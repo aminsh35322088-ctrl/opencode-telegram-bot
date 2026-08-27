@@ -1,6 +1,7 @@
 import type { Bot, Context, NextFunction } from "grammy";
 import { config } from "../../config.js";
 import { settingsCommand } from "../commands/settings-command.js";
+import { providersCommand, handleProviderWizardMessage } from "../commands/providers-command.js";
 import { opencodeStartCommand } from "../commands/opencode-start-command.js";
 import { opencodeStopCommand } from "../commands/opencode-stop-command.js";
 import { projectsCommand } from "../commands/projects-command.js";
@@ -33,63 +34,28 @@ interface CommandRouterDeps {
 let commandsInitialized = false;
 
 export async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Promise<void> {
-  if (commandsInitialized || !ctx.from || ctx.from.id !== config.telegram.allowedUserId) {
-    await next();
-    return;
-  }
-
-  if (!ctx.chat) {
-    logger.warn("[Bot] Cannot initialize commands: chat context is missing");
-    await next();
-    return;
-  }
-
+  if (commandsInitialized || !ctx.from || ctx.from.id !== config.telegram.allowedUserId) { await next(); return; }
+  if (!ctx.chat) { logger.warn("[Bot] Cannot initialize commands: chat context is missing"); await next(); return; }
   try {
-    await ctx.api.setMyCommands(BOT_COMMANDS, {
-      scope: {
-        type: "chat",
-        chat_id: ctx.chat.id,
-      },
-    });
-
+    await ctx.api.setMyCommands(BOT_COMMANDS, { scope: { type: "chat", chat_id: ctx.chat.id } });
     commandsInitialized = true;
-    logger.debug(`[Bot] Commands initialized for authorized user (chat_id=${ctx.chat.id})`);
-  } catch (err) {
-    logger.error("[Bot] Failed to set commands:", err);
-  }
-
+  } catch (err) { logger.error("[Bot] Failed to set commands:", err); }
   await next();
 }
 
 export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps): void {
   bot.use(async (ctx, next) => {
-    if (ctx.chat && ctx.message?.text?.startsWith("/")) {
-      flushPendingPrompt(ctx.chat.id);
-    }
+    if (ctx.chat && ctx.message?.text?.startsWith("/")) flushPendingPrompt(ctx.chat.id);
+    if (ctx.message?.text && ctx.chat && await handleProviderWizardMessage(ctx)) return;
     await next();
   });
-
-  bot.command("start", startCommand);
-  bot.command("help", helpCommand);
-  bot.command("status", statusCommand);
-  bot.command("settings", settingsCommand);
+  bot.command("start", startCommand); bot.command("help", helpCommand); bot.command("status", statusCommand);
+  bot.command("settings", settingsCommand); bot.command("providers", providersCommand);
   bot.command("opencode_start", opencodeStartCommand);
-  bot.command("opencode_stop", (ctx) =>
-    opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }),
-  );
-  bot.command("projects", projectsCommand);
-  bot.command("worktree", worktreeCommand);
-  bot.command("open", openCommand);
-  bot.command("ls", lsCommand);
-  bot.command("sessions", sessionsCommand);
-  bot.command("messages", messagesCommand);
+  bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }));
+  bot.command("projects", projectsCommand); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand);
+  bot.command("sessions", sessionsCommand); bot.command("messages", messagesCommand);
   bot.command("new", (ctx) => newCommand(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }));
-  bot.command("abort", abortCommand);
-  bot.command("detach", detachCommand);
-  bot.command("task", taskCommand);
-  bot.command("tasklist", taskListCommand);
-  bot.command("rename", renameCommand);
-  bot.command("commands", commandsCommand);
-  bot.command("skills", skillsCommand);
-  bot.command("mcps", mcpsCommand);
+  bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand);
+  bot.command("rename", renameCommand); bot.command("commands", commandsCommand); bot.command("skills", skillsCommand); bot.command("mcps", mcpsCommand);
 }
