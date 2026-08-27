@@ -20,8 +20,6 @@ RUN npm prune --omit=dev
 # Runtime stage
 FROM node:22-bookworm-slim AS runtime
 
-ARG OPENCODE_VERSION=latest
-
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -31,9 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the official OpenCode CLI instead of compiling OpenCode from source.
-# This keeps Railway builds small and fast while tracking the latest stable npm release.
-RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" \
+# The version file is updated automatically by the scheduled GitHub workflow.
+COPY .opencode-version ./
+RUN OPENCODE_VERSION="$(tr -d '\\r\\n' < .opencode-version)" \
+    && test -n "${OPENCODE_VERSION}" \
+    && npm install -g "opencode-ai@${OPENCODE_VERSION}" \
     && npm cache clean --force
 
 ENV NODE_ENV=production
