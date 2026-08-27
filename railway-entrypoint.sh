@@ -12,7 +12,7 @@ set -eu
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 
-mkdir -p /app/data/logs /app/data/run /app/workspace
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /app/workspace
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
 printf '%s\n' "[railway] OpenCode CLI: $(opencode --version 2>/dev/null || echo unknown)"
