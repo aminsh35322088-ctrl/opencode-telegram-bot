@@ -9,13 +9,22 @@ import {
   type LocalOpencodeTarget,
 } from "./process.js";
 
-const SERVER_READY_TIMEOUT_MS = 10000;
+const SERVER_READY_TIMEOUT_MS = 15000;
 const SERVER_READY_POLL_INTERVAL_MS = 500;
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const HEALTH_CHECK_TIMED_OUT = Symbol("health-check-timed-out");
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isEnabled(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function shouldSpawnLocalServerInContainer(): boolean {
+  return isEnabled(process.env.OPENCODE_AUTO_START_IN_CONTAINER);
 }
 
 async function withTimeout<T>(
@@ -32,9 +41,7 @@ async function withTimeout<T>(
       }),
     ]);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -59,10 +66,7 @@ async function waitForOpencodeServerReady(timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isOpencodeServerHealthy()) {
-      return true;
-    }
-
+    if (await isOpencodeServerHealthy()) return true;
     await sleep(SERVER_READY_POLL_INTERVAL_MS);
   }
 
@@ -77,9 +81,7 @@ export class OpencodeAutoRestartService {
   private serverWasHealthy = false;
 
   async start(): Promise<boolean> {
-    if (this.started || !config.opencode.autoRestartEnabled) {
-      return false;
-    }
+    if (this.started || !config.opencode.autoRestartEnabled) return false;
 
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
@@ -89,18 +91,15 @@ export class OpencodeAutoRestartService {
       return false;
     }
 
+    const container = isContainerRuntime();
+    const spawnInContainer = shouldSpawnLocalServerInContainer();
+
     this.started = true;
     this.localTarget = localTarget;
 
-    if (isContainerRuntime()) {
-      logger.info(
-        `[OpenCodeAutoRestart] Enabled without local spawn: port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}`,
-      );
-    } else {
-      logger.info(
-        `[OpenCodeAutoRestart] Enabled: port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}`,
-      );
-    }
+    logger.info(
+      `[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}`,
+    );
 
     await this.checkAndRestart("startup");
 
@@ -124,9 +123,7 @@ export class OpencodeAutoRestartService {
   }
 
   private async checkAndRestart(reason: "startup" | "interval"): Promise<void> {
-    if (this.checkInProgress || !this.localTarget) {
-      return;
-    }
+    if (this.checkInProgress || !this.localTarget) return;
 
     this.checkInProgress = true;
 
@@ -143,9 +140,9 @@ export class OpencodeAutoRestartService {
       this.serverWasHealthy = false;
       opencodeReadyLifecycle.notifyUnavailable(`auto_restart_${reason}`);
 
-      if (isContainerRuntime()) {
+      if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
         logger.warn(
-          `[OpenCodeAutoRestart] OpenCode server is unavailable; not starting a local process in container: reason=${reason}`,
+          `[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`,
         );
         return;
       }
