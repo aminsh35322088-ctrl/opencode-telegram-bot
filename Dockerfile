@@ -3,59 +3,58 @@ FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install only native build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files first for better layer caching
 COPY package.json package-lock.json ./
-
-# Install ALL dependencies (including dev for build)
 RUN npm ci
 
-# Copy TypeScript config and source code
 COPY tsconfig.json ./
 COPY src/ ./src/
-
-# Build the project
 RUN npm run build
-
-# Prune dev dependencies from the final image
 RUN npm prune --omit=dev
-
 
 # Runtime stage
 FROM node:22-bookworm-slim AS runtime
 
+ARG OPENCODE_VERSION=latest
+
 WORKDIR /app
 
-# Install dumb-init and ca-certificates for proper signal handling and HTTPS
 RUN apt-get update && apt-get install -y --no-install-recommends \
     dumb-init \
     ca-certificates \
+    git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Set production environment
+# Install the official OpenCode CLI instead of compiling OpenCode from source.
+# This keeps Railway builds small and fast while tracking the latest stable npm release.
+RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" \
+    && npm cache clean --force
+
 ENV NODE_ENV=production
-
-# Set persistent home for the bot
 ENV OPENCODE_TELEGRAM_HOME=/app/data
+ENV HOME=/app/data
+ENV XDG_CONFIG_HOME=/app/data/.config
+ENV XDG_DATA_HOME=/app/data/.local/share
+ENV XDG_CACHE_HOME=/app/data/.cache
 
-# Create data directories with correct ownership for node user
-RUN mkdir -p /app/data/logs /app/data/run && \
-    chown -R node:node /app
+RUN mkdir -p /app/data/logs /app/data/run /app/workspace \
+    /app/data/.config /app/data/.local/share /app/data/.cache \
+    && chown -R node:node /app
 
-# Copy built application and production dependencies from builder
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --chown=node:node railway-entrypoint.sh ./railway-entrypoint.sh
 
-# Run as non-root node user (uid 1000)
+RUN chmod +x ./railway-entrypoint.sh
+
 USER node
 
-# Single dumb-init entrypoint
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["./railway-entrypoint.sh"]
