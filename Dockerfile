@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The version file is updated automatically by the scheduled GitHub workflow.
 COPY .opencode-version ./
-RUN OPENCODE_VERSION="$(tr -d '\\r\\n' < .opencode-version)" \
+RUN OPENCODE_VERSION="$(tr -d '\r\n' < .opencode-version)" \
     && test -n "${OPENCODE_VERSION}" \
     && npm install -g "opencode-ai@${OPENCODE_VERSION}" \
     && npm cache clean --force
@@ -49,11 +49,12 @@ RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache 
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
-COPY --chown=node:node railway-entrypoint.sh ./railway-entrypoint.sh
+COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 
 RUN chmod +x ./railway-entrypoint.sh
 
-USER node
-
+# Railway mounts volumes after the image is built, so image-time ownership of
+# /data does not apply to the mounted volume. The entrypoint repairs ownership
+# at runtime and then drops privileges to the unprivileged node user.
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./railway-entrypoint.sh"]
