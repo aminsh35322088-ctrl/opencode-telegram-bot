@@ -18,6 +18,39 @@ export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID O
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /app/workspace
 chown -R node:node /data /app/workspace
 
+# Optional GitHub HTTPS authentication. Git only receives the token for
+# github.com; the token is never written to disk or printed to logs.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  cat > /data/run/github-credential-helper.sh <<'EOF'
+#!/bin/sh
+set -eu
+
+host=""
+while IFS= read -r line; do
+  case "$line" in
+    host=*) host=${line#host=} ;;
+  esac
+done
+
+if [ "$host" = "github.com" ]; then
+  printf '%s\n' 'username=x-access-token'
+  printf 'password=%s\n' "${GITHUB_TOKEN}"
+fi
+EOF
+  chmod 700 /data/run/github-credential-helper.sh
+  chown node:node /data/run/github-credential-helper.sh
+
+  # URL-scoped helper: credentials are only supplied to github.com HTTPS remotes.
+  su -s /bin/sh node -c \
+    'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
+  su -s /bin/sh node -c \
+    'git config --global credential.https://github.com/.useHttpPath false'
+
+  printf '%s\n' "[railway] GitHub HTTPS authentication: enabled"
+else
+  printf '%s\n' "[railway] GitHub HTTPS authentication: disabled (GITHUB_TOKEN not set)"
+fi
+
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
 printf '%s\n' "[railway] OpenCode CLI: $(opencode --version 2>/dev/null || echo unknown)"
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
