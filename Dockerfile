@@ -37,15 +37,14 @@ RUN OPENCODE_VERSION="$(tr -d '\\r\\n' < .opencode-version)" \
     && npm cache clean --force
 
 ENV NODE_ENV=production
-ENV OPENCODE_TELEGRAM_HOME=/app/data
-ENV HOME=/app/data
-ENV XDG_CONFIG_HOME=/app/data/.config
-ENV XDG_DATA_HOME=/app/data/.local/share
-ENV XDG_CACHE_HOME=/app/data/.cache
+ENV OPENCODE_TELEGRAM_HOME=/data
+ENV HOME=/data
+ENV XDG_CONFIG_HOME=/data/.config
+ENV XDG_DATA_HOME=/data/.local/share
+ENV XDG_CACHE_HOME=/data/.cache
 
-RUN mkdir -p /app/data/logs /app/data/run /app/workspace \
-    /app/data/.config /app/data/.local/share /app/data/.cache \
-    && chown -R node:node /app
+RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /app/workspace \
+    && chown -R node:node /data /app
 
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
