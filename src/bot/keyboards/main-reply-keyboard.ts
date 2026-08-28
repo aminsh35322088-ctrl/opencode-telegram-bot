@@ -1,8 +1,8 @@
 import { Keyboard } from "grammy";
+import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
-import { t } from "../../i18n/index.js";
 
 export function createMainKeyboard(
   _currentAgent: string,
@@ -25,7 +25,7 @@ export function createMainKeyboard(
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
   const keyboard = new Keyboard();
-  keyboard.text(currentAgent).row();
+  keyboard.text(getAgentButtonLabel(currentAgent)).row();
   return keyboard.resized().persistent();
 }
 
