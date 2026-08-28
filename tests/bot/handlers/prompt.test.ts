@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot, Context } from "grammy";
-import {
-  consumePromptResponseMode,
-  processUserPrompt,
-  type ProcessPromptDeps,
-} from "../../../src/bot/handlers/prompt.js";
+import { processUserPrompt, type ProcessPromptDeps } from "../../../src/bot/handlers/prompt.js";
 import { promptAttachment } from "../../../src/app/managers/prompt-attachment-manager.js";
 
 const mocked = vi.hoisted(() => ({
@@ -26,7 +22,6 @@ const mocked = vi.hoisted(() => ({
   setSessionSummaryMock: vi.fn(),
   setBotAndChatIdMock: vi.fn(),
   attachToSessionMock: vi.fn(),
-  getTtsModeMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -46,14 +41,8 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
   clearSession: vi.fn(),
 }));
 
-vi.mock("../../../src/app/services/session-cache-service.js", () => ({
-  ingestSessionInfoForCache: vi.fn(),
-  __resetSessionDirectoryCacheForTests: vi.fn(),
-}));
-
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
-  getTtsMode: mocked.getTtsModeMock,
 }));
 
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({
@@ -143,7 +132,6 @@ vi.mock("../../../src/app/managers/external-input-suppression-manager.js", () =>
   },
 }));
 
-// The resolver has its own suite; here only the wiring around it is under test.
 vi.mock("../../../src/app/services/prompt-attachment-service.js", () => ({
   resolvePendingAttachment: mocked.resolvePendingAttachmentMock,
 }));
@@ -198,8 +186,6 @@ describe("bot/handlers/prompt", () => {
     mocked.setSessionSummaryMock.mockReset();
     mocked.setBotAndChatIdMock.mockReset();
     mocked.attachToSessionMock.mockReset();
-    mocked.getTtsModeMock.mockReset();
-    mocked.getTtsModeMock.mockReturnValue("off");
     mocked.attachToSessionMock.mockResolvedValue({
       busy: false,
       alreadyAttached: false,
@@ -310,15 +296,6 @@ describe("bot/handlers/prompt", () => {
 
     expect(handled).toBe(true);
     expect(mocked.suppressionRegisterMock).not.toHaveBeenCalled();
-  });
-
-  it("keeps text prompts text-only when TTS mode is auto", async () => {
-    mocked.getTtsModeMock.mockReturnValue("auto");
-
-    const handled = await processUserPrompt(createContext(), "Review README", createDeps());
-
-    expect(handled).toBe(true);
-    expect(consumePromptResponseMode("session-1")).toBe("text_only");
   });
 
   it("uses plural placeholder text for multiple file-only prompts", async () => {
