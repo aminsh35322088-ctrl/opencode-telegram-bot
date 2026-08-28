@@ -23,17 +23,27 @@ export function formatModelDisplayName(
   return t("pinned.unknown");
 }
 
+/**
+ * Render context usage as a compact visual progress gauge.
+ * The percentage is derived only from the measured context window and its
+ * provider/model limit; it is not a cost or token-budget control.
+ */
 export function formatContextLine(tokensUsed: number, tokensLimit?: number | null): string {
   const safeLimit = typeof tokensLimit === "number" && tokensLimit > 0 ? tokensLimit : null;
-  const percentage = safeLimit ? Math.round((tokensUsed / safeLimit) * 100) : 0;
+  const percentage = safeLimit
+    ? Math.min(100, Math.max(0, Math.round((tokensUsed / safeLimit) * 100)))
+    : 0;
+  const segments = 20;
+  const filled = safeLimit ? Math.round((percentage / 100) * segments) : 0;
+  const gauge = `${"█".repeat(filled)}${"░".repeat(segments - filled)}`;
 
-  return t("pinned.line.context", {
-    used: formatTokenCount(tokensUsed),
-    limit: safeLimit ? formatTokenCount(safeLimit) : t("pinned.unknown"),
-    percent: percentage,
-  });
+  return `🧠 Context\n${gauge} ${percentage}%\n${formatTokenCount(tokensUsed)} / ${safeLimit ? formatTokenCount(safeLimit) : t("pinned.unknown")}`;
 }
 
-export function formatCostLine(cost: number): string {
-  return t("pinned.line.cost", { cost: `$${cost.toFixed(2)}` });
+/**
+ * Legacy compatibility: cost is provider-specific and is intentionally not
+ * presented as a locally calculated spend figure.
+ */
+export function formatCostLine(_cost: number): string {
+  return "";
 }
