@@ -1,8 +1,7 @@
 import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
 import { opencodeClient } from "../../opencode/client.js";
-import { getCurrentProject } from "../../app/stores/settings-store.js";
-import { setCurrentSession } from "../../app/services/session-service.js";
+import { setCurrentSession, getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -29,12 +28,11 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
   if (isForegroundBusy()) { await replyBusyBlocked(ctx); return true; }
   if (!(await ensureActiveInlineMenu(ctx, "session"))) return true;
 
-  const project = getCurrentProject();
-  if (!project) { await ctx.answerCallbackQuery({ text: t("sessions.select_project_first"), show_alert: true }).catch(() => {}); return true; }
+  const directory = getCurrentSessionDirectory();
 
   try {
     if (isBack || isNo) {
-      const pageData = await loadSessionPage(project.worktree, 0, config.bot.sessionsListLimit);
+      const pageData = await loadSessionPage(directory, 0, config.bot.sessionsListLimit);
       const view = buildSessionSelectionMenuView(pageData, config.bot.sessionsListLimit);
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(view.text, { reply_markup: appendInlineMenuCancelButton(view.keyboard, "session") });
@@ -43,17 +41,17 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
 
     const sessionId = previewId ?? continueId;
     if (!sessionId) return true;
-    const { data: session, error } = await opencodeClient.session.get({ sessionID: sessionId, directory: project.worktree });
+    const { data: session, error } = await opencodeClient.session.get({ sessionID: sessionId, directory });
     if (error || !session) throw error || new Error("Session not found");
 
     if (previewId) {
-      const items = await loadSessionPreviewItems(session.id, project.worktree, 10);
+      const items = await loadSessionPreviewItems(session.id, directory, 10);
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(formatSessionPreview(session.title, items), { reply_markup: buildSessionPreviewKeyboard(session.id) });
       return true;
     }
 
-    const sessionInfo = { id: session.id, title: session.title, directory: project.worktree };
+    const sessionInfo = { id: session.id, title: session.title, directory };
     setCurrentSession(sessionInfo);
     clearAllInteractionState("session_preview_continue");
     await attachToSession({ bot: deps.bot, chatId: ctx.chat!.id, session: sessionInfo, ensureEventSubscription: deps.ensureEventSubscription });
