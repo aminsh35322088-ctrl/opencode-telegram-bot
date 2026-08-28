@@ -30,9 +30,12 @@ import {
   markAttachedSessionBusy,
   markAttachedSessionIdle,
 } from "../../app/services/attach-service.js";
-import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
+import { externalUserInputSuppressionManager } from "../../app/managers/external-user-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { resolvePendingAttachment } from "../../app/services/prompt-attachment-service.js";
+
+/** Legacy reconciliation hook retained as a no-op after audio reply removal. */
+export function clearPromptResponseMode(_sessionId: string): void {}
 
 /** Module-level references for async callbacks that don't have ctx. */
 let botInstance: Bot<Context> | null = null;
@@ -49,17 +52,13 @@ export function getPromptChatId(): number | null {
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
   try {
     const { data, error } = await opencodeClient.session.status({ directory });
-
     if (error || !data) {
       logger.warn("[Bot] Failed to check session status before prompt:", error);
       return false;
     }
 
     const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
-    if (!sessionStatus) {
-      return false;
-    }
-
+    if (!sessionStatus) return false;
     logger.debug(`[Bot] Current session status before prompt: ${sessionStatus.type || "unknown"}`);
     return sessionStatus.type === "busy";
   } catch (err) {
@@ -78,9 +77,7 @@ async function resetMismatchedSessionContext(): Promise<void> {
   clearSession();
   keyboardManager.clearContext();
 
-  if (!pinnedMessageManager.isInitialized()) {
-    return;
-  }
+  if (!pinnedMessageManager.isInitialized()) return;
 
   try {
     await pinnedMessageManager.clear();
@@ -94,34 +91,13 @@ export interface ProcessPromptDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
-/**
- * Drops the cancel button from the attachment confirmation once the file has been sent.
- * The attachment is consumed by then, so the button would no longer cancel anything.
- * The message text stays as a record of what went with the prompt.
- */
-async function retireAttachmentConfirmation(
-  ctx: Context,
-  messageId: number | undefined,
-): Promise<void> {
-  if (!messageId || !ctx.chat) {
-    return;
-  }
-
+async function retireAttachmentConfirmation(ctx: Context, messageId: number | undefined): Promise<void> {
+  if (!messageId || !ctx.chat) return;
   await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId).catch((err) => {
     logger.debug(`[PromptAttachment] Could not retire confirmation message ${messageId}:`, err);
   });
 }
 
-/**
- * Processes a user prompt: ensures project/session, subscribes to events, and sends
- * the prompt to OpenCode. Used by text, voice, and photo message handlers.
- *
- * @param ctx - Grammy context
- * @param text - Text content of the prompt
- * @param deps - Dependencies (bot and event subscription)
- * @param fileParts - Optional file parts (for photo/document attachments)
- * @returns true if the prompt was dispatched, false if it was blocked/failed early.
- */
 export async function processUserPrompt(
   ctx: Context,
   text: string,
@@ -152,11 +128,9 @@ export async function processUserPrompt(
 
   if (!currentSession) {
     await ctx.reply(t("bot.creating_session"));
-
     const { data: session, error } = await opencodeClient.session.create({
       directory: currentProject.worktree,
     });
-
     if (error || !session) {
       await ctx.reply(t("bot.create_session_error"));
       return false;
@@ -165,13 +139,11 @@ export async function processUserPrompt(
     logger.info(
       `[Bot] Created new session: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`,
     );
-
     currentSession = {
       id: session.id,
       title: session.title,
       directory: currentProject.worktree,
     };
-
     setCurrentSession(currentSession);
     await ingestSessionInfoForCache(session);
     createdNewSession = true;
@@ -200,7 +172,6 @@ export async function processUserPrompt(
       contextInfo ?? undefined,
       variantName,
     );
-
     await ctx.reply(t("bot.session_created", { title: currentSession.title }), {
       reply_markup: keyboard,
     });
@@ -217,16 +188,11 @@ export async function processUserPrompt(
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = getStoredModel();
     const parts: Array<TextPartInput | FilePartInput> = [];
-
-    if (text.trim().length > 0) {
-      parts.push({ type: "text", text });
-    }
-
+    if (text.trim().length > 0) parts.push({ type: "text", text });
     parts.push(...fileParts);
 
     const pendingAttachment = promptAttachment.get();
     const attachmentPart = await resolvePendingAttachment(currentSession.directory);
-
     if (attachmentPart) {
       parts.push(attachmentPart);
     } else if (pendingAttachment) {
@@ -247,7 +213,6 @@ export async function processUserPrompt(
     }
 
     const filePartCount = parts.filter((part) => part.type === "file").length;
-
     const promptOptions: {
       sessionID: string;
       directory: string;
@@ -267,10 +232,7 @@ export async function processUserPrompt(
         providerID: storedModel.providerID,
         modelID: storedModel.modelID,
       };
-
-      if (storedModel.variant) {
-        promptOptions.variant = storedModel.variant;
-      }
+      if (storedModel.variant) promptOptions.variant = storedModel.variant;
     }
 
     const promptErrorLogContext = {
@@ -310,16 +272,12 @@ export async function processUserPrompt(
           void markAttachedSessionIdle(currentSession.id);
           assistantRunState.clearRun(currentSession.id, "session_prompt_api_error");
           const details = formatErrorDetails(error, 6000);
-          logger.error(
-            "[Bot] OpenCode API returned an error for session.promptAsync",
-            promptErrorLogContext,
-          );
+          logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext);
           logger.error("[Bot] session.promptAsync error details:", details);
           logger.error("[Bot] session.promptAsync raw API error object:", error);
           void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {});
           return;
         }
-
         logger.info("[Bot] session.promptAsync accepted");
       },
       onError: (error) => {
@@ -342,9 +300,7 @@ export async function processUserPrompt(
       assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error");
     }
     logger.error("Error in prompt handler:", err);
-    if (interactionManager.getSnapshot()) {
-      clearAllInteractionState("message_handler_error");
-    }
+    if (interactionManager.getSnapshot()) clearAllInteractionState("message_handler_error");
     await ctx.reply(t("error.generic"));
     return false;
   }
