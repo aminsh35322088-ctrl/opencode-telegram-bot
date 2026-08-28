@@ -1,7 +1,6 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
-import { getTtsMode } from "../../app/stores/settings-store.js";
 import { fetchCurrentAgent } from "../../app/services/agent-selection-service.js";
 import { fetchCurrentModel } from "../../app/services/model-selection-service.js";
 import { getAgentDisplayName } from "../../app/types/agent.js";
@@ -26,15 +25,6 @@ export async function statusCommand(ctx: CommandContext<Context>) {
     if (data.version) {
       message += `${t("status.line.version", { version: data.version })}\n`;
     }
-    const ttsMode = getTtsMode();
-    message += `${t("status.line.tts", {
-      tts:
-        ttsMode === "off"
-          ? t("status.tts.off")
-          : ttsMode === "all"
-            ? t("status.tts.all")
-            : t("status.tts.auto"),
-    })}\n`;
 
     const currentAgent = await fetchCurrentAgent();
     const agentDisplay = currentAgent
