@@ -29,6 +29,8 @@ type PromptOptions = {
 
 type SessionApi = typeof baseClient.session;
 
+const MEMORY_LOOKUP_BUDGET_MS = 75;
+
 function extractPromptText(parts: PromptPart[]): string {
   return parts
     .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -41,6 +43,33 @@ function countPromptChars(parts: PromptPart[]): number {
   return parts.reduce((total, part) => total + (typeof part.text === "string" ? part.text.length : 0), 0);
 }
 
+async function searchMemoriesWithinBudget(options: {
+  query: string;
+  projectDirectory: string;
+  maxChars: number;
+}): Promise<Awaited<ReturnType<typeof searchRelevantMemories>>> {
+  let timer: NodeJS.Timeout | undefined;
+  const lookup = searchRelevantMemories(options);
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), MEMORY_LOOKUP_BUDGET_MS);
+  });
+
+  try {
+    const startedAt = Date.now();
+    const result = await Promise.race([lookup, timeout]);
+    const elapsedMs = Date.now() - startedAt;
+    if (result === null) {
+      logger.debug(`[Memory] Lookup exceeded ${MEMORY_LOOKUP_BUDGET_MS}ms; sending prompt without memory`);
+      return [];
+    }
+
+    logger.debug(`[Memory] Lookup completed in ${elapsedMs}ms; matches=${result.length}`);
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const originalPromptAsync = baseClient.session.promptAsync.bind(baseClient.session);
 
 async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown> {
@@ -50,10 +79,11 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
     ? `${options.model.providerID}/${options.model.modelID}`
     : "default";
 
+  const promptStart = Date.now();
   let parts = originalParts;
-  try {
-    if (userText) {
-      const memories = await searchRelevantMemories({
+  if (userText) {
+    try {
+      const memories = await searchMemoriesWithinBudget({
         query: userText,
         projectDirectory: options.directory,
         maxChars: 2000,
@@ -65,19 +95,21 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
           `[Memory] Injecting ${memories.length} relevant memories into session=${options.sessionID} chars=${memoryText.length}`,
         );
       }
+    } catch (error) {
+      logger.warn("[Memory] Memory retrieval failed; continuing without memory:", error);
     }
-  } catch (error) {
-    logger.warn("[Memory] Memory retrieval failed; continuing without memory:", error);
   }
 
   const promptOptions = { ...options, parts } as Parameters<SessionApi["promptAsync"]>[0];
   const promptChars = countPromptChars(parts);
 
   logger.info(
-    `[LLM Prompt] session=${options.sessionID} model=${model} agent=${options.agent ?? "default"} parts=${parts.length} promptChars=${promptChars} memoryInjected=${parts.length > originalParts.length}`,
+    `[LLM Prompt] session=${options.sessionID} model=${model} agent=${options.agent ?? "default"} parts=${parts.length} promptChars=${promptChars} memoryInjected=${parts.length > originalParts.length} prepMs=${Date.now() - promptStart}`,
   );
 
+  const dispatchStartedAt = Date.now();
   const result = await originalPromptAsync(promptOptions);
+  logger.info(`[LLM Prompt] session=${options.sessionID} promptAsync returned in ${Date.now() - dispatchStartedAt}ms`);
 
   observePromptUsage(baseClient as never, {
     sessionId: options.sessionID,
