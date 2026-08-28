@@ -79,7 +79,6 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
 
     const model = getStoredModel();
     const displayModel = formatModelForDisplay(model.providerID, model.modelID);
-    const keyboard = keyboardManager.getKeyboard();
     await ctx.api.editMessageText(
       ctx.chat!.id,
       progressMessage.message_id,
@@ -93,7 +92,7 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
         "",
         "Change the model/provider or recharge your API, then tap <b>▶️ Resume</b>.",
       ].join("\n"),
-      { parse_mode: "HTML", ...(keyboard ? { reply_markup: keyboard } : {}) },
+      { parse_mode: "HTML" },
     );
   } catch (error) {
     logger.error("[Pause] Failed to pause current chat:", error);
