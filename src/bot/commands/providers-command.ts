@@ -6,6 +6,7 @@ import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLoca
 import { logger } from "../../utils/logger.js";
 import { clearIntegrationWizard } from "./integrations-command.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { settingsCommand } from "./settings-command.js";
 
 interface PendingProvider { step: "name" | "url" | "key"; name?: string; baseURL?: string; apiKey?: string; }
 const pending = new Map<number, PendingProvider>();
@@ -13,7 +14,6 @@ const cancelKeyboard = () => new Keyboard().text("❌ Cancel").resized().oneTime
 
 export function isProviderWizardActive(chatId: number): boolean { return pending.has(chatId); }
 export function clearProviderWizard(chatId: number): void { pending.delete(chatId); }
-
 async function replyNext(ctx: Context, text: string): Promise<void> { await ctx.reply(text, { reply_markup: cancelKeyboard() }); }
 
 export async function providersCommand(ctx: CommandContext<Context>): Promise<void> {
@@ -22,6 +22,7 @@ export async function providersCommand(ctx: CommandContext<Context>): Promise<vo
   const providers = await listCustomProviders();
   const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
   for (const provider of providers) keyboard.row().text(`🧠 ${provider.name}`, `provider:view:${provider.id}`).text("🗑️", `provider:delete:${provider.id}`);
+  keyboard.row().text("🔙 Back", "provider:settings");
   const text = providers.length ? `🔌 Custom Providers\n\n${providers.map((p) => `• ${p.name} — ${p.baseURL} — ${p.models.length} models`).join("\n")}\n\nAdd or manage an OpenAI-compatible provider.` : "🔌 Custom Providers\n\nNo custom providers configured yet.\n\nAdd any OpenAI-compatible API exposing /v1/chat/completions.";
   const callbackMessage = (ctx as Context).callbackQuery?.message;
   if (callbackMessage && "message_id" in callbackMessage) { await (ctx as Context).api.editMessageText(chatId!, callbackMessage.message_id, text, { reply_markup: keyboard }); return; }
@@ -35,6 +36,7 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   if (!chatId) return true;
   if (data === "provider:cancel") { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return true; }
+  if (data === "provider:settings") { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await settingsCommand(ctx as never); return true; }
   if (data === "provider:add") { clearIntegrationWizard(chatId); pending.set(chatId, { step: "name" }); await replyNext(ctx, "1/3 — Provider name?\nExample: TabiToken"); return true; }
   if (data.startsWith("provider:delete:")) { const id = data.slice("provider:delete:".length); const deleted = await deleteCustomProvider(id); if (deleted) { await syncOpenCodeCustomConfig(); await providersCommand(ctx as never); } else await ctx.answerCallbackQuery({ text: "Provider not found" }); return true; }
   if (data.startsWith("provider:view:")) { const id = data.slice("provider:view:".length); const provider = (await listCustomProviders()).find((item) => item.id === id); if (!provider) { await ctx.answerCallbackQuery({ text: "Provider not found" }); return true; } await ctx.api.editMessageText(chatId, ctx.callbackQuery!.message!.message_id, `🔌 ${provider.name}\n\nBase URL: ${provider.baseURL}\nModels:\n${provider.models.map((m) => `• ${m.name} (${m.id})`).join("\n")}\n\n🔐 API key is stored separately and is never displayed.`, { reply_markup: new InlineKeyboard().text("🔙 Back", "provider:menu") }); return true; }
