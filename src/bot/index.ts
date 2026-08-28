@@ -1,4 +1,5 @@
 import { Bot, Context } from "grammy";
+import { readFile, writeFile } from "node:fs/promises";
 import { config } from "../config.js";
 import { getCurrentProject } from "../app/stores/settings-store.js";
 import { attachManager } from "../app/managers/attach-manager.js";
@@ -32,6 +33,8 @@ import { createTelegramBotOptions } from "./telegram-client-options.js";
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let unsubscribeReadyRestore: (() => void) | null = null;
 const eventSubscriptionService: BotEventSubscriptionService = createEventSubscriptionService();
+const VERSION_FILE = "/app/.opencode-version";
+const LAST_NOTIFIED_VERSION_FILE = "/data/.last-opencode-notified-version";
 
 const TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS = new Set([
   "editMessageReplyMarkup",
@@ -49,6 +52,30 @@ class TelegramApiResponseError extends Error {
 export function shouldRetryTelegramServerError(method: string): boolean { return TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS.has(method); }
 function isTelegramApiErrorResponse(response: unknown): response is TelegramApiErrorResponse {
   return typeof response === "object" && response !== null && Reflect.get(response, "ok") === false && typeof Reflect.get(response, "error_code") === "number" && typeof Reflect.get(response, "description") === "string";
+}
+
+async function notifyOpenCodeUpdate(bot: Bot<Context>): Promise<void> {
+  try {
+    const currentVersion = (await readFile(VERSION_FILE, "utf8")).trim();
+    if (!currentVersion) return;
+    let previousVersion = "";
+    try { previousVersion = (await readFile(LAST_NOTIFIED_VERSION_FILE, "utf8")).trim(); } catch { /* first boot */ }
+    if (!previousVersion) {
+      await writeFile(LAST_NOTIFIED_VERSION_FILE, `${currentVersion}\n`, "utf8");
+      return;
+    }
+    if (previousVersion === currentVersion) return;
+
+    await bot.api.sendMessage(
+      config.telegram.allowedUserId,
+      `🚀 <b>OpenCode Updated</b>\n\n${previousVersion} → <b>${currentVersion}</b>\n\n🟢 The new version is installed and ready to use.`,
+      { parse_mode: "HTML" },
+    );
+    await writeFile(LAST_NOTIFIED_VERSION_FILE, `${currentVersion}\n`, "utf8");
+    logger.info(`[Bot] Notified user about OpenCode update: ${previousVersion} -> ${currentVersion}`);
+  } catch (error) {
+    logger.warn("[Bot] Could not send OpenCode update notification:", error);
+  }
 }
 
 export function createBot(): Bot<Context> {
@@ -78,6 +105,8 @@ export function createBot(): Bot<Context> {
       logger.info(`[Bot] Started background session tracking after OpenCode ready: reason=${reason}, directory=${currentProject.worktree}`);
     }
   });
+
+  void notifyOpenCodeUpdate(bot);
 
   let heartbeatCounter = 0;
   heartbeatTimer = setInterval(() => { heartbeatCounter++; if (heartbeatCounter % 6 === 0) logger.debug(`[Bot] Heartbeat #${heartbeatCounter} - event loop alive`); }, 5000);
