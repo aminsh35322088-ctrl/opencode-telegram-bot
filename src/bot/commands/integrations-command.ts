@@ -1,25 +1,26 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import {
-  clearGithubToken,
-  getGithubToken,
-  getGithubTokenPath,
-  saveGithubToken,
+  addGithubAccount,
+  getActiveGithubAccount,
+  listGithubAccounts,
+  removeGithubAccount,
+  setActiveGithubAccount,
 } from "../../app/services/github-integration-service.js";
 
-const PENDING_GITHUB = new Set<number>();
-
-export function isGithubTokenWizardActive(chatId: number): boolean {
-  return PENDING_GITHUB.has(chatId);
-}
+interface PendingGithub { step: "name" | "token"; name?: string; }
+const pending = new Map<number, PendingGithub>();
 
 export async function showIntegrationsMenu(ctx: Context): Promise<void> {
-  const configured = Boolean(await getGithubToken());
-  const keyboard = new InlineKeyboard();
-  keyboard.text(configured ? "✏️ Change GitHub token" : "➕ Configure GitHub", "integration:github:set");
-  if (configured) keyboard.row().text("🗑️ Remove GitHub", "integration:github:remove");
+  const accounts = await listGithubAccounts();
+  const active = await getActiveGithubAccount();
+  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add");
+  for (const account of accounts) {
+    const label = account.id === active?.id ? `✅ ${account.name}` : account.name;
+    keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
+  }
   await ctx.reply(
-    `🔌 Integrations\n\nGitHub: ${configured ? "✅ Connected" : "❌ Not configured"}\n\nGitHub access is stored on the persistent /data volume and is used by git/gh tooling.`,
+    `🔌 Integrations\n\nGitHub accounts: ${accounts.length}\nActive: ${active?.name ?? "None"}\n\nAdd multiple GitHub accounts and switch the active credential without changing Railway ENV variables.`,
     { reply_markup: keyboard },
   );
 }
@@ -34,18 +35,26 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   await ctx.answerCallbackQuery();
   const chatId = ctx.chat?.id;
   if (!chatId) return true;
+
   if (data === "integration:menu") {
     await showIntegrationsMenu(ctx);
     return true;
   }
-  if (data === "integration:github:set") {
-    PENDING_GITHUB.add(chatId);
-    await ctx.reply("🔐 Send your GitHub Personal Access Token.\n\nThe message will be deleted when Telegram allows it.");
+  if (data === "integration:github:add") {
+    pending.set(chatId, { step: "name" });
+    await ctx.reply("1/2 — GitHub account name?\nExample: Personal GitHub");
     return true;
   }
-  if (data === "integration:github:remove") {
-    await clearGithubToken();
-    await ctx.reply("✅ GitHub integration removed.");
+  if (data.startsWith("integration:github:select:")) {
+    const id = data.slice("integration:github:select:".length);
+    const account = await setActiveGithubAccount(id);
+    await ctx.reply(`✅ Active GitHub account: ${account.name}${account.username ? ` (@${account.username})` : ""}`);
+    return true;
+  }
+  if (data.startsWith("integration:github:remove:")) {
+    const id = data.slice("integration:github:remove:".length);
+    const removed = await removeGithubAccount(id);
+    await ctx.reply(removed ? "✅ GitHub account removed." : "⚠️ GitHub account not found.");
     return true;
   }
   return true;
@@ -54,15 +63,22 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
 export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   const text = ctx.message?.text?.trim();
-  if (!chatId || !text || !PENDING_GITHUB.has(chatId)) return false;
+  const state = chatId ? pending.get(chatId) : undefined;
+  if (!chatId || !text || !state) return false;
   try {
-    await saveGithubToken(text);
-    PENDING_GITHUB.delete(chatId);
+    if (state.step === "name") {
+      state.name = text;
+      state.step = "token";
+      await ctx.reply("2/2 — Send your GitHub Personal Access Token.\n\nThe token message will be deleted when Telegram allows it.");
+      return true;
+    }
+    const account = await addGithubAccount(state.name!, text);
+    pending.delete(chatId);
     await ctx.api.deleteMessage(chatId, ctx.message!.message_id).catch(() => {});
-    await ctx.reply(`✅ GitHub connected.\n\nCredential stored securely at ${getGithubTokenPath()} and available to git/gh tooling.`);
+    await ctx.reply(`✅ GitHub account “${account.name}” added and selected.`);
   } catch (error) {
-    PENDING_GITHUB.delete(chatId);
-    await ctx.reply(`❌ Could not save GitHub token.\n\n${error instanceof Error ? error.message : "Unknown error"}`);
+    pending.delete(chatId);
+    await ctx.reply(`❌ Could not add GitHub account.\n\n${error instanceof Error ? error.message : "Unknown error"}`);
   }
   return true;
 }
