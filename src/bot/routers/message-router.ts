@@ -28,12 +28,17 @@ import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { projectsCommand } from "../commands/projects-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
+import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 
 interface MessageRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number) => void; }
 
 async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
   const activeInteraction = interactionManager.getSnapshot();
   if (!activeInteraction) return false;
+  if (activeInteraction.kind === "inline") {
+    await closeActiveInlineMenu(ctx, "reply-keyboard-navigation");
+    return false;
+  }
   logger.debug(`[Bot] Blocking menu open while interaction active: kind=${activeInteraction.kind}, expectedInput=${activeInteraction.expectedInput}`);
   await ctx.reply(t("interaction.blocked.finish_current"));
   return true;
@@ -41,93 +46,42 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
   bot.on("message:text", unknownCommandMiddleware);
-
-  // Reply-keyboard controls are handled before any wizard input handler.
-  // This is intentionally duplicated in the final text router as a safety net:
-  // grammY handlers can continue through the middleware chain, so a Cancel
-  // button must never be allowed to become a wizard value (e.g. a URL).
   bot.hears(/^❌ Cancel$/, async (ctx) => {
     const chatId = ctx.chat.id;
-    if (isProviderWizardActive(chatId)) {
-      clearProviderWizard(chatId);
-      clearIntegrationWizard(chatId);
-      await providersCommand(ctx as never);
-      return;
-    }
-    if (isIntegrationWizardActive(chatId)) {
-      clearIntegrationWizard(chatId);
-      clearProviderWizard(chatId);
-      await integrationsCommand(ctx as never);
-      return;
-    }
+    if (isProviderWizardActive(chatId)) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return; }
+    if (isIntegrationWizardActive(chatId)) { clearIntegrationWizard(chatId); clearProviderWizard(chatId); await integrationsCommand(ctx as never); return; }
   });
-
-  bot.hears(/^⚙️ Settings$/, async (ctx) => {
-    if (await blockMenuWhileInteractionActive(ctx)) return;
-    await settingsCommand(ctx as never);
-  });
-  bot.hears(/^📁 Projects$/, async (ctx) => {
-    if (await blockMenuWhileInteractionActive(ctx)) return;
-    await projectsCommand(ctx as never);
-  });
-  bot.hears(/^💬 New Chat$/, async (ctx) => {
-    if (await blockMenuWhileInteractionActive(ctx)) return;
-    await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription });
-  });
-
-  bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => {
-    logger.debug(`[Bot] Queued prompt button pressed: ${ctx.message?.text}`);
-    if (await blockMenuWhileInteractionActive(ctx)) return;
-    const label = ctx.message?.text;
-    const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null;
-    if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; }
-    const keyboard = keyboardManager.getKeyboard();
-    await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});
-  });
-  bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Agent button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
-  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Model button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
-  bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Context button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
-  bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Variant button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await showVariantSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing variant menu:", err); await ctx.reply(t("error.load_variants")); } });
-  bot.on("message:text", async (ctx, next) => { const text = ctx.message?.text; if (text) { const isCommand = text.startsWith("/"); logger.debug(`[Bot] Received text message: ${isCommand ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`); } await next(); });
+  bot.hears(/^⚙️ Settings$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await settingsCommand(ctx as never); });
+  bot.hears(/^📁 Projects$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await projectsCommand(ctx as never); });
+  bot.hears(/^💬 New Chat$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
+  bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Queued prompt button pressed: ${ctx.message?.text}`); if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
+  bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
+  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
+  bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
+  bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showVariantSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing variant menu:", err); await ctx.reply(t("error.load_variants")); } });
+  bot.on("message:text", async (ctx, next) => { const text = ctx.message?.text; if (text) logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`); await next(); });
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
-  bot.on("message:voice", async (ctx) => { logger.debug(`[Bot] Received voice message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
-  bot.on("message:audio", async (ctx) => { logger.debug(`[Bot] Received audio message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
+  bot.on("message:voice", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
+  bot.on("message:audio", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
   bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
-  bot.on("message:photo", async (ctx) => { logger.debug(`[Bot] Received photo message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
-  bot.on("message:document", async (ctx) => { logger.debug(`[Bot] Received document message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
+  bot.on("message:photo", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
+  bot.on("message:document", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.on("message:text", async (ctx) => {
-    const text = ctx.message?.text?.trim();
-    if (!text) return;
-    deps.setTelegramContext(bot, ctx.chat.id);
-    if (text.startsWith("/")) return;
-
-    // IMPORTANT: ReplyKeyboard buttons are ordinary Telegram text messages.
-    // Consume Cancel here before any wizard handler can interpret it as input.
+    const text = ctx.message?.text?.trim(); if (!text) return;
+    deps.setTelegramContext(bot, ctx.chat.id); if (text.startsWith("/")) return;
     if (text === "❌ Cancel") {
-      if (isProviderWizardActive(ctx.chat.id)) {
-        clearProviderWizard(ctx.chat.id);
-        clearIntegrationWizard(ctx.chat.id);
-        await providersCommand(ctx as never);
-        return;
-      }
-      if (isIntegrationWizardActive(ctx.chat.id)) {
-        clearIntegrationWizard(ctx.chat.id);
-        clearProviderWizard(ctx.chat.id);
-        await integrationsCommand(ctx as never);
-        return;
-      }
+      if (isProviderWizardActive(ctx.chat.id)) { clearProviderWizard(ctx.chat.id); clearIntegrationWizard(ctx.chat.id); await providersCommand(ctx as never); return; }
+      if (isIntegrationWizardActive(ctx.chat.id)) { clearIntegrationWizard(ctx.chat.id); clearProviderWizard(ctx.chat.id); await integrationsCommand(ctx as never); return; }
       return;
     }
-
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
     if (questionManager.isActive()) { await handleQuestionTextAnswer(ctx); return; }
-    const handledTask = await handleTaskTextInput(ctx); if (handledTask) return;
-    const handledModelSearchText = await handleModelSearchTextInput(ctx); if (handledModelSearchText) return;
-    const handledRename = await handleRenameTextAnswer(ctx); if (handledRename) return;
+    if (await handleTaskTextInput(ctx)) return;
+    if (await handleModelSearchTextInput(ctx)) return;
+    if (await handleRenameTextAnswer(ctx)) return;
     const promptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
-    const handledCatalogTextArgs = await handleCatalogTextArguments(ctx, promptDeps); if (handledCatalogTextArgs) return;
+    if (await handleCatalogTextArguments(ctx, promptDeps)) return;
     queuePromptForMerging(ctx, text, promptDeps, config.bot.messageMergeWindowMs);
-    logger.debug(`[Bot] message:text handler completed (merge window=${config.bot.messageMergeWindowMs}ms)`);
   });
 }
