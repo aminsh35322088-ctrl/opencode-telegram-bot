@@ -9,7 +9,7 @@ import { isIntegrationWizardActive } from "../commands/integrations-command.js";
 
 const BUSY_ALLOWED_COMMANDS = ["/abort", "/detach", "/status", "/help", "/opencode_stop"] as const;
 const BUSY_ALLOWED_COMMAND_SET = new Set<string>(BUSY_ALLOWED_COMMANDS);
-const BUSY_ALLOWED_CONTROL_TEXTS = new Set(["⏸️ Pause", "❌ Cancel"]);
+const BUSY_ALLOWED_CONTROL_TEXTS = new Set(["⏸️ Pause", "▶️ Resume", "🛑 Abort", "❌ Cancel"]);
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
 
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && BUSY_ALLOWED_COMMAND_SET.has(command)); }
@@ -36,9 +36,8 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   const state = interactionManager.getSnapshot(); const { inputType, command } = classifyIncomingInput(ctx); const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
 
-  // Control buttons must remain actionable while an agent is busy. Pause/Cancel are
-  // execution controls, not prompts, so they must reach the command/message router
-  // before the busy guard can turn them into a blocked text input.
+  // Control buttons must remain actionable while an agent is busy. Pause/Resume/Abort/Cancel
+  // are execution controls, not prompts, so they must reach the command/message router.
   if (isBusy && inputType === "text" && isBusyControlButtonPress(ctx)) {
     return createAllowDecision(inputType, state, command, true);
   }
