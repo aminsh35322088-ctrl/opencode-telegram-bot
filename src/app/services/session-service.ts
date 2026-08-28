@@ -24,6 +24,10 @@ export function getCurrentSession(): SessionInfo | null {
   return getSettingsSession() ?? null;
 }
 
+export function getCurrentSessionDirectory(): string {
+  return getCurrentSession()?.directory ?? process.cwd();
+}
+
 export function clearSession(): void {
   promptQueue.clear("session_cleared");
   promptAttachment.clear("session_cleared");
