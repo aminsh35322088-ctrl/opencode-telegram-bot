@@ -4,17 +4,21 @@ import { deleteCustomProvider, discoverModels, listCustomProviders, saveCustomPr
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
 import { logger } from "../../utils/logger.js";
+import { clearIntegrationWizard, clearProviderWizard } from "./integrations-command.js";
 
 interface PendingProvider { step: "name" | "url" | "key"; name?: string; baseURL?: string; apiKey?: string; }
 const pending = new Map<number, PendingProvider>();
 
 export function isProviderWizardActive(chatId: number): boolean { return pending.has(chatId); }
+export function clearProviderWizard(chatId: number): void { pending.delete(chatId); }
 
 async function replyNext(ctx: Context, text: string): Promise<void> {
   await ctx.reply(text, { reply_markup: { force_reply: true, selective: true } });
 }
 
 export async function providersCommand(ctx: CommandContext<Context>): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); }
   const providers = await listCustomProviders();
   const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
   for (const provider of providers) keyboard.row().text(`🧠 ${provider.name}`, `provider:view:${provider.id}`).text("🗑️", `provider:delete:${provider.id}`);
@@ -30,7 +34,12 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery();
   const chatId = ctx.chat?.id;
   if (!chatId) return true;
-  if (data === "provider:add") { pending.set(chatId, { step: "name" }); await replyNext(ctx, "1/3 — Provider name?\nExample: TabiToken"); return true; }
+  if (data === "provider:add") {
+    clearIntegrationWizard(chatId);
+    pending.set(chatId, { step: "name" });
+    await replyNext(ctx, "1/3 — Provider name?\nExample: TabiToken");
+    return true;
+  }
   if (data.startsWith("provider:delete:")) {
     const id = data.slice("provider:delete:".length); const deleted = await deleteCustomProvider(id);
     if (deleted) { await syncOpenCodeCustomConfig(); await ctx.reply(`✅ Provider ${id} deleted. Restart OpenCode to apply the change.`); }
