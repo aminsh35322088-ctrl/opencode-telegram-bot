@@ -15,7 +15,6 @@ import { attachManager } from "../../app/managers/attach-manager.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { markAttachedSessionIdle } from "../../app/services/attach-service.js";
-import { clearPromptResponseMode } from "../handlers/prompt.js";
 
 export interface OpencodeStopCommandDeps {
   clearRuntimeState: (reason: string) => void;
@@ -26,26 +25,12 @@ const STOP_REASON = "opencode_stop";
 async function releaseLocalStateAfterServerStop(
   clearRuntimeState: (reason: string) => void,
 ): Promise<void> {
-  const sessionIds = new Set<string>();
-
-  for (const session of foregroundSessionState.getBusySessions()) {
-    sessionIds.add(session.sessionId);
-  }
-
-  const attached = attachManager.getSnapshot();
-  if (attached) {
-    sessionIds.add(attached.sessionId);
-  }
-
   clearRuntimeState(STOP_REASON);
   foregroundSessionState.clearAll(STOP_REASON);
 
+  const attached = attachManager.getSnapshot();
   if (attached) {
     await markAttachedSessionIdle(attached.sessionId);
-  }
-
-  for (const sessionId of sessionIds) {
-    clearPromptResponseMode(sessionId);
   }
 
   promptQueue.clear(STOP_REASON);
@@ -80,7 +65,6 @@ export async function opencodeStopCommand(
     }
 
     const statusMessage = await ctx.reply(t("opencode_stop.stopping", { pid }));
-
     const stopped = await killServerProcess(pid, 5000);
     if (!stopped) {
       await editBotText({
