@@ -1,5 +1,7 @@
 # Build stage
-FROM node:22-bookworm-slim AS builder
+# Use AWS ECR Public's mirror of the official Node image to avoid relying on Docker Hub
+# during Railway builds.
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
@@ -10,7 +12,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Runtime stage
-FROM node:22-bookworm-slim AS runtime
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS runtime
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     dumb-init ca-certificates git git-lfs curl wget unzip zip jq \
