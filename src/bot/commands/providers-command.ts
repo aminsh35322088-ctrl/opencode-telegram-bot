@@ -23,8 +23,8 @@ export async function providersCommand(ctx: CommandContext<Context>): Promise<vo
   const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
   for (const provider of providers) keyboard.row().text(`🧠 ${provider.name}`, `provider:view:${provider.id}`).text("🗑️", `provider:delete:${provider.id}`);
   const text = providers.length ? `🔌 Custom Providers\n\n${providers.map((p) => `• ${p.name} — ${p.baseURL} — ${p.models.length} models`).join("\n")}\n\nAdd or manage an OpenAI-compatible provider.` : "🔌 Custom Providers\n\nNo custom providers configured yet.\n\nAdd any OpenAI-compatible API exposing /v1/chat/completions.";
-  const message = ctx.callbackQuery?.message;
-  if (message && "message_id" in message) { await ctx.api.editMessageText(chatId!, message.message_id, text, { reply_markup: keyboard }); return; }
+  const callbackMessage = (ctx as Context).callbackQuery?.message;
+  if (callbackMessage && "message_id" in callbackMessage) { await (ctx as Context).api.editMessageText(chatId!, callbackMessage.message_id, text, { reply_markup: keyboard }); return; }
   await ctx.reply(text, { reply_markup: keyboard });
 }
 
@@ -55,6 +55,8 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
     pending.delete(chatId); const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath;
     const target = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((resolve) => setTimeout(resolve, 500)); startLocalOpencodeServer(target).unref(); }
-    await ctx.reply(`✅ ${saved.name} configured successfully.\n\nFound ${models.length} models.\nOpenCode was restarted to load the provider.\n\nUse /models to select one.`, { reply_markup: keyboardManager.getKeyboard() }); return true;
-  } catch (error) { pending.delete(chatId); logger.error("[Providers] Provider wizard failed:", error); await ctx.reply(`❌ Could not configure provider.\n\n${error instanceof Error ? error.message : "Unknown error"}`, { reply_markup: keyboardManager.getKeyboard() }); return true; }
+    const keyboard = keyboardManager.getKeyboard(); const message = `✅ ${saved.name} configured successfully.\n\nFound ${models.length} models.\nOpenCode was restarted to load the provider.\n\nUse /models to select one.`;
+    if (keyboard) await ctx.reply(message, { reply_markup: keyboard }); else await ctx.reply(message);
+    return true;
+  } catch (error) { pending.delete(chatId); logger.error("[Providers] Provider wizard failed:", error); const keyboard = keyboardManager.getKeyboard(); const message = `❌ Could not configure provider.\n\n${error instanceof Error ? error.message : "Unknown error"}`; if (keyboard) await ctx.reply(message, { reply_markup: keyboard }); else await ctx.reply(message); return true; }
 }
