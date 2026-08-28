@@ -94,6 +94,14 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
       ].join("\n"),
       { parse_mode: "HTML" },
     );
+
+    // Telegram reply keyboards are chat-level UI and cannot be changed by
+    // editMessageText. Publish the updated keyboard immediately so Pause turns
+    // into Resume instead of leaving the stale Pause button visible.
+    const keyboard = keyboardManager.getKeyboard();
+    if (keyboard) {
+      await ctx.reply("▶️ Resume is ready.", { reply_markup: keyboard });
+    }
   } catch (error) {
     logger.error("[Pause] Failed to pause current chat:", error);
     await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption.");
