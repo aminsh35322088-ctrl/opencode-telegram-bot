@@ -9,6 +9,7 @@ import { logger } from "../../utils/logger.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 
 class KeyboardManager {
   private state: KeyboardState | null = null;
@@ -32,44 +33,23 @@ class KeyboardManager {
     }
   }
 
-  public updateAgent(agent: string): void {
-    if (!this.state) return;
-    this.state.currentAgent = agent;
-  }
-
+  public updateAgent(agent: string): void { if (this.state) this.state.currentAgent = agent; }
   public updateModel(model: ModelInfo): void {
     if (!this.state) return;
     this.state.currentModel = model;
     this.state.variantName = formatVariantForButton(model.variant || "default");
   }
-
-  public updateVariant(variantId: string): void {
-    if (!this.state) return;
-    this.state.variantName = formatVariantForButton(variantId);
-  }
-
-  public setPaused(paused: boolean): void {
-    if (!this.state) return;
-    this.state.paused = paused;
-  }
-
+  public updateVariant(variantId: string): void { if (this.state) this.state.variantName = formatVariantForButton(variantId); }
+  public setPaused(paused: boolean): void { if (this.state) this.state.paused = paused; }
   public updateContext(tokensUsed: number, tokensLimit: number): void {
-    if (!this.state) return;
-    this.state.contextInfo = { tokensUsed, tokensLimit };
+    if (this.state) this.state.contextInfo = { tokensUsed, tokensLimit };
   }
-
-  public clearContext(): void {
-    if (!this.state) return;
-    this.state.contextInfo = null;
-  }
-
-  public getContextInfo(): ContextInfo | null {
-    return this.state?.contextInfo ?? null;
-  }
+  public clearContext(): void { if (this.state) this.state.contextInfo = null; }
+  public getContextInfo(): ContextInfo | null { return this.state?.contextInfo ?? null; }
 
   private buildKeyboard() {
     if (!this.state) {
-      return createMainKeyboard("build", { providerID: "", modelID: "" }, undefined, undefined, [], false);
+      return createMainKeyboard("build", { providerID: "", modelID: "" }, undefined, undefined, [], false, assistantRunState.hasActiveRuns());
     }
     return createMainKeyboard(
       this.state.currentAgent,
@@ -78,6 +58,7 @@ class KeyboardManager {
       this.state.variantName,
       getQueuedPromptButtonLabels(),
       this.state.paused,
+      assistantRunState.hasActiveRuns(),
     );
   }
 
@@ -89,25 +70,15 @@ class KeyboardManager {
     if (now - this.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTime = now;
     try {
-      await this.api.sendMessage(targetChatId, t("keyboard.updated"), {
-        reply_markup: this.buildKeyboard(),
-      });
+      await this.api.sendMessage(targetChatId, t("keyboard.updated"), { reply_markup: this.buildKeyboard() });
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
     }
   }
 
-  public getKeyboard() {
-    return this.state ? this.buildKeyboard() : undefined;
-  }
-
-  public getState(): KeyboardState | undefined {
-    return this.state ?? undefined;
-  }
-
-  public isInitialized(): boolean {
-    return this.state !== null;
-  }
+  public getKeyboard() { return this.state ? this.buildKeyboard() : undefined; }
+  public getState(): KeyboardState | undefined { return this.state ?? undefined; }
+  public isInitialized(): boolean { return this.state !== null; }
 }
 
 export const keyboardManager = new KeyboardManager();
