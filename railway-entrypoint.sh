@@ -12,16 +12,23 @@ set -eu
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 
-# Railway attaches the persistent volume after the image is built, so the
-# ownership set in Dockerfile may not survive the mount. Fix it as root before
-# dropping to the unprivileged node user.
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /app/workspace
 chown -R node:node /data /app/workspace
 
-# Optional GitHub HTTPS authentication. Git only receives the token for
-# github.com; the token is never written to disk or printed to logs.
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  cat > /data/run/github-credential-helper.sh <<'EOF'
+# GitHub credentials are persisted on the Railway Volume. An existing
+# GITHUB_TOKEN env var is migrated into the integration file on first boot.
+GITHUB_TOKEN_FILE="/data/integrations/github.token"
+if [ -s "$GITHUB_TOKEN_FILE" ]; then
+  GITHUB_TOKEN="$(cat "$GITHUB_TOKEN_FILE")"
+  export GITHUB_TOKEN
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
+  mkdir -p "$(dirname "$GITHUB_TOKEN_FILE")"
+  printf '%s\n' "$GITHUB_TOKEN" > "$GITHUB_TOKEN_FILE"
+  chmod 600 "$GITHUB_TOKEN_FILE"
+  chown node:node "$GITHUB_TOKEN_FILE"
+fi
+
+cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
 set -eu
 
@@ -32,23 +39,23 @@ while IFS= read -r line; do
   esac
 done
 
-if [ "$host" = "github.com" ]; then
+TOKEN_FILE="/data/integrations/github.token"
+if [ "$host" = "github.com" ] && [ -s "$TOKEN_FILE" ]; then
   printf '%s\n' 'username=x-access-token'
-  printf 'password=%s\n' "${GITHUB_TOKEN}"
+  printf 'password=%s\n' "$(cat "$TOKEN_FILE")"
 fi
 EOF
-  chmod 700 /data/run/github-credential-helper.sh
-  chown node:node /data/run/github-credential-helper.sh
+chmod 700 /data/run/github-credential-helper.sh
+chown node:node /data/run/github-credential-helper.sh
 
-  # URL-scoped helper: credentials are only supplied to github.com HTTPS remotes.
-  su -s /bin/sh node -c \
-    'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
-  su -s /bin/sh node -c \
-    'git config --global credential.https://github.com/.useHttpPath false'
+# URL-scoped helper: credentials are supplied only to github.com HTTPS remotes.
+su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
+su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
-  printf '%s\n' "[railway] GitHub HTTPS authentication: enabled"
+if [ -s "$GITHUB_TOKEN_FILE" ]; then
+  printf '%s\n' "[railway] GitHub integration: configured"
 else
-  printf '%s\n' "[railway] GitHub HTTPS authentication: disabled (GITHUB_TOKEN not set)"
+  printf '%s\n' "[railway] GitHub integration: not configured"
 fi
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
@@ -57,5 +64,4 @@ printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
 
-# Run the application unprivileged after repairing the mounted volume.
 exec su -s /bin/sh node -c 'exec node /app/dist/index.js'
