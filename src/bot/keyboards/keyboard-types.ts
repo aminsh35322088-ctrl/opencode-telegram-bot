@@ -16,4 +16,5 @@ export interface KeyboardState {
   currentModel: ModelInfo;
   contextInfo: ContextInfo | null;
   variantName?: string;
+  paused: boolean;
 }
