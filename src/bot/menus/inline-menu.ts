@@ -7,7 +7,7 @@ import { t } from "../../i18n/index.js";
 export const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 export const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
 
-const INLINE_MENU_KINDS = ["project", "session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
+const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
 
 interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; }
@@ -66,16 +66,11 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
   return false;
 }
 
-export function getActiveInlineMenu(): ActiveInlineMenuMetadata | null {
-  return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
-}
+export function getActiveInlineMenu(): ActiveInlineMenuMetadata | null { return getActiveInlineMenuMetadata(interactionManager.getSnapshot()); }
 
 export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {
   const active = getActiveInlineMenu();
-  if (!active || !ctx.chat?.id) {
-    clearActiveInlineMenu(reason);
-    return;
-  }
+  if (!active || !ctx.chat?.id) { clearActiveInlineMenu(reason); return; }
   await ctx.api.deleteMessage(ctx.chat.id, active.messageId).catch(() => {});
   clearActiveInlineMenu(reason);
 }
