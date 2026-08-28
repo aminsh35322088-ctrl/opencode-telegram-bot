@@ -1,4 +1,5 @@
 import { Context } from "grammy";
+import { readFile } from "node:fs/promises";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
@@ -13,6 +14,13 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
+
+const VERSION_FILE = "/app/.opencode-version";
+
+async function getOpenCodeVersion(): Promise<string> {
+  try { return (await readFile(VERSION_FILE, "utf8")).trim() || "unknown"; }
+  catch { return "unknown"; }
+}
 
 export async function startCommand(ctx: Context): Promise<void> {
   if (ctx.chat) {
@@ -32,28 +40,21 @@ export async function startCommand(ctx: Context): Promise<void> {
   await pinnedMessageManager.clear();
 
   if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
-
   const currentAgent = getStoredAgent();
   const currentModel = getStoredModel();
   const variantName = formatVariantForButton(currentModel.variant || "default");
-  const contextInfo =
-    pinnedMessageManager.getContextInfo() ??
-    (pinnedMessageManager.getContextLimit() > 0
-      ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
-      : null);
-
+  const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
   keyboardManager.updateAgent(currentAgent);
   keyboardManager.updateModel(currentModel);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
 
-  const modelDisplay = currentModel.providerID && currentModel.modelID
-    ? formatModelForDisplay(currentModel.providerID, currentModel.modelID)
-    : "Not configured";
-
+  const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID) : "Not configured";
+  const version = await getOpenCodeVersion();
   const text = [
-    "⚡ <b>OpenCode</b>",
+    "⚡ <b>OpenCode Telegram</b>",
     "",
     "🟢 <b>Ready</b>",
+    `🧠 OpenCode <b>v${version}</b>`,
     `🤖 ${modelDisplay}`,
     `🛠️ ${currentAgent}`,
     "",
@@ -62,6 +63,5 @@ export async function startCommand(ctx: Context): Promise<void> {
     "💬 Start a fresh chat or open 🕘 History to continue an existing conversation.",
   ].join("\n");
 
-  const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false);
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false, false) });
 }
