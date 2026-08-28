@@ -1,11 +1,13 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
+import { clearProviderWizard } from "./providers-command.js";
 
 interface PendingGithub { step: "name" | "token"; name?: string; }
 const pending = new Map<number, PendingGithub>();
 
 export function isIntegrationWizardActive(chatId: number): boolean { return pending.has(chatId); }
+export function clearIntegrationWizard(chatId: number): void { pending.delete(chatId); }
 
 export async function showIntegrationsMenu(ctx: Context): Promise<void> {
   const accounts = await listGithubAccounts(); const active = await getActiveGithubAccount();
@@ -14,13 +16,22 @@ export async function showIntegrationsMenu(ctx: Context): Promise<void> {
   await ctx.reply(`🔌 Integrations\n\nGitHub accounts: ${accounts.length}\nActive: ${active?.name ?? "None"}\n\nAdd multiple GitHub accounts and switch the active credential without changing Railway ENV variables.`, { reply_markup: keyboard });
 }
 
-export async function integrationsCommand(ctx: CommandContext<Context>): Promise<void> { await showIntegrationsMenu(ctx); }
+export async function integrationsCommand(ctx: CommandContext<Context>): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId) { clearIntegrationWizard(chatId); clearProviderWizard(chatId); }
+  await showIntegrationsMenu(ctx);
+}
 
 export async function handleIntegrationsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data ?? ""; if (!data.startsWith("integration:")) return false;
   await ctx.answerCallbackQuery(); const chatId = ctx.chat?.id; if (!chatId) return true;
   if (data === "integration:menu") { await showIntegrationsMenu(ctx); return true; }
-  if (data === "integration:github:add") { pending.set(chatId, { step: "name" }); await ctx.reply("1/2 — GitHub account name?\nExample: Personal GitHub", { reply_markup: { force_reply: true, selective: true } }); return true; }
+  if (data === "integration:github:add") {
+    clearProviderWizard(chatId);
+    pending.set(chatId, { step: "name" });
+    await ctx.reply("1/2 — GitHub account name?\nExample: Personal GitHub", { reply_markup: { force_reply: true, selective: true } });
+    return true;
+  }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.reply(`✅ Active GitHub account: ${account.name}${account.username ? ` (@${account.username})` : ""}`); return true; }
   if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.reply(removed ? "✅ GitHub account removed." : "⚠️ GitHub account not found."); return true; }
   return true;
