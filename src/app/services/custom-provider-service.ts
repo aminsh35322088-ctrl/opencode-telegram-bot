@@ -64,17 +64,26 @@ function normalizeBaseURL(value: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+function toPublicProvider(provider: StoredProvider): CustomProvider {
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseURL: provider.baseURL,
+    models: provider.models,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+  };
+}
+
 export async function listCustomProviders(): Promise<CustomProvider[]> {
   const store = await readStore();
-  return store.providers.map(({ keyFile: _keyFile, ...provider }) => provider);
+  return store.providers.map(toPublicProvider);
 }
 
 export async function getCustomProvider(id: string): Promise<CustomProvider | undefined> {
   const store = await readStore();
   const provider = store.providers.find((item) => item.id === id);
-  if (!provider) return undefined;
-  const { keyFile: _keyFile, ...publicProvider } = provider;
-  return publicProvider;
+  return provider ? toPublicProvider(provider) : undefined;
 }
 
 export async function discoverModels(baseURL: string, apiKey: string): Promise<CustomProviderModel[]> {
@@ -137,8 +146,7 @@ export async function saveCustomProvider(input: {
   await writeStore({ providers: next });
 
   logger.info(`[CustomProvider] Saved provider ${id} with ${provider.models.length} models`);
-  const { keyFile: _keyFile, ...publicProvider } = provider;
-  return publicProvider;
+  return toPublicProvider(provider);
 }
 
 export async function deleteCustomProvider(id: string): Promise<boolean> {
