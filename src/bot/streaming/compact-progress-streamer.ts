@@ -5,6 +5,8 @@ import {
   type StreamThrottleMs,
 } from "./stream-throttle.js";
 
+const COMPACT_PROGRESS_HEARTBEAT_MS = 4_000;
+
 interface CompactProgressState {
   sessionId: string;
   messageId: number | null;
@@ -12,6 +14,7 @@ interface CompactProgressState {
   toolCallIds: Set<string>;
   filePaths: Set<string>;
   timer: ReturnType<typeof setTimeout> | null;
+  heartbeatTimer: ReturnType<typeof setInterval> | null;
   task: Promise<boolean>;
   cancelled: boolean;
 }
@@ -34,6 +37,7 @@ function createInitialState(sessionId: string): CompactProgressState {
     toolCallIds: new Set(),
     filePaths: new Set(),
     timer: null,
+    heartbeatTimer: null,
     task: Promise.resolve(true),
     cancelled: false,
   };
@@ -105,6 +109,7 @@ export class CompactProgressStreamer {
     });
 
     this.clearTimer(state);
+    this.clearHeartbeat(state);
     await state.task.catch(() => false);
     await this.syncState(state, "finalize");
     this.cancelState(state);
@@ -118,6 +123,7 @@ export class CompactProgressStreamer {
     }
 
     this.clearTimer(state);
+    this.clearHeartbeat(state);
     this.cancelState(state);
     this.states.delete(sessionId);
     logger.debug(`[CompactProgress] Cleared session: session=${sessionId}, reason=${reason}`);
@@ -126,6 +132,7 @@ export class CompactProgressStreamer {
   clearAll(reason: string): void {
     for (const state of this.states.values()) {
       this.clearTimer(state);
+      this.clearHeartbeat(state);
       this.cancelState(state);
     }
     this.states.clear();
@@ -140,6 +147,7 @@ export class CompactProgressStreamer {
 
     const state = createInitialState(sessionId);
     this.states.set(sessionId, state);
+    this.ensureHeartbeat(state);
     return state;
   }
 
@@ -159,6 +167,20 @@ export class CompactProgressStreamer {
       activity: normalizedActivity,
     });
     this.ensureTimer(state);
+  }
+
+  private ensureHeartbeat(state: CompactProgressState): void {
+    if (state.cancelled || state.heartbeatTimer) {
+      return;
+    }
+
+    state.heartbeatTimer = setInterval(() => {
+      if (state.cancelled || !state.latestText.trim()) {
+        return;
+      }
+
+      state.task = this.enqueueTask(state, () => this.syncState(state, "heartbeat"));
+    }, COMPACT_PROGRESS_HEARTBEAT_MS);
   }
 
   private ensureTimer(state: CompactProgressState): void {
@@ -224,6 +246,13 @@ export class CompactProgressStreamer {
     if (state.timer) {
       clearTimeout(state.timer);
       state.timer = null;
+    }
+  }
+
+  private clearHeartbeat(state: CompactProgressState): void {
+    if (state.heartbeatTimer) {
+      clearInterval(state.heartbeatTimer);
+      state.heartbeatTimer = null;
     }
   }
 
