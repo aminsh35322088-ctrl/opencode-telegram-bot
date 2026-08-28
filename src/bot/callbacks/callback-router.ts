@@ -17,6 +17,7 @@ import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
+import { handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { handleBackgroundSessionOpen, handleSessionSelect } from "./session-callback-handler.js";
 import { handleSkillsCallback } from "./skills-catalog-callback-handler.js";
 import { handleTaskCallback, handleTaskListCallback } from "./scheduled-task-callback-handler.js";
@@ -48,6 +49,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["project", { name: "project", handlers: [(ctx) => handleProjectSelect(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["projects", { name: "projects", handlers: [(ctx) => handleProjectSelect(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }],
+    ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
     ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],
     ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }],
     ["session", { name: "session", handlers: [(ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
