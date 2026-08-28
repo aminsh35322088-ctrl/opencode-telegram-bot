@@ -6,7 +6,6 @@ import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { config } from "../../config.js";
-import { getTtsMode } from "../../app/stores/settings-store.js";
 import {
   isSttConfigured,
   transcribeAudio,
@@ -115,15 +114,9 @@ export interface VoiceMessageDeps extends ProcessPromptDeps {
     text: string,
     deps: ProcessPromptDeps,
     fileParts?: FilePartInput[],
-    options?: { responseMode?: "text_only" | "text_and_tts" },
   ) => Promise<boolean>;
 }
 
-/**
- * Downloads the audio file from Telegram servers.
- *
- * @returns Buffer with file content, or null on failure
- */
 async function downloadTelegramFile(
   ctx: Context,
   fileId: string,
@@ -142,7 +135,6 @@ async function downloadTelegramFile(
 
     const buffer = await downloadTelegramFileByUrl(fileUrl);
 
-    // Extract filename from file_path (e.g., "voice/file_123.oga" -> "file_123.oga")
     let filename = file.file_path.split("/").pop() || "audio.ogg";
 
     if (filename.endsWith(".oga")) {
@@ -157,34 +149,18 @@ async function downloadTelegramFile(
   }
 }
 
-/**
- * Creates the voice message handler function.
- *
- * The factory pattern is used so that `bot` and `ensureEventSubscription` dependencies
- * can be injected from createBot() without circular imports.
- */
 export function createVoiceHandler(deps: VoiceMessageDeps) {
   return async (ctx: Context): Promise<void> => {
     await handleVoiceMessage(ctx, deps);
   };
 }
 
-/**
- * Handles incoming voice and audio messages:
- * 1. Checks if STT is configured
- * 2. Downloads the audio file from Telegram
- * 3. Sends "recognizing..." status message
- * 4. Calls STT API
- * 5. Shows recognized text
- * 6. Passes text to processUserPrompt
- */
 export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): Promise<void> {
   const sttConfigured = deps.isSttConfigured ?? isSttConfigured;
   const downloadFile = deps.downloadTelegramFile ?? downloadTelegramFile;
   const transcribe = deps.transcribeAudio ?? transcribeAudio;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
 
-  // Determine file_id from voice or audio message
   const voice = ctx.message?.voice;
   const audio = ctx.message?.audio;
   const fileId = voice?.file_id ?? audio?.file_id;
@@ -196,17 +172,14 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
 
   flushPendingPrompt(ctx.chat!.id);
 
-  // Check if STT is configured
   if (!sttConfigured()) {
     await ctx.reply(t("stt.not_configured"));
     return;
   }
 
-  // Send "recognizing..." status message (will be edited later)
   const statusMessage = await ctx.reply(t("stt.recognizing"));
 
   try {
-    // Download the audio file from Telegram
     const fileData = await downloadFile(ctx, fileId);
     if (!fileData) {
       await ctx.api.editMessageText(
@@ -217,7 +190,6 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
       return;
     }
 
-    // Transcribe the audio
     const result = await transcribe(fileData.buffer, fileData.filename);
 
     const recognizedText = result.text.trim();
@@ -226,9 +198,6 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
       return;
     }
 
-    // Show the recognized text by editing the status message.
-    // IMPORTANT: even if this edit fails (e.g. Telegram message length limits),
-    // we still send the recognized text to OpenCode as a prompt.
     try {
       const notification = buildQuotedNotification(t("stt.recognized"), recognizedText, {
         blankLineAfterTitle: false,
@@ -256,11 +225,7 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
       textForLLM = `${llmNote}\n${recognizedText}`;
     }
 
-    // Process the recognized text as a prompt
-    const currentTtsMode = getTtsMode();
-    const responseMode =
-      currentTtsMode === "all" || currentTtsMode === "auto" ? "text_and_tts" : "text_only";
-    await processPrompt(ctx, textForLLM, deps, [], { responseMode });
+    await processPrompt(ctx, textForLLM, deps, []);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "unknown error";
     logger.error("[Voice] Error processing voice message:", err);
@@ -272,7 +237,6 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
         t("stt.error", { error: errorMessage }),
       );
     } catch {
-      // If we can't edit the status message, try sending a new one
       await ctx.reply(t("stt.error", { error: errorMessage })).catch(() => {});
     }
   }
