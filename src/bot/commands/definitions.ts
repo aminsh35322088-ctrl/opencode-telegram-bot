@@ -14,19 +14,19 @@ interface BotCommandI18nDefinition {
 }
 
 const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
-  { command: "start", descriptionKey: "cmd.description.help" },
-  { command: "update", description: "Check for a newer OpenCode version" },
-  { command: "help", descriptionKey: "cmd.description.help" },
-  { command: "status", descriptionKey: "cmd.description.status" },
-  { command: "sessions", descriptionKey: "cmd.description.sessions" },
-  { command: "messages", descriptionKey: "cmd.description.messages" },
-  { command: "settings", descriptionKey: "cmd.description.settings" },
-  { command: "providers", descriptionKey: "cmd.description.settings" },
-  { command: "rename", descriptionKey: "cmd.description.rename" },
-  { command: "abort", descriptionKey: "cmd.description.stop" },
-  { command: "commands", descriptionKey: "cmd.description.commands" },
-  { command: "skills", descriptionKey: "cmd.description.skills" },
-  { command: "mcps", descriptionKey: "cmd.description.mcps" },
+  { command: "start", description: "🚀 Start bot & show OpenCode version" },
+  { command: "update", description: "🔄 Check for a newer OpenCode version" },
+  { command: "help", description: "❓ Show help & available features" },
+  { command: "status", description: "📡 Show server & session status" },
+  { command: "sessions", description: "🕘 Browse saved sessions" },
+  { command: "messages", description: "🧾 Browse messages in the current session" },
+  { command: "settings", description: "⚙️ Configure bot settings" },
+  { command: "providers", description: "🔌 Manage AI providers" },
+  { command: "rename", description: "🏷️ Rename the current session" },
+  { command: "abort", description: "🛑 Stop the current task" },
+  { command: "commands", description: "🧩 Browse custom OpenCode commands" },
+  { command: "skills", description: "🧠 Browse OpenCode skills" },
+  { command: "mcps", description: "🔗 Browse MCP servers" },
 ];
 
 export function getLocalizedBotCommands(): BotCommandDefinition[] {
