@@ -6,6 +6,8 @@ import { logger } from "../../utils/logger.js";
 export const SESSION_CALLBACK_PREFIX = "session:";
 export const SESSION_PREVIEW_CALLBACK_PREFIX = "session:preview:";
 export const SESSION_CONTINUE_CALLBACK_PREFIX = "session:continue:";
+export const SESSION_DELETE_CALLBACK_PREFIX = "session:delete:";
+export const SESSION_DELETE_CONFIRM_CALLBACK_PREFIX = "session:delete-confirm:";
 export const SESSION_BACK_CALLBACK = "session:back";
 export const SESSION_NO_CALLBACK = "session:no";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
@@ -24,6 +26,8 @@ const BACKGROUND_SESSION_KIND_BY_CALLBACK_MARKER: Record<string, BackgroundSessi
 function buildSessionPageCallback(page: number): string { return `${SESSION_PAGE_CALLBACK_PREFIX}${page}`; }
 export function buildSessionPreviewCallback(sessionId: string): string { return `${SESSION_PREVIEW_CALLBACK_PREFIX}${sessionId}`; }
 export function buildSessionContinueCallback(sessionId: string): string { return `${SESSION_CONTINUE_CALLBACK_PREFIX}${sessionId}`; }
+export function buildSessionDeleteCallback(sessionId: string): string { return `${SESSION_DELETE_CALLBACK_PREFIX}${sessionId}`; }
+export function buildSessionDeleteConfirmCallback(sessionId: string): string { return `${SESSION_DELETE_CONFIRM_CALLBACK_PREFIX}${sessionId}`; }
 
 export function parseSessionPageCallback(data: string): number | null {
   if (!data.startsWith(SESSION_PAGE_CALLBACK_PREFIX)) return null;
@@ -32,7 +36,7 @@ export function parseSessionPageCallback(data: string): number | null {
 }
 
 export function parseSessionIdCallback(data: string): string | null {
-  if (!data.startsWith(SESSION_CALLBACK_PREFIX) || data.startsWith(SESSION_PAGE_CALLBACK_PREFIX) || data.startsWith(SESSION_PREVIEW_CALLBACK_PREFIX) || data.startsWith(SESSION_CONTINUE_CALLBACK_PREFIX)) return null;
+  if (!data.startsWith(SESSION_CALLBACK_PREFIX) || data.startsWith(SESSION_PAGE_CALLBACK_PREFIX) || data.startsWith(SESSION_PREVIEW_CALLBACK_PREFIX) || data.startsWith(SESSION_CONTINUE_CALLBACK_PREFIX) || data.startsWith(SESSION_DELETE_CALLBACK_PREFIX) || data.startsWith(SESSION_DELETE_CONFIRM_CALLBACK_PREFIX)) return null;
   const sessionId = data.slice(SESSION_CALLBACK_PREFIX.length);
   return sessionId.length > 0 && data !== SESSION_BACK_CALLBACK && data !== SESSION_NO_CALLBACK ? sessionId : null;
 }
@@ -46,6 +50,18 @@ export function parseSessionPreviewCallback(data: string): string | null {
 export function parseSessionContinueCallback(data: string): string | null {
   if (!data.startsWith(SESSION_CONTINUE_CALLBACK_PREFIX)) return null;
   const id = data.slice(SESSION_CONTINUE_CALLBACK_PREFIX.length);
+  return id.length > 0 ? id : null;
+}
+
+export function parseSessionDeleteCallback(data: string): string | null {
+  if (!data.startsWith(SESSION_DELETE_CALLBACK_PREFIX)) return null;
+  const id = data.slice(SESSION_DELETE_CALLBACK_PREFIX.length);
+  return id.length > 0 ? id : null;
+}
+
+export function parseSessionDeleteConfirmCallback(data: string): string | null {
+  if (!data.startsWith(SESSION_DELETE_CONFIRM_CALLBACK_PREFIX)) return null;
+  const id = data.slice(SESSION_DELETE_CONFIRM_CALLBACK_PREFIX.length);
   return id.length > 0 ? id : null;
 }
 
@@ -87,7 +103,10 @@ function buildSessionsKeyboard(pageData: SessionPage): InlineKeyboard {
   const locale = getDateLocale();
   pageData.sessions.forEach((session) => {
     const date = new Date(session.time.created).toLocaleDateString(locale, { month: "short", day: "numeric" });
-    keyboard.text(`${truncateButtonTitle(session.title)} · ${date}`, buildSessionPreviewCallback(session.id)).row();
+    keyboard
+      .text(`${truncateButtonTitle(session.title)} · ${date}`, buildSessionPreviewCallback(session.id))
+      .text("🗑", buildSessionDeleteCallback(session.id))
+      .row();
   });
   if (pageData.page > 0) keyboard.text("← Prev", buildSessionPageCallback(pageData.page - 1));
   if (pageData.hasNext) keyboard.text("Next →", buildSessionPageCallback(pageData.page + 1));
@@ -106,9 +125,7 @@ export async function loadSessionPreviewItems(sessionId: string, directory: stri
     .map(({ info, parts }) => {
       const role = info.role as "user" | "assistant" | undefined;
       if ((role !== "user" && role !== "assistant") || (role === "assistant" && info.summary)) return null;
-      const textParts = parts
-        .filter((part) => part.type === "text" && "text" in part && typeof part.text === "string")
-        .map((part) => ("text" in part ? part.text : ""));
+      const textParts = parts.filter((part) => part.type === "text" && "text" in part && typeof part.text === "string").map((part) => ("text" in part ? part.text : ""));
       const text = textParts.join("").trim();
       if (!text) return null;
       return { role, text, created: info.time?.created ?? 0 };
@@ -131,8 +148,14 @@ export function formatSessionPreview(title: string, items: Array<{ role: "user" 
 
 export function buildSessionPreviewKeyboard(sessionId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✅ Yes, continue", buildSessionContinueCallback(sessionId))
-    .text("❌ No", SESSION_NO_CALLBACK)
+    .text("✅ Continue", buildSessionContinueCallback(sessionId))
+    .text("🗑 Delete", buildSessionDeleteCallback(sessionId))
     .row()
     .text("← Back", SESSION_BACK_CALLBACK);
+}
+
+export function buildSessionDeleteConfirmationKeyboard(sessionId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🗑 Yes, delete", buildSessionDeleteConfirmCallback(sessionId))
+    .text("Cancel", SESSION_BACK_CALLBACK);
 }
