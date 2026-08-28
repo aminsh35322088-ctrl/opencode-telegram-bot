@@ -21,6 +21,7 @@ import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { startCommand } from "../commands/start-command.js";
 import { helpCommand } from "../commands/help-command.js";
 import { statusCommand } from "../commands/status-command.js";
+import { updateCommand } from "../commands/update-command.js";
 import { memoryCommand, rememberCommand, forgetCommand } from "../commands/memory-command.js";
 import { BOT_COMMANDS } from "../commands/definitions.js";
 import { logger } from "../../utils/logger.js";
@@ -52,7 +53,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
     }
     await next();
   });
-  bot.command("start", startCommand); bot.command("help", helpCommand); bot.command("status", statusCommand);
+  bot.command("start", startCommand); bot.command("update", updateCommand); bot.command("help", helpCommand); bot.command("status", statusCommand);
   bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand);
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }));
