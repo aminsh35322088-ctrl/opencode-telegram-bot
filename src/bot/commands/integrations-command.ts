@@ -3,6 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { settingsCommand } from "./settings-command.js";
+import { logger } from "../../utils/logger.js";
 
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 const pending = new Map<number, PendingGithub>();
@@ -120,13 +121,8 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
     await showIntegrationsMenu(ctx, state.messageId, `✅ GitHub account “${account.name}” added and selected.`);
     return true;
   } catch (error) {
-    loggerPlaceholder(error);
+    logger.error("[Integrations] GitHub wizard failed:", error);
     await editWizard(ctx, state.messageId, `➕ Add GitHub Account\n\n2/2 · Personal Access Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
     return true;
   }
-}
-
-function loggerPlaceholder(error: unknown): void {
-  // Keep the wizard self-contained; the global Bot error/log middleware records uncaught failures.
-  void error;
 }
