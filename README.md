@@ -1,6 +1,6 @@
 # OpenCode Telegram Bot — Railway Edition
 
-A Telegram client for OpenCode designed to run continuously on Railway. It lets you control OpenCode, run coding tasks, manage projects and sessions, switch models, browse files, configure custom OpenAI-compatible providers, manage integrations, and use a compact Telegram UI.
+A Telegram client for OpenCode designed to run continuously on Railway. It lets you control OpenCode, run coding tasks, manage sessions, switch models, browse files, configure custom OpenAI-compatible providers, manage integrations, and use a compact Telegram UI.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ Memory is stored under `/data` and only relevant, bounded memories are injected 
 Token Guard is the central place for request-cost/context protection. It is designed around the main causes of unexpected model usage:
 
 - oversized context
-- unnecessary project/tool context
+- unnecessary tool context
 - repeated retries
 - runaway agent/tool turns
 - excessive output/reasoning budgets
@@ -148,7 +148,6 @@ For expensive models such as Opus, avoid repeated test prompts until usage has b
 | `BOT_LOCALE` | `en` | Bot locale |
 | `SESSIONS_LIST_LIMIT` | `10` | Sessions shown per history page |
 | `MESSAGES_LIST_LIMIT` | `10` | Messages shown per message page |
-| `PROJECTS_LIST_LIMIT` | `10` | Projects shown per page |
 | `COMMANDS_LIST_LIMIT` | `10` | Commands/skills shown per page |
 | `MODELS_LIST_LIMIT` | `10` | Providers/models shown per page |
 | `TASK_LIMIT` | `10` | Maximum scheduled tasks |
@@ -169,7 +168,6 @@ Optional STT, document extraction, and TTS settings are documented in `.env.exam
 | `/detach` | Detach without stopping the session |
 | `/sessions` | Browse recent OpenCode sessions |
 | `/messages` | Browse messages, revert, or fork |
-| `/projects` | Switch OpenCode projects |
 | `/worktree` | Switch Git worktrees |
 | `/open` | Browse and add a project directory |
 | `/ls` | Browse, open, and download files |
