@@ -26,10 +26,7 @@ class AssistantRunState {
   private readonly runs = new Map<string, AssistantRunInfo>();
 
   startRun(sessionId: string, info: AssistantRunStartInfo): void {
-    if (!sessionId) {
-      return;
-    }
-
+    if (!sessionId) return;
     resetStreamThrottle(sessionId);
     this.runs.set(sessionId, {
       sessionId,
@@ -39,37 +36,28 @@ class AssistantRunState {
       configuredModelID: info.configuredModelID,
       hasCompletedResponse: false,
     });
-
     logger.debug(
       `[AssistantRunState] Started run: session=${sessionId}, agent=${info.configuredAgent || "unknown"}, model=${info.configuredProviderID || "unknown"}/${info.configuredModelID || "unknown"}`,
     );
   }
 
+  hasActiveRuns(): boolean {
+    return this.runs.size > 0;
+  }
+
   markResponseCompleted(sessionId: string, info?: AssistantRunResolvedInfo): void {
     const run = this.runs.get(sessionId);
-    if (!run) {
-      return;
-    }
-
+    if (!run) return;
     run.hasCompletedResponse = true;
-    if (info?.agent) {
-      run.actualAgent = info.agent;
-    }
-    if (info?.providerID) {
-      run.actualProviderID = info.providerID;
-    }
-    if (info?.modelID) {
-      run.actualModelID = info.modelID;
-    }
+    if (info?.agent) run.actualAgent = info.agent;
+    if (info?.providerID) run.actualProviderID = info.providerID;
+    if (info?.modelID) run.actualModelID = info.modelID;
   }
 
   finishRun(sessionId: string, reason: string): AssistantRunInfo | null {
     resetStreamThrottle(sessionId);
     const run = this.runs.get(sessionId) ?? null;
-    if (!run) {
-      return null;
-    }
-
+    if (!run) return null;
     this.runs.delete(sessionId);
     logger.debug(`[AssistantRunState] Finished run: session=${sessionId}, reason=${reason}`);
     return { ...run };
@@ -77,19 +65,13 @@ class AssistantRunState {
 
   clearRun(sessionId: string, reason: string): void {
     resetStreamThrottle(sessionId);
-    if (!this.runs.delete(sessionId)) {
-      return;
-    }
-
+    if (!this.runs.delete(sessionId)) return;
     logger.debug(`[AssistantRunState] Cleared run: session=${sessionId}, reason=${reason}`);
   }
 
   clearAll(reason: string): void {
     resetAllStreamThrottles();
-    if (this.runs.size === 0) {
-      return;
-    }
-
+    if (this.runs.size === 0) return;
     logger.debug(`[AssistantRunState] Cleared all runs: count=${this.runs.size}, reason=${reason}`);
     this.runs.clear();
   }
