@@ -8,13 +8,13 @@ type UsageClient = {
 };
 
 type PromptUsageSnapshot = {
-  input?: number;
-  output?: number;
-  reasoning?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-  total?: number;
-  cost?: number;
+  input?: number | undefined;
+  output?: number | undefined;
+  reasoning?: number | undefined;
+  cacheRead?: number | undefined;
+  cacheWrite?: number | undefined;
+  total?: number | undefined;
+  cost?: number | undefined;
 };
 
 const MAX_OBSERVE_MS = 5 * 60 * 1000;
