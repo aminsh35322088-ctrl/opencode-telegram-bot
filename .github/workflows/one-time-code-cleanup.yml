@@ -3,8 +3,6 @@ name: One-time code cleanup
 on:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/one-time-code-cleanup.yml
   workflow_dispatch:
 
 permissions:
@@ -40,7 +38,6 @@ jobs:
                   raise SystemExit(f"Expected exactly one match in {path}, found {count}")
               p.write_text(text.replace(old, new, 1))
 
-          # Remove TTS runtime integration from the event service.
           replace_once(
               "src/bot/services/event-subscription-service.ts",
               'import { sendTtsResponseForSession } from "../handlers/tts-response-handler.js";\n',
@@ -52,45 +49,27 @@ jobs:
               "",
           )
 
-          # Remove persisted TTS settings and legacy migrations.
           replace_once(
               "src/app/stores/settings-store.ts",
               '''\nexport type TtsMode = "off" | "all" | "auto";\n\nexport function getTtsMode(): TtsMode {\n  return currentSettings.ttsMode ?? "off";\n}\n\nexport function setTtsMode(mode: TtsMode): void {\n  currentSettings.ttsMode = mode;\n  void writeSettingsFile(currentSettings);\n}\n''',
               "",
           )
-          replace_once(
-              "src/app/stores/settings-store.ts",
-              '    "ttsMode",\n',
-              "",
-          )
+          replace_once("src/app/stores/settings-store.ts", '    "ttsMode",\n', "")
           replace_once(
               "src/app/stores/settings-store.ts",
               '''    if (key === "ttsMode") {\n      if (typeof value !== "string" || !VALID_TTS_MODES.includes(value as TtsMode)) {\n        throw new Error(\n          `INITIAL_SETTINGS_PRESET: invalid value for "ttsMode"; expected one of ${VALID_TTS_MODES.join(", ")}.`,\n        );\n      }\n      if (currentSettings.ttsMode === undefined) {\n        currentSettings.ttsMode = value as TtsMode;\n      }\n    } else if (key === "responseStreamingMode") {''',
               '''    if (key === "responseStreamingMode") {''',
           )
-          replace_once(
-              "src/app/stores/settings-store.ts",
-              'const VALID_TTS_MODES: readonly TtsMode[] = ["off", "all", "auto"];\n',
-              "",
-          )
+          replace_once("src/app/stores/settings-store.ts", 'const VALID_TTS_MODES: readonly TtsMode[] = ["off", "all", "auto"];\n', "")
           replace_once(
               "src/app/stores/settings-store.ts",
               '''\n  if ("ttsEnabled" in loadedSettings) {\n    const oldEnabled = (loadedSettings as Record<string, unknown>).ttsEnabled;\n    loadedSettings.ttsMode = oldEnabled === true ? "all" : "off";\n    delete (loadedSettings as Record<string, unknown>).ttsEnabled;\n    requiresRewrite = true;\n  }\n''',
               "",
           )
 
-          replace_once(
-              "src/app/types/settings.ts",
-              '  ttsMode?: "off" | "all" | "auto" | undefined;\n',
-              "",
-          )
+          replace_once("src/app/types/settings.ts", '  ttsMode?: "off" | "all" | "auto" | undefined;\n', "")
 
-          # Remove TTS config surface.
-          replace_once(
-              "src/config.ts",
-              'export type TtsProvider = "openai" | "google" | "elevenlabs" | "edge";\n',
-              "",
-          )
+          replace_once("src/config.ts", 'export type TtsProvider = "openai" | "google" | "elevenlabs" | "edge";\n', "")
           p = Path("src/config.ts")
           text = p.read_text()
           start = text.index("const VALID_TTS_PROVIDERS:")
@@ -101,23 +80,17 @@ jobs:
               raise SystemExit(f"Expected exactly one TTS config block, found {text.count(old)}")
           p.write_text(text.replace(old, "", 1))
 
-          # Remove stale TTS/i18n entries. Locale files use one flat key per line.
           for p in Path("src/i18n").glob("*.ts"):
               lines = p.read_text().splitlines(keepends=True)
-              new_lines = [line for line in lines if not any(marker in line for marker in (
+              p.write_text("".join(line for line in lines if not any(marker in line for marker in (
                   '"status.line.tts"', '"status.tts.', '"tts.', '"settings.tts.label"'
-              ))]
-              p.write_text("".join(new_lines))
+              )))
 
-          # Remove stale TTS env documentation if present.
           for filename in (".env.example", "README.md"):
               p = Path(filename)
-              if not p.exists():
-                  continue
-              lines = p.read_text().splitlines(keepends=True)
-              p.write_text("".join(line for line in lines if "TTS_" not in line))
+              if p.exists():
+                  p.write_text("".join(line for line in p.read_text().splitlines(keepends=True) if "TTS_" not in line))
 
-          # Remove feature files and tests.
           for filename in (
               "src/app/services/edge-tts.ts",
               "src/app/services/tts-service.ts",
@@ -133,7 +106,6 @@ jobs:
 
           npm uninstall @google-cloud/text-to-speech --ignore-scripts --no-audit --no-fund
 
-          # No TTS symbol should remain in executable code or configuration.
           if grep -RInE 'TTS_|ttsMode|getTtsMode|setTtsMode|sendTts|tts-service|edge-tts|status\.tts|settings\.tts' src tests .env.example README.md --exclude-dir=node_modules --exclude-dir=.git; then
             echo "Stale TTS references remain."
             exit 1
