@@ -36,7 +36,6 @@ interface MessageRouterDeps { ensureEventSubscription: (directory: string) => Pr
 const CONTROL_TEXT = {
   cancel: "❌ Cancel",
   pause: "⏸️ Pause",
-  resume: "▶️ Resume",
 } as const;
 
 function normalizeControlText(text: string): string {
@@ -48,28 +47,18 @@ function normalizeControlText(text: string): string {
     .trim();
 }
 
-async function handleControlButton(ctx: Context): Promise<boolean> {
+async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   const rawText = ctx.message?.text;
   if (!rawText) return false;
 
   const text = normalizeControlText(rawText);
-  const pauseText = normalizeControlText(CONTROL_TEXT.pause);
-  const resumeText = normalizeControlText(CONTROL_TEXT.resume);
-  const cancelText = normalizeControlText(CONTROL_TEXT.cancel);
-
-  if (text === pauseText) {
+  if (text === normalizeControlText(CONTROL_TEXT.pause)) {
     logger.info(`[Bot] Control button received: Pause chatId=${ctx.chat.id}`);
     await pauseCurrentChat(ctx);
     return true;
   }
 
-  if (text === resumeText) {
-    logger.info(`[Bot] Control button received: Resume chatId=${ctx.chat.id}`);
-    await resumePausedChat(ctx, { bot: ctx.api ? (ctx as never) : (ctx as never), ensureEventSubscription: async () => {} });
-    return true;
-  }
-
-  if (text === cancelText) {
+  if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
     const chatId = ctx.chat.id;
     logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`);
     if (isProviderWizardActive(chatId)) {
@@ -102,8 +91,11 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
 }
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
+  // Priority route for controls that must remain usable even while another
+  // interaction middleware is active. Normalize Unicode variation selectors and
+  // invisible characters because Telegram clients may serialize emoji slightly differently.
   bot.on("message:text", async (ctx, next) => {
-    if (await handleControlButton(ctx)) return;
+    if (await handlePriorityControlButton(ctx)) return;
     await next();
   });
 
