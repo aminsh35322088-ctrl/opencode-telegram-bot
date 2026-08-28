@@ -30,7 +30,7 @@ import {
   markAttachedSessionBusy,
   markAttachedSessionIdle,
 } from "../../app/services/attach-service.js";
-import { externalUserInputSuppressionManager } from "../../app/managers/external-user-input-suppression-manager.js";
+import { externalUserInputSuppressionManager } from "../../app/services/external-user-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { resolvePendingAttachment } from "../../app/services/prompt-attachment-service.js";
 
@@ -56,7 +56,6 @@ async function isSessionBusy(sessionId: string, directory: string): Promise<bool
       logger.warn("[Bot] Failed to check session status before prompt:", error);
       return false;
     }
-
     const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
     if (!sessionStatus) return false;
     logger.debug(`[Bot] Current session status before prompt: ${sessionStatus.type || "unknown"}`);
@@ -76,9 +75,7 @@ async function resetMismatchedSessionContext(): Promise<void> {
   clearAllInteractionState("session_mismatch_reset");
   clearSession();
   keyboardManager.clearContext();
-
   if (!pinnedMessageManager.isInitialized()) return;
-
   try {
     await pinnedMessageManager.clear();
   } catch (err) {
@@ -113,7 +110,6 @@ export async function processUserPrompt(
 
   botInstance = bot;
   chatIdInstance = ctx.chat!.id;
-
   let currentSession = getCurrentSession();
   let createdNewSession = false;
 
@@ -135,22 +131,15 @@ export async function processUserPrompt(
       await ctx.reply(t("bot.create_session_error"));
       return false;
     }
-
     logger.info(
       `[Bot] Created new session: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`,
     );
-    currentSession = {
-      id: session.id,
-      title: session.title,
-      directory: currentProject.worktree,
-    };
+    currentSession = { id: session.id, title: session.title, directory: currentProject.worktree };
     setCurrentSession(currentSession);
     await ingestSessionInfoForCache(session);
     createdNewSession = true;
   } else {
-    logger.info(
-      `[Bot] Using existing session: id=${currentSession.id}, title="${currentSession.title}"`,
-    );
+    logger.info(`[Bot] Using existing session: id=${currentSession.id}, title="${currentSession.title}"`);
   }
 
   await attachToSession({
@@ -166,15 +155,8 @@ export async function processUserPrompt(
     keyboardManager.updateAgent(currentAgent);
     const contextInfo = keyboardManager.getContextInfo();
     const variantName = formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(
-      currentAgent,
-      currentModel,
-      contextInfo ?? undefined,
-      variantName,
-    );
-    await ctx.reply(t("bot.session_created", { title: currentSession.title }), {
-      reply_markup: keyboard,
-    });
+    const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName);
+    await ctx.reply(t("bot.session_created", { title: currentSession.title }), { reply_markup: keyboard });
   }
 
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
@@ -193,11 +175,8 @@ export async function processUserPrompt(
 
     const pendingAttachment = promptAttachment.get();
     const attachmentPart = await resolvePendingAttachment(currentSession.directory);
-    if (attachmentPart) {
-      parts.push(attachmentPart);
-    } else if (pendingAttachment) {
-      await ctx.reply(t("attachment.invalid"));
-    }
+    if (attachmentPart) parts.push(attachmentPart);
+    else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
 
     if (pendingAttachment) {
       promptAttachment.clear("consumed");
@@ -220,18 +199,10 @@ export async function processUserPrompt(
       model?: { providerID: string; modelID: string };
       agent?: string;
       variant?: string;
-    } = {
-      sessionID: currentSession.id,
-      directory: currentSession.directory,
-      parts,
-      agent: currentAgent,
-    };
+    } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
 
     if (storedModel.providerID && storedModel.modelID) {
-      promptOptions.model = {
-        providerID: storedModel.providerID,
-        modelID: storedModel.modelID,
-      };
+      promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID };
       if (storedModel.variant) promptOptions.variant = storedModel.variant;
     }
 
@@ -246,10 +217,7 @@ export async function processUserPrompt(
       fileCount: filePartCount,
     };
 
-    logger.info(
-      `[Bot] Calling session.promptAsync (start-only) with agent=${currentAgent}, fileCount=${filePartCount}...`,
-    );
-
+    logger.info(`[Bot] Calling session.promptAsync (start-only) with agent=${currentAgent}, fileCount=${filePartCount}...`);
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, {
@@ -259,9 +227,7 @@ export async function processUserPrompt(
       configuredModelID: storedModel.modelID,
     });
 
-    if (text.trim().length > 0) {
-      externalUserInputSuppressionManager.register(currentSession.id, text);
-    }
+    if (text.trim().length > 0) externalUserInputSuppressionManager.register(currentSession.id, text);
 
     safeBackgroundTask({
       taskName: "session.promptAsync",
@@ -291,7 +257,6 @@ export async function processUserPrompt(
         void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {});
       },
     });
-
     return true;
   } catch (err) {
     if (currentSession) {
