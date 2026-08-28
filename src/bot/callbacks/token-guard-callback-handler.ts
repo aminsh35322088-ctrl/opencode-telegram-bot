@@ -20,7 +20,7 @@ export async function handleTokenGuardCallback(ctx: Context): Promise<boolean> {
     if (data === "tokenguard:auto" && !(await ensureActiveInlineMenu(ctx, "settings"))) return true;
     const { text, keyboard } = await buildTokenGuardMenuView();
     await ctx.answerCallbackQuery({ text: "Token Guard: Auto" });
-    await ctx.editMessageText(text, { reply_markup: keyboard });
+    await ctx.editMessageText(text, { reply_markup: appendInlineMenuCancelButton(keyboard, "settings") });
     return true;
   }
 
