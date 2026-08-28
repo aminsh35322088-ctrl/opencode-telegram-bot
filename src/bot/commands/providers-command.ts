@@ -4,7 +4,7 @@ import { deleteCustomProvider, discoverModels, listCustomProviders, saveCustomPr
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
 import { logger } from "../../utils/logger.js";
-import { clearIntegrationWizard, clearProviderWizard } from "./integrations-command.js";
+import { clearIntegrationWizard } from "./integrations-command.js";
 
 interface PendingProvider { step: "name" | "url" | "key"; name?: string; baseURL?: string; apiKey?: string; }
 const pending = new Map<number, PendingProvider>();
