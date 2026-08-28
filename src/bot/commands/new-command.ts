@@ -1,10 +1,9 @@
 import type { Bot } from "grammy";
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { setCurrentSession } from "../../app/services/session-service.js";
+import { setCurrentSession, getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
-import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
@@ -29,31 +28,23 @@ export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandD
       return;
     }
 
-    const currentProject = getCurrentProject();
+    const directory = getCurrentSessionDirectory();
+    logger.debug("[Bot] Creating new session for directory:", directory);
 
-    if (!currentProject) {
-      await ctx.reply(t("new.project_not_selected"));
-      return;
-    }
-
-    logger.debug("[Bot] Creating new session for directory:", currentProject.worktree);
-
-    const { data: session, error } = await opencodeClient.session.create({
-      directory: currentProject.worktree,
-    });
+    const { data: session, error } = await opencodeClient.session.create({ directory });
 
     if (error || !session) {
       throw error || new Error("No data received from server");
     }
 
     logger.info(
-      `[Bot] Created new session via /new command: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`,
+      `[Bot] Created new session via /new command: id=${session.id}, title="${session.title}", directory=${directory}`,
     );
 
     const sessionInfo: SessionInfo = {
       id: session.id,
       title: session.title,
-      directory: currentProject.worktree,
+      directory,
     };
     setCurrentSession(sessionInfo);
     clearAllInteractionState("session_created");
@@ -66,18 +57,12 @@ export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandD
       ensureEventSubscription: deps.ensureEventSubscription,
     });
 
-    // Get current state for keyboard
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const currentModel = getStoredModel();
     keyboardManager.updateAgent(currentAgent);
     const contextInfo = keyboardManager.getContextInfo();
     const variantName = formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(
-      currentAgent,
-      currentModel,
-      contextInfo ?? undefined,
-      variantName,
-    );
+    const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName);
 
     await ctx.reply(t("new.created", { title: session.title }), {
       reply_markup: keyboard,
