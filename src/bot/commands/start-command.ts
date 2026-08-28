@@ -9,15 +9,14 @@ import { clearSession } from "../../app/services/session-service.js";
 import { clearProject } from "../../app/stores/settings-store.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { abortCurrentOperation } from "./abort-command.js";
-import { t } from "../../i18n/index.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { detachAttachedSession } from "../../app/services/attach-service.js";
+import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
+import { formatModelForDisplay } from "../../app/types/model.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
   if (ctx.chat) {
-    if (!pinnedMessageManager.isInitialized()) {
-      pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
-    }
+    if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
     keyboardManager.initialize(ctx.api, ctx.chat.id);
   }
 
@@ -25,17 +24,15 @@ export async function startCommand(ctx: Context): Promise<void> {
   detachAttachedSession("start_command_reset");
   foregroundSessionState.clearAll("start_command_reset");
   assistantRunState.clearAll("start_command_reset");
-
+  clearPausedSession();
+  keyboardManager.setPaused(false);
   clearSession();
   clearProject();
   keyboardManager.clearContext();
   await pinnedMessageManager.clear();
 
-  if (pinnedMessageManager.getContextLimit() === 0) {
-    await pinnedMessageManager.refreshContextLimit();
-  }
+  if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
 
-  // Get current agent, model, and context
   const currentAgent = getStoredAgent();
   const currentModel = getStoredModel();
   const variantName = formatVariantForButton(currentModel.variant || "default");
@@ -47,16 +44,24 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   keyboardManager.updateAgent(currentAgent);
   keyboardManager.updateModel(currentModel);
-  if (contextInfo) {
-    keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-  }
+  if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
 
-  const keyboard = createMainKeyboard(
-    currentAgent,
-    currentModel,
-    contextInfo ?? undefined,
-    variantName,
-  );
+  const modelDisplay = currentModel.providerID && currentModel.modelID
+    ? formatModelForDisplay(currentModel.providerID, currentModel.modelID)
+    : "Not configured";
 
-  await ctx.reply(t("start.welcome"), { reply_markup: keyboard });
+  const text = [
+    "⚡ <b>OpenCode</b>",
+    "",
+    "🟢 <b>Ready</b>",
+    `🤖 ${modelDisplay}`,
+    `🛠️ ${currentAgent}`,
+    "",
+    "Build, debug and control OpenCode directly from Telegram.",
+    "",
+    "💬 Start a fresh chat or open 🕘 History to continue an existing conversation.",
+  ].join("\n");
+
+  const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false);
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
 }
