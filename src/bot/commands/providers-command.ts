@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, Keyboard } from "grammy";
 import { deleteCustomProvider, discoverModels, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig } from "../../app/services/custom-provider-service.js";
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
@@ -8,12 +8,13 @@ import { clearIntegrationWizard } from "./integrations-command.js";
 
 interface PendingProvider { step: "name" | "url" | "key"; name?: string; baseURL?: string; apiKey?: string; }
 const pending = new Map<number, PendingProvider>();
+const cancelKeyboard = () => new Keyboard().text("❌ Cancel").resized().oneTime();
 
 export function isProviderWizardActive(chatId: number): boolean { return pending.has(chatId); }
 export function clearProviderWizard(chatId: number): void { pending.delete(chatId); }
 
 async function replyNext(ctx: Context, text: string): Promise<void> {
-  await ctx.reply(text, { reply_markup: new InlineKeyboard().text("❌ Cancel", "provider:cancel") });
+  await ctx.reply(text, { reply_markup: cancelKeyboard() });
 }
 
 export async function providersCommand(ctx: CommandContext<Context>): Promise<void> {
@@ -36,7 +37,7 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (!chatId) return true;
   if (data === "provider:cancel") {
     clearProviderWizard(chatId); clearIntegrationWizard(chatId);
-    await ctx.reply("❌ Provider setup cancelled."); return true;
+    await providersCommand(ctx as never); return true;
   }
   if (data === "provider:add") {
     clearIntegrationWizard(chatId); pending.set(chatId, { step: "name" });
