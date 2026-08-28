@@ -42,7 +42,10 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
   bot.on("message:text", unknownCommandMiddleware);
 
-  // Contextual reply-keyboard controls. Cancel terminates only the active setup wizard.
+  // Reply-keyboard controls are handled before any wizard input handler.
+  // This is intentionally duplicated in the final text router as a safety net:
+  // grammY handlers can continue through the middleware chain, so a Cancel
+  // button must never be allowed to become a wizard value (e.g. a URL).
   bot.hears(/^❌ Cancel$/, async (ctx) => {
     const chatId = ctx.chat.id;
     if (isProviderWizardActive(chatId)) {
@@ -57,7 +60,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       await integrationsCommand(ctx as never);
       return;
     }
-    logger.debug(`[Bot] Cancel pressed with no active wizard, chatId=${chatId}`);
   });
 
   bot.hears(/^⚙️ Settings$/, async (ctx) => {
@@ -94,10 +96,29 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message:photo", async (ctx) => { logger.debug(`[Bot] Received photo message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.on("message:document", async (ctx) => { logger.debug(`[Bot] Received document message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.on("message:text", async (ctx) => {
-    const text = ctx.message?.text;
+    const text = ctx.message?.text?.trim();
     if (!text) return;
     deps.setTelegramContext(bot, ctx.chat.id);
     if (text.startsWith("/")) return;
+
+    // IMPORTANT: ReplyKeyboard buttons are ordinary Telegram text messages.
+    // Consume Cancel here before any wizard handler can interpret it as input.
+    if (text === "❌ Cancel") {
+      if (isProviderWizardActive(ctx.chat.id)) {
+        clearProviderWizard(ctx.chat.id);
+        clearIntegrationWizard(ctx.chat.id);
+        await providersCommand(ctx as never);
+        return;
+      }
+      if (isIntegrationWizardActive(ctx.chat.id)) {
+        clearIntegrationWizard(ctx.chat.id);
+        clearProviderWizard(ctx.chat.id);
+        await integrationsCommand(ctx as never);
+        return;
+      }
+      return;
+    }
+
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
     if (questionManager.isActive()) { await handleQuestionTextAnswer(ctx); return; }
