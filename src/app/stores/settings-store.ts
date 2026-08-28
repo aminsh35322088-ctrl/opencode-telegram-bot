@@ -30,14 +30,10 @@ function getSettingsBackupFilePath(): string {
   return `${getSettingsFilePath()}.bak`;
 }
 
-// Lives next to the target file so the rename never crosses a volume boundary.
 function getSettingsTempFilePath(): string {
   return `${getSettingsFilePath()}.tmp`;
 }
 
-// Set when settings were recovered from the backup: the target file still holds
-// the damaged content, so rotating it into the backup would destroy the only
-// good copy. Cleared by the first successful write.
 let skipNextBackupRotation = false;
 
 function isFileNotFound(error: unknown): boolean {
@@ -58,10 +54,7 @@ async function readSettingsFile(): Promise<Settings> {
     return await readSettingsFileAt(settingsFilePath);
   } catch (primaryError) {
     if (!isFileNotFound(primaryError)) {
-      logger.warn(
-        `[SettingsManager] Cannot read settings file ${settingsFilePath}:`,
-        primaryError,
-      );
+      logger.warn(`[SettingsManager] Cannot read settings file ${settingsFilePath}:`, primaryError);
     }
 
     try {
@@ -100,7 +93,6 @@ async function writeSettingsFileAtomically(settings: Settings): Promise<void> {
       try {
         await fs.rename(settingsFilePath, getSettingsBackupFilePath());
       } catch (error) {
-        // Nothing to back up on the very first write.
         if (!isFileNotFound(error)) {
           throw error;
         }
@@ -110,9 +102,7 @@ async function writeSettingsFileAtomically(settings: Settings): Promise<void> {
     await fs.rename(tempFilePath, settingsFilePath);
     skipNextBackupRotation = false;
   } catch (error) {
-    await fs.rm(tempFilePath, { force: true }).catch(() => {
-      // Best-effort cleanup of the temporary file.
-    });
+    await fs.rm(tempFilePath, { force: true }).catch(() => {});
     throw error;
   }
 }
@@ -121,9 +111,7 @@ let settingsWriteQueue: Promise<void> = Promise.resolve();
 
 function writeSettingsFile(settings: Settings): Promise<void> {
   settingsWriteQueue = settingsWriteQueue
-    .catch(() => {
-      // Keep write queue alive after failed writes.
-    })
+    .catch(() => {})
     .then(async () => {
       try {
         await writeSettingsFileAtomically(settings);
@@ -135,26 +123,33 @@ function writeSettingsFile(settings: Settings): Promise<void> {
   return settingsWriteQueue;
 }
 
-// Awaits the writes queued at the moment of the call; writes queued later are not
-// covered. That is enough for shutdown, where everything able to write is already
-// stopped. The queue never rejects - writeSettingsFile handles its own errors.
 export function flushSettings(): Promise<void> {
   return settingsWriteQueue;
 }
 
 let currentSettings: Settings = {};
 
-export function getCurrentProject(): ProjectInfo | undefined {
-  return currentSettings.currentProject;
+/**
+ * Project selection is intentionally no longer persisted or used as application state.
+ * The active session directory is the single source of truth for the workspace.
+ * A transient ProjectInfo is returned only for legacy callers that still consume this API.
+ */
+export function getCurrentProject(): ProjectInfo {
+  const directory = currentSettings.currentSession?.directory ?? process.cwd();
+  return {
+    id: `session:${currentSettings.currentSession?.id ?? "default"}`,
+    worktree: directory,
+    name: path.basename(directory) || directory,
+  };
 }
 
-export function setCurrentProject(projectInfo: ProjectInfo): void {
-  currentSettings.currentProject = projectInfo;
+/** @deprecated Project selection has been removed; the session directory is authoritative. */
+export function setCurrentProject(_projectInfo: ProjectInfo): void {
   void writeSettingsFile(currentSettings);
 }
 
+/** @deprecated Project selection has been removed. */
 export function clearProject(): void {
-  currentSettings.currentProject = undefined;
   void writeSettingsFile(currentSettings);
 }
 
@@ -363,32 +358,24 @@ function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
         currentSettings.responseStreamingMode = value as ResponseStreamingMode;
       }
     } else {
-      // Boolean settings: compactOutputMode, showThinkingContent, showAssistantRunFooter, sendDiffFileAttachments, promptQueueEnabled
       if (typeof value !== "boolean") {
-        throw new Error(
-          `INITIAL_SETTINGS_PRESET: "${key}" must be a boolean.`,
-        );
+        throw new Error(`INITIAL_SETTINGS_PRESET: "${key}" must be a boolean.`);
       }
       switch (key) {
         case "compactOutputMode":
-          if (currentSettings.compactOutputMode === undefined)
-            currentSettings.compactOutputMode = value;
+          if (currentSettings.compactOutputMode === undefined) currentSettings.compactOutputMode = value;
           break;
         case "showThinkingContent":
-          if (currentSettings.showThinkingContent === undefined)
-            currentSettings.showThinkingContent = value;
+          if (currentSettings.showThinkingContent === undefined) currentSettings.showThinkingContent = value;
           break;
         case "showAssistantRunFooter":
-          if (currentSettings.showAssistantRunFooter === undefined)
-            currentSettings.showAssistantRunFooter = value;
+          if (currentSettings.showAssistantRunFooter === undefined) currentSettings.showAssistantRunFooter = value;
           break;
         case "sendDiffFileAttachments":
-          if (currentSettings.sendDiffFileAttachments === undefined)
-            currentSettings.sendDiffFileAttachments = value;
+          if (currentSettings.sendDiffFileAttachments === undefined) currentSettings.sendDiffFileAttachments = value;
           break;
         case "promptQueueEnabled":
-          if (currentSettings.promptQueueEnabled === undefined)
-            currentSettings.promptQueueEnabled = value;
+          if (currentSettings.promptQueueEnabled === undefined) currentSettings.promptQueueEnabled = value;
           break;
       }
     }
@@ -413,7 +400,6 @@ export async function loadSettings(): Promise<void> {
     requiresRewrite = true;
   }
 
-  // Migrate old ttsEnabled boolean to new ttsMode
   if ("ttsEnabled" in loadedSettings) {
     const oldEnabled = (loadedSettings as Record<string, unknown>).ttsEnabled;
     loadedSettings.ttsMode = oldEnabled === true ? "all" : "off";
