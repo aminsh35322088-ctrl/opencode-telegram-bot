@@ -27,88 +27,53 @@ import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
+import { abortCommand } from "../commands/abort-command.js";
 import { sessionsCommand } from "../commands/sessions-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { closeActiveInlineMenu } from "../menus/inline-menu.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 
 interface MessageRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number) => void; }
-
-const CONTROL_TEXT = {
-  cancel: "❌ Cancel",
-  pause: "⏸️ Pause",
-} as const;
-
-function normalizeControlText(text: string): string {
-  return text
-    .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/\uFE0F/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+const CONTROL_TEXT = { cancel: "❌ Cancel", pause: "⏸️ Pause", abort: "🛑 Abort", resume: "▶️ Resume" } as const;
+function normalizeControlText(text: string): string { return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim(); }
+let botInstance: Bot<Context> | null = null;
+let currentEnsureEventSubscription: ((directory: string) => Promise<void>) | null = null;
 
 async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
-  const rawText = ctx.message?.text;
-  if (!rawText) return false;
-  const chatId = ctx.chat?.id;
-  if (!chatId) return false;
-
+  const rawText = ctx.message?.text; const chatId = ctx.chat?.id; if (!rawText || !chatId) return false;
   const text = normalizeControlText(rawText);
-  if (text === normalizeControlText(CONTROL_TEXT.pause)) {
-    logger.info(`[Bot] Control button received: Pause chatId=${chatId}`);
-    await pauseCurrentChat(ctx);
-    return true;
-  }
-
+  if (text === normalizeControlText(CONTROL_TEXT.pause)) { logger.info(`[Bot] Control button received: Pause chatId=${chatId}`); await pauseCurrentChat(ctx); return true; }
+  if (text === normalizeControlText(CONTROL_TEXT.resume)) { logger.info(`[Bot] Control button received: Resume chatId=${chatId}`); if (botInstance && currentEnsureEventSubscription) await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription }); return true; }
+  if (text === normalizeControlText(CONTROL_TEXT.abort)) { logger.info(`[Bot] Control button received: Abort chatId=${chatId}`); await abortCommand(ctx); return true; }
   if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
     logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`);
-    if (isProviderWizardActive(chatId)) {
-      clearProviderWizard(chatId);
-      clearIntegrationWizard(chatId);
-      await providersCommand(ctx as never);
-      return true;
-    }
-    if (isIntegrationWizardActive(chatId)) {
-      clearIntegrationWizard(chatId);
-      clearProviderWizard(chatId);
-      await integrationsCommand(ctx as never);
-      return true;
-    }
+    if (isProviderWizardActive(chatId)) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return true; }
+    if (isIntegrationWizardActive(chatId)) { clearIntegrationWizard(chatId); clearProviderWizard(chatId); await integrationsCommand(ctx as never); return true; }
   }
-
   return false;
 }
 
 async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
+  if (assistantRunState.hasActiveRuns()) return true;
   const activeInteraction = interactionManager.getSnapshot();
   if (!activeInteraction) return false;
-  if (activeInteraction.kind === "inline") {
-    await closeActiveInlineMenu(ctx, "reply-keyboard-navigation");
-    return false;
-  }
+  if (activeInteraction.kind === "inline") { await closeActiveInlineMenu(ctx, "reply-keyboard-navigation"); return false; }
   logger.debug(`[Bot] Blocking menu open while interaction active: kind=${activeInteraction.kind}, expectedInput=${activeInteraction.expectedInput}`);
-  await ctx.reply(t("interaction.blocked.finish_current"));
-  return true;
+  await ctx.reply(t("interaction.blocked.finish_current")); return true;
 }
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
-  bot.on("message:text", async (ctx, next) => {
-    if (await handlePriorityControlButton(ctx)) return;
-    await next();
-  });
-
+  botInstance = bot; currentEnsureEventSubscription = deps.ensureEventSubscription;
+  bot.on("message:text", async (ctx, next) => { if (await handlePriorityControlButton(ctx)) return; await next(); });
   bot.on("message:text", unknownCommandMiddleware);
-  bot.hears(/^❌ Cancel$/, async (ctx) => {
-    const chatId = ctx.chat.id;
-    if (isProviderWizardActive(chatId)) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return; }
-    if (isIntegrationWizardActive(chatId)) { clearIntegrationWizard(chatId); clearProviderWizard(chatId); await integrationsCommand(ctx as never); return; }
-  });
+  bot.hears(/^❌ Cancel$/, async (ctx) => { const chatId = ctx.chat.id; if (isProviderWizardActive(chatId)) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return; } if (isIntegrationWizardActive(chatId)) { clearIntegrationWizard(chatId); clearProviderWizard(chatId); await integrationsCommand(ctx as never); return; } });
   bot.hears(/^⚙️ Settings$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await settingsCommand(ctx as never); });
   bot.hears(/^🕘 History$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await sessionsCommand(ctx as never); });
   bot.hears(/^💬 New Chat$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.hears(/^⏸️ Pause$/, async (ctx) => { await pauseCurrentChat(ctx); });
   bot.hears(/^▶️ Resume$/, async (ctx) => { await resumePausedChat(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
-  bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Queued prompt button pressed: ${ctx.message?.text}`); if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
+  bot.hears(/^🛑 Abort$/, async (ctx) => { await abortCommand(ctx); });
+  bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
   bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
   bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
   bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
@@ -123,20 +88,11 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message:text", async (ctx) => {
     const text = ctx.message?.text?.trim(); if (!text) return;
     deps.setTelegramContext(bot, ctx.chat.id); if (text.startsWith("/")) return;
-    if (text === "❌ Cancel") {
-      if (isProviderWizardActive(ctx.chat.id)) { clearProviderWizard(ctx.chat.id); clearIntegrationWizard(ctx.chat.id); await providersCommand(ctx as never); return; }
-      if (isIntegrationWizardActive(ctx.chat.id)) { clearIntegrationWizard(ctx.chat.id); clearProviderWizard(ctx.chat.id); await integrationsCommand(ctx as never); return; }
-      return;
-    }
-    if (text === "⏸️ Pause" || text === "▶️ Resume" || text === "💬 New Chat" || text === "🕘 History" || text === "⚙️ Settings") return;
-    if (await handleProviderWizardMessage(ctx)) return;
-    if (await handleIntegrationMessage(ctx)) return;
+    if (["❌ Cancel", "⏸️ Pause", "▶️ Resume", "🛑 Abort", "💬 New Chat", "🕘 History", "⚙️ Settings"].includes(text)) return;
+    if (await handleProviderWizardMessage(ctx)) return; if (await handleIntegrationMessage(ctx)) return;
     if (questionManager.isActive()) { await handleQuestionTextAnswer(ctx); return; }
-    if (await handleTaskTextInput(ctx)) return;
-    if (await handleModelSearchTextInput(ctx)) return;
-    if (await handleRenameTextAnswer(ctx)) return;
-    const promptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
-    if (await handleCatalogTextArguments(ctx, promptDeps)) return;
+    if (await handleTaskTextInput(ctx)) return; if (await handleModelSearchTextInput(ctx)) return; if (await handleRenameTextAnswer(ctx)) return;
+    const promptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription }; if (await handleCatalogTextArguments(ctx, promptDeps)) return;
     queuePromptForMerging(ctx, text, promptDeps, config.bot.messageMergeWindowMs);
   });
 }
