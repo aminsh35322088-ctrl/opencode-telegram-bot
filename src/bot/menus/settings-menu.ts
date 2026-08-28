@@ -34,8 +34,6 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
   const keyboard = new InlineKeyboard()
     .text(modelLabel, SETTINGS_MODEL_CALLBACK)
     .row()
-    .text("🛡️ Token Guard", "tokenguard:menu")
-    .row()
     .text(`${t("settings.compact_output.label")}: ${formatBooleanSettingValue(compactOutputMode)}`, SETTINGS_COMPACT_OUTPUT_CALLBACK);
   if (!compactOutputMode) {
     keyboard.row().text(`${t("settings.thinking_content.label")}: ${formatBooleanSettingValue(showThinkingContent)}`, SETTINGS_THINKING_CONTENT_CALLBACK);
