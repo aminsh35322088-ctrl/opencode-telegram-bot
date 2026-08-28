@@ -6,12 +6,7 @@ import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
-  getTtsModeMock: vi.fn(),
   flushPendingPromptMock: vi.fn(),
-}));
-
-vi.mock("../../../src/app/stores/settings-store.js", () => ({
-  getTtsMode: mocked.getTtsModeMock,
 }));
 
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -136,7 +131,6 @@ function mockHttpsDownload(): ReturnType<typeof vi.fn> {
 describe("bot/handlers/voice-handler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocked.getTtsModeMock.mockReturnValue("off");
     vi.doUnmock("node:https");
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
     vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "123456789");
@@ -162,9 +156,7 @@ describe("bot/handlers/voice-handler", () => {
       "🎤 Recognized:\n> Line 1\n> Line 2",
       { parse_mode: "MarkdownV2" },
     );
-    expect(processPromptMock).toHaveBeenCalledWith(ctx, "Line 1\nLine 2", deps, [], {
-      responseMode: "text_only",
-    });
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, "Line 1\nLine 2", deps, []);
   });
 
   it("continues with prompt processing when recognized text message edit fails", async () => {
@@ -178,9 +170,7 @@ describe("bot/handlers/voice-handler", () => {
 
     expect(mocked.flushPendingPromptMock).toHaveBeenCalledWith(777);
     expect(replyMock).toHaveBeenCalledWith(t("stt.recognizing"));
-    expect(processPromptMock).toHaveBeenCalledWith(ctx, "run tests", deps, [], {
-      responseMode: "text_only",
-    });
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, "run tests", deps, []);
   });
 
   it("returns not-configured message and does not process prompt", async () => {
@@ -225,25 +215,10 @@ describe("bot/handlers/voice-handler", () => {
 
     await handleVoiceMessage(ctx, deps);
 
-    expect(processPromptMock).toHaveBeenCalledWith(ctx, `[Note: ${note}]\nrun tests`, deps, [], {
-      responseMode: "text_only",
-    });
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, `[Note: ${note}]\nrun tests`, deps, []);
     expect(logger.debug).toHaveBeenCalledWith(
       `[Voice] Added STT note to LLM prompt: [Note: ${note}]`,
     );
-  });
-
-  it("requests an audio reply for voice prompts when TTS mode is auto", async () => {
-    mocked.getTtsModeMock.mockReturnValue("auto");
-    const { handleVoiceMessage } = await loadVoiceModule();
-    const { ctx } = createVoiceContext();
-    const { deps, processPromptMock } = createVoiceDeps();
-
-    await handleVoiceMessage(ctx, deps);
-
-    expect(processPromptMock).toHaveBeenCalledWith(ctx, "run tests", deps, [], {
-      responseMode: "text_and_tts",
-    });
   });
 
   it.each(["", "false", "0", "   "])(
@@ -258,9 +233,7 @@ describe("bot/handlers/voice-handler", () => {
 
       await handleVoiceMessage(ctx, deps);
 
-      expect(processPromptMock).toHaveBeenCalledWith(ctx, "run tests", deps, [], {
-        responseMode: "text_only",
-      });
+      expect(processPromptMock).toHaveBeenCalledWith(ctx, "run tests", deps, []);
       expect(logger.debug).not.toHaveBeenCalled();
     },
   );
@@ -286,9 +259,7 @@ describe("bot/handlers/voice-handler", () => {
     expect(String(url)).toBe(
       "https://api.telegram.org/file/bottest-telegram-token/voice/file_123.oga",
     );
-    expect(processPromptMock).toHaveBeenCalledWith(ctx, "hello", deps, [], {
-      responseMode: "text_only",
-    });
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, "hello", deps, []);
   });
 
   it("downloads voice files from TELEGRAM_API_ROOT without a double slash", async () => {
