@@ -167,17 +167,6 @@ export function clearSession(): void {
   void writeSettingsFile(currentSettings);
 }
 
-export type TtsMode = "off" | "all" | "auto";
-
-export function getTtsMode(): TtsMode {
-  return currentSettings.ttsMode ?? "off";
-}
-
-export function setTtsMode(mode: TtsMode): void {
-  currentSettings.ttsMode = mode;
-  void writeSettingsFile(currentSettings);
-}
-
 export function getCompactOutputMode(): boolean {
   return currentSettings.compactOutputMode ?? false;
 }
@@ -316,12 +305,10 @@ export function __resetSettingsForTests(): void {
   skipNextBackupRotation = false;
 }
 
-const VALID_TTS_MODES: readonly TtsMode[] = ["off", "all", "auto"];
 const VALID_STREAMING_MODES: readonly ResponseStreamingMode[] = ["edit", "draft"];
 
 function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
   const knownKeys = new Set([
-    "ttsMode",
     "compactOutputMode",
     "showThinkingContent",
     "showAssistantRunFooter",
@@ -336,16 +323,7 @@ function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
         `INITIAL_SETTINGS_PRESET: unknown key "${key}". Supported keys: ${[...knownKeys].join(", ")}.`,
       );
     }
-    if (key === "ttsMode") {
-      if (typeof value !== "string" || !VALID_TTS_MODES.includes(value as TtsMode)) {
-        throw new Error(
-          `INITIAL_SETTINGS_PRESET: invalid value for "ttsMode"; expected one of ${VALID_TTS_MODES.join(", ")}.`,
-        );
-      }
-      if (currentSettings.ttsMode === undefined) {
-        currentSettings.ttsMode = value as TtsMode;
-      }
-    } else if (key === "responseStreamingMode") {
+    if (key === "responseStreamingMode") {
       if (
         typeof value !== "string" ||
         !VALID_STREAMING_MODES.includes(value as ResponseStreamingMode)
@@ -401,9 +379,12 @@ export async function loadSettings(): Promise<void> {
   }
 
   if ("ttsEnabled" in loadedSettings) {
-    const oldEnabled = (loadedSettings as Record<string, unknown>).ttsEnabled;
-    loadedSettings.ttsMode = oldEnabled === true ? "all" : "off";
     delete (loadedSettings as Record<string, unknown>).ttsEnabled;
+    requiresRewrite = true;
+  }
+
+  if ("ttsMode" in loadedSettings) {
+    delete (loadedSettings as Record<string, unknown>).ttsMode;
     requiresRewrite = true;
   }
 
