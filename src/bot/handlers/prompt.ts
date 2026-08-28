@@ -7,7 +7,7 @@ import {
   setCurrentSession,
 } from "../../app/services/session-service.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
-import { getCurrentProject, getTtsMode } from "../../app/stores/settings-store.js";
+import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
@@ -37,13 +37,6 @@ import { resolvePendingAttachment } from "../../app/services/prompt-attachment-s
 /** Module-level references for async callbacks that don't have ctx. */
 let botInstance: Bot<Context> | null = null;
 let chatIdInstance: number | null = null;
-const promptResponseModes = new Map<string, PromptResponseMode>();
-
-export type PromptResponseMode = "text_only" | "text_and_tts";
-
-type ProcessPromptOptions = {
-  responseMode?: PromptResponseMode;
-};
 
 export function getPromptBotInstance(): Bot<Context> | null {
   return botInstance;
@@ -51,20 +44,6 @@ export function getPromptBotInstance(): Bot<Context> | null {
 
 export function getPromptChatId(): number | null {
   return chatIdInstance;
-}
-
-export function setPromptResponseMode(sessionId: string, responseMode: PromptResponseMode): void {
-  promptResponseModes.set(sessionId, responseMode);
-}
-
-export function clearPromptResponseMode(sessionId: string): void {
-  promptResponseModes.delete(sessionId);
-}
-
-export function consumePromptResponseMode(sessionId: string): PromptResponseMode | null {
-  const responseMode = promptResponseModes.get(sessionId) ?? null;
-  promptResponseModes.delete(sessionId);
-  return responseMode;
 }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
@@ -148,12 +127,8 @@ export async function processUserPrompt(
   text: string,
   deps: ProcessPromptDeps,
   fileParts: FilePartInput[] = [],
-  options: ProcessPromptOptions = {},
 ): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
-  const responseMode =
-    options.responseMode ?? (getTtsMode() === "all" ? "text_and_tts" : "text_only");
-
   const currentProject = getCurrentProject();
   if (!currentProject) {
     await ctx.reply(t("bot.project_not_selected"));
@@ -241,21 +216,14 @@ export async function processUserPrompt(
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = getStoredModel();
-
-    // Build parts array with text and files
     const parts: Array<TextPartInput | FilePartInput> = [];
 
-    // Add text part if present
     if (text.trim().length > 0) {
       parts.push({ type: "text", text });
     }
 
-    // Add file parts
     parts.push(...fileParts);
 
-    // A file picked in /ls belongs to this prompt. Capture whether one existed before
-    // resolving it: the resolver clears the attachment on every failed check, so afterwards
-    // a null result can no longer tell "nothing was attached" from "it went stale".
     const pendingAttachment = promptAttachment.get();
     const attachmentPart = await resolvePendingAttachment(currentSession.directory);
 
@@ -266,25 +234,18 @@ export async function processUserPrompt(
     }
 
     if (pendingAttachment) {
-      // Cleared here rather than next to `return true`: the catch below already clears the
-      // interaction on any failure but knows nothing about the attachment, which would leave
-      // it behind to be picked up silently by an unrelated later prompt.
       promptAttachment.clear("consumed");
       interactionManager.clear("attachment_consumed");
       await retireAttachmentConfirmation(ctx, pendingAttachment.confirmationMessageId);
     }
 
-    // If no text and files exist, use a placeholder
     if (parts.length === 0 || (parts.length > 0 && parts.every((p) => p.type === "file"))) {
       if (fileParts.length > 0) {
-        // Files without text - add a minimal system prompt
         const attachmentText = fileParts.length === 1 ? "See attached file" : "See attached files";
         parts.unshift({ type: "text", text: attachmentText });
       }
     }
 
-    // Counted from `parts` rather than `fileParts`: a file attached through /ls is added
-    // above and would otherwise be missing from the logs.
     const filePartCount = parts.filter((part) => part.type === "file").length;
 
     const promptOptions: {
@@ -301,14 +262,12 @@ export async function processUserPrompt(
       agent: currentAgent,
     };
 
-    // Use stored model (from settings or config)
     if (storedModel.providerID && storedModel.modelID) {
       promptOptions.model = {
         providerID: storedModel.providerID,
         modelID: storedModel.modelID,
       };
 
-      // Add variant if specified
       if (storedModel.variant) {
         promptOptions.variant = storedModel.variant;
       }
@@ -337,17 +296,11 @@ export async function processUserPrompt(
       configuredProviderID: storedModel.providerID,
       configuredModelID: storedModel.modelID,
     });
-    setPromptResponseMode(currentSession.id, responseMode);
 
     if (text.trim().length > 0) {
       externalUserInputSuppressionManager.register(currentSession.id, text);
     }
 
-    // CRITICAL: Use the async prompt start endpoint here.
-    // session.prompt streams the full assistant response and can outlive the original
-    // Telegram message handler, which turns late transport failures into misleading
-    // "failed to send" messages even after the run has already started.
-    // The actual assistant result still arrives via the SSE event subscription.
     safeBackgroundTask({
       taskName: "session.promptAsync",
       task: () => opencodeClient.session.promptAsync(promptOptions),
@@ -356,7 +309,6 @@ export async function processUserPrompt(
           foregroundSessionState.markIdle(currentSession.id);
           void markAttachedSessionIdle(currentSession.id);
           assistantRunState.clearRun(currentSession.id, "session_prompt_api_error");
-          clearPromptResponseMode(currentSession.id);
           const details = formatErrorDetails(error, 6000);
           logger.error(
             "[Bot] OpenCode API returned an error for session.promptAsync",
@@ -364,8 +316,6 @@ export async function processUserPrompt(
           );
           logger.error("[Bot] session.promptAsync error details:", details);
           logger.error("[Bot] session.promptAsync raw API error object:", error);
-
-          // Send user-friendly error via API directly because ctx is no longer available
           void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {});
           return;
         }
@@ -376,7 +326,6 @@ export async function processUserPrompt(
         foregroundSessionState.markIdle(currentSession.id);
         void markAttachedSessionIdle(currentSession.id);
         assistantRunState.clearRun(currentSession.id, "session_prompt_background_error");
-        clearPromptResponseMode(currentSession.id);
         const details = formatErrorDetails(error, 6000);
         logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext);
         logger.error("[Bot] session.promptAsync background failure details:", details);
