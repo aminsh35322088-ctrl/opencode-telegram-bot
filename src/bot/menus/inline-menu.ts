@@ -66,4 +66,18 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
   return false;
 }
 
+export function getActiveInlineMenu(): ActiveInlineMenuMetadata | null {
+  return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
+}
+
+export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {
+  const active = getActiveInlineMenu();
+  if (!active || !ctx.chat?.id) {
+    clearActiveInlineMenu(reason);
+    return;
+  }
+  await ctx.api.deleteMessage(ctx.chat.id, active.messageId).catch(() => {});
+  clearActiveInlineMenu(reason);
+}
+
 export function clearActiveInlineMenu(reason: string): void { const state = interactionManager.getSnapshot(); if (state?.kind === "inline") interactionManager.clear(reason); }
