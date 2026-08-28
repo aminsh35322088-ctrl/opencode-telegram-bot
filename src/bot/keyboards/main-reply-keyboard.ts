@@ -10,15 +10,16 @@ export function createMainKeyboard(
   _contextInfo?: ContextInfo,
   _variantName?: string,
   queuedPromptLabels: string[] = [],
+  paused = false,
 ): Keyboard {
   const keyboard = new Keyboard();
   const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
 
   for (const label of queuedPromptLabels) keyboard.text(label).row();
 
-  // Keep the persistent keyboard intentionally small. Advanced controls live in Settings.
   keyboard.text(modelText).text("💬 New Chat").row();
-  keyboard.text("🕘 History").text("⚙️ Settings").row();
+  keyboard.text(paused ? "▶️ Resume" : "⏸️ Pause").text("🕘 History").row();
+  keyboard.text("⚙️ Settings").row();
 
   return keyboard.resized().persistent();
 }
