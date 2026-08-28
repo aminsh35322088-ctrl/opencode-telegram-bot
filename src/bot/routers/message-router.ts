@@ -26,6 +26,7 @@ import { handleCatalogTextArguments } from "../handlers/text-message-handler.js"
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
 import { newCommand } from "../commands/new-command.js";
+import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
 import { sessionsCommand } from "../commands/sessions-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { closeActiveInlineMenu } from "../menus/inline-menu.js";
@@ -54,6 +55,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.hears(/^⚙️ Settings$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await settingsCommand(ctx as never); });
   bot.hears(/^🕘 History$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await sessionsCommand(ctx as never); });
   bot.hears(/^💬 New Chat$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
+  bot.hears(/^⏸️ Pause$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await pauseCurrentChat(ctx); });
+  bot.hears(/^▶️ Resume$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await resumePausedChat(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Queued prompt button pressed: ${ctx.message?.text}`); if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
   bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
   bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
@@ -74,6 +77,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       if (isIntegrationWizardActive(ctx.chat.id)) { clearIntegrationWizard(ctx.chat.id); clearProviderWizard(ctx.chat.id); await integrationsCommand(ctx as never); return; }
       return;
     }
+    if (text === "⏸️ Pause" || text === "▶️ Resume" || text === "💬 New Chat" || text === "🕘 History" || text === "⚙️ Settings") return;
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
     if (questionManager.isActive()) { await handleQuestionTextAnswer(ctx); return; }
