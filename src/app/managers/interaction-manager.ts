@@ -18,44 +18,29 @@ export const DEFAULT_ALLOWED_INTERACTION_COMMANDS = [
   "/opencode_stop",
 ] as const;
 
+const DEFAULT_INLINE_MENU_TTL_MS = 15 * 60 * 1000;
+
 function normalizeCommand(command: string): string | null {
   const trimmed = command.trim().toLowerCase();
-  if (!trimmed) {
-    return null;
-  }
-
+  if (!trimmed) return null;
   const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
   const withoutMention = withSlash.split("@")[0];
-  if (!withoutMention || withoutMention.length <= 1) {
-    return null;
-  }
-
+  if (!withoutMention || withoutMention.length <= 1) return null;
   return withoutMention;
 }
 
 function normalizeAllowedCommands(commands?: string[]): string[] {
-  if (commands === undefined) {
-    return [...DEFAULT_ALLOWED_INTERACTION_COMMANDS];
-  }
-
+  if (commands === undefined) return [...DEFAULT_ALLOWED_INTERACTION_COMMANDS];
   const normalized = new Set<string>();
-
   for (const command of commands) {
     const value = normalizeCommand(command);
-    if (value) {
-      normalized.add(value);
-    }
+    if (value) normalized.add(value);
   }
-
   return Array.from(normalized);
 }
 
 function cloneState(state: InteractionState): InteractionState {
-  return {
-    ...state,
-    allowedCommands: [...state.allowedCommands],
-    metadata: { ...state.metadata },
-  };
+  return { ...state, allowedCommands: [...state.allowedCommands], metadata: { ...state.metadata } };
 }
 
 class InteractionManager {
@@ -64,13 +49,14 @@ class InteractionManager {
   start(options: StartInteractionOptions): InteractionState {
     const now = Date.now();
     let expiresAt: number | null = null;
-
-    if (this.state) {
-      this.clear("state_replaced");
-    }
+    if (this.state) this.clear("state_replaced");
 
     if (typeof options.expiresInMs === "number") {
       expiresAt = now + options.expiresInMs;
+    } else if (options.kind === "inline") {
+      // Inline menus are ephemeral UI state. An abandoned menu must not block
+      // later text/menu actions indefinitely after the user disappears.
+      expiresAt = now + DEFAULT_INLINE_MENU_TTL_MS;
     }
 
     const nextState: InteractionState = {
@@ -81,80 +67,34 @@ class InteractionManager {
       createdAt: now,
       expiresAt,
     };
-
     this.state = nextState;
-
-    logger.info(
-      `[InteractionManager] Started interaction: kind=${nextState.kind}, expectedInput=${nextState.expectedInput}, allowedCommands=${nextState.allowedCommands.join(",") || "none"}`,
-    );
-
+    logger.info(`[InteractionManager] Started interaction: kind=${nextState.kind}, expectedInput=${nextState.expectedInput}, allowedCommands=${nextState.allowedCommands.join(",") || "none"}`);
     return cloneState(nextState);
   }
 
-  get(): InteractionState | null {
-    if (!this.state) {
-      return null;
-    }
-
-    return cloneState(this.state);
-  }
-
-  getSnapshot(): InteractionState | null {
-    return this.get();
-  }
-
-  isActive(): boolean {
-    return this.state !== null;
-  }
-
-  isExpired(referenceTimeMs: number = Date.now()): boolean {
-    if (!this.state || this.state.expiresAt === null) {
-      return false;
-    }
-
-    return referenceTimeMs >= this.state.expiresAt;
-  }
+  get(): InteractionState | null { return this.state ? cloneState(this.state) : null; }
+  getSnapshot(): InteractionState | null { return this.get(); }
+  isActive(): boolean { return this.state !== null; }
+  isExpired(referenceTimeMs: number = Date.now()): boolean { return !!this.state && this.state.expiresAt !== null && referenceTimeMs >= this.state.expiresAt; }
 
   transition(options: TransitionInteractionOptions): InteractionState | null {
-    if (!this.state) {
-      return null;
-    }
-
+    if (!this.state) return null;
     const now = Date.now();
-
     this.state = {
       ...this.state,
       kind: options.kind ?? this.state.kind,
       expectedInput: options.expectedInput ?? this.state.expectedInput,
-      allowedCommands:
-        options.allowedCommands !== undefined
-          ? normalizeAllowedCommands(options.allowedCommands)
-          : [...this.state.allowedCommands],
+      allowedCommands: options.allowedCommands !== undefined ? normalizeAllowedCommands(options.allowedCommands) : [...this.state.allowedCommands],
       metadata: options.metadata ? { ...options.metadata } : { ...this.state.metadata },
-      expiresAt:
-        options.expiresInMs === undefined
-          ? this.state.expiresAt
-          : options.expiresInMs === null
-            ? null
-            : now + options.expiresInMs,
+      expiresAt: options.expiresInMs === undefined ? this.state.expiresAt : options.expiresInMs === null ? null : now + options.expiresInMs,
     };
-
-    logger.debug(
-      `[InteractionManager] Transitioned interaction: kind=${this.state.kind}, expectedInput=${this.state.expectedInput}, allowedCommands=${this.state.allowedCommands.join(",") || "none"}`,
-    );
-
+    logger.debug(`[InteractionManager] Transitioned interaction: kind=${this.state.kind}, expectedInput=${this.state.expectedInput}, allowedCommands=${this.state.allowedCommands.join(",") || "none"}`);
     return cloneState(this.state);
   }
 
   clear(reason: InteractionClearReason = "manual"): void {
-    if (!this.state) {
-      return;
-    }
-
-    logger.info(
-      `[InteractionManager] Cleared interaction: reason=${reason}, kind=${this.state.kind}, expectedInput=${this.state.expectedInput}`,
-    );
-
+    if (!this.state) return;
+    logger.info(`[InteractionManager] Cleared interaction: reason=${reason}, kind=${this.state.kind}, expectedInput=${this.state.expectedInput}`);
     this.state = null;
   }
 }
@@ -169,51 +109,27 @@ export type InteractionErrorScope =
   | "interaction"
   | "none";
 
-const SCOPE_TO_INTERACTION_KIND: Record<
-  Exclude<InteractionErrorScope, "interaction" | "none">,
-  InteractionState["kind"]
-> = {
+const SCOPE_TO_INTERACTION_KIND: Record<Exclude<InteractionErrorScope, "interaction" | "none">, InteractionState["kind"]> = {
   question: "question",
   permission: "permission",
   rename: "rename",
   taskCreation: "task",
 };
 
-export function clearInteractionErrorState(
-  scope: InteractionErrorScope,
-  reason: string,
-): void {
-  if (scope === "none") {
-    return;
-  }
-
+export function clearInteractionErrorState(scope: InteractionErrorScope, reason: string): void {
+  if (scope === "none") return;
   const stateBefore = interactionManager.getSnapshot();
-
   if (scope === "interaction") {
     interactionManager.clear(reason);
-    logger.debug(
-      `[InteractionCleanup] Cleared scoped state: reason=${reason}, scope=${scope}, interactionKind=${stateBefore?.kind || "none"}`,
-    );
+    logger.debug(`[InteractionCleanup] Cleared scoped state: reason=${reason}, scope=${scope}, interactionKind=${stateBefore?.kind || "none"}`);
     return;
   }
-
-  if (scope === "question") {
-    questionManager.clear();
-  } else if (scope === "permission") {
-    permissionManager.clear();
-  } else if (scope === "rename") {
-    renameManager.clear();
-  } else {
-    taskCreationManager.clear();
-  }
-
-  if (stateBefore && stateBefore.kind === SCOPE_TO_INTERACTION_KIND[scope]) {
-    interactionManager.clear(reason);
-  }
-
-  logger.debug(
-    `[InteractionCleanup] Cleared scoped state: reason=${reason}, scope=${scope}, interactionKind=${stateBefore?.kind || "none"}`,
-  );
+  if (scope === "question") questionManager.clear();
+  else if (scope === "permission") permissionManager.clear();
+  else if (scope === "rename") renameManager.clear();
+  else taskCreationManager.clear();
+  if (stateBefore && stateBefore.kind === SCOPE_TO_INTERACTION_KIND[scope]) interactionManager.clear(reason);
+  logger.debug(`[InteractionCleanup] Cleared scoped state: reason=${reason}, scope=${scope}, interactionKind=${stateBefore?.kind || "none"}`);
 }
 
 export function clearAllInteractionState(reason: string): void {
@@ -222,30 +138,8 @@ export function clearAllInteractionState(reason: string): void {
   const renameActive = renameManager.isWaitingForName();
   const taskCreationActive = taskCreationManager.isActive();
   const interactionSnapshot = interactionManager.getSnapshot();
-
-  questionManager.clear();
-  permissionManager.clear();
-  renameManager.clear();
-  taskCreationManager.clear();
-  interactionManager.clear(reason);
-
-  const hasAnyActiveState =
-    questionActive ||
-    permissionActive ||
-    renameActive ||
-    taskCreationActive ||
-    interactionSnapshot !== null;
-
-  const message =
-    `[InteractionCleanup] Cleared state: reason=${reason}, ` +
-    `questionActive=${questionActive}, permissionActive=${permissionActive}, ` +
-    `renameActive=${renameActive}, taskCreationActive=${taskCreationActive}, ` +
-    `interactionKind=${interactionSnapshot?.kind || "none"}`;
-
-  if (hasAnyActiveState) {
-    logger.info(message);
-    return;
-  }
-
-  logger.debug(message);
+  questionManager.clear(); permissionManager.clear(); renameManager.clear(); taskCreationManager.clear(); interactionManager.clear(reason);
+  const hasAnyActiveState = questionActive || permissionActive || renameActive || taskCreationActive || interactionSnapshot !== null;
+  const message = `[InteractionCleanup] Cleared state: reason=${reason}, questionActive=${questionActive}, permissionActive=${permissionActive}, renameActive=${renameActive}, taskCreationActive=${taskCreationActive}, interactionKind=${interactionSnapshot?.kind || "none"}`;
+  if (hasAnyActiveState) logger.info(message); else logger.debug(message);
 }
