@@ -14,6 +14,7 @@ import { withTelegramRateLimitRetry } from "../utils/telegram-rate-limit-retry.j
 import { registerCallbackRouter } from "./callbacks/callback-router.js";
 import { initializePromptQueueDispatch } from "./handlers/prompt-queue-dispatch.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { inboundRateLimitMiddleware } from "./middleware/inbound-rate-limit.js";
 import { interactionGuardMiddleware } from "./middleware/interaction-guard.js";
 import { staleUpdateMiddleware } from "./middleware/stale-update.js";
 import {
@@ -30,7 +31,6 @@ import { createTelegramBotOptions } from "./telegram-client-options.js";
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let unsubscribeReadyRestore: (() => void) | null = null;
-
 const eventSubscriptionService: BotEventSubscriptionService = createEventSubscriptionService();
 
 const TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS = new Set([
@@ -41,55 +41,27 @@ const TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS = new Set([
   "sendRichMessageDraft",
 ]);
 
-interface TelegramApiErrorResponse {
-  ok: false;
-  error_code: number;
-  description: string;
-  parameters?: object;
-}
-
+interface TelegramApiErrorResponse { ok: false; error_code: number; description: string; parameters?: object; }
 class TelegramApiResponseError extends Error {
-  constructor(readonly response: TelegramApiErrorResponse) {
-    super(response.description ?? "Telegram API request failed");
-    Object.assign(this, response);
-  }
+  constructor(readonly response: TelegramApiErrorResponse) { super(response.description ?? "Telegram API request failed"); Object.assign(this, response); }
 }
 
-export function shouldRetryTelegramServerError(method: string): boolean {
-  return TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS.has(method);
-}
-
+export function shouldRetryTelegramServerError(method: string): boolean { return TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS.has(method); }
 function isTelegramApiErrorResponse(response: unknown): response is TelegramApiErrorResponse {
-  return (
-    typeof response === "object" &&
-    response !== null &&
-    Reflect.get(response, "ok") === false &&
-    typeof Reflect.get(response, "error_code") === "number" &&
-    typeof Reflect.get(response, "description") === "string"
-  );
+  return typeof response === "object" && response !== null && Reflect.get(response, "ok") === false && typeof Reflect.get(response, "error_code") === "number" && typeof Reflect.get(response, "description") === "string";
 }
 
 export function createBot(): Bot<Context> {
   clearAllInteractionState("bot_startup");
   attachManager.clear("bot_startup");
   eventSubscriptionService.clearRuntimeState("bot_startup");
-
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 
   const botOptions = createTelegramBotOptions(config.telegram);
   const bot = new Bot(config.telegram.token, botOptions);
-
   configureAttachPresentation(createAttachPresentation());
-
   eventSubscriptionService.setTelegramContext(bot, config.telegram.allowedUserId);
-
-  initializePromptQueueDispatch({
-    bot,
-    ensureEventSubscription: eventSubscriptionService.ensureEventSubscription,
-  });
+  initializePromptQueueDispatch({ bot, ensureEventSubscription: eventSubscriptionService.ensureEventSubscription });
 
   unsubscribeReadyRestore?.();
   unsubscribeReadyRestore = opencodeReadyLifecycle.onReady(async (reason) => {
@@ -99,64 +71,38 @@ export function createBot(): Bot<Context> {
       ensureEventSubscription: eventSubscriptionService.ensureEventSubscription,
       forceFullRestore: true,
     });
-
-    if (restored) {
-      logger.info(`[Bot] Restored followed session after OpenCode ready: reason=${reason}`);
-      return;
-    }
-
+    if (restored) { logger.info(`[Bot] Restored followed session after OpenCode ready: reason=${reason}`); return; }
     const currentProject = getCurrentProject();
     if (config.bot.trackBackgroundSessions && currentProject?.worktree) {
       await eventSubscriptionService.ensureEventSubscription(currentProject.worktree);
-      logger.info(
-        `[Bot] Started background session tracking after OpenCode ready: reason=${reason}, directory=${currentProject.worktree}`,
-      );
+      logger.info(`[Bot] Started background session tracking after OpenCode ready: reason=${reason}, directory=${currentProject.worktree}`);
     }
   });
 
   let heartbeatCounter = 0;
-  heartbeatTimer = setInterval(() => {
-    heartbeatCounter++;
-    if (heartbeatCounter % 6 === 0) {
-      logger.debug(`[Bot] Heartbeat #${heartbeatCounter} - event loop alive`);
-    }
-  }, 5000);
+  heartbeatTimer = setInterval(() => { heartbeatCounter++; if (heartbeatCounter % 6 === 0) logger.debug(`[Bot] Heartbeat #${heartbeatCounter} - event loop alive`); }, 5000);
 
   let lastGetUpdatesTime = Date.now();
   bot.api.config.use(async (prev, method, payload, signal) => {
     if (method === "getUpdates") {
       const now = Date.now();
-      const timeSinceLast = now - lastGetUpdatesTime;
-      logger.debug(`[Bot API] getUpdates called (${timeSinceLast}ms since last)`);
+      logger.debug(`[Bot API] getUpdates called (${now - lastGetUpdatesTime}ms since last)`);
       lastGetUpdatesTime = now;
       return prev(method, payload, signal);
     }
-
-    if (method === "sendMessage") {
-      logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id}`);
-    }
-
+    if (method === "sendMessage") logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id}`);
     try {
       return await withTelegramRateLimitRetry(async () => {
         const response = await prev(method, payload, signal);
-        if (isTelegramApiErrorResponse(response)) {
-          throw new TelegramApiResponseError(response);
-        }
+        if (isTelegramApiErrorResponse(response)) throw new TelegramApiResponseError(response);
         return response;
       }, {
         maxRetries: 5,
         retryTransientServerErrors: shouldRetryTelegramServerError(method),
-        onRetry: ({ attempt, retryAfterMs, error }) => {
-          logger.warn(
-            `[Bot API] Retryable Telegram error on ${method}, retrying in ${retryAfterMs}ms (attempt=${attempt})`,
-            error,
-          );
-        },
+        onRetry: ({ attempt, retryAfterMs, error }) => logger.warn(`[Bot API] Retryable Telegram error on ${method}, retrying in ${retryAfterMs}ms (attempt=${attempt})`, error),
       });
     } catch (error) {
-      if (error instanceof TelegramApiResponseError) {
-        return error.response;
-      }
+      if (error instanceof TelegramApiResponseError) return error.response;
       throw error;
     }
   });
@@ -165,29 +111,19 @@ export function createBot(): Bot<Context> {
     const hasCallbackQuery = !!ctx.callbackQuery;
     const hasMessage = !!ctx.message;
     const callbackData = ctx.callbackQuery?.data || "N/A";
-    logger.debug(
-      `[DEBUG] Incoming update: hasCallbackQuery=${hasCallbackQuery}, hasMessage=${hasMessage}, callbackData=${callbackData}`,
-    );
+    logger.debug(`[DEBUG] Incoming update: hasCallbackQuery=${hasCallbackQuery}, hasMessage=${hasMessage}, callbackData=${callbackData}`);
     return next();
   });
 
   bot.use(authMiddleware);
   bot.use(staleUpdateMiddleware);
+  bot.use(inboundRateLimitMiddleware);
   bot.use(ensureCommandsInitialized);
   bot.use(interactionGuardMiddleware);
 
-  registerCommandRouter(bot, {
-    ensureEventSubscription: eventSubscriptionService.ensureEventSubscription,
-    clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason),
-  });
-  registerCallbackRouter(bot, {
-    ensureEventSubscription: eventSubscriptionService.ensureEventSubscription,
-    setTelegramContext: eventSubscriptionService.setTelegramContext,
-  });
-  registerMessageRouter(bot, {
-    ensureEventSubscription: eventSubscriptionService.ensureEventSubscription,
-    setTelegramContext: eventSubscriptionService.setTelegramContext,
-  });
+  registerCommandRouter(bot, { ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason) });
+  registerCallbackRouter(bot, { ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, setTelegramContext: eventSubscriptionService.setTelegramContext });
+  registerMessageRouter(bot, { ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, setTelegramContext: eventSubscriptionService.setTelegramContext });
 
   safeBackgroundTask({
     taskName: "bot.clearGlobalCommands",
@@ -198,29 +134,15 @@ export function createBot(): Bot<Context> {
           bot.api.setMyCommands([], { scope: { type: "all_private_chats" } }),
         ]);
         return { success: true as const };
-      } catch (error) {
-        return { success: false as const, error };
-      }
+      } catch (error) { return { success: false as const, error }; }
     },
-    onSuccess: (result) => {
-      if (result.success) {
-        logger.debug("[Bot] Cleared global commands (default and all_private_chats scopes)");
-        return;
-      }
-
-      logger.warn("[Bot] Could not clear global commands:", result.error);
-    },
+    onSuccess: (result) => { if (result.success) { logger.debug("[Bot] Cleared global commands (default and all_private_chats scopes)"); return; } logger.warn("[Bot] Could not clear global commands:", result.error); },
   });
 
   bot.catch((err) => {
     logger.error("[Bot] Unhandled error in bot:", err);
     clearAllInteractionState("bot_unhandled_error");
-    if (err.ctx) {
-      logger.error(
-        "[Bot] Error context - update type:",
-        err.ctx.update ? Object.keys(err.ctx.update) : "unknown",
-      );
-    }
+    if (err.ctx) logger.error("[Bot] Error context - update type:", err.ctx.update ? Object.keys(err.ctx.update) : "unknown");
   });
 
   return bot;
@@ -230,9 +152,5 @@ export function cleanupBotRuntime(reason: string): void {
   unsubscribeReadyRestore?.();
   unsubscribeReadyRestore = null;
   eventSubscriptionService.cleanup(reason);
-
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
