@@ -10,13 +10,13 @@ const INDEX_FILENAME = "accounts.json";
 export interface GithubAccount {
   id: string;
   name: string;
-  username?: string;
+  username: string | undefined;
   tokenFile: string;
   createdAt: string;
 }
 
 interface GithubIndex {
-  activeId?: string;
+  activeId: string | undefined;
   accounts: GithubAccount[];
 }
 
@@ -51,9 +51,12 @@ function slugify(value: string): string {
 async function readIndex(): Promise<GithubIndex> {
   try {
     const parsed = JSON.parse(await fs.readFile(getIndexPath(), "utf8")) as Partial<GithubIndex>;
-    return { accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [], activeId: parsed.activeId };
+    return {
+      accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
+      activeId: typeof parsed.activeId === "string" ? parsed.activeId : undefined,
+    };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { accounts: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { accounts: [], activeId: undefined };
     throw error;
   }
 }
@@ -63,7 +66,7 @@ async function writeIndex(index: GithubIndex): Promise<void> {
   await fs.writeFile(getIndexPath(), `${JSON.stringify(index, null, 2)}\n`, { mode: 0o600 });
 }
 
-async function applyActiveToken(index = await readIndex()): Promise<string> {
+async function applyActiveToken(index: GithubIndex): Promise<string> {
   const active = index.accounts.find((account) => account.id === index.activeId) ?? index.accounts[0];
   if (!active) {
     delete process.env.GITHUB_TOKEN;
@@ -87,18 +90,21 @@ export async function addGithubAccount(name: string, tokenValue: string, usernam
   const token = normalizeToken(tokenValue);
   const cleanName = name.trim();
   if (!cleanName) throw new Error("GitHub account name is empty");
+
   const index = await readIndex();
   const base = slugify(cleanName);
   let id = base;
   let counter = 2;
   while (index.accounts.some((account) => account.id === id)) id = `${base}-${counter++}`;
+
   const account: GithubAccount = {
     id,
     name: cleanName,
-    ...(username?.trim() ? { username: username.trim() } : {}),
+    username: username?.trim() || undefined,
     tokenFile: `${id}.token`,
     createdAt: new Date().toISOString(),
   };
+
   await fs.mkdir(getGithubDir(), { recursive: true, mode: 0o700 });
   await fs.writeFile(getAccountTokenPath(account), `${token}\n`, { mode: 0o600 });
   index.accounts.push(account);
@@ -112,6 +118,7 @@ export async function removeGithubAccount(id: string): Promise<boolean> {
   const index = await readIndex();
   const account = index.accounts.find((item) => item.id === id);
   if (!account) return false;
+
   index.accounts = index.accounts.filter((item) => item.id !== id);
   await fs.rm(getAccountTokenPath(account), { force: true });
   if (index.activeId === id) index.activeId = index.accounts[0]?.id;
@@ -124,6 +131,7 @@ export async function setActiveGithubAccount(id: string): Promise<GithubAccount>
   const index = await readIndex();
   const account = index.accounts.find((item) => item.id === id);
   if (!account) throw new Error("GitHub account not found");
+
   index.activeId = id;
   await writeIndex(index);
   await applyActiveToken(index);
@@ -133,6 +141,7 @@ export async function setActiveGithubAccount(id: string): Promise<GithubAccount>
 export async function getGithubToken(): Promise<string> {
   const index = await readIndex();
   if (index.accounts.length) return applyActiveToken(index);
+
   try {
     return (await fs.readFile(getLegacyTokenPath(), "utf8")).trim();
   } catch (error) {
@@ -145,17 +154,19 @@ export async function hasGithubToken(): Promise<boolean> {
   return Boolean(await getGithubToken());
 }
 
-/** Backward-compatible single-account save; creates/replaces the default account. */
+/** Backward-compatible single-account save: replaces the active account token. */
 export async function saveGithubToken(value: string): Promise<void> {
+  const token = normalizeToken(value);
   const index = await readIndex();
-  if (index.accounts.length) {
-    const active = index.accounts.find((account) => account.id === index.activeId) ?? index.accounts[0];
-    const token = normalizeToken(value);
+  const active = index.accounts.find((account) => account.id === index.activeId) ?? index.accounts[0];
+
+  if (active) {
     await fs.writeFile(getAccountTokenPath(active), `${token}\n`, { mode: 0o600 });
     await applyActiveToken(index);
     return;
   }
-  await addGithubAccount("GitHub", value);
+
+  await addGithubAccount("GitHub", token);
 }
 
 export async function clearGithubToken(): Promise<void> {
@@ -172,14 +183,16 @@ export async function initializeGithubTokenFromEnvironment(): Promise<boolean> {
     await applyActiveToken(index);
     return Boolean(process.env.GITHUB_TOKEN);
   }
-  const legacy = await fs.readFile(getLegacyTokenPath(), "utf8").then((v) => v.trim()).catch(() => "");
+
+  const legacy = await fs.readFile(getLegacyTokenPath(), "utf8").then((value) => value.trim()).catch(() => "");
   const envToken = process.env.GITHUB_TOKEN?.trim();
   if (!legacy && !envToken) return false;
+
   await addGithubAccount("GitHub", legacy || envToken!);
   if (envToken) delete process.env.GITHUB_TOKEN;
   return true;
 }
 
 export function getGithubTokenPath(): string {
-  return getLegacyTokenPath();
+  return getGithubDir();
 }
