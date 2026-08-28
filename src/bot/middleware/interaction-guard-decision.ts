@@ -9,17 +9,19 @@ import { isIntegrationWizardActive } from "../commands/integrations-command.js";
 
 const BUSY_ALLOWED_COMMANDS = ["/abort", "/detach", "/status", "/help", "/opencode_stop"] as const;
 const BUSY_ALLOWED_COMMAND_SET = new Set<string>(BUSY_ALLOWED_COMMANDS);
+const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
 
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && BUSY_ALLOWED_COMMAND_SET.has(command)); }
 function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
 function isSetupWizardText(ctx: Context): boolean { const chatId = ctx.chat?.id; return Boolean(chatId && ctx.message?.text && (isProviderWizardActive(chatId) || isIntegrationWizardActive(chatId))); }
+function isRootNavigationText(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && ROOT_NAVIGATION_TEXTS.has(text); }
 function normalizeIncomingCommand(text: string): string | null { const trimmed = text.trim(); if (!trimmed.startsWith("/")) return null; const token = trimmed.split(/\s+/)[0]; if (!token) return null; const withoutMention = token.split("@")[0]?.toLowerCase(); return !withoutMention || withoutMention.length <= 1 ? null : withoutMention; }
 function classifyIncomingInput(ctx: Context): { inputType: IncomingInputType; command?: string } {
   if (ctx.callbackQuery?.data) return { inputType: "callback" };
   const text = ctx.message?.text;
   if (typeof text === "string") { const command = normalizeIncomingCommand(text); return command ? { inputType: "command", command } : { inputType: "text" }; }
-  return { inputType: ctx.message?.photo ? "other" : "other" };
+  return { inputType: "other" };
 }
 function getExpectedInputBlockReason(expectedInput: ExpectedInput): BlockReason { switch (expectedInput) { case "callback": return "expected_callback"; case "command": return "expected_command"; case "text": case "mixed": return "expected_text"; } }
 function createAllowDecision(inputType: IncomingInputType, state: InteractionState | null, command?: string, busy?: boolean): GuardDecision { return { allow: true, inputType, state, command, busy }; }
@@ -30,8 +32,14 @@ function isAllowedTaskCallback(ctx: Context, state: InteractionState): boolean {
 
 export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   const state = interactionManager.getSnapshot(); const { inputType, command } = classifyIncomingInput(ctx); const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
-  // Provider/GitHub setup is a Telegram-local wizard. Its free-form answers must bypass the generic interaction guard.
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
+
+  // A local inline menu is navigation state, not a blocking user interaction.
+  // Root reply-keyboard navigation must be allowed to replace/close it.
+  if (inputType === "text" && state?.kind === "inline" && isRootNavigationText(ctx)) {
+    return createAllowDecision(inputType, state, command, isBusy);
+  }
+
   if (state && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, state, "expired", command, isBusy); }
   if (isBusy) {
     if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, state, command, true); return createBusyBlockDecision(inputType, state, "command_not_allowed", command); }
