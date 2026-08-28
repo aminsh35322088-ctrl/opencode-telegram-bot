@@ -13,7 +13,6 @@ export const en = {
   "cmd.description.commands": "Custom commands",
   "cmd.description.skills": "Skills catalog",
   "cmd.description.mcps": "MCP servers",
-  "cmd.description.memory": "Persistent memory",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",
   "cmd.description.ls": "List directory contents",
@@ -143,7 +142,7 @@ export const en = {
   "tts.all": "🔊 Audio replies enabled for all messages.",
   "tts.auto": "🎤 Audio replies enabled for voice/audio messages only.",
   "tts.not_configured":
-    "⚠️ Audio replies are unavailable.\n\nSet STT/TTS variables to enable audio replies.",
+    "🎤 Voice recognition is not configured.\n\nSet STT_API_URL and STT_API_KEY in .env to enable it.",
   "tts.failed": "⚠️ Failed to generate audio reply.",
 
   "settings.menu.title": "⚙️ Bot settings\nTap a setting to toggle its value:",
