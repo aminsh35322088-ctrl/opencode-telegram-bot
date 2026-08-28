@@ -31,12 +31,20 @@ export async function rememberCommand(ctx: CommandContext<Context>): Promise<voi
   const content = isProjectMemory ? argument.slice(projectPrefix.length).trim() : argument;
 
   try {
-    const memory = await addMemory({
+    const input: {
+      scope: "user" | "project";
+      content: string;
+      projectId?: string | undefined;
+      projectDirectory?: string | undefined;
+    } = {
       scope: isProjectMemory ? "project" : "user",
       content,
-      projectId: project?.id,
-      projectDirectory: project?.worktree,
-    });
+    };
+
+    if (project?.id) input.projectId = project.id;
+    if (project?.worktree) input.projectDirectory = project.worktree;
+
+    const memory = await addMemory(input);
     await ctx.reply(`✅ Memory saved (${memory.scope}).\n\n${memory.content}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not save memory";
