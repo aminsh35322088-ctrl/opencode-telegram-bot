@@ -11,7 +11,6 @@ import { handleMcpsCallback } from "./mcp-catalog-callback-handler.js";
 import { handleMessagesCallback } from "./message-history-callback-handler.js";
 import { handleModelProvidersCallback, handleModelSearchCallback, handleModelSearchResults, handleModelSelect } from "./model-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
-import { handleProjectSelect } from "./project-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
@@ -48,10 +47,6 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["model", { name: "model", handlers: [handleModelSearchCallback, handleModelSearchResults, handleModelProvidersCallback, handleModelSelect], errorScope: "interaction" }],
     ["open", { name: "open", handlers: [(ctx) => handleOpenCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["permission", { name: "permission", handlers: [handlePermissionCallback], errorScope: "permission" }],
-    ["project", { name: "project", handlers: [(ctx) => handleProjectSelect(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
-    ["projects", { name: "projects", handlers: [(ctx) => handleProjectSelect(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
-    ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }],
-    ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
     ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],
     ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }],
     ["session", { name: "session", handlers: [(ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }), (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
@@ -62,6 +57,8 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["tasklist", { name: "tasklist", handlers: [handleTaskListCallback], errorScope: "interaction" }],
     ["variant", { name: "variant", handlers: [handleVariantSelect], errorScope: "interaction" }],
     ["worktree", { name: "worktree", handlers: [(ctx) => handleWorktreeCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }],
+    ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
   ]);
 
   bot.on("callback_query:data", async (ctx) => {
