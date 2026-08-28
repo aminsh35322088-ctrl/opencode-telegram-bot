@@ -19,6 +19,7 @@ import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { handleBackgroundSessionOpen, handleSessionSelect } from "./session-callback-handler.js";
+import { handleSessionPreviewCallback } from "./session-preview-callback-handler.js";
 import { handleSkillsCallback } from "./skills-catalog-callback-handler.js";
 import { handleTaskCallback, handleTaskListCallback } from "./scheduled-task-callback-handler.js";
 import { handleVariantSelect } from "./variant-selection-callback-handler.js";
@@ -52,7 +53,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
     ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],
     ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }],
-    ["session", { name: "session", handlers: [(ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["session", { name: "session", handlers: [handleSessionPreviewCallback, (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }],
     ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }],
