@@ -1,8 +1,7 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { getGitWorktreeContext } from "../../app/services/worktree-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
-import { getCurrentProject, getTtsMode } from "../../app/stores/settings-store.js";
+import { getTtsMode } from "../../app/stores/settings-store.js";
 import { fetchCurrentAgent } from "../../app/services/agent-selection-service.js";
 import { fetchCurrentModel } from "../../app/services/model-selection-service.js";
 import { getAgentDisplayName } from "../../app/types/agent.js";
@@ -37,45 +36,15 @@ export async function statusCommand(ctx: CommandContext<Context>) {
             : t("status.tts.auto"),
     })}\n`;
 
-    // Add agent information
     const currentAgent = await fetchCurrentAgent();
     const agentDisplay = currentAgent
       ? getAgentDisplayName(currentAgent)
       : t("status.agent_not_set");
     message += `${t("status.line.mode", { mode: agentDisplay })}\n`;
 
-    // Add model information
     const currentModel = fetchCurrentModel();
     const modelDisplay = `🧠 ${currentModel.providerID}/${currentModel.modelID}`;
     message += `${t("status.line.model", { model: modelDisplay })}\n`;
-
-    const currentProject = getCurrentProject();
-    if (currentProject) {
-      let projectDisplay = currentProject.worktree;
-      let linkedWorktreePath: string | null = null;
-
-      try {
-        const worktreeContext = await getGitWorktreeContext(currentProject.worktree);
-        if (worktreeContext) {
-          projectDisplay = worktreeContext.branch
-            ? `${worktreeContext.mainProjectPath}: ${worktreeContext.branch}`
-            : worktreeContext.mainProjectPath;
-          linkedWorktreePath = worktreeContext.isLinkedWorktree
-            ? worktreeContext.activeWorktreePath
-            : null;
-        }
-      } catch (error) {
-        logger.debug("[Status] Could not resolve git worktree metadata", error);
-      }
-
-      message += `\n${t("status.project_selected", { project: projectDisplay })}\n`;
-      if (linkedWorktreePath) {
-        message += `${t("status.worktree_selected", { worktree: linkedWorktreePath })}\n`;
-      }
-    } else {
-      message += `\n${t("status.project_not_selected")}\n`;
-      message += t("status.project_hint");
-    }
 
     const currentSession = getCurrentSession();
     if (currentSession) {
@@ -89,13 +58,12 @@ export async function statusCommand(ctx: CommandContext<Context>) {
       if (!pinnedMessageManager.isInitialized()) {
         pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
       }
-      // Fetch context limit if not yet loaded (e.g. fresh bot start)
       if (pinnedMessageManager.getContextLimit() === 0) {
         await pinnedMessageManager.refreshContextLimit();
       }
       keyboardManager.initialize(ctx.api, ctx.chat.id);
     }
-    // Sync current context (tokens used + limit) into keyboard state
+
     const contextInfo = pinnedMessageManager.getContextInfo();
     if (contextInfo) {
       keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
