@@ -2,6 +2,7 @@ import type { Bot, Context, NextFunction } from "grammy";
 import { config } from "../../config.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { providersCommand, handleProviderWizardMessage } from "../commands/providers-command.js";
+import { integrationsCommand, handleIntegrationMessage } from "../commands/integrations-command.js";
 import { opencodeStartCommand } from "../commands/opencode-start-command.js";
 import { opencodeStopCommand } from "../commands/opencode-stop-command.js";
 import { projectsCommand } from "../commands/projects-command.js";
@@ -46,11 +47,14 @@ export async function ensureCommandsInitialized(ctx: Context, next: NextFunction
 export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps): void {
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.message?.text?.startsWith("/")) flushPendingPrompt(ctx.chat.id);
-    if (ctx.message?.text && ctx.chat && await handleProviderWizardMessage(ctx)) return;
+    if (ctx.message?.text && ctx.chat) {
+      if (await handleProviderWizardMessage(ctx)) return;
+      if (await handleIntegrationMessage(ctx)) return;
+    }
     await next();
   });
   bot.command("start", startCommand); bot.command("help", helpCommand); bot.command("status", statusCommand);
-  bot.command("settings", settingsCommand); bot.command("providers", providersCommand);
+  bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand);
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }));
   bot.command("projects", projectsCommand); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand);
