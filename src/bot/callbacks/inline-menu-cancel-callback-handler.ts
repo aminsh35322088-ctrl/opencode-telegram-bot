@@ -31,16 +31,22 @@ export async function handleInlineMenuCancel(ctx: Context): Promise<boolean> {
     return false;
   }
 
-  const isActive = await ensureActiveInlineMenu(ctx, menuKind);
-  if (!isActive) {
+  try {
+    const isActive = await ensureActiveInlineMenu(ctx, menuKind);
+    if (!isActive) {
+      await ctx.answerCallbackQuery({ text: "Already closed" }).catch(() => {});
+      return true;
+    }
+
+    clearActiveInlineMenu(`inline_menu_cancel:${menuKind}`);
+    await cancelMenu(ctx);
+    await ctx.answerCallbackQuery({ text: "Cancelled" }).catch(() => {});
+
+    logger.debug(`[InlineMenu] Menu cancelled: kind=${menuKind}`);
+    return true;
+  } catch (error) {
+    logger.error(`[InlineMenu] Failed to cancel menu: kind=${menuKind}`, error);
+    await ctx.answerCallbackQuery({ text: "Cancel failed" }).catch(() => {});
     return true;
   }
-
-  clearActiveInlineMenu(`inline_menu_cancel:${menuKind}`);
-
-  await cancelMenu(ctx);
-
-  logger.debug(`[InlineMenu] Menu cancelled: kind=${menuKind}`);
-
-  return true;
 }
