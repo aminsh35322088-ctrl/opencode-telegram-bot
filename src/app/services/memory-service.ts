@@ -9,8 +9,8 @@ export type MemoryScope = "user" | "project";
 export interface MemoryItem {
   id: string;
   scope: MemoryScope;
-  projectId?: string;
-  projectDirectory?: string;
+  projectId?: string | undefined;
+  projectDirectory?: string | undefined;
   content: string;
   createdAt: string;
   updatedAt: string;
@@ -85,8 +85,8 @@ function scoreMemory(memory: MemoryItem, queryTokens: Set<string>): number {
 export async function addMemory(input: {
   scope: MemoryScope;
   content: string;
-  projectId?: string;
-  projectDirectory?: string;
+  projectId?: string | undefined;
+  projectDirectory?: string | undefined;
 }): Promise<MemoryItem> {
   const content = normalizeContent(input.content);
   const store = await readStore();
@@ -114,7 +114,7 @@ export async function addMemory(input: {
   return memory;
 }
 
-export async function listMemories(scope?: MemoryScope, projectId?: string): Promise<MemoryItem[]> {
+export async function listMemories(scope?: MemoryScope, projectId?: string | undefined): Promise<MemoryItem[]> {
   const store = await readStore();
   return store.memories.filter((memory) => {
     if (!scope) return true;
@@ -134,9 +134,9 @@ export async function removeMemory(id: string): Promise<boolean> {
 
 export async function searchRelevantMemories(input: {
   query: string;
-  projectId?: string;
-  projectDirectory?: string;
-  maxChars?: number;
+  projectId?: string | undefined;
+  projectDirectory?: string | undefined;
+  maxChars?: number | undefined;
 }): Promise<MemoryItem[]> {
   const queryTokens = new Set(tokenize(input.query));
   if (queryTokens.size === 0) return [];
