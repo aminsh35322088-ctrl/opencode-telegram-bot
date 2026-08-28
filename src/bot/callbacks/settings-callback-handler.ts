@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { isTtsConfigured } from "../../app/services/tts-service.js";
+import { showModelSelectionMenu } from "../menus/model-selection-menu.js";
 import {
   getCompactOutputMode,
   getPromptQueueEnabled,
@@ -27,6 +28,7 @@ import {
   SETTINGS_CALLBACK_PREFIX,
   SETTINGS_COMPACT_OUTPUT_CALLBACK,
   SETTINGS_DIFF_FILES_CALLBACK,
+  SETTINGS_MODEL_CALLBACK,
   SETTINGS_PROMPT_QUEUE_CALLBACK,
   SETTINGS_RESPONSE_STREAMING_CALLBACK,
   SETTINGS_THINKING_CONTENT_CALLBACK,
@@ -34,26 +36,14 @@ import {
 } from "../menus/settings-menu.js";
 
 function getTtsSavedMessageKey(mode: TtsMode): "tts.off" | "tts.all" | "tts.auto" {
-  if (mode === "all") {
-    return "tts.all";
-  }
-
-  if (mode === "auto") {
-    return "tts.auto";
-  }
-
+  if (mode === "all") return "tts.all";
+  if (mode === "auto") return "tts.auto";
   return "tts.off";
 }
 
 function getNextTtsMode(mode: TtsMode): TtsMode {
-  if (mode === "off") {
-    return "all";
-  }
-
-  if (mode === "all") {
-    return "auto";
-  }
-
+  if (mode === "off") return "all";
+  if (mode === "all") return "auto";
   return "off";
 }
 
@@ -63,95 +53,49 @@ function getNextResponseStreamingMode(mode: ResponseStreamingMode): ResponseStre
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
-
-  if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) {
-    return false;
-  }
+  if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) return false;
 
   const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
-  if (!isActiveMenu) {
-    return true;
-  }
+  if (!isActiveMenu) return true;
 
   try {
+    if (callbackData === SETTINGS_MODEL_CALLBACK) {
+      await ctx.answerCallbackQuery();
+      await showModelSelectionMenu(ctx);
+      return true;
+    }
+
     if (callbackData === SETTINGS_COMPACT_OUTPUT_CALLBACK) {
       setCompactOutputMode(!getCompactOutputMode());
-      const { text, keyboard } = buildSettingsMenuView();
-      await ctx.answerCallbackQuery({ text: t("settings.saved") });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
-      return true;
-    }
-
-    if (callbackData === SETTINGS_THINKING_CONTENT_CALLBACK) {
+    } else if (callbackData === SETTINGS_THINKING_CONTENT_CALLBACK) {
       setShowThinkingContent(!getShowThinkingContent());
-      const { text, keyboard } = buildSettingsMenuView();
-      await ctx.answerCallbackQuery({ text: t("settings.saved") });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
-      return true;
-    }
-
-    if (callbackData === SETTINGS_RESPONSE_STREAMING_CALLBACK) {
+    } else if (callbackData === SETTINGS_RESPONSE_STREAMING_CALLBACK) {
       setResponseStreamingMode(getNextResponseStreamingMode(getResponseStreamingMode()));
-      const { text, keyboard } = buildSettingsMenuView();
-      await ctx.answerCallbackQuery({ text: t("settings.saved") });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
-      return true;
-    }
-
-    if (callbackData === SETTINGS_DIFF_FILES_CALLBACK) {
+    } else if (callbackData === SETTINGS_DIFF_FILES_CALLBACK) {
       setSendDiffFileAttachments(!getSendDiffFileAttachments());
-      const { text, keyboard } = buildSettingsMenuView();
-      await ctx.answerCallbackQuery({ text: t("settings.saved") });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
-      return true;
-    }
-
-    if (callbackData === SETTINGS_PROMPT_QUEUE_CALLBACK) {
+    } else if (callbackData === SETTINGS_PROMPT_QUEUE_CALLBACK) {
       setPromptQueueEnabled(!getPromptQueueEnabled());
-      const { text, keyboard } = buildSettingsMenuView();
-      await ctx.answerCallbackQuery({ text: t("settings.saved") });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
-      return true;
-    }
-
-    if (callbackData === SETTINGS_ASSISTANT_FOOTER_CALLBACK) {
+    } else if (callbackData === SETTINGS_ASSISTANT_FOOTER_CALLBACK) {
       setShowAssistantRunFooter(!getShowAssistantRunFooter());
-      const { text, keyboard } = buildSettingsMenuView();
-      await ctx.answerCallbackQuery({ text: t("settings.saved") });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
-      return true;
-    }
-
-    if (callbackData === SETTINGS_TTS_CALLBACK) {
+    } else if (callbackData === SETTINGS_TTS_CALLBACK) {
       const nextMode = getNextTtsMode(getTtsMode());
-
       if (nextMode !== "off" && !isTtsConfigured()) {
         await ctx.answerCallbackQuery({ text: t("tts.not_configured"), show_alert: true });
         return true;
       }
-
       setTtsMode(nextMode);
       const { text, keyboard } = buildSettingsMenuView();
       await ctx.answerCallbackQuery({ text: t(getTtsSavedMessageKey(nextMode)) });
-      await ctx.editMessageText(text, {
-        reply_markup: appendInlineMenuCancelButton(keyboard, "settings"),
-      });
+      await ctx.editMessageText(text, { reply_markup: appendInlineMenuCancelButton(keyboard, "settings") });
+      return true;
+    } else {
+      await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
       return true;
     }
 
-    await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+    const { text, keyboard } = buildSettingsMenuView();
+    await ctx.answerCallbackQuery({ text: t("settings.saved") });
+    await ctx.editMessageText(text, { reply_markup: appendInlineMenuCancelButton(keyboard, "settings") });
     return true;
   } catch (error) {
     logger.error("[Settings] Error handling settings callback:", error);
