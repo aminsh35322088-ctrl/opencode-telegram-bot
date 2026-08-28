@@ -1,5 +1,6 @@
 import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
+import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { setCurrentSession } from "../../app/services/session-service.js";
 import { attachToSession } from "../../app/services/attach-service.js";
@@ -61,7 +62,10 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
     const sessionId = previewId ?? continueId;
     if (!sessionId) return true;
 
-    const { data: session, error } = await deps.bot.api.getMyCommands ? await import("../../opencode/client.js").then(({ opencodeClient }) => opencodeClient.session.get({ sessionID: sessionId, directory: project.worktree })) : { data: null, error: new Error("OpenCode client unavailable") };
+    const { data: session, error } = await opencodeClient.session.get({
+      sessionID: sessionId,
+      directory: project.worktree,
+    });
     if (error || !session) throw error || new Error("Session not found");
 
     if (previewId) {
@@ -73,12 +77,13 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
       return true;
     }
 
-    setCurrentSession({ id: session.id, title: session.title, directory: project.worktree });
+    const sessionInfo = { id: session.id, title: session.title, directory: project.worktree };
+    setCurrentSession(sessionInfo);
     clearAllInteractionState("session_preview_continue");
     await attachToSession({
       bot: deps.bot,
       chatId: ctx.chat!.id,
-      session: { id: session.id, title: session.title, directory: project.worktree },
+      session: sessionInfo,
       ensureEventSubscription: deps.ensureEventSubscription,
     });
     keyboardManager.updateAgent(await resolveProjectAgent());
