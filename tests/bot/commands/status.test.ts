@@ -6,7 +6,6 @@ const mocked = vi.hoisted(() => ({
   healthMock: vi.fn(),
   getCurrentSessionMock: vi.fn(),
   getCurrentProjectMock: vi.fn(),
-  getTtsModeMock: vi.fn(),
   fetchCurrentAgentMock: vi.fn(),
   fetchCurrentModelMock: vi.fn(),
   getGitWorktreeContextMock: vi.fn(),
@@ -48,7 +47,6 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentProject: mocked.getCurrentProjectMock,
-  getTtsMode: mocked.getTtsModeMock,
 }));
 
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({
@@ -90,7 +88,6 @@ describe("bot/commands/status-command", () => {
     mocked.healthMock.mockReset();
     mocked.getCurrentSessionMock.mockReset();
     mocked.getCurrentProjectMock.mockReset();
-    mocked.getTtsModeMock.mockReset();
     mocked.fetchCurrentAgentMock.mockReset();
     mocked.fetchCurrentModelMock.mockReset();
     mocked.getGitWorktreeContextMock.mockReset();
@@ -111,7 +108,6 @@ describe("bot/commands/status-command", () => {
     mocked.healthMock.mockResolvedValue({ data: { healthy: true, version: "1.0.0" }, error: null });
     mocked.getCurrentSessionMock.mockReturnValue({ id: "s1", title: "S", directory: "/repo" });
     mocked.getCurrentProjectMock.mockReturnValue({ id: "p1", worktree: "/repo", name: "Repo" });
-    mocked.getTtsModeMock.mockReturnValue("all");
     mocked.fetchCurrentAgentMock.mockResolvedValue("build");
     mocked.fetchCurrentModelMock.mockReturnValue({ providerID: "openai", modelID: "gpt-5" });
     mocked.getGitWorktreeContextMock.mockResolvedValue(null);
@@ -123,7 +119,7 @@ describe("bot/commands/status-command", () => {
     mocked.sendBotTextMock.mockResolvedValue(undefined);
   });
 
-  it("includes TTS status in the rendered message", async () => {
+  it("renders healthy server, model, session, and git worktree information", async () => {
     const ctx = {
       chat: { id: 42, type: "private" },
       message: { text: "/status" },
@@ -134,9 +130,10 @@ describe("bot/commands/status-command", () => {
     await statusCommand(ctx as never);
 
     const message = mocked.sendBotTextMock.mock.calls[0]?.[0]?.text as string;
-    expect(message).toContain("Audio replies");
-    expect(message).toContain("All");
-    expect(message).not.toContain("Started by bot");
+    expect(message).toContain("OpenCode Server is running");
+    expect(message).toContain("Model:");
+    expect(message).toContain("Current session: S");
+    expect(message).not.toContain("Audio replies");
   });
 
   it("shows main project path and linked worktree when git metadata is available", async () => {
