@@ -1,5 +1,5 @@
 import { CommandContext, Context } from "grammy";
-import { getCurrentProject } from "../../app/stores/settings-store.js";
+import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { isForegroundBusy } from "../../app/services/run-control-service.js";
 import { replyBusyBlocked } from "../messages/busy-blocked-renderer.js";
@@ -16,16 +16,11 @@ export async function sessionsCommand(ctx: CommandContext<Context>) {
     }
 
     const pageSize = config.bot.sessionsListLimit;
-    const currentProject = getCurrentProject();
+    const directory = getCurrentSessionDirectory();
 
-    if (!currentProject) {
-      await ctx.reply(t("sessions.project_not_selected"));
-      return;
-    }
+    logger.debug(`[Sessions] Fetching sessions for directory: ${directory}`);
 
-    logger.debug(`[Sessions] Fetching sessions for directory: ${currentProject.worktree}`);
-
-    const firstPage = await loadSessionPage(currentProject.worktree, 0, pageSize);
+    const firstPage = await loadSessionPage(directory, 0, pageSize);
 
     logger.debug(`[Sessions] Found ${firstPage.sessions.length} sessions on page 1`);
     firstPage.sessions.forEach((session) => {
