@@ -97,13 +97,8 @@ export async function buildModelSelectionMenu(currentModel?: ModelInfo, modelLis
     keyboard.text(modelLabel(model, active, icon), buildModelListCallback(kind, index)).row();
   };
 
-  if (lists.favorites.length > 0) {
-    lists.favorites.forEach((model, index) => addButton(model, "⭐", "favorites", index));
-  }
-
-  if (lists.recent.length > 0) {
-    lists.recent.forEach((model, index) => addButton(model, "🕘", "recent", index));
-  }
+  lists.favorites.forEach((model, index) => addButton(model, "⭐", "favorites", index));
+  lists.recent.forEach((model, index) => addButton(model, "🕘", "recent", index));
 
   if (lists.favorites.length === 0 && lists.recent.length === 0) {
     logger.warn("[ModelHandler] No favorite or recent models found");
@@ -153,7 +148,10 @@ export function buildProvidersMenuView(providers: ProviderInfo[], page: number):
   appendPaginationRow(keyboard, normalizedPage, totalPages, (targetPage) => `${MODEL_PROVIDERS_CALLBACK_PREFIX}${targetPage}`);
   keyboard.text("← Models", MODEL_ROOT_CALLBACK);
 
-  const baseText = providers.length === 0 ? "🧩 Providers\n\nNo providers are currently available." : "🧩 Providers\n\nChoose a provider to browse its models.";
+  const baseText = providers.length === 0
+    ? "🧩 Providers\n\nNo providers are currently available."
+    : "🧩 Providers\n\nChoose a provider to browse its models.";
+
   return {
     text: appendPageIndicator(baseText, normalizedPage, totalPages, "model.providers.page_indicator"),
     keyboard,
@@ -177,9 +175,9 @@ export function buildProviderModelsMenuView(
   );
   const pageModels = models.slice(startIndex, endIndex);
 
-  pageModels.forEach((model) => {
+  pageModels.forEach((model, index) => {
     const active = currentModel?.providerID === model.providerID && currentModel?.modelID === model.modelID;
-    keyboard.text(modelLabel(model, active, "🤖"), `${MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}${models.indexOf(model)}`).row();
+    keyboard.text(modelLabel(model, active, "🤖"), `${MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}${index}`).row();
   });
 
   appendPaginationRow(keyboard, normalizedPage, totalPages, (targetPage) => `${MODEL_PROVIDER_CALLBACK_PREFIX}${providerIndex}:${targetPage}`);
