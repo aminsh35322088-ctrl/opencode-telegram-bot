@@ -215,11 +215,10 @@ function getOpenCodeModelStatePath(): string {
 
 export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
   const envDefaultModel = getEnvDefaultModel();
+  const stateFilePath = getOpenCodeModelStatePath();
 
   try {
     const fs = await import("fs/promises");
-
-    const stateFilePath = getOpenCodeModelStatePath();
     const content = await fs.readFile(stateFilePath, "utf-8");
     const state = JSON.parse(content) as OpenCodeModelState;
 
@@ -268,10 +267,17 @@ export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
     return { favorites, recent };
   } catch (err) {
     if (envDefaultModel) {
-      logger.warn(
-        "[ModelManager] Failed to load OpenCode model state, using config model as favorite:",
-        err,
-      );
+      const code = err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+      if (code === "ENOENT") {
+        logger.debug(
+          `[ModelManager] OpenCode model state not found at ${stateFilePath}; using config model as favorite`,
+        );
+      } else {
+        logger.warn(
+          "[ModelManager] Failed to load OpenCode model state, using config model as favorite:",
+          err,
+        );
+      }
       return { favorites: [envDefaultModel], recent: [] };
     }
 
