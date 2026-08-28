@@ -7,30 +7,18 @@ export const SESSION_CALLBACK_PREFIX = "session:";
 export const SESSION_PREVIEW_CALLBACK_PREFIX = "session:preview:";
 export const SESSION_CONTINUE_CALLBACK_PREFIX = "session:continue:";
 export const SESSION_BACK_CALLBACK = "session:back";
+export const SESSION_NO_CALLBACK = "session:no";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
 const BACKGROUND_SESSION_CALLBACK_PREFIX = "background-session:";
 const SESSION_FETCH_EXTRA_COUNT = 1;
 const SESSION_BUTTON_MAX_LENGTH = 58;
 
-export type SessionListItem = {
-  id: string;
-  title: string;
-  directory: string;
-  time: { created: number };
-};
-
-export type SessionPage = {
-  sessions: SessionListItem[];
-  hasNext: boolean;
-  page: number;
-};
-
+export type SessionListItem = { id: string; title: string; directory: string; time: { created: number } };
+export type SessionPage = { sessions: SessionListItem[]; hasNext: boolean; page: number };
 export type BackgroundSessionOpenKind = "assistant_response" | "question_asked" | "permission_asked";
 export interface BackgroundSessionCallbackPayload { sessionId: string; kind: BackgroundSessionOpenKind | null; }
 
-const BACKGROUND_SESSION_KIND_CALLBACK_MARKERS: Record<BackgroundSessionOpenKind, string> = {
-  assistant_response: "a", question_asked: "q", permission_asked: "p",
-};
+const BACKGROUND_SESSION_KIND_CALLBACK_MARKERS: Record<BackgroundSessionOpenKind, string> = { assistant_response: "a", question_asked: "q", permission_asked: "p" };
 const BACKGROUND_SESSION_KIND_BY_CALLBACK_MARKER: Record<string, BackgroundSessionOpenKind> = { a: "assistant_response", q: "question_asked", p: "permission_asked" };
 
 function buildSessionPageCallback(page: number): string { return `${SESSION_PAGE_CALLBACK_PREFIX}${page}`; }
@@ -46,7 +34,7 @@ export function parseSessionPageCallback(data: string): number | null {
 export function parseSessionIdCallback(data: string): string | null {
   if (!data.startsWith(SESSION_CALLBACK_PREFIX) || data.startsWith(SESSION_PAGE_CALLBACK_PREFIX) || data.startsWith(SESSION_PREVIEW_CALLBACK_PREFIX) || data.startsWith(SESSION_CONTINUE_CALLBACK_PREFIX)) return null;
   const sessionId = data.slice(SESSION_CALLBACK_PREFIX.length);
-  return sessionId.length > 0 && data !== SESSION_BACK_CALLBACK ? sessionId : null;
+  return sessionId.length > 0 && data !== SESSION_BACK_CALLBACK && data !== SESSION_NO_CALLBACK ? sessionId : null;
 }
 
 export function parseSessionPreviewCallback(data: string): string | null {
@@ -73,13 +61,10 @@ export function parseBackgroundSessionCallback(data: string): BackgroundSessionC
 }
 
 export function buildBackgroundSessionOpenKeyboard(sessionId: string, kind: BackgroundSessionOpenKind): InlineKeyboard {
-  const marker = BACKGROUND_SESSION_KIND_CALLBACK_MARKERS[kind];
-  return new InlineKeyboard().text(t("background.open_session_button"), `${BACKGROUND_SESSION_CALLBACK_PREFIX}${marker}:${sessionId}`);
+  return new InlineKeyboard().text(t("background.open_session_button"), `${BACKGROUND_SESSION_CALLBACK_PREFIX}${BACKGROUND_SESSION_KIND_CALLBACK_MARKERS[kind]}:${sessionId}`);
 }
 
-function formatSessionsSelectText(page: number): string {
-  return page === 0 ? "🕘 Recent chats" : `🕘 Recent chats · page ${page + 1}`;
-}
+function formatSessionsSelectText(page: number): string { return page === 0 ? "🕘 Recent chats" : `🕘 Recent chats · page ${page + 1}`; }
 
 export async function loadSessionPage(directory: string, page: number, pageSize: number): Promise<SessionPage> {
   const startIndex = page * pageSize;
@@ -94,11 +79,10 @@ export async function loadSessionPage(directory: string, page: number, pageSize:
 
 function truncateButtonTitle(title: string): string {
   const normalized = title.replace(/\s+/g, " ").trim();
-  if (normalized.length <= SESSION_BUTTON_MAX_LENGTH) return normalized;
-  return `${normalized.slice(0, SESSION_BUTTON_MAX_LENGTH - 1).trimEnd()}…`;
+  return normalized.length <= SESSION_BUTTON_MAX_LENGTH ? normalized : `${normalized.slice(0, SESSION_BUTTON_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
-function buildSessionsKeyboard(pageData: SessionPage, pageSize: number): InlineKeyboard {
+function buildSessionsKeyboard(pageData: SessionPage): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   const locale = getDateLocale();
   pageData.sessions.forEach((session) => {
@@ -111,8 +95,8 @@ function buildSessionsKeyboard(pageData: SessionPage, pageSize: number): InlineK
   return keyboard;
 }
 
-export function buildSessionSelectionMenuView(pageData: SessionPage, pageSize: number): { text: string; keyboard: InlineKeyboard } {
-  return { text: formatSessionsSelectText(pageData.page), keyboard: buildSessionsKeyboard(pageData, pageSize) };
+export function buildSessionSelectionMenuView(pageData: SessionPage, _pageSize: number): { text: string; keyboard: InlineKeyboard } {
+  return { text: formatSessionsSelectText(pageData.page), keyboard: buildSessionsKeyboard(pageData) };
 }
 
 export async function loadSessionPreviewItems(sessionId: string, directory: string, limit = 10): Promise<Array<{ role: "user" | "assistant"; text: string; created: number }>> {
@@ -132,7 +116,7 @@ export async function loadSessionPreviewItems(sessionId: string, directory: stri
 }
 
 export function formatSessionPreview(title: string, items: Array<{ role: "user" | "assistant"; text: string }>): string {
-  const lines = [`💬 ${title}`, "", "Recent messages"];
+  const lines = [`💬 ${title}`, "", "Recent messages · last 10"];
   if (items.length === 0) lines.push("No messages yet.");
   for (const item of items) {
     const label = item.role === "user" ? "You" : "Agent";
@@ -144,6 +128,8 @@ export function formatSessionPreview(title: string, items: Array<{ role: "user" 
 
 export function buildSessionPreviewKeyboard(sessionId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✅ Continue chat", buildSessionContinueCallback(sessionId))
+    .text("✅ Yes, continue", buildSessionContinueCallback(sessionId))
+    .text("❌ No", SESSION_NO_CALLBACK)
+    .row()
     .text("← Back", SESSION_BACK_CALLBACK);
 }
