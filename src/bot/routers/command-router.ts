@@ -5,7 +5,6 @@ import { providersCommand, handleProviderWizardMessage } from "../commands/provi
 import { integrationsCommand, handleIntegrationMessage } from "../commands/integrations-command.js";
 import { opencodeStartCommand } from "../commands/opencode-start-command.js";
 import { opencodeStopCommand } from "../commands/opencode-stop-command.js";
-import { projectsCommand } from "../commands/projects-command.js";
 import { worktreeCommand } from "../commands/worktree-command.js";
 import { openCommand } from "../commands/open-command.js";
 import { lsCommand } from "../commands/ls-command.js";
@@ -58,7 +57,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand);
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }));
-  bot.command("projects", projectsCommand); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand);
+  bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand);
   bot.command("sessions", sessionsCommand); bot.command("messages", messagesCommand);
   bot.command("new", (ctx) => newCommand(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }));
   bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand);
