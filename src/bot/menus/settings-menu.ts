@@ -33,12 +33,12 @@ export function formatResponseStreamingModeValue(mode: ResponseStreamingMode): s
   return mode === "draft" ? "Live draft" : "Live edit";
 }
 
-function settingButton(label: string, value: string, callback: string): string {
+function settingButton(label: string, value: string): string {
   return `${label}: ${value}`;
 }
 
-function buildSettingsBackButton(keyboard: InlineKeyboard): InlineKeyboard {
-  return keyboard.text("← Settings", SETTINGS_BACK_CALLBACK);
+function appendSettingsBackButton(keyboard: InlineKeyboard): void {
+  keyboard.text("← Settings", SETTINGS_BACK_CALLBACK);
 }
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
@@ -71,20 +71,32 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
   const diff = getSendDiffFileAttachments();
 
   const keyboard = new InlineKeyboard()
-    .text(settingButton("📦 Compact output", formatBooleanSettingValue(compact), SETTINGS_COMPACT_OUTPUT_CALLBACK))
+    .text(
+      settingButton("📦 Compact output", formatBooleanSettingValue(compact)),
+      SETTINGS_COMPACT_OUTPUT_CALLBACK,
+    )
     .row()
-    .text(settingButton("🧠 Thinking details", formatBooleanSettingValue(thinking), SETTINGS_THINKING_CONTENT_CALLBACK))
+    .text(
+      settingButton("🧠 Thinking details", formatBooleanSettingValue(thinking)),
+      SETTINGS_THINKING_CONTENT_CALLBACK,
+    )
     .row()
     .text(
       `✍️ Reply streaming: ${formatResponseStreamingModeValue(streaming)}`,
       SETTINGS_RESPONSE_STREAMING_CALLBACK,
     )
     .row()
-    .text(settingButton("📊 Run footer", formatBooleanSettingValue(footer), SETTINGS_ASSISTANT_FOOTER_CALLBACK))
+    .text(
+      settingButton("📊 Run footer", formatBooleanSettingValue(footer)),
+      SETTINGS_ASSISTANT_FOOTER_CALLBACK,
+    )
     .row()
-    .text(settingButton("📎 Diff files", formatBooleanSettingValue(diff), SETTINGS_DIFF_FILES_CALLBACK));
+    .text(
+      settingButton("📎 Diff files", formatBooleanSettingValue(diff)),
+      SETTINGS_DIFF_FILES_CALLBACK,
+    );
 
-  buildSettingsBackButton(keyboard);
+  appendSettingsBackButton(keyboard);
 
   const recommendation = compact
     ? "Compact output is ON — tool noise is minimized and replies stay visually tight."
@@ -99,9 +111,10 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
 export function buildNotificationsSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const queue = getPromptQueueEnabled();
   const keyboard = new InlineKeyboard().text(
-    settingButton("📥 Prompt queue", formatBooleanSettingValue(queue), SETTINGS_PROMPT_QUEUE_CALLBACK),
+    settingButton("📥 Prompt queue", formatBooleanSettingValue(queue)),
+    SETTINGS_PROMPT_QUEUE_CALLBACK,
   );
-  buildSettingsBackButton(keyboard);
+  appendSettingsBackButton(keyboard);
 
   return {
     text: "🔔 Notifications\n\nControl how incoming prompts are handled while another task is running.",
