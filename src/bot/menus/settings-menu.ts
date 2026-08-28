@@ -32,7 +32,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
     .row().text(`${t("settings.assistant_footer.label")}: ${formatBooleanSettingValue(showAssistantRunFooter)}`, SETTINGS_ASSISTANT_FOOTER_CALLBACK)
     .row().text(`${t("settings.tts.label")}: ${formatTtsModeValue(ttsMode)}`, SETTINGS_TTS_CALLBACK)
     .row().text(`${t("settings.prompt_queue.label")}: ${formatBooleanSettingValue(promptQueueEnabled)}`, SETTINGS_PROMPT_QUEUE_CALLBACK)
-    .row().text("🔌 API Providers", "provider:add")
+    .row().text("🔌 API Providers", "provider:menu")
     .row().text("🔗 Integrations", "integration:menu");
   return { text: t("settings.menu.title"), keyboard };
 }
