@@ -106,7 +106,10 @@ export async function loadSessionPreviewItems(sessionId: string, directory: stri
     .map(({ info, parts }) => {
       const role = info.role as "user" | "assistant" | undefined;
       if ((role !== "user" && role !== "assistant") || (role === "assistant" && info.summary)) return null;
-      const text = parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text as string).join("").trim();
+      const textParts = parts
+        .filter((part) => part.type === "text" && "text" in part && typeof part.text === "string")
+        .map((part) => ("text" in part ? part.text : ""));
+      const text = textParts.join("").trim();
       if (!text) return null;
       return { role, text, created: info.time?.created ?? 0 };
     })
