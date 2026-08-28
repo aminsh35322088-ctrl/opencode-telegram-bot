@@ -5,8 +5,8 @@ import { questionManager } from "../../app/managers/question-manager.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { handleTaskTextInput } from "../commands/task-command.js";
-import { handleProviderWizardMessage } from "../commands/providers-command.js";
-import { handleIntegrationMessage } from "../commands/integrations-command.js";
+import { handleProviderWizardMessage, isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
+import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
 import { handleModelSearchTextInput } from "../callbacks/model-selection-callback-handler.js";
 import { handleQuestionTextAnswer } from "../callbacks/question-callback-handler.js";
 import { handleRenameTextAnswer } from "../callbacks/rename-callback-handler.js";
@@ -25,6 +25,9 @@ import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
+import { newCommand } from "../commands/new-command.js";
+import { projectsCommand } from "../commands/projects-command.js";
+import { settingsCommand } from "../commands/settings-command.js";
 
 interface MessageRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number) => void; }
 
@@ -38,6 +41,38 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
   bot.on("message:text", unknownCommandMiddleware);
+
+  // Contextual reply-keyboard controls. Cancel terminates only the active setup wizard.
+  bot.hears(/^❌ Cancel$/, async (ctx) => {
+    const chatId = ctx.chat.id;
+    if (isProviderWizardActive(chatId)) {
+      clearProviderWizard(chatId);
+      clearIntegrationWizard(chatId);
+      await providersCommand(ctx as never);
+      return;
+    }
+    if (isIntegrationWizardActive(chatId)) {
+      clearIntegrationWizard(chatId);
+      clearProviderWizard(chatId);
+      await integrationsCommand(ctx as never);
+      return;
+    }
+    logger.debug(`[Bot] Cancel pressed with no active wizard, chatId=${chatId}`);
+  });
+
+  bot.hears(/^⚙️ Settings$/, async (ctx) => {
+    if (await blockMenuWhileInteractionActive(ctx)) return;
+    await settingsCommand(ctx as never);
+  });
+  bot.hears(/^📁 Projects$/, async (ctx) => {
+    if (await blockMenuWhileInteractionActive(ctx)) return;
+    await projectsCommand(ctx as never);
+  });
+  bot.hears(/^💬 New Chat$/, async (ctx) => {
+    if (await blockMenuWhileInteractionActive(ctx)) return;
+    await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => {
     logger.debug(`[Bot] Queued prompt button pressed: ${ctx.message?.text}`);
     if (await blockMenuWhileInteractionActive(ctx)) return;
@@ -51,7 +86,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Model button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
   bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Context button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
   bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => { logger.debug(`[Bot] Variant button pressed: ${ctx.message?.text}`); try { if (await blockMenuWhileInteractionActive(ctx)) return; await showVariantSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing variant menu:", err); await ctx.reply(t("error.load_variants")); } });
-  bot.on("message:text", async (ctx, next) => { const text = ctx.message?.text; if (text) { const isCommand = text.startsWith("/"); logger.debug(`[Bot] Received text message: ${isCommand ? `command="${text}"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`); } await next(); });
+  bot.on("message:text", async (ctx, next) => { const text = ctx.message?.text; if (text) { const isCommand = text.startsWith("/"); logger.debug(`[Bot] Received text message: ${isCommand ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`); } await next(); });
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
   bot.on("message:voice", async (ctx) => { logger.debug(`[Bot] Received voice message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
   bot.on("message:audio", async (ctx) => { logger.debug(`[Bot] Received audio message, chatId=${ctx.chat.id}`); deps.setTelegramContext(bot, ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
@@ -63,12 +98,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     if (!text) return;
     deps.setTelegramContext(bot, ctx.chat.id);
     if (text.startsWith("/")) return;
-
-    // Runtime setup wizards must get first refusal on free-form text. Otherwise
-    // the generic question/prompt handlers consume provider/integration answers.
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
-
     if (questionManager.isActive()) { await handleQuestionTextAnswer(ctx); return; }
     const handledTask = await handleTaskTextInput(ctx); if (handledTask) return;
     const handledModelSearchText = await handleModelSearchTextInput(ctx); if (handledModelSearchText) return;
