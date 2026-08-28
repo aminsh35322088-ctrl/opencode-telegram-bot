@@ -1,11 +1,7 @@
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
 
-/**
- * Centralized bot commands definitions
- * Used for both Telegram API setMyCommands and command handler registration
- */
-
+/** Public, user-facing Telegram commands. Internal/debug handlers are intentionally omitted. */
 export interface BotCommandDefinition {
   command: string;
   description: string;
@@ -13,43 +9,30 @@ export interface BotCommandDefinition {
 
 interface BotCommandI18nDefinition {
   command: string;
-  descriptionKey: I18nKey;
+  descriptionKey?: I18nKey;
+  description?: string;
 }
 
-/**
- * List of all bot commands
- * Update this array when adding new commands
- */
 const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
+  { command: "start", descriptionKey: "cmd.description.help" },
+  { command: "update", description: "Check for a newer OpenCode version" },
+  { command: "help", descriptionKey: "cmd.description.help" },
   { command: "status", descriptionKey: "cmd.description.status" },
-  { command: "abort", descriptionKey: "cmd.description.stop" },
-  { command: "detach", descriptionKey: "cmd.description.detach" },
   { command: "sessions", descriptionKey: "cmd.description.sessions" },
   { command: "messages", descriptionKey: "cmd.description.messages" },
   { command: "settings", descriptionKey: "cmd.description.settings" },
   { command: "providers", descriptionKey: "cmd.description.settings" },
-  { command: "integrations", descriptionKey: "cmd.description.settings" },
-  { command: "worktree", descriptionKey: "cmd.description.worktree" },
-  { command: "task", descriptionKey: "cmd.description.task" },
-  { command: "tasklist", descriptionKey: "cmd.description.tasklist" },
   { command: "rename", descriptionKey: "cmd.description.rename" },
+  { command: "abort", descriptionKey: "cmd.description.stop" },
   { command: "commands", descriptionKey: "cmd.description.commands" },
   { command: "skills", descriptionKey: "cmd.description.skills" },
   { command: "mcps", descriptionKey: "cmd.description.mcps" },
-  { command: "memory", descriptionKey: "cmd.description.settings" },
-  { command: "remember", descriptionKey: "cmd.description.settings" },
-  { command: "forget", descriptionKey: "cmd.description.settings" },
-  { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
-  { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
-  { command: "open", descriptionKey: "cmd.description.open" },
-  { command: "ls", descriptionKey: "cmd.description.ls" },
-  { command: "help", descriptionKey: "cmd.description.help" },
 ];
 
 export function getLocalizedBotCommands(): BotCommandDefinition[] {
-  return COMMAND_DEFINITIONS.map(({ command, descriptionKey }) => ({
+  return COMMAND_DEFINITIONS.map(({ command, descriptionKey, description }) => ({
     command,
-    description: t(descriptionKey),
+    description: description ?? t(descriptionKey!),
   }));
 }
 
