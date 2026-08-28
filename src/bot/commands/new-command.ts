@@ -15,6 +15,7 @@ import { replyBusyBlocked } from "../messages/busy-blocked-renderer.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
+import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -23,6 +24,9 @@ export interface NewCommandDeps {
 
 export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps) {
   try {
+    clearPausedSession();
+    keyboardManager.setPaused(false);
+
     if (isForegroundBusy()) {
       await replyBusyBlocked(ctx);
       return;
