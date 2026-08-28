@@ -12,6 +12,7 @@ export function createMainKeyboard(
   _variantName?: string,
   queuedPromptLabels: string[] = [],
   paused = false,
+  running = false,
 ): Keyboard {
   const keyboard = new Keyboard();
   const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
@@ -19,9 +20,18 @@ export function createMainKeyboard(
 
   for (const label of queuedPromptLabels) keyboard.text(label).row();
 
+  if (running) {
+    keyboard.text(effectivePaused ? "▶️ Resume" : "⏸️ Pause").text("🛑 Abort").row();
+    return keyboard.resized().persistent();
+  }
+
   keyboard.text(modelText).text("💬 New Chat").row();
-  keyboard.text(effectivePaused ? "▶️ Resume" : "⏸️ Pause").text("🕘 History").row();
-  keyboard.text("⚙️ Settings").row();
+  if (effectivePaused) {
+    keyboard.text("▶️ Resume").text("🛑 Abort").row();
+  } else {
+    keyboard.text("🕘 History").row();
+    keyboard.text("⚙️ Settings").row();
+  }
 
   return keyboard.resized().persistent();
 }
