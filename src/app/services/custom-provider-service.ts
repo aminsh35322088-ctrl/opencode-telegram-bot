@@ -139,6 +139,14 @@ export async function saveCustomProvider(input: {
   if (!input.apiKey.trim()) throw new Error("API key is empty");
   const id = normalizeId(input.name);
   const baseURL = normalizeBaseURL(input.baseURL);
+
+  if (id === GLM_PROVIDER_ID) {
+    throw new Error(`Provider ID "${GLM_PROVIDER_ID}" is reserved for the built-in GLM provider`);
+  }
+  if (id === OPENROUTER_PROVIDER_ID && baseURL !== OPENROUTER_BASE_URL) {
+    throw new Error(`Provider ID "${OPENROUTER_PROVIDER_ID}" is reserved for OpenRouter`);
+  }
+
   const now = new Date().toISOString();
   const store = await readStore();
   const existing = store.providers.find((provider) => provider.id === id);
