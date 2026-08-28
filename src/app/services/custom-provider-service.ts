@@ -32,10 +32,6 @@ function getStorePath(): string {
   return path.join(getRuntimePaths().appHome, STORE_FILENAME);
 }
 
-function getProviderDir(): string {
-  return path.join(getRuntimePaths().appHome, PROVIDER_DIR);
-}
-
 async function readStore(): Promise<ProviderStoreFile> {
   try {
     return JSON.parse(await fs.readFile(getStorePath(), "utf8")) as ProviderStoreFile;
