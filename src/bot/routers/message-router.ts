@@ -50,16 +50,17 @@ function normalizeControlText(text: string): string {
 async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   const rawText = ctx.message?.text;
   if (!rawText) return false;
+  const chatId = ctx.chat?.id;
+  if (!chatId) return false;
 
   const text = normalizeControlText(rawText);
   if (text === normalizeControlText(CONTROL_TEXT.pause)) {
-    logger.info(`[Bot] Control button received: Pause chatId=${ctx.chat.id}`);
+    logger.info(`[Bot] Control button received: Pause chatId=${chatId}`);
     await pauseCurrentChat(ctx);
     return true;
   }
 
   if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
-    const chatId = ctx.chat.id;
     logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`);
     if (isProviderWizardActive(chatId)) {
       clearProviderWizard(chatId);
@@ -91,9 +92,6 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
 }
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
-  // Priority route for controls that must remain usable even while another
-  // interaction middleware is active. Normalize Unicode variation selectors and
-  // invisible characters because Telegram clients may serialize emoji slightly differently.
   bot.on("message:text", async (ctx, next) => {
     if (await handlePriorityControlButton(ctx)) return;
     await next();
