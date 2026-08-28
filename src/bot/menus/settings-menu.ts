@@ -38,20 +38,19 @@ function settingButton(label: string, value: string): string {
 }
 
 function appendSettingsBackButton(keyboard: InlineKeyboard): void {
-  keyboard.text("← Settings", SETTINGS_BACK_CALLBACK);
+  keyboard.row().text("← Settings", SETTINGS_BACK_CALLBACK);
 }
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
   const currentModel = getStoredModel();
-  const modelLabel =
-    currentModel.providerID && currentModel.modelID
-      ? formatModelForButton(currentModel.providerID, currentModel.modelID)
-      : "Not selected";
+  const modelLabel = currentModel.providerID && currentModel.modelID
+    ? formatModelForButton(currentModel.providerID, currentModel.modelID)
+    : "Not selected";
 
   return {
-    text: "⚙️ Settings\n\nChoose a category to control the bot and the way model replies are presented.",
+    text: "⚙️ Settings\n\nTune the model, reply presentation, notifications, context display, and integrations.",
     keyboard: new InlineKeyboard()
-      .text(`🤖 Model · ${modelLabel}`, SETTINGS_MODEL_CALLBACK)
+      .text(`🤖 Model\n${modelLabel}`, SETTINGS_MODEL_CALLBACK)
       .row()
       .text("🎨 Appearance", SETTINGS_APPEARANCE_CALLBACK)
       .row()
@@ -71,39 +70,33 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
   const diff = getSendDiffFileAttachments();
 
   const keyboard = new InlineKeyboard()
-    .text(
-      settingButton("📦 Compact output", formatBooleanSettingValue(compact)),
-      SETTINGS_COMPACT_OUTPUT_CALLBACK,
-    )
+    .text(settingButton("📦 Compact output", formatBooleanSettingValue(compact)), SETTINGS_COMPACT_OUTPUT_CALLBACK)
     .row()
-    .text(
-      settingButton("🧠 Thinking details", formatBooleanSettingValue(thinking)),
-      SETTINGS_THINKING_CONTENT_CALLBACK,
-    )
+    .text(settingButton("🧠 Thinking details", formatBooleanSettingValue(thinking)), SETTINGS_THINKING_CONTENT_CALLBACK)
     .row()
-    .text(
-      `✍️ Reply streaming: ${formatResponseStreamingModeValue(streaming)}`,
-      SETTINGS_RESPONSE_STREAMING_CALLBACK,
-    )
+    .text(`✍️ Reply streaming: ${formatResponseStreamingModeValue(streaming)}`, SETTINGS_RESPONSE_STREAMING_CALLBACK)
     .row()
-    .text(
-      settingButton("📊 Run footer", formatBooleanSettingValue(footer)),
-      SETTINGS_ASSISTANT_FOOTER_CALLBACK,
-    )
+    .text(settingButton("📊 Run footer", formatBooleanSettingValue(footer)), SETTINGS_ASSISTANT_FOOTER_CALLBACK)
     .row()
-    .text(
-      settingButton("📎 Diff files", formatBooleanSettingValue(diff)),
-      SETTINGS_DIFF_FILES_CALLBACK,
-    );
+    .text(settingButton("📎 Diff files", formatBooleanSettingValue(diff)), SETTINGS_DIFF_FILES_CALLBACK);
 
   appendSettingsBackButton(keyboard);
 
-  const recommendation = compact
-    ? "Compact output is ON — tool noise is minimized and replies stay visually tight."
-    : "Tip: turn Compact output ON for a cleaner mobile-first view.";
+  const compactDescription = compact
+    ? "ON · tighter tool output, less visual noise, mobile-first formatting."
+    : "OFF · full reply presentation is preserved.";
 
   return {
-    text: `🎨 Appearance\n\nControl the visual density and presentation of model replies.\n\n✨ ${recommendation}`,
+    text: [
+      "🎨 Appearance",
+      "",
+      "Control how model replies look and stream in Telegram.",
+      "",
+      `📦 Compact output — ${compactDescription}`,
+      `✍️ Streaming — ${formatResponseStreamingModeValue(streaming)}`,
+      "",
+      "These options change presentation only; they do not impose provider token or cost limits.",
+    ].join("\n"),
     keyboard,
   };
 }
@@ -124,14 +117,14 @@ export function buildNotificationsSettingsView(): { text: string; keyboard: Inli
 
 export function buildContextSettingsView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🧠 Context\n\nContext limits, compaction, and provider-side token budgets are controlled by OpenCode itself.\n\nThe Telegram UI only exposes presentation controls here, so it does not add an artificial token or cost limit.",
+    text: "🧠 Context\n\nThe context gauge reflects the actual model context window reported by the provider/OpenCode.\n\nThe Telegram bot does not invent a token budget or estimate provider cost.",
     keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
 
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🛠 Advanced\n\nAdvanced connectivity and integration controls are grouped here, away from reply presentation settings.",
+    text: "🛠 Advanced\n\nAdvanced connectivity and integrations live here so the main reply settings stay clean.",
     keyboard: new InlineKeyboard()
       .text("🔌 API Providers", "provider:menu")
       .row()
