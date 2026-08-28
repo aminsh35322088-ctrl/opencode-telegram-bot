@@ -1,7 +1,7 @@
 import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
 import { opencodeClient } from "../../opencode/client.js";
-import { setCurrentSession, getCurrentSessionDirectory } from "../../app/services/session-service.js";
+import { setCurrentSession, clearSession, getCurrentSessionDirectory, getCurrentSession } from "../../app/services/session-service.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -50,7 +50,7 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
       const current = getCurrentSession();
       await opencodeClient.session.delete({ sessionID: session.id, directory });
       if (current?.id === session.id) {
-        setCurrentSession(undefined as never);
+        clearSession();
         clearAllInteractionState("session_deleted");
       }
       const pageData = await loadSessionPage(directory, 0, config.bot.sessionsListLimit);
