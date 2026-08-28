@@ -20,7 +20,7 @@ import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { attachToSession, detachAttachedSession, markAttachedSessionBusy, markAttachedSessionIdle } from "../../app/services/attach-service.js";
-import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
+import { externalUserInputSuppressionManager } from "../../app/managers/external-user-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { resolvePendingAttachment } from "../../app/services/prompt-attachment-service.js";
 
@@ -135,14 +135,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
     }
 
-    const promptOptions: {
-      sessionID: string;
-      directory: string;
-      parts: Array<TextPartInput | FilePartInput>;
-      model?: { providerID: string; modelID: string };
-      agent?: string;
-      variant?: string;
-    } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
+    const promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
     if (storedModel.providerID && storedModel.modelID) {
       promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID };
       if (storedModel.variant) promptOptions.variant = storedModel.variant;
@@ -152,6 +145,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
+    await keyboardManager.sendKeyboardUpdate(ctx.chat!.id);
     if (text.trim()) externalUserInputSuppressionManager.register(currentSession.id, text);
 
     safeBackgroundTask({
