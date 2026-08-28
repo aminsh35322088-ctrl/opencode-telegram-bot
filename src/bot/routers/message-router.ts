@@ -33,6 +33,62 @@ import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 
 interface MessageRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number) => void; }
 
+const CONTROL_TEXT = {
+  cancel: "❌ Cancel",
+  pause: "⏸️ Pause",
+  resume: "▶️ Resume",
+} as const;
+
+function normalizeControlText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\uFE0F/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function handleControlButton(ctx: Context): Promise<boolean> {
+  const rawText = ctx.message?.text;
+  if (!rawText) return false;
+
+  const text = normalizeControlText(rawText);
+  const pauseText = normalizeControlText(CONTROL_TEXT.pause);
+  const resumeText = normalizeControlText(CONTROL_TEXT.resume);
+  const cancelText = normalizeControlText(CONTROL_TEXT.cancel);
+
+  if (text === pauseText) {
+    logger.info(`[Bot] Control button received: Pause chatId=${ctx.chat.id}`);
+    await pauseCurrentChat(ctx);
+    return true;
+  }
+
+  if (text === resumeText) {
+    logger.info(`[Bot] Control button received: Resume chatId=${ctx.chat.id}`);
+    await resumePausedChat(ctx, { bot: ctx.api ? (ctx as never) : (ctx as never), ensureEventSubscription: async () => {} });
+    return true;
+  }
+
+  if (text === cancelText) {
+    const chatId = ctx.chat.id;
+    logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`);
+    if (isProviderWizardActive(chatId)) {
+      clearProviderWizard(chatId);
+      clearIntegrationWizard(chatId);
+      await providersCommand(ctx as never);
+      return true;
+    }
+    if (isIntegrationWizardActive(chatId)) {
+      clearIntegrationWizard(chatId);
+      clearProviderWizard(chatId);
+      await integrationsCommand(ctx as never);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
   const activeInteraction = interactionManager.getSnapshot();
   if (!activeInteraction) return false;
@@ -46,6 +102,11 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
 }
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
+  bot.on("message:text", async (ctx, next) => {
+    if (await handleControlButton(ctx)) return;
+    await next();
+  });
+
   bot.on("message:text", unknownCommandMiddleware);
   bot.hears(/^❌ Cancel$/, async (ctx) => {
     const chatId = ctx.chat.id;
