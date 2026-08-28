@@ -3,6 +3,7 @@ import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
+import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 
 export function createMainKeyboard(
   _currentAgent: string,
@@ -14,11 +15,12 @@ export function createMainKeyboard(
 ): Keyboard {
   const keyboard = new Keyboard();
   const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
+  const effectivePaused = paused || isChatPaused();
 
   for (const label of queuedPromptLabels) keyboard.text(label).row();
 
   keyboard.text(modelText).text("💬 New Chat").row();
-  keyboard.text(paused ? "▶️ Resume" : "⏸️ Pause").text("🕘 History").row();
+  keyboard.text(effectivePaused ? "▶️ Resume" : "⏸️ Pause").text("🕘 History").row();
   keyboard.text("⚙️ Settings").row();
 
   return keyboard.resized().persistent();
