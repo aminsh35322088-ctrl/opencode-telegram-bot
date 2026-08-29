@@ -33,14 +33,12 @@ function getAudioFormat(filename: string): string {
 /**
  * Transcribes an audio buffer using a Whisper-compatible API.
  *
+ * Language is intentionally omitted unless explicitly configured. This lets
+ * Whisper perform automatic language detection for multilingual voice notes.
+ *
  * Two request formats are supported via `STT_REQUEST_FORMAT`:
  * - `multipart` (default): standard OpenAI/Groq `multipart/form-data` upload.
  * - `json`: base64 audio in an `input_audio` JSON body (e.g. OpenRouter).
- *
- * @param audioBuffer - Raw audio file bytes (ogg, mp3, wav, m4a, webm, etc.)
- * @param filename    - Original filename with extension (used to detect format)
- * @returns Transcribed text
- * @throws Error if STT is not configured, the request fails, or the response is invalid
  */
 export async function transcribeAudio(audioBuffer: Buffer, filename: string): Promise<SttResult> {
   if (!isSttConfigured()) {
@@ -64,6 +62,8 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
       },
     };
 
+    // Leave language unset by default so the provider can auto-detect it.
+    // If STT_LANGUAGE is explicitly configured, honor that override.
     if (config.stt.language) {
       payload.language = config.stt.language;
     }
@@ -72,7 +72,7 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
     body = JSON.stringify(payload);
 
     logger.debug(
-      `[STT] Sending transcription request (json): url=${url}, model=${config.stt.model}, format=${getAudioFormat(filename)}, size=${audioBuffer.length} bytes`,
+      `[STT] Sending transcription request (json): url=${url}, model=${config.stt.model}, format=${getAudioFormat(filename)}, size=${audioBuffer.length} bytes, language=${config.stt.language || "auto"}`,
     );
   } else {
     const formData = new FormData();
@@ -80,6 +80,8 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
     formData.append("model", config.stt.model);
     formData.append("response_format", "json");
 
+    // Leave language unset by default so the provider can auto-detect it.
+    // If STT_LANGUAGE is explicitly configured, honor that override.
     if (config.stt.language) {
       formData.append("language", config.stt.language);
     }
@@ -87,7 +89,7 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
     body = formData;
 
     logger.debug(
-      `[STT] Sending transcription request (multipart): url=${url}, model=${config.stt.model}, filename=${filename}, size=${audioBuffer.length} bytes`,
+      `[STT] Sending transcription request (multipart): url=${url}, model=${config.stt.model}, filename=${filename}, size=${audioBuffer.length} bytes, language=${config.stt.language || "auto"}`,
     );
   }
 
