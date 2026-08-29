@@ -28,6 +28,18 @@ if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
 fi
 ln -sfn /data/workspace /app/workspace
 
+# Some OpenCode agents may choose the historical /tmp/site path when creating
+# web projects. That path is ephemeral on Railway, so transparently alias it
+# to the same persistent shared workspace. Existing files are migrated first.
+if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
+  if [ -d /tmp/site ] && [ "$(find /tmp/site -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    printf '%s\n' "[railway] Migrating legacy /tmp/site contents to persistent workspace"
+    cp -a /tmp/site/. /data/workspace/
+  fi
+  rm -rf /tmp/site
+fi
+ln -sfn /data/workspace /tmp/site
+
 # OpenCode custom tools are loaded from this persistent config directory so
 # every project/session gets the same Telegram artifact delivery capability.
 if [ -f /app/.opencode/tools/send-file.ts ]; then
@@ -86,6 +98,7 @@ printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
 printf '%s\n' "[railway] Persistent workspace: /data/workspace"
+printf '%s\n' "[railway] Legacy /tmp/site: /data/workspace"
 printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Artifact delivery tool: $(test -f /data/opencode/config/tools/send-file.ts && echo enabled || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable)"
