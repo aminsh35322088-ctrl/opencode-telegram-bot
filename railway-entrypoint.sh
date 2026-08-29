@@ -40,8 +40,6 @@ if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
 fi
 ln -sfn /data/workspace /tmp/site
 
-# OpenCode custom tools are loaded from this persistent config directory so
-# every project/session gets the same Telegram artifact delivery capability.
 if [ -f /app/.opencode/tools/send-file.ts ]; then
   cp /app/.opencode/tools/send-file.ts /data/opencode/config/tools/send-file.ts
   chown node:node /data/opencode/config/tools/send-file.ts
@@ -49,8 +47,6 @@ fi
 
 chown -R node:node /data
 
-# GitHub credentials are persisted on the Railway Volume. An existing
-# GITHUB_TOKEN env var is migrated into the integration file on first boot.
 GITHUB_TOKEN_FILE="/data/integrations/github.token"
 if [ -s "$GITHUB_TOKEN_FILE" ]; then
   GITHUB_TOKEN="$(cat "$GITHUB_TOKEN_FILE")"
@@ -82,7 +78,6 @@ EOF
 chmod 700 /data/run/github-credential-helper.sh
 chown node:node /data/run/github-credential-helper.sh
 
-# URL-scoped helper: credentials are supplied only to github.com HTTPS remotes.
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
@@ -97,8 +92,9 @@ printf '%s\n' "[railway] OpenCode CLI: $(opencode --version 2>/dev/null || echo 
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
-printf '%s\n' "[railway] Persistent workspace: /data/workspace"
-printf '%s\n' "[railway] Legacy /tmp/site: /data/workspace"
+printf '%s\n' "[railway] Persistent shared workspace: /data/workspace"
+printf '%s\n' "[railway] Legacy /app/workspace -> /data/workspace"
+printf '%s\n' "[railway] Legacy /tmp/site -> /data/workspace"
 printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Artifact delivery tool: $(test -f /data/opencode/config/tools/send-file.ts && echo enabled || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable)"
