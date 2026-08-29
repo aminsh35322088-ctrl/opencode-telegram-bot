@@ -1,4 +1,4 @@
-import { CommandContext, Context } from "grammy";
+import type { Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
@@ -10,6 +10,7 @@ import { markAttachedSessionIdle } from "../../app/services/attach-service.js";
 import { markUserAbortRequested } from "../../app/managers/abort-suppression-manager.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
+import { keyboardManager } from "../keyboards/keyboard-manager.js";
 
 type SessionState = "idle" | "busy" | "retry" | "not-found";
 export type AbortResult = "confirmed" | "unconfirmed" | "maybe-finished" | "timeout" | "error" | "no-session";
@@ -28,6 +29,16 @@ async function releaseAbortBusyState(sessionId: string, reason: string): Promise
   foregroundSessionState.markIdle(sessionId);
   assistantRunState.clearRun(sessionId, reason);
   await markAttachedSessionIdle(sessionId);
+}
+
+async function restoreMainKeyboard(ctx: Context): Promise<void> {
+  keyboardManager.setPaused(false);
+  const keyboard = keyboardManager.getKeyboard();
+  if (!keyboard || !ctx.chat?.id) return;
+
+  // Telegram reply keyboards are chat-level UI. After an abort, publish the
+  // rebuilt idle keyboard so the stale Pause/Abort controls disappear.
+  await ctx.reply("⌨️ Controls restored.", { reply_markup: keyboard });
 }
 
 async function pollSessionStatus(
@@ -132,6 +143,7 @@ export async function abortCurrentOperation(
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
         }
+        await restoreMainKeyboard(ctx);
         return "confirmed";
       }
 
@@ -163,6 +175,6 @@ export async function abortCurrentOperation(
   }
 }
 
-export async function abortCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function abortCommand(ctx: Context): Promise<void> {
   await abortCurrentOperation(ctx);
 }
