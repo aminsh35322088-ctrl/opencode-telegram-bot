@@ -27,7 +27,7 @@ import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
-import { abortCommand } from "../commands/abort-command.js";
+import { abortCurrentOperation } from "../commands/abort-command.js";
 import { sessionsCommand } from "../commands/sessions-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { closeActiveInlineMenu } from "../menus/inline-menu.js";
@@ -44,7 +44,7 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   const text = normalizeControlText(rawText);
   if (text === normalizeControlText(CONTROL_TEXT.pause)) { logger.info(`[Bot] Control button received: Pause chatId=${chatId}`); await pauseCurrentChat(ctx); return true; }
   if (text === normalizeControlText(CONTROL_TEXT.resume)) { logger.info(`[Bot] Control button received: Resume chatId=${chatId}`); if (botInstance && currentEnsureEventSubscription) await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription }); return true; }
-  if (text === normalizeControlText(CONTROL_TEXT.abort)) { logger.info(`[Bot] Control button received: Abort chatId=${chatId}`); await abortCommand(ctx as never); return true; }
+  if (text === normalizeControlText(CONTROL_TEXT.abort)) { logger.info(`[Bot] Control button received: Abort chatId=${chatId}`); await abortCurrentOperation(ctx); return true; }
   if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
     logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`);
     if (isProviderWizardActive(chatId)) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return true; }
@@ -72,7 +72,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.hears(/^💬 New Chat$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.hears(/^⏸️ Pause$/, async (ctx) => { await pauseCurrentChat(ctx); });
   bot.hears(/^▶️ Resume$/, async (ctx) => { await resumePausedChat(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
-  bot.hears(/^🛑 Abort$/, async (ctx) => { await abortCommand(ctx as never); });
+  bot.hears(/^🛑 Abort$/, async (ctx) => { await abortCurrentOperation(ctx); });
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
   bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
   bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
