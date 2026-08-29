@@ -2,20 +2,15 @@ import type { CommandContext, Context } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { loadSkillsCatalog } from "../../app/services/skills-catalog-service.js";
-import { getCurrentProject } from "../../app/stores/settings-store.js";
+import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { buildSkillsListKeyboard, formatSkillsSelectText } from "../menus/skills-catalog-menu.js";
 
 export async function skillsCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
-    const currentProject = getCurrentProject();
-    if (!currentProject) {
-      await ctx.reply(t("bot.project_not_selected"));
-      return;
-    }
-
-    const skills = await loadSkillsCatalog(currentProject.worktree);
+    const projectDirectory = getCurrentSessionDirectory();
+    const skills = await loadSkillsCatalog(projectDirectory);
     if (skills.length === 0) {
       await ctx.reply(t("skills.empty"));
       return;
@@ -34,7 +29,7 @@ export async function skillsCommand(ctx: CommandContext<Context>): Promise<void>
         flow: "skills",
         stage: "list",
         messageId: message.message_id,
-        projectDirectory: currentProject.worktree,
+        projectDirectory,
         skills,
         page: 0,
       },
