@@ -35,10 +35,12 @@ function addIdleControls(keyboard: Keyboard, modelText: string, compactOutputMod
   keyboard.text(MAIN_BUTTONS.settings).row();
 }
 
-export function createMainKeyboard(
-  currentModel: ModelInfo,
-  options: MainKeyboardOptions = {},
-): Keyboard {
+function addPausedControls(keyboard: Keyboard, modelText: string): void {
+  keyboard.text(modelText).text(MAIN_BUTTONS.newChat).row();
+  keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
+}
+
+export function createMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
   const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
   const effectivePaused = options.paused ?? isChatPaused();
@@ -50,10 +52,10 @@ export function createMainKeyboard(
     return keyboard.resized().persistent();
   }
 
-  addIdleControls(keyboard, modelText, options.compactOutputMode ?? false);
-
   if (effectivePaused) {
-    keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
+    addPausedControls(keyboard, modelText);
+  } else {
+    addIdleControls(keyboard, modelText, options.compactOutputMode ?? false);
   }
 
   return keyboard.resized().persistent();
