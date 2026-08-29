@@ -43,7 +43,13 @@ The production container is intentionally equipped as a general-purpose coding w
 
 When a user asks for an archive, **create a real archive with the shell tooling** (for example `zip -r project.zip project/` or `tar -czf project.tar.gz project/`). Do not write archive bytes through the text-file `write` tool and do not rename a text file to an archive extension. After creating an archive, verify it with `file`, `unzip -t`, or the appropriate archive checker before reporting it as complete.
 
-For a request to send an archive to Telegram, keep the actual binary archive path and filename unchanged; the Telegram bridge will deliver the file as a document.
+### Sending generated files to Telegram
+
+When the user asks to receive a generated file, archive, website, image, document, build artifact, or other output file, use the custom `send_file` tool after the file has been created and verified. The tool accepts arbitrary file formats; **do not maintain or invent an extension whitelist** and do not rename a file merely to make it match one.
+
+For multi-file projects, create a real archive first, verify it, then call `send_file` with the archive path. Keep the actual binary path and filename unchanged.
+
+The `send_file` tool is intentionally the agent's explicit delivery decision. The Telegram bridge independently validates the path, size, and sensitive-file policy before uploading it with `sendDocument`. This is the preferred delivery path because files such as `/tmp/*.zip` are not guaranteed to emit project file events.
 
 ## Architecture
 
