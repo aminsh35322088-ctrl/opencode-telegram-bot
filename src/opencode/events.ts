@@ -3,6 +3,7 @@ import { Event } from "@opencode-ai/sdk/v2";
 import { logger } from "../utils/logger.js";
 import { isRecord } from "../utils/type-guards.js";
 import { isExpectedOpencodeUnavailableError } from "../utils/opencode-error.js";
+import { agentArtifactDeliveryService } from "../bot/services/agent-artifact-delivery-service.js";
 
 type EventCallback = (event: Event) => void;
 type EventStreamSource = "global" | "legacy";
@@ -291,8 +292,6 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
 
             const event = readResult.result.value;
 
-            // CRITICAL: Explicitly yield to the event loop BEFORE processing the event
-            // This allows grammY to handle getUpdates between SSE events
             await new Promise<void>((resolve) => setImmediate(resolve));
 
             const normalizedEvent = normalizeEvent(event, subscription.source, directory);
@@ -300,13 +299,13 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
               continue;
             }
 
+            agentArtifactDeliveryService.processEvent(normalizedEvent);
+
             if (normalizedEvent.type !== "server.connected") {
               usefulEventCount++;
             }
 
             if (eventCallback) {
-              // Use setImmediate to avoid blocking the event loop
-              // and let grammY process incoming Telegram updates
               const callbackSnapshot = eventCallback;
               setImmediate(() => {
                 if (
@@ -436,6 +435,7 @@ export function stopEventListening(): void {
   eventCallback = null;
   eventStream = null;
   activeDirectory = null;
+  agentArtifactDeliveryService.clear();
   logger.info("Event listener stopped");
 }
 
