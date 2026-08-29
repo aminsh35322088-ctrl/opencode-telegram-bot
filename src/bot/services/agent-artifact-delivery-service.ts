@@ -8,7 +8,7 @@ import type { Event } from "@opencode-ai/sdk/v2";
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const DEBOUNCE_MS = 1500;
-const MAX_FILES_PER_SESSION = 8;
+const DELIVERY_COOLDOWN_MS = 5000;
 
 const BINARY_ARTIFACT_EXTENSIONS = new Set([
   ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
@@ -68,7 +68,7 @@ function captionFor(filePath: string, size: number): string {
 class AgentArtifactDeliveryService {
   private readonly bot: Bot;
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly sentInSession = new Map<string, Set<string>>();
+  private readonly lastDelivered = new Map<string, { signature: string; at: number }>();
 
   constructor() {
     this.bot = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
@@ -76,12 +76,6 @@ class AgentArtifactDeliveryService {
 
   processEvent(event: Event): void {
     if (event.type !== "file.edited" && event.type !== "file.watcher.updated") {
-      if (event.type === "session.status") {
-        const properties = event.properties as { sessionID?: string; status?: { type?: string } };
-        if (properties.status?.type === "idle" && properties.sessionID) {
-          this.sentInSession.delete(properties.sessionID);
-        }
-      }
       return;
     }
 
@@ -94,19 +88,17 @@ class AgentArtifactDeliveryService {
       return;
     }
 
-    const sessionId = this.getSessionId(event);
-    const key = `${sessionId ?? "unknown"}:${filePath}`;
-    const previous = this.pending.get(key);
+    const previous = this.pending.get(filePath);
     if (previous) {
       clearTimeout(previous);
     }
 
     const timer = setTimeout(() => {
-      this.pending.delete(key);
-      void this.deliver(filePath, sessionId);
+      this.pending.delete(filePath);
+      void this.deliver(filePath);
     }, DEBOUNCE_MS);
 
-    this.pending.set(key, timer);
+    this.pending.set(filePath, timer);
   }
 
   clear(): void {
@@ -114,27 +106,23 @@ class AgentArtifactDeliveryService {
       clearTimeout(timer);
     }
     this.pending.clear();
-    this.sentInSession.clear();
+    this.lastDelivered.clear();
   }
 
-  private getSessionId(event: Event): string | null {
-    if (event.type === "file.edited") {
-      return null;
-    }
-
-    return null;
-  }
-
-  private async deliver(filePath: string, sessionId: string | null): Promise<void> {
+  private async deliver(filePath: string): Promise<void> {
     try {
       const stat = await fs.stat(filePath).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_FILE_SIZE_BYTES || stat.size === 0) {
         return;
       }
 
-      const sessionKey = sessionId ?? "default";
-      const sent = this.sentInSession.get(sessionKey) ?? new Set<string>();
-      if (sent.has(filePath) || sent.size >= MAX_FILES_PER_SESSION) {
+      const signature = `${stat.size}:${stat.mtimeMs}`;
+      const previous = this.lastDelivered.get(filePath);
+      const now = Date.now();
+      if (
+        previous &&
+        (previous.signature === signature || now - previous.at < DELIVERY_COOLDOWN_MS)
+      ) {
         return;
       }
 
@@ -143,8 +131,7 @@ class AgentArtifactDeliveryService {
         disable_notification: true,
       });
 
-      sent.add(filePath);
-      this.sentInSession.set(sessionKey, sent);
+      this.lastDelivered.set(filePath, { signature, at: now });
       logger.info(`[Artifact] Delivered generated file to Telegram: ${filePath} (${stat.size} bytes)`);
     } catch (error) {
       logger.error(`[Artifact] Failed to deliver generated file: ${filePath}`, error);
