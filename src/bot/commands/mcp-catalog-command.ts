@@ -1,20 +1,15 @@
 import type { CommandContext, Context } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { loadMcpCatalog } from "../../app/services/mcp-catalog-service.js";
-import { getCurrentProject } from "../../app/stores/settings-store.js";
+import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { buildMcpsListKeyboard } from "../menus/mcp-catalog-menu.js";
 
 export async function mcpsCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
-    const currentProject = getCurrentProject();
-    if (!currentProject) {
-      await ctx.reply(t("bot.project_not_selected"));
-      return;
-    }
-
-    const servers = await loadMcpCatalog(currentProject.worktree);
+    const projectDirectory = getCurrentSessionDirectory();
+    const servers = await loadMcpCatalog(projectDirectory);
     if (servers.length === 0) {
       await ctx.reply(t("mcps.empty"));
       return;
@@ -32,7 +27,7 @@ export async function mcpsCommand(ctx: CommandContext<Context>): Promise<void> {
         flow: "mcps",
         stage: "list",
         messageId: message.message_id,
-        projectDirectory: currentProject.worktree,
+        projectDirectory,
         servers,
       },
     });
