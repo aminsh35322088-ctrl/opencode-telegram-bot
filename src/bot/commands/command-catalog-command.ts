@@ -19,14 +19,27 @@ export async function commandsCommand(ctx: CommandContext<Context>): Promise<voi
 
     const pageSize = config.bot.commandsListLimit;
     const keyboard = buildCommandsListKeyboard(commands, 0, pageSize);
-    const message = await ctx.reply(formatCommandsSelectText(0), {
-      reply_markup: keyboard,
-    });
+    const callbackMessage = ctx.callbackQuery?.message;
+    const callbackMessageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : null;
+    let messageId: number;
+
+    if (callbackMessageId !== null && ctx.chat?.id) {
+      await ctx.api.editMessageText(ctx.chat.id, callbackMessageId, formatCommandsSelectText(0), {
+        reply_markup: keyboard,
+      });
+      await ctx.answerCallbackQuery().catch(() => {});
+      messageId = callbackMessageId;
+    } else {
+      const message = await ctx.reply(formatCommandsSelectText(0), {
+        reply_markup: keyboard,
+      });
+      messageId = message.message_id;
+    }
 
     const metadata: CommandsMetadata = {
       flow: "commands",
       stage: "list",
-      messageId: message.message_id,
+      messageId,
       projectDirectory,
       commands,
       page: 0,
