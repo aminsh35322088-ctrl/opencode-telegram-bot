@@ -54,14 +54,16 @@ export function createBot(): Bot<Context> {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   const bot = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
   configureAttachPresentation(createAttachPresentation());
-  eventSubscriptionService.setTelegramContext(bot, config.telegram.allowedUserId);
-  initializePromptQueueDispatch({ bot, ensureEventSubscription: eventSubscriptionService.ensureEventSubscription });
+  const setTelegramContext = eventSubscriptionService.setTelegramContext.bind(eventSubscriptionService);
+  const ensureEventSubscription = eventSubscriptionService.ensureEventSubscription.bind(eventSubscriptionService);
+  setTelegramContext(bot, config.telegram.allowedUserId);
+  initializePromptQueueDispatch({ bot, ensureEventSubscription });
   unsubscribeReadyRestore?.();
   unsubscribeReadyRestore = opencodeReadyLifecycle.onReady(async (reason) => {
-    const restored = await restoreAttachedCurrentSession({ bot, chatId: config.telegram.allowedUserId, ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, forceFullRestore: true });
+    const restored = await restoreAttachedCurrentSession({ bot, chatId: config.telegram.allowedUserId, ensureEventSubscription, forceFullRestore: true });
     if (restored) { logger.info(`[Bot] Restored followed session after OpenCode ready: reason=${reason}`); return; }
     const currentProject = getCurrentProject();
-    if (config.bot.trackBackgroundSessions && currentProject?.worktree) { await eventSubscriptionService.ensureEventSubscription(currentProject.worktree); logger.info(`[Bot] Started background session tracking after OpenCode ready: reason=${reason}, directory=${currentProject.worktree}`); }
+    if (config.bot.trackBackgroundSessions && currentProject?.worktree) { await ensureEventSubscription(currentProject.worktree); logger.info(`[Bot] Started background session tracking after OpenCode ready: reason=${reason}, directory=${currentProject.worktree}`); }
   });
   void notifyOpenCodeUpdate(bot);
   let heartbeatCounter = 0;
@@ -75,9 +77,9 @@ export function createBot(): Bot<Context> {
   });
   bot.use((ctx, next) => { logger.debug(`[DEBUG] Incoming update: hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}, callbackData=${ctx.callbackQuery?.data || "N/A"}`); return next(); });
   bot.use(authMiddleware); bot.use(staleUpdateMiddleware); bot.use(inboundRateLimitMiddleware); bot.use(ensureCommandsInitialized); bot.use(interactionGuardMiddleware);
-  registerCommandRouter(bot, { ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason) });
-  registerCallbackRouter(bot, { ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, setTelegramContext: eventSubscriptionService.setTelegramContext });
-  registerMessageRouter(bot, { ensureEventSubscription: eventSubscriptionService.ensureEventSubscription, setTelegramContext: eventSubscriptionService.setTelegramContext });
+  registerCommandRouter(bot, { ensureEventSubscription, clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason) });
+  registerCallbackRouter(bot, { ensureEventSubscription, setTelegramContext });
+  registerMessageRouter(bot, { ensureEventSubscription, setTelegramContext });
   safeBackgroundTask({ taskName: "bot.refreshGlobalCommands", task: async () => { try { await Promise.all([bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "default" } }), bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } })]); return { success: true as const }; } catch (error) { return { success: false as const, error }; } }, onSuccess: (result) => { if (result.success) { logger.debug("[Bot] Refreshed global Telegram command catalog"); return; } logger.warn("[Bot] Could not refresh global commands:", result.error); } });
   bot.catch((err) => { logger.error("[Bot] Unhandled error in bot:", err); clearAllInteractionState("bot_unhandled_error"); if (err.ctx) logger.error("[Bot] Error context - update type:", err.ctx.update ? Object.keys(err.ctx.update) : "unknown"); });
   return bot;
