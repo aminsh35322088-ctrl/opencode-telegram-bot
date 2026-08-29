@@ -11,6 +11,7 @@ export const MODEL_SEARCH_AGAIN_CALLBACK = "model:search:again";
 export const MODEL_SEARCH_CANCEL_CALLBACK = "model:search:cancel";
 export const MODEL_LIST_CALLBACK_PREFIX = "model:list:";
 export const MODEL_ROOT_CALLBACK = "model:root";
+export const MODEL_SETTINGS_BACK_CALLBACK = "model:settings_back";
 export const MODEL_PROVIDERS_CALLBACK_PREFIX = "model:providers:";
 export const MODEL_PROVIDER_CALLBACK_PREFIX = "model:provider:";
 export const MODEL_PROVIDER_MODEL_CALLBACK_PREFIX = "model:pick:";
@@ -104,6 +105,7 @@ export async function buildModelSelectionMenu(currentModel?: ModelInfo, modelLis
     logger.warn("[ModelHandler] No favorite or recent models found");
   }
 
+  keyboard.row().text("← Settings", MODEL_SETTINGS_BACK_CALLBACK).text("✖ Close", "inline:cancel:model");
   return keyboard;
 }
 
@@ -146,7 +148,7 @@ export function buildProvidersMenuView(providers: ProviderInfo[], page: number):
   });
 
   appendPaginationRow(keyboard, normalizedPage, totalPages, (targetPage) => `${MODEL_PROVIDERS_CALLBACK_PREFIX}${targetPage}`);
-  keyboard.text("← Models", MODEL_ROOT_CALLBACK);
+  keyboard.text("← Models", MODEL_ROOT_CALLBACK).text("✖ Close", "inline:cancel:model");
 
   const baseText = providers.length === 0
     ? "🧩 Providers\n\nNo providers are currently available."
@@ -181,7 +183,7 @@ export function buildProviderModelsMenuView(
   });
 
   appendPaginationRow(keyboard, normalizedPage, totalPages, (targetPage) => `${MODEL_PROVIDER_CALLBACK_PREFIX}${providerIndex}:${targetPage}`);
-  keyboard.text("← Providers", `${MODEL_PROVIDERS_CALLBACK_PREFIX}${providersPage}`);
+  keyboard.text("← Providers", `${MODEL_PROVIDERS_CALLBACK_PREFIX}${providersPage}`).text("✖ Close", "inline:cancel:model");
 
   const baseText = models.length === 0
     ? `🧩 ${provider.name}\n\nNo models are currently exposed by this provider.`
