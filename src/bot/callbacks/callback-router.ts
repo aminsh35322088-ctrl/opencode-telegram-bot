@@ -1,5 +1,5 @@
 import type { Bot, Context } from "grammy";
-import { clearInteractionErrorState, type InteractionErrorScope } from "../../app/managers/interaction-manager.js";
+import { clearInteractionErrorState, interactionManager, type InteractionErrorScope } from "../../app/managers/interaction-manager.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { handleAgentSelect } from "./agent-selection-callback-handler.js";
@@ -17,6 +17,8 @@ import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
+import { commandsCommand } from "../commands/command-catalog-command.js";
+import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { handleBackgroundSessionOpen, handleSessionSelect } from "./session-callback-handler.js";
 import { handleSessionPreviewCallback } from "./session-preview-callback-handler.js";
 import { handleSkillsCallback } from "./skills-catalog-callback-handler.js";
@@ -24,6 +26,8 @@ import { handleTaskCallback, handleTaskListCallback } from "./scheduled-task-cal
 import { handleVariantSelect } from "./variant-selection-callback-handler.js";
 import { handleWorktreeCallback } from "./worktree-callback-handler.js";
 import { clearLsPathIndex, clearOpenPathIndex } from "../menus/file-browser-menu.js";
+import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
+import { replyWithInlineMenu } from "../menus/inline-menu.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -32,6 +36,39 @@ interface CallbackRouterDeps { ensureEventSubscription: (directory: string) => P
 function parseCallbackPrefix(data: string): string | null {
   const separatorIndex = data.indexOf(":");
   return separatorIndex <= 0 ? null : data.slice(0, separatorIndex);
+}
+
+async function handleSettingsChildNavigation(ctx: Context, data: string): Promise<boolean> {
+  const isCommandsParentBack = data === "commands:back";
+  const isSkillsParentBack = data === "skills:back";
+  const isMcpsParentBack = data === "mcps:parent_back";
+  if (!isCommandsParentBack && !isSkillsParentBack && !isMcpsParentBack) return false;
+
+  // List -> Advanced. Reuse the same Telegram message so the navigation is
+  // truly back-in-place and cannot leave a stale parent menu behind.
+  await ctx.answerCallbackQuery().catch(() => {});
+  const view = buildAdvancedSettingsView();
+  await replyWithInlineMenu(ctx, {
+    menuKind: "settings",
+    text: view.text,
+    keyboard: view.keyboard,
+  });
+  logger.debug(`[Navigation] Restored Advanced settings from child menu: ${data}`);
+  return true;
+}
+
+async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> {
+  if (data !== "commands:list_back" && data !== "skills:list_back") return false;
+
+  await ctx.answerCallbackQuery().catch(() => {});
+  await ctx.deleteMessage().catch(() => {});
+  if (data === "commands:list_back") {
+    await commandsCommand(ctx as never);
+  } else {
+    await skillsCommand(ctx as never);
+  }
+  logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`);
+  return true;
 }
 
 export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDeps): void {
@@ -66,6 +103,8 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     try {
       if (await handleBackgroundSessionOpen(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })) return;
       if (await handleInlineMenuCancel(ctx)) { clearOpenPathIndex(); clearLsPathIndex(); return; }
+      if (await handleSettingsChildNavigation(ctx, data)) return;
+      if (await handleCatalogListBack(ctx, data)) return;
       const prefix = parseCallbackPrefix(data);
       const route = prefix ? routes.get(prefix) : undefined;
       if (!route) { await ctx.answerCallbackQuery({ text: t("callback.unknown_command") }); return; }
