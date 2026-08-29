@@ -1,6 +1,8 @@
 import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
 import type { CommandCatalogItem } from "../../app/services/command-catalog-service.js";
+import { loadCommandCatalog } from "../../app/services/command-catalog-service.js";
+import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import {
   clearSession,
   getCurrentSession,
@@ -72,92 +74,49 @@ export interface ExecuteCommandDeps {
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) {
-    return null;
-  }
-
+  if (!message || !("message_id" in message)) return null;
   const messageId = (message as { message_id?: number }).message_id;
   return typeof messageId === "number" ? messageId : null;
 }
 
 function parseCommandItems(value: unknown): CommandCatalogItem[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
+  if (!Array.isArray(value)) return null;
   const commands: CommandCatalogItem[] = [];
   for (const item of value) {
-    if (!item || typeof item !== "object") {
-      return null;
-    }
-
+    if (!item || typeof item !== "object") return null;
     const commandName = (item as { name?: unknown }).name;
-    if (typeof commandName !== "string" || !commandName.trim()) {
-      return null;
-    }
-
+    if (typeof commandName !== "string" || !commandName.trim()) return null;
     const description = (item as { description?: unknown }).description;
     commands.push({
       name: commandName,
       description: typeof description === "string" ? description : undefined,
     });
   }
-
   return commands;
 }
 
 export function parseCommandsMetadata(state: InteractionState | null): CommandsMetadata | null {
-  if (!state || state.kind !== "custom") {
-    return null;
-  }
-
+  if (!state || state.kind !== "custom") return null;
   const flow = state.metadata.flow;
   const stage = state.metadata.stage;
   const messageId = state.metadata.messageId;
   const projectDirectory = state.metadata.projectDirectory;
 
-  if (
-    flow !== "commands" ||
-    typeof messageId !== "number" ||
-    typeof projectDirectory !== "string"
-  ) {
-    return null;
-  }
+  if (flow !== "commands" || typeof messageId !== "number" || typeof projectDirectory !== "string") return null;
 
   if (stage === "list") {
     const commands = parseCommandItems(state.metadata.commands);
-    if (!commands) {
-      return null;
-    }
-
-    const page =
-      typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
-        ? Math.max(0, state.metadata.page)
-        : 0;
-
-    return {
-      flow,
-      stage,
-      messageId,
-      projectDirectory,
-      commands,
-      page,
-    };
+    if (!commands) return null;
+    const page = typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
+      ? Math.max(0, state.metadata.page)
+      : 0;
+    return { flow, stage, messageId, projectDirectory, commands, page };
   }
 
   if (stage === "confirm") {
     const commandName = state.metadata.commandName;
-    if (typeof commandName !== "string" || !commandName.trim()) {
-      return null;
-    }
-
-    return {
-      flow,
-      stage,
-      messageId,
-      projectDirectory,
-      commandName,
-    };
+    if (typeof commandName !== "string" || !commandName.trim()) return null;
+    return { flow, stage, messageId, projectDirectory, commandName };
   }
 
   return null;
@@ -165,42 +124,60 @@ export function parseCommandsMetadata(state: InteractionState | null): CommandsM
 
 export function clearCommandsInteraction(reason: string): void {
   const metadata = parseCommandsMetadata(interactionManager.getSnapshot());
-  if (metadata) {
-    interactionManager.clear(reason);
-  }
+  if (metadata) interactionManager.clear(reason);
+}
+
+async function recoverCommandsListMetadata(ctx: Context): Promise<CommandsListMetadata | null> {
+  const messageId = getCallbackMessageId(ctx);
+  if (messageId === null) return null;
+
+  const projectDirectory = getCurrentSessionDirectory();
+  if (!projectDirectory) return null;
+
+  const commands = await loadCommandCatalog(projectDirectory);
+  if (commands.length === 0) return null;
+
+  const pageSize = config.bot.commandsListLimit;
+  const { page } = calculateCommandsPaginationRange(commands.length, 0, pageSize);
+  const recovered: CommandsListMetadata = {
+    flow: "commands",
+    stage: "list",
+    messageId,
+    projectDirectory,
+    commands,
+    page,
+  };
+
+  interactionManager.start({
+    kind: "custom",
+    expectedInput: "callback",
+    metadata: recovered,
+  });
+
+  logger.warn(`[Commands] Recovered stale custom-command menu state: messageId=${messageId}`);
+  return recovered;
 }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
   try {
     const { data, error } = await opencodeClient.session.status({ directory });
-
     if (error || !data) {
       logger.warn("[Commands] Failed to check session status before command:", error);
       return false;
     }
-
     const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
-    if (!sessionStatus) {
-      return false;
-    }
-
-    return sessionStatus.type === "busy";
+    return sessionStatus?.type === "busy";
   } catch (err) {
     logger.warn("[Commands] Error checking session status before command:", err);
     return false;
   }
 }
 
-async function ensureSessionForProject(
-  ctx: Context,
-  projectDirectory: string,
-): Promise<SessionInfo | null> {
+async function ensureSessionForProject(ctx: Context, projectDirectory: string): Promise<SessionInfo | null> {
   let currentSession = getCurrentSession();
 
   if (currentSession && currentSession.directory !== projectDirectory) {
-    logger.warn(
-      `[Commands] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${projectDirectory}. Resetting session context.`,
-    );
+    logger.warn(`[Commands] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${projectDirectory}. Resetting session context.`);
     detachAttachedSession("session_mismatch_reset");
     clearSession();
     summaryAggregator.clear();
@@ -210,58 +187,33 @@ async function ensureSessionForProject(
     currentSession = null;
   }
 
-  if (currentSession) {
-    return currentSession;
-  }
+  if (currentSession) return currentSession;
 
   await ctx.reply(t("bot.creating_session"));
-
-  const { data: session, error } = await opencodeClient.session.create({
-    directory: projectDirectory,
-  });
-
+  const { data: session, error } = await opencodeClient.session.create({ directory: projectDirectory });
   if (error || !session) {
     await ctx.reply(t("bot.create_session_error"));
     return null;
   }
 
-  const sessionInfo: SessionInfo = {
-    id: session.id,
-    title: session.title,
-    directory: projectDirectory,
-  };
-
+  const sessionInfo: SessionInfo = { id: session.id, title: session.title, directory: projectDirectory };
   setCurrentSession(sessionInfo);
   await ingestSessionInfoForCache(session);
   await ctx.reply(t("bot.session_created", { title: session.title }));
-
   return sessionInfo;
 }
 
-export async function executeCommand(
-  ctx: Context,
-  deps: ExecuteCommandDeps,
-  params: ExecuteCommandParams,
-): Promise<void> {
-  if (!ctx.chat) {
-    return;
-  }
+export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, params: ExecuteCommandParams): Promise<void> {
+  if (!ctx.chat) return;
 
   const args = params.argumentsText.trim();
   const executingMessage = formatExecutingCommandMessage(params.commandName, args);
   await ctx.reply(executingMessage.text, { entities: executingMessage.entities });
 
   const session = await ensureSessionForProject(ctx, params.projectDirectory);
-  if (!session) {
-    return;
-  }
+  if (!session) return;
 
-  await attachToSession({
-    bot: deps.bot,
-    chatId: ctx.chat.id,
-    session,
-    ensureEventSubscription: deps.ensureEventSubscription,
-  });
+  await attachToSession({ bot: deps.bot, chatId: ctx.chat.id, session, ensureEventSubscription: deps.ensureEventSubscription });
 
   const sessionIsBusy = await isSessionBusy(session.id, session.directory);
   if (sessionIsBusy) {
@@ -271,10 +223,7 @@ export async function executeCommand(
 
   const currentAgent = await resolveProjectAgent(getStoredAgent());
   const storedModel = getStoredModel();
-  const model =
-    storedModel.providerID && storedModel.modelID
-      ? `${storedModel.providerID}/${storedModel.modelID}`
-      : undefined;
+  const model = storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : undefined;
 
   foregroundSessionState.markBusy(session.id, session.directory);
   await markAttachedSessionBusy(session.id);
@@ -284,68 +233,60 @@ export async function executeCommand(
     configuredProviderID: storedModel.providerID,
     configuredModelID: storedModel.modelID,
   });
-  externalUserInputSuppressionManager.register(
-    session.id,
-    args ? `/${params.commandName} ${args}` : `/${params.commandName}`,
-  );
+  externalUserInputSuppressionManager.register(session.id, args ? `/${params.commandName} ${args}` : `/${params.commandName}`);
 
   safeBackgroundTask({
     taskName: "session.command",
-    task: () =>
-      opencodeClient.session.command({
-        sessionID: session.id,
-        directory: session.directory,
-        command: params.commandName,
-        arguments: args,
-        agent: currentAgent,
-        ...(model !== undefined ? { model } : {}),
-        ...(storedModel.variant !== undefined ? { variant: storedModel.variant } : {}),
-      }),
+    task: () => opencodeClient.session.command({
+      sessionID: session.id,
+      directory: session.directory,
+      command: params.commandName,
+      arguments: args,
+      agent: currentAgent,
+      ...(model !== undefined ? { model } : {}),
+      ...(storedModel.variant !== undefined ? { variant: storedModel.variant } : {}),
+    }),
     onSuccess: ({ error }) => {
       if (error) {
         foregroundSessionState.markIdle(session.id);
         void markAttachedSessionIdle(session.id);
         assistantRunState.clearRun(session.id, "session_command_api_error");
-        logger.error("[Commands] OpenCode API returned an error for session.command", {
-          sessionId: session.id,
-          command: params.commandName,
-          args,
-        });
+        logger.error("[Commands] OpenCode API returned an error for session.command", { sessionId: session.id, command: params.commandName, args });
         logger.error("[Commands] session.command error details:", error);
         void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
         return;
       }
-
-      logger.info(
-        `[Commands] session.command completed: session=${session.id}, command=/${params.commandName}`,
-      );
+      logger.info(`[Commands] session.command completed: session=${session.id}, command=/${params.commandName}`);
     },
     onError: (error) => {
       foregroundSessionState.markIdle(session.id);
       void markAttachedSessionIdle(session.id);
       assistantRunState.clearRun(session.id, "session_command_background_error");
-      logger.error("[Commands] session.command background task failed", {
-        sessionId: session.id,
-        command: params.commandName,
-        args,
-      });
+      logger.error("[Commands] session.command background task failed", { sessionId: session.id, command: params.commandName, args });
       logger.error("[Commands] session.command background failure details:", error);
       void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
     },
   });
 }
 
-export async function handleCommandsCallback(
-  ctx: Context,
-  deps: ExecuteCommandDeps,
-): Promise<boolean> {
+export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandDeps): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
-  if (!data || !data.startsWith(COMMANDS_CALLBACK_PREFIX)) {
-    return false;
+  if (!data || !data.startsWith(COMMANDS_CALLBACK_PREFIX)) return false;
+
+  // Cancel must always be actionable from the command menu, even if the
+  // global interaction state was replaced by another menu in the meantime.
+  if (data === COMMANDS_CALLBACK_CANCEL) {
+    clearCommandsInteraction("commands_cancelled");
+    await ctx.answerCallbackQuery().catch(() => {});
+    await cancelMenu(ctx).catch(() => {});
+    return true;
   }
 
-  const metadata = parseCommandsMetadata(interactionManager.getSnapshot());
+  let metadata = parseCommandsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
+  if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
+    metadata = await recoverCommandsListMetadata(ctx);
+  }
 
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
     await ctx.answerCallbackQuery({ text: t("commands.inactive_callback"), show_alert: true });
@@ -353,22 +294,14 @@ export async function handleCommandsCallback(
   }
 
   try {
-    if (data === COMMANDS_CALLBACK_CANCEL) {
-      clearCommandsInteraction("commands_cancelled");
-      await cancelMenu(ctx);
-      return true;
-    }
-
     if (data === COMMANDS_CALLBACK_EXECUTE) {
       if (metadata.stage !== "confirm") {
         await ctx.answerCallbackQuery({ text: t("commands.inactive_callback"), show_alert: true });
         return true;
       }
-
       clearCommandsInteraction("commands_execute_clicked");
       await ctx.answerCallbackQuery({ text: t("commands.execute_callback") });
       await ctx.deleteMessage().catch(() => {});
-
       await executeCommand(ctx, deps, {
         projectDirectory: metadata.projectDirectory,
         commandName: metadata.commandName,
@@ -383,25 +316,15 @@ export async function handleCommandsCallback(
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-
       const pageSize = config.bot.commandsListLimit;
-      const { page: normalizedPage, totalPages } = calculateCommandsPaginationRange(
-        metadata.commands.length,
-        page,
-        pageSize,
-      );
-
+      const { page: normalizedPage, totalPages } = calculateCommandsPaginationRange(metadata.commands.length, page, pageSize);
       if (page >= totalPages || page < 0) {
         await ctx.answerCallbackQuery({ text: t("commands.page_empty_callback") });
         return true;
       }
-
       const keyboard = buildCommandsListKeyboard(metadata.commands, normalizedPage, pageSize);
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(formatCommandsSelectText(normalizedPage), {
-        reply_markup: keyboard,
-      });
-
+      await ctx.editMessageText(formatCommandsSelectText(normalizedPage), { reply_markup: keyboard });
       interactionManager.transition({
         expectedInput: "callback",
         metadata: {
@@ -413,7 +336,6 @@ export async function handleCommandsCallback(
           page: normalizedPage,
         },
       });
-
       return true;
     }
 
