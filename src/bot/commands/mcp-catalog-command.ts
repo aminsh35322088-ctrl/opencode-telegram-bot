@@ -16,9 +16,22 @@ export async function mcpsCommand(ctx: CommandContext<Context>): Promise<void> {
     }
 
     const keyboard = buildMcpsListKeyboard(servers);
-    const message = await ctx.reply(t("mcps.select"), {
-      reply_markup: keyboard,
-    });
+    const callbackMessage = ctx.callbackQuery?.message;
+    const callbackMessageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : null;
+    let messageId: number;
+
+    if (callbackMessageId !== null && ctx.chat?.id) {
+      await ctx.api.editMessageText(ctx.chat.id, callbackMessageId, t("mcps.select"), {
+        reply_markup: keyboard,
+      });
+      await ctx.answerCallbackQuery().catch(() => {});
+      messageId = callbackMessageId;
+    } else {
+      const message = await ctx.reply(t("mcps.select"), {
+        reply_markup: keyboard,
+      });
+      messageId = message.message_id;
+    }
 
     interactionManager.start({
       kind: "custom",
@@ -26,7 +39,7 @@ export async function mcpsCommand(ctx: CommandContext<Context>): Promise<void> {
       metadata: {
         flow: "mcps",
         stage: "list",
-        messageId: message.message_id,
+        messageId,
         projectDirectory,
         servers,
       },
