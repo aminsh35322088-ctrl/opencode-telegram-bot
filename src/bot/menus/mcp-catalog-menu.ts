@@ -7,6 +7,7 @@ export const MCPS_CALLBACK_PREFIX = "mcps:";
 export const MCPS_CALLBACK_SELECT_PREFIX = `${MCPS_CALLBACK_PREFIX}select:`;
 export const MCPS_CALLBACK_TOGGLE = `${MCPS_CALLBACK_PREFIX}toggle`;
 export const MCPS_CALLBACK_BACK = `${MCPS_CALLBACK_PREFIX}back`;
+export const MCPS_CALLBACK_PARENT_BACK = `${MCPS_CALLBACK_PREFIX}parent_back`;
 export const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
@@ -75,7 +76,7 @@ export function buildMcpsListKeyboard(servers: McpCatalogServerItem[]): InlineKe
     keyboard.text(formatMcpButtonLabel(server), `${MCPS_CALLBACK_SELECT_PREFIX}${index}`).row();
   });
 
-  keyboard.text(t("inline.button.cancel"), MCPS_CALLBACK_CANCEL);
+  keyboard.text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
   return keyboard;
 }
 
@@ -95,9 +96,7 @@ export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKey
     keyboard.row();
   }
 
-  keyboard.text(t("mcps.button.back"), MCPS_CALLBACK_BACK);
-  keyboard.text(t("inline.button.cancel"), MCPS_CALLBACK_CANCEL);
-
+  keyboard.text(t("mcps.button.back"), MCPS_CALLBACK_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
   return keyboard;
 }
 
