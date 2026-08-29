@@ -92,6 +92,23 @@ function getOptionalMessageFormatModeEnvVar(
   return defaultValue;
 }
 
+function parseTelegramAllowedUserIds(): number[] {
+  const raw = getEnvVar("TELEGRAM_ALLOWED_USER_ID").trim();
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const ids = values.map((value) => Number(value));
+  if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error(
+      "TELEGRAM_ALLOWED_USER_ID must contain one or more valid positive Telegram user IDs separated by commas.",
+    );
+  }
+
+  return [...new Set(ids)];
+}
+
 export function parseInitialSettingsPreset(): Record<string, unknown> {
   const raw = getEnvVar("INITIAL_SETTINGS_PRESET", false).trim();
   if (!raw) {
@@ -134,6 +151,7 @@ function getOptionalSttRequestFormatEnvVar(
 export function buildTelegramConfig(): {
   token: string;
   allowedUserId: number;
+  allowedUserIds: number[];
   proxyUrl: string;
   apiRoot: string;
   proxySecret: string;
@@ -143,6 +161,7 @@ export function buildTelegramConfig(): {
   const apiRoot = getEnvVar("TELEGRAM_API_ROOT", false).replace(/\/+$/, "");
   const proxySecret = getEnvVar("TELEGRAM_PROXY_SECRET", false);
   const forceIpv4 = getOptionalBooleanEnvVar("TELEGRAM_FORCE_IPV4", false);
+  const allowedUserIds = parseTelegramAllowedUserIds();
 
   if (proxyUrl && apiRoot) {
     throw new Error(
@@ -160,7 +179,8 @@ export function buildTelegramConfig(): {
 
   return {
     token: getEnvVar("TELEGRAM_BOT_TOKEN"),
-    allowedUserId: parseInt(getEnvVar("TELEGRAM_ALLOWED_USER_ID"), 10),
+    allowedUserId: allowedUserIds[0],
+    allowedUserIds,
     proxyUrl,
     apiRoot,
     proxySecret,
