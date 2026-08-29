@@ -7,6 +7,8 @@ export const SKILLS_CALLBACK_SELECT_PREFIX = `${SKILLS_CALLBACK_PREFIX}select:`;
 const SKILLS_CALLBACK_PAGE_PREFIX = `${SKILLS_CALLBACK_PREFIX}page:`;
 export const SKILLS_CALLBACK_CANCEL = `${SKILLS_CALLBACK_PREFIX}cancel`;
 export const SKILLS_CALLBACK_EXECUTE = `${SKILLS_CALLBACK_PREFIX}execute`;
+export const SKILLS_CALLBACK_BACK = `${SKILLS_CALLBACK_PREFIX}back`;
+export const SKILLS_CALLBACK_LIST_BACK = `${SKILLS_CALLBACK_PREFIX}list_back`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
@@ -143,12 +145,16 @@ export function buildSkillsListKeyboard(
     keyboard.row();
   }
 
-  keyboard.text(t("skills.button.cancel"), SKILLS_CALLBACK_CANCEL);
+  keyboard
+    .text("← Back", SKILLS_CALLBACK_BACK)
+    .text("✖ Close", SKILLS_CALLBACK_CANCEL);
   return keyboard;
 }
 
 export function buildSkillsConfirmKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text(t("skills.button.execute"), SKILLS_CALLBACK_EXECUTE)
-    .text(t("skills.button.cancel"), SKILLS_CALLBACK_CANCEL);
+    .row()
+    .text("← Skills", SKILLS_CALLBACK_LIST_BACK)
+    .text("✖ Close", SKILLS_CALLBACK_CANCEL);
 }
