@@ -92,5 +92,23 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
 }
 
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
-  return { text: "🛠 Advanced\n\nAdvanced connectivity and integrations live here so the main reply settings stay clean.", keyboard: new InlineKeyboard().text("🔌 API Providers", "provider:menu").row().text("🔗 Integrations", "integration:menu").row().text("← Settings", SETTINGS_BACK_CALLBACK) };
+  const keyboard = new InlineKeyboard()
+    .text("🔌 API Providers", "provider:menu").row()
+    .text("🔗 Integrations", "integration:menu").row()
+    .text("🔗 MCP Servers", "mcps:list").row()
+    .text("🧠 Skills", "skills:list").row()
+    .text("🧩 Custom Commands", "commands:list");
+  appendSettingsBackButton(keyboard);
+  return {
+    text: [
+      "🛠 Advanced",
+      "",
+      "Power-user controls and OpenCode integrations.",
+      "",
+      "🔗 MCP Servers — inspect and enable/disable connected MCP servers.",
+      "🧠 Skills — browse reusable Agent workflows available to OpenCode.",
+      "🧩 Custom Commands — browse project-defined OpenCode command templates.",
+    ].join("\n"),
+    keyboard,
+  };
 }
