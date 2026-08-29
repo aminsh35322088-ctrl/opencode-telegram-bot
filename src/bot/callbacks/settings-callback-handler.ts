@@ -1,6 +1,9 @@
 import type { Context } from "grammy";
 import type { InlineKeyboard } from "grammy";
 import { showModelSelectionMenu } from "../menus/model-selection-menu.js";
+import { mcpsCommand } from "../commands/mcp-catalog-command.js";
+import { skillsCommand } from "../commands/skills-catalog-command.js";
+import { commandsCommand } from "../commands/command-catalog-command.js";
 import {
   getCompactOutputMode,
   getPromptQueueEnabled,
@@ -29,15 +32,18 @@ import {
   SETTINGS_APPEARANCE_CALLBACK,
   SETTINGS_ASSISTANT_FOOTER_CALLBACK,
   SETTINGS_BACK_CALLBACK,
-  SETTINGS_CALLBACK_PREFIX,
+  SETTINGS_COMMANDS_CALLBACK,
   SETTINGS_COMPACT_OUTPUT_CALLBACK,
   SETTINGS_CONTEXT_CALLBACK,
   SETTINGS_DIFF_FILES_CALLBACK,
+  SETTINGS_MCP_CALLBACK,
   SETTINGS_MODEL_CALLBACK,
   SETTINGS_NOTIFICATIONS_CALLBACK,
   SETTINGS_PROMPT_QUEUE_CALLBACK,
   SETTINGS_RESPONSE_STREAMING_CALLBACK,
+  SETTINGS_SKILLS_CALLBACK,
   SETTINGS_THINKING_CONTENT_CALLBACK,
+  SETTINGS_CALLBACK_PREFIX,
 } from "../menus/settings-menu.js";
 
 function getNextResponseStreamingMode(mode: ResponseStreamingMode): ResponseStreamingMode {
@@ -80,6 +86,18 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_ADVANCED_CALLBACK:
         await ctx.answerCallbackQuery();
         await renderSettingsView(ctx, buildAdvancedSettingsView());
+        return true;
+      case SETTINGS_MCP_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await mcpsCommand(ctx as never);
+        return true;
+      case SETTINGS_SKILLS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await skillsCommand(ctx as never);
+        return true;
+      case SETTINGS_COMMANDS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await commandsCommand(ctx as never);
         return true;
       case SETTINGS_BACK_CALLBACK:
         await ctx.answerCallbackQuery();
