@@ -8,11 +8,13 @@ set -eu
 : "${OPENCODE_MODEL_PROVIDER:=opencode}"
 : "${OPENCODE_MODEL_ID:=big-pickle}"
 : "${OPEN_BROWSER_ROOTS:=/data/workspace}"
+: "${OPENCODE_CONFIG_DIR:=/data/opencode/config}"
 
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
+export OPENCODE_CONFIG_DIR
 
-mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace /data/opencode/config/tools
 
 # Keep the historical /app/workspace path as a compatibility alias. Existing
 # persisted sessions may still reference it, while all actual workspace data
@@ -25,6 +27,13 @@ if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   rm -rf /app/workspace
 fi
 ln -sfn /data/workspace /app/workspace
+
+# OpenCode custom tools are loaded from this persistent config directory so
+# every project/session gets the same Telegram artifact delivery capability.
+if [ -f /app/.opencode/tools/send-file.ts ]; then
+  cp /app/.opencode/tools/send-file.ts /data/opencode/config/tools/send-file.ts
+  chown node:node /data/opencode/config/tools/send-file.ts
+fi
 
 chown -R node:node /data
 
@@ -77,6 +86,8 @@ printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
 printf '%s\n' "[railway] Persistent workspace: /data/workspace"
+printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
+printf '%s\n' "[railway] Artifact delivery tool: $(test -f /data/opencode/config/tools/send-file.ts && echo enabled || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable)"
 
 exec su -s /bin/sh node -c 'exec node /app/dist/index.js'
