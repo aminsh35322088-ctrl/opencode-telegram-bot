@@ -40,6 +40,7 @@ import { settingsCommand } from "../commands/settings-command.js";
 import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
+import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -141,6 +142,14 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   botInstance = bot;
   currentEnsureEventSubscription = deps.ensureEventSubscription;
 
+  bot.on("message", async (ctx, next) => {
+    if (ctx.chat?.id) {
+      agentArtifactDeliveryService.setChatId(ctx.chat.id);
+      deps.setTelegramContext(bot, ctx.chat.id);
+    }
+    await next();
+  });
+
   bot.on("message:text", async (ctx, next) => {
     if (await handlePriorityControlButton(ctx)) return;
     await next();
@@ -230,25 +239,30 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
   bot.on("message:voice", async (ctx) => {
     deps.setTelegramContext(bot, ctx.chat.id);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
   bot.on("message:audio", async (ctx) => {
     deps.setTelegramContext(bot, ctx.chat.id);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
   bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
   bot.on("message:photo", async (ctx) => {
     deps.setTelegramContext(bot, ctx.chat.id);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
   bot.on("message:document", async (ctx) => {
     deps.setTelegramContext(bot, ctx.chat.id);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
   bot.on("message:text", async (ctx) => {
     const text = ctx.message?.text?.trim();
     if (!text) return;
     deps.setTelegramContext(bot, ctx.chat.id);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     if (text.startsWith("/")) return;
     if (REPLY_KEYBOARD_TEXT.has(text) || /^📦 Compact: (?:ON|OFF)$/.test(text)) return;
     if (await handleProviderWizardMessage(ctx)) return;
