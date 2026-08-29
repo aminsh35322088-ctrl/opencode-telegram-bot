@@ -7,6 +7,8 @@ export const COMMANDS_CALLBACK_SELECT_PREFIX = `${COMMANDS_CALLBACK_PREFIX}selec
 const COMMANDS_CALLBACK_PAGE_PREFIX = `${COMMANDS_CALLBACK_PREFIX}page:`;
 export const COMMANDS_CALLBACK_CANCEL = `${COMMANDS_CALLBACK_PREFIX}cancel`;
 export const COMMANDS_CALLBACK_EXECUTE = `${COMMANDS_CALLBACK_PREFIX}execute`;
+export const COMMANDS_CALLBACK_BACK = `${COMMANDS_CALLBACK_PREFIX}back`;
+export const COMMANDS_CALLBACK_LIST_BACK = `${COMMANDS_CALLBACK_PREFIX}list_back`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
@@ -148,12 +150,16 @@ export function buildCommandsListKeyboard(
     keyboard.row();
   }
 
-  keyboard.text(t("commands.button.cancel"), COMMANDS_CALLBACK_CANCEL);
+  keyboard
+    .text("← Back", COMMANDS_CALLBACK_BACK)
+    .text("✖ Close", COMMANDS_CALLBACK_CANCEL);
   return keyboard;
 }
 
 export function buildCommandsConfirmKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text(t("commands.button.execute"), COMMANDS_CALLBACK_EXECUTE)
-    .text(t("commands.button.cancel"), COMMANDS_CALLBACK_CANCEL);
+    .row()
+    .text("← Commands", COMMANDS_CALLBACK_LIST_BACK)
+    .text("✖ Close", COMMANDS_CALLBACK_CANCEL);
 }
