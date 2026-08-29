@@ -19,6 +19,15 @@ const GENERATED_NAME_HINTS = [
   "bundle", "site", "build",
 ];
 
+type ToolEventPart = {
+  type: "tool";
+  state: {
+    status: string;
+    input: Record<string, unknown>;
+    output?: string;
+  };
+};
+
 function normalizedSegments(filePath: string): string[] {
   return filePath.split(/[\\/]+/).map((segment) => segment.toLowerCase()).filter(Boolean);
 }
@@ -76,10 +85,19 @@ export function extractArtifactMarkers(value: unknown): string[] {
   return [...new Set(paths)];
 }
 
-function isCompletedToolPart(event: Event): boolean {
-  if (event.type !== "message.part.updated") return false;
-  const part = event.properties.part;
-  return Boolean(part && part.type === "tool" && part.state.status === "completed");
+function getToolEventPart(event: Event): ToolEventPart | null {
+  if (event.type !== "message.part.updated") return null;
+
+  const properties = event.properties as { part?: unknown };
+  const part = properties.part;
+  if (!part || typeof part !== "object") return null;
+
+  const candidate = part as Partial<ToolEventPart>;
+  if (candidate.type !== "tool" || !candidate.state || typeof candidate.state !== "object") return null;
+  if (typeof candidate.state.status !== "string") return null;
+  if (!candidate.state.input || typeof candidate.state.input !== "object") return null;
+
+  return candidate as ToolEventPart;
 }
 
 function captionFor(filePath: string, size: number): string {
@@ -98,19 +116,21 @@ class AgentArtifactDeliveryService {
 
   processEvent(event: Event): void {
     if (event.type === "file.edited" || event.type === "file.watcher.updated") {
-      const filePath = event.properties.file;
+      const properties = event.properties as { file?: unknown; event?: unknown };
+      const filePath = properties.file;
       if (typeof filePath !== "string") return;
-      if (event.type === "file.watcher.updated" && event.properties.event === "unlink") return;
+      if (event.type === "file.watcher.updated" && properties.event === "unlink") return;
       void this.scheduleAutoDetection(filePath);
       return;
     }
 
-    if (!isCompletedToolPart(event)) return;
+    const part = getToolEventPart(event);
+    if (!part || part.state.status !== "completed") return;
 
-    const part = event.properties.part;
-    const state = part.state;
-    const input = state.input as Record<string, unknown>;
-    const markerPaths = [...extractArtifactMarkers(state.output), ...extractArtifactMarkers(input.command)];
+    const markerPaths = [
+      ...extractArtifactMarkers(part.state.output),
+      ...extractArtifactMarkers(part.state.input.command),
+    ];
     for (const filePath of markerPaths) this.scheduleDelivery(filePath);
   }
 
