@@ -2,35 +2,58 @@ import { Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import type { ModelInfo } from "../../app/types/model.js";
-import type { ContextInfo } from "./keyboard-types.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 
+const MAIN_BUTTONS = {
+  history: "🕘 History",
+  newChat: "💬 New Chat",
+  settings: "⚙️ Settings",
+  compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
+  pause: "⏸️ Pause",
+  resume: "▶️ Resume",
+  abort: "🛑 Abort",
+} as const;
+
+interface MainKeyboardOptions {
+  queuedPromptLabels?: string[];
+  paused?: boolean;
+  running?: boolean;
+  compactOutputMode?: boolean;
+}
+
+function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
+  for (const label of labels) keyboard.text(label).row();
+}
+
+function addRunningControls(keyboard: Keyboard, paused: boolean): void {
+  keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
+}
+
+function addIdleControls(keyboard: Keyboard, modelText: string, compactOutputMode: boolean): void {
+  keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
+  keyboard.text(modelText).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
+  keyboard.text(MAIN_BUTTONS.settings).row();
+}
+
 export function createMainKeyboard(
-  _currentAgent: string,
   currentModel: ModelInfo,
-  _contextInfo?: ContextInfo,
-  _variantName?: string,
-  queuedPromptLabels: string[] = [],
-  paused = false,
-  running = false,
+  options: MainKeyboardOptions = {},
 ): Keyboard {
   const keyboard = new Keyboard();
   const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
-  const effectivePaused = paused || isChatPaused();
+  const effectivePaused = options.paused ?? isChatPaused();
 
-  for (const label of queuedPromptLabels) keyboard.text(label).row();
+  addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
 
-  if (running) {
-    keyboard.text(effectivePaused ? "▶️ Resume" : "⏸️ Pause").text("🛑 Abort").row();
+  if (options.running) {
+    addRunningControls(keyboard, effectivePaused);
     return keyboard.resized().persistent();
   }
 
-  keyboard.text(modelText).text("💬 New Chat").row();
+  addIdleControls(keyboard, modelText, options.compactOutputMode ?? false);
+
   if (effectivePaused) {
-    keyboard.text("▶️ Resume").text("🛑 Abort").row();
-  } else {
-    keyboard.text("🕘 History").row();
-    keyboard.text("⚙️ Settings").row();
+    keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
   }
 
   return keyboard.resized().persistent();
@@ -45,3 +68,5 @@ export function createAgentKeyboard(currentAgent: string): Keyboard {
 export function removeKeyboard(): { remove_keyboard: true } {
   return { remove_keyboard: true };
 }
+
+export { MAIN_BUTTONS };
