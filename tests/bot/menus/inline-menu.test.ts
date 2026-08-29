@@ -10,7 +10,8 @@ describe("inline-menu", () => {
     const keyboard = new InlineKeyboard().text("Session A", "session:1").row();
     appendInlineMenuCancelButton(keyboard, "session");
     expect(keyboard.inline_keyboard.some((row) => row.length === 0)).toBe(false);
-    expect(keyboard.inline_keyboard.at(-1)?.[0]?.callback_data).toBe("inline:cancel:session");
+    const button = keyboard.inline_keyboard.at(-1)?.[0];
+    expect(button && "callback_data" in button ? button.callback_data : undefined).toBe("inline:cancel:session");
   });
 
   it("registers an active inline interaction", async () => {
