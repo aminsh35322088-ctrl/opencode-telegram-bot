@@ -70,9 +70,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.hears(/^⚙️ Settings$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await settingsCommand(ctx as never); });
   bot.hears(/^🕘 History$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await sessionsCommand(ctx as never); });
   bot.hears(/^💬 New Chat$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
-  bot.hears(/^⏸️ Pause$/, async (ctx) => { await pauseCurrentChat(ctx); });
-  bot.hears(/^▶️ Resume$/, async (ctx) => { await resumePausedChat(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
-  bot.hears(/^🛑 Abort$/, async (ctx) => { await abortCurrentOperation(ctx); });
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } const keyboard = keyboardManager.getKeyboard(); await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
   bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
   bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showModelSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing model menu:", err); await ctx.reply(t("error.load_models")); } });
