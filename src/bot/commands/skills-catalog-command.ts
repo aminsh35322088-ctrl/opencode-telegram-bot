@@ -1,4 +1,4 @@
-import type { CommandContext, Context } from "grammy";
+import type { Context } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { loadSkillsCatalog } from "../../app/services/skills-catalog-service.js";
@@ -7,7 +7,7 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { buildSkillsListKeyboard, formatSkillsSelectText } from "../menus/skills-catalog-menu.js";
 
-export async function skillsCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function skillsCommand(ctx: Context): Promise<void> {
   try {
     const projectDirectory = getCurrentSessionDirectory();
     const skills = await loadSkillsCatalog(projectDirectory);
