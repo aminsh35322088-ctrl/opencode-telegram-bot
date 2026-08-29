@@ -17,6 +17,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     dumb-init ca-certificates git git-lfs curl wget unzip zip jq \
     ripgrep fd-find tree file less rsync openssh-client procps \
+    python3 python3-pip python3-venv sqlite3 build-essential pkg-config \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,12 +39,14 @@ RUN OPENCODE_VERSION="$(tr -d '\r\n' < .opencode-version)" \
 
 ENV NODE_ENV=production
 ENV OPENCODE_TELEGRAM_HOME=/data
+ENV OPENCODE_HOME=/data/opencode
 ENV HOME=/data
 ENV XDG_CONFIG_HOME=/data/.config
 ENV XDG_DATA_HOME=/data/.local/share
 ENV XDG_CACHE_HOME=/data/.cache
+ENV OPEN_BROWSER_ROOTS=/data/workspace
 
-RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /app/workspace \
+RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace \
     && chown -R node:node /data /app
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
