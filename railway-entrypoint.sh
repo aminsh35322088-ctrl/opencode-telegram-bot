@@ -7,13 +7,26 @@ set -eu
 : "${OPENCODE_MONITOR_INTERVAL_SEC:=60}"
 : "${OPENCODE_MODEL_PROVIDER:=opencode}"
 : "${OPENCODE_MODEL_ID:=big-pickle}"
-: "${OPEN_BROWSER_ROOTS:=/app/workspace}"
+: "${OPEN_BROWSER_ROOTS:=/data/workspace}"
 
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 
-mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /app/workspace
-chown -R node:node /data /app/workspace
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace
+
+# Keep the historical /app/workspace path as a compatibility alias. Existing
+# persisted sessions may still reference it, while all actual workspace data
+# now lives on the Railway Volume under /data/workspace.
+if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
+  if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    printf '%s\n' "[railway] Migrating image-local workspace contents to persistent volume"
+    cp -a /app/workspace/. /data/workspace/
+  fi
+  rm -rf /app/workspace
+fi
+ln -sfn /data/workspace /app/workspace
+
+chown -R node:node /data
 
 # GitHub credentials are persisted on the Railway Volume. An existing
 # GITHUB_TOKEN env var is migrated into the integration file on first boot.
@@ -63,5 +76,7 @@ printf '%s\n' "[railway] OpenCode CLI: $(opencode --version 2>/dev/null || echo 
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
+printf '%s\n' "[railway] Persistent workspace: /data/workspace"
+printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable)"
 
 exec su -s /bin/sh node -c 'exec node /app/dist/index.js'
