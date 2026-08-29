@@ -13,12 +13,18 @@ export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
 interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; }
 interface InlineMenuReplyOptions { menuKind: InlineMenuKind; text: string; keyboard: InlineKeyboard; parseMode?: "Markdown" | "HTML"; metadata?: InteractionMetadata; }
 
+// Inline-menu UI state belongs to the Telegram chat, not to the shared
+// OpenCode workspace/history. This prevents one developer opening a menu from
+// invalidating another developer's menu while they work on the same project.
+const activeInlineMenus = new Map<number, ActiveInlineMenuMetadata>();
+
 export function isInlineMenuKind(value: string): value is InlineMenuKind { return INLINE_MENU_KINDS.includes(value as InlineMenuKind); }
 function getCallbackMessageId(ctx: Context): number | null { const message = ctx.callbackQuery?.message; if (!message || !("message_id" in message)) return null; const id = (message as { message_id?: number }).message_id; return typeof id === "number" ? id : null; }
+function getChatId(ctx: Context): number | null { return typeof ctx.chat?.id === "number" ? ctx.chat.id : null; }
 function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInlineMenuMetadata | null {
   if (!state || state.kind !== "inline") return null;
   const menuKind = state.metadata.menuKind; const messageId = state.metadata.messageId;
-  if (typeof menuKind !== "string" || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
+  if (typeof menuKind !== "string' || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
   return { menuKind, messageId };
 }
 function getInlineCancelCallbackData(menuKind: InlineMenuKind): string { return `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`; }
@@ -51,44 +57,51 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
     messageId = message.message_id;
   }
 
+  const chatId = getChatId(ctx);
+  if (chatId !== null) activeInlineMenus.set(chatId, { menuKind: options.menuKind, messageId });
   interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { ...options.metadata, menuKind: options.menuKind, messageId } });
-  logger.debug(`[InlineMenu] Opened/updated menu: kind=${options.menuKind}, messageId=${messageId}`);
+  logger.debug(`[InlineMenu] Opened/updated menu: kind=${options.menuKind}, messageId=${messageId}, chatId=${chatId ?? "none"}`);
   return messageId;
 }
 
 export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuKind): Promise<boolean> {
-  const activeMetadata = getActiveInlineMenuMetadata(interactionManager.getSnapshot());
+  const chatId = getChatId(ctx);
+  const activeMetadata = chatId !== null ? activeInlineMenus.get(chatId) ?? null : null;
   const callbackMessageId = getCallbackMessageId(ctx);
   const callbackData = ctx.callbackQuery?.data ?? "";
   const isActive = !!activeMetadata && callbackMessageId !== null && activeMetadata.menuKind === menuKind && activeMetadata.messageId === callbackMessageId;
   if (isActive) return true;
 
-  // Settings is the parent/root navigation surface for several child catalogs.
-  // Child menus may replace the singleton interaction state; when the user
-  // returns to the still-existing Settings message, rehydrate its state from
-  // the callback message instead of trapping the user behind an "inactive" alert.
-  if (menuKind === "settings" && callbackMessageId !== null && callbackData.startsWith("settings:")) {
-    interactionManager.start({
-      kind: "inline",
-      expectedInput: "callback",
-      metadata: { menuKind: "settings", messageId: callbackMessageId },
-    });
-    logger.debug(`[InlineMenu] Rehydrated settings interaction: messageId=${callbackMessageId}`);
+  // A callback is valid for this chat when it targets the expected menu family.
+  // Do not compare it against a singleton/global interaction state: another
+  // developer may have opened a menu in a different Telegram chat meanwhile.
+  if (chatId !== null && callbackMessageId !== null && (callbackData.startsWith(`${menuKind}:`) || callbackData.startsWith(`${INLINE_MENU_CANCEL_PREFIX}${menuKind}`))) {
+    activeInlineMenus.set(chatId, { menuKind, messageId: callbackMessageId });
+    logger.debug(`[InlineMenu] Rehydrated menu from callback: kind=${menuKind}, messageId=${callbackMessageId}, chatId=${chatId}`);
     return true;
   }
 
-  logger.debug(`[InlineMenu] Stale callback ignored: expectedKind=${menuKind}, activeKind=${activeMetadata?.menuKind || "none"}, callbackMessageId=${callbackMessageId || "none"}, activeMessageId=${activeMetadata?.messageId || "none"}`);
+  logger.debug(`[InlineMenu] Stale callback ignored: expectedKind=${menuKind}, callbackMessageId=${callbackMessageId || "none"}, chatId=${chatId ?? "none"}`);
   await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
   return false;
 }
 
-export function getActiveInlineMenu(): ActiveInlineMenuMetadata | null { return getActiveInlineMenuMetadata(interactionManager.getSnapshot()); }
-
-export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {
-  const active = getActiveInlineMenu();
-  if (!active || !ctx.chat?.id) { clearActiveInlineMenu(reason); return; }
-  await ctx.api.deleteMessage(ctx.chat.id, active.messageId).catch(() => {});
-  clearActiveInlineMenu(reason);
+export function getActiveInlineMenu(chatId?: number): ActiveInlineMenuMetadata | null {
+  if (typeof chatId === "number") return activeInlineMenus.get(chatId) ?? null;
+  return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
 }
 
-export function clearActiveInlineMenu(reason: string): void { const state = interactionManager.getSnapshot(); if (state?.kind === "inline") interactionManager.clear(reason); }
+export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {
+  const chatId = getChatId(ctx);
+  const active = chatId !== null ? activeInlineMenus.get(chatId) ?? null : null;
+  if (!active || !ctx.chat?.id) { clearActiveInlineMenu(reason, chatId ?? undefined); return; }
+  await ctx.api.deleteMessage(ctx.chat.id, active.messageId).catch(() => {});
+  clearActiveInlineMenu(reason, chatId ?? undefined);
+}
+
+export function clearActiveInlineMenu(reason: string, chatId?: number): void {
+  if (typeof chatId === "number") activeInlineMenus.delete(chatId);
+  else activeInlineMenus.clear();
+  const state = interactionManager.getSnapshot();
+  if (state?.kind === "inline") interactionManager.clear(reason);
+}
