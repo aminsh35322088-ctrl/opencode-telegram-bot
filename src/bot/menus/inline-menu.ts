@@ -13,9 +13,6 @@ export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
 interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; }
 interface InlineMenuReplyOptions { menuKind: InlineMenuKind; text: string; keyboard: InlineKeyboard; parseMode?: "Markdown" | "HTML"; metadata?: InteractionMetadata; }
 
-// Inline-menu UI state belongs to the Telegram chat, not to the shared
-// OpenCode workspace/history. This prevents one developer opening a menu from
-// invalidating another developer's menu while they work on the same project.
 const activeInlineMenus = new Map<number, ActiveInlineMenuMetadata>();
 
 export function isInlineMenuKind(value: string): value is InlineMenuKind { return INLINE_MENU_KINDS.includes(value as InlineMenuKind); }
@@ -24,7 +21,7 @@ function getChatId(ctx: Context): number | null { return typeof ctx.chat?.id ===
 function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInlineMenuMetadata | null {
   if (!state || state.kind !== "inline") return null;
   const menuKind = state.metadata.menuKind; const messageId = state.metadata.messageId;
-  if (typeof menuKind !== "string' || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
+  if (typeof menuKind !== "string" || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
   return { menuKind, messageId };
 }
 function getInlineCancelCallbackData(menuKind: InlineMenuKind): string { return `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`; }
@@ -72,9 +69,6 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
   const isActive = !!activeMetadata && callbackMessageId !== null && activeMetadata.menuKind === menuKind && activeMetadata.messageId === callbackMessageId;
   if (isActive) return true;
 
-  // A callback is valid for this chat when it targets the expected menu family.
-  // Do not compare it against a singleton/global interaction state: another
-  // developer may have opened a menu in a different Telegram chat meanwhile.
   if (chatId !== null && callbackMessageId !== null && (callbackData.startsWith(`${menuKind}:`) || callbackData.startsWith(`${INLINE_MENU_CANCEL_PREFIX}${menuKind}`))) {
     activeInlineMenus.set(chatId, { menuKind, messageId: callbackMessageId });
     logger.debug(`[InlineMenu] Rehydrated menu from callback: kind=${menuKind}, messageId=${callbackMessageId}, chatId=${chatId}`);
