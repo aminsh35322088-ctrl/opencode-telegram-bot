@@ -6,6 +6,7 @@ import { getCurrentSessionDirectory } from "../../app/services/session-service.j
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { buildCommandsListKeyboard, formatCommandsSelectText } from "../menus/command-catalog-menu.js";
+import { registerCommandsMenu, type CommandsMetadata } from "../callbacks/command-catalog-callback-handler.js";
 
 export async function commandsCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
@@ -22,17 +23,20 @@ export async function commandsCommand(ctx: CommandContext<Context>): Promise<voi
       reply_markup: keyboard,
     });
 
+    const metadata: CommandsMetadata = {
+      flow: "commands",
+      stage: "list",
+      messageId: message.message_id,
+      projectDirectory,
+      commands,
+      page: 0,
+    };
+
+    registerCommandsMenu(metadata);
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
-      metadata: {
-        flow: "commands",
-        stage: "list",
-        messageId: message.message_id,
-        projectDirectory,
-        commands,
-        page: 0,
-      },
+      metadata: { ...metadata },
     });
   } catch (error) {
     logger.error("[Commands] Error fetching commands list:", error);
