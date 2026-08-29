@@ -59,8 +59,24 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
 export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuKind): Promise<boolean> {
   const activeMetadata = getActiveInlineMenuMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
+  const callbackData = ctx.callbackQuery?.data ?? "";
   const isActive = !!activeMetadata && callbackMessageId !== null && activeMetadata.menuKind === menuKind && activeMetadata.messageId === callbackMessageId;
   if (isActive) return true;
+
+  // Settings is the parent/root navigation surface for several child catalogs.
+  // Child menus may replace the singleton interaction state; when the user
+  // returns to the still-existing Settings message, rehydrate its state from
+  // the callback message instead of trapping the user behind an "inactive" alert.
+  if (menuKind === "settings" && callbackMessageId !== null && callbackData.startsWith("settings:")) {
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: { menuKind: "settings", messageId: callbackMessageId },
+    });
+    logger.debug(`[InlineMenu] Rehydrated settings interaction: messageId=${callbackMessageId}`);
+    return true;
+  }
+
   logger.debug(`[InlineMenu] Stale callback ignored: expectedKind=${menuKind}, activeKind=${activeMetadata?.menuKind || "none"}, callbackMessageId=${callbackMessageId || "none"}, activeMessageId=${activeMetadata?.messageId || "none"}`);
   await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
   return false;
