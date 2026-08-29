@@ -4,6 +4,9 @@ import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
+import {
+  getCompactOutputMode,
+} from "../../app/stores/settings-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
@@ -21,6 +24,7 @@ class KeyboardManager {
   public initialize(api: Api, chatId: number): void {
     this.api = api;
     this.chatId = chatId;
+
     if (!this.state) {
       const currentModel = getStoredModel();
       this.state = {
@@ -33,52 +37,82 @@ class KeyboardManager {
     }
   }
 
-  public updateAgent(agent: string): void { if (this.state) this.state.currentAgent = agent; }
+  public updateAgent(agent: string): void {
+    if (this.state) this.state.currentAgent = agent;
+  }
+
   public updateModel(model: ModelInfo): void {
     if (!this.state) return;
     this.state.currentModel = model;
     this.state.variantName = formatVariantForButton(model.variant || "default");
   }
-  public updateVariant(variantId: string): void { if (this.state) this.state.variantName = formatVariantForButton(variantId); }
-  public setPaused(paused: boolean): void { if (this.state) this.state.paused = paused; }
+
+  public updateVariant(variantId: string): void {
+    if (this.state) this.state.variantName = formatVariantForButton(variantId);
+  }
+
+  public setPaused(paused: boolean): void {
+    if (this.state) this.state.paused = paused;
+  }
+
   public updateContext(tokensUsed: number, tokensLimit: number): void {
     if (this.state) this.state.contextInfo = { tokensUsed, tokensLimit };
   }
-  public clearContext(): void { if (this.state) this.state.contextInfo = null; }
-  public getContextInfo(): ContextInfo | null { return this.state?.contextInfo ?? null; }
+
+  public clearContext(): void {
+    if (this.state) this.state.contextInfo = null;
+  }
+
+  public getContextInfo(): ContextInfo | null {
+    return this.state?.contextInfo ?? null;
+  }
 
   private buildKeyboard() {
     if (!this.state) {
-      return createMainKeyboard("build", { providerID: "", modelID: "" }, undefined, undefined, [], false, assistantRunState.hasActiveRuns());
+      return createMainKeyboard({ providerID: "", modelID: "" }, {
+        paused: false,
+        running: assistantRunState.hasActiveRuns(),
+        compactOutputMode: getCompactOutputMode(),
+      });
     }
-    return createMainKeyboard(
-      this.state.currentAgent,
-      this.state.currentModel,
-      this.state.contextInfo ?? undefined,
-      this.state.variantName,
-      getQueuedPromptButtonLabels(),
-      this.state.paused,
-      assistantRunState.hasActiveRuns(),
-    );
+
+    return createMainKeyboard(this.state.currentModel, {
+      queuedPromptLabels: getQueuedPromptButtonLabels(),
+      paused: this.state.paused,
+      running: assistantRunState.hasActiveRuns(),
+      compactOutputMode: getCompactOutputMode(),
+    });
   }
 
   public async sendKeyboardUpdate(chatId?: number): Promise<void> {
     if (!this.api) return;
     const targetChatId = chatId ?? this.chatId;
     if (!targetChatId) return;
+
     const now = Date.now();
     if (now - this.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTime = now;
+
     try {
-      await this.api.sendMessage(targetChatId, t("keyboard.updated"), { reply_markup: this.buildKeyboard() });
+      await this.api.sendMessage(targetChatId, t("keyboard.updated"), {
+        reply_markup: this.buildKeyboard(),
+      });
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
     }
   }
 
-  public getKeyboard() { return this.state ? this.buildKeyboard() : undefined; }
-  public getState(): KeyboardState | undefined { return this.state ?? undefined; }
-  public isInitialized(): boolean { return this.state !== null; }
+  public getKeyboard() {
+    return this.state ? this.buildKeyboard() : undefined;
+  }
+
+  public getState(): KeyboardState | undefined {
+    return this.state ?? undefined;
+  }
+
+  public isInitialized(): boolean {
+    return this.state !== null;
+  }
 }
 
 export const keyboardManager = new KeyboardManager();
