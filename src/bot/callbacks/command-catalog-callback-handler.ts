@@ -2,10 +2,10 @@ import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
 import type { CommandCatalogItem } from "../../app/services/command-catalog-service.js";
 import { loadCommandCatalog } from "../../app/services/command-catalog-service.js";
-import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import {
   clearSession,
   getCurrentSession,
+  getCurrentSessionDirectory,
   setCurrentSession,
 } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
@@ -151,7 +151,7 @@ async function recoverCommandsListMetadata(ctx: Context): Promise<CommandsListMe
   interactionManager.start({
     kind: "custom",
     expectedInput: "callback",
-    metadata: recovered,
+    metadata: { ...recovered },
   });
 
   logger.warn(`[Commands] Recovered stale custom-command menu state: messageId=${messageId}`);
@@ -273,8 +273,6 @@ export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandD
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(COMMANDS_CALLBACK_PREFIX)) return false;
 
-  // Cancel must always be actionable from the command menu, even if the
-  // global interaction state was replaced by another menu in the meantime.
   if (data === COMMANDS_CALLBACK_CANCEL) {
     clearCommandsInteraction("commands_cancelled");
     await ctx.answerCallbackQuery().catch(() => {});
