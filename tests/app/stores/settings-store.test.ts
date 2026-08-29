@@ -12,7 +12,6 @@ import {
   getShowThinkingContent,
   loadSettings,
   setCompactOutputMode,
-  setPromptQueueEnabled,
 } from "../../../src/app/stores/settings-store.js";
 
 describe("settings-store", () => {
