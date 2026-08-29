@@ -24,6 +24,9 @@ export const SETTINGS_DIFF_FILES_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}diff_fil
 export const SETTINGS_ASSISTANT_FOOTER_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}assistant_footer`;
 export const SETTINGS_PROMPT_QUEUE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}prompt_queue`;
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
+export const SETTINGS_MCP_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}mcp`;
+export const SETTINGS_SKILLS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}skills`;
+export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
 export const SETTINGS_BACK_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}back`;
 
 export function formatBooleanSettingValue(enabled: boolean): string { return enabled ? "ON" : "OFF"; }
@@ -95,9 +98,9 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
   const keyboard = new InlineKeyboard()
     .text("🔌 API Providers", "provider:menu").row()
     .text("🔗 Integrations", "integration:menu").row()
-    .text("🔗 MCP Servers", "mcps:list").row()
-    .text("🧠 Skills", "skills:list").row()
-    .text("🧩 Custom Commands", "commands:list");
+    .text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row()
+    .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
+    .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK);
   appendSettingsBackButton(keyboard);
   return {
     text: [
