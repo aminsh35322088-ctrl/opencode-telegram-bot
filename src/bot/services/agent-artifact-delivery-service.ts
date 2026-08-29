@@ -109,9 +109,14 @@ class AgentArtifactDeliveryService {
   private readonly bot: Bot;
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastDelivered = new Map<string, { signature: string; at: number }>();
+  private chatId: number | null = null;
 
   constructor() {
     this.bot = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
+  }
+
+  setChatId(chatId: number | null): void {
+    this.chatId = chatId;
   }
 
   processEvent(event: Event): void {
@@ -138,6 +143,7 @@ class AgentArtifactDeliveryService {
     for (const timer of this.pending.values()) clearTimeout(timer);
     this.pending.clear();
     this.lastDelivered.clear();
+    this.chatId = null;
   }
 
   private async scheduleAutoDetection(filePath: string): Promise<void> {
@@ -170,6 +176,12 @@ class AgentArtifactDeliveryService {
   private async deliver(filePath: string): Promise<void> {
     try {
       if (isSensitiveArtifactPath(filePath)) return;
+      if (this.chatId === null) {
+        logger.warn(`[Artifact] No Telegram chat context; refusing to deliver file: ${filePath}`);
+        return;
+      }
+
+      const targetChatId = this.chatId;
       const stat = await fs.stat(filePath).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_FILE_SIZE_BYTES || stat.size === 0) {
         logger.warn(`[Artifact] Skipping unavailable/empty/oversized file: ${filePath}`);
@@ -181,13 +193,13 @@ class AgentArtifactDeliveryService {
       const now = Date.now();
       if (previous && (previous.signature === signature || now - previous.at < DELIVERY_COOLDOWN_MS)) return;
 
-      await this.bot.api.sendDocument(config.telegram.allowedUserId, new InputFile(filePath), {
+      await this.bot.api.sendDocument(targetChatId, new InputFile(filePath), {
         caption: captionFor(filePath, stat.size),
         disable_notification: true,
       });
 
       this.lastDelivered.set(filePath, { signature, at: now });
-      logger.info(`[Artifact] Delivered generated file to Telegram: ${filePath} (${stat.size} bytes)`);
+      logger.info(`[Artifact] Delivered generated file to Telegram chat ${targetChatId}: ${filePath} (${stat.size} bytes)`);
     } catch (error) {
       logger.error(`[Artifact] Failed to deliver generated file: ${filePath}`, error);
     }
