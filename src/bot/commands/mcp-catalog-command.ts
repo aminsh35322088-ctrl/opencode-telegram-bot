@@ -1,4 +1,4 @@
-import type { CommandContext, Context } from "grammy";
+import type { Context } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { loadMcpCatalog } from "../../app/services/mcp-catalog-service.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
@@ -6,7 +6,7 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { buildMcpsListKeyboard } from "../menus/mcp-catalog-menu.js";
 
-export async function mcpsCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function mcpsCommand(ctx: Context): Promise<void> {
   try {
     const projectDirectory = getCurrentSessionDirectory();
     const servers = await loadMcpCatalog(projectDirectory);
