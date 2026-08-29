@@ -1,4 +1,4 @@
-import type { CommandContext, Context } from "grammy";
+import type { Context } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { loadCommandCatalog } from "../../app/services/command-catalog-service.js";
@@ -8,7 +8,7 @@ import { logger } from "../../utils/logger.js";
 import { buildCommandsListKeyboard, formatCommandsSelectText } from "../menus/command-catalog-menu.js";
 import { registerCommandsMenu, type CommandsMetadata } from "../callbacks/command-catalog-callback-handler.js";
 
-export async function commandsCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function commandsCommand(ctx: Context): Promise<void> {
   try {
     const projectDirectory = getCurrentSessionDirectory();
     const commands = await loadCommandCatalog(projectDirectory);
