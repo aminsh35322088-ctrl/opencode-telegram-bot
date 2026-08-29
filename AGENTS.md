@@ -29,10 +29,21 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 - Vitest
 - Mocks/stubs via `vi.mock()`
 
-### Code quality
+## Coding environment
 
-- ESLint + Prettier
-- TypeScript strict mode
+The production container is intentionally equipped as a general-purpose coding workspace. In addition to Node.js/npm and Git, it provides:
+
+- shell utilities: bash/sh, curl, wget, jq, less, tree, file, procps
+- search/navigation: ripgrep (`rg`), fd, find
+- version control: git, git-lfs, GitHub CLI (`gh`), openssh-client, rsync
+- archives: `zip`, `unzip`, `tar`, gzip/bzip2/xz support
+- Python 3 with pip and venv
+- SQLite 3
+- native build tooling: gcc/g++, make, pkg-config
+
+When a user asks for an archive, **create a real archive with the shell tooling** (for example `zip -r project.zip project/` or `tar -czf project.tar.gz project/`). Do not write archive bytes through the text-file `write` tool and do not rename a text file to an archive extension. After creating an archive, verify it with `file`, `unzip -t`, or the appropriate archive checker before reporting it as complete.
+
+For a request to send an archive to Telegram, keep the actual binary archive path and filename unchanged; the Telegram bridge will deliver the file as a document.
 
 ## Architecture
 
@@ -218,7 +229,7 @@ logger.error("[Component] Critical failure", error);
 
 Important:
 
-- Do not use raw `console.log` / `console.error` directly in feature code; use `logger`.
+- Do not use raw `console.log` / `console.error` directly in feature code; use logger.
 - Put internal diagnostics under `debug`.
 - Keep important operational events under `info`.
 - Default level is `info`.
@@ -237,41 +248,3 @@ Important:
 - Use descriptive test names
 - Follow Arrange-Act-Assert
 - Use `vi.mock()` for external dependencies
-
-## OpenCode SDK quick reference
-
-```typescript
-import { createOpencodeClient } from "@opencode-ai/sdk";
-
-const client = createOpencodeClient({ baseUrl: "http://localhost:4096" });
-
-await client.global.health();
-
-await client.project.list();
-await client.project.current();
-
-await client.session.list();
-await client.session.create({ body: { title: "My session" } });
-await client.session.prompt({
-  path: { id: "session-id" },
-  body: { parts: [{ type: "text", text: "Implement feature X" }] },
-});
-await client.session.abort({ path: { id: "session-id" } });
-
-const events = await client.event.subscribe();
-for await (const event of events.stream) {
-  // handle SSE event
-}
-```
-
-Full docs: https://opencode.ai/docs/sdk
-
-## Workflow
-
-1. Read [PRODUCT.md](./PRODUCT.md) to understand scope and status.
-2. Inspect existing code before adding or changing components.
-3. Align major architecture changes (including new dependencies) with the user first.
-4. Add or update tests for new functionality.
-5. After code changes, run quality checks: `npm run build`, `npm run lint`, `npm run typecheck`, and `npm test`.
-6. Update checkboxes in `PRODUCT.md` when relevant tasks are completed.
-7. Keep code clean, consistent, and maintainable.
