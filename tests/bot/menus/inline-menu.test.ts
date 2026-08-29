@@ -3,6 +3,12 @@ import { InlineKeyboard } from "grammy";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { appendInlineMenuCancelButton, ensureActiveInlineMenu, replyWithInlineMenu } from "../../../src/bot/menus/inline-menu.js";
 
+function getCallbackData(button: unknown): string | undefined {
+  if (!button || typeof button !== "object" || !("callback_data" in button)) return undefined;
+  const value = (button as { callback_data?: unknown }).callback_data;
+  return typeof value === "string" ? value : undefined;
+}
+
 describe("inline-menu", () => {
   beforeEach(() => interactionManager.clear("test_setup"));
 
@@ -10,8 +16,7 @@ describe("inline-menu", () => {
     const keyboard = new InlineKeyboard().text("Session A", "session:1").row();
     appendInlineMenuCancelButton(keyboard, "session");
     expect(keyboard.inline_keyboard.some((row) => row.length === 0)).toBe(false);
-    const button = keyboard.inline_keyboard.at(-1)?.[0];
-    expect(button && "callback_data" in button ? button.callback_data : undefined).toBe("inline:cancel:session");
+    expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("inline:cancel:session");
   });
 
   it("registers an active inline interaction", async () => {
