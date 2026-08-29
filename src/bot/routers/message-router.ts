@@ -53,7 +53,7 @@ const CONTROL_TEXT = {
   resume: MAIN_BUTTONS.resume,
 } as const;
 
-const REPLY_KEYBOARD_TEXT = new Set([
+const REPLY_KEYBOARD_TEXT: ReadonlySet<string> = new Set([
   CONTROL_TEXT.cancel,
   CONTROL_TEXT.pause,
   CONTROL_TEXT.resume,
