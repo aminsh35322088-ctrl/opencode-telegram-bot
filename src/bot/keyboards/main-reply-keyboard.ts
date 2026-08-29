@@ -2,7 +2,9 @@ import { Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import type { ModelInfo } from "../../app/types/model.js";
+import type { ContextInfo } from "./keyboard-types.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
+import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 
 const MAIN_BUTTONS = {
   history: "🕘 History",
@@ -14,7 +16,7 @@ const MAIN_BUTTONS = {
   abort: "🛑 Abort",
 } as const;
 
-interface MainKeyboardOptions {
+export interface MainKeyboardOptions {
   queuedPromptLabels?: string[];
   paused?: boolean;
   running?: boolean;
@@ -40,7 +42,7 @@ function addPausedControls(keyboard: Keyboard, modelText: string): void {
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
 }
 
-export function createMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
+function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
   const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
   const effectivePaused = options.paused ?? isChatPaused();
@@ -55,10 +57,46 @@ export function createMainKeyboard(currentModel: ModelInfo, options: MainKeyboar
   if (effectivePaused) {
     addPausedControls(keyboard, modelText);
   } else {
-    addIdleControls(keyboard, modelText, options.compactOutputMode ?? false);
+    addIdleControls(keyboard, modelText, options.compactOutputMode ?? getCompactOutputMode());
   }
 
   return keyboard.resized().persistent();
+}
+
+/** Current API: model + explicit keyboard options. */
+export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
+/**
+ * Compatibility API for existing presentation/callback callers. The legacy
+ * agent/context/variant values were never rendered by this keyboard and are
+ * intentionally ignored while the state refactor is finalized.
+ */
+export function createMainKeyboard(
+  _currentAgent: string,
+  currentModel: ModelInfo,
+  _contextInfo?: ContextInfo,
+  _variantName?: string,
+  queuedPromptLabels?: string[],
+  paused?: boolean,
+  running?: boolean,
+): Keyboard;
+export function createMainKeyboard(
+  first: ModelInfo | string,
+  second?: MainKeyboardOptions | ModelInfo,
+  _contextInfo?: ContextInfo,
+  _variantName?: string,
+  queuedPromptLabels: string[] = [],
+  paused = false,
+  running = false,
+): Keyboard {
+  if (typeof first !== "string") {
+    return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
+  }
+
+  return buildMainKeyboard(second as ModelInfo, {
+    queuedPromptLabels,
+    paused,
+    running,
+  });
 }
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
