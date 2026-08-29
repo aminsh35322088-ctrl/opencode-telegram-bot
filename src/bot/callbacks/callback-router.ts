@@ -1,5 +1,5 @@
 import type { Bot, Context } from "grammy";
-import { clearInteractionErrorState, interactionManager, type InteractionErrorScope } from "../../app/managers/interaction-manager.js";
+import { clearInteractionErrorState, type InteractionErrorScope } from "../../app/managers/interaction-manager.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { handleAgentSelect } from "./agent-selection-callback-handler.js";
@@ -26,8 +26,9 @@ import { handleTaskCallback, handleTaskListCallback } from "./scheduled-task-cal
 import { handleVariantSelect } from "./variant-selection-callback-handler.js";
 import { handleWorktreeCallback } from "./worktree-callback-handler.js";
 import { clearLsPathIndex, clearOpenPathIndex } from "../menus/file-browser-menu.js";
-import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
+import { buildAdvancedSettingsView, buildSettingsMenuView } from "../menus/settings-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
+import { MODEL_SETTINGS_BACK_CALLBACK } from "../menus/model-selection-menu.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -39,34 +40,31 @@ function parseCallbackPrefix(data: string): string | null {
 }
 
 async function handleSettingsChildNavigation(ctx: Context, data: string): Promise<boolean> {
-  const isCommandsParentBack = data === "commands:back";
-  const isSkillsParentBack = data === "skills:back";
-  const isMcpsParentBack = data === "mcps:parent_back";
-  if (!isCommandsParentBack && !isSkillsParentBack && !isMcpsParentBack) return false;
+  const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "mcps:parent_back" || data === "provider:advanced" || data === "integration:advanced";
+  if (isAdvancedBack) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const view = buildAdvancedSettingsView();
+    await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard });
+    logger.debug(`[Navigation] Restored Advanced settings from child menu: ${data}`);
+    return true;
+  }
 
-  // List -> Advanced. Reuse the same Telegram message so the navigation is
-  // truly back-in-place and cannot leave a stale parent menu behind.
-  await ctx.answerCallbackQuery().catch(() => {});
-  const view = buildAdvancedSettingsView();
-  await replyWithInlineMenu(ctx, {
-    menuKind: "settings",
-    text: view.text,
-    keyboard: view.keyboard,
-  });
-  logger.debug(`[Navigation] Restored Advanced settings from child menu: ${data}`);
-  return true;
+  if (data === MODEL_SETTINGS_BACK_CALLBACK) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const view = buildSettingsMenuView();
+    await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard });
+    logger.debug("[Navigation] Restored Settings from model menu");
+    return true;
+  }
+
+  return false;
 }
 
 async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> {
   if (data !== "commands:list_back" && data !== "skills:list_back") return false;
-
   await ctx.answerCallbackQuery().catch(() => {});
-  await ctx.deleteMessage().catch(() => {});
-  if (data === "commands:list_back") {
-    await commandsCommand(ctx as never);
-  } else {
-    await skillsCommand(ctx as never);
-  }
+  if (data === "commands:list_back") await commandsCommand(ctx as never);
+  else await skillsCommand(ctx as never);
   logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`);
   return true;
 }
