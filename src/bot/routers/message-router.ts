@@ -28,6 +28,7 @@ import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button
 import { handleDocumentMessage } from "../handlers/document-handler.js";
 import { createMediaGroupAttachmentMiddleware } from "../handlers/media-group-handler.js";
 import { handlePhotoMessage } from "../handlers/photo-handler.js";
+import { editPhotoMessage } from "../commands/media-command.js";
 import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
@@ -251,6 +252,11 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message:photo", async (ctx) => {
     deps.setTelegramContext(bot, ctx.chat.id);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
+    const caption = ctx.message.caption?.trim() ?? "";
+    if (/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) {
+      await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim());
+      return;
+    }
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
   bot.on("message:document", async (ctx) => {
