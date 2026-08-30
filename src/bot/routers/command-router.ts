@@ -23,6 +23,7 @@ import { helpCommand } from "../commands/help-command.js";
 import { statusCommand } from "../commands/status-command.js";
 import { updateCommand } from "../commands/update-command.js";
 import { memoryCommand, rememberCommand, forgetCommand } from "../commands/memory-command.js";
+import { imageCommand, editCommand } from "../commands/media-command.js";
 import { BOT_COMMANDS } from "../commands/definitions.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "../handlers/message-merger.js";
@@ -62,4 +63,5 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand);
   bot.command("rename", renameCommand); bot.command("commands", commandsCommand); bot.command("skills", skillsCommand); bot.command("mcps", mcpsCommand);
   bot.command("memory", memoryCommand); bot.command("remember", rememberCommand); bot.command("forget", forgetCommand);
+  bot.command("image", imageCommand); bot.command("edit", editCommand);
 }
