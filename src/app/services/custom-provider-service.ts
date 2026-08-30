@@ -13,7 +13,9 @@ const STORE_FILENAME = "custom-providers.json";
 const PROVIDER_DIR = "providers";
 const STT_KEY_FILE = path.join(PROVIDER_DIR, "groq-stt.key");
 const GROQ_STT_BASE_URL = "https://api.groq.com/openai/v1";
-const GROQ_STT_MODEL = "whisper-large-v3-turbo";
+// Accuracy-first model for multilingual/Persian voice input. STT is deliberately
+// independent from the OpenCode coding model/provider selection.
+const GROQ_STT_MODEL = "whisper-large-v3";
 
 function getStorePath(): string { return path.join(getRuntimePaths().appHome, STORE_FILENAME); }
 async function readStore(): Promise<ProviderStoreFile> { try { return JSON.parse(await fs.readFile(getStorePath(), "utf8")) as ProviderStoreFile; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { providers: [] }; throw error; } }
@@ -36,9 +38,9 @@ export async function configureGroqStt(apiKey: string): Promise<void> {
   const store = await readStore(); const absoluteKeyFile = path.join(getRuntimePaths().appHome, STT_KEY_FILE);
   await fs.mkdir(path.dirname(absoluteKeyFile), { recursive: true }); await fs.writeFile(absoluteKeyFile, `${key}\n`, { mode: 0o600 });
   await writeStore({ ...store, stt: { provider: "groq", keyFile: STT_KEY_FILE, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } });
-  logger.info("[CustomProvider] Groq STT configured and verified");
+  logger.info(`[CustomProvider] Groq STT configured and verified: model=${GROQ_STT_MODEL}`);
 }
-export async function getGroqSttConfig(): Promise<{ apiUrl: string; apiKey: string; model: string } | undefined> { const store = await readStore(); if (!store.stt) return undefined; try { const key = (await fs.readFile(path.join(getRuntimePaths().appHome, store.stt.keyFile), "utf8")).trim(); return key ? { apiUrl: GROQ_STT_BASE_URL, apiKey: key, model: store.stt.model } : undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
+export async function getGroqSttConfig(): Promise<{ apiUrl: string; apiKey: string; model: string } | undefined> { const store = await readStore(); if (!store.stt) return undefined; try { const key = (await fs.readFile(path.join(getRuntimePaths().appHome, store.stt.keyFile), "utf8")).trim(); return key ? { apiUrl: GROQ_STT_BASE_URL, apiKey: key, model: GROQ_STT_MODEL } : undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
 export async function isGroqSttConfigured(): Promise<boolean> { return Boolean(await getGroqSttConfig()); }
 export async function removeGroqStt(): Promise<boolean> { const store = await readStore(); if (!store.stt) return false; await fs.rm(path.join(getRuntimePaths().appHome, store.stt.keyFile), { force: true }); const { stt: _stt, ...next } = store; await writeStore(next); return true; }
 
