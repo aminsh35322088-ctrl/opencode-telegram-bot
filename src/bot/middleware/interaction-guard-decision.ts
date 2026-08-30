@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
+import { questionManager } from "../../app/managers/question-manager.js";
 import type { BlockReason, ExpectedInput, GuardDecision, IncomingInputType, InteractionState, InteractionKind } from "../../app/types/interaction.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
@@ -33,20 +34,16 @@ function isAllowedRenameCancelCallback(ctx: Context, state: InteractionState): b
 function isAllowedTaskCallback(ctx: Context, state: InteractionState): boolean { return state.kind === "task" && (ctx.callbackQuery?.data === "task:cancel" || ctx.callbackQuery?.data === "task:retry-schedule"); }
 
 export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
-  const state = interactionManager.getSnapshot(); const { inputType, command } = classifyIncomingInput(ctx); const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
+  const rawState = interactionManager.getSnapshot();
+  // Question UI state is chat-local. A question opened in another Telegram
+  // chat must not block this chat's buttons or prompts.
+  const state = rawState?.kind === "question" && !questionManager.isActiveForChat(ctx.chat?.id) ? null : rawState;
+  const { inputType, command } = classifyIncomingInput(ctx);
+  const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
 
-  // Control buttons must remain actionable while an agent is busy. Pause/Resume/Abort/Cancel
-  // are execution controls, not prompts, so they must reach the command/message router.
-  if (isBusy && inputType === "text" && isBusyControlButtonPress(ctx)) {
-    return createAllowDecision(inputType, state, command, true);
-  }
-
-  // A local inline menu is navigation state, not a blocking user interaction.
-  // Root reply-keyboard navigation must be allowed to replace/close it.
-  if (inputType === "text" && state?.kind === "inline" && isRootNavigationText(ctx)) {
-    return createAllowDecision(inputType, state, command, isBusy);
-  }
+  if (isBusy && inputType === "text" && isBusyControlButtonPress(ctx)) return createAllowDecision(inputType, state, command, true);
+  if (inputType === "text" && state?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
 
   if (state && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, state, "expired", command, isBusy); }
   if (isBusy) {
