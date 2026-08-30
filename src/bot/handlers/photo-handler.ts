@@ -20,7 +20,7 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
   const photos = ctx.message?.photo;
   if (!photos?.length) return;
   flushPendingPrompt(ctx.chat!.id);
-  const caption = ctx.message.caption?.trim() ?? "";
+  const caption = ctx.message?.caption?.trim() ?? "";
   const largestPhoto = photos[photos.length - 1];
   if (!largestPhoto) return;
 
