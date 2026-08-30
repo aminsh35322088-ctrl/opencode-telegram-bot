@@ -23,6 +23,8 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "providers", description: "🔌 Manage AI providers" },
   { command: "rename", description: "🏷️ Rename the current session" },
   { command: "abort", description: "🛑 Stop the current task" },
+  { command: "image", description: "🎨 Generate an image with AI" },
+  { command: "edit", description: "✨ Edit a photo with AI" },
 ];
 
 export function getLocalizedBotCommands(): BotCommandDefinition[] {
