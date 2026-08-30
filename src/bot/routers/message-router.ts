@@ -63,6 +63,7 @@ const REPLY_KEYBOARD_TEXT: ReadonlySet<string> = new Set([
   MAIN_BUTTONS.history,
   MAIN_BUTTONS.newChat,
   MAIN_BUTTONS.settings,
+  MAIN_BUTTONS.editImage,
 ]);
 
 function normalizeControlText(text: string): string {
@@ -109,6 +110,10 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
       await integrationsCommand(ctx as never);
       return true;
     }
+  }
+  if (text === normalizeControlText(MAIN_BUTTONS.editImage)) {
+    await ctx.reply("🎨 Send the photo you want to edit with an instruction as its caption. You can also just send a photo and then describe the edit in your next message.\n\nExample: remove the background and add a blue studio backdrop.");
+    return true;
   }
   return false;
 }
@@ -255,6 +260,10 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     const caption = ctx.message.caption?.trim() ?? "";
     if (/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) {
       await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim());
+      return;
+    }
+    if (caption && /\b(?:edit|change|modify|remove|replace|add|delete|background|backdrop|style|transform|enhance|upscale|crop|resize|retouch|دستکاری|ویرایش|تغییر|حذف|اضافه|پس.?زمینه|بک.?گراند|کیفیت|بزرگ|کوچک)\b/iu.test(caption)) {
+      await editPhotoMessage(ctx, caption);
       return;
     }
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
