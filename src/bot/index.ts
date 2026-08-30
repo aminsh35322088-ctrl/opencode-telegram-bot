@@ -12,6 +12,7 @@ import { withTelegramRateLimitRetry } from "../utils/telegram-rate-limit-retry.j
 import { registerCallbackRouter } from "./callbacks/callback-router.js";
 import { initializePromptQueueDispatch } from "./handlers/prompt-queue-dispatch.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { imageIntentRouter } from "./middleware/image-intent-router.js";
 import { inboundRateLimitMiddleware } from "./middleware/inbound-rate-limit.js";
 import { interactionGuardMiddleware } from "./middleware/interaction-guard.js";
 import { staleUpdateMiddleware } from "./middleware/stale-update.js";
@@ -92,6 +93,7 @@ export function createBot(): Bot<Context> {
   bot.use(authMiddleware); bot.use(staleUpdateMiddleware); bot.use(inboundRateLimitMiddleware); bot.use(ensureCommandsInitialized); bot.use(interactionGuardMiddleware);
   registerCommandRouter(bot, { ensureEventSubscription, clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason) });
   registerCallbackRouter(bot, { ensureEventSubscription, setTelegramContext });
+  imageIntentRouter(bot);
   registerMessageRouter(bot, { ensureEventSubscription, setTelegramContext });
   safeBackgroundTask({ taskName: "bot.refreshGlobalCommands", task: async () => { try { await Promise.all([bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "default" } }), bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } })]); return { success: true as const }; } catch (error) { return { success: false as const, error }; } }, onSuccess: (result) => { if (result.success) { logger.debug("[Bot] Refreshed global Telegram command catalog"); return; } logger.warn("[Bot] Could not refresh global commands:", result.error); } });
   bot.catch((err) => { logger.error("[Bot] Unhandled error in bot:", err); clearAllInteractionState("bot_unhandled_error"); if (err.ctx) logger.error("[Bot] Error context - update type:", err.ctx.update ? Object.keys(err.ctx.update) : "unknown"); });
