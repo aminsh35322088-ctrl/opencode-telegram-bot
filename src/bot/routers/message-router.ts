@@ -1,4 +1,5 @@
 import type { Bot, Context } from "grammy";
+import { InputFile } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
@@ -28,7 +29,7 @@ import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button
 import { handleDocumentMessage } from "../handlers/document-handler.js";
 import { createMediaGroupAttachmentMiddleware } from "../handlers/media-group-handler.js";
 import { handlePhotoMessage } from "../handlers/photo-handler.js";
-import { editPhotoMessage } from "../commands/media-command.js";
+import { downloadPhoto, editImage, editPhotoMessage, isMediaAiConfigured } from "../commands/media-command.js";
 import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
@@ -47,6 +48,16 @@ interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
   setTelegramContext: (bot: Bot<Context>, chatId: number) => void;
 }
+
+interface PendingImage {
+  buffer: Buffer;
+  mimeType: string;
+  expiresAt: number;
+}
+
+const PENDING_IMAGE_TTL_MS = 10 * 60 * 1000;
+const pendingImages = new Map<number, PendingImage>();
+const IMAGE_EDIT_INTENT_PATTERN = /\b(?:edit|change|modify|remove|replace|add|delete|background|backdrop|style|transform|enhance|upscale|crop|resize|retouch|make|turn|generate|دستکاری|ویرایش|تغییر|حذف|اضافه|پس.?زمینه|بک.?گراند|کیفیت|بزرگ|کوچک|تبدیل|بساز|درست)\b/iu;
 
 const CONTROL_TEXT = {
   cancel: "❌ Cancel",
@@ -68,6 +79,41 @@ const REPLY_KEYBOARD_TEXT: ReadonlySet<string> = new Set([
 
 function normalizeControlText(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
+}
+
+function isImageEditIntent(text: string): boolean {
+  return IMAGE_EDIT_INTENT_PATTERN.test(text);
+}
+
+function rememberPendingImage(chatId: number, image: PendingImage): void {
+  pendingImages.set(chatId, image);
+  setTimeout(() => {
+    const current = pendingImages.get(chatId);
+    if (current === image) pendingImages.delete(chatId);
+  }, PENDING_IMAGE_TTL_MS).unref?.();
+}
+
+async function handlePendingImageEdit(ctx: Context, text: string): Promise<boolean> {
+  const chatId = ctx.chat?.id;
+  if (!chatId || !isImageEditIntent(text)) return false;
+  const pending = pendingImages.get(chatId);
+  if (!pending || pending.expiresAt <= Date.now()) {
+    pendingImages.delete(chatId);
+    return false;
+  }
+  pendingImages.delete(chatId);
+  if (!(await isMediaAiConfigured())) {
+    await ctx.reply("🎨 Image AI is not configured. Open /providers and add the gemini-image custom provider.");
+    return true;
+  }
+  try {
+    await ctx.replyWithChatAction("upload_photo");
+    const result = await editImage(pending.buffer, pending.mimeType, text);
+    await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Nano Banana" });
+  } catch (error) {
+    await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return true;
 }
 
 let botInstance: Bot<Context> | null = null;
@@ -112,7 +158,7 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
     }
   }
   if (text === normalizeControlText(MAIN_BUTTONS.editImage)) {
-    await ctx.reply("🎨 Send the photo you want to edit with an instruction as its caption. You can also just send a photo and then describe the edit in your next message.\n\nExample: remove the background and add a blue studio backdrop.");
+    await ctx.reply("🎨 Send the photo you want to edit, then describe the change in your next message. You can also put the instruction directly in the photo caption.");
     return true;
   }
   return false;
@@ -262,8 +308,11 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim());
       return;
     }
-    if (caption && /\b(?:edit|change|modify|remove|replace|add|delete|background|backdrop|style|transform|enhance|upscale|crop|resize|retouch|دستکاری|ویرایش|تغییر|حذف|اضافه|پس.?زمینه|بک.?گراند|کیفیت|بزرگ|کوچک)\b/iu.test(caption)) {
+    const source = await downloadPhoto(ctx);
+    rememberPendingImage(ctx.chat.id, { ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS });
+    if (caption && isImageEditIntent(caption)) {
       await editPhotoMessage(ctx, caption);
+      pendingImages.delete(ctx.chat.id);
       return;
     }
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
@@ -286,6 +335,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       await handleQuestionTextAnswer(ctx);
       return;
     }
+    if (await handlePendingImageEdit(ctx, text)) return;
     if (await handleTaskTextInput(ctx)) return;
     if (await handleModelSearchTextInput(ctx)) return;
     if (await handleRenameTextAnswer(ctx)) return;
