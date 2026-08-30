@@ -1,8 +1,9 @@
 import { InputFile, type Context } from "grammy";
-import { downloadPhoto, downloadRepliedPhoto, editImage, generateImage } from "../services/media-ai-service.js";
-import { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";
+import { downloadPhoto, downloadRepliedPhoto } from "../services/media-ai-service.js";
+import { generateImageWithFallback, editImageWithFallback, hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 
-export { downloadPhoto, editImage, isMediaAiConfigured } from "../services/media-ai-service.js";
+export { downloadPhoto, editImage } from "../services/media-ai-service.js";
+export async function isMediaAiConfigured(): Promise<boolean> { return hasActiveImageAiProvider("generate") || hasActiveImageAiProvider("edit"); }
 
 const GENERATE_INTENT = /(?:^|\s)(?:generate|create|draw|make|render|produce|generate an image|create an image|make an image|تصویر(?:ی)?\s*(?:بساز|ایجاد|تولید)|عکس\s*(?:بساز|ایجاد|تولید)|تصویرسازی|تولید\s*تصویر|جنریت)(?:\s|$)/iu;
 const EDIT_INTENT = /(?:^|\s)(?:edit|change|modify|remove|replace|add|delete|background|backdrop|retouch|enhance|upscale|crop|resize|transform|style|ویرایش|تغییر|حذف|جایگزین|اضافه|پس.?زمینه|بک.?گراند|رتوش|بهبود|بزرگ.?نمایی|برش|تبدیل)(?:\s|$)/iu;
@@ -10,13 +11,65 @@ const REFERENCE_INTENT = /(?:this photo|this image|based on this|using this|from
 
 export function isImageGenerationIntent(text: string): boolean { return GENERATE_INTENT.test(text); }
 export function isImageEditIntent(text: string): boolean { return EDIT_INTENT.test(text); }
-export function classifyImageIntent(text: string, hasSourceImage: boolean): "generate" | "edit" | null { const value = text.trim(); if (!value) return null; if (!hasSourceImage) return isImageGenerationIntent(value) ? "generate" : null; if (REFERENCE_INTENT.test(value)) return "edit"; if (isImageGenerationIntent(value) && !isImageEditIntent(value)) return "generate"; return "edit"; }
+export function classifyImageIntent(text: string, hasSourceImage: boolean): "generate" | "edit" | null {
+  const value = text.trim();
+  if (!value) return null;
+  if (!hasSourceImage) return isImageGenerationIntent(value) ? "generate" : null;
+  if (REFERENCE_INTENT.test(value)) return "edit";
+  if (isImageGenerationIntent(value) && !isImageEditIntent(value)) return "generate";
+  return "edit";
+}
 
 function commandArguments(ctx: Context): string { return (ctx.message?.text ?? "").replace(/^\/\w+(?:@\w+)?\s*/u, "").trim(); }
 function mediaNotConfiguredMessage(): string { return "🎨 Image AI is not configured. Open /providers → 🎨 Image AI and configure a provider."; }
-async function sendGeneratedImage(ctx: Context, prompt: string): Promise<void> { if (!(await hasActiveImageAiProvider("generate"))) { await ctx.reply(mediaNotConfiguredMessage()); return; } if (!prompt) { await ctx.reply("Usage: /image <prompt>\nExample: /image a cinematic cyberpunk city at night"); return; } await ctx.replyWithChatAction("upload_photo"); const result = await generateImage(prompt); await ctx.replyWithPhoto(new InputFile(result.buffer, `generated.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "🎨 Generated with Image AI" }); }
+
+async function sendGeneratedImage(ctx: Context, prompt: string): Promise<void> {
+  if (!(await hasActiveImageAiProvider("generate"))) { await ctx.reply(mediaNotConfiguredMessage()); return; }
+  if (!prompt) { await ctx.reply("Usage: /image <prompt>"); return; }
+  await ctx.replyWithChatAction("upload_photo");
+  const result = await generateImageWithFallback(prompt);
+  await ctx.replyWithPhoto(new InputFile(result.buffer, `generated.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "🎨 Generated with Image AI" });
+}
+
 export async function imageCommand(ctx: Context): Promise<void> { try { await sendGeneratedImage(ctx, commandArguments(ctx)); } catch (error) { await ctx.reply(`❌ Image generation failed: ${error instanceof Error ? error.message : String(error)}`); } }
-export async function editCommand(ctx: Context): Promise<void> { if (!(await hasActiveImageAiProvider("edit"))) { await ctx.reply(mediaNotConfiguredMessage()); return; } const prompt = commandArguments(ctx); if (!prompt) { await ctx.reply("Usage: reply to a photo with /edit <instruction>"); return; } try { const source = await downloadRepliedPhoto(ctx); await ctx.replyWithChatAction("upload_photo"); const result = await editImage(source.buffer, source.mimeType, prompt); await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" }); } catch (error) { await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`); } }
-export async function handleImageTextPrompt(ctx: Context, prompt: string): Promise<boolean> { if (classifyImageIntent(prompt, false) !== "generate") return false; if (!(await hasActiveImageAiProvider("generate"))) { await ctx.reply(mediaNotConfiguredMessage()); return true; } try { await ctx.replyWithChatAction("upload_photo"); const result = await generateImage(prompt); await ctx.replyWithPhoto(new InputFile(result.buffer, `generated.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "🎨 Generated with Image AI" }); } catch (error) { await ctx.reply(`❌ Image generation failed: ${error instanceof Error ? error.message : String(error)}`); } return true; }
-export async function handlePhotoCaptionMessage(ctx: Context, prompt: string): Promise<void> { if (!prompt.trim()) return; const intent = classifyImageIntent(prompt, true); try { if (intent === "generate") { if (!(await hasActiveImageAiProvider("generate"))) { await ctx.reply(mediaNotConfiguredMessage()); return; } await ctx.replyWithChatAction("upload_photo"); const result = await generateImage(prompt); await ctx.replyWithPhoto(new InputFile(result.buffer, `generated.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "🎨 Generated with Image AI" }); return; } if (!(await hasActiveImageAiProvider("edit"))) { await ctx.reply(mediaNotConfiguredMessage()); return; } const source = await downloadPhoto(ctx); await ctx.replyWithChatAction("upload_photo"); const result = await editImage(source.buffer, source.mimeType, prompt); await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" }); } catch (error) { await ctx.reply(`❌ Image ${intent === "generate" ? "generation" : "editing"} failed: ${error instanceof Error ? error.message : String(error)}`); } }
-export async function editPhotoMessage(ctx: Context, prompt: string): Promise<void> { if (!(await hasActiveImageAiProvider("edit"))) { await ctx.reply(mediaNotConfiguredMessage()); return; } if (!prompt) { await ctx.reply("Usage: send a photo with /edit <instruction>."); return; } try { const source = await downloadPhoto(ctx); await ctx.replyWithChatAction("upload_photo"); const result = await editImage(source.buffer, source.mimeType, prompt); await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" }); } catch (error) { await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`); } }
+
+export async function editCommand(ctx: Context): Promise<void> {
+  if (!(await hasActiveImageAiProvider("edit"))) { await ctx.reply(mediaNotConfiguredMessage()); return; }
+  const prompt = commandArguments(ctx);
+  if (!prompt) { await ctx.reply("Usage: reply to a photo with /edit <instruction>"); return; }
+  try {
+    const source = await downloadRepliedPhoto(ctx);
+    await ctx.replyWithChatAction("upload_photo");
+    const result = await editImageWithFallback(source.buffer, source.mimeType, prompt);
+    await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" });
+  } catch (error) { await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
+export async function handleImageTextPrompt(ctx: Context, prompt: string): Promise<boolean> {
+  if (classifyImageIntent(prompt, false) !== "generate") return false;
+  try { await sendGeneratedImage(ctx, prompt); } catch (error) { await ctx.reply(`❌ Image generation failed: ${error instanceof Error ? error.message : String(error)}`); }
+  return true;
+}
+
+export async function handlePhotoCaptionMessage(ctx: Context, prompt: string): Promise<void> {
+  const intent = classifyImageIntent(prompt, true);
+  try {
+    if (intent === "generate") { await sendGeneratedImage(ctx, prompt); return; }
+    if (!(await hasActiveImageAiProvider("edit"))) { await ctx.reply(mediaNotConfiguredMessage()); return; }
+    const source = await downloadPhoto(ctx);
+    await ctx.replyWithChatAction("upload_photo");
+    const result = await editImageWithFallback(source.buffer, source.mimeType, prompt);
+    await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" });
+  } catch (error) { await ctx.reply(`❌ Image ${intent === "generate" ? "generation" : "editing"} failed: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
+export async function editPhotoMessage(ctx: Context, prompt: string): Promise<void> {
+  if (!(await hasActiveImageAiProvider("edit"))) { await ctx.reply(mediaNotConfiguredMessage()); return; }
+  if (!prompt) { await ctx.reply("Usage: send a photo with /edit <instruction>."); return; }
+  try {
+    const source = await downloadPhoto(ctx);
+    await ctx.replyWithChatAction("upload_photo");
+    const result = await editImageWithFallback(source.buffer, source.mimeType, prompt);
+    await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" });
+  } catch (error) { await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`); }
+}
