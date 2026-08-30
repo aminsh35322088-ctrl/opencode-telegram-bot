@@ -1,5 +1,8 @@
 import { InputFile, type Context } from "grammy";
 import { downloadPhoto, downloadRepliedPhoto, editImage, generateImage, isMediaAiConfigured } from "../services/media-ai-service.js";
+
+export { downloadPhoto, editImage, isMediaAiConfigured } from "../services/media-ai-service.js";
+
 function commandArguments(ctx: Context): string { return (ctx.message?.text ?? "").replace(/^\/\w+(?:@\w+)?\s*/u, "").trim(); }
 async function sendGeneratedImage(ctx: Context, prompt: string): Promise<void> {
   if (!(await isMediaAiConfigured())) { await ctx.reply("🎨 Image AI is not configured. Open /providers and add the gemini-image custom provider."); return; }
