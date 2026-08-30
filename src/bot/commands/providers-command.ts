@@ -43,7 +43,7 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   if (data === "provider:cancel") { const state = pending.get(chatId); pending.delete(chatId); clearIntegrationWizard(chatId); await renderProvidersMenu(ctx, state?.messageId, "❌ Setup cancelled."); return true; }
   if (data === "provider:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "name", messageId }); await editWizard(ctx, messageId, "➕ Add Custom Provider\n\n1/3 · Provider name\n\nExample: TabiToken"); return true; }
-  if (data === "provider:gemini:image:configure" || data === "provider:gemini:image:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "gemini-image-key", messageId }); await editWizard(ctx, messageId, "🎨 Configure Gemini / Nano Banana 2\n\nSend your Google AI Studio API key.\n\n🔐 The key is verified before it is stored and is never displayed back to Telegram.\n\nModel: gemini-3.1-flash-image"); return true; }
+  if (data === "provider:gemini:image:configure") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "gemini-image-key", messageId }); await editWizard(ctx, messageId, "🎨 Configure Gemini / Nano Banana 2\n\nSend your Google AI Studio API key.\n\n🔐 The key is verified before it is stored and is never displayed back to Telegram.\n\nModel: gemini-3.1-flash-image"); return true; }
   if (data === "provider:gemini:image:remove") { const deleted = await deleteCustomProvider(GEMINI_IMAGE_PROVIDER_ID); await syncOpenCodeCustomConfig(); await renderProvidersMenu(ctx, undefined, deleted ? "🎨 Gemini / Nano Banana disabled." : "🎨 Gemini / Nano Banana was not configured."); return true; }
   if (data === "provider:stt:groq:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "groq-stt-key", messageId }); await editWizard(ctx, messageId, "🎤 Configure Groq Voice STT\n\nSend your Groq API key.\n\nThe key is verified against Groq and stored securely on persistent storage. It is never displayed back to Telegram."); return true; }
   if (data === "provider:stt:groq:remove") { const removed = await removeGroqStt(); await renderProvidersMenu(ctx, undefined, removed ? "🎤 Groq Voice STT disabled." : "🎤 Groq Voice STT was not configured."); return true; }
@@ -58,15 +58,15 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
     if (state.step === "gemini-image-key") {
       await deleteInput(ctx);
       await editWizard(ctx, state.messageId, "🎨 Verifying Gemini / Nano Banana API key…\n\n⏳ Contacting Google Gemini API and checking model access. Please wait.");
-      const response = await fetch(`${GEMINI_IMAGE_BASE_URL}/models`, { headers: { "x-goog-api-key": text }, signal: AbortSignal.timeout(15_000) });
+      const response = await fetch(`${GEMINI_IMAGE_BASE_URL}/models/${GEMINI_IMAGE_MODEL}`, { headers: { "x-goog-api-key": text }, signal: AbortSignal.timeout(15_000) });
       const detail = await response.text().catch(() => "");
       if (!response.ok) throw new Error(`Gemini API key verification failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 220)}` : "."}`);
-      let payload: { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> } = {};
-      try { payload = JSON.parse(detail) as typeof payload; } catch { /* HTTP 200 with unexpected body is handled below. */ }
-      const model = (payload.models ?? []).find((item) => item.name?.endsWith(`/models/${GEMINI_IMAGE_MODEL}`));
-      if (!model) throw new Error(`Gemini API key is valid, but ${GEMINI_IMAGE_MODEL} is not available to this project.`);
-      await editWizard(ctx, state.messageId, "🎨 Gemini / Nano Banana API key verified.\n\n💾 Saving encrypted-at-rest provider credentials…");
-      const saved = await saveCustomProvider({ id: GEMINI_IMAGE_PROVIDER_ID, name: "Gemini / Nano Banana", baseURL: GEMINI_IMAGE_BASE_URL, apiKey: text, models: [{ id: GEMINI_IMAGE_MODEL, name: "Gemini 3.1 Flash Image (Nano Banana 2)" }] });
+      let payload: { name?: string; supportedGenerationMethods?: string[] } = {};
+      try { payload = JSON.parse(detail) as typeof payload; } catch { throw new Error("Gemini returned an invalid verification response."); }
+      if (payload.name !== `models/${GEMINI_IMAGE_MODEL}` && !payload.name?.endsWith(`/models/${GEMINI_IMAGE_MODEL}`)) throw new Error(`Gemini API key is valid, but ${GEMINI_IMAGE_MODEL} is not available to this project.`);
+      if (payload.supportedGenerationMethods && !payload.supportedGenerationMethods.includes("generateContent")) throw new Error(`Gemini API key is valid, but ${GEMINI_IMAGE_MODEL} does not expose image generation for this project.`);
+      await editWizard(ctx, state.messageId, "🎨 Gemini / Nano Banana API key verified.\n\n💾 Saving provider credentials…");
+      await saveCustomProvider({ id: GEMINI_IMAGE_PROVIDER_ID, name: "Gemini / Nano Banana", baseURL: GEMINI_IMAGE_BASE_URL, apiKey: text, models: [{ id: GEMINI_IMAGE_MODEL, name: "Gemini 3.1 Flash Image (Nano Banana 2)" }] });
       pending.delete(chatId); await syncOpenCodeCustomConfig();
       await renderProvidersMenu(ctx, state.messageId, `✅ Gemini / Nano Banana is ready!\n\n🔑 API key: Verified\n🖼️ Image model: ${GEMINI_IMAGE_MODEL}\n🚀 Status: Active`);
       logger.info(`[Providers] Gemini image provider verified and activated: ${GEMINI_IMAGE_MODEL}`);
