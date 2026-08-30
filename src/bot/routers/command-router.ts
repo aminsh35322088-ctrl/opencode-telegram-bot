@@ -1,7 +1,7 @@
 import type { Bot, Context, NextFunction } from "grammy";
 import { config } from "../../config.js";
 import { settingsCommand } from "../commands/settings-command.js";
-import { providersCommand, handleProviderWizardMessage } from "../commands/providers-command.js";
+import { providersCommand, handleProviderWizardMessage, clearProviderWizard } from "../commands/providers-command.js";
 import { integrationsCommand, handleIntegrationMessage } from "../commands/integrations-command.js";
 import { opencodeStartCommand } from "../commands/opencode-start-command.js";
 import { opencodeStopCommand } from "../commands/opencode-stop-command.js";
@@ -27,6 +27,8 @@ import { handleImageTextPrompt, imageCommand, editCommand } from "../commands/me
 import { BOT_COMMANDS } from "../commands/definitions.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "../handlers/message-merger.js";
+import { isGeminiWizardActive, clearGeminiWizard } from "../services/gemini-wizard-state.js";
+import { verifyAndSaveGeminiChatProvider } from "../../app/services/gemini-chat-service.js";
 
 interface CommandRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; clearRuntimeState: (reason: string) => void; }
 let commandsInitialized = false;
@@ -35,6 +37,19 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.message?.text?.startsWith("/")) flushPendingPrompt(ctx.chat.id);
     if (ctx.message?.text && ctx.chat) {
+      if (isGeminiWizardActive(ctx.chat.id) && !ctx.message.text.startsWith("/")) {
+        try {
+          await verifyAndSaveGeminiChatProvider(ctx.message.text);
+          clearGeminiWizard(ctx.chat.id);
+          clearProviderWizard(ctx.chat.id);
+          await ctx.reply("✅ Gemini API verified and activated.\n\n🤖 Chat model: gemini-3.1-flash-lite\n💸 Free Tier model");
+        } catch (error) {
+          clearGeminiWizard(ctx.chat.id);
+          const message = error instanceof Error ? error.message : String(error);
+          await ctx.reply(`❌ Gemini API verification failed.\n\n${message}\n\nThe key was NOT saved. Open Configure Gemini and try again.`);
+        }
+        return;
+      }
       if (await handleProviderWizardMessage(ctx)) return;
       if (await handleIntegrationMessage(ctx)) return;
       if (!ctx.message.text.startsWith("/") && await handleImageTextPrompt(ctx, ctx.message.text.trim())) return;
