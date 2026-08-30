@@ -6,6 +6,8 @@ const STT_REQUEST_TIMEOUT_MS = 60_000;
 export interface SttResult { text: string; }
 const AUDIO_FORMAT_BY_EXTENSION: Record<string, string> = { oga: "ogg", ogg: "ogg", mp3: "mp3", wav: "wav", m4a: "m4a", flac: "flac", aac: "aac", webm: "webm" };
 const GROQ_PERSIAN_LANGUAGE = "fa";
+const GROQ_PERSIAN_PROMPT =
+  "این گفتار فارسی محاوره‌ای است. متن را دقیق و طبیعی به فارسی پیاده‌سازی کن. کلمات انگلیسی و اصطلاحات فنی را ترجمه نکن و املای آن‌ها را حفظ کن. نام فایل‌ها، فریم‌ورک‌ها، زبان‌های برنامه‌نویسی، سرویس‌ها و نام‌های خاص را دست‌کاری نکن. اصطلاحات رایج: HTML, CSS, JavaScript, TypeScript, React, Next.js, OpenCode, GitHub, Railway, API, frontend, backend, website, portfolio, About, Services, Products, Resume, Get in touch."
 
 /** STT can be configured by env for backwards compatibility or via Custom Providers > Groq Voice STT. */
 export async function isSttConfigured(): Promise<boolean> { return Boolean(config.stt.apiUrl && config.stt.apiKey) || Boolean(await getGroqSttConfig()); }
@@ -25,19 +27,24 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
   // Groq is a dedicated STT provider. Its output is only transcription text;
   // it must never replace or configure the OpenCode coding model.
   const language = custom ? GROQ_PERSIAN_LANGUAGE : config.stt.language;
+  const prompt = custom ? GROQ_PERSIAN_PROMPT : undefined;
 
   if (useJsonFormat) {
     const payload: Record<string, unknown> = { model, input_audio: { data: Buffer.from(audioBuffer).toString("base64"), format: getAudioFormat(filename) } };
     if (language) payload.language = language;
     headers["Content-Type"] = "application/json"; body = JSON.stringify(payload);
   } else {
-    const formData = new FormData(); formData.append("file", new Blob([new Uint8Array(audioBuffer)]), filename); formData.append("model", model); formData.append("response_format", "json");
+    const formData = new FormData();
+    formData.append("file", new Blob([new Uint8Array(audioBuffer)]), filename);
+    formData.append("model", model);
+    formData.append("response_format", "json");
     if (language) formData.append("language", language);
+    if (prompt) formData.append("prompt", prompt);
     formData.append("temperature", "0");
     body = formData;
   }
 
-  logger.debug(`[STT] Transcription request: provider=${custom ? "groq-custom" : "env"}, model=${model}, format=${getAudioFormat(filename)}, size=${audioBuffer.length} bytes, language=${language || "auto"}`);
+  logger.debug(`[STT] Transcription request: provider=${custom ? "groq-custom" : "env"}, model=${model}, format=${getAudioFormat(filename)}, size=${audioBuffer.length} bytes, language=${language || "auto"}, prompt=${prompt ? "persian-context" : "none"}`);
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), STT_REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(url, { method: "POST", headers, body, signal: controller.signal });
