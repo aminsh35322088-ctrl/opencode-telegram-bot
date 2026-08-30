@@ -1,5 +1,5 @@
 import { InputFile, type Context } from "grammy";
-import { downloadPhoto, downloadRepliedPhoto, editImage, generateImage, isMediaAiConfigured } from "../services/media-ai-service.js";
+import { downloadPhoto, downloadRepliedPhoto, editImage, generateImage } from "../services/media-ai-service.js";
 import { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 
 export { downloadPhoto, editImage, isMediaAiConfigured } from "../services/media-ai-service.js";
