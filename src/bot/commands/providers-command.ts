@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { configureGroqStt, deleteCustomProvider, discoverModels, getGroqSttConfig, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig } from "../../app/services/custom-provider-service.js";
+import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig } from "../../app/services/custom-provider-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
@@ -18,19 +18,17 @@ export function clearProviderWizard(chatId: number): void { pending.delete(chatI
 async function deleteInput(ctx: Context): Promise<void> { const messageId = ctx.message?.message_id; if (ctx.chat?.id && messageId) await ctx.api.deleteMessage(ctx.chat.id, messageId).catch(() => {}); }
 async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> { await ctx.api.editMessageText(ctx.chat!.id, messageId, text, { reply_markup: wizardKeyboard() }); }
 async function renderProvidersMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
-  const providers = await listCustomProviders(); const groqStt = await isGroqSttConfigured();
-  const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
+  const providers = await listCustomProviders(); const groqStt = await isGroqSttConfigured(); const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
   keyboard.row().text(groqStt ? "🎤 Groq Voice STT · ✅ Active" : "🎤 Configure Groq Voice STT", groqStt ? "provider:stt:groq:remove" : "provider:stt:groq:add");
   for (const provider of providers) keyboard.row().text(`🧠 ${provider.name}`, `provider:view:${provider.id}`).text("🗑️", `provider:delete:${provider.id}`);
   keyboard.row().text("← Advanced", "provider:advanced").text("✖ Close", "provider:close");
   const body = providers.length ? `🔌 Custom Providers\n\n${providers.map((p) => `• ${p.name} — ${p.baseURL} — ${p.models.length} models`).join("\n")}` : "🔌 Custom Providers\n\nNo custom providers configured yet.";
   const sttLine = groqStt ? "\n\n🎤 Voice transcription: Groq Whisper Large V3 Turbo · Active" : "\n\n🎤 Voice transcription: Not configured";
-  const text = `${notice ? `${notice}\n\n` : ""}${body}${sttLine}`;
-  const targetMessageId = messageId ?? callbackMessageId(ctx); if (targetMessageId !== null && ctx.chat?.id) { await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard }); return; }
+  const text = `${notice ? `${notice}\n\n` : ""}${body}${sttLine}`; const targetMessageId = messageId ?? callbackMessageId(ctx);
+  if (targetMessageId !== null && ctx.chat?.id) { await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard }); return; }
   await ctx.reply(text, { reply_markup: keyboard });
 }
 export async function providersCommand(ctx: CommandContext<Context>): Promise<void> { const chatId = ctx.chat?.id; if (chatId) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); } await renderProvidersMenu(ctx as Context); }
-
 export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data ?? ""; if (!data.startsWith("provider:")) return false; const chatId = ctx.chat?.id; if (!chatId) return true;
   if (data === "provider:close") { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
@@ -45,16 +43,12 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (data === "provider:menu") { await renderProvidersMenu(ctx); return true; }
   return true;
 }
-
 export async function handleProviderWizardMessage(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id; const text = ctx.message?.text?.trim(); const state = chatId ? pending.get(chatId) : undefined; if (!chatId || !text || !state) return false;
   try {
-    if (state.step === "groq-stt-key") {
-      await deleteInput(ctx); await editWizard(ctx, state.messageId, "🎤 Verifying Groq API key…"); await configureGroqStt(text); pending.delete(chatId); await renderProvidersMenu(ctx, state.messageId, "✅ Groq Voice STT verified and activated."); return true;
-    }
+    if (state.step === "groq-stt-key") { await deleteInput(ctx); await editWizard(ctx, state.messageId, "🎤 Verifying Groq API key…"); await configureGroqStt(text); pending.delete(chatId); await renderProvidersMenu(ctx, state.messageId, "✅ Groq Voice STT verified and activated."); return true; }
     if (state.step === "name") { state.name = text; state.step = "url"; await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n2/3 · Base URL\n\nExample: https://tabitoken.com/v1"); return true; }
     if (state.step === "url") { const baseURL = text.replace(/\/+$/, ""); let parsed: URL; try { parsed = new URL(baseURL); } catch { await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n2/3 · Base URL\n\n⚠️ Invalid URL. Use an absolute http(s) URL and try again."); return true; } if (parsed.protocol !== "http:" && parsed.protocol !== "https:") { await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n2/3 · Base URL\n\n⚠️ Only http:// and https:// URLs are supported. Try again."); return true; } state.baseURL = baseURL; state.step = "key"; await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n3/3 · API key\n\nSend the key as a message. It will be deleted when Telegram permits."); return true; }
-    state.apiKey = text; await deleteInput(ctx); await editWizard(ctx, state.messageId, "🔎 Testing provider and discovering models…"); const models = await discoverModels(state.baseURL!, state.apiKey!); const saved = await saveCustomProvider({ name: state.name!, baseURL: state.baseURL!, apiKey: state.apiKey!, models }); pending.delete(chatId); const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath; const target = resolveLocalOpencodeTarget(config.opencode.apiUrl); if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((resolve) => setTimeout(resolve, 500)); startLocalOpencodeServer(target).unref(); }
-    await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch((error) => logger.warn("[Providers] Model catalog refresh after save failed:", error)); await renderProvidersMenu(ctx, state.messageId, `✅ ${saved.name} configured successfully · ${models.length} model${models.length === 1 ? "" : "s"} found`); return true;
+    state.apiKey = text; await deleteInput(ctx); await editWizard(ctx, state.messageId, "🔎 Testing provider and discovering models…"); const models = await discoverModels(state.baseURL!, state.apiKey!); const saved = await saveCustomProvider({ name: state.name!, baseURL: state.baseURL!, apiKey: state.apiKey!, models }); pending.delete(chatId); const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath; const target = resolveLocalOpencodeTarget(config.opencode.apiUrl); if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((resolve) => setTimeout(resolve, 500)); startLocalOpencodeServer(target).unref(); } await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch((error) => logger.warn("[Providers] Model catalog refresh after save failed:", error)); await renderProvidersMenu(ctx, state.messageId, `✅ ${saved.name} configured successfully · ${models.length} model${models.length === 1 ? "" : "s"} found`); return true;
   } catch (error) { logger.error("[Providers] Provider wizard failed:", error); const message = error instanceof Error ? error.message : "Unknown error"; await editWizard(ctx, state.messageId, `❌ ${message}\n\nSend the API key again to retry, or press Cancel.`).catch(() => {}); return true; }
 }
