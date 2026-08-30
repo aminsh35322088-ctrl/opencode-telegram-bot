@@ -23,9 +23,12 @@ export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
   logger.debug(`[QuestionHandler] Received callback: ${data}`);
 
   const chatId = ctx.chat?.id;
+  // The first callback establishes the owning chat. Afterwards, callbacks from
+  // other chats can never consume this question's state.
+  if (questionManager.isActive() && questionManager.getChatId() === null && chatId !== undefined) {
+    questionManager.setChatId(chatId);
+  }
   if (!questionManager.isActiveForChat(chatId)) {
-    // A question belongs to the Telegram chat that owns its UI. Do not let a
-    // stale/global question state consume callbacks from another chat.
     await ctx.answerCallbackQuery({ text: t("question.inactive_callback"), show_alert: true });
     return true;
   }
@@ -116,7 +119,6 @@ async function handleCancelPoll(ctx: Context): Promise<void> {
 export async function handleQuestionTextAnswer(ctx: Context): Promise<void> {
   const text = ctx.message?.text;
   if (!text || !questionManager.isActiveForChat(ctx.chat?.id)) return;
-
   const currentIndex = questionManager.getCurrentIndex();
   if (!questionManager.isWaitingForCustomInput(currentIndex)) {
     await ctx.reply(t("question.use_custom_button_first"));
@@ -126,7 +128,6 @@ export async function handleQuestionTextAnswer(ctx: Context): Promise<void> {
     await ctx.reply(t("question.answer_already_received"));
     return;
   }
-
   logger.debug(`[QuestionHandler] Custom text answer for question ${currentIndex}: ${text}`);
   questionManager.setCustomAnswer(currentIndex, text);
   questionManager.clearCustomInput();
