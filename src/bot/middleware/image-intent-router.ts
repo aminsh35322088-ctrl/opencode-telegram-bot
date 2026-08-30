@@ -17,7 +17,7 @@ const CONTROL_TEXT = new Set([
   MAIN_BUTTONS.editImage,
 ]);
 
-export function registerImageIntentRouter(bot: Bot<Context>): void {
+export function imageIntentRouter(bot: Bot<Context>): void {
   bot.on("message:text", async (ctx, next) => {
     const chatId = ctx.chat?.id;
     const text = ctx.message?.text?.trim();
@@ -25,27 +25,20 @@ export function registerImageIntentRouter(bot: Bot<Context>): void {
       await next();
       return;
     }
-
     if (CONTROL_TEXT.has(text) || /^📦 Compact: (?:ON|OFF)$/u.test(text)) {
       await next();
       return;
     }
-
-    // Never steal credentials, integration inputs, or interactive answers.
     if (isProviderWizardActive(chatId) || isIntegrationWizardActive(chatId) || questionManager.isActive()) {
       await next();
       return;
     }
-
     if (!isImageGenerationIntent(text)) {
       await next();
       return;
     }
-
     logger.info(`[ImageRouter] Detected image-generation intent before coding: chatId=${chatId}`);
     const handled = await handleImageTextPrompt(ctx, text);
-    if (!handled) {
-      await next();
-    }
+    if (!handled) await next();
   });
 }
