@@ -17,6 +17,8 @@ interface OpenCodeModelState {
 }
 
 const MODEL_CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const COPILOT_PROVIDER_ID = "github-copilot";
+const COPILOT_AUTO_MODEL_ID = "auto";
 
 let cachedValidModelKeys: Set<string> | null = null;
 let cachedAllModels: FavoriteModel[] | null = null;
@@ -29,6 +31,11 @@ const SEARCH_RESULTS_LIMIT = 10;
 
 function getModelKey(providerID: string, modelID: string): string {
   return `${providerID}/${modelID}`;
+}
+
+function isExposedCatalogModel(providerID: string, modelID: string): boolean {
+  if (providerID !== COPILOT_PROVIDER_ID) return true;
+  return modelID === COPILOT_AUTO_MODEL_ID;
 }
 
 function getEnvDefaultModel(): FavoriteModel | null {
@@ -120,9 +127,17 @@ async function getValidModelKeys(options?: {
         const providerModels: FavoriteModel[] = [];
 
         for (const modelID of Object.keys(provider.models)) {
+          if (!isExposedCatalogModel(provider.id, modelID)) {
+            continue;
+          }
+
           validModelKeys.add(getModelKey(provider.id, modelID));
           allModels.push({ providerID: provider.id, modelID });
           providerModels.push({ providerID: provider.id, modelID });
+        }
+
+        if (providerModels.length === 0) {
+          continue;
         }
 
         providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID));
@@ -142,8 +157,8 @@ async function getValidModelKeys(options?: {
       cachedModelsByProvider = modelsByProvider;
       modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
 
-      logger.debug(
-        `[ModelManager] Model catalog refreshed: providers=${response.data.providers.length}, models=${validModelKeys.size}`,
+      logger.info(
+        `[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${validModelKeys.size}, copilot=${validModelKeys.has(getModelKey(COPILOT_PROVIDER_ID, COPILOT_AUTO_MODEL_ID)) ? "auto" : "unavailable"}`,
       );
 
       return cachedValidModelKeys;
