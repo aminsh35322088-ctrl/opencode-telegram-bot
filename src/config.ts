@@ -71,4 +71,5 @@ export const config = {
   open: { browserRoots: getEnvVar("OPEN_BROWSER_ROOTS", false) },
   stt: { apiUrl: getEnvVar("STT_API_URL", false), apiKey: getEnvVar("STT_API_KEY", false), model: getEnvVar("STT_MODEL", false) || "whisper-large-v3-turbo", language: getEnvVar("STT_LANGUAGE", false), notePrompt: getEnvVar("STT_NOTE_PROMPT", false), requestFormat: getOptionalSttRequestFormatEnvVar("STT_REQUEST_FORMAT", "multipart") },
   docExtractor: { apiUrl: getEnvVar("DOC_EXTRACTOR_URL", false), apiKey: getEnvVar("DOC_EXTRACTOR_API_KEY", false) },
+  media: { geminiApiKey: getEnvVar("GEMINI_API_KEY", false), geminiImageModel: getEnvVar("GEMINI_IMAGE_MODEL", false) || "gemini-3.1-flash-image" },
 };
