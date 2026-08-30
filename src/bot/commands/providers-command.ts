@@ -19,7 +19,7 @@ function wizardKeyboard(): InlineKeyboard { return new InlineKeyboard().text("�
 export function isProviderWizardActive(chatId: number): boolean { return pending.has(chatId); }
 export function clearProviderWizard(chatId: number): void { pending.delete(chatId); }
 async function deleteInput(ctx: Context): Promise<void> { const messageId = ctx.message?.message_id; if (ctx.chat?.id && messageId) await ctx.api.deleteMessage(ctx.chat.id, messageId).catch(() => {}); }
-async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> { await ctx.api.editMessageText(ctx.chat!.id, messageId, text, { reply_markup: wizardKeyboard() }); }
+async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> { if (!ctx.chat?.id) return; await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: wizardKeyboard() }); }
 async function renderProvidersMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
   const providers = await listCustomProviders(); const groqStt = await isGroqSttConfigured(); const gemini = providers.some((p) => p.id === GEMINI_IMAGE_PROVIDER_ID && p.models.some((m) => m.id === GEMINI_IMAGE_MODEL));
   const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
@@ -40,9 +40,9 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (data === "provider:close") { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
   if (data === "provider:advanced") { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
-  if (data === "provider:cancel") { const state = pending.get(chatId); pending.delete(chatId); clearIntegrationWizard(chatId); await renderProvidersMenu(ctx, state?.messageId); return true; }
+  if (data === "provider:cancel") { const state = pending.get(chatId); pending.delete(chatId); clearIntegrationWizard(chatId); await renderProvidersMenu(ctx, state?.messageId, "❌ Setup cancelled."); return true; }
   if (data === "provider:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "name", messageId }); await editWizard(ctx, messageId, "➕ Add Custom Provider\n\n1/3 · Provider name\n\nExample: TabiToken"); return true; }
-  if (data === "provider:gemini:image:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "gemini-image-key", messageId }); await editWizard(ctx, messageId, "🎨 Configure Gemini / Nano Banana 2\n\nSend your Google AI Studio API key.\n\nThe key is verified against Gemini, stored securely on persistent storage, and never displayed back to Telegram.\n\nModel: gemini-3.1-flash-image"); return true; }
+  if (data === "provider:gemini:image:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "gemini-image-key", messageId }); await editWizard(ctx, messageId, "🎨 Configure Gemini / Nano Banana 2\n\nSend your Google AI Studio API key.\n\n🔐 The key is verified before it is stored and is never displayed back to Telegram.\n\nModel: gemini-3.1-flash-image"); return true; }
   if (data === "provider:gemini:image:remove") { const deleted = await deleteCustomProvider(GEMINI_IMAGE_PROVIDER_ID); await syncOpenCodeCustomConfig(); await renderProvidersMenu(ctx, undefined, deleted ? "🎨 Gemini / Nano Banana disabled." : "🎨 Gemini / Nano Banana was not configured."); return true; }
   if (data === "provider:stt:groq:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "groq-stt-key", messageId }); await editWizard(ctx, messageId, "🎤 Configure Groq Voice STT\n\nSend your Groq API key.\n\nThe key is verified against Groq and stored securely on persistent storage. It is never displayed back to Telegram."); return true; }
   if (data === "provider:stt:groq:remove") { const removed = await removeGroqStt(); await renderProvidersMenu(ctx, undefined, removed ? "🎤 Groq Voice STT disabled." : "🎤 Groq Voice STT was not configured."); return true; }
@@ -55,16 +55,27 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
   const chatId = ctx.chat?.id; const text = ctx.message?.text?.trim(); const state = chatId ? pending.get(chatId) : undefined; if (!chatId || !text || !state) return false;
   try {
     if (state.step === "gemini-image-key") {
-      await deleteInput(ctx); await editWizard(ctx, state.messageId, "🎨 Verifying Gemini API key…");
-      const response = await fetch(`${GEMINI_IMAGE_BASE_URL}/models`, { headers: { "x-goog-api-key": text }, signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) { const detail = await response.text().catch(() => ""); throw new Error(`Gemini API key verification failed: HTTP ${response.status}${detail ? ` — ${detail.slice(0, 180)}` : ""}`); }
-      const models = [{ id: GEMINI_IMAGE_MODEL, name: "Gemini 3.1 Flash Image (Nano Banana 2)" }];
-      const saved = await saveCustomProvider({ name: "Gemini / Nano Banana", baseURL: GEMINI_IMAGE_BASE_URL, apiKey: text, models });
-      pending.delete(chatId); await syncOpenCodeCustomConfig(); await renderProvidersMenu(ctx, state.messageId, `✅ ${saved.name} configured successfully · ${GEMINI_IMAGE_MODEL}`); return true;
+      await deleteInput(ctx);
+      await editWizard(ctx, state.messageId, "🎨 Verifying Gemini / Nano Banana API key…\n\n⏳ Contacting Google Gemini API and checking model access. Please wait.");
+      const response = await fetch(`${GEMINI_IMAGE_BASE_URL}/models`, { headers: { "x-goog-api-key": text }, signal: AbortSignal.timeout(15_000) });
+      const detail = await response.text().catch(() => "");
+      if (!response.ok) {
+        throw new Error(`Gemini API key verification failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 220)}` : "."}`);
+      }
+      let payload: { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> } = {};
+      try { payload = JSON.parse(detail) as typeof payload; } catch { /* HTTP 200 with unexpected body is handled below. */ }
+      const model = (payload.models ?? []).find((item) => item.name?.endsWith(`/models/${GEMINI_IMAGE_MODEL}`));
+      if (!model) throw new Error(`Gemini API key is valid, but ${GEMINI_IMAGE_MODEL} is not available to this project.`);
+      await editWizard(ctx, state.messageId, "🎨 Gemini / Nano Banana API key verified.\n\n💾 Saving encrypted-at-rest provider credentials…");
+      const saved = await saveCustomProvider({ id: GEMINI_IMAGE_PROVIDER_ID, name: "Gemini / Nano Banana", baseURL: GEMINI_IMAGE_BASE_URL, apiKey: text, models: [{ id: GEMINI_IMAGE_MODEL, name: "Gemini 3.1 Flash Image (Nano Banana 2)" }] });
+      pending.delete(chatId); await syncOpenCodeCustomConfig();
+      await renderProvidersMenu(ctx, state.messageId, `✅ Gemini / Nano Banana is ready!\n\n🔑 API key: Verified\n🖼️ Image model: ${GEMINI_IMAGE_MODEL}\n🚀 Status: Active`);
+      logger.info(`[Providers] Gemini image provider verified and activated: ${GEMINI_IMAGE_MODEL}`);
+      return true;
     }
     if (state.step === "groq-stt-key") { await deleteInput(ctx); await editWizard(ctx, state.messageId, "🎤 Verifying Groq API key…"); await configureGroqStt(text); pending.delete(chatId); await renderProvidersMenu(ctx, state.messageId, "✅ Groq Voice STT verified and activated."); return true; }
     if (state.step === "name") { state.name = text; state.step = "url"; await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n2/3 · Base URL\n\nExample: https://tabitoken.com/v1"); return true; }
     if (state.step === "url") { const baseURL = text.replace(/\/+$/, ""); let parsed: URL; try { parsed = new URL(baseURL); } catch { await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n2/3 · Base URL\n\n⚠️ Invalid URL. Use an absolute http(s) URL and try again."); return true; } if (parsed.protocol !== "http:" && parsed.protocol !== "https:") { await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n⚠️ Only http:// and https:// URLs are supported. Try again."); return true; } state.baseURL = baseURL; state.step = "key"; await deleteInput(ctx); await editWizard(ctx, state.messageId, "➕ Add Custom Provider\n\n3/3 · API key\n\nSend the key as a message. It will be deleted when Telegram permits."); return true; }
     state.apiKey = text; await deleteInput(ctx); await editWizard(ctx, state.messageId, "🔎 Testing provider and discovering models…"); const models = await discoverModels(state.baseURL!, state.apiKey!); const saved = await saveCustomProvider({ name: state.name!, baseURL: state.baseURL!, apiKey: state.apiKey!, models }); pending.delete(chatId); const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath; const target = resolveLocalOpencodeTarget(config.opencode.apiUrl); if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((resolve) => setTimeout(resolve, 500)); startLocalOpencodeServer(target).unref(); } await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch((error) => logger.warn("[Providers] Model catalog refresh after save failed:", error)); await renderProvidersMenu(ctx, state.messageId, `✅ ${saved.name} configured successfully · ${models.length} model${models.length === 1 ? "" : "s"} found`); return true;
-  } catch (error) { logger.error("[Providers] Provider wizard failed:", error); const message = error instanceof Error ? error.message : "Unknown error"; await editWizard(ctx, state.messageId, `❌ ${message}\n\nSend the API key again to retry, or press Cancel.`).catch(() => {}); return true; }
+  } catch (error) { logger.error("[Providers] Provider wizard failed:", error); const message = error instanceof Error ? error.message : "Unknown error"; await editWizard(ctx, state.messageId, `❌ ${message}\n\nThe key was NOT saved. Send it again to retry, or press Cancel.`).catch(() => {}); return true; }
 }
