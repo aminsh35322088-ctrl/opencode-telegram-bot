@@ -23,11 +23,12 @@ async function editWizard(ctx: Context, messageId: number, text: string): Promis
 async function renderProvidersMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
   const providers = await listCustomProviders(); const groqStt = await isGroqSttConfigured(); const gemini = providers.some((p) => p.id === GEMINI_IMAGE_PROVIDER_ID && p.models.some((m) => m.id === GEMINI_IMAGE_MODEL));
   const keyboard = new InlineKeyboard().text("➕ Add custom provider", "provider:add");
-  keyboard.row().text(gemini ? "🎨 Gemini / Nano Banana · ✅ Active" : "🎨 Configure Gemini / Nano Banana", gemini ? "provider:gemini:image:remove" : "provider:gemini:image:add");
-  keyboard.row().text(groqStt ? "🎤 Groq Voice STT · ✅ Active" : "🎤 Configure Groq Voice STT", groqStt ? "provider:stt:groq:remove" : "provider:stt:groq:add");
-  for (const provider of providers) keyboard.row().text(`🧠 ${provider.name}`, `provider:view:${provider.id}`).text("🗑️", `provider:delete:${provider.id}`);
+  keyboard.row().text(gemini ? "🎨 Configure Gemini / Nano Banana · Active ✅" : "🎨 Configure Gemini / Nano Banana", "provider:gemini:image:configure");
+  keyboard.row().text(groqStt ? "🎤 Configure Groq Voice STT · ✅ Active" : "🎤 Configure Groq Voice STT", groqStt ? "provider:stt:groq:remove" : "provider:stt:groq:add");
+  for (const provider of providers.filter((p) => p.id !== GEMINI_IMAGE_PROVIDER_ID)) keyboard.row().text(`🧠 ${provider.name}`, `provider:view:${provider.id}`).text("🗑️", `provider:delete:${provider.id}`);
   keyboard.row().text("← Advanced", "provider:advanced").text("✖ Close", "provider:close");
-  const body = providers.length ? `🔌 Custom Providers\n\n${providers.map((p) => `• ${p.name} — ${p.baseURL} — ${p.models.length} models`).join("\n")}` : "🔌 Custom Providers\n\nNo custom providers configured yet.";
+  const customProviders = providers.filter((p) => p.id !== GEMINI_IMAGE_PROVIDER_ID);
+  const body = customProviders.length ? `🔌 Custom Providers\n\n${customProviders.map((p) => `• ${p.name} — ${p.baseURL} — ${p.models.length} models`).join("\n")}` : "🔌 Custom Providers\n\nNo custom providers configured yet.";
   const sttLine = groqStt ? "\n\n🎤 Voice transcription: Groq Whisper Large V3 · Active" : "\n\n🎤 Voice transcription: Not configured";
   const geminiLine = gemini ? "\n🎨 Image AI: Gemini / Nano Banana 2 · Active" : "\n🎨 Image AI: Not configured";
   const text = `${notice ? `${notice}\n\n` : ""}${body}${sttLine}${geminiLine}`; const targetMessageId = messageId ?? callbackMessageId(ctx);
@@ -42,7 +43,7 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   if (data === "provider:cancel") { const state = pending.get(chatId); pending.delete(chatId); clearIntegrationWizard(chatId); await renderProvidersMenu(ctx, state?.messageId, "❌ Setup cancelled."); return true; }
   if (data === "provider:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "name", messageId }); await editWizard(ctx, messageId, "➕ Add Custom Provider\n\n1/3 · Provider name\n\nExample: TabiToken"); return true; }
-  if (data === "provider:gemini:image:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "gemini-image-key", messageId }); await editWizard(ctx, messageId, "🎨 Configure Gemini / Nano Banana 2\n\nSend your Google AI Studio API key.\n\n🔐 The key is verified before it is stored and is never displayed back to Telegram.\n\nModel: gemini-3.1-flash-image"); return true; }
+  if (data === "provider:gemini:image:configure" || data === "provider:gemini:image:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "gemini-image-key", messageId }); await editWizard(ctx, messageId, "🎨 Configure Gemini / Nano Banana 2\n\nSend your Google AI Studio API key.\n\n🔐 The key is verified before it is stored and is never displayed back to Telegram.\n\nModel: gemini-3.1-flash-image"); return true; }
   if (data === "provider:gemini:image:remove") { const deleted = await deleteCustomProvider(GEMINI_IMAGE_PROVIDER_ID); await syncOpenCodeCustomConfig(); await renderProvidersMenu(ctx, undefined, deleted ? "🎨 Gemini / Nano Banana disabled." : "🎨 Gemini / Nano Banana was not configured."); return true; }
   if (data === "provider:stt:groq:add") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearIntegrationWizard(chatId); pending.set(chatId, { step: "groq-stt-key", messageId }); await editWizard(ctx, messageId, "🎤 Configure Groq Voice STT\n\nSend your Groq API key.\n\nThe key is verified against Groq and stored securely on persistent storage. It is never displayed back to Telegram."); return true; }
   if (data === "provider:stt:groq:remove") { const removed = await removeGroqStt(); await renderProvidersMenu(ctx, undefined, removed ? "🎤 Groq Voice STT disabled." : "🎤 Groq Voice STT was not configured."); return true; }
@@ -59,9 +60,7 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
       await editWizard(ctx, state.messageId, "🎨 Verifying Gemini / Nano Banana API key…\n\n⏳ Contacting Google Gemini API and checking model access. Please wait.");
       const response = await fetch(`${GEMINI_IMAGE_BASE_URL}/models`, { headers: { "x-goog-api-key": text }, signal: AbortSignal.timeout(15_000) });
       const detail = await response.text().catch(() => "");
-      if (!response.ok) {
-        throw new Error(`Gemini API key verification failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 220)}` : "."}`);
-      }
+      if (!response.ok) throw new Error(`Gemini API key verification failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 220)}` : "."}`);
       let payload: { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> } = {};
       try { payload = JSON.parse(detail) as typeof payload; } catch { /* HTTP 200 with unexpected body is handled below. */ }
       const model = (payload.models ?? []).find((item) => item.name?.endsWith(`/models/${GEMINI_IMAGE_MODEL}`));
