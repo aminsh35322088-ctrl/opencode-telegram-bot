@@ -110,6 +110,25 @@ export function createOpencodeServeSpawnCommand(
   };
 }
 
+function buildAgentEnvironment(): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+
+  // The OpenCode agent must never receive the Telegram bot credential or
+  // Telegram routing secrets. Telegram delivery is mediated by the host bot
+  // through the send-file artifact bridge, not by the agent runtime.
+  for (const key of [
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_ALLOWED_USER_ID",
+    "TELEGRAM_PROXY_URL",
+    "TELEGRAM_PROXY_SECRET",
+    "TELEGRAM_API_ROOT",
+  ]) {
+    delete environment[key];
+  }
+
+  return environment;
+}
+
 export function startLocalOpencodeServer(target: LocalOpencodeTarget): ChildProcess {
   const spawnCommand = createOpencodeServeSpawnCommand(target);
 
@@ -117,6 +136,7 @@ export function startLocalOpencodeServer(target: LocalOpencodeTarget): ChildProc
     detached: true,
     stdio: "ignore",
     windowsHide: spawnCommand.windowsHide,
+    env: buildAgentEnvironment(),
   });
 }
 
