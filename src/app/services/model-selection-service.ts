@@ -1,6 +1,7 @@
 import { getCurrentModel, setCurrentModel } from "../stores/settings-store.js";
 import { config } from "../../config.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { listCustomProviders } from "./custom-provider-service.js";
 import { isServerUnavailableError } from "../../utils/opencode-error.js";
 import { logger } from "../../utils/logger.js";
 import type { ModelInfo, FavoriteModel, ModelSelectionLists, ProviderInfo } from "../types/model.js";
@@ -26,15 +27,30 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
   modelCatalogFetchInFlight = (async () => {
     try {
       const response = await opencodeClient.config.providers();
-      if (response.error || !response.data) { logModelCatalogRefreshFailure(response.error, "error"); return cachedValidModelKeys; }
+      if (response.error || !response.data) { logModelCatalogRefreshFailure(response.error, "error"); }
       const validModelKeys = new Set<string>(); const allModels: FavoriteModel[] = []; const providers: ProviderInfo[] = []; const modelsByProvider = new Map<string, FavoriteModel[]>();
-      for (const provider of response.data.providers) {
-        const providerModels: FavoriteModel[] = Object.keys(provider.models).map(modelID => ({ providerID: provider.id, modelID }));
-        for (const model of providerModels) { validModelKeys.add(getModelKey(model.providerID, model.modelID)); allModels.push(model); }
-        if (providerModels.length === 0) continue;
-        providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID)); modelsByProvider.set(provider.id, providerModels);
-        providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
+      if (response.data?.providers) {
+        for (const provider of response.data.providers) {
+          const providerModels: FavoriteModel[] = Object.keys(provider.models).map(modelID => ({ providerID: provider.id, modelID }));
+          for (const model of providerModels) { validModelKeys.add(getModelKey(model.providerID, model.modelID)); allModels.push(model); }
+          if (providerModels.length === 0) continue;
+          providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID)); modelsByProvider.set(provider.id, providerModels);
+          providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
+        }
       }
+      // Verified custom providers are authoritative even when OpenCode has not refreshed its catalog yet.
+      // This prevents models from disappearing after a provider config reload/restart.
+      try {
+        for (const provider of await listCustomProviders()) {
+          const existingModels = modelsByProvider.get(provider.id) ?? [];
+          const merged = dedupeModels([...existingModels, ...provider.models.map(model => ({ providerID: provider.id, modelID: model.id }))]);
+          for (const model of merged) { validModelKeys.add(getModelKey(model.providerID, model.modelID)); if (!allModels.some(item => getModelKey(item.providerID,item.modelID) === getModelKey(model.providerID,model.modelID))) allModels.push(model); }
+          modelsByProvider.set(provider.id, merged);
+          const existingProvider = providers.find(item => item.id === provider.id);
+          if (existingProvider) existingProvider.modelCount = merged.length;
+          else providers.push({ id: provider.id, name: provider.name, modelCount: merged.length });
+        }
+      } catch (error) { logger.warn("[ModelManager] Failed to merge verified custom providers:", error); }
       providers.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
       cachedValidModelKeys = validModelKeys; cachedAllModels = allModels; cachedProviders = providers; cachedModelsByProvider = modelsByProvider; modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
       logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${validModelKeys.size}`);
