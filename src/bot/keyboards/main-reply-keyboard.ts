@@ -1,6 +1,5 @@
 import { Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
-import { formatModelForButton } from "../../app/types/model.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
@@ -9,6 +8,7 @@ import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 const MAIN_BUTTONS = {
   history: "🕘 History",
   newChat: "💬 New Chat",
+  aiRules: "🧠 AI Rules",
   settings: "⚙️ Settings",
   editImage: "🎨 Edit Image",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
@@ -32,22 +32,21 @@ function addRunningControls(keyboard: Keyboard, paused: boolean): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
 }
 
-function addIdleControls(keyboard: Keyboard, modelText: string, compactOutputMode: boolean): void {
+function addIdleControls(keyboard: Keyboard, compactOutputMode: boolean): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
-  keyboard.text(modelText).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
+  keyboard.text(MAIN_BUTTONS.aiRules).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(MAIN_BUTTONS.editImage).row();
   keyboard.text(MAIN_BUTTONS.settings).row();
 }
 
-function addPausedControls(keyboard: Keyboard, modelText: string): void {
-  keyboard.text(modelText).text(MAIN_BUTTONS.newChat).row();
+function addPausedControls(keyboard: Keyboard): void {
+  keyboard.text(MAIN_BUTTONS.aiRules).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.editImage).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
 }
 
-function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
+function buildMainKeyboard(_currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
-  const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
   const effectivePaused = options.paused ?? isChatPaused();
 
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
@@ -58,21 +57,15 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   }
 
   if (effectivePaused) {
-    addPausedControls(keyboard, modelText);
+    addPausedControls(keyboard);
   } else {
-    addIdleControls(keyboard, modelText, options.compactOutputMode ?? getCompactOutputMode());
+    addIdleControls(keyboard, options.compactOutputMode ?? getCompactOutputMode());
   }
 
   return keyboard.resized().persistent();
 }
 
-/** Current API: model + explicit keyboard options. */
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
-/**
- * Compatibility API for existing presentation/callback callers. The legacy
- * agent/context/variant values were never rendered by this keyboard and are
- * intentionally ignored while the state refactor is finalized.
- */
 export function createMainKeyboard(
   _currentAgent: string,
   currentModel: ModelInfo,
@@ -103,9 +96,7 @@ export function createMainKeyboard(
 }
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
-  const keyboard = new Keyboard();
-  keyboard.text(getAgentButtonLabel(currentAgent)).row();
-  return keyboard.resized().persistent();
+  return new Keyboard().text(getAgentButtonLabel(currentAgent)).row().resized().persistent();
 }
 
 export function removeKeyboard(): { remove_keyboard: true } {
