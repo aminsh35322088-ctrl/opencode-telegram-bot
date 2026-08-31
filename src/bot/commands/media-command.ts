@@ -5,11 +5,12 @@ import { generateImageWithFallback, editImageWithFallback, hasActiveImageAiProvi
 export { downloadPhoto } from "../services/media-ai-service.js";
 export async function editImage(image: Buffer, mimeType: string, prompt: string) { return editImageWithFallback(image, mimeType, prompt); }
 export async function isMediaAiConfigured(): Promise<boolean> { return hasActiveImageAiProvider("generate") || hasActiveImageAiProvider("edit"); }
-
-const GENERATE_INTENT = /(?:\b(?:i|i'd|i would|please|can you|could you|want|need)\b[^\n]{0,80}\b(?:image|picture|photo)\b|\b(?:image|picture|photo)\b[^\n]{0,100}\b(?:generate|create|draw|make|render|produce)\b|(?:می.?خوام|می.?خواهم|برام|یه|یک)[^\n]{0,50}\b(?:تصویر|عکس|image|picture|photo)\b[^\n]{0,100}\b(?:بساز|بسازیم|بکش|ایجاد|تولید|جنریت|ساخت)\b|\b(?:generate|create|draw|make|render|produce|بساز|بکش|ایجاد|تولید|جنریت)\b[^\n]{0,100}\b(?:تصویر|عکس|image|picture|photo)\b)/iu;
+const PERSIAN_CREATE = "(?:بساز(?:ی|ید|یم|م)?|بکش(?:ی|ید|یم|م)?|ایجاد(?:\s*کن|\s*کنید|\s*کنیم)?|تولید(?:\s*کن|\s*کنید|\s*کنیم)?|جنریت(?:\s*کن|\s*کنید)?|درست(?:\s*کن|\s*کنید|\s*کنیم)?)";
+const ENGLISH_CREATE = "(?:generate|create|draw|make|render|produce|build)";
+const IMAGE_WORD = "(?:تصویر|عکس|image|picture|photo)";
+const GENERATE_INTENT = new RegExp(`(?:\\b(?:i|i'd|i would|please|can you|could you|want|need)\\b[^\\n]{0,100}\\b(?:image|picture|photo)\\b[^\\n]{0,120}\\b${ENGLISH_CREATE}\\b|\\b${ENGLISH_CREATE}\\b[^\\n]{0,120}\\b${IMAGE_WORD}\\b|(?:می.?خوام|می.?خواهم|برام|یه|یک)[^\\n]{0,70}\\b${IMAGE_WORD}\\b[^\\n]{0,160}\\b${PERSIAN_CREATE}\\b|\\b${PERSIAN_CREATE}\\b[^\\n]{0,160}\\b${IMAGE_WORD}\\b)`, "iu");
 const EDIT_INTENT = /(?:^|\s)(?:edit|change|modify|remove|replace|add|delete|background|backdrop|retouch|enhance|upscale|crop|resize|transform|style|ویرایش|تغییر|حذف|جایگزین|اضافه|پس.?زمینه|بک.?گراند|رتوش|بهبود|بزرگ.?نمایی|برش|تبدیل)(?:\s|$)/iu;
 const REFERENCE_INTENT = /(?:this photo|this image|based on this|using this|from this photo|روی همین عکس|بر اساس این عکس|با استفاده از این عکس|از روی این عکس)/iu;
-
 export function isImageGenerationIntent(text: string): boolean { return GENERATE_INTENT.test(text.trim()); }
 export function isImageEditIntent(text: string): boolean { return EDIT_INTENT.test(text); }
 export function classifyImageIntent(text: string, hasSourceImage: boolean): "generate" | "edit" | null { const value = text.trim(); if (!value) return null; if (!hasSourceImage) return isImageGenerationIntent(value) ? "generate" : null; if (REFERENCE_INTENT.test(value) || isImageEditIntent(value)) return "edit"; if (isImageGenerationIntent(value)) return "generate"; return null; }
