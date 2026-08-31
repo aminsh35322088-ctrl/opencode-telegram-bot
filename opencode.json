@@ -12,6 +12,7 @@
     "system-diagnostics": "allow",
     "logs-observability": "allow",
     "image-inspect": "allow",
+    "safe-download": "allow",
     "send-file": "allow",
     "external_directory": {
       "/data/logs/**": "allow"
