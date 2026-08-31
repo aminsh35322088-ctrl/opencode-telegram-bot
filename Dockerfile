@@ -18,6 +18,7 @@ RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache 
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --chown=node:node opencode.json ./opencode.json
 COPY --chown=node:node .opencode/tools ./.opencode/tools
 COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 RUN chmod +x ./railway-entrypoint.sh
