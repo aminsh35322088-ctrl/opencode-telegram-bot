@@ -4,13 +4,17 @@
     "webfetch": "allow",
     "websearch": "allow",
     "lsp": "allow",
-    "browser": "ask",
-    "package-manager": "ask",
-    "database-query": "ask",
+    "browser": "allow",
+    "package-manager": "allow",
+    "database-query": "allow",
     "test-runner": "allow",
     "network-diagnostics": "allow",
     "system-diagnostics": "allow",
     "logs-observability": "allow",
-    "image-inspect": "allow"
+    "image-inspect": "allow",
+    "send-file": "allow",
+    "external_directory": {
+      "/data/logs/**": "allow"
+    }
   }
 }
