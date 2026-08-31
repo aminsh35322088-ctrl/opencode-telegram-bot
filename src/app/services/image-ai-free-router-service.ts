@@ -9,6 +9,7 @@ type Json = Record<string, unknown>;
 interface ProviderRecord { id: string; name: string; model: string; editModel?: string; capabilities: ImageAiCapability[]; active: boolean; baseURL: string; keyFile: string; }
 interface Store { providers?: ProviderRecord[]; }
 export interface FreeImageModel { providerId: string; providerName: string; model: string; editModel?: string; capability: ImageAiCapability; cost: CostClass; reason: string; route: string; providerModel?: string; }
+interface RouteHealth { failures: number; lastFailureAt: number; cooldownUntil: number; lastSuccessAt: number; }
 
 const STORE = "image-ai-providers.json";
 const CACHE_TTL_MS = 10 * 60_000;
@@ -16,7 +17,9 @@ const DISCOVERY_LIMIT = 40;
 const HF_CONCURRENCY = 5;
 const REQUEST_TIMEOUT_MS = 20_000;
 const GENERATION_TIMEOUT_MS = 120_000;
+const HEALTH_COOLDOWN_MS = [30_000, 120_000, 600_000];
 let cache: { expiresAt: number; models: FreeImageModel[] } | undefined;
+const routeHealth = new Map<string, RouteHealth>();
 
 function storePath(): string { return path.join(getRuntimePaths().appHome, STORE); }
 async function readStore(): Promise<ProviderRecord[]> {
@@ -53,6 +56,13 @@ function isImageModel(model: Json): boolean {
 }
 function editCapable(model: Json): boolean { const text = JSON.stringify(model).toLowerCase(); return /image-edit|image-to-image|inpaint|kontext/.test(text); }
 function modelRoute(baseURL: string, capability: ImageAiCapability): string { return `${baseURL.replace(/\/$/, "")}/images/${capability === "edit" ? "edits" : "generations"}`; }
+function healthKey(model: FreeImageModel): string { return `${model.providerId}:${model.providerName}:${model.model}:${model.capability}:${model.route}`; }
+function getHealth(model: FreeImageModel): RouteHealth { return routeHealth.get(healthKey(model)) ?? { failures: 0, lastFailureAt: 0, cooldownUntil: 0, lastSuccessAt: 0 }; }
+function markSuccess(model: FreeImageModel): void { routeHealth.set(healthKey(model), { failures: 0, lastFailureAt: 0, cooldownUntil: 0, lastSuccessAt: Date.now() }); }
+function markFailure(model: FreeImageModel): void { const previous = getHealth(model); const failures = Math.min(previous.failures + 1, HEALTH_COOLDOWN_MS.length); const cooldownUntil = Date.now() + HEALTH_COOLDOWN_MS[failures - 1]!; routeHealth.set(healthKey(model), { failures, lastFailureAt: Date.now(), cooldownUntil, lastSuccessAt: previous.lastSuccessAt }); }
+function isCoolingDown(model: FreeImageModel): boolean { return getHealth(model).cooldownUntil > Date.now(); }
+function routeScore(model: FreeImageModel): number { const health = getHealth(model); const age = health.lastSuccessAt ? Math.min((Date.now() - health.lastSuccessAt) / 3_600_000, 1) : 0.5; return (health.failures * 100) + (isCoolingDown(model) ? 10_000 : 0) - age; }
+function orderCandidates(models: FreeImageModel[]): FreeImageModel[] { return models.filter((model) => !isCoolingDown(model)).sort((a, b) => routeScore(a) - routeScore(b)); }
 
 async function detectOpenAiCompatible(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
   const base = provider.baseURL.replace(/\/$/, "");
@@ -68,7 +78,6 @@ async function detectOpenAiCompatible(provider: ProviderRecord, key: string): Pr
   }
   return result;
 }
-
 async function detectPollinations(provider: ProviderRecord): Promise<FreeImageModel[]> {
   const body = await request("https://gen.pollinations.ai/v1/models");
   const result: FreeImageModel[] = [];
@@ -81,7 +90,6 @@ async function detectPollinations(provider: ProviderRecord): Promise<FreeImageMo
   }
   return result;
 }
-
 async function detectHuggingFace(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
   const searchUrl = "https://huggingface.co/api/models?inference_provider=all&pipeline_tag=text-to-image&sort=downloads&direction=-1&limit=40";
   const catalog = asList(await request(searchUrl, key));
@@ -107,7 +115,6 @@ async function detectHuggingFace(provider: ProviderRecord, key: string): Promise
   }
   return result.slice(0, DISCOVERY_LIMIT);
 }
-
 async function detectProvider(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
   if (provider.id === "pollinations") return detectPollinations(provider);
   if (provider.id === "huggingface") return detectHuggingFace(provider, key);
@@ -125,7 +132,6 @@ export async function detectFreeImageModels(force = false): Promise<FreeImageMod
 }
 export function clearFreeImageModelCache(): void { cache = undefined; }
 export async function freeImageStatus(): Promise<{ checkedAt: string; models: FreeImageModel[] }> { return { checkedAt: new Date().toISOString(), models: await detectFreeImageModels() }; }
-
 async function imageResponse(response: Response, providerName: string): Promise<{ buffer: Buffer; mimeType: string }> {
   const text = await response.text(); let body: unknown = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
   if (!response.ok) { const detail = body && typeof body === "object" && "error" in body ? String((body as Json).error) : `HTTP ${response.status}`; throw new Error(`${providerName}: ${detail}`); }
@@ -150,12 +156,12 @@ async function execute(model: FreeImageModel, prompt: string, image?: Buffer, mi
   return imageResponse(await fetch(model.route, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: model.model, prompt, n: 1, response_format: "b64_json" }), signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS) }), model.providerName);
 }
 export async function generateFreeImage(prompt: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  const errors: string[] = []; const models = (await detectFreeImageModels()).filter((m) => m.capability === "generate");
-  for (const model of models) { try { logger.info(`[ImageAI] free route provider=${model.providerId} model=${model.model}`); return await execute(model, prompt); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); logger.warn(`[ImageAI] free route failed provider=${model.providerId} model=${model.model}: ${message}`); clearFreeImageModelCache(); } }
+  const errors: string[] = []; const models = orderCandidates((await detectFreeImageModels()).filter((m) => m.capability === "generate"));
+  for (const model of models) { try { logger.info(`[ImageAI] free route provider=${model.providerId} model=${model.model} healthFailures=${getHealth(model).failures}`); const result = await execute(model, prompt); markSuccess(model); return result; } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); markFailure(model); logger.warn(`[ImageAI] free route failed provider=${model.providerId} model=${model.model} failures=${getHealth(model).failures} cooldownMs=${Math.max(0, getHealth(model).cooldownUntil - Date.now())}: ${message}`); clearFreeImageModelCache(); } }
   throw new Error(errors.length ? `No verified free image model succeeded.\n${errors.join("\n")}` : "No verified free image generation model is currently available.");
 }
 export async function editFreeImage(image: Buffer, mimeType: string, prompt: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  const errors: string[] = []; const models = (await detectFreeImageModels()).filter((m) => m.capability === "edit");
-  for (const model of models) { try { logger.info(`[ImageAI] free edit route provider=${model.providerId} model=${model.model}`); return await execute(model, prompt, image, mimeType); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); logger.warn(`[ImageAI] free edit route failed provider=${model.providerId} model=${model.model}: ${message}`); clearFreeImageModelCache(); } }
+  const errors: string[] = []; const models = orderCandidates((await detectFreeImageModels()).filter((m) => m.capability === "edit"));
+  for (const model of models) { try { logger.info(`[ImageAI] free edit route provider=${model.providerId} model=${model.model} healthFailures=${getHealth(model).failures}`); const result = await execute(model, prompt, image, mimeType); markSuccess(model); return result; } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); markFailure(model); logger.warn(`[ImageAI] free edit route failed provider=${model.providerId} model=${model.model} failures=${getHealth(model).failures} cooldownMs=${Math.max(0, getHealth(model).cooldownUntil - Date.now())}: ${message}`); clearFreeImageModelCache(); } }
   throw new Error(errors.length ? `No verified free image editing model succeeded.\n${errors.join("\n")}` : "No verified free image editing model is currently available.");
 }
