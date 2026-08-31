@@ -17,16 +17,13 @@ let cachedModelsByProvider: Map<string, FavoriteModel[]> | null = null;
 let modelCatalogCacheExpiresAt = 0;
 let modelCatalogFetchInFlight: Promise<Set<string> | null> | null = null;
 const SEARCH_RESULTS_LIMIT = 10;
-
 function getModelKey(providerID: string, modelID: string) { return `${providerID}/${modelID}`; }
 function getEnvDefaultModel(): FavoriteModel | null { const providerID = config.opencode.model.provider; const modelID = config.opencode.model.modelId; return providerID && modelID ? { providerID, modelID } : null; }
 function dedupeModels(models: FavoriteModel[]): FavoriteModel[] { const unique = new Map<string, FavoriteModel>(); for (const model of models) { const key = getModelKey(model.providerID, model.modelID); if (!unique.has(key)) unique.set(key, model); } return [...unique.values()]; }
 function filterModelsByCatalog(models: FavoriteModel[], valid: Set<string> | null) { return valid ? models.filter((m) => valid.has(getModelKey(m.providerID, m.modelID))) : models; }
 function logFailure(error: unknown, type: "error" | "exception") { if (isServerUnavailableError(error)) { logger.warn("[ModelManager] OpenCode server is not running; skipping model catalog refresh"); return; } logger.warn(`[ModelManager] ${type === "error" ? "Failed to refresh" : "Error refreshing"} model catalog:`, error); }
-
 async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<string> | null> {
-  const force = options?.force === true;
-  if (!force && cachedValidModelKeys && Date.now() < modelCatalogCacheExpiresAt) return cachedValidModelKeys;
+  const force = options?.force === true; if (!force && cachedValidModelKeys && Date.now() < modelCatalogCacheExpiresAt) return cachedValidModelKeys;
   if (modelCatalogFetchInFlight) { const inFlight = modelCatalogFetchInFlight; if (!force) return inFlight; await inFlight; }
   modelCatalogFetchInFlight = (async () => {
     try {
@@ -40,18 +37,23 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
         providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID)); byProvider.set(provider.id, providerModels); providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
       }
       for (const provider of await listCustomProviders()) {
-        const merged = dedupeModels([...(byProvider.get(provider.id) ?? []), ...provider.models.map((model) => ({ providerID: provider.id, modelID: model.id }))]);
-        byProvider.set(provider.id, merged);
+        const merged = dedupeModels([...(byProvider.get(provider.id) ?? []), ...provider.models.map((model) => ({ providerID: provider.id, modelID: model.id }))]); byProvider.set(provider.id, merged);
         for (const model of merged) { valid.add(getModelKey(model.providerID, model.modelID)); if (!all.some((item) => getModelKey(item.providerID, item.modelID) === getModelKey(model.providerID, model.modelID))) all.push(model); }
         const existing = providers.find((item) => item.id === provider.id); if (existing) existing.modelCount = merged.length; else providers.push({ id: provider.id, name: provider.name, modelCount: merged.length });
       }
+      const env = getEnvDefaultModel();
+      if (env && !providers.some((provider) => provider.id === env.providerID)) {
+        providers.push({ id: env.providerID, name: env.providerID === "opencode" ? "OpenCode" : env.providerID, modelCount: 1 });
+        byProvider.set(env.providerID, [env]);
+        logger.warn(`[ModelManager] Catalog omitted configured provider ${env.providerID}; preserving its configured default model for UI/recovery.`);
+      } else if (env && !(byProvider.get(env.providerID) ?? []).some((model) => model.modelID === env.modelID)) {
+        const merged = dedupeModels([...(byProvider.get(env.providerID) ?? []), env]); byProvider.set(env.providerID, merged); providers.find((provider) => provider.id === env.providerID)!.modelCount = merged.length;
+      }
       providers.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)); cachedValidModelKeys = valid; cachedAllModels = all; cachedProviders = providers; cachedModelsByProvider = byProvider; modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
-      logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, copilot=removed`); return valid;
+      logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, providerIds=${providers.map((p) => p.id).join(",")}, copilot=removed`); return valid;
     } catch (err) { logFailure(err, "exception"); return cachedValidModelKeys; } finally { modelCatalogFetchInFlight = null; }
-  })();
-  return modelCatalogFetchInFlight;
+  })(); return modelCatalogFetchInFlight;
 }
-
 function normalizeFavoriteModels(state: OpenCodeModelState): FavoriteModel[] { return Array.isArray(state.favorite) ? state.favorite.filter((m): m is { providerID: string; modelID: string } => typeof m?.providerID === "string" && !!m.providerID && typeof m.modelID === "string" && !!m.modelID).map((m) => ({ providerID: m.providerID, modelID: m.modelID })) : []; }
 function normalizeRecentModels(state: OpenCodeModelState): FavoriteModel[] { return Array.isArray(state.recent) ? state.recent.filter((m): m is { providerID: string; modelID: string } => typeof m?.providerID === "string" && !!m.providerID && typeof m.modelID === "string" && !!m.modelID).map((m) => ({ providerID: m.providerID, modelID: m.modelID })) : []; }
 function getOpenCodeModelStatePath() { const xdg = process.env.XDG_STATE_HOME; if (xdg?.trim()) return path.join(xdg, "opencode", "model.json"); const home = process.env.HOME || process.env.USERPROFILE || ""; return path.join(home, ".local", "state", "opencode", "model.json"); }
@@ -60,27 +62,10 @@ export async function reconcileStoredModelSelection(options?: { forceCatalogRefr
 export function __resetModelCatalogCacheForTests() { cachedValidModelKeys = null; cachedAllModels = null; cachedProviders = null; cachedModelsByProvider = null; modelCatalogCacheExpiresAt = 0; modelCatalogFetchInFlight = null; }
 export async function getFavoriteModels() { return (await getModelSelectionLists()).favorites; }
 export async function getProviders() { await getValidModelKeys(); return cachedProviders ?? []; }
-export async function getProvidersForCapability(capability: AiCapability) {
-  const customProviders = await listCustomProvidersByCapability(capability);
-  if (capability !== "coding") return customProviders.map((p) => ({ id: p.id, name: p.name, modelCount: p.models.length }));
-  await getValidModelKeys();
-  const merged = new Map((cachedProviders ?? []).map((provider) => [provider.id, { id: provider.id, name: provider.name, modelCount: provider.modelCount }]));
-  for (const provider of customProviders) { const existing = merged.get(provider.id); if (existing) existing.modelCount = Math.max(existing.modelCount, provider.models.length); else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length }); }
-  return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-}
+export async function getProvidersForCapability(capability: AiCapability) { const customProviders = await listCustomProvidersByCapability(capability); if (capability !== "coding") return customProviders.map((p) => ({ id: p.id, name: p.name, modelCount: p.models.length })); await getValidModelKeys(); const merged = new Map((cachedProviders ?? []).map((provider) => [provider.id, { id: provider.id, name: provider.name, modelCount: provider.modelCount }])); for (const provider of customProviders) { const existing = merged.get(provider.id); if (existing) existing.modelCount = Math.max(existing.modelCount, provider.models.length); else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length }); } return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)); }
 export async function getProviderModels(providerID: string) { await getValidModelKeys(); return cachedModelsByProvider?.get(providerID) ?? []; }
-export async function getProviderModelsForCapability(providerID: string, capability: AiCapability) {
-  if (capability === "coding") { await getValidModelKeys(); const openCodeModels = cachedModelsByProvider?.get(providerID) ?? []; const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID); const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id })) ?? []; return dedupeModels([...openCodeModels, ...customModels]); }
-  const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID); return provider?.models.map((m) => ({ providerID, modelID: m.id })) ?? [];
-}
-export async function resolveCatalogModel(providerID: string, modelID: string, options?: { forceRefresh?: boolean }): Promise<ModelInfo | null> {
-  const valid = await getValidModelKeys({ force: options?.forceRefresh === true });
-  if (!valid || !cachedAllModels) return null;
-  if (valid.has(getModelKey(providerID, modelID))) return { providerID, modelID, variant: "default" };
-  const exactMatches = cachedAllModels.filter((model) => model.modelID === modelID);
-  const match = exactMatches.length === 1 ? exactMatches[0] : undefined;
-  return match ? { providerID: match.providerID, modelID: match.modelID, variant: "default" } : null;
-}
+export async function getProviderModelsForCapability(providerID: string, capability: AiCapability) { if (capability === "coding") { await getValidModelKeys(); const openCodeModels = cachedModelsByProvider?.get(providerID) ?? []; const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID); const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id })) ?? []; return dedupeModels([...openCodeModels, ...customModels]); } const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID); return provider?.models.map((m) => ({ providerID, modelID: m.id })) ?? []; }
+export async function resolveCatalogModel(providerID: string, modelID: string, options?: { forceRefresh?: boolean }): Promise<ModelInfo | null> { const valid = await getValidModelKeys({ force: options?.forceRefresh === true }); if (!valid || !cachedAllModels) return null; if (valid.has(getModelKey(providerID, modelID))) return { providerID, modelID, variant: "default" }; const exactMatches = cachedAllModels.filter((model) => model.modelID === modelID); const match = exactMatches.length === 1 ? exactMatches[0] : undefined; return match ? { providerID: match.providerID, modelID: match.modelID, variant: "default" } : null; }
 export async function searchModels(query: string) { const q = query.trim().toLowerCase(); if (!q) return []; const valid = await getValidModelKeys(); if (!valid || !cachedAllModels) return []; return cachedAllModels.filter((m) => getModelKey(m.providerID, m.modelID).toLowerCase().includes(q)).slice(0, SEARCH_RESULTS_LIMIT); }
 export function fetchCurrentModel(): ModelInfo { return getStoredModel(); }
 export function selectModel(modelInfo: ModelInfo) { logger.info(`[ModelManager] Selected model: ${modelInfo.providerID}/${modelInfo.modelID}`); setCurrentModel(modelInfo); }
