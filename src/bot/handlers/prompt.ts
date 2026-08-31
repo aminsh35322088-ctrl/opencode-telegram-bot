@@ -42,10 +42,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
   if (createdNewSession) { const currentAgent = await resolveProjectAgent(getStoredAgent()); const currentModel = getStoredModel(); keyboardManager.updateAgent(currentAgent); const contextInfo = keyboardManager.getContextInfo(); const variantName = formatVariantForButton(currentModel.variant || "default"); await ctx.reply(t("bot.session_created", { title: currentSession.title }), { reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName) }); }
   if (await isSessionBusy(currentSession.id, currentSession.directory)) { await ctx.reply(t("bot.session_busy")); return false; }
   try {
-    const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const fallbackModel = getStoredModel();
-    const codingRule = await getAiRoleSelection("coding");
-    const storedModel = codingRule ?? fallbackModel;
+    const currentAgent = await resolveProjectAgent(getStoredAgent()); const fallbackModel = getStoredModel(); const codingRule = await getAiRoleSelection("coding"); const storedModel = codingRule ? { ...codingRule, variant: fallbackModel.variant || "default" } : fallbackModel;
     if (codingRule) logger.info(`[Bot] Using Coding AI Rule: ${codingRule.providerID}/${codingRule.modelID}`);
     const parts: Array<TextPartInput | FilePartInput> = []; if (text.trim()) parts.push({ type: "text", text }); parts.push(...fileParts);
     const pendingAttachment = promptAttachment.get(); const attachmentPart = await resolvePendingAttachment(currentSession.directory); if (attachmentPart) parts.push(attachmentPart); else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
