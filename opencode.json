@@ -4,13 +4,13 @@
     "webfetch": "allow",
     "websearch": "allow",
     "lsp": "allow",
-    "browser_*": "ask",
-    "package_manager": "ask",
-    "database_query": "ask",
-    "test_runner": "allow",
-    "network_diagnostics": "allow",
-    "system_diagnostics": "allow",
-    "logs_observability": "allow",
-    "image_inspect": "allow"
+    "browser": "ask",
+    "package-manager": "ask",
+    "database-query": "ask",
+    "test-runner": "allow",
+    "network-diagnostics": "allow",
+    "system-diagnostics": "allow",
+    "logs-observability": "allow",
+    "image-inspect": "allow"
   }
 }
