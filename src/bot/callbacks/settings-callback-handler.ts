@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { InlineKeyboard } from "grammy";
-import { showModelSelectionMenu } from "../menus/model-selection-menu.js";
+import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
@@ -28,6 +28,7 @@ import {
   buildContextSettingsView,
   buildNotificationsSettingsView,
   buildSettingsMenuView,
+  SETTINGS_AI_RULES_CALLBACK,
   SETTINGS_ADVANCED_CALLBACK,
   SETTINGS_APPEARANCE_CALLBACK,
   SETTINGS_ASSISTANT_FOOTER_CALLBACK,
@@ -37,7 +38,6 @@ import {
   SETTINGS_CONTEXT_CALLBACK,
   SETTINGS_DIFF_FILES_CALLBACK,
   SETTINGS_MCP_CALLBACK,
-  SETTINGS_MODEL_CALLBACK,
   SETTINGS_NOTIFICATIONS_CALLBACK,
   SETTINGS_PROMPT_QUEUE_CALLBACK,
   SETTINGS_RESPONSE_STREAMING_CALLBACK,
@@ -50,10 +50,7 @@ function getNextResponseStreamingMode(mode: ResponseStreamingMode): ResponseStre
   return mode === "edit" ? "draft" : "edit";
 }
 
-async function renderSettingsView(
-  ctx: Context,
-  view: { text: string; keyboard: InlineKeyboard },
-): Promise<void> {
+async function renderSettingsView(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<void> {
   await ctx.editMessageText(view.text, {
     reply_markup: appendInlineMenuCancelButton(view.keyboard, "settings"),
   });
@@ -62,15 +59,18 @@ async function renderSettingsView(
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
   if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) return false;
+  if (callbackData === SETTINGS_AI_RULES_CALLBACK) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return handleAiRoleCallback({
+      ...ctx,
+      callbackQuery: { ...ctx.callbackQuery!, data: "role:root" },
+    } as Context);
+  }
 
   if (!(await ensureActiveInlineMenu(ctx, "settings"))) return true;
 
   try {
     switch (callbackData) {
-      case SETTINGS_MODEL_CALLBACK:
-        await ctx.answerCallbackQuery();
-        await showModelSelectionMenu(ctx);
-        return true;
       case SETTINGS_APPEARANCE_CALLBACK:
         await ctx.answerCallbackQuery();
         await renderSettingsView(ctx, buildAppearanceSettingsView());
@@ -106,7 +106,6 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
     }
 
     let destination: () => { text: string; keyboard: InlineKeyboard } = buildAppearanceSettingsView;
-
     switch (callbackData) {
       case SETTINGS_COMPACT_OUTPUT_CALLBACK:
         setCompactOutputMode(!getCompactOutputMode());
