@@ -8,15 +8,19 @@ set -eu
 : "${OPENCODE_MODEL_PROVIDER:=opencode}"
 : "${OPENCODE_MODEL_ID:=big-pickle}"
 : "${OPEN_BROWSER_ROOTS:=/data/workspace}"
-: "${OPENCODE_CONFIG_DIR:=/data/opencode/config}"
+: "${OPENCODE_CONFIG_DIR:=/data/.config/opencode}"
 : "${OPENCODE_EXPERIMENTAL_LSP_TOOL:=true}"
+: "${OPENCODE_ENABLE_EXA:=1}"
 : "${PLAYWRIGHT_BROWSERS_PATH:=/opt/ms-playwright}"
 
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
-export OPENCODE_CONFIG_DIR OPENCODE_EXPERIMENTAL_LSP_TOOL PLAYWRIGHT_BROWSERS_PATH
+export OPENCODE_CONFIG_DIR OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
 
-mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace /data/opencode/config/tools
+# OpenCode's global config/tool location for HOME=/data + XDG_CONFIG_HOME=/data/.config.
+GLOBAL_OPENCODE_DIR="${XDG_CONFIG_HOME:-/data/.config}/opencode"
+GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR"
 
 # Keep the historical /app/workspace path as a compatibility alias. Existing
 # persisted sessions may still reference it, while all actual workspace data
@@ -42,14 +46,18 @@ if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
 fi
 ln -sfn /data/workspace /tmp/site
 
-# OpenCode loads project tools and permissions from the persistent config directory.
-if [ -f /app/opencode.json ]; then
-  cp /app/opencode.json /data/opencode/config/opencode.json
-  chown node:node /data/opencode/config/opencode.json
-fi
+# Persist the complete custom-tool bundle where OpenCode actually discovers
+# global tools. This also works when a session's project directory is /data/workspace.
 if [ -d /app/.opencode/tools ]; then
-  cp -a /app/.opencode/tools/. /data/opencode/config/tools/
-  chown -R node:node /data/opencode/config/tools
+  cp -a /app/.opencode/tools/. "$GLOBAL_TOOLS_DIR/"
+  chown -R node:node "$GLOBAL_TOOLS_DIR"
+fi
+
+# Make the project permission config available globally as well as at /app so
+# tool access does not depend on the OpenCode server's working directory.
+if [ -f /app/opencode.json ]; then
+  cp /app/opencode.json "$GLOBAL_OPENCODE_DIR/opencode.json"
+  chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
 chown -R node:node /data
@@ -103,7 +111,8 @@ printf '%s\n' "[railway] Persistent shared workspace: /data/workspace"
 printf '%s\n' "[railway] Legacy /app/workspace -> /data/workspace"
 printf '%s\n' "[railway] Legacy /tmp/site -> /data/workspace"
 printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
-printf '%s\n' "[railway] Agent tools: $(find /data/opencode/config/tools -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
+printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
+printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable)"
 
