@@ -35,27 +35,24 @@ async function resetMismatchedSessionContext(): Promise<void> { detachAttachedSe
 export interface ProcessPromptDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
 async function retireAttachmentConfirmation(ctx: Context, messageId: number | undefined): Promise<void> { if (!messageId || !ctx.chat) return; await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId).catch((err) => logger.debug(`[PromptAttachment] Could not retire confirmation message ${messageId}:`, err)); }
 
-async function resolveCodingModel(): Promise<{ providerID: string; modelID: string; variant: string } | null> {
+async function resolveCodingModel(chatId?: number): Promise<{ providerID: string; modelID: string; variant: string } | null> {
   const fallback = getStoredModel();
-  const rule = await getAiRoleSelection("coding");
+  const rule = await getAiRoleSelection("coding", chatId);
   const requestedProvider = rule?.providerID || fallback.providerID;
   const requestedModel = rule?.modelID || fallback.modelID;
   if (!requestedProvider || !requestedModel) return null;
-
-  const resolved = await resolveCatalogModel(requestedProvider, requestedModel);
+  let resolved = await resolveCatalogModel(requestedProvider, requestedModel);
+  if (!resolved && rule) resolved = await resolveCatalogModel(requestedProvider, requestedModel, { forceRefresh: true });
   if (resolved) {
     if (rule && (resolved.providerID !== rule.providerID || resolved.modelID !== rule.modelID)) {
-      await setAiRoleSelection("coding", resolved.providerID, resolved.modelID);
-      logger.warn(`[Bot] Repaired stale Coding AI Rule: ${rule.providerID}/${rule.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
+      await setAiRoleSelection("coding", resolved.providerID, resolved.modelID, chatId);
+      logger.warn(`[Bot] Repaired stale Coding AI Rule for chat=${chatId ?? "legacy"}: ${rule.providerID}/${rule.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
     }
     return { providerID: resolved.providerID, modelID: resolved.modelID, variant: fallback.variant || "default" };
   }
-
-  if (rule) {
-    logger.warn(`[Bot] Coding AI Rule is unavailable in the live OpenCode catalog: ${rule.providerID}/${rule.modelID}; falling back to stored/default model.`);
-  }
+  if (rule) logger.warn(`[Bot] Coding AI Rule unavailable in live OpenCode catalog for chat=${chatId ?? "legacy"}: ${rule.providerID}/${rule.modelID}; falling back.`);
   if (fallback.providerID && fallback.modelID) {
-    const fallbackResolved = await resolveCatalogModel(fallback.providerID, fallback.modelID);
+    const fallbackResolved = await resolveCatalogModel(fallback.providerID, fallback.modelID, { forceRefresh: true });
     if (fallbackResolved) return { providerID: fallbackResolved.providerID, modelID: fallbackResolved.modelID, variant: fallback.variant || "default" };
   }
   return null;
@@ -67,19 +64,10 @@ async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; 
   const detail = String((first.error as { name?: string; message?: string })?.message ?? first.error);
   const type = String((first.error as { name?: string })?.name ?? "");
   if (!/model\s+not\s+found|ProviderModelNotFoundError/i.test(`${type} ${detail}`)) return first;
-
   logger.warn(`[Bot] Explicit model rejected by OpenCode; refreshing catalog and retrying without a stale model: ${promptOptions.model.providerID}/${promptOptions.model.modelID}`);
   const refreshed = await resolveCatalogModel(promptOptions.model.providerID, promptOptions.model.modelID, { forceRefresh: true });
-  if (refreshed) {
-    promptOptions.model = { providerID: refreshed.providerID, modelID: refreshed.modelID };
-    const retry = await opencodeClient.session.promptAsync(promptOptions);
-    if (!retry.error) return retry;
-  }
-
-  const retryWithoutModel = { ...promptOptions };
-  delete retryWithoutModel.model;
-  delete retryWithoutModel.variant;
-  return opencodeClient.session.promptAsync(retryWithoutModel);
+  if (refreshed) { promptOptions.model = { providerID: refreshed.providerID, modelID: refreshed.modelID }; const retry = await opencodeClient.session.promptAsync(promptOptions); if (!retry.error) return retry; }
+  const retryWithoutModel = { ...promptOptions }; delete retryWithoutModel.model; delete retryWithoutModel.variant; return opencodeClient.session.promptAsync(retryWithoutModel);
 }
 
 export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = []): Promise<boolean> {
@@ -91,14 +79,14 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
   if (createdNewSession) { const currentAgent = await resolveProjectAgent(getStoredAgent()); const currentModel = getStoredModel(); keyboardManager.updateAgent(currentAgent); const contextInfo = keyboardManager.getContextInfo(); const variantName = formatVariantForButton(currentModel.variant || "default"); await ctx.reply(t("bot.session_created", { title: currentSession.title }), { reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName) }); }
   if (await isSessionBusy(currentSession.id, currentSession.directory)) { await ctx.reply(t("bot.session_busy")); return false; }
   try {
-    const currentAgent = await resolveProjectAgent(getStoredAgent()); const storedModel = await resolveCodingModel();
+    const currentAgent = await resolveProjectAgent(getStoredAgent()); const storedModel = await resolveCodingModel(ctx.chat?.id);
     const parts: Array<TextPartInput | FilePartInput> = []; if (text.trim()) parts.push({ type: "text", text }); parts.push(...fileParts);
     const pendingAttachment = promptAttachment.get(); const attachmentPart = await resolvePendingAttachment(currentSession.directory); if (attachmentPart) parts.push(attachmentPart); else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
     if (pendingAttachment) { promptAttachment.clear("consumed"); interactionManager.clear("attachment_consumed"); await retireAttachmentConfirmation(ctx, pendingAttachment.confirmationMessageId); }
     if (parts.length === 0 || parts.every((p) => p.type === "file")) if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
     const promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
     if (storedModel) { promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID }; promptOptions.variant = storedModel.variant; }
-    const promptErrorLogContext = { sessionId: currentSession.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel?.providerID || "OpenCode/default", modelId: storedModel?.modelID || "default", variant: storedModel?.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
+    const promptErrorLogContext = { sessionId: currentSession.id, chatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel?.providerID || "OpenCode/default", modelId: storedModel?.modelID || "default", variant: storedModel?.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory); await markAttachedSessionBusy(currentSession.id); assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel?.providerID, configuredModelID: storedModel?.modelID }); await keyboardManager.sendKeyboardUpdate(ctx.chat!.id); if (text.trim()) externalUserInputSuppressionManager.register(currentSession.id, text);
     safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) return; foregroundSessionState.markIdle(currentSession.id); void markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_api_error"); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession.id); void markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_background_error"); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
     return true;
