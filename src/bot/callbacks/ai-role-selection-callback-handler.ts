@@ -5,14 +5,190 @@ import { listImageAiProviders } from "../../app/services/image-ai-provider-servi
 import { getGroqSttConfig } from "../../app/services/custom-provider-service.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 
-const ROOT="role:root"; const ROLE_PREFIX="role:select:"; const PICK_PREFIX="role:pick:"; const BACK="role:back"; const ROLES:AiRole[]=["coding","image","video","stt"];
-function roleFromData(data:string):AiRole|null{const value=data.slice(ROLE_PREFIX.length) as AiRole;return ROLES.includes(value)?value:null;}
-export function isAiRoleCallback(data:string):boolean{return data===ROOT||data===BACK||data.startsWith(ROLE_PREFIX)||data.startsWith(PICK_PREFIX);}
-async function candidates(role:AiRole):Promise<Array<{providerID:string;modelID:string;label:string}>>{
-  if(role==="image") return (await listImageAiProviders()).filter(p=>p.active).map(p=>({providerID:p.id,modelID:p.model,label:`${p.name}/${p.model}`}));
-  if(role==="stt"){const stt=await getGroqSttConfig();return stt?[{providerID:"groq",modelID:stt.model,label:`Groq/${stt.model}`}]:[];}
-  const providers=await getProvidersForCapability(role); const result:Array<{providerID:string;modelID:string;label:string}>=[]; for(const provider of providers)for(const model of await getProviderModelsForCapability(provider.id,role))result.push({providerID:model.providerID,modelID:model.modelID,label:`${provider.name}/${model.modelID}`}); return result;
+const ROOT = "role:root";
+const ROLE_PREFIX = "role:select:";
+const PROVIDER_PREFIX = "role:provider:";
+const PICK_PREFIX = "role:pick:";
+const BACK = "role:back";
+const ROLES: AiRole[] = ["coding", "image", "video", "stt"];
+
+function roleFromData(data: string): AiRole | null {
+  const value = data.slice(ROLE_PREFIX.length) as AiRole;
+  return ROLES.includes(value) ? value : null;
 }
-export async function handleAiRoleCallback(ctx:Context):Promise<boolean>{const data=ctx.callbackQuery?.data??"";if(!isAiRoleCallback(data))return false;await ctx.answerCallbackQuery().catch(()=>{});if(data===BACK){await ctx.deleteMessage().catch(()=>{});return true;}if(data===ROOT){await renderRoles(ctx);return true;}if(data.startsWith(ROLE_PREFIX)){const role=roleFromData(data);if(!role)return true;await renderRoleModels(ctx,role);return true;}const parts=data.slice(PICK_PREFIX.length).split(":");const role=parts[0] as AiRole|undefined;const index=Number.parseInt(parts[1]??"",10);if(!role||!ROLES.includes(role)||!Number.isInteger(index)||index<0)return true;const options=await candidates(role);const selected=options[index];if(selected)await setAiRoleSelection(role,selected.providerID,selected.modelID);await renderRoles(ctx,"✅ AI role selection updated.");return true;}
-async function renderRoles(ctx:Context,notice?:string):Promise<void>{const selected=await getAiRoleSelections();const keyboard=new InlineKeyboard();for(const role of ROLES)keyboard.text(`${AI_ROLE_LABELS[role]}${selected[role]?" · ✅":""}`,`${ROLE_PREFIX}${role}`).row();keyboard.text("← Models",BACK);const lines=ROLES.map(role=>{const item=selected[role];return`${AI_ROLE_LABELS[role]}\n${item?`✅ ${item.providerID}/${item.modelID}`:"⚪ Not configured"}`;});await replyWithInlineMenu(ctx,{menuKind:"model",text:`${notice?`${notice}\n\n`:""}🎛️ AI Roles\n\n${lines.join("\n\n")}`,keyboard});}
-async function renderRoleModels(ctx:Context,role:AiRole):Promise<void>{const keyboard=new InlineKeyboard();const selected=await getAiRoleSelections();const options=await candidates(role);options.forEach((item,index)=>keyboard.text(`${selected[role]?.providerID===item.providerID&&selected[role]?.modelID===item.modelID?"✅":"🔹"} ${item.label}`,`${PICK_PREFIX}${role}:${index}`).row());if(!options.length)keyboard.text(`⚪ No verified ${AI_ROLE_LABELS[role]} provider`,`${PICK_PREFIX}${role}:0`).row();keyboard.text("← AI Roles",ROOT);await replyWithInlineMenu(ctx,{menuKind:"model",text:`${AI_ROLE_LABELS[role]}\n\nOnly verified/active providers assigned to this capability are shown.`,keyboard});}
+
+function encodePart(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodePart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function isAiRoleCallback(data: string): boolean {
+  return (
+    data === ROOT ||
+    data === BACK ||
+    data.startsWith(ROLE_PREFIX) ||
+    data.startsWith(PROVIDER_PREFIX) ||
+    data.startsWith(PICK_PREFIX)
+  );
+}
+
+interface CandidateProvider {
+  id: string;
+  name: string;
+  models: Array<{ providerID: string; modelID: string }>;
+}
+
+async function providersForRole(role: AiRole): Promise<CandidateProvider[]> {
+  if (role === "image") {
+    return (await listImageAiProviders())
+      .filter((provider) => provider.active)
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        models: [{ providerID: provider.id, modelID: provider.model }],
+      }));
+  }
+
+  if (role === "stt") {
+    const stt = await getGroqSttConfig();
+    return stt
+      ? [{ id: "groq", name: "Groq", models: [{ providerID: "groq", modelID: stt.model }] }]
+      : [];
+  }
+
+  const providers = await getProvidersForCapability(role);
+  const result: CandidateProvider[] = [];
+  for (const provider of providers) {
+    const models = await getProviderModelsForCapability(provider.id, role);
+    if (models.length > 0) {
+      result.push({ id: provider.id, name: provider.name, models });
+    }
+  }
+  return result;
+}
+
+async function candidatesForProvider(role: AiRole, providerID: string) {
+  const provider = (await providersForRole(role)).find((item) => item.id === providerID);
+  return provider?.models ?? [];
+}
+
+export async function handleAiRoleCallback(ctx: Context): Promise<boolean> {
+  const data = ctx.callbackQuery?.data ?? "";
+  if (!isAiRoleCallback(data)) return false;
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  if (data === BACK) {
+    await ctx.deleteMessage().catch(() => {});
+    return true;
+  }
+  if (data === ROOT) {
+    await renderRoles(ctx);
+    return true;
+  }
+  if (data.startsWith(ROLE_PREFIX)) {
+    const role = roleFromData(data);
+    if (!role) return true;
+    await renderRoleProviders(ctx, role);
+    return true;
+  }
+  if (data.startsWith(PROVIDER_PREFIX)) {
+    const parts = data.slice(PROVIDER_PREFIX.length).split(":");
+    const role = parts[0] as AiRole | undefined;
+    const providerID = parts.slice(1).join(":");
+    if (!role || !ROLES.includes(role) || !providerID) return true;
+    await renderProviderModels(ctx, role, decodePart(providerID));
+    return true;
+  }
+
+  const parts = data.slice(PICK_PREFIX.length).split(":");
+  const role = parts[0] as AiRole | undefined;
+  const providerID = decodePart(parts[1] ?? "");
+  const modelID = decodePart(parts.slice(2).join(":"));
+  if (!role || !ROLES.includes(role) || !providerID || !modelID) return true;
+
+  const options = await candidatesForProvider(role, providerID);
+  const selected = options.find((item) => item.modelID === modelID);
+  if (selected) {
+    await setAiRoleSelection(role, selected.providerID, selected.modelID);
+    await renderRoleProviders(ctx, role, "✅ AI Rule updated.");
+  }
+  return true;
+}
+
+async function renderRoles(ctx: Context, notice?: string): Promise<void> {
+  const selected = await getAiRoleSelections();
+  const keyboard = new InlineKeyboard();
+  for (const role of ROLES) {
+    keyboard.text(`${AI_ROLE_LABELS[role]}${selected[role] ? " · ✅" : ""}`, `${ROLE_PREFIX}${role}`).row();
+  }
+  keyboard.text("← Back", BACK);
+  const lines = ROLES.map((role) => {
+    const item = selected[role];
+    return `${AI_ROLE_LABELS[role]}\n${item ? `✅ ${item.providerID}/${item.modelID}` : "⚪ Not configured"}`;
+  });
+  await replyWithInlineMenu(ctx, {
+    menuKind: "model",
+    text: `${notice ? `${notice}\n\n` : ""}🧠 AI Rules\n\nChoose which provider/model each AI capability uses.\n\n${lines.join("\n\n")}`,
+    keyboard,
+  });
+}
+
+async function renderRoleProviders(ctx: Context, role: AiRole, notice?: string): Promise<void> {
+  const selected = await getAiRoleSelections();
+  const providers = await providersForRole(role);
+  const keyboard = new InlineKeyboard();
+
+  for (const provider of providers) {
+    const active = selected[role]?.providerID === provider.id;
+    keyboard
+      .text(`${active ? "✅" : "🔌"} ${provider.name}\n${provider.models.length} model${provider.models.length === 1 ? "" : "s"}`, `${PROVIDER_PREFIX}${role}:${encodePart(provider.id)}`)
+      .row();
+  }
+  keyboard.text("← AI Rules", ROOT);
+
+  const body = providers.length
+    ? "Choose a provider first. Its verified models will appear next."
+    : `No verified ${AI_ROLE_LABELS[role]} providers are available.`;
+  await replyWithInlineMenu(ctx, {
+    menuKind: "model",
+    text: `${notice ? `${notice}\n\n` : ""}${AI_ROLE_LABELS[role]}\n\n${body}`,
+    keyboard,
+  });
+}
+
+async function renderProviderModels(ctx: Context, role: AiRole, providerID: string): Promise<void> {
+  const selected = await getAiRoleSelections();
+  const providers = await providersForRole(role);
+  const provider = providers.find((item) => item.id === providerID);
+  const keyboard = new InlineKeyboard();
+
+  if (!provider) {
+    keyboard.text("← Providers", `${ROLE_PREFIX}${role}`);
+    await replyWithInlineMenu(ctx, {
+      menuKind: "model",
+      text: `${AI_ROLE_LABELS[role]}\n\n⚠️ Provider is no longer available.`,
+      keyboard,
+    });
+    return;
+  }
+
+  for (const model of provider.models) {
+    const active = selected[role]?.providerID === model.providerID && selected[role]?.modelID === model.modelID;
+    keyboard
+      .text(`${active ? "✅" : "🤖"} ${model.modelID}`, `${PICK_PREFIX}${role}:${encodePart(model.providerID)}:${encodePart(model.modelID)}`)
+      .row();
+  }
+  keyboard.text("← Providers", `${ROLE_PREFIX}${role}`);
+  await replyWithInlineMenu(ctx, {
+    menuKind: "model",
+    text: `${AI_ROLE_LABELS[role]} → ${provider.name}\n\nSelect a verified model.\n\nProvider: ${provider.name}`,
+    keyboard,
+  });
+}
