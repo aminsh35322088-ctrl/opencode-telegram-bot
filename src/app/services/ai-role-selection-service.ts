@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ModelInfo } from "../types/model.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { resolveCatalogModel } from "./model-selection-service.js";
+import { getImageAiRequestChatId } from "./image-ai-request-context.js";
 import { logger } from "../../utils/logger.js";
 
 export type AiRole = "coding" | "image" | "video" | "stt";
@@ -16,7 +17,7 @@ async function read(): Promise<StoredRoleSelections> { return normalizeStored(aw
 async function write(value: StoredRoleSelections): Promise<void> { await fs.mkdir(path.dirname(filePath()), { recursive: true }); const temp = `${filePath()}.tmp`; await fs.writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 }); await fs.rename(temp, filePath()); }
 function chatKey(chatId: number | undefined): string | undefined { return chatId !== undefined && Number.isSafeInteger(chatId) ? String(chatId) : undefined; }
 export async function getAiRoleSelections(chatId?: number): Promise<AiRoleSelection> { const value = await read(); const key = chatKey(chatId); return key ? (value.chats[key] ?? value.legacy ?? {}) : (value.legacy ?? {}); }
-export async function getAiRoleSelection(role: AiRole, chatId?: number): Promise<{ providerID: string; modelID: string } | undefined> { const value = await getAiRoleSelections(chatId); return value[role]; }
+export async function getAiRoleSelection(role: AiRole, chatId?: number): Promise<{ providerID: string; modelID: string } | undefined> { const effectiveChatId = chatId ?? (role === "image" ? getImageAiRequestChatId() : undefined); const value = await getAiRoleSelections(effectiveChatId); return value[role]; }
 export async function setAiRoleSelection(role: AiRole, providerID: string, modelID: string, chatId?: number): Promise<void> {
   const normalizedProviderID = providerID.trim(); const normalizedModelID = modelID.trim(); if (!normalizedProviderID || !normalizedModelID) throw new Error("AI role selection requires a provider and model.");
   const value = await read(); const key = chatKey(chatId); if (key) { value.chats[key] = { ...(value.chats[key] ?? value.legacy ?? {}), [role]: { providerID: normalizedProviderID, modelID: normalizedModelID } }; } else { value.legacy = { ...(value.legacy ?? {}), [role]: { providerID: normalizedProviderID, modelID: normalizedModelID } }; }
