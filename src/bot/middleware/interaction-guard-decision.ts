@@ -4,19 +4,18 @@ import { questionManager } from "../../app/managers/question-manager.js";
 import type { BlockReason, ExpectedInput, GuardDecision, IncomingInputType, InteractionState, InteractionKind } from "../../app/types/interaction.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
-import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN } from "../message-patterns.js";
+import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN, isReplyKeyboardButtonText } from "../message-patterns.js";
 import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
 
 const BUSY_ALLOWED_COMMANDS = ["/abort", "/detach", "/status", "/help", "/opencode_stop"] as const;
 const BUSY_ALLOWED_COMMAND_SET = new Set<string>(BUSY_ALLOWED_COMMANDS);
-const BUSY_ALLOWED_CONTROL_TEXTS = new Set(["⏸️ Pause", "▶️ Resume", "🛑 Abort", "❌ Cancel"]);
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
 
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && BUSY_ALLOWED_COMMAND_SET.has(command)); }
 function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
-function isBusyControlButtonPress(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && BUSY_ALLOWED_CONTROL_TEXTS.has(text); }
+function isReplyKeyboardPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && isReplyKeyboardButtonText(text); }
 function isSetupWizardText(ctx: Context): boolean { const chatId = ctx.chat?.id; return Boolean(chatId && ctx.message?.text && (isProviderWizardActive(chatId) || isIntegrationWizardActive(chatId))); }
 function isRootNavigationText(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && ROOT_NAVIGATION_TEXTS.has(text); }
 function normalizeIncomingCommand(text: string): string | null { const trimmed = text.trim(); if (!trimmed.startsWith("/")) return null; const token = trimmed.split(/\s+/)[0]; if (!token) return null; const withoutMention = token.split("@")[0]?.toLowerCase(); return !withoutMention || withoutMention.length <= 1 ? null : withoutMention; }
@@ -39,10 +38,18 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   // chat must not block this chat's buttons or prompts.
   const state = rawState?.kind === "question" && !questionManager.isActiveForChat(ctx.chat?.id) ? null : rawState;
   const { inputType, command } = classifyIncomingInput(ctx);
+
+  // Reply-keyboard controls are commands expressed as text. They must always
+  // reach their dedicated handlers instead of being consumed by an active
+  // inline/question/wizard interaction as free-form input.
+  if (inputType === "text" && isReplyKeyboardPress(ctx)) {
+    return createAllowDecision(inputType, state, command, foregroundSessionState.isBusy() || attachManager.isBusy());
+  }
+
   const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
 
-  if (isBusy && inputType === "text" && isBusyControlButtonPress(ctx)) return createAllowDecision(inputType, state, command, true);
+  if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, state, command, true);
   if (inputType === "text" && state?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
 
   if (state && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, state, "expired", command, isBusy); }
@@ -53,7 +60,6 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
       if (state.expectedInput === inputType) return createAllowDecision(inputType, state, command, true);
       return createBusyBlockDecision(inputType, state, getExpectedInputBlockReason(state.expectedInput), command);
     }
-    if (inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, state, command, true);
     return createBusyBlockDecision(inputType, state, "expected_text", command);
   }
   if (!state) return createAllowDecision(inputType, null, command);
