@@ -11,7 +11,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitOverride": true,
-    "exactOptionalPropertyTypes": true,
+    "exactOptionalPropertyTypes": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
