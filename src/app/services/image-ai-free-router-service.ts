@@ -4,28 +4,156 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import type { ImageAiCapability } from "./image-ai-provider-service.js";
 
-type CostClass = "free" | "free-tier" | "paid" | "unknown";
+type CostClass = "free" | "paid" | "unknown";
+type Json = Record<string, unknown>;
 interface ProviderRecord { id: string; name: string; model: string; editModel?: string; capabilities: ImageAiCapability[]; active: boolean; baseURL: string; keyFile: string; }
 interface Store { providers?: ProviderRecord[]; }
-export interface FreeImageModel { providerId: string; providerName: string; model: string; editModel?: string; capability: ImageAiCapability; cost: CostClass; reason: string; route?: string; providerModel?: string; }
+export interface FreeImageModel { providerId: string; providerName: string; model: string; editModel?: string; capability: ImageAiCapability; cost: CostClass; reason: string; route: string; providerModel?: string; }
+
 const STORE = "image-ai-providers.json";
-const CACHE_TTL_MS = 15 * 60_000;
+const CACHE_TTL_MS = 10 * 60_000;
+const DISCOVERY_LIMIT = 40;
 let cache: { expiresAt: number; models: FreeImageModel[] } | undefined;
+
 function storePath(): string { return path.join(getRuntimePaths().appHome, STORE); }
-async function readStore(): Promise<ProviderRecord[]> { try { const value = JSON.parse(await fs.readFile(storePath(), "utf8")) as Store; return Array.isArray(value.providers) ? value.providers.filter((p) => p?.active && p?.keyFile) : []; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; } }
-async function readKey(provider: ProviderRecord): Promise<string | undefined> { try { return (await fs.readFile(path.join(getRuntimePaths().appHome, provider.keyFile), "utf8")).trim() || undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
-function pricingIsZero(value: unknown): boolean { if (typeof value === "number") return value === 0; if (typeof value === "string") return value.trim() === "0" || value.trim() === "0.0"; if (!value || typeof value !== "object") return false; const obj = value as Record<string, unknown>; const keys = ["input", "output", "prompt", "completion", "image", "images", "input_per_token", "output_per_token"]; const present = keys.filter((key) => key in obj); return present.length > 0 && present.every((key) => pricingIsZero(obj[key])); }
-function isExplicitFree(model: Record<string, unknown>): boolean { if (model.is_free === true || model.free === true) return true; if (pricingIsZero(model.pricing)) return true; const id = String(model.id ?? model.name ?? "").toLowerCase(); return /(^|[-/:])free($|[-/:])|:free$/.test(id); }
-function isImageModel(model: Record<string, unknown>): boolean { const tags = [model.pipeline_tag, model.task, ...(Array.isArray(model.capabilities) ? model.capabilities : [])].map(String).join(" ").toLowerCase(); const id = String(model.id ?? "").toLowerCase(); return /text-to-image|image-generation|image-edit|images?/.test(tags) || /flux|stable-diffusion|imagen|nano.?banana|image/.test(id); }
-async function fetchJson(url: string, key: string): Promise<unknown> { const response = await fetch(url, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }); const text = await response.text(); let body: unknown = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; } if (!response.ok) throw new Error(`HTTP ${response.status}`); return body; }
-async function detectHuggingFace(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> { const body = await fetchJson(`https://router.huggingface.co/v1/models/${encodeURIComponent(provider.model)}`, key) as Record<string, unknown>; const entries = Array.isArray(body?.data) ? body.data : Array.isArray(body?.providers) ? body.providers : []; const result: FreeImageModel[] = []; for (const raw of entries) { if (!raw || typeof raw !== "object") continue; const item = raw as Record<string, unknown>; const providerId = String(item.provider ?? item.provider_id ?? ""); if (!providerId || (item.status && item.status !== "live")) continue; if (item.is_free === true || pricingIsZero(item.pricing)) result.push({ providerId: provider.id, providerName: `${provider.name} / ${providerId}`, model: provider.model, editModel: provider.editModel, capability: "generate", cost: "free", reason: item.is_free === true ? "Hugging Face provider reports is_free=true" : "Hugging Face provider reports zero pricing", route: `https://router.huggingface.co/${providerId}/v1/images/generations`, providerModel: String(item.model ?? item.provider_model ?? provider.model) }); } return result; }
-async function detectOpenAiCompatible(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> { const base = provider.baseURL.replace(/\/$/, ""); const body = await fetchJson(`${base}/models`, key) as Record<string, unknown>; const data = Array.isArray(body?.data) ? body.data : Array.isArray(body) ? body : []; const result: FreeImageModel[] = []; for (const raw of data) { if (!raw || typeof raw !== "object") continue; const item = raw as Record<string, unknown>; if (!isImageModel(item) || !isExplicitFree(item)) continue; const id = String(item.id ?? ""); if (!id) continue; const capability: ImageAiCapability = /edit|kontext|inpaint|image-to-image/i.test(id) ? "edit" : "generate"; result.push({ providerId: provider.id, providerName: provider.name, model: id, capability, cost: "free", reason: "Provider /models metadata reports a zero/free price", route: `${base}/images/${capability === "edit" ? "edits" : "generations"}` }); } return result; }
-async function detectProvider(provider: ProviderRecord): Promise<FreeImageModel[]> { const key = await readKey(provider); if (!key) return []; if (provider.id === "huggingface") return detectHuggingFace(provider, key); return detectOpenAiCompatible(provider, key); }
-export async function detectFreeImageModels(force = false): Promise<FreeImageModel[]> { if (!force && cache && cache.expiresAt > Date.now()) return cache.models; const providers = await readStore(); const results = await Promise.all(providers.map(async (provider) => { try { const found = await detectProvider(provider); logger.info(`[ImageAI] free-model scan provider=${provider.id} found=${found.length}`); return found; } catch (error) { logger.warn(`[ImageAI] free-model scan failed provider=${provider.id}: ${error instanceof Error ? error.message : String(error)}`); return []; } })); const models = results.flat(); cache = { expiresAt: Date.now() + CACHE_TTL_MS, models }; return models; }
-export async function getFreeImageModel(capability: ImageAiCapability, force = false): Promise<FreeImageModel | undefined> { const models = await detectFreeImageModels(force); return models.find((model) => model.capability === capability) ?? models.find((model) => model.capability === "generate" && capability === "edit" && model.editModel); }
+async function readStore(): Promise<ProviderRecord[]> {
+  try { const value = JSON.parse(await fs.readFile(storePath(), "utf8")) as Store; return Array.isArray(value.providers) ? value.providers.filter((p) => p?.active && p?.keyFile) : []; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+}
+async function readKey(provider: ProviderRecord): Promise<string | undefined> {
+  try { return (await fs.readFile(path.join(getRuntimePaths().appHome, provider.keyFile), "utf8")).trim() || undefined; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+}
+async function request(url: string, key?: string, init: RequestInit = {}): Promise<unknown> {
+  const headers = new Headers(init.headers); headers.set("Accept", "application/json"); if (key) headers.set("Authorization", `Bearer ${key}`);
+  const response = await fetch(url, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(20_000) });
+  const text = await response.text(); let body: unknown = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  if (!response.ok) throw new Error(`HTTP ${response.status}${body && typeof body === "object" && "error" in body ? `: ${String((body as Json).error)}` : ""}`);
+  return body;
+}
+function asList(body: unknown): Json[] { if (Array.isArray(body)) return body.filter((x): x is Json => Boolean(x) && typeof x === "object"); if (body && typeof body === "object") { const data = (body as Json).data; if (Array.isArray(data)) return data.filter((x): x is Json => Boolean(x) && typeof x === "object"); } return []; }
+function numericZero(value: unknown): boolean { return typeof value === "number" ? value === 0 : typeof value === "string" ? Number(value) === 0 : false; }
+function pricingFree(pricing: unknown): boolean {
+  if (!pricing || typeof pricing !== "object") return false;
+  const values = Object.values(pricing as Json).filter((v) => v !== null && v !== undefined && v !== "");
+  return values.length > 0 && values.every((v) => numericZero(v));
+}
+function detectCost(model: Json): { cost: CostClass; reason: string } {
+  if (model.is_free === true || model.free === true) return { cost: "free", reason: "provider explicitly reports the model as free" };
+  if (pricingFree(model.pricing)) return { cost: "free", reason: "provider reports zero pricing" };
+  if (model.pricing && typeof model.pricing === "object") return { cost: "paid", reason: "provider reports non-zero pricing" };
+  return { cost: "unknown", reason: "provider did not expose machine-readable pricing" };
+}
+function isImageModel(model: Json): boolean {
+  const architecture = model.architecture && typeof model.architecture === "object" ? model.architecture as Json : {};
+  const input = Array.isArray(architecture.input_modalities) ? architecture.input_modalities.map(String) : [];
+  const output = Array.isArray(architecture.output_modalities) ? architecture.output_modalities.map(String) : [];
+  const tags = [model.pipeline_tag, model.task, ...(Array.isArray(model.capabilities) ? model.capabilities.map(String) : [])].map(String).join(" ").toLowerCase();
+  const id = String(model.id ?? model.name ?? "").toLowerCase();
+  return output.includes("image") || input.includes("image") || /text-to-image|image-generation|image-edit|image-to-image/.test(tags) || /flux|stable-diffusion|imagen|nano.?banana|gpt-image|kontext/.test(id);
+}
+function editCapable(model: Json): boolean { const text = JSON.stringify(model).toLowerCase(); return /image-edit|image-to-image|inpaint|kontext|edit/.test(text); }
+function modelRoute(baseURL: string, capability: ImageAiCapability): string { return `${baseURL.replace(/\/$/, "")}/images/${capability === "edit" ? "edits" : "generations"}`; }
+
+async function detectOpenAiCompatible(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
+  const base = provider.baseURL.replace(/\/$/, "");
+  let body: unknown;
+  try { body = await request(`${base}/models`, key); }
+  catch { body = await request(`${base}/v1/models`, key); }
+  const result: FreeImageModel[] = [];
+  for (const item of asList(body).slice(0, DISCOVERY_LIMIT)) {
+    if (!isImageModel(item)) continue;
+    const cost = detectCost(item); if (cost.cost !== "free") continue;
+    const id = String(item.id ?? item.name ?? ""); if (!id) continue;
+    const capability: ImageAiCapability = editCapable(item) ? "edit" : "generate";
+    result.push({ providerId: provider.id, providerName: provider.name, model: id, capability, cost: "free", reason: cost.reason, route: modelRoute(base, capability) });
+  }
+  return result;
+}
+
+async function detectPollinations(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
+  const body = await request("https://gen.pollinations.ai/v1/models");
+  const result: FreeImageModel[] = [];
+  for (const item of asList(body)) {
+    if (!isImageModel(item)) continue;
+    const cost = detectCost(item); if (cost.cost !== "free") continue;
+    const id = String(item.id ?? item.name ?? ""); if (!id) continue;
+    const capability: ImageAiCapability = editCapable(item) ? "edit" : "generate";
+    result.push({ providerId: provider.id, providerName: provider.name, model: id, capability, cost: "free", reason: cost.reason, route: modelRoute(provider.baseURL, capability) });
+  }
+  return result;
+}
+
+async function detectHuggingFace(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
+  const searchUrl = "https://huggingface.co/api/models?inference_provider=all&pipeline_tag=text-to-image&sort=downloads&direction=-1&limit=40";
+  const catalog = asList(await request(searchUrl, key));
+  const result: FreeImageModel[] = [];
+  for (const model of catalog.slice(0, DISCOVERY_LIMIT)) {
+    const modelId = String(model.id ?? ""); if (!modelId) continue;
+    try {
+      const info = await request(`https://router.huggingface.co/v1/models/${encodeURIComponent(modelId)}`, key) as Json;
+      for (const entry of asList(info.providers)) {
+        if (String(entry.status ?? "") !== "live") continue;
+        const cost = detectCost(entry); if (cost.cost !== "free") continue;
+        const providerName = String(entry.provider ?? ""); if (!providerName) continue;
+        const providerModel = String(entry.provider_model ?? entry.providerModel ?? modelId);
+        result.push({ providerId: provider.id, providerName: `${provider.name} / ${providerName}`, model: modelId, providerModel, capability: "generate", cost: "free", reason: cost.reason, route: `https://router.huggingface.co/${providerName}/models/${providerModel}` });
+      }
+    } catch (error) { logger.debug?.(`[ImageAI] HF discovery skipped model=${modelId}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  return result;
+}
+async function detectProvider(provider: ProviderRecord, key: string): Promise<FreeImageModel[]> {
+  if (provider.id === "pollinations") return detectPollinations(provider, key);
+  if (provider.id === "huggingface") return detectHuggingFace(provider, key);
+  return detectOpenAiCompatible(provider, key);
+}
+
+export async function detectFreeImageModels(force = false): Promise<FreeImageModel[]> {
+  if (!force && cache && cache.expiresAt > Date.now()) return cache.models;
+  const providers = await readStore();
+  const results = await Promise.all(providers.map(async (provider) => {
+    const key = await readKey(provider); if (!key) return [] as FreeImageModel[];
+    try { const found = await detectProvider(provider, key); logger.info(`[ImageAI] free-model scan provider=${provider.id} found=${found.length}`); return found; }
+    catch (error) { logger.warn(`[ImageAI] free-model scan failed provider=${provider.id}: ${error instanceof Error ? error.message : String(error)}`); return [] as FreeImageModel[]; }
+  }));
+  const models = results.flat(); cache = { expiresAt: Date.now() + CACHE_TTL_MS, models }; return models;
+}
 export function clearFreeImageModelCache(): void { cache = undefined; }
 export async function freeImageStatus(): Promise<{ checkedAt: string; models: FreeImageModel[] }> { return { checkedAt: new Date().toISOString(), models: await detectFreeImageModels() }; }
-async function imageResponse(response: Response, providerName: string): Promise<{ buffer: Buffer; mimeType: string }> { const text = await response.text(); let body: unknown = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; } if (!response.ok) { const detail = body && typeof body === "object" && "error" in body ? String((body as Record<string, unknown>).error) : `HTTP ${response.status}`; throw new Error(`${providerName}: ${detail}`); } const data = body && typeof body === "object" && Array.isArray((body as Record<string, unknown>).data) ? (body as { data: Array<{ b64_json?: string; url?: string }> }).data[0] : undefined; if (data?.b64_json) return { buffer: Buffer.from(data.b64_json, "base64"), mimeType: "image/png" }; if (data?.url) { const image = await fetch(data.url, { signal: AbortSignal.timeout(120_000) }); if (!image.ok) throw new Error(`${providerName}: image download HTTP ${image.status}`); return { buffer: Buffer.from(await image.arrayBuffer()), mimeType: image.headers.get("content-type") ?? "image/png" }; } throw new Error(`${providerName}: no image data returned`); }
-async function executeFreeModel(model: FreeImageModel, prompt: string, image?: Buffer, mimeType?: string): Promise<{ buffer: Buffer; mimeType: string }> { const providers = await readStore(); const provider = providers.find((item) => item.id === model.providerId); if (!provider) throw new Error(`Free image provider ${model.providerId} is no longer configured.`); const key = await readKey(provider); if (!key) throw new Error(`Free image provider ${provider.id} has no API key.`); if (provider.id === "huggingface") { if (image) throw new Error("Hugging Face free image editing is not supported by the verified route."); if (!model.route) throw new Error("Hugging Face free provider route is unavailable."); const response = await fetch(model.route, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: model.providerModel ?? model.model, prompt, n: 1, response_format: "b64_json" }), signal: AbortSignal.timeout(120_000) }); return imageResponse(response, model.providerName); } const base = provider.baseURL.replace(/\/$/, ""); const operation = image ? "edits" : "generations"; const endpoint = `${base}/images/${operation}`; const selectedModel = image ? (model.editModel ?? model.model) : model.model; if (image) { const form = new FormData(); form.append("model", selectedModel); form.append("prompt", prompt); form.append("response_format", "b64_json"); form.append("image", new Blob([new Uint8Array(image)], { type: mimeType ?? "image/png" }), "input.png"); const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(120_000) }); return imageResponse(response, model.providerName); } const response = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: selectedModel, prompt, n: 1, response_format: "b64_json" }), signal: AbortSignal.timeout(120_000) }); return imageResponse(response, model.providerName); }
-export async function generateFreeImage(prompt: string): Promise<{ buffer: Buffer; mimeType: string }> { const errors: string[] = []; const models = (await detectFreeImageModels()).filter((model) => model.capability === "generate"); for (const model of models) { try { logger.info(`[ImageAI] free route provider=${model.providerId} model=${model.model}`); return await executeFreeModel(model, prompt); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); logger.warn(`[ImageAI] free route failed provider=${model.providerId}: ${message}`); clearFreeImageModelCache(); } } throw new Error(errors.length ? `No verified free image model succeeded.\n${errors.join("\n")}` : "No verified free image generation model is currently available."); }
-export async function editFreeImage(image: Buffer, mimeType: string, prompt: string): Promise<{ buffer: Buffer; mimeType: string }> { const errors: string[] = []; const models = (await detectFreeImageModels()).filter((model) => model.capability === "edit" || Boolean(model.editModel)); for (const model of models) { try { return await executeFreeModel(model, prompt, image, mimeType); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); logger.warn(`[ImageAI] free edit route failed provider=${model.providerId}: ${message}`); clearFreeImageModelCache(); } } throw new Error(errors.length ? `No verified free image editing model succeeded.\n${errors.join("\n")}` : "No verified free image editing model is currently available."); }
+
+async function imageResponse(response: Response, providerName: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const text = await response.text(); let body: unknown = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  if (!response.ok) { const detail = body && typeof body === "object" && "error" in body ? String((body as Json).error) : `HTTP ${response.status}`; throw new Error(`${providerName}: ${detail}`); }
+  const item = body && typeof body === "object" && Array.isArray((body as Json).data) ? ((body as { data: Array<{ b64_json?: string; url?: string }> }).data[0]) : undefined;
+  if (item?.b64_json) return { buffer: Buffer.from(item.b64_json, "base64"), mimeType: "image/png" };
+  if (item?.url) { const image = await fetch(item.url, { signal: AbortSignal.timeout(120_000) }); if (!image.ok) throw new Error(`${providerName}: image download HTTP ${image.status}`); return { buffer: Buffer.from(await image.arrayBuffer()), mimeType: image.headers.get("content-type") ?? "image/png" }; }
+  throw new Error(`${providerName}: no image data returned`);
+}
+async function execute(model: FreeImageModel, prompt: string, image?: Buffer, mimeType?: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const providers = await readStore(); const provider = providers.find((item) => item.id === model.providerId); if (!provider) throw new Error(`Free image provider ${model.providerId} is no longer configured.`);
+  const key = await readKey(provider); if (!key) throw new Error(`Free image provider ${provider.id} has no API key.`);
+  if (provider.id === "huggingface") {
+    if (image) throw new Error("Hugging Face free image editing is not available through the verified discovery route.");
+    const response = await fetch(model.route, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ inputs: prompt }), signal: AbortSignal.timeout(120_000) });
+    if (!response.ok) { const text = await response.text(); throw new Error(`${model.providerName}: HTTP ${response.status} ${text.slice(0, 300)}`); }
+    return { buffer: Buffer.from(await response.arrayBuffer()), mimeType: response.headers.get("content-type") ?? "image/png" };
+  }
+  const endpoint = model.route;
+  if (image) {
+    const form = new FormData(); form.append("model", model.model); form.append("prompt", prompt); form.append("response_format", "b64_json"); form.append("image", new Blob([new Uint8Array(image)], { type: mimeType ?? "image/png" }), "input.png");
+    return imageResponse(await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(120_000) }), model.providerName);
+  }
+  return imageResponse(await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: model.model, prompt, n: 1, response_format: "b64_json" }), signal: AbortSignal.timeout(120_000) }), model.providerName);
+}
+export async function generateFreeImage(prompt: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const errors: string[] = [];
+  const models = (await detectFreeImageModels()).filter((m) => m.capability === "generate");
+  for (const model of models) { try { logger.info(`[ImageAI] free route provider=${model.providerId} model=${model.model}`); return await execute(model, prompt); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); logger.warn(`[ImageAI] free route failed provider=${model.providerId} model=${model.model}: ${message}`); clearFreeImageModelCache(); } }
+  throw new Error(errors.length ? `No verified free image model succeeded.\n${errors.join("\n")}` : "No verified free image generation model is currently available.");
+}
+export async function editFreeImage(image: Buffer, mimeType: string, prompt: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const errors: string[] = []; const models = (await detectFreeImageModels()).filter((m) => m.capability === "edit");
+  for (const model of models) { try { logger.info(`[ImageAI] free edit route provider=${model.providerId} model=${model.model}`); return await execute(model, prompt, image, mimeType); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${model.providerName}: ${message}`); logger.warn(`[ImageAI] free edit route failed provider=${model.providerId} model=${model.model}: ${message}`); clearFreeImageModelCache(); } }
+  throw new Error(errors.length ? `No verified free image editing model succeeded.\n${errors.join("\n")}` : "No verified free image editing model is currently available.");
+}
