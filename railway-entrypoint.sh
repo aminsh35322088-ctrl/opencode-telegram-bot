@@ -42,8 +42,11 @@ if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
 fi
 ln -sfn /data/workspace /tmp/site
 
-# OpenCode loads project tools from the persistent config directory. Copy the
-# complete tool bundle so upgrades/restarts preserve the same capabilities.
+# OpenCode loads project tools and permissions from the persistent config directory.
+if [ -f /app/opencode.json ]; then
+  cp /app/opencode.json /data/opencode/config/opencode.json
+  chown node:node /data/opencode/config/opencode.json
+fi
 if [ -d /app/.opencode/tools ]; then
   cp -a /app/.opencode/tools/. /data/opencode/config/tools/
   chown -R node:node /data/opencode/config/tools
