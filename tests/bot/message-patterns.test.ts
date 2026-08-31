@@ -88,4 +88,20 @@ describe("bot/message-patterns", () => {
     expect(isReplyKeyboardButtonText(formatQueuedPromptButtonLabel(1, "queued"))).toBe(true);
     expect(isReplyKeyboardButtonText("Create a migration plan")).toBe(false);
   });
+
+  it("recognises all static main controls", () => {
+    for (const text of [
+      "🕘 History",
+      "💬 New Chat",
+      "⚙️ Settings",
+      "🎨 Edit Image",
+      "📦 Compact: ON",
+      "📦 Compact: OFF",
+      "⏸️ Pause",
+      "▶️ Resume",
+      "🛑 Abort",
+    ]) {
+      expect(isReplyKeyboardButtonText(text), text).toBe(true);
+    }
+  });
 });
