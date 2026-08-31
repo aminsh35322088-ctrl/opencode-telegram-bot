@@ -10,6 +10,7 @@ import { handleInlineMenuCancel } from "./inline-menu-cancel-callback-handler.js
 import { handleMcpsCallback } from "./mcp-catalog-callback-handler.js";
 import { handleMessagesCallback } from "./message-history-callback-handler.js";
 import { handleModelProvidersCallback, handleModelSearchCallback, handleModelSearchResults, handleModelSelect } from "./model-selection-callback-handler.js";
+import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
@@ -39,7 +40,28 @@ async function handleSettingsChildNavigation(ctx: Context, data: string): Promis
 async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> { if (data !== "commands:list_back" && data !== "skills:list_back") return false; await ctx.answerCallbackQuery().catch(() => {}); if (data === "commands:list_back") await commandsCommand(ctx as never); else await skillsCommand(ctx as never); logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`); return true; }
 export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDeps): void {
   const routes = new Map<string, CallbackRoute>([
-    ["agent", { name: "agent", handlers: [handleAgentSelect], errorScope: "interaction" }], ["attach", { name: "attach", handlers: [handlePromptAttachmentCancel], errorScope: "interaction" }], ["commands", { name: "commands", handlers: [(ctx) => handleCommandsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }], ["compact", { name: "compact", handlers: [handleCompactConfirm], errorScope: "interaction" }], ["ls", { name: "ls", handlers: [handleLsCallback], errorScope: "interaction" }], ["mcps", { name: "mcps", handlers: [handleMcpsCallback], errorScope: "interaction" }], ["messages", { name: "messages", handlers: [(ctx) => handleMessagesCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }], ["model", { name: "model", handlers: [handleModelSearchCallback, handleModelSearchResults, handleModelProvidersCallback, handleModelSelect], errorScope: "interaction" }], ["open", { name: "open", handlers: [(ctx) => handleOpenCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }], ["permission", { name: "permission", handlers: [handlePermissionCallback], errorScope: "permission" }], ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }], ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }], ["session", { name: "session", handlers: [(ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }), (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }], ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }], ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }], ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }], ["tasklist", { name: "tasklist", handlers: [handleTaskListCallback], errorScope: "interaction" }], ["variant", { name: "variant", handlers: [handleVariantSelect], errorScope: "interaction" }], ["worktree", { name: "worktree", handlers: [(ctx) => handleWorktreeCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }], ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }], ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
+    ["agent", { name: "agent", handlers: [handleAgentSelect], errorScope: "interaction" }],
+    ["attach", { name: "attach", handlers: [handlePromptAttachmentCancel], errorScope: "interaction" }],
+    ["commands", { name: "commands", handlers: [(ctx) => handleCommandsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["compact", { name: "compact", handlers: [handleCompactConfirm], errorScope: "interaction" }],
+    ["ls", { name: "ls", handlers: [handleLsCallback], errorScope: "interaction" }],
+    ["mcps", { name: "mcps", handlers: [handleMcpsCallback], errorScope: "interaction" }],
+    ["messages", { name: "messages", handlers: [(ctx) => handleMessagesCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["model", { name: "model", handlers: [handleModelSearchCallback, handleModelSearchResults, handleModelProvidersCallback, handleModelSelect], errorScope: "interaction" }],
+    ["role", { name: "role", handlers: [handleAiRoleCallback], errorScope: "interaction" }],
+    ["open", { name: "open", handlers: [(ctx) => handleOpenCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["permission", { name: "permission", handlers: [handlePermissionCallback], errorScope: "permission" }],
+    ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],
+    ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }],
+    ["session", { name: "session", handlers: [(ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }), (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }],
+    ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }],
+    ["tasklist", { name: "tasklist", handlers: [handleTaskListCallback], errorScope: "interaction" }],
+    ["variant", { name: "variant", handlers: [handleVariantSelect], errorScope: "interaction" }],
+    ["worktree", { name: "worktree", handlers: [(ctx) => handleWorktreeCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }],
+    ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
   ]);
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
