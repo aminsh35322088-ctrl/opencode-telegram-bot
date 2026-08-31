@@ -1,5 +1,5 @@
+import { accessSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -16,10 +16,19 @@ function managerFor(worktree: string, packageJson: Record<string, unknown>): { b
     if (name === "yarn") return { bin: "yarn", prefix: [] };
     if (name === "bun") return { bin: "bun", prefix: ["run"] };
   }
-  if (existsSync(path.join(worktree, "pnpm-lock.yaml"))) return { bin: "pnpm", prefix: ["run"] };
-  if (existsSync(path.join(worktree, "yarn.lock"))) return { bin: "yarn", prefix: [] };
-  if (existsSync(path.join(worktree, "bun.lockb")) || existsSync(path.join(worktree, "bun.lock"))) return { bin: "bun", prefix: ["run"] };
+  if (fsSyncExists(path.join(worktree, "pnpm-lock.yaml"))) return { bin: "pnpm", prefix: ["run"] };
+  if (fsSyncExists(path.join(worktree, "yarn.lock"))) return { bin: "yarn", prefix: [] };
+  if (fsSyncExists(path.join(worktree, "bun.lockb")) || fsSyncExists(path.join(worktree, "bun.lock"))) return { bin: "bun", prefix: ["run"] };
   return { bin: "npm", prefix: ["run"] };
+}
+
+function fsSyncExists(file: string): boolean {
+  try {
+    accessSync(file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export default tool({
@@ -31,7 +40,8 @@ export default tool({
   async execute(args, context) {
     const raw = await fs.readFile(path.join(context.worktree, "package.json"), "utf8");
     const pkg = JSON.parse(raw) as { scripts?: Record<string, string>; packageManager?: string };
-    if (!pkg.scripts?.[args.mode]) return `No '${args.mode}' script is defined in package.json.`;
+    const script = pkg.scripts?.[args.mode];
+    if (!script) return `No '${args.mode}' script is defined in package.json.`;
 
     const manager = managerFor(context.worktree, pkg);
     const command = [...manager.prefix, args.mode];
