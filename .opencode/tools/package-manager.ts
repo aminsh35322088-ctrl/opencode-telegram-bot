@@ -1,15 +1,15 @@
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
+import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 
 function manager(worktree: string): string {
-  if (fs.existsSync?.(path.join(worktree, "pnpm-lock.yaml"))) return "pnpm";
-  if (fs.existsSync?.(path.join(worktree, "yarn.lock"))) return "yarn";
-  if (fs.existsSync?.(path.join(worktree, "bun.lockb")) || fs.existsSync?.(path.join(worktree, "bun.lock"))) return "bun";
+  if (existsSync(path.join(worktree, "pnpm-lock.yaml"))) return "pnpm";
+  if (existsSync(path.join(worktree, "yarn.lock"))) return "yarn";
+  if (existsSync(path.join(worktree, "bun.lockb")) || existsSync(path.join(worktree, "bun.lock"))) return "bun";
   return "npm";
 }
 
