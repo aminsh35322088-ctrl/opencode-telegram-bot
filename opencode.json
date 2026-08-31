@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "webfetch": "allow",
+    "websearch": "allow",
+    "lsp": "allow",
+    "browser_*": "ask",
+    "package_manager": "ask",
+    "database_query": "ask",
+    "test_runner": "allow",
+    "network_diagnostics": "allow",
+    "system_diagnostics": "allow",
+    "logs_observability": "allow",
+    "image_inspect": "allow"
+  }
+}
