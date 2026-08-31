@@ -32,35 +32,22 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
     try {
       const response = await opencodeClient.config.providers();
       if (response.error || !response.data) { logFailure(response.error, "error"); return cachedValidModelKeys; }
-      const valid = new Set<string>();
-      const all: FavoriteModel[] = [];
-      const providers: ProviderInfo[] = [];
-      const byProvider = new Map<string, FavoriteModel[]>();
+      const valid = new Set<string>(); const all: FavoriteModel[] = []; const providers: ProviderInfo[] = []; const byProvider = new Map<string, FavoriteModel[]>();
       for (const provider of response.data.providers) {
         if (provider.id === COPILOT_PROVIDER_ID) continue;
         const providerModels: FavoriteModel[] = Object.keys(provider.models).map((modelID) => ({ providerID: provider.id, modelID }));
         for (const model of providerModels) { valid.add(getModelKey(model.providerID, model.modelID)); all.push(model); }
-        providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID));
-        byProvider.set(provider.id, providerModels);
-        providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
+        providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID)); byProvider.set(provider.id, providerModels); providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
       }
       for (const provider of await listCustomProviders()) {
         const merged = dedupeModels([...(byProvider.get(provider.id) ?? []), ...provider.models.map((model) => ({ providerID: provider.id, modelID: model.id }))]);
         byProvider.set(provider.id, merged);
         for (const model of merged) { valid.add(getModelKey(model.providerID, model.modelID)); if (!all.some((item) => getModelKey(item.providerID, item.modelID) === getModelKey(model.providerID, model.modelID))) all.push(model); }
-        const existing = providers.find((item) => item.id === provider.id);
-        if (existing) existing.modelCount = merged.length; else providers.push({ id: provider.id, name: provider.name, modelCount: merged.length });
+        const existing = providers.find((item) => item.id === provider.id); if (existing) existing.modelCount = merged.length; else providers.push({ id: provider.id, name: provider.name, modelCount: merged.length });
       }
-      providers.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-      cachedValidModelKeys = valid;
-      cachedAllModels = all;
-      cachedProviders = providers;
-      cachedModelsByProvider = byProvider;
-      modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
-      logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, copilot=removed`);
-      return valid;
-    } catch (err) { logFailure(err, "exception"); return cachedValidModelKeys; }
-    finally { modelCatalogFetchInFlight = null; }
+      providers.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)); cachedValidModelKeys = valid; cachedAllModels = all; cachedProviders = providers; cachedModelsByProvider = byProvider; modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
+      logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, copilot=removed`); return valid;
+    } catch (err) { logFailure(err, "exception"); return cachedValidModelKeys; } finally { modelCatalogFetchInFlight = null; }
   })();
   return modelCatalogFetchInFlight;
 }
@@ -73,52 +60,27 @@ export async function reconcileStoredModelSelection(options?: { forceCatalogRefr
 export function __resetModelCatalogCacheForTests() { cachedValidModelKeys = null; cachedAllModels = null; cachedProviders = null; cachedModelsByProvider = null; modelCatalogCacheExpiresAt = 0; modelCatalogFetchInFlight = null; }
 export async function getFavoriteModels() { return (await getModelSelectionLists()).favorites; }
 export async function getProviders() { await getValidModelKeys(); return cachedProviders ?? []; }
-
-/**
- * Return providers available for an AI capability.
- * OpenCode's real provider catalog is the source of truth for coding; custom
- * capability providers are merged on top. Image/video/STT keep their dedicated
- * capability stores so unrelated providers don't leak into those menus.
- */
 export async function getProvidersForCapability(capability: AiCapability) {
   const customProviders = await listCustomProvidersByCapability(capability);
   if (capability !== "coding") return customProviders.map((p) => ({ id: p.id, name: p.name, modelCount: p.models.length }));
-
   await getValidModelKeys();
-  const openCodeProviders = (cachedProviders ?? []).map((provider) => ({ id: provider.id, name: provider.name, modelCount: provider.modelCount }));
-  const merged = new Map(openCodeProviders.map((provider) => [provider.id, provider]));
-  for (const provider of customProviders) {
-    const existing = merged.get(provider.id);
-    if (existing) existing.modelCount = Math.max(existing.modelCount, provider.models.length);
-    else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length });
-  }
+  const merged = new Map((cachedProviders ?? []).map((provider) => [provider.id, { id: provider.id, name: provider.name, modelCount: provider.modelCount }]));
+  for (const provider of customProviders) { const existing = merged.get(provider.id); if (existing) existing.modelCount = Math.max(existing.modelCount, provider.models.length); else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length }); }
   return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
-
 export async function getProviderModels(providerID: string) { await getValidModelKeys(); return cachedModelsByProvider?.get(providerID) ?? []; }
-
 export async function getProviderModelsForCapability(providerID: string, capability: AiCapability) {
-  if (capability === "coding") {
-    await getValidModelKeys();
-    const openCodeModels = cachedModelsByProvider?.get(providerID) ?? [];
-    const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-    const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id })) ?? [];
-    return dedupeModels([...openCodeModels, ...customModels]);
-  }
-  const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-  return provider?.models.map((m) => ({ providerID, modelID: m.id })) ?? [];
+  if (capability === "coding") { await getValidModelKeys(); const openCodeModels = cachedModelsByProvider?.get(providerID) ?? []; const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID); const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id })) ?? []; return dedupeModels([...openCodeModels, ...customModels]); }
+  const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID); return provider?.models.map((m) => ({ providerID, modelID: m.id })) ?? [];
 }
-
-/** Resolve a requested model to a real OpenCode catalog entry. */
 export async function resolveCatalogModel(providerID: string, modelID: string, options?: { forceRefresh?: boolean }): Promise<ModelInfo | null> {
   const valid = await getValidModelKeys({ force: options?.forceRefresh === true });
   if (!valid || !cachedAllModels) return null;
   if (valid.has(getModelKey(providerID, modelID))) return { providerID, modelID, variant: "default" };
   const exactMatches = cachedAllModels.filter((model) => model.modelID === modelID);
-  if (exactMatches.length === 1) return { providerID: exactMatches[0].providerID, modelID: exactMatches[0].modelID, variant: "default" };
-  return null;
+  const match = exactMatches.length === 1 ? exactMatches[0] : undefined;
+  return match ? { providerID: match.providerID, modelID: match.modelID, variant: "default" } : null;
 }
-
 export async function searchModels(query: string) { const q = query.trim().toLowerCase(); if (!q) return []; const valid = await getValidModelKeys(); if (!valid || !cachedAllModels) return []; return cachedAllModels.filter((m) => getModelKey(m.providerID, m.modelID).toLowerCase().includes(q)).slice(0, SEARCH_RESULTS_LIMIT); }
 export function fetchCurrentModel(): ModelInfo { return getStoredModel(); }
 export function selectModel(modelInfo: ModelInfo) { logger.info(`[ModelManager] Selected model: ${modelInfo.providerID}/${modelInfo.modelID}`); setCurrentModel(modelInfo); }
