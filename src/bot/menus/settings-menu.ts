@@ -8,11 +8,10 @@ import {
   getShowThinkingContent,
   type ResponseStreamingMode,
 } from "../../app/stores/settings-store.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { formatModelForButton } from "../../app/types/model.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
+export const SETTINGS_AI_RULES_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}ai_rules`;
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
@@ -23,7 +22,6 @@ export const SETTINGS_RESPONSE_STREAMING_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}
 export const SETTINGS_DIFF_FILES_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}diff_files`;
 export const SETTINGS_ASSISTANT_FOOTER_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}assistant_footer`;
 export const SETTINGS_PROMPT_QUEUE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}prompt_queue`;
-export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
 export const SETTINGS_MCP_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}mcp`;
 export const SETTINGS_SKILLS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}skills`;
 export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
@@ -35,9 +33,15 @@ function settingButton(label: string, value: string): string { return `${label}:
 function appendSettingsBackButton(keyboard: InlineKeyboard): void { keyboard.row().text("← Settings", SETTINGS_BACK_CALLBACK); }
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
-  const currentModel = getStoredModel();
-  const modelLabel = currentModel.providerID && currentModel.modelID ? formatModelForButton(currentModel.providerID, currentModel.modelID) : "Not selected";
-  return { text: "⚙️ Settings\n\nTune the model, reply presentation, notifications, context display, and integrations.", keyboard: new InlineKeyboard().text(`🤖 Model\n${modelLabel}`, SETTINGS_MODEL_CALLBACK).row().text("🎨 Appearance", SETTINGS_APPEARANCE_CALLBACK).row().text("🔔 Notifications", SETTINGS_NOTIFICATIONS_CALLBACK).row().text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row().text("🛠 Advanced", SETTINGS_ADVANCED_CALLBACK) };
+  return {
+    text: "⚙️ Settings\n\nConfigure AI Rules, reply presentation, notifications, context display, and integrations.",
+    keyboard: new InlineKeyboard()
+      .text("🧠 AI Rules", SETTINGS_AI_RULES_CALLBACK).row()
+      .text("🎨 Appearance", SETTINGS_APPEARANCE_CALLBACK).row()
+      .text("🔔 Notifications", SETTINGS_NOTIFICATIONS_CALLBACK).row()
+      .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
+      .text("🛠 Advanced", SETTINGS_ADVANCED_CALLBACK),
+  };
 }
 
 export function buildAppearanceSettingsView(): { text: string; keyboard: InlineKeyboard } {
@@ -79,17 +83,7 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
   const percent = Math.round((info.tokensUsed / info.tokensLimit) * 100);
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
   return {
-    text: [
-      "🧠 Context",
-      "",
-      health,
-      "",
-      contextGauge(info.tokensUsed, info.tokensLimit),
-      `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`,
-      "",
-      "📌 This is observed session context usage, not a billing estimate.",
-      "🗜️ Compaction remains a presentation/execution strategy and never changes the provider's actual billing rules.",
-    ].join("\n"),
+    text: ["🧠 Context", "", health, "", contextGauge(info.tokensUsed, info.tokensLimit), `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`, "", "📌 This is observed session context usage, not a billing estimate.", "🗜️ Compaction remains a presentation/execution strategy and never changes the provider's actual billing rules."].join("\n"),
     keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
@@ -102,16 +96,5 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
     .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return {
-    text: [
-      "🛠 Advanced",
-      "",
-      "Power-user controls and OpenCode integrations.",
-      "",
-      "🔗 MCP Servers — inspect and enable/disable connected MCP servers.",
-      "🧠 Skills — browse reusable Agent workflows available to OpenCode.",
-      "🧩 Custom Commands — browse project-defined OpenCode command templates.",
-    ].join("\n"),
-    keyboard,
-  };
+  return { text: ["🛠 Advanced", "", "Power-user controls and OpenCode integrations.", "", "🔗 MCP Servers — inspect and enable/disable connected MCP servers.", "🧠 Skills — browse reusable Agent workflows available to OpenCode.", "🧩 Custom Commands — browse project-defined OpenCode command templates."].join("\n"), keyboard };
 }
