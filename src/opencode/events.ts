@@ -36,7 +36,7 @@ let listenerGeneration = 0;
 let consecutiveTimeouts = 0;
 
 function traceEvent(event: Event, phase: string): void {
-  const properties = isRecord(event.properties) ? event.properties : {};
+  const properties: Record<string, unknown> = isRecord(event.properties) ? event.properties : {};
   const sessionId =
     typeof properties.sessionID === "string"
       ? properties.sessionID
