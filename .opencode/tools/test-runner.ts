@@ -7,6 +7,11 @@ import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 
+// Keep tool execution below OpenCode's short observation window so the tool
+// returns a structured timeout result instead of leaving the model waiting
+// until the observation expires.
+const TOOL_TIMEOUT_MS = 4 * 60 * 1000;
+
 type Mode = "test" | "build" | "lint" | "typecheck";
 
 function managerFor(worktree: string, packageJson: Record<string, unknown>): { bin: string; prefix: string[] } {
@@ -51,13 +56,15 @@ export default tool({
       const { stdout, stderr } = await execFileAsync(manager.bin, command, {
         cwd: context.worktree,
         maxBuffer: 4 * 1024 * 1024,
-        timeout: 15 * 60 * 1000,
+        timeout: TOOL_TIMEOUT_MS,
         env: { ...process.env, CI: process.env.CI || "1" },
       });
       return `PASS: ${manager.bin} ${command.join(" ")}\n${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.slice(-12000);
     } catch (error) {
-      const e = error as { code?: number; stdout?: string; stderr?: string; message?: string };
-      return `FAIL (${e.code ?? "unknown"}): ${manager.bin} ${command.join(" ")}\n${e.stdout ?? ""}\n${e.stderr ?? e.message ?? ""}`.slice(-12000);
+      const e = error as { code?: number | string; stdout?: string; stderr?: string; message?: string; killed?: boolean };
+      const timedOut = e.killed || e.code === "ETIMEDOUT";
+      const status = timedOut ? `TIMEOUT after ${TOOL_TIMEOUT_MS / 60000} minutes` : `FAIL (${e.code ?? "unknown"})`;
+      return `${status}: ${manager.bin} ${command.join(" ")}\n${e.stdout ?? ""}\n${e.stderr ?? e.message ?? ""}`.slice(-12000);
     }
   },
 });
