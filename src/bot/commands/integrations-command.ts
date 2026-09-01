@@ -53,12 +53,25 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   try {
     if (github) {
       if (github.step === "name") { github.name = text; github.step = "token"; await deleteInput(ctx); await editWizard(ctx, github.messageId, "➕ Add GitHub Account\n\n2/2 · Personal Access Token\n\nSend the token as a message. Telegram will delete it when possible."); return true; }
-      await deleteInput(ctx); const account = await addGithubAccount(github.name!, text); pending.delete(chatId); await showIntegrationsMenu(ctx, github.messageId, `✅ GitHub account “${account.name}” added and selected.`); return true;
+      const account = await addGithubAccount(github.name!, text);
+      await finishWizard(ctx, chatId, github.messageId, `✅ GitHub account “${account.name}” added and selected.`);
+      return true;
     }
     if (railway) {
       if (railway.step === "name") { railway.name = text; railway.step = "token"; await deleteInput(ctx); await editWizard(ctx, railway.messageId, "➕ Add Railway Account\n\n2/2 · API Token\n\nSend the token as a message. Telegram will delete it when possible."); return true; }
-      await deleteInput(ctx); const account = await addRailwayAccount(railway.name!, text); pending.delete(chatId); await showIntegrationsMenu(ctx, railway.messageId, `✅ Railway account “${account.name}” added and selected.`); return true;
+      const account = await addRailwayAccount(railway.name!, text);
+      await finishWizard(ctx, chatId, railway.messageId, `✅ Railway account “${account.name}” added and selected.`);
+      return true;
     }
     return false;
-  } catch (error) { logger.error("[Integrations] wizard failed:", error); const messageId = github?.messageId ?? railway?.messageId; const kind = github ? "GitHub" : "Railway"; await editWizard(ctx, messageId!, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {}); return true; }
+  } catch (error) { logger.error("[Integrations] wizard failed:", error); const messageId = github?.messageId ?? railway?.messageId; const kind = github ? "GitHub" : "Railway"; if (messageId !== undefined && pending.has(chatId)) { await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {}); } return true; }
+}
+
+async function finishWizard(ctx: Context, chatId: number, messageId: number, notice: string): Promise<void> {
+  await deleteInput(ctx);
+  try {
+    await showIntegrationsMenu(ctx, messageId, notice);
+  } finally {
+    pending.delete(chatId);
+  }
 }
