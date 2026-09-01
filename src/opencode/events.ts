@@ -35,6 +35,19 @@ let streamAbortController: AbortController | null = null;
 let listenerGeneration = 0;
 let consecutiveTimeouts = 0;
 
+function traceEvent(event: Event, phase: string): void {
+  const properties = isRecord(event.properties) ? event.properties : {};
+  const sessionId =
+    typeof properties.sessionID === "string"
+      ? properties.sessionID
+      : typeof properties.sessionId === "string"
+        ? properties.sessionId
+        : typeof properties.id === "string"
+          ? properties.id
+          : "unknown";
+  logger.info(`[SessionTrace] phase=${phase} event=${event.type} session=${sessionId}`);
+}
+
 type StreamReadResult =
   | { type: "next"; result: IteratorResult<unknown, unknown> }
   | { type: "error"; error: unknown }
@@ -94,6 +107,7 @@ function readStreamWithIdleTimeout(
 ): Promise<StreamReadResult> {
   return new Promise((resolve) => {
     let settled = false;
+    const startedAt = Date.now();
     const finish = (result: StreamReadResult) => {
       if (settled) {
         return;
@@ -102,6 +116,14 @@ function readStreamWithIdleTimeout(
       settled = true;
       clearTimeout(timeout);
       signal.removeEventListener("abort", onAbort);
+      const elapsedMs = Date.now() - startedAt;
+      if (result.type === "timeout") {
+        logger.warn(`[SessionTrace] phase=stream_read_timeout elapsedMs=${elapsedMs}`);
+      } else if (result.type === "error") {
+        logger.warn(`[SessionTrace] phase=stream_read_error elapsedMs=${elapsedMs}`);
+      } else if (result.type === "aborted") {
+        logger.info(`[SessionTrace] phase=stream_read_aborted elapsedMs=${elapsedMs}`);
+      }
       resolve(result);
     };
 
@@ -181,11 +203,14 @@ async function subscribeToGlobalEventStream(signal: AbortSignal): Promise<EventS
     throw new Error("Global event subscription is not available");
   }
 
+  logger.info("[SessionTrace] phase=subscribe_global_start");
   const result = await globalEvents.event({ signal });
   if (!result.stream) {
+    logger.error("[SessionTrace] phase=subscribe_global_no_stream");
     throw new Error(FATAL_NO_STREAM_ERROR);
   }
 
+  logger.info("[SessionTrace] phase=subscribe_global_success");
   return { source: "global", stream: result.stream };
 }
 
@@ -193,12 +218,15 @@ async function subscribeToLegacyEventStream(
   directory: string,
   signal: AbortSignal,
 ): Promise<EventStreamSubscription> {
+  logger.info(`[SessionTrace] phase=subscribe_legacy_start directory=${directory}`);
   const result = await opencodeClient.event.subscribe({ directory }, { signal });
 
   if (!result.stream) {
+    logger.error(`[SessionTrace] phase=subscribe_legacy_no_stream directory=${directory}`);
     throw new Error(FATAL_NO_STREAM_ERROR);
   }
 
+  logger.info(`[SessionTrace] phase=subscribe_legacy_success directory=${directory}`);
   return { source: "legacy", stream: result.stream };
 }
 
@@ -224,6 +252,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
   eventCallback = callback;
   isListening = true;
   streamAbortController = controller;
+  logger.info(`[SessionTrace] phase=listener_started generation=${generation} directory=${directory}`);
 
   try {
     let reconnectAttempt = 0;
@@ -261,6 +290,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         reconnectAttempt = 0;
         consecutiveTimeouts = 0;
         eventStream = subscription.stream;
+        logger.info(`[SessionTrace] phase=stream_active source=${subscription.source} generation=${generation}`);
         let usefulEventCount = 0;
 
         try {
@@ -276,6 +306,9 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
             }
 
             if (readResult.type === "timeout") {
+              logger.warn(
+                `[SessionTrace] phase=sse_idle_timeout directory=${directory} timeoutMs=${sseIdleTimeoutMs} source=${subscription.source}`,
+              );
               attemptAbort.controller.abort();
               const closeStream = eventStream.return?.(undefined);
               void closeStream?.catch(() => undefined);
@@ -283,10 +316,12 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
             }
 
             if (readResult.type === "error") {
+              logger.warn(`[SessionTrace] phase=stream_next_error directory=${directory}`, readResult.error);
               throw readResult.error;
             }
 
             if (readResult.result.done) {
+              logger.warn(`[SessionTrace] phase=stream_done directory=${directory} source=${subscription.source}`);
               break;
             }
 
@@ -299,6 +334,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
               continue;
             }
 
+            traceEvent(normalizedEvent, "event_received");
             agentArtifactDeliveryService.processEvent(normalizedEvent);
 
             if (normalizedEvent.type !== "server.connected") {
@@ -315,15 +351,21 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
                   activeDirectory !== directory ||
                   listenerGeneration !== generation
                 ) {
+                  logger.warn(
+                    `[SessionTrace] phase=callback_dropped event=${normalizedEvent.type} generation=${generation} currentGeneration=${listenerGeneration}`,
+                  );
                   return;
                 }
 
                 try {
+                  traceEvent(normalizedEvent, "callback_dispatch");
                   callbackSnapshot(normalizedEvent);
                 } catch (error) {
                   logger.error("[Events] Callback failed:", error);
                 }
               });
+            } else {
+              logger.warn(`[SessionTrace] phase=callback_missing event=${normalizedEvent.type}`);
             }
           }
         } finally {
@@ -339,7 +381,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         if (subscription.source === "global" && usefulEventCount === 0) {
           useLegacyEventsOnce = true;
           logger.warn(
-            `Global event stream ended without project events for ${directory}, falling back to project event stream`,
+            `[SessionTrace] phase=global_empty_fallback directory=${directory}`,
           );
           continue;
         }
@@ -348,7 +390,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         consecutiveTimeouts = 0;
         const reconnectDelay = getReconnectDelayMs(reconnectAttempt);
         logger.warn(
-          `Event stream ended for ${directory}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+          `[SessionTrace] phase=stream_reconnect directory=${directory} reason=ended delayMs=${reconnectDelay} attempt=${reconnectAttempt}`,
         );
 
         const shouldContinue = await waitWithAbort(reconnectDelay, controller.signal);
@@ -360,7 +402,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         eventStream = null;
 
         if (controller.signal.aborted || !isListening || activeDirectory !== directory) {
-          logger.info("Event listener aborted");
+          logger.info(`[SessionTrace] phase=listener_aborted directory=${directory}`);
           return;
         }
 
@@ -378,15 +420,15 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
               ? ` (${consecutiveTimeouts} consecutive timeouts — OpenCode server may be unreachable)`
               : "";
           logger.warn(
-            `Event stream idle timeout for ${directory}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})${timeoutWarning}`,
+            `[SessionTrace] phase=reconnect_after_idle_timeout directory=${directory} delayMs=${reconnectDelay} attempt=${reconnectAttempt}${timeoutWarning}`,
           );
         } else if (isExpectedOpencodeUnavailableError(error)) {
           logger.warn(
-            `Event stream unavailable for ${directory}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+            `[SessionTrace] phase=reconnect_after_unavailable directory=${directory} delayMs=${reconnectDelay} attempt=${reconnectAttempt}`,
           );
         } else {
           logger.error(
-            `Event stream error for ${directory}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+            `[SessionTrace] phase=reconnect_after_error directory=${directory} delayMs=${reconnectDelay} attempt=${reconnectAttempt}`,
             error,
           );
         }
@@ -399,14 +441,14 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
     }
   } catch (error) {
     if (controller.signal.aborted) {
-      logger.info("Event listener aborted");
+      logger.info(`[SessionTrace] phase=listener_aborted_outer directory=${directory}`);
       return;
     }
 
     if (isExpectedOpencodeUnavailableError(error)) {
-      logger.warn("Event stream unavailable; listener stopped");
+      logger.warn(`[SessionTrace] phase=listener_unavailable_stopped directory=${directory}`);
     } else {
-      logger.error("Event stream error:", error);
+      logger.error(`[SessionTrace] phase=listener_fatal_error directory=${directory}`, error);
     }
     isListening = false;
     activeDirectory = null;
@@ -415,7 +457,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
   } finally {
     if (streamAbortController === controller) {
       if (isListening && activeDirectory === directory && !controller.signal.aborted) {
-        logger.warn(`Event stream ended for ${directory}, listener marked as disconnected`);
+        logger.warn(`[SessionTrace] phase=listener_disconnected directory=${directory}`);
       }
 
       streamAbortController = null;
@@ -423,6 +465,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
       eventCallback = null;
       isListening = false;
       activeDirectory = null;
+      logger.info(`[SessionTrace] phase=listener_stopped directory=${directory} generation=${generation}`);
     }
   }
 }
@@ -436,6 +479,7 @@ export function stopEventListening(): void {
   eventStream = null;
   activeDirectory = null;
   agentArtifactDeliveryService.clear();
+  logger.info(`[SessionTrace] phase=listener_stop_requested generation=${listenerGeneration}`);
   logger.info("Event listener stopped");
 }
 
