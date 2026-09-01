@@ -36,16 +36,16 @@ The production container is intentionally equipped as a general-purpose coding w
 - shell utilities: bash/sh, curl, wget, jq, less, tree, file, procps
 - search/navigation: ripgrep (`rg`), fd, find
 - version control: git, git-lfs, GitHub CLI (`gh`), openssh-client, rsync
-- archives: `zip`, `unzip`, `tar`, gzip/bzip2/xz support
+- archives: `zip`, `unzip`, `tar`, `gzip/bzip2/xz` support
 - Python 3 with pip and venv
 - SQLite 3
 - native build tooling: gcc/g++, make, pkg-config
 
-When a user asks for an archive, **create a real archive with the shell tooling** (for example `zip -r project.zip project/` or `tar -czf project.tar.gz project/`). Do not write archive bytes through the text-file `write` tool and do not rename a text file to an archive extension. After creating an archive, verify it with `file`, `unzip -t`, or the appropriate archive checker before reporting it as complete.
+When a user asks for an archive, **create a real archive with the shell tooling** (for example `zip -r project.zip project/` or `tar -czf project.tar.gz project/`). Do not write archive bytes through the text-file `write` tool and do not rename a text file to an archive extension. After creating an archive, verify it with `file`, `unzip -t`, or the appropriate archive checker.
 
 ### Sending generated files to Telegram
 
-When the user asks to receive a generated file, archive, website, image, document, build artifact, or other output file, use the custom `send_file` tool after the file has been created and verified. The tool accepts arbitrary file formats; **do not maintain or invent an extension whitelist** and do not rename a file merely to make it match one.
+When the user asks to receive a generated file, archive, website, image, document, build artifact, or other output file, use the custom `send_file` tool after the file has been created and verified. The tool accepts arbitrary file formats; do not maintain or invent an extension whitelist and do not rename a file merely to make it match one.
 
 For multi-file projects, create a real archive first, verify it, then call `send_file` with the archive path. Keep the actual binary path and filename unchanged.
 
@@ -206,7 +206,7 @@ Important:
 
 ### Logging
 
-The project uses `src/utils/logger.ts` with level-based logging.
+The project uses `src/utils/logger.ts` with level-based logs.
 
 Log files:
 
@@ -254,3 +254,10 @@ Important:
 - Use descriptive test names
 - Follow Arrange-Act-Assert
 - Use `vi.mock()` for external dependencies
+
+### Agent validation commands
+
+- For project test, build, lint, or typecheck validation, prefer the dedicated `.opencode/tools/test-runner.ts` tool instead of raw shell commands.
+- Keep validation commands bounded and avoid pipelines that hide exit codes or truncate diagnostic output.
+- Never delete tests or source files merely to make validation pass. Fix the underlying issue or report the failure.
+- If validation times out, treat it as a real failure and report the timeout rather than repeatedly rerunning the same command.
