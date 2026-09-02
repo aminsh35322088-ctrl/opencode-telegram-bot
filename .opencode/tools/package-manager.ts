@@ -13,8 +13,12 @@ function manager(worktree: string): string {
   return "npm";
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
+}
+
 export default tool({
-  description: "Manage project dependencies using the repository's detected package manager. Mutating actions require approval.",
+  description: "Manage project dependencies using the repository's detected package manager. Commands may run as long as needed; use Pause/Abort to cancel mutating or diagnostic operations. Mutating actions require approval.",
   args: {
     action: tool.schema.enum(["install", "add", "remove", "update", "outdated", "list"]).describe("Dependency operation."),
     packages: tool.schema.string().optional().describe("Space-separated package names. Used by add/remove/update."),
@@ -50,12 +54,19 @@ export default tool({
     }
 
     if (["add", "remove", "update"].includes(args.action) && !args.packages) throw new Error(`${args.action} requires packages`);
-    const { stdout, stderr } = await execFileAsync(bin, command, {
-      cwd: context.worktree,
-      maxBuffer: 4 * 1024 * 1024,
-      timeout: 10 * 60 * 1000,
-      env: { ...process.env, CI: process.env.CI || "1" },
-    });
-    return `${bin} ${command.join(" ")}\n${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.slice(-12000);
+
+    try {
+      const { stdout, stderr } = await execFileAsync(bin, command, {
+        cwd: context.worktree,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, CI: process.env.CI || "1" },
+        signal: context.abort,
+      });
+      return `${bin} ${command.join(" ")}\n${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.slice(-12000);
+    } catch (error) {
+      const e = error as { code?: number | string; stdout?: string; stderr?: string; message?: string };
+      const status = isAbortError(error) || context.abort.aborted ? "ABORTED" : `FAIL (${e.code ?? "unknown"})`;
+      return `${status}: ${bin} ${command.join(" ")}\n${e.stdout ?? ""}\n${e.stderr ?? e.message ?? ""}`.slice(-12000);
+    }
   },
 });
