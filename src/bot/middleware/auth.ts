@@ -4,34 +4,19 @@ import { logger } from "../../utils/logger.js";
 
 export async function authMiddleware(ctx: Context, next: NextFunction): Promise<void> {
   const userId = ctx.from?.id;
+  const allowedUserId = config.telegram.allowedUserId;
 
   logger.debug(
-    `[Auth] Checking access: userId=${userId}, allowedUserIds=${config.telegram.allowedUserIds.join(",")}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`,
+    `[Auth] Checking access: userId=${userId}, allowedUserId=${allowedUserId}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`,
   );
 
-  if (userId && config.telegram.allowedUserIds.includes(userId)) {
+  if (userId === allowedUserId) {
     logger.debug(`[Auth] Access granted for userId=${userId}`);
     await next();
-  } else {
-    // Silently ignore unauthorized users
-    logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
-
-    // Actively hide commands for unauthorized users by setting empty command list
-    // Only do this if the chat is NOT one of the authorized users' private chats
-    if (
-      typeof ctx.chat?.id === "number" &&
-      !config.telegram.allowedUserIds.includes(ctx.chat.id)
-    ) {
-      try {
-        // Set empty commands for this specific chat (more reliable than deleteMyCommands)
-        await ctx.api.setMyCommands([], {
-          scope: { type: "chat", chat_id: ctx.chat.id },
-        });
-        logger.debug(`[Auth] Set empty commands for unauthorized chat_id=${ctx.chat.id}`);
-      } catch (err) {
-        // Ignore errors
-        logger.debug(`[Auth] Could not set empty commands: ${err}`);
-      }
-    }
+    return;
   }
+
+  // Single-user deployment: unauthorized users are ignored and never enter
+  // application state, queues, sessions, or AI request handling.
+  logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
 }
