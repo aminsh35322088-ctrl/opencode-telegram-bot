@@ -37,14 +37,14 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.message?.text?.startsWith("/")) flushPendingPrompt(ctx.chat.id);
     if (ctx.message?.text && ctx.chat) {
-      if (isGeminiWizardActive(ctx.chat.id) && !ctx.message.text.startsWith("/")) {
+      if (isGeminiWizardActive() && !ctx.message.text.startsWith("/")) {
         try {
           await verifyAndSaveGeminiChatProvider(ctx.message.text);
-          clearGeminiWizard(ctx.chat.id);
-          clearProviderWizard(ctx.chat.id);
+          clearGeminiWizard();
+          clearProviderWizard();
           await ctx.reply("✅ Gemini API verified and activated.\n\n🤖 Chat model: gemini-3.1-flash-lite\n💸 Free Tier model");
         } catch (error) {
-          clearGeminiWizard(ctx.chat.id);
+          clearGeminiWizard();
           const message = error instanceof Error ? error.message : String(error);
           await ctx.reply(`❌ Gemini API verification failed.\n\n${message}\n\nThe key was NOT saved. Open Configure Gemini and try again.`);
         }
