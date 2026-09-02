@@ -16,10 +16,7 @@ interface ProjectTokenScope {
 
 interface RailwayGraphqlResponse {
   data?: {
-    projectToken?: {
-      projectId?: string | null;
-      environmentId?: string | null;
-    } | null;
+    projectToken?: { projectId?: string | null; environmentId?: string | null } | null;
   };
 }
 
@@ -27,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const RAILWAY_BIN = "/usr/local/bin/railway";
 const RAILWAY_GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const MAX_OUTPUT = 16000;
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 15000;
 const STORE_PATH = "/app/dist/app/services/railway-integration-service.js";
 
 async function getStore(): Promise<RailwayIntegrationStore> {
@@ -35,11 +32,11 @@ async function getStore(): Promise<RailwayIntegrationStore> {
 }
 
 function clampTimeout(value?: number): number {
-  return Math.max(3000, Math.min(value ?? DEFAULT_TIMEOUT_MS, 120000));
+  return Math.max(3000, Math.min(Math.trunc(value ?? DEFAULT_TIMEOUT_MS), 120000));
 }
 
 function redact(text: string, token: string): string {
-  return text.split(token).join("[REDACTED]");
+  return token ? text.split(token).join("[REDACTED]") : text;
 }
 
 function addScope(args: string[], project?: string, environment?: string, service?: string): void {
@@ -49,42 +46,45 @@ function addScope(args: string[], project?: string, environment?: string, servic
 }
 
 async function resolveProjectTokenScope(token: string): Promise<ProjectTokenScope | null> {
-  const response = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Project-Access-Token": token,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query: "query { projectToken { projectId environmentId } }" }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: { "Project-Access-Token": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "query { projectToken { projectId environmentId } }" }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json().catch(() => ({}))) as RailwayGraphqlResponse;
+    const projectToken = payload.data?.projectToken;
+    if (!projectToken?.projectId || !projectToken.environmentId) return null;
+    return { projectId: projectToken.projectId, environmentId: projectToken.environmentId };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-  if (!response.ok) return null;
-  const payload = (await response.json().catch(() => ({}))) as RailwayGraphqlResponse;
-  const projectToken = payload.data?.projectToken;
-  if (!projectToken?.projectId || !projectToken.environmentId) return null;
-
-  return {
-    projectId: projectToken.projectId,
-    environmentId: projectToken.environmentId,
-  };
+function stringifyResult(value: unknown): string {
+  return JSON.stringify(value, null, 2);
 }
 
 export default tool({
-  description: "Manage the currently selected Railway account from the bot. Project-scoped credentials automatically resolve their project/environment scope so commands do not depend on a local .railway link.",
-  args: {
-    action: tool.schema.enum(["whoami", "status", "logs", "variables", "deploy"]).describe("Railway operation."),
-    project: tool.schema.string().optional().describe("Railway project ID. For project tokens, defaults to the token's own project."),
-    environment: tool.schema.string().optional().describe("Railway environment name or ID. For project tokens, defaults to the token's own environment."),
-    service: tool.schema.string().optional().describe("Railway service name or ID."),
-    lines: tool.schema.number().optional().describe("For logs: number of historical lines, 1-200."),
-    build: tool.schema.boolean().optional().describe("For logs: return build logs instead of deploy logs."),
-    timeoutMs: tool.schema.number().optional().describe("Command timeout, 3000-120000 ms."),
+  description: "Railway operations tool. Use this tool for Railway status, logs, variables, authentication, and deployments instead of running the Railway CLI through the shell. Prefer explicit project/environment/service when targeting a resource. Each call performs exactly one Railway operation and returns structured success or failure data."
+  ,args: {
+    action: tool.schema.enum(["whoami", "status", "logs", "variables", "deploy"]).describe("One Railway operation: whoami=verify account auth; status=inspect project/services; logs=read deploy or build logs; variables=list service variables; deploy=trigger railway up."),
+    project: tool.schema.string().optional().describe("Railway project name or ID. Required for unlinked operations when the selected credential is project-scoped; omit only when the CLI can safely infer the target."),
+    environment: tool.schema.string().optional().describe("Railway environment name or ID. Use with project for deterministic targeting."),
+    service: tool.schema.string().optional().describe("Railway service name or ID. Use when the action targets one service."),
+    lines: tool.schema.number().optional().describe("For logs only: number of historical log lines, clamped to 1-200."),
+    build: tool.schema.boolean().optional().describe("For logs only: read build logs instead of deploy/runtime logs."),
+    timeoutMs: tool.schema.number().optional().describe("CLI timeout in milliseconds, 3000-120000. Use the default for normal status/log operations."),
   },
   async execute(args, context) {
     const store = await getStore();
     const token = await store.getRailwayToken();
     if (!token) {
-      throw new Error("No active Railway account is configured. Add/select a Railway account in Integrations first.");
+      return stringifyResult({ ok: false, action: args.action, error: "NO_RAILWAY_CREDENTIAL", message: "No active Railway account is configured. Add/select a Railway account in Integrations first." });
     }
 
     const account = await store.getActiveRailwayAccount();
@@ -97,7 +97,7 @@ export default tool({
       project ??= scope?.projectId;
       environment ??= scope?.environmentId;
       if (!project || !environment) {
-        throw new Error("The active Railway project token is valid but its project/environment scope could not be resolved. Re-add the Project token from Railway Integrations.");
+        return stringifyResult({ ok: false, action: args.action, error: "PROJECT_SCOPE_UNRESOLVED", message: "The selected Railway project token is present, but its project/environment scope could not be resolved." });
       }
     }
 
@@ -107,15 +107,10 @@ export default tool({
         command.push("whoami", "--json");
         break;
       case "status":
-        // `railway status` is link-based. Use service status with explicit targets
-        // whenever a project scope is available so the tool never depends on cwd/.railway.
-        if (project && environment) {
-          command.push("service", "status", "--all", "--json");
-          addScope(command, project, environment, args.service);
-        } else {
-          command.push("status", "--json");
-          addScope(command, project, environment, args.service);
-        }
+        // Railway's documented status command already returns the full linked
+        // environment overview. Explicit scope flags make it independent of cwd.
+        command.push("status", "--json");
+        addScope(command, project, environment, args.service);
         break;
       case "logs":
         command.push("logs");
@@ -139,6 +134,9 @@ export default tool({
     if (tokenType === "project") railwayEnv.RAILWAY_TOKEN = token;
     else railwayEnv.RAILWAY_API_TOKEN = token;
 
+    const startedAt = Date.now();
+    logger.info?.(`[RailwayTool] start action=${args.action} account=${account?.name ?? "Unknown"} tokenType=${tokenType ?? "unknown"} project=${project ?? "-"} environment=${environment ?? "-"} service=${args.service?.trim() ?? "-"}`);
+
     try {
       const { stdout, stderr } = await execFileAsync(RAILWAY_BIN, command, {
         cwd: context.worktree,
@@ -146,32 +144,41 @@ export default tool({
         maxBuffer: 2 * 1024 * 1024,
         env: railwayEnv,
       });
-      const output = `${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`;
-      return JSON.stringify({
+      const output = `${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.trim();
+      logger.info?.(`[RailwayTool] success action=${args.action} durationMs=${Date.now() - startedAt}`);
+      return stringifyResult({
         ok: true,
         account: account?.name ?? "Unknown",
         tokenType: tokenType ?? "unknown",
         project: project ?? null,
         environment: environment ?? null,
+        service: args.service?.trim() ?? null,
         action: args.action,
         command: `railway ${command.join(" ")}`,
+        durationMs: Date.now() - startedAt,
         output: redact(output, token).slice(-MAX_OUTPUT),
-      }, null, 2);
+      });
     } catch (error) {
-      const e = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string };
+      const e = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string; signal?: string };
       const stdout = typeof e.stdout === "string" ? e.stdout : "";
       const stderr = typeof e.stderr === "string" ? e.stderr : "";
-      return JSON.stringify({
+      const output = redact(`${stdout}${stderr ? `\n${stderr}` : ""}`.trim(), token).slice(-MAX_OUTPUT);
+      logger.error?.(`[RailwayTool] failure action=${args.action} durationMs=${Date.now() - startedAt} code=${e.code ?? "unknown"}`);
+      return stringifyResult({
         ok: false,
         account: account?.name ?? "Unknown",
         tokenType: tokenType ?? "unknown",
         project: project ?? null,
         environment: environment ?? null,
+        service: args.service?.trim() ?? null,
         action: args.action,
         command: `railway ${command.join(" ")}`,
+        durationMs: Date.now() - startedAt,
         exitCode: e.code ?? null,
-        output: redact(`${stdout}${stderr ? `\n${stderr}` : ""}`.trim(), token).slice(-MAX_OUTPUT),
-      }, null, 2);
+        signal: e.signal ?? null,
+        output,
+        hint: "Use the returned error/output to correct the target or arguments before retrying; do not repeat an identical failed call indefinitely.",
+      });
     }
   },
 });
