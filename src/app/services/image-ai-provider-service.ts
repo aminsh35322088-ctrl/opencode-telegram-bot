@@ -7,83 +7,138 @@ import { logger } from "../../utils/logger.js";
 export type ImageAiCapability = "generate" | "edit";
 export interface ImageAiProviderStatus { id: string; name: string; model: string; editModel?: string; capabilities: ImageAiCapability[]; active: boolean; default: boolean; }
 interface StoredImageAiProvider extends ImageAiProviderStatus { baseURL: string; keyFile: string; updatedAt: string; }
-interface ImageAiDefinition { name: string; baseURL: string; model: string; capabilities: ImageAiCapability[]; editModel?: string; }
 interface ImageAiStore { providers: StoredImageAiProvider[]; }
 
 const STORE_FILENAME = "image-ai-providers.json";
 const PROVIDER_DIR = "providers";
-const POLLINATIONS_ID = "pollinations";
-const HUGGINGFACE_ID = "huggingface";
+const CLOUDFLARE_ID = "cloudflare";
 const CUSTOM_ID = "custom-image-ai";
-const DEFINITIONS: Record<typeof POLLINATIONS_ID | typeof HUGGINGFACE_ID, ImageAiDefinition> = {
-  [POLLINATIONS_ID]: { name: "Pollinations", baseURL: "https://gen.pollinations.ai/v1", model: "flux", editModel: "kontext", capabilities: ["generate", "edit"] },
-  [HUGGINGFACE_ID]: { name: "Hugging Face", baseURL: "https://router.huggingface.co", model: "black-forest-labs/FLUX.1-schnell", capabilities: ["generate"] },
-};
+const CLOUDFLARE_MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
+const CLOUDFLARE_BASE_URL = "https://api.cloudflare.com/client/v4";
+const CLOUDFLARE_KEY_FILE = "providers/cloudflare.key";
 
 function storePath(): string { return path.join(getRuntimePaths().appHome, STORE_FILENAME); }
 async function readStore(): Promise<ImageAiStore> { try { const value = JSON.parse(await fs.readFile(storePath(), "utf8")) as Partial<ImageAiStore>; return { providers: Array.isArray(value.providers) ? value.providers : [] }; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { providers: [] }; throw error; } }
 async function writeStore(store: ImageAiStore): Promise<void> { await fs.mkdir(getRuntimePaths().appHome, { recursive: true }); const tmp = `${storePath()}.tmp`; await fs.writeFile(tmp, JSON.stringify(store, null, 2), { mode: 0o600 }); await fs.rename(tmp, storePath()); }
-function keyPathFor(id: string): string { return path.join(PROVIDER_DIR, `${id}.key`); }
 async function readKey(provider: StoredImageAiProvider): Promise<string | undefined> { try { const value = (await fs.readFile(path.join(getRuntimePaths().appHome, provider.keyFile), "utf8")).trim(); return value || undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
-function publicStatus(provider: StoredImageAiProvider, defaultId?: string): ImageAiProviderStatus { const result: ImageAiProviderStatus = { id: provider.id, name: provider.name, model: provider.model, capabilities: provider.capabilities, active: provider.active, default: provider.active && provider.id === defaultId }; if (provider.editModel) result.editModel = provider.editModel; return result; }
-export async function listImageAiProviders(): Promise<ImageAiProviderStatus[]> { const store = await readStore(); const defaultId = store.providers.find((p) => p.active)?.id; return store.providers.map((p) => publicStatus(p, defaultId)); }
-export async function getActiveImageAiProviders(): Promise<StoredImageAiProvider[]> { const store = await readStore(); return store.providers.filter((p) => p.active && Boolean(p.keyFile)); }
-export async function hasActiveImageAiProvider(capability: ImageAiCapability): Promise<boolean> { return (await getActiveImageAiProviders()).some((p) => p.capabilities.includes(capability)); }
+function status(provider: StoredImageAiProvider, defaultId?: string): ImageAiProviderStatus { const result: ImageAiProviderStatus = { id: provider.id, name: provider.name, model: provider.model, capabilities: provider.capabilities, active: provider.active, default: provider.active && provider.id === defaultId }; if (provider.editModel) result.editModel = provider.editModel; return result; }
+
+function cloudflareFromEnv(): StoredImageAiProvider | null {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  const token = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  if (!accountId || !token) return null;
+  return { id: CLOUDFLARE_ID, name: "Cloudflare Workers AI", baseURL: `${CLOUDFLARE_BASE_URL}/accounts/${accountId}/ai/run`, model: CLOUDFLARE_MODEL, capabilities: ["generate", "edit"], active: true, default: true, keyFile: CLOUDFLARE_KEY_FILE, updatedAt: new Date().toISOString() };
+}
+
+export async function listImageAiProviders(): Promise<ImageAiProviderStatus[]> {
+  const store = await readStore();
+  const cloudflare = cloudflareFromEnv();
+  const configured = store.providers.filter((p) => p.id !== CLOUDFLARE_ID);
+  const providers = cloudflare ? [cloudflare, ...configured] : configured;
+  const defaultId = providers.find((p) => p.active)?.id;
+  return providers.map((p) => status(p, defaultId));
+}
+
+export async function getActiveImageAiProviders(): Promise<StoredImageAiProvider[]> {
+  const store = await readStore();
+  const cloudflare = cloudflareFromEnv();
+  const configured = store.providers.filter((p) => p.id !== CLOUDFLARE_ID && p.active && Boolean(p.keyFile));
+  return cloudflare ? [cloudflare, ...configured] : configured;
+}
+
+export async function hasActiveImageAiProvider(capability: ImageAiCapability): Promise<boolean> {
+  return (await getActiveImageAiProviders()).some((p) => p.capabilities.includes(capability));
+}
 
 async function getOrderedImageProviders(): Promise<StoredImageAiProvider[]> {
   const providers = await getActiveImageAiProviders();
   try {
     const selected = await getAiRoleSelection("image");
     if (!selected) return providers;
-    const selectedIndex = providers.findIndex((provider) => provider.id === selected.providerID && (provider.model === selected.modelID || provider.editModel === selected.modelID));
-    if (selectedIndex <= 0) return providers;
-    const chosen = providers[selectedIndex]; if (!chosen) return providers;
-    providers.splice(selectedIndex, 1); providers.unshift(chosen);
+    const index = providers.findIndex((p) => p.id === selected.providerID && (p.model === selected.modelID || p.editModel === selected.modelID));
+    if (index > 0) { const chosen = providers[index]; if (chosen) { providers.splice(index, 1); providers.unshift(chosen); } }
   } catch (error) { logger.warn("[ImageAI] Could not resolve Image AI Rule; using active-provider order:", error); }
   return providers;
 }
 
-function parseError(payload: unknown, status: number): string { if (payload && typeof payload === "object" && "error" in payload) { const error = (payload as Record<string, unknown>).error; return typeof error === "string" ? error : JSON.stringify(error); } return `HTTP ${status}`; }
+function parseError(payload: unknown, httpStatus: number): string {
+  if (payload && typeof payload === "object" && "error" in payload) { const value = (payload as Record<string, unknown>).error; return typeof value === "string" ? value : JSON.stringify(value); }
+  return `HTTP ${httpStatus}`;
+}
 async function readBody(response: Response): Promise<unknown> { const text = await response.text(); if (!text) return null; try { return JSON.parse(text); } catch { return text; } }
-async function fetchRetry(url: string, init: RequestInit, attempts = 2): Promise<Response> { let lastError: unknown; for (let i = 0; i < attempts; i += 1) { try { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) }); if ((response.status !== 429 && response.status !== 503) || i === attempts - 1) return response; const retryAfter = Number(response.headers.get("retry-after") ?? ""); if (retryAfter > 0 && retryAfter < 30) await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000)); } catch (error) { lastError = error; if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1000)); } } throw lastError instanceof Error ? lastError : new Error("Image provider request failed"); }
-async function requestJson(url: string, key?: string, timeoutMs = 20_000): Promise<unknown> { const headers = new Headers({ Accept: "application/json" }); if (key) headers.set("Authorization", `Bearer ${key}`); const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) }); const body = await readBody(response); if (!response.ok) throw new Error(parseError(body, response.status)); return body; }
+async function fetchRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> { let lastError: unknown; for (let i = 0; i < attempts; i += 1) { try { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) }); if (![429, 502, 503, 504].includes(response.status) || i === attempts - 1) return response; const retryAfter = Number(response.headers.get("retry-after") ?? ""); const delay = retryAfter > 0 && retryAfter < 30 ? retryAfter * 1000 : 1000 * (i + 1); await new Promise((resolve) => setTimeout(resolve, delay)); } catch (error) { lastError = error; if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1))); } } throw lastError instanceof Error ? lastError : new Error("Image provider request failed"); }
 
-type CostTier = 0 | 1 | 2;
-type Json = Record<string, unknown>;
-interface Candidate { model: string; capability: ImageAiCapability; costTier: CostTier; source: "configured" | "discovered"; huggingFaceRoute?: string; }
-function asList(body: unknown): Json[] { if (Array.isArray(body)) return body.filter((x): x is Json => Boolean(x) && typeof x === "object"); if (body && typeof body === "object") { const data = (body as Json).data; if (Array.isArray(data)) return data.filter((x): x is Json => Boolean(x) && typeof x === "object"); } return []; }
-function numericZero(value: unknown): boolean { return typeof value === "number" ? value === 0 : typeof value === "string" ? Number(value) === 0 : false; }
-function pricingFree(pricing: unknown): boolean { if (!pricing || typeof pricing !== "object") return false; const values = Object.values(pricing as Json).filter((v) => v !== null && v !== undefined && v !== ""); return values.length > 0 && values.every(numericZero); }
-function pricingPaid(pricing: unknown): boolean { if (!pricing || typeof pricing !== "object") return false; return Object.values(pricing as Json).some((v) => typeof v === "number" ? v > 0 : typeof v === "string" ? Number(v) > 0 : false); }
-function costTierOf(model: Json): CostTier { if (model.is_free === true || model.free === true || model.is_free === "true" || model.free === "true") return 0; if (pricingFree(model.pricing)) return 0; if (pricingPaid(model.pricing)) return 2; return 1; }
-function isImageModel(model: Json): boolean { const architecture = model.architecture && typeof model.architecture === "object" ? model.architecture as Json : {}; const input = Array.isArray(architecture.input_modalities) ? architecture.input_modalities.map(String) : []; const output = Array.isArray(architecture.output_modalities) ? architecture.output_modalities.map(String) : []; const tags = [model.pipeline_tag, model.task, ...(Array.isArray(model.capabilities) ? model.capabilities.map(String) : [])].map(String).join(" ").toLowerCase(); const id = String(model.id ?? model.name ?? "").toLowerCase(); return output.includes("image") || input.includes("image") || /text-to-image|image-generation|image-edit|image-to-image/.test(tags) || /flux|stable-diffusion|imagen|nano.?banana|gpt-image|kontext/.test(id); }
-function editCapable(model: Json): boolean { const text = JSON.stringify(model).toLowerCase(); return /image-edit|image-to-image|inpaint|kontext/.test(text); }
-const DISCOVERY_LIMIT = 20;
-const HF_CONCURRENCY = 5;
-const DISCOVERY_CACHE_TTL_MS = 10 * 60_000;
-const discoveryCache = new Map<string, { expiresAt: number; candidates: Candidate[] }>();
-async function discoverCatalog(baseURL: string, key: string | undefined): Promise<Candidate[]> { const base = baseURL.replace(/\/$/, "").replace(/\/v1$/, ""); let body: unknown; try { body = await requestJson(`${base}/v1/models`, key); } catch { body = await requestJson(`${base}/models`, key); } const result: Candidate[] = []; for (const item of asList(body).filter(isImageModel).slice(0, DISCOVERY_LIMIT)) { const costTier = costTierOf(item); if (costTier === 2) continue; const id = String(item.id ?? item.name ?? ""); if (!id) continue; result.push({ model: id, capability: editCapable(item) ? "edit" : "generate", costTier, source: "discovered" }); } return result; }
-async function discoverHuggingFace(key: string): Promise<Candidate[]> { const searchUrl = "https://huggingface.co/api/models?inference_provider=all&pipeline_tag=text-to-image&sort=downloads&direction=-1&limit=40"; const catalog = asList(await requestJson(searchUrl, key)); const result: Candidate[] = []; for (let index = 0; index < catalog.length && result.length < DISCOVERY_LIMIT; index += HF_CONCURRENCY) { const batch = catalog.slice(index, index + HF_CONCURRENCY); const discovered = await Promise.all(batch.map(async (model) => { const modelId = String(model.id ?? ""); if (!modelId) return [] as Candidate[]; try { const info = await requestJson(`https://router.huggingface.co/v1/models/${encodeURIComponent(modelId)}`, key) as Json; const models: Candidate[] = []; for (const entry of asList(info.providers)) { if (String(entry.status ?? "") !== "live") continue; const costTier = costTierOf(entry); if (costTier === 2) continue; models.push({ model: modelId, capability: "generate", costTier, source: "discovered", huggingFaceRoute: `https://router.huggingface.co/${String(entry.provider ?? "hf-inference")}/models/${String(entry.provider_model ?? entry.providerModel ?? modelId)}` }); } return models; } catch (error) { logger.debug?.(`[ImageAI] HF discovery skipped model=${modelId}: ${error instanceof Error ? error.message : String(error)}`); return [] as Candidate[]; } })); result.push(...discovered.flat()); } return result; }
-
-async function discoverCandidates(provider: StoredImageAiProvider): Promise<Candidate[]> { const key = await readKey(provider); if (!key) return []; const cacheKey = `${provider.id}:${provider.baseURL}:${provider.model}:${provider.editModel ?? ""}`; const cached = discoveryCache.get(cacheKey); if (cached && cached.expiresAt > Date.now()) return cached.candidates; let candidates: Candidate[] = []; let discoverySucceeded = false; try { candidates = provider.id === HUGGINGFACE_ID ? await discoverHuggingFace(key) : await discoverCatalog(provider.baseURL, key); discoverySucceeded = true; } catch (error) { logger.warn(`[ImageAI] Discovery failed provider=${provider.id}: ${error instanceof Error ? error.message : String(error)}`); } const configured: Candidate[] = [{ model: provider.model, capability: "generate", costTier: 1, source: "configured" }]; if (provider.editModel) configured.push({ model: provider.editModel, capability: "edit", costTier: 1, source: "configured" }); const merged = [...candidates, ...configured.filter((c) => !candidates.some((x) => x.model === c.model && x.capability === c.capability))]; if (discoverySucceeded) discoveryCache.set(cacheKey, { expiresAt: Date.now() + DISCOVERY_CACHE_TTL_MS, candidates: merged }); return merged; }
-
-async function runCandidate(provider: StoredImageAiProvider, key: string, candidate: Candidate, prompt: string, image?: Buffer, mimeType?: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  if (provider.id === POLLINATIONS_ID) { if (image) throw new Error("Pollinations image editing is not available through the free model detection route."); const response = await fetchRetry(`${provider.baseURL}/images/${candidate.capability === "edit" ? "edits" : "generations"}`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: candidate.model, prompt, n: 1, response_format: "b64_json" }) }); const body = await readBody(response); if (!response.ok) throw new Error(`Pollinations generation failed: ${parseError(body, response.status)}`); const item = (body as { data?: Array<{ b64_json?: string; url?: string }> } | null)?.data?.[0]; if (item?.b64_json) return { buffer: Buffer.from(item.b64_json, "base64"), mimeType: "image/png" }; if (item?.url) { const imageResponse = await fetch(item.url, { signal: AbortSignal.timeout(120_000) }); if (!imageResponse.ok) throw new Error(`Pollinations image download failed: HTTP ${imageResponse.status}`); return { buffer: Buffer.from(await imageResponse.arrayBuffer()), mimeType: imageResponse.headers.get("content-type") ?? "image/png" }; } throw new Error("Pollinations returned no image data"); }
-  if (provider.id === HUGGINGFACE_ID) { if (image) throw new Error("Hugging Face free image editing is not available through the verified discovery route."); const route = candidate.huggingFaceRoute ?? `https://router.huggingface.co/hf-inference/models/${candidate.model}`; const response = await fetch(route, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ inputs: prompt }), signal: AbortSignal.timeout(120_000) }); if (!response.ok) throw new Error(`Hugging Face generation failed: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`); return { buffer: Buffer.from(await response.arrayBuffer()), mimeType: response.headers.get("content-type") ?? "image/png" }; }
-  const endpoint = `${provider.baseURL.replace(/\/$/, "")}/images/${candidate.capability === "edit" ? "edits" : "generations"}`; if (image) { const form = new FormData(); form.append("model", candidate.model); form.append("prompt", prompt); form.append("response_format", "b64_json"); form.append("image", new Blob([new Uint8Array(image)], { type: mimeType ?? "image/png" }), "input.png"); const response = await fetchRetry(endpoint, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }); const body = await readBody(response); if (!response.ok) throw new Error(`${provider.name} editing failed: ${parseError(body, response.status)}`); const b64 = (body as { data?: Array<{ b64_json?: string }> } | null)?.data?.[0]?.b64_json; if (!b64) throw new Error(`${provider.name} returned no edited image data`); return { buffer: Buffer.from(b64, "base64"), mimeType: "image/png" }; }
-  const response = await fetchRetry(endpoint, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: candidate.model, prompt, n: 1, response_format: "b64_json" }) }); const body = await readBody(response); if (!response.ok) throw new Error(`${provider.name} generation failed: ${parseError(body, response.status)}`); const b64 = (body as { data?: Array<{ b64_json?: string }> } | null)?.data?.[0]?.b64_json; if (!b64) throw new Error(`${provider.name} returned no image data`); return { buffer: Buffer.from(b64, "base64"), mimeType: "image/png" };
+function imageBufferFromResult(body: unknown): Buffer {
+  const result = body && typeof body === "object" ? (body as Record<string, unknown>).result : undefined;
+  const value = result && typeof result === "object" ? (result as Record<string, unknown>).image : undefined;
+  if (typeof value !== "string" || !value) throw new Error("Cloudflare Workers AI returned no image data");
+  const match = value.match(/^data:[^;]+;base64,(.+)$/s);
+  return Buffer.from(match?.[1] ?? value, "base64");
 }
 
-export async function generateImageWithFallback(prompt: string) { const errors: string[] = []; for (const provider of await getOrderedImageProviders()) { const key = await readKey(provider); if (!key) continue; const candidates = (await discoverCandidates(provider)).filter((c) => c.capability === "generate").sort((a, b) => a.costTier - b.costTier); for (const candidate of candidates) { try { logger.info(`[ImageAI] generate provider=${provider.id} model=${candidate.model} costTier=${candidate.costTier}`); return await runCandidate(provider, key, candidate, prompt); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${provider.name}/${candidate.model}: ${message}`); logger.warn(`[ImageAI] generate failed provider=${provider.id} model=${candidate.model}: ${message}`); } } } throw new Error(errors.length ? `All active image providers failed.\n${errors.join("\n")}` : "No active image AI generation provider is configured."); }
-export async function editImageWithFallback(image: Buffer, mimeType: string, prompt: string) { const errors: string[] = []; for (const provider of await getOrderedImageProviders()) { const key = await readKey(provider); if (!key) continue; const candidates = (await discoverCandidates(provider)).filter((c) => c.capability === "edit").sort((a, b) => a.costTier - b.costTier); for (const candidate of candidates) { try { logger.info(`[ImageAI] edit provider=${provider.id} model=${candidate.model} costTier=${candidate.costTier}`); return await runCandidate(provider, key, candidate, prompt, image, mimeType); } catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${provider.name}/${candidate.model}: ${message}`); logger.warn(`[ImageAI] edit failed provider=${provider.id} model=${candidate.model}: ${message}`); } } } throw new Error(errors.length ? `All active image editing providers failed.\n${errors.join("\n")}` : "No active image AI editing provider is configured."); }
+async function runCloudflare(provider: StoredImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png"): Promise<{ buffer: Buffer; mimeType: string }> {
+  const form = new FormData();
+  form.append("prompt", prompt);
+  form.append("width", "1024");
+  form.append("height", "768");
+  if (image) form.append("input_image_0", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png");
+  const response = await fetchRetry(`${provider.baseURL}/${encodeURIComponent(provider.model)}`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+  const body = await readBody(response);
+  if (!response.ok) throw new Error(`Cloudflare Workers AI ${image ? "editing" : "generation"} failed: ${parseError(body, response.status)}`);
+  return { buffer: imageBufferFromResult(body), mimeType: "image/png" };
+}
 
-export async function configureImageAiProvider(id: string, apiKey: string, options?: { baseURL?: string | undefined; model?: string | undefined; editModel?: string | undefined; name?: string | undefined }): Promise<void> { const key = apiKey.trim(); if (!key) throw new Error("API key is empty"); if (id === POLLINATIONS_ID) { const response = await fetch("https://enter.pollinations.ai/api/device/userinfo", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) }); const body = await readBody(response); if (!response.ok) throw new Error(`Pollinations API key verification failed: ${parseError(body, response.status)}`); } else if (id === HUGGINGFACE_ID) { const response = await fetch("https://huggingface.co/api/whoami-v2", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) }); const body = await readBody(response); if (!response.ok) throw new Error(`Hugging Face token verification failed: ${parseError(body, response.status)}`); } else if (id === CUSTOM_ID) { const baseURL = (options?.baseURL ?? "").replace(/\/$/, ""); if (!baseURL) throw new Error("Custom Image AI base URL is required."); await discoverImageAiProvider(baseURL, key); }
-  if (id !== CUSTOM_ID && !(id in DEFINITIONS)) throw new Error(`Unknown image AI provider: ${id}`);
-  const definition: ImageAiDefinition = id === CUSTOM_ID ? { name: options?.name?.trim() || "Custom Image AI", baseURL: (options?.baseURL ?? "").replace(/\/$/, ""), model: options?.model?.trim() || "default", capabilities: options?.editModel?.trim() ? ["generate", "edit"] : ["generate"] } : { ...DEFINITIONS[id as typeof POLLINATIONS_ID | typeof HUGGINGFACE_ID] };
-  if (options?.editModel?.trim()) definition.editModel = options.editModel.trim();
-  const now = new Date().toISOString(); const store = await readStore(); const existing = store.providers.find((p) => p.id === id); const provider: StoredImageAiProvider = { id, name: definition.name, baseURL: definition.baseURL, model: definition.model, capabilities: definition.capabilities, active: true, default: false, keyFile: existing?.keyFile ?? keyPathFor(id), updatedAt: now }; if (definition.editModel) provider.editModel = definition.editModel; await fs.mkdir(path.join(getRuntimePaths().appHome, PROVIDER_DIR), { recursive: true }); await fs.writeFile(path.join(getRuntimePaths().appHome, provider.keyFile), `${key}\n`, { mode: 0o600 }); await writeStore({ providers: [...store.providers.filter((p) => p.id !== id), provider] }); clearFreeImageModelCache(); }
-async function discoverImageAiProvider(baseURL: string, key: string): Promise<void> { const response = await fetch(`${baseURL.replace(/\/$/, "")}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) }); const body = await readBody(response); if (!response.ok) throw new Error(`Image AI provider verification failed: ${parseError(body, response.status)}`); }
-export async function configureBuiltInImageAiProvider(id: typeof POLLINATIONS_ID | typeof HUGGINGFACE_ID, apiKey: string): Promise<void> { await configureImageAiProvider(id, apiKey); }
-export async function removeImageAiProvider(id: string): Promise<boolean> { const store = await readStore(); const provider = store.providers.find((p) => p.id === id); if (!provider) return false; await fs.rm(path.join(getRuntimePaths().appHome, provider.keyFile), { force: true }); await writeStore({ providers: store.providers.filter((p) => p.id !== id) }); clearFreeImageModelCache(); return true; }
-export const IMAGE_AI_PROVIDER_IDS = { POLLINATIONS_ID, HUGGINGFACE_ID, CUSTOM_ID } as const;
-function clearFreeImageModelCache(): void { discoveryCache.clear(); }
+export async function generateImageWithFallback(prompt: string) {
+  const errors: string[] = [];
+  for (const provider of await getOrderedImageProviders()) {
+    if (!provider.capabilities.includes("generate")) continue;
+    const key = await readKey(provider);
+    if (!key) continue;
+    try { logger.info(`[ImageAI] generate provider=${provider.id} model=${provider.model}`); return await runCloudflare(provider, key, prompt); }
+    catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${provider.name}/${provider.model}: ${message}`); logger.warn(`[ImageAI] generate failed provider=${provider.id}: ${message}`); }
+  }
+  throw new Error(errors.length ? `All active image providers failed.\n${errors.join("\n")}` : "Cloudflare Workers AI is not configured. Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.");
+}
+
+export async function editImageWithFallback(image: Buffer, mimeType: string, prompt: string) {
+  const errors: string[] = [];
+  for (const provider of await getOrderedImageProviders()) {
+    if (!provider.capabilities.includes("edit")) continue;
+    const key = await readKey(provider);
+    if (!key) continue;
+    try { logger.info(`[ImageAI] edit provider=${provider.id} model=${provider.model}`); return await runCloudflare(provider, key, prompt, image, mimeType); }
+    catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${provider.name}/${provider.model}: ${message}`); logger.warn(`[ImageAI] edit failed provider=${provider.id}: ${message}`); }
+  }
+  throw new Error(errors.length ? `All active image editing providers failed.\n${errors.join("\n")}` : "Cloudflare Workers AI is not configured. Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.");
+}
+
+export async function configureImageAiProvider(id: string, apiKey: string, options?: { baseURL?: string; model?: string; editModel?: string; name?: string }): Promise<void> {
+  const key = apiKey.trim();
+  if (!key) throw new Error("API key is empty");
+  if (id === CLOUDFLARE_ID) throw new Error("Cloudflare Workers AI uses CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables.");
+  if (id !== CUSTOM_ID) throw new Error(`Unknown image AI provider: ${id}`);
+  const baseURL = (options?.baseURL ?? "").replace(/\/$/, "");
+  if (!baseURL) throw new Error("Custom Image AI base URL is required.");
+  const response = await fetch(`${baseURL}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
+  const body = await readBody(response);
+  if (!response.ok) throw new Error(`Image AI provider verification failed: ${parseError(body, response.status)}`);
+  const store = await readStore();
+  const provider: StoredImageAiProvider = { id: CUSTOM_ID, name: options?.name?.trim() || "Custom Image AI", baseURL, model: options?.model?.trim() || "default", editModel: options?.editModel?.trim(), capabilities: options?.editModel?.trim() ? ["generate", "edit"] : ["generate"], active: true, default: false, keyFile: `providers/${CUSTOM_ID}.key`, updatedAt: new Date().toISOString() };
+  await fs.mkdir(path.join(getRuntimePaths().appHome, PROVIDER_DIR), { recursive: true });
+  await fs.writeFile(path.join(getRuntimePaths().appHome, provider.keyFile), `${key}\n`, { mode: 0o600 });
+  await writeStore({ providers: [...store.providers.filter((p) => p.id !== CUSTOM_ID && p.id !== CLOUDFLARE_ID), provider] });
+}
+
+export async function configureBuiltInImageAiProvider(id: typeof CLOUDFLARE_ID, apiKey: string): Promise<void> { throw new Error(`Cloudflare Workers AI is configured with CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN; token received for ${id} must not be stored as a provider key.`); }
+
+export async function removeImageAiProvider(id: string): Promise<boolean> {
+  if (id === CLOUDFLARE_ID) return false;
+  const store = await readStore();
+  const provider = store.providers.find((p) => p.id === id);
+  if (!provider) return false;
+  await fs.rm(path.join(getRuntimePaths().appHome, provider.keyFile), { force: true });
+  await writeStore({ providers: store.providers.filter((p) => p.id !== id) });
+  return true;
+}
+
+export const IMAGE_AI_PROVIDER_IDS = { CLOUDFLARE_ID, CUSTOM_ID } as const;
