@@ -16,7 +16,7 @@ function isBusyAllowedCommand(command?: string): boolean { return Boolean(comman
 function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
 function isReplyKeyboardPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && isReplyKeyboardButtonText(text); }
-function isSetupWizardText(ctx: Context): boolean { const chatId = ctx.chat?.id; return Boolean(chatId && ctx.message?.text && (isProviderWizardActive(chatId) || isIntegrationWizardActive(chatId))); }
+function isSetupWizardText(ctx: Context): boolean { return Boolean(ctx.message?.text && (isProviderWizardActive() || isIntegrationWizardActive())); }
 function isRootNavigationText(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && ROOT_NAVIGATION_TEXTS.has(text); }
 function normalizeIncomingCommand(text: string): string | null { const trimmed = text.trim(); if (!trimmed.startsWith("/")) return null; const token = trimmed.split(/\s+/)[0]; if (!token) return null; const withoutMention = token.split("@")[0]?.toLowerCase(); return !withoutMention || withoutMention.length <= 1 ? null : withoutMention; }
 function classifyIncomingInput(ctx: Context): { inputType: IncomingInputType; command?: string } {
@@ -34,24 +34,13 @@ function isAllowedTaskCallback(ctx: Context, state: InteractionState): boolean {
 
 export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   const rawState = interactionManager.getSnapshot();
-  // Question UI state is chat-local. A question opened in another Telegram
-  // chat must not block this chat's buttons or prompts.
   const state = rawState?.kind === "question" && !questionManager.isActiveForChat(ctx.chat?.id) ? null : rawState;
   const { inputType, command } = classifyIncomingInput(ctx);
-
-  // Reply-keyboard controls are commands expressed as text. They must always
-  // reach their dedicated handlers instead of being consumed by an active
-  // inline/question/wizard interaction as free-form input.
-  if (inputType === "text" && isReplyKeyboardPress(ctx)) {
-    return createAllowDecision(inputType, state, command, foregroundSessionState.isBusy() || attachManager.isBusy());
-  }
-
+  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, state, command, foregroundSessionState.isBusy() || attachManager.isBusy());
   const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
-
   if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, state, command, true);
   if (inputType === "text" && state?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
-
   if (state && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, state, "expired", command, isBusy); }
   if (isBusy) {
     if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, state, command, true); return createBusyBlockDecision(inputType, state, "command_not_allowed", command); }
