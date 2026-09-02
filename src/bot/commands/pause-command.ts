@@ -13,6 +13,8 @@ import { processUserPrompt, type ProcessPromptDeps } from "../handlers/prompt.js
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 
 const RESUME_PROMPT =
   "[resume] Continue the interrupted task from the current session state. Preserve completed work, inspect the current state, and continue only what remains. Do not restart completed work.";
@@ -53,14 +55,21 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
   try {
     const { data, error } = await opencodeClient.session.status({ directory: session.directory });
     const state = (data as Record<string, { type?: string }> | undefined)?.[session.id];
-
-    logger.info(
-      `[Pause] Button invoked: session=${session.id}, status=${state?.type ?? "missing"}, statusError=${error ? "yes" : "no"}`,
+    const localRunActive = assistantRunState.hasActiveRun(session.id);
+    const foregroundActive = foregroundSessionState.getBusySessions().some(
+      (busySession) => busySession.sessionId === session.id,
     );
 
-    if (error) throw error;
+    logger.info(
+      `[Pause] Button invoked: session=${session.id}, status=${state?.type ?? "missing"}, statusError=${error ? "yes" : "no"}, localRunActive=${localRunActive}, foregroundActive=${foregroundActive}`,
+    );
 
-    if (!isActiveStatus(state?.type)) {
+    if (error && !localRunActive && !foregroundActive) throw error;
+
+    // OpenCode's session.status can lag real tool/session activity. The bot's
+    // own run state is set before prompt execution and is therefore a second
+    // independent signal. Abort when either source says work is active.
+    if (!isActiveStatus(state?.type) && !localRunActive && !foregroundActive) {
       await ctx.reply("ℹ️ Nothing is running right now, so there is nothing to pause.");
       return;
     }
@@ -95,9 +104,6 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
       { parse_mode: "HTML" },
     );
 
-    // Telegram reply keyboards are chat-level UI and cannot be changed by
-    // editMessageText. Publish the updated keyboard immediately so Pause turns
-    // into Resume instead of leaving the stale Pause button visible.
     const keyboard = keyboardManager.getKeyboard();
     if (keyboard) {
       await ctx.reply("▶️ Resume is ready.", { reply_markup: keyboard });
