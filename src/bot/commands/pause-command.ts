@@ -126,19 +126,22 @@ export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): P
     return;
   }
 
+  // Capture the user's visible model before dispatch. Resume must continue
+  // with that exact selection instead of re-routing through the Coding AI Rule.
+  const resumeModel = getStoredModel();
   clearPausedSession();
   keyboardManager.setPaused(false);
 
   try {
-    const dispatched = await processUserPrompt(ctx, RESUME_PROMPT, deps);
+    const dispatched = await processUserPrompt(ctx, RESUME_PROMPT, deps, [], resumeModel);
     if (!dispatched) {
       setPausedSession(session);
       keyboardManager.setPaused(true);
+      await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true);
       return;
     }
 
-    const model = getStoredModel();
-    const displayModel = formatModelForDisplay(model.providerID, model.modelID);
+    const displayModel = formatModelForDisplay(resumeModel.providerID, resumeModel.modelID);
     const keyboard = keyboardManager.getKeyboard();
     await ctx.reply(
       `▶️ Resuming <b>${session.title}</b> with <b>${displayModel}</b>.`,
@@ -147,6 +150,7 @@ export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): P
   } catch (error) {
     setPausedSession(session);
     keyboardManager.setPaused(true);
+    await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true);
     logger.error("[Resume] Failed to resume paused chat:", error);
     await ctx.reply("⚠️ Resume failed. The chat remains paused so you can change model/provider safely.");
   }
