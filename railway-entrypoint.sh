@@ -9,13 +9,14 @@ set -eu
 : "${OPENCODE_MODEL_ID:=big-pickle}"
 : "${OPEN_BROWSER_ROOTS:=/data/workspace}"
 : "${OPENCODE_CONFIG_DIR:=/data/.config/opencode}"
+: "${OPENCODE_TELEGRAM_WORKSPACE:=/data/workspace}"
 : "${OPENCODE_EXPERIMENTAL_LSP_TOOL:=true}"
 : "${OPENCODE_ENABLE_EXA:=1}"
 : "${PLAYWRIGHT_BROWSERS_PATH:=/opt/ms-playwright}"
 
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
-export OPENCODE_CONFIG_DIR OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
+export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
 
 # OpenCode's global config/tool location for HOME=/data + XDG_CONFIG_HOME=/data/.config.
 GLOBAL_OPENCODE_DIR="${XDG_CONFIG_HOME:-/data/.config}/opencode"
@@ -58,6 +59,26 @@ fi
 if [ -f /app/opencode.json ]; then
   cp /app/opencode.json "$GLOBAL_OPENCODE_DIR/opencode.json"
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
+fi
+
+# A persisted current session created before the persistent workspace migration
+# can point at /app. Do not silently remap that old session ID to a different
+# directory; clear only those legacy selections so a fresh session is created
+# in /data/workspace on the next prompt.
+SETTINGS_FILE="/data/settings.json"
+if [ -f "$SETTINGS_FILE" ] && command -v jq >/dev/null 2>&1; then
+  SETTINGS_TMP="${SETTINGS_FILE}.$$"
+  if jq 'if (.currentSession.directory? == "/app" or .currentSession.directory? == "/app/workspace" or .currentSession.directory? == "/tmp/site") then del(.currentSession) else . end' "$SETTINGS_FILE" > "$SETTINGS_TMP" 2>/dev/null; then
+    if ! cmp -s "$SETTINGS_FILE" "$SETTINGS_TMP"; then
+      mv "$SETTINGS_TMP" "$SETTINGS_FILE"
+      printf '%s\n' "[railway] Cleared legacy current session directory; next session will use /data/workspace"
+    else
+      rm -f "$SETTINGS_TMP"
+    fi
+  else
+    rm -f "$SETTINGS_TMP"
+    printf '%s\n' "[railway] Warning: could not inspect persisted settings for legacy session path"
+  fi
 fi
 
 chown -R node:node /data
@@ -108,6 +129,7 @@ printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
 printf '%s\n' "[railway] Persistent shared workspace: /data/workspace"
+printf '%s\n' "[railway] OpenCode default cwd: ${OPENCODE_TELEGRAM_WORKSPACE}"
 printf '%s\n' "[railway] Legacy /app/workspace -> /data/workspace"
 printf '%s\n' "[railway] Legacy /tmp/site -> /data/workspace"
 printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
@@ -116,4 +138,8 @@ printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -na
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
 
-exec su -s /bin/sh node -c 'exec node /app/dist/index.js'
+# Launch the bot from the persistent workspace. The local OpenCode server is
+# spawned by the bot and inherits this cwd, making its default project/worktree
+# and every context.worktree-based custom tool resolve to the persistent root.
+cd "$OPENCODE_TELEGRAM_WORKSPACE"
+exec su -s /bin/sh node -c 'cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
