@@ -15,19 +15,18 @@ const CLOUDFLARE_ID = "cloudflare";
 const CUSTOM_ID = "custom-image-ai";
 const CLOUDFLARE_MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
 const CLOUDFLARE_BASE_URL = "https://api.cloudflare.com/client/v4";
-const CLOUDFLARE_KEY_FILE = "providers/cloudflare.key";
 
 function storePath(): string { return path.join(getRuntimePaths().appHome, STORE_FILENAME); }
 async function readStore(): Promise<ImageAiStore> { try { const value = JSON.parse(await fs.readFile(storePath(), "utf8")) as Partial<ImageAiStore>; return { providers: Array.isArray(value.providers) ? value.providers : [] }; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { providers: [] }; throw error; } }
 async function writeStore(store: ImageAiStore): Promise<void> { await fs.mkdir(getRuntimePaths().appHome, { recursive: true }); const tmp = `${storePath()}.tmp`; await fs.writeFile(tmp, JSON.stringify(store, null, 2), { mode: 0o600 }); await fs.rename(tmp, storePath()); }
-async function readKey(provider: StoredImageAiProvider): Promise<string | undefined> { try { const value = (await fs.readFile(path.join(getRuntimePaths().appHome, provider.keyFile), "utf8")).trim(); return value || undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
+async function readKey(provider: StoredImageAiProvider): Promise<string | undefined> { if (provider.id === CLOUDFLARE_ID) return process.env.CLOUDFLARE_API_TOKEN?.trim() || undefined; try { const value = (await fs.readFile(path.join(getRuntimePaths().appHome, provider.keyFile), "utf8")).trim(); return value || undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
 function status(provider: StoredImageAiProvider, defaultId?: string): ImageAiProviderStatus { const result: ImageAiProviderStatus = { id: provider.id, name: provider.name, model: provider.model, capabilities: provider.capabilities, active: provider.active, default: provider.active && provider.id === defaultId }; if (provider.editModel) result.editModel = provider.editModel; return result; }
 
 function cloudflareFromEnv(): StoredImageAiProvider | null {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
   const token = process.env.CLOUDFLARE_API_TOKEN?.trim();
   if (!accountId || !token) return null;
-  return { id: CLOUDFLARE_ID, name: "Cloudflare Workers AI", baseURL: `${CLOUDFLARE_BASE_URL}/accounts/${accountId}/ai/run`, model: CLOUDFLARE_MODEL, capabilities: ["generate", "edit"], active: true, default: true, keyFile: CLOUDFLARE_KEY_FILE, updatedAt: new Date().toISOString() };
+  return { id: CLOUDFLARE_ID, name: "Cloudflare Workers AI", baseURL: `${CLOUDFLARE_BASE_URL}/accounts/${accountId}/ai/run`, model: CLOUDFLARE_MODEL, capabilities: ["generate", "edit"], active: true, default: true, keyFile: "", updatedAt: new Date().toISOString() };
 }
 
 export async function listImageAiProviders(): Promise<ImageAiProviderStatus[]> {
@@ -46,9 +45,7 @@ export async function getActiveImageAiProviders(): Promise<StoredImageAiProvider
   return cloudflare ? [cloudflare, ...configured] : configured;
 }
 
-export async function hasActiveImageAiProvider(capability: ImageAiCapability): Promise<boolean> {
-  return (await getActiveImageAiProviders()).some((p) => p.capabilities.includes(capability));
-}
+export async function hasActiveImageAiProvider(capability: ImageAiCapability): Promise<boolean> { return (await getActiveImageAiProviders()).some((p) => p.capabilities.includes(capability)); }
 
 async function getOrderedImageProviders(): Promise<StoredImageAiProvider[]> {
   const providers = await getActiveImageAiProviders();
@@ -61,10 +58,7 @@ async function getOrderedImageProviders(): Promise<StoredImageAiProvider[]> {
   return providers;
 }
 
-function parseError(payload: unknown, httpStatus: number): string {
-  if (payload && typeof payload === "object" && "error" in payload) { const value = (payload as Record<string, unknown>).error; return typeof value === "string" ? value : JSON.stringify(value); }
-  return `HTTP ${httpStatus}`;
-}
+function parseError(payload: unknown, httpStatus: number): string { if (payload && typeof payload === "object" && "error" in payload) { const value = (payload as Record<string, unknown>).error; return typeof value === "string" ? value : JSON.stringify(value); } return `HTTP ${httpStatus}`; }
 async function readBody(response: Response): Promise<unknown> { const text = await response.text(); if (!text) return null; try { return JSON.parse(text); } catch { return text; } }
 async function fetchRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> { let lastError: unknown; for (let i = 0; i < attempts; i += 1) { try { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) }); if (![429, 502, 503, 504].includes(response.status) || i === attempts - 1) return response; const retryAfter = Number(response.headers.get("retry-after") ?? ""); const delay = retryAfter > 0 && retryAfter < 30 ? retryAfter * 1000 : 1000 * (i + 1); await new Promise((resolve) => setTimeout(resolve, delay)); } catch (error) { lastError = error; if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1))); } } throw lastError instanceof Error ? lastError : new Error("Image provider request failed"); }
 
@@ -82,7 +76,7 @@ async function runCloudflare(provider: StoredImageAiProvider, key: string, promp
   form.append("width", "1024");
   form.append("height", "768");
   if (image) form.append("input_image_0", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png");
-  const response = await fetchRetry(`${provider.baseURL}/${encodeURIComponent(provider.model)}`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+  const response = await fetchRetry(`${provider.baseURL}/${provider.model}`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
   const body = await readBody(response);
   if (!response.ok) throw new Error(`Cloudflare Workers AI ${image ? "editing" : "generation"} failed: ${parseError(body, response.status)}`);
   return { buffer: imageBufferFromResult(body), mimeType: "image/png" };
@@ -92,8 +86,7 @@ export async function generateImageWithFallback(prompt: string) {
   const errors: string[] = [];
   for (const provider of await getOrderedImageProviders()) {
     if (!provider.capabilities.includes("generate")) continue;
-    const key = await readKey(provider);
-    if (!key) continue;
+    const key = await readKey(provider); if (!key) continue;
     try { logger.info(`[ImageAI] generate provider=${provider.id} model=${provider.model}`); return await runCloudflare(provider, key, prompt); }
     catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${provider.name}/${provider.model}: ${message}`); logger.warn(`[ImageAI] generate failed provider=${provider.id}: ${message}`); }
   }
@@ -104,8 +97,7 @@ export async function editImageWithFallback(image: Buffer, mimeType: string, pro
   const errors: string[] = [];
   for (const provider of await getOrderedImageProviders()) {
     if (!provider.capabilities.includes("edit")) continue;
-    const key = await readKey(provider);
-    if (!key) continue;
+    const key = await readKey(provider); if (!key) continue;
     try { logger.info(`[ImageAI] edit provider=${provider.id} model=${provider.model}`); return await runCloudflare(provider, key, prompt, image, mimeType); }
     catch (error) { const message = error instanceof Error ? error.message : String(error); errors.push(`${provider.name}/${provider.model}: ${message}`); logger.warn(`[ImageAI] edit failed provider=${provider.id}: ${message}`); }
   }
@@ -129,7 +121,7 @@ export async function configureImageAiProvider(id: string, apiKey: string, optio
   await writeStore({ providers: [...store.providers.filter((p) => p.id !== CUSTOM_ID && p.id !== CLOUDFLARE_ID), provider] });
 }
 
-export async function configureBuiltInImageAiProvider(id: typeof CLOUDFLARE_ID, apiKey: string): Promise<void> { throw new Error(`Cloudflare Workers AI is configured with CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN; token received for ${id} must not be stored as a provider key.`); }
+export async function configureBuiltInImageAiProvider(id: typeof CLOUDFLARE_ID, _apiKey: string): Promise<void> { throw new Error(`Cloudflare Workers AI is configured with CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN; token received for ${id} must not be stored as a provider key.`); }
 
 export async function removeImageAiProvider(id: string): Promise<boolean> {
   if (id === CLOUDFLARE_ID) return false;
