@@ -41,4 +41,9 @@ describe("current config", () => {
     const config = await loadConfig();
     expect(config.bot.initialSettingsPreset).toEqual({ compactOutputMode: true, showThinkingContent: false, responseStreamingMode: "draft" });
   });
+
+  it("rejects a non-singular Telegram user ID value", async () => {
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "123456789,987654321");
+    await expect(loadConfig()).rejects.toThrow("TELEGRAM_ALLOWED_USER_ID must contain one valid positive Telegram user ID.");
+  });
 });
