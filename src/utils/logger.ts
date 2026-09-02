@@ -10,6 +10,7 @@ type LogLevel = "debug" | "info" | "warn" | "error";
 const DEFAULT_LOG_LEVEL: LogLevel = "info";
 const DEFAULT_LOG_RETENTION = 10;
 const LOGGER_ERROR_PREFIX = "[LOGGER]";
+const SESSION_DELTA_TRACE_MIN_INTERVAL_MS = 1000;
 
 const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
@@ -23,6 +24,8 @@ let logFilePath: string | null = null;
 let initializePromise: Promise<void> | null = null;
 let cleanupPromise: Promise<void> | null = null;
 let streamErrorReported = false;
+let lastSessionDeltaTraceAt = 0;
+let suppressedSessionDeltaTraceCount = 0;
 const CONSOLE_BROKEN_KEY = "__opencodeTelegramBotConsoleOutputBroken";
 
 function normalizeLogLevel(value: string): LogLevel {
@@ -112,6 +115,34 @@ function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] >= LOG_LEVELS[configuredLevel];
 }
 
+function isHighFrequencySessionDeltaTrace(args: unknown[]): boolean {
+  const first = args[0];
+  if (typeof first !== "string") {
+    return false;
+  }
+
+  return first.includes("[SessionTrace]") && first.includes("event=message.part.delta");
+}
+
+function shouldSuppressHighFrequencySessionDeltaTrace(args: unknown[]): boolean {
+  if (!isHighFrequencySessionDeltaTrace(args)) {
+    return false;
+  }
+
+  const now = Date.now();
+  if (now - lastSessionDeltaTraceAt >= SESSION_DELTA_TRACE_MIN_INTERVAL_MS) {
+    if (suppressedSessionDeltaTraceCount > 0) {
+      args[0] = `${String(args[0])} suppressed=${suppressedSessionDeltaTraceCount}`;
+      suppressedSessionDeltaTraceCount = 0;
+    }
+    lastSessionDeltaTraceAt = now;
+    return false;
+  }
+
+  suppressedSessionDeltaTraceCount += 1;
+  return true;
+}
+
 function sanitizeTimestampForFile(timestamp: string): string {
   return timestamp.replace(/:/g, "-").replace("T", "_");
 }
@@ -157,10 +188,6 @@ function isConsoleOutputBroken(): boolean {
   return (globalThis as Record<string, unknown>)[CONSOLE_BROKEN_KEY] === true;
 }
 
-// A closed console pipe makes each console write raise EPIPE. Without an
-// "error" listener, Node escalates that to an uncaught exception, whose
-// handler logs through this same console — an unbounded loop that grew a
-// log file to 2 GB once. Swallow EPIPE and stop console logging instead.
 const CONSOLE_PIPE_GUARD_KEY = "__opencodeTelegramBotConsolePipeGuardInstalled";
 
 function installConsolePipeGuard(): void {
@@ -178,7 +205,6 @@ function installConsolePipeGuard(): void {
       return;
     }
 
-    // Re-throw non-EPIPE errors to preserve fatal EventEmitter semantics
     throw error;
   };
 
@@ -383,6 +409,8 @@ export function __resetLoggerForTests(): void {
   cleanupPromise = null;
   logFilePath = null;
   streamErrorReported = false;
+  lastSessionDeltaTraceAt = 0;
+  suppressedSessionDeltaTraceCount = 0;
   (globalThis as Record<string, unknown>)[CONSOLE_BROKEN_KEY] = false;
   closeLogStream();
 }
@@ -411,7 +439,7 @@ export const logger = {
   },
 
   info: (...args: unknown[]): void => {
-    if (shouldLog("info")) {
+    if (shouldLog("info") && !shouldSuppressHighFrequencySessionDeltaTrace(args)) {
       writeToConsole("info", args);
       writeToFile(formatLine("info", args));
     }
