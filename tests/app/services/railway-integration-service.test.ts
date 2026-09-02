@@ -1,5 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { validateRailwayToken } from "../../../src/app/services/railway-integration-service.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { validateRailwayToken, addRailwayAccount, setActiveRailwayAccount, removeRailwayAccount, clearRailwayToken } from "../../../src/app/services/railway-integration-service.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -41,5 +44,61 @@ describe("validateRailwayToken", () => {
     vi.stubGlobal("fetch", fetchMock);
     await expect(validateRailwayToken("do-not-log-me")).resolves.toEqual({ valid: false, reason: "unauthorized" });
     expect(JSON.stringify(fetchMock.mock.calls)).not.toContain("[REDACTED]");
+  });
+});
+
+describe("applyActiveRailwayToken env vars", () => {
+  let home: string;
+  const originalRailwayToken = process.env.RAILWAY_TOKEN;
+  const originalApiToken = process.env.RAILWAY_API_TOKEN;
+
+  beforeEach(async () => {
+    home = await fs.mkdtemp(path.join(os.tmpdir(), "railway-env-"));
+    process.env.OPENCODE_TELEGRAM_HOME = home;
+    delete process.env.RAILWAY_TOKEN;
+    delete process.env.RAILWAY_API_TOKEN;
+  });
+
+  afterEach(async () => {
+    await fs.rm(home, { recursive: true, force: true });
+    delete process.env.OPENCODE_TELEGRAM_HOME;
+    if (originalRailwayToken === undefined) delete process.env.RAILWAY_TOKEN; else process.env.RAILWAY_TOKEN = originalRailwayToken;
+    if (originalApiToken === undefined) delete process.env.RAILWAY_API_TOKEN; else process.env.RAILWAY_API_TOKEN = originalApiToken;
+  });
+
+  it("sets RAILWAY_API_TOKEN for an account token after add", async () => {
+    await addRailwayAccount("Amin", "account-secret", "account");
+    expect(process.env.RAILWAY_API_TOKEN).toBe("account-secret");
+    expect(process.env.RAILWAY_TOKEN).toBeUndefined();
+  });
+
+  it("sets RAILWAY_TOKEN for a project token after add", async () => {
+    await addRailwayAccount("Proj", "project-secret", "project");
+    expect(process.env.RAILWAY_TOKEN).toBe("project-secret");
+    expect(process.env.RAILWAY_API_TOKEN).toBeUndefined();
+  });
+
+  it("switches env var when active account changes", async () => {
+    await addRailwayAccount("Acct", "account-secret", "account");
+    await addRailwayAccount("Proj", "project-secret", "project");
+    await setActiveRailwayAccount("acct");
+    expect(process.env.RAILWAY_API_TOKEN).toBe("account-secret");
+    await setActiveRailwayAccount("proj");
+    expect(process.env.RAILWAY_TOKEN).toBe("project-secret");
+    expect(process.env.RAILWAY_API_TOKEN).toBeUndefined();
+  });
+
+  it("clears env vars when the last account is removed", async () => {
+    await addRailwayAccount("Acct", "account-secret", "account");
+    expect(process.env.RAILWAY_API_TOKEN).toBe("account-secret");
+    await removeRailwayAccount("acct");
+    expect(process.env.RAILWAY_API_TOKEN).toBeUndefined();
+  });
+
+  it("clears env vars on clearRailwayToken", async () => {
+    await addRailwayAccount("Acct", "account-secret", "account");
+    await clearRailwayToken();
+    expect(process.env.RAILWAY_API_TOKEN).toBeUndefined();
+    expect(process.env.RAILWAY_TOKEN).toBeUndefined();
   });
 });

@@ -192,6 +192,26 @@ export async function validateRailwayToken(tokenValue: string): Promise<RailwayT
   }
 }
 
+async function applyActiveRailwayToken(): Promise<void> {
+  try {
+    const index = await readIndex();
+    const active = await getActiveAccountFromIndex(index);
+    if (!active) {
+      delete process.env.RAILWAY_TOKEN;
+      delete process.env.RAILWAY_API_TOKEN;
+      return;
+    }
+    const token = await readAccountToken(active);
+    delete process.env.RAILWAY_TOKEN;
+    delete process.env.RAILWAY_API_TOKEN;
+    if (active.tokenType === "project") process.env.RAILWAY_TOKEN = token;
+    else process.env.RAILWAY_API_TOKEN = token;
+  } catch {
+    delete process.env.RAILWAY_TOKEN;
+    delete process.env.RAILWAY_API_TOKEN;
+  }
+}
+
 export async function listRailwayAccounts(): Promise<RailwayAccount[]> {
   return withStoreLock(async () => (await readIndex()).accounts.map((account) => ({ ...account })));
 }
@@ -219,6 +239,7 @@ export async function addRailwayAccount(name: string, tokenValue: string, tokenT
     if (!index.activeId) index.activeId = account.id;
     try { await writeIndex(index); }
     catch (error) { await fs.rm(getAccountTokenPath(account), { force: true }).catch(() => {}); throw error; }
+    await applyActiveRailwayToken();
     return { ...account };
   });
 }
@@ -231,6 +252,7 @@ export async function removeRailwayAccount(id: string): Promise<boolean> {
     const nextAccounts = index.accounts.filter((item) => item.id !== id);
     await writeIndex({ accounts: nextAccounts, activeId: index.activeId === id ? nextAccounts[0]?.id : index.activeId });
     await fs.rm(getAccountTokenPath(account), { force: true });
+    await applyActiveRailwayToken();
     return true;
   });
 }
@@ -243,6 +265,7 @@ export async function setActiveRailwayAccount(id: string): Promise<RailwayAccoun
     await readAccountToken(account);
     index.activeId = id;
     await writeIndex(index);
+    await applyActiveRailwayToken();
     return { ...account };
   });
 }
@@ -267,6 +290,8 @@ export async function clearRailwayToken(): Promise<void> {
     const index = await readIndex();
     await Promise.all(index.accounts.map((account) => fs.rm(getAccountTokenPath(account), { force: true })));
     await fs.rm(getIndexPath(), { force: true });
+    delete process.env.RAILWAY_TOKEN;
+    delete process.env.RAILWAY_API_TOKEN;
   });
 }
 
@@ -282,6 +307,7 @@ export async function initializeRailwayTokenFromEnvironment(): Promise<boolean> 
     try { await writeIndex({ accounts: [account], activeId: account.id }); }
     catch (error) { await fs.rm(getAccountTokenPath(account), { force: true }).catch(() => {}); throw error; }
     delete process.env.RAILWAY_TOKEN;
+    await applyActiveRailwayToken();
     return true;
   });
 }
