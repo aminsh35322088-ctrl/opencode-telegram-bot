@@ -79,7 +79,12 @@ export async function startBotApp(): Promise<void> {
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
   await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
-  safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => { await opencodeAutoRestartService.start(); await notifyOpencodeReadyIfHealthy("startup"); } });
+  safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => {
+    const monitorStarted = await opencodeAutoRestartService.start();
+    if (!monitorStarted) {
+      await notifyOpencodeReadyIfHealthy("startup");
+    }
+  } });
 
   let shutdownStarted = false;
   let shutdownTimeout: ReturnType<typeof setTimeout> | null = null;

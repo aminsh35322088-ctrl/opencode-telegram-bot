@@ -140,6 +140,14 @@ export class OpencodeAutoRestartService {
         return;
       }
 
+      // During process startup, an unavailable local OpenCode server is expected.
+      // Start it directly and reserve the consecutive-failure threshold for
+      // runtime outages, so normal startup does not look like a failure/restart.
+      if (reason === "startup") {
+        await this.startServer("startup");
+        return;
+      }
+
       this.consecutiveHealthFailures += 1;
       logger.warn(
         `[OpenCodeAutoRestart] Health-check failed: reason=${reason}, consecutiveFailures=${this.consecutiveHealthFailures}/${HEALTH_FAILURES_BEFORE_RESTART}`,
@@ -152,44 +160,50 @@ export class OpencodeAutoRestartService {
       this.consecutiveHealthFailures = 0;
       this.serverWasHealthy = false;
       opencodeReadyLifecycle.notifyUnavailable(`auto_restart_${reason}`);
-
-      if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
-        logger.warn(
-          `[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`,
-        );
-        return;
-      }
-
-      logger.warn(
-        `[OpenCodeAutoRestart] OpenCode server is unavailable after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks, starting local server: reason=${reason}, port=${this.localTarget.port}`,
-      );
-
-      const childProcess = startLocalOpencodeServer(this.localTarget);
-      childProcess.once("error", (error) => {
-        logger.error("[OpenCodeAutoRestart] OpenCode server process failed to start", error);
-      });
-
-      const pid = childProcess.pid;
-      childProcess.unref();
-
-      const ready = await waitForOpencodeServerReady(SERVER_READY_TIMEOUT_MS);
-      if (!ready) {
-        logger.warn(
-          `[OpenCodeAutoRestart] OpenCode server was started but did not become ready: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`,
-        );
-        return;
-      }
-
-      logger.info(
-        `[OpenCodeAutoRestart] OpenCode server recovered: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`,
-      );
-      this.serverWasHealthy = true;
-      await opencodeReadyLifecycle.notifyReady(`auto_restart_${reason}`);
+      await this.startServer(reason);
     } catch (error) {
       logger.error("[OpenCodeAutoRestart] Failed to check or restart OpenCode server", error);
     } finally {
       this.checkInProgress = false;
     }
+  }
+
+  private async startServer(reason: "startup" | "interval"): Promise<void> {
+    if (!this.localTarget) return;
+
+    if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
+      logger.warn(
+        `[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`,
+      );
+      return;
+    }
+
+    const prefix = reason === "startup" ? "Startup" : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
+    logger.info(
+      `[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`,
+    );
+
+    const childProcess = startLocalOpencodeServer(this.localTarget);
+    childProcess.once("error", (error) => {
+      logger.error("[OpenCodeAutoRestart] OpenCode server process failed to start", error);
+    });
+
+    const pid = childProcess.pid;
+    childProcess.unref();
+
+    const ready = await waitForOpencodeServerReady(SERVER_READY_TIMEOUT_MS);
+    if (!ready) {
+      logger.warn(
+        `[OpenCodeAutoRestart] OpenCode server was started but did not become ready: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`,
+      );
+      return;
+    }
+
+    logger.info(
+      `[OpenCodeAutoRestart] OpenCode server recovered: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`,
+    );
+    this.serverWasHealthy = true;
+    await opencodeReadyLifecycle.notifyReady(`auto_restart_${reason}`);
   }
 }
 
