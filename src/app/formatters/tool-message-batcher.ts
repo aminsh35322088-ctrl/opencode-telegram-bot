@@ -13,6 +13,7 @@ export class ToolMessageBatcher {
   private readonly sendText: SendTextCallback;
   private readonly sendFile: SendFileCallback;
   private readonly sessionTasks: Map<string, Promise<void>> = new Map();
+  private readonly uniqueMessageKeys: Map<string, Set<string>> = new Map();
   private generation = 0;
 
   constructor(options: ToolMessageBatcherOptions) {
@@ -38,8 +39,26 @@ export class ToolMessageBatcher {
   }
 
   enqueueUniqueByPrefix(sessionId: string, message: string, prefix: string): void {
-    void prefix;
-    this.sendTextNow(sessionId, message, "enqueue_unique_by_prefix");
+    const normalizedPrefix = prefix.trim();
+    if (!sessionId || !normalizedPrefix) {
+      return;
+    }
+
+    let keys = this.uniqueMessageKeys.get(sessionId);
+    if (!keys) {
+      keys = new Set<string>();
+      this.uniqueMessageKeys.set(sessionId, keys);
+    }
+
+    if (keys.has(normalizedPrefix)) {
+      logger.debug(
+        `[ToolBatcher] Skipping duplicate unique message: session=${sessionId}, prefix=${normalizedPrefix}`,
+      );
+      return;
+    }
+
+    keys.add(normalizedPrefix);
+    this.sendTextNow(sessionId, message, `enqueue_unique_by_prefix:${normalizedPrefix}`);
   }
 
   enqueueFile(sessionId: string, fileData: CodeFileData): void {
@@ -68,11 +87,13 @@ export class ToolMessageBatcher {
 
   clearSession(sessionId: string, reason: string): void {
     this.generation++;
+    this.uniqueMessageKeys.delete(sessionId);
     logger.debug(`[ToolBatcher] Cleared session sends: session=${sessionId}, reason=${reason}`);
   }
 
   clearAll(reason: string): void {
     this.generation++;
+    this.uniqueMessageKeys.clear();
     logger.debug(`[ToolBatcher] Cleared all pending tool sends: reason=${reason}`);
   }
 
