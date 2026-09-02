@@ -1,5 +1,5 @@
 import type { Bot, Context } from "grammy";
-import { InputFile } from "grammy";
+import { InputFile, InlineKeyboard } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
@@ -44,7 +44,7 @@ import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
-import { activateImageMode, clearImageMode, isImageModeActive } from "../../app/services/image-mode-service.js";
+import { activateImageMode, clearImageMode, getImageMode } from "../../app/services/image-mode-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -93,13 +93,19 @@ function rememberPendingImage(image: PendingImage): void {
 }
 
 async function handleImageModeText(ctx: Context, text: string): Promise<boolean> {
-  if (!isImageModeActive()) return false;
+  const mode = getImageMode();
+  if (!mode) return false;
 
   const image = pendingImage;
   pendingImage = null;
   clearImageMode();
 
-  if (image && image.expiresAt > Date.now()) {
+  if (mode === "edit") {
+    if (!image || image.expiresAt <= Date.now()) {
+      await ctx.reply("🖌️ Edit mode is active. Send a photo first, then send the edit instruction.");
+      return true;
+    }
+
     if (!(await isMediaAiConfigured())) {
       await ctx.reply("🎨 Image AI is not configured. Open /providers and add the image provider.");
       return true;
@@ -161,12 +167,12 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
 
   const text = normalizeControlText(rawText);
 
-  if (text === normalizeControlText(MAIN_BUTTONS.editImage)) {
+  if (text === normalizeControlText(MAIN_BUTTONS.imageAi)) {
     resetImageInteraction();
-    activateImageMode();
-    await ctx.reply(
-      "🎨 Image AI mode enabled. Send a photo to edit it, or send a text/voice prompt to generate an image. This applies only to the next image task.",
-    );
+    const keyboard = new InlineKeyboard()
+      .text("🖼️ Generate Image", "imageai:generate")
+      .text("🖌️ Edit Image", "imageai:edit");
+    await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", { parse_mode: "HTML", reply_markup: keyboard });
     return true;
   }
 
@@ -236,7 +242,7 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
 
     // Keyboard events are UI controls, never prompts. This guard must run before Image Mode.
     if (isReplyKeyboardButtonText(text)) {
-      if (text !== MAIN_BUTTONS.editImage) resetImageInteraction();
+      if (text !== MAIN_BUTTONS.imageAi) resetImageInteraction();
       await next();
       return;
     }
@@ -394,7 +400,14 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       return;
     }
 
-    if (isImageModeActive()) {
+    const mode = getImageMode();
+    if (mode === "generate") {
+      resetImageInteraction();
+      await ctx.reply("🖼️ Generate mode is active. Send a text or voice prompt to create a new image.");
+      return;
+    }
+
+    if (mode === "edit") {
       const source = await downloadPhoto(ctx);
       rememberPendingImage({ ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS });
       if (caption) {
