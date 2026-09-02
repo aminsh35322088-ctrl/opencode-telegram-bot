@@ -14,6 +14,8 @@ import { t } from "../../i18n/index.js";
 import { buildTelegramFileUrl } from "../../app/services/file-download-service.js";
 import { buildQuotedNotification } from "../../app/services/quoted-notification.js";
 import { editBotText } from "../messages/telegram-text.js";
+import { clearImageMode, isImageModeActive } from "../../app/services/image-mode-service.js";
+import { handleImageTextPrompt } from "../commands/media-command.js";
 
 const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 30_000;
 const TELEGRAM_DOWNLOAD_MAX_REDIRECTS = 3;
@@ -38,6 +40,12 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     try { const notification = buildQuotedNotification(t("stt.recognized"), recognizedText, { blankLineAfterTitle: false }); await editBotText({ api: ctx.api, chatId: ctx.chat!.id, messageId: statusMessage.message_id, text: notification.text, rawFallbackText: notification.rawFallbackText, format: "markdown_v2" }); } catch (editError) { logger.warn("[Voice] Failed to edit status message with recognized text:", editError); }
     logger.info(`[Voice] Transcribed audio: ${recognizedText.length} chars`);
     let textForLLM = recognizedText; const notePrompt = config.stt.notePrompt.trim(); if (notePrompt && notePrompt.toLowerCase() !== "false" && notePrompt !== "0") textForLLM = `[Note: ${notePrompt}]\n${recognizedText}`;
+    if (isImageModeActive()) {
+      clearImageMode();
+      logger.info(`[Voice] Dispatching transcription to explicit Image AI mode: textLength=${textForLLM.length}`);
+      await handleImageTextPrompt(ctx, textForLLM);
+      return;
+    }
     await processPrompt(ctx, textForLLM, deps, []);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "unknown error"; logger.error("[Voice] Error processing voice message:", err);
