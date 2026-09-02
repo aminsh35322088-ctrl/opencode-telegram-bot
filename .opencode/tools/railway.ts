@@ -1,12 +1,19 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
-import { getActiveRailwayAccount, getRailwayToken } from "../../dist/app/services/railway-integration-service.js";
+import { pathToFileURL } from "node:url";
+
+type RailwayIntegrationStore = typeof import("../../src/app/services/railway-integration-service.js");
 
 const execFileAsync = promisify(execFile);
 const RAILWAY_BIN = "/usr/local/bin/railway";
 const MAX_OUTPUT = 16000;
 const DEFAULT_TIMEOUT_MS = 30000;
+const STORE_PATH = "/app/dist/app/services/railway-integration-service.js";
+
+async function getStore(): Promise<RailwayIntegrationStore> {
+  return import(pathToFileURL(STORE_PATH).href);
+}
 
 function clampTimeout(value?: number): number {
   return Math.max(3000, Math.min(value ?? DEFAULT_TIMEOUT_MS, 120000));
@@ -33,11 +40,12 @@ export default tool({
     build: tool.schema.boolean().optional().describe("For logs: return build logs instead of deploy logs."),
     timeoutMs: tool.schema.number().optional().describe("Command timeout, 3000-120000 ms."),
   },
-  async execute(args) {
-    const token = await getRailwayToken();
+  async execute(args, context) {
+    const store = await getStore();
+    const token = await store.getRailwayToken();
     if (!token) throw new Error("No active Railway account is configured. Add/select a Railway account in Integrations first.");
 
-    const account = await getActiveRailwayAccount();
+    const account = await store.getActiveRailwayAccount();
     const command: string[] = [];
 
     switch (args.action) {
@@ -67,7 +75,7 @@ export default tool({
 
     try {
       const { stdout, stderr } = await execFileAsync(RAILWAY_BIN, command, {
-        cwd: process.env.OPENCODE_TELEGRAM_HOME || process.cwd(),
+        cwd: context.worktree,
         timeout: clampTimeout(args.timeoutMs),
         maxBuffer: 2 * 1024 * 1024,
         env: { ...process.env, RAILWAY_TOKEN: token, RAILWAY_API_TOKEN: undefined },
