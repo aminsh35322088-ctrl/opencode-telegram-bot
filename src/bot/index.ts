@@ -48,13 +48,6 @@ async function notifyOpenCodeUpdate(bot: Bot<Context>): Promise<void> {
   } catch (error) { logger.warn("[Bot] Could not send OpenCode update notification:", error); }
 }
 
-function isGlobalPinnedStatusMessage(payload: unknown): boolean {
-  if (typeof payload !== "object" || payload === null) return false;
-  const text = Reflect.get(payload, "text");
-  if (typeof text !== "string") return false;
-  return text.includes("🧠 Context") && /(?:^|\n)Model:\s/.test(text);
-}
-
 export function createBot(): Bot<Context> {
   clearAllInteractionState("bot_startup");
   attachManager.clear("bot_startup");
@@ -80,10 +73,6 @@ export function createBot(): Bot<Context> {
   bot.api.config.use(async (prev, method, payload, signal) => {
     if (method === "getUpdates") { const now = Date.now(); logger.debug(`[Bot API] getUpdates called (${now - lastGetUpdatesTime}ms since last)`); lastGetUpdatesTime = now; return prev(method, payload, signal); }
     if (method === "sendMessage") {
-      if (isGlobalPinnedStatusMessage(payload)) {
-        logger.debug("[Bot API] Suppressed global pinned status message during multi-user testing");
-        return { ok: false, error_code: 409, description: "Global pinned status messages are disabled during multi-user testing" } as TelegramApiErrorResponse;
-      }
       logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id}`);
     }
     try { return await withTelegramRateLimitRetry(async () => { const response = await prev(method, payload, signal); if (isTelegramApiErrorResponse(response)) throw new TelegramApiResponseError(response); return response; }, { maxRetries: 5, retryTransientServerErrors: shouldRetryTelegramServerError(method), onRetry: ({ attempt, retryAfterMs, error }) => logger.warn(`[Bot API] Retryable Telegram error on ${method}, retrying in ${retryAfterMs}ms (attempt=${attempt})`, error) }); }
