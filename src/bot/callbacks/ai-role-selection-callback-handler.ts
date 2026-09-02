@@ -4,6 +4,7 @@ import { getProvidersForCapability, getProviderModelsForCapability } from "../..
 import { listImageAiProviders } from "../../app/services/image-ai-provider-service.js";
 import { getGroqSttConfig } from "../../app/services/custom-provider-service.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
+import { showModelSelectionMenu } from "../menus/model-selection-menu.js";
 
 const ROOT = "role:root";
 const ROLE_PREFIX = "role:select:";
@@ -55,8 +56,8 @@ function selectedModelLabel(role: AiRole, selected: Awaited<ReturnType<typeof ge
   return item ? ` · ${item.modelID}` : "";
 }
 
-export async function showAiRulesMenu(ctx: Context, notice?: string): Promise<void> {
-  await renderRoles(ctx, notice);
+export async function showAiRulesMenu(ctx: Context, _notice?: string): Promise<void> {
+  await showModelSelectionMenu(ctx);
 }
 
 export async function handleAiRoleCallback(ctx: Context): Promise<boolean> {

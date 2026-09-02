@@ -1,6 +1,6 @@
 import { Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
-import type { ModelInfo } from "../../app/types/model.js";
+import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getCompactOutputMode } from "../../app/stores/settings-store.js";
@@ -8,7 +8,6 @@ import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 const MAIN_BUTTONS = {
   history: "🕘 History",
   newChat: "💬 New Chat",
-  aiRules: "🧠 AI Rules",
   settings: "⚙️ Settings",
   imageAi: "🎨 Image AI",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
@@ -24,6 +23,11 @@ export interface MainKeyboardOptions {
   compactOutputMode?: boolean;
 }
 
+function getModelButtonLabel(currentModel: ModelInfo): string {
+  if (!currentModel.providerID || !currentModel.modelID) return "🧠 Model";
+  return formatModelForButton(currentModel.providerID, currentModel.modelID);
+}
+
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
   for (const label of labels) keyboard.text(label).row();
 }
@@ -32,20 +36,20 @@ function addRunningControls(keyboard: Keyboard, paused: boolean): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
 }
 
-function addIdleControls(keyboard: Keyboard, compactOutputMode: boolean): void {
+function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
-  keyboard.text(MAIN_BUTTONS.aiRules).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
+  keyboard.text(getModelButtonLabel(currentModel)).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(MAIN_BUTTONS.settings).row();
 }
 
-function addPausedControls(keyboard: Keyboard): void {
-  keyboard.text(MAIN_BUTTONS.aiRules).text(MAIN_BUTTONS.newChat).row();
+function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
+  keyboard.text(getModelButtonLabel(currentModel)).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
 }
 
-function buildMainKeyboard(_currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
+function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
   const effectivePaused = options.paused ?? isChatPaused();
 
@@ -57,9 +61,9 @@ function buildMainKeyboard(_currentModel: ModelInfo, options: MainKeyboardOption
   }
 
   if (effectivePaused) {
-    addPausedControls(keyboard);
+    addPausedControls(keyboard, currentModel);
   } else {
-    addIdleControls(keyboard, options.compactOutputMode ?? getCompactOutputMode());
+    addIdleControls(keyboard, currentModel, options.compactOutputMode ?? getCompactOutputMode());
   }
 
   return keyboard.resized().persistent();

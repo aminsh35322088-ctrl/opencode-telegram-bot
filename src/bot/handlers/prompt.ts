@@ -6,7 +6,6 @@ import { ingestSessionInfoForCache } from "../../app/services/session-cache-serv
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel, resolveCatalogModel } from "../../app/services/model-selection-service.js";
-import { getAiRoleSelection, setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -73,29 +72,6 @@ async function retireAttachmentConfirmation(ctx: Context, messageId: number | un
   await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId).catch((err) => logger.debug(`[PromptAttachment] Could not retire confirmation message ${messageId}:`, err));
 }
 
-async function resolveCodingModel(): Promise<{ providerID: string; modelID: string; variant: string } | null> {
-  const fallback = getStoredModel();
-  const rule = await getAiRoleSelection("coding");
-  const requestedProvider = rule?.providerID || fallback.providerID;
-  const requestedModel = rule?.modelID || fallback.modelID;
-  if (!requestedProvider || !requestedModel) return null;
-  let resolved = await resolveCatalogModel(requestedProvider, requestedModel);
-  if (!resolved && rule) resolved = await resolveCatalogModel(requestedProvider, requestedModel, { forceRefresh: true });
-  if (resolved) {
-    if (rule && (resolved.providerID !== rule.providerID || resolved.modelID !== rule.modelID)) {
-      await setAiRoleSelection("coding", resolved.providerID, resolved.modelID);
-      logger.warn(`[Bot] Repaired stale Coding AI Rule: ${rule.providerID}/${rule.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
-    }
-    return { providerID: resolved.providerID, modelID: resolved.modelID, variant: fallback.variant || "default" };
-  }
-  if (rule) logger.warn(`[Bot] Coding AI Rule unavailable in live OpenCode catalog: ${rule.providerID}/${rule.modelID}; falling back.`);
-  if (fallback.providerID && fallback.modelID) {
-    const fallbackResolved = await resolveCatalogModel(fallback.providerID, fallback.modelID, { forceRefresh: true });
-    if (fallbackResolved) return { providerID: fallbackResolved.providerID, modelID: fallbackResolved.modelID, variant: fallback.variant || "default" };
-  }
-  return null;
-}
-
 async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string }) {
   const first = await opencodeClient.session.promptAsync(promptOptions);
   if (!first.error || !promptOptions.model) return first;
@@ -115,13 +91,7 @@ async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; 
   return opencodeClient.session.promptAsync(retryWithoutModel);
 }
 
-export async function processUserPrompt(
-  ctx: Context,
-  text: string,
-  deps: ProcessPromptDeps,
-  fileParts: FilePartInput[] = [],
-  modelOverride?: ModelInfo,
-): Promise<boolean> {
+export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
   const currentProject = getCurrentProject();
   if (!currentProject) { await ctx.reply(t("bot.project_not_selected")); return false; }
@@ -151,9 +121,7 @@ export async function processUserPrompt(
   if (await isSessionBusy(currentSession.id, currentSession.directory)) { await ctx.reply(t("bot.session_busy")); return false; }
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const storedModel = modelOverride
-      ? { providerID: modelOverride.providerID, modelID: modelOverride.modelID, variant: modelOverride.variant || "default" }
-      : await resolveCodingModel();
+    const storedModel = modelOverride ?? getStoredModel();
     const parts: Array<TextPartInput | FilePartInput> = [];
     if (text.trim()) parts.push({ type: "text", text });
     parts.push(...fileParts);
@@ -163,16 +131,16 @@ export async function processUserPrompt(
     if (pendingAttachment) { promptAttachment.clear("consumed"); interactionManager.clear("attachment_consumed"); await retireAttachmentConfirmation(ctx, pendingAttachment.confirmationMessageId); }
     if (parts.length === 0 || parts.every((p) => p.type === "file")) if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
     const promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
-    if (storedModel) { promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID }; promptOptions.variant = storedModel.variant; }
-    const promptErrorLogContext = { sessionId: currentSession.id, telegramChatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel?.providerID || "OpenCode/default", modelId: storedModel?.modelID || "default", variant: storedModel?.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
-    logger.info(`[Bot] Dispatching prompt: session=${currentSession.id} model=${storedModel ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"} agent=${currentAgent || "default"} textLength=${text.length} files=${parts.filter((p) => p.type === "file").length}`);
+    if (storedModel.providerID && storedModel.modelID) { promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID }; promptOptions.variant = storedModel.variant; }
+    const promptErrorLogContext = { sessionId: currentSession.id, telegramChatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel.providerID || "OpenCode/default", modelId: storedModel.modelID || "default", variant: storedModel.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
+    logger.info(`[Bot] Dispatching prompt: session=${currentSession.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"} agent=${currentAgent || "default"} textLength=${text.length} files=${parts.filter((p) => p.type === "file").length}`);
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
-    assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel?.providerID, configuredModelID: storedModel?.modelID });
-    startSessionStallWatchdog({ sessionId: currentSession.id, directory: currentSession.directory, model: storedModel ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default" });
+    assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
+    startSessionStallWatchdog({ sessionId: currentSession.id, directory: currentSession.directory, model: storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default" });
     await keyboardManager.sendKeyboardUpdate(ctx.chat!.id);
     if (text.trim()) externalUserInputSuppressionManager.register(currentSession.id, text);
-    safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
+    safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
     return true;
   } catch (err) {
     if (currentSession) { foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); }
