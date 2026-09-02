@@ -87,6 +87,7 @@ import {
 import { buildBackgroundSessionOpenKeyboard } from "../menus/session-selection-menu.js";
 import { questionManager } from "../../app/managers/question-manager.js";
 import { permissionManager } from "../../app/managers/permission-manager.js";
+import { interactionEventGate } from "../../app/services/interaction-event-gate.js";
 import { showCurrentQuestion } from "../menus/question-menu.js";
 import { showPermissionRequest, syncPermissionInteractionState } from "../menus/permission-menu.js";
 import {
@@ -527,6 +528,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnPartial((sessionId, messageId, messageText) => {
+      if (interactionEventGate.isBlocked(sessionId)) {
+        logger.debug(`[Bot] Suppressing assistant partial while interaction is pending: session=${sessionId}`);
+        return;
+      }
+
       if (!this.botInstance || !this.chatIdInstance) {
         return;
       }
@@ -698,6 +704,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnRootToolUpdate((toolInfo) => {
+      if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
+        logger.debug(`[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
+        return;
+      }
+
       const currentSession = getCurrentSession();
       if (!currentSession || currentSession.id !== toolInfo.sessionId) {
         return;
@@ -761,6 +772,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnTool(async (toolInfo) => {
+      if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
+        logger.debug(`[Bot] Suppressing completed tool notification while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
+        return;
+      }
+
       if (!this.botInstance || !this.chatIdInstance) {
         logger.error("Bot or chat ID not available for sending tool notification");
         return;
@@ -833,6 +849,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnToolFile(async (fileInfo) => {
+      if (interactionEventGate.isBlocked(fileInfo.sessionId)) {
+        logger.debug(`[Bot] Suppressing tool file while interaction is pending: session=${fileInfo.sessionId}, tool=${fileInfo.tool}`);
+        return;
+      }
+
       if (!this.botInstance || !this.chatIdInstance) {
         logger.error("Bot or chat ID not available for sending file");
         return;
@@ -921,6 +942,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnPermission(async (request) => {
+      interactionEventGate.mark("permission", request.sessionID, request.id);
       const generation = permissionManager.getGeneration();
 
       if (!this.botInstance || !this.chatIdInstance) {
@@ -952,6 +974,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnPermissionReplied(async (_sessionId, requestID) => {
       const messageIds = permissionManager.resolveRequest(requestID);
+      interactionEventGate.release("permission", _sessionId, requestID);
       const interaction = interactionManager.getSnapshot();
       if (!permissionManager.isActive() || !interaction || interaction.kind === "permission") {
         syncPermissionInteractionState({ resolvedRequestID: requestID });
@@ -977,6 +1000,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnThinking(async (update) => {
+      if (interactionEventGate.isBlocked(update.sessionId)) {
+        logger.debug(`[Bot] Suppressing thinking while interaction is pending: session=${update.sessionId}`);
+        return;
+      }
+
       if (!this.botInstance || !this.chatIdInstance) {
         return;
       }
