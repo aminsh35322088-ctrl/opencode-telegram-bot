@@ -28,9 +28,9 @@ import { startSessionStallWatchdog } from "../../app/services/session-stall-watc
 
 export function clearPromptResponseMode(_sessionId: string): void {}
 let botInstance: Bot<Context> | null = null;
-let chatIdInstance: number | null = null;
+let telegramChatId: number | null = null;
 export function getPromptBotInstance(): Bot<Context> | null { return botInstance; }
-export function getPromptChatId(): number | null { return chatIdInstance; }
+export function getPromptChatId(): number | null { return telegramChatId; }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
   try {
@@ -38,12 +38,10 @@ async function isSessionBusy(sessionId: string, directory: string): Promise<bool
       logger.debug(`[Bot] Local run state says session is busy: session=${sessionId}`);
       return true;
     }
-
     if (foregroundSessionState.getBusySessions().some((session) => session.sessionId === sessionId)) {
       logger.debug(`[Bot] Foreground run state says session is busy: session=${sessionId}`);
       return true;
     }
-
     const { data, error } = await opencodeClient.session.status({ directory });
     if (error || !data) return false;
     const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
@@ -74,9 +72,9 @@ async function retireAttachmentConfirmation(ctx: Context, messageId: number | un
   await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId).catch((err) => logger.debug(`[PromptAttachment] Could not retire confirmation message ${messageId}:`, err));
 }
 
-async function resolveCodingModel(chatId?: number): Promise<{ providerID: string; modelID: string; variant: string } | null> {
+async function resolveCodingModel(): Promise<{ providerID: string; modelID: string; variant: string } | null> {
   const fallback = getStoredModel();
-  const rule = await getAiRoleSelection("coding", chatId);
+  const rule = await getAiRoleSelection("coding");
   const requestedProvider = rule?.providerID || fallback.providerID;
   const requestedModel = rule?.modelID || fallback.modelID;
   if (!requestedProvider || !requestedModel) return null;
@@ -84,12 +82,12 @@ async function resolveCodingModel(chatId?: number): Promise<{ providerID: string
   if (!resolved && rule) resolved = await resolveCatalogModel(requestedProvider, requestedModel, { forceRefresh: true });
   if (resolved) {
     if (rule && (resolved.providerID !== rule.providerID || resolved.modelID !== rule.modelID)) {
-      await setAiRoleSelection("coding", resolved.providerID, resolved.modelID, chatId);
-      logger.warn(`[Bot] Repaired stale Coding AI Rule for chat=${chatId ?? "legacy"}: ${rule.providerID}/${rule.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
+      await setAiRoleSelection("coding", resolved.providerID, resolved.modelID);
+      logger.warn(`[Bot] Repaired stale Coding AI Rule: ${rule.providerID}/${rule.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
     }
     return { providerID: resolved.providerID, modelID: resolved.modelID, variant: fallback.variant || "default" };
   }
-  if (rule) logger.warn(`[Bot] Coding AI Rule unavailable in live OpenCode catalog for chat=${chatId ?? "legacy"}: ${rule.providerID}/${rule.modelID}; falling back.`);
+  if (rule) logger.warn(`[Bot] Coding AI Rule unavailable in live OpenCode catalog: ${rule.providerID}/${rule.modelID}; falling back.`);
   if (fallback.providerID && fallback.modelID) {
     const fallbackResolved = await resolveCatalogModel(fallback.providerID, fallback.modelID, { forceRefresh: true });
     if (fallbackResolved) return { providerID: fallbackResolved.providerID, modelID: fallbackResolved.modelID, variant: fallback.variant || "default" };
@@ -120,7 +118,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
   const { bot, ensureEventSubscription } = deps;
   const currentProject = getCurrentProject();
   if (!currentProject) { await ctx.reply(t("bot.project_not_selected")); return false; }
-  botInstance = bot; chatIdInstance = ctx.chat!.id;
+  botInstance = bot; telegramChatId = ctx.chat!.id;
   let currentSession = getCurrentSession();
   let createdNewSession = false;
   if (currentSession && currentSession.directory !== currentProject.worktree) { await resetMismatchedSessionContext(); await ctx.reply(t("bot.session_reset_project_mismatch")); return false; }
@@ -146,7 +144,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
   if (await isSessionBusy(currentSession.id, currentSession.directory)) { await ctx.reply(t("bot.session_busy")); return false; }
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const storedModel = await resolveCodingModel(ctx.chat?.id);
+    const storedModel = await resolveCodingModel();
     const parts: Array<TextPartInput | FilePartInput> = [];
     if (text.trim()) parts.push({ type: "text", text });
     parts.push(...fileParts);
@@ -157,7 +155,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     if (parts.length === 0 || parts.every((p) => p.type === "file")) if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
     const promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
     if (storedModel) { promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID }; promptOptions.variant = storedModel.variant; }
-    const promptErrorLogContext = { sessionId: currentSession.id, chatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel?.providerID || "OpenCode/default", modelId: storedModel?.modelID || "default", variant: storedModel?.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
+    const promptErrorLogContext = { sessionId: currentSession.id, telegramChatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel?.providerID || "OpenCode/default", modelId: storedModel?.modelID || "default", variant: storedModel?.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel?.providerID, configuredModelID: storedModel?.modelID });
