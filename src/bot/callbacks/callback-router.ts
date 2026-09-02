@@ -14,7 +14,7 @@ import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
-import { handleRenameCancel } from "./rename-callback-handler.js";
+import { handleRenameCancel } from "./rename-cancel-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
@@ -66,8 +66,8 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
     if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id);
-    if (data === "provider:gemini:configure" && ctx.chat?.id) markGeminiWizard(ctx.chat.id);
-    if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") { if (ctx.chat?.id) clearGeminiWizard(ctx.chat.id); }
+    if (data === "provider:gemini:configure") markGeminiWizard();
+    if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
     let errorScope: InteractionErrorScope = "interaction";
     try {
       if (await handleBackgroundSessionOpen(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })) return;
@@ -83,6 +83,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     } catch (err) {
       logger.error("[Bot] Error handling callback:", err);
       clearInteractionErrorState(errorScope, "callback_handler_error");
+      clearGeminiWizard();
       await ctx.answerCallbackQuery({ text: t("callback.processing_error") }).catch(() => {});
     }
   });
