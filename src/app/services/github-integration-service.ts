@@ -146,7 +146,7 @@ export async function addGithubAccount(name: string, tokenValue: string, usernam
   const account: GithubAccount = {
     id,
     name: cleanName,
-    username: validation.username ?? username?.trim() || undefined,
+    username: validation.username ?? username?.trim() ?? undefined,
     tokenFile: `${id}.token`,
     createdAt: new Date().toISOString(),
   };
@@ -215,7 +215,17 @@ export async function saveGithubToken(value: string): Promise<void> {
     return;
   }
 
-  await addGithubAccount("GitHub", token, validation.username);
+  const account: GithubAccount = {
+    id: "github",
+    name: "GitHub",
+    username: validation.username,
+    tokenFile: "github.token",
+    createdAt: new Date().toISOString(),
+  };
+  await fs.mkdir(getGithubDir(), { recursive: true, mode: 0o700 });
+  await fs.writeFile(getAccountTokenPath(account), `${token}\n`, { mode: 0o600 });
+  await writeIndex({ activeId: account.id, accounts: [account] });
+  await applyActiveToken({ activeId: account.id, accounts: [account] });
 }
 
 export async function clearGithubToken(): Promise<void> {
@@ -240,7 +250,18 @@ export async function initializeGithubTokenFromEnvironment(): Promise<boolean> {
   const candidate = legacy || envToken!;
   const validation = await validateGithubToken(candidate);
   if (!validation.valid) return false;
-  await addGithubAccount("GitHub", candidate, validation.username);
+
+  const account: GithubAccount = {
+    id: "github",
+    name: "GitHub",
+    username: validation.username,
+    tokenFile: "github.token",
+    createdAt: new Date().toISOString(),
+  };
+  await fs.mkdir(getGithubDir(), { recursive: true, mode: 0o700 });
+  await fs.writeFile(getAccountTokenPath(account), `${candidate}\n`, { mode: 0o600 });
+  await writeIndex({ activeId: account.id, accounts: [account] });
+  await applyActiveToken({ activeId: account.id, accounts: [account] });
   if (envToken) delete process.env.GITHUB_TOKEN;
   return true;
 }
