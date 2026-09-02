@@ -90,7 +90,7 @@ async function requestAbort(sessionId: string, directory: string): Promise<boole
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ABORT_REQUEST_TIMEOUT_MS);
   try {
-    const { data, error } = await opencodeClient.session.abort({ sessionID, directory }, { signal: controller.signal });
+    const { data, error } = await opencodeClient.session.abort({ sessionID: sessionId, directory }, { signal: controller.signal });
     logger.warn(`[StallWatchdog] Abort result: session=${sessionId}, result=${String(data)}, error=${error ? "yes" : "no"}`);
     return !error && data === true;
   } catch (error) {
