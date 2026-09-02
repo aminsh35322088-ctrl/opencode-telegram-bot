@@ -91,12 +91,12 @@ async function upsertState(chatId: number): Promise<ImageConversationState> {
     return existing;
   }
   const state: ImageConversationState = { turns: [], expiresAt: Date.now() + CONVERSATION_TTL_MS };
-  setImageConversationState(chatId, serializeState(state));
+  await setImageConversationState(chatId, serializeState(state));
   return state;
 }
 
 async function saveState(chatId: number, state: ImageConversationState): Promise<void> {
-  setImageConversationState(chatId, serializeState(state));
+  await setImageConversationState(chatId, serializeState(state));
 }
 
 function extractText(payload: unknown): string {
@@ -179,13 +179,13 @@ export async function isImageConversationActive(chatId: number): Promise<boolean
 export async function activateImageConversation(chatId: number): Promise<void> {
   await ensureStoreLoaded();
   const state: ImageConversationState = { turns: [], expiresAt: Date.now() + CONVERSATION_TTL_MS };
-  setImageConversationState(chatId, serializeState(state));
+  await setImageConversationState(chatId, serializeState(state));
   logger.info(`[ImageConversation] activated chatId=${chatId}`);
 }
 
 export async function clearImageConversation(chatId: number): Promise<void> {
   await ensureStoreLoaded();
-  deleteImageConversationState(chatId);
+  await deleteImageConversationState(chatId);
   logger.info(`[ImageConversation] cleared chatId=${chatId}`);
 }
 
