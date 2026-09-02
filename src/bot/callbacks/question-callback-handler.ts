@@ -6,6 +6,9 @@ import {
   syncQuestionInteractionState,
   updateQuestionMessage,
 } from "../menus/question-menu.js";
+import { opencodeClient } from "../../opencode/client.js";
+import { getCurrentProject } from "../../app/stores/settings-store.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { alert, cancelPrompt } from "./feedback.js";
@@ -23,8 +26,6 @@ export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
   logger.debug(`[QuestionHandler] Received callback: ${data}`);
 
   const chatId = ctx.chat?.id;
-  // The first callback establishes the owning chat. Afterwards, callbacks from
-  // other chats can never consume this question's state.
   if (questionManager.isActive() && questionManager.getChatId() === null && chatId !== undefined) {
     questionManager.setChatId(chatId);
   }
@@ -109,7 +110,32 @@ async function handleCustomAnswer(ctx: Context, questionIndex: number): Promise<
   await ctx.answerCallbackQuery({ text: t("question.enter_custom_callback"), show_alert: true });
 }
 
+async function rejectPendingQuestion(reason: string): Promise<void> {
+  const requestID = questionManager.getRequestID();
+  if (!requestID) return;
+
+  const currentProject = getCurrentProject();
+  const currentSession = getCurrentSession();
+  const directory = currentSession?.directory ?? currentProject?.worktree;
+  if (!directory) {
+    logger.warn(`[QuestionHandler] Cannot reject question ${requestID}: no active directory (${reason})`);
+    return;
+  }
+
+  try {
+    const response = await opencodeClient.question.reject({ requestID, directory });
+    if (response.error) {
+      logger.warn(`[QuestionHandler] Failed to reject question ${requestID}:`, response.error);
+      return;
+    }
+    logger.info(`[QuestionHandler] Rejected pending question: requestID=${requestID}, reason=${reason}`);
+  } catch (error) {
+    logger.warn(`[QuestionHandler] Exception rejecting question ${requestID}:`, error);
+  }
+}
+
 async function handleCancelPoll(ctx: Context): Promise<void> {
+  await rejectPendingQuestion("user_cancelled");
   questionManager.cancel();
   clearQuestionInteraction("question_cancelled");
   await cancelPrompt(ctx, "question.cancelled");
