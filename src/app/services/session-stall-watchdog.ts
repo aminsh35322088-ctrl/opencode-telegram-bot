@@ -20,15 +20,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function hasRunningToolPart(messages: unknown[]): boolean {
-  return messages.some((message) => {
-    const record = asRecord(message);
-    const parts = record?.parts;
-    if (!Array.isArray(parts)) return false;
-    return parts.some((part) => {
-      const partRecord = asRecord(part);
-      const state = asRecord(partRecord?.state);
-      return state?.status === "running";
-    });
+  const latest = messages.at(-1);
+  const record = asRecord(latest);
+  const parts = record?.parts;
+  if (!Array.isArray(parts)) return false;
+
+  return parts.some((part) => {
+    const partRecord = asRecord(part);
+    const state = asRecord(partRecord?.state);
+    return state?.status === "running";
   });
 }
 
@@ -41,10 +41,12 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
       ? record.parts.map((part) => {
           const partRecord = asRecord(part);
           const state = asRecord(partRecord?.state);
+          const text = typeof partRecord?.text === "string" ? partRecord.text : undefined;
           return {
             id: partRecord?.id,
             type: partRecord?.type,
-            textLength: typeof partRecord?.text === "string" ? partRecord.text.length : undefined,
+            textLength: text?.length,
+            textTail: text?.slice(-96),
             stateStatus: typeof state?.status === "string" ? state.status : undefined,
             title: typeof state?.title === "string" ? state.title : undefined,
           };
@@ -140,8 +142,8 @@ export function startSessionStallWatchdog(options: { sessionId: string; director
         const messages = await getMessages(options.sessionId, options.directory);
         if (!messages) continue;
 
-        // A running tool is genuine work. Do not kill long installs, builds, tests,
-        // or other commands merely because they produce no new assistant text.
+        // A currently-running tool is genuine work. Historical tool parts are
+        // ignored so a stale `running` record cannot defeat recovery forever.
         if (hasRunningToolPart(messages)) {
           lastMeaningfulProgressAt = Date.now();
           continue;
