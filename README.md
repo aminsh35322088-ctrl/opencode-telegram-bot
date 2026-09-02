@@ -19,6 +19,137 @@ Railway Volume
    └── /data
 ```
 
+## Project Architecture Roadmap
+
+The project is evolving toward a **single-deployment, project-centric coding workspace**. One Railway deployment represents one owner's workspace; Telegram chats are work threads inside that project rather than separate user-isolation domains. The Telegram `chatId` remains a transport/routing identifier, but it is not used as the ownership or persistent-state boundary.
+
+This roadmap is intentionally implemented in small, reviewable PRs. Existing sessions, memory, provider configuration, and persistent `/data` state must be preserved throughout the migration.
+
+### Phase 0 — Multi-User Purge
+
+Remove remaining multi-user assumptions from the core architecture.
+
+- Keep exactly one configured Telegram owner per deployment.
+- Remove per-user/per-chat state isolation where it is not required for Telegram transport.
+- Keep `chatId` only where Telegram routing/callback semantics require it.
+- Remove legacy multi-user compatibility and stale state schemas safely.
+- Preserve existing persistent data and migrate legacy singleton-compatible state where needed.
+
+**Exit condition:** core services no longer model Telegram chats/users as separate application owners.
+
+### Phase 1 — Project Architecture
+
+Make the project/workspace the primary application boundary.
+
+- Define a project as the repository/workspace being developed.
+- Keep all chats for a project connected to the same Project Brain.
+- Keep projects isolated from one another.
+- Treat chats as focused work threads, conceptually similar to branches/PRs but not actual Git branches.
+- Establish clear ownership of sessions, memory, files, tools, and runtime state.
+
+**Exit condition:** the codebase has a clear project → chats → sessions relationship without reintroducing multi-user isolation.
+
+### Phase 2 — Project Brain
+
+Build persistent project-level memory independent of the selected AI model.
+
+- Store architecture, decisions, capabilities, constraints, known bugs, and fixes.
+- Continuously accumulate useful project knowledge.
+- Make memory available across all chats belonging to the project.
+- Retrieve only relevant, bounded context for each task.
+- Keep memory separate from raw OpenCode session history.
+
+**Exit condition:** switching chats or models does not lose project knowledge, while prompts remain bounded.
+
+### Phase 3 — Project / Chat Management
+
+Add explicit project and work-thread management to the Telegram UI.
+
+- Create/select/rename projects.
+- Create and resume focused chats.
+- Show recent project activity and sessions compactly.
+- Keep navigation inside editable Telegram menus where practical.
+- Preserve existing sessions during migration.
+
+**Exit condition:** users can understand and control project/chat structure without exposing implementation details.
+
+### Phase 4 — Context Engine
+
+Connect project memory, chat history, repository state, and current task into a bounded context pipeline.
+
+- Determine what project knowledge is relevant to the current request.
+- Combine relevant memory with the active session context.
+- Avoid dumping the entire project history into every prompt.
+- Make context decisions observable and debuggable.
+
+**Exit condition:** coding requests receive the right project context with predictable token usage.
+
+### Phase 5 — AI / Tools Architecture
+
+Unify model and tool execution around the project-centric architecture.
+
+- Keep coding AI as the default execution path for coding/tool requests.
+- Keep Image AI an explicit mode rather than keyword-driven automatic routing.
+- Route voice through STT and then into the currently active mode/model.
+- Keep tool capabilities such as diagnostics, browser, files, Railway, GitHub, testing, and downloads composable.
+- Keep provider/model selection independent from project memory.
+
+**Exit condition:** AI modes and tools are explicit, composable, and do not accidentally steal unrelated prompts.
+
+### Phase 6 — Reliability
+
+Harden long-running agent execution and recovery.
+
+- Add bounded timeouts and stall detection.
+- Ensure busy/paused/resumed states recover cleanly.
+- Keep Telegram keyboards synchronized after errors/timeouts.
+- Make model/provider recovery deterministic.
+- Improve structured logging and failure diagnosis.
+- Test realistic multi-tool and long-running sessions.
+
+**Exit condition:** common failures recover without leaving the bot in a stuck or inconsistent state.
+
+### Phase 7 — Railway Production
+
+Validate the complete architecture under the real Railway deployment.
+
+- Preserve `/data` across deploys and restarts.
+- Verify OpenCode startup/recovery.
+- Verify model catalog/provider health.
+- Verify Telegram routing and persistent sessions.
+- Inspect build and runtime logs after every production change.
+- Iterate through GitHub PR fixes until Railway logs are clean and stable.
+
+**Exit condition:** the production deployment is healthy, persistent, observable, and ready for continued feature development.
+
+### Development rule
+
+For this roadmap, architectural changes should follow:
+
+```text
+Audit main
+   ↓
+Design exact change
+   ↓
+Feature/fix branch
+   ↓
+Implementation + tests/typecheck/build
+   ↓
+Pull Request → main
+   ↓
+Review
+   ↓
+Merge
+   ↓
+Railway deploy
+   ↓
+Runtime/build log verification
+   ↓
+Fix again if needed
+```
+
+Do not treat a PR as complete merely because it compiles. Production behavior and Railway logs are part of the acceptance criteria.
+
 ## Railway deployment
 
 Deploy the `main` branch of:
