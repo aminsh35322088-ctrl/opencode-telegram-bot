@@ -7,11 +7,6 @@ import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 
-// Keep tool execution below OpenCode's short observation window so the tool
-// returns a structured timeout result instead of leaving the model waiting
-// until the observation expires.
-const TOOL_TIMEOUT_MS = 4 * 60 * 1000;
-
 type Mode = "test" | "build" | "lint" | "typecheck";
 
 function managerFor(worktree: string, packageJson: Record<string, unknown>): { bin: string; prefix: string[] } {
@@ -36,8 +31,12 @@ function fsSyncExists(file: string): boolean {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
+}
+
 export default tool({
-  description: "Run the project's test, build, lint, or typecheck script with a concise structured result. Use after code changes to verify the work.",
+  description: "Run the project's test, build, lint, or typecheck script. Commands may run as long as needed; use Pause/Abort to cancel them.",
   args: {
     mode: tool.schema.enum(["test", "build", "lint", "typecheck"]).describe("Validation task to run."),
     filter: tool.schema.string().optional().describe("Optional test file, test name, or script argument."),
@@ -56,14 +55,13 @@ export default tool({
       const { stdout, stderr } = await execFileAsync(manager.bin, command, {
         cwd: context.worktree,
         maxBuffer: 4 * 1024 * 1024,
-        timeout: TOOL_TIMEOUT_MS,
         env: { ...process.env, CI: process.env.CI || "1" },
+        signal: context.abort,
       });
       return `PASS: ${manager.bin} ${command.join(" ")}\n${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.slice(-12000);
     } catch (error) {
-      const e = error as { code?: number | string; stdout?: string; stderr?: string; message?: string; killed?: boolean };
-      const timedOut = e.killed || e.code === "ETIMEDOUT";
-      const status = timedOut ? `TIMEOUT after ${TOOL_TIMEOUT_MS / 60000} minutes` : `FAIL (${e.code ?? "unknown"})`;
+      const e = error as { code?: number | string; stdout?: string; stderr?: string; message?: string };
+      const status = isAbortError(error) || context.abort.aborted ? "ABORTED" : `FAIL (${e.code ?? "unknown"})`;
       return `${status}: ${manager.bin} ${command.join(" ")}\n${e.stdout ?? ""}\n${e.stderr ?? e.message ?? ""}`.slice(-12000);
     }
   },
