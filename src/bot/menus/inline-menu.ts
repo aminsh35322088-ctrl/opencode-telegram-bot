@@ -56,7 +56,7 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
 
   const chatId = getChatId(ctx);
   if (chatId !== null) activeInlineMenus.set(chatId, { menuKind: options.menuKind, messageId });
-  interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { ...options.metadata, menuKind: options.menuKind, messageId } });
+  interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { ...options.metadata, menuKind: options.menuKind, messageId, ...(chatId !== null ? { chatId } : {}) } });
   logger.debug(`[InlineMenu] Opened/updated menu: kind=${options.menuKind}, messageId=${messageId}, chatId=${chatId ?? "none"}`);
   return messageId;
 }
@@ -97,5 +97,8 @@ export function clearActiveInlineMenu(reason: string, chatId?: number): void {
   if (typeof chatId === "number") activeInlineMenus.delete(chatId);
   else activeInlineMenus.clear();
   const state = interactionManager.getSnapshot();
-  if (state?.kind === "inline") interactionManager.clear(reason);
+  if (state?.kind !== "inline") return;
+  const stateChatId = state.metadata.chatId;
+  if (typeof chatId === "number" && typeof stateChatId === "number" && stateChatId !== chatId) return;
+  interactionManager.clear(reason);
 }
