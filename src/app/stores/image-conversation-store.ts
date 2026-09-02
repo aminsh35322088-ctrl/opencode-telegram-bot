@@ -42,7 +42,11 @@ function isFileNotFound(error: unknown): boolean {
 async function readStoreFileAt(filePath: string): Promise<ImageConversationStore> {
   const fs = await import("fs/promises");
   const content = await fs.readFile(filePath, "utf-8");
-  return JSON.parse(content) as ImageConversationStore;
+  const parsed = JSON.parse(content) as Partial<ImageConversationStore>;
+  if (!parsed || typeof parsed !== "object" || !parsed.conversations || typeof parsed.conversations !== "object") {
+    throw new Error(`Invalid image conversation store format: ${filePath}`);
+  }
+  return { conversations: parsed.conversations as Record<string, SerializedImageConversationState> };
 }
 
 async function readStoreFile(): Promise<ImageConversationStore> {
@@ -86,7 +90,7 @@ async function writeStoreFileAtomically(store: ImageConversationStore): Promise<
   await fs.mkdir(path.dirname(storeFilePath), { recursive: true });
 
   try {
-    await fs.writeFile(tempFilePath, JSON.stringify(store, null, 2));
+    await fs.writeFile(tempFilePath, JSON.stringify(store, null, 2), { mode: 0o600 });
 
     if (!skipNextBackupRotation) {
       try {
@@ -110,15 +114,8 @@ let storeWriteQueue: Promise<void> = Promise.resolve();
 
 function writeStoreFile(store: ImageConversationStore): Promise<void> {
   storeWriteQueue = storeWriteQueue
-    .catch(() => {})
-    .then(async () => {
-      try {
-        await writeStoreFileAtomically(store);
-      } catch (err) {
-        logger.error("[ImageConversationStore] Error writing store file:", err);
-      }
-    });
-
+    .catch(() => undefined)
+    .then(() => writeStoreFileAtomically(store));
   return storeWriteQueue;
 }
 
@@ -141,7 +138,9 @@ export function getImageConversationState(
   if (!state) return undefined;
   if (state.expiresAt <= Date.now()) {
     delete currentStore.conversations[key];
-    void writeStoreFile(currentStore);
+    void writeStoreFile(currentStore).catch((error) => {
+      logger.error(`[ImageConversationStore] Failed to persist expired conversation cleanup for chatId=${chatId}:`, error);
+    });
     return undefined;
   }
   return state;
@@ -150,17 +149,17 @@ export function getImageConversationState(
 export function setImageConversationState(
   chatId: number,
   state: SerializedImageConversationState,
-): void {
+): Promise<void> {
   const key = String(chatId);
   currentStore.conversations[key] = { ...state, updatedAt: Date.now() };
-  void writeStoreFile(currentStore);
+  return writeStoreFile(currentStore);
 }
 
-export function deleteImageConversationState(chatId: number): void {
+export function deleteImageConversationState(chatId: number): Promise<void> {
   const key = String(chatId);
   delete currentStore.conversations[key];
-  void writeStoreFile(currentStore);
   logger.info(`[ImageConversationStore] Deleted conversation for chatId=${chatId}`);
+  return writeStoreFile(currentStore);
 }
 
 export function listImageConversationChatIds(): number[] {
