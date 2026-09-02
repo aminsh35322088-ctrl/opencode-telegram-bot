@@ -84,13 +84,13 @@ class KeyboardManager {
     });
   }
 
-  public async sendKeyboardUpdate(chatId?: number): Promise<void> {
+  public async sendKeyboardUpdate(chatId?: number, force = false): Promise<void> {
     if (!this.api) return;
     const targetChatId = chatId ?? this.chatId;
     if (!targetChatId) return;
 
     const now = Date.now();
-    if (now - this.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) return;
+    if (!force && now - this.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTime = now;
 
     try {
