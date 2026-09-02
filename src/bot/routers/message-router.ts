@@ -93,11 +93,13 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   if (!rawText || !chatId) return false;
   const text = normalizeControlText(rawText);
-  if (text === normalizeControlText(CONTROL_TEXT.pause)) { logger.info(`[Bot] Control button received: Pause chatId=${chatId}`); await pauseCurrentChat(ctx); return true; }
-  if (text === normalizeControlText(CONTROL_TEXT.resume)) { logger.info(`[Bot] Control button received: Resume chatId=${chatId}`); if (botInstance && currentEnsureEventSubscription) await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription }); return true; }
-  if (text === normalizeControlText(CONTROL_TEXT.abort)) { logger.info(`[Bot] Control button received: Abort chatId=${chatId}`); await abortCurrentOperation(ctx); return true; }
+  if (text === normalizeControlText(CONTROL_TEXT.pause)) { logger.info(`[Bot] Control button received: Pause chatId=${chatId}`); clearImageMode(); pendingImage = null; await pauseCurrentChat(ctx); return true; }
+  if (text === normalizeControlText(CONTROL_TEXT.resume)) { logger.info(`[Bot] Control button received: Resume chatId=${chatId}`); clearImageMode(); pendingImage = null; if (botInstance && currentEnsureEventSubscription) await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription }); return true; }
+  if (text === normalizeControlText(CONTROL_TEXT.abort)) { logger.info(`[Bot] Control button received: Abort chatId=${chatId}`); clearImageMode(); pendingImage = null; await abortCurrentOperation(ctx); return true; }
   if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
     logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`);
+    clearImageMode();
+    pendingImage = null;
     if (isProviderWizardActive()) { clearProviderWizard(); clearIntegrationWizard(); await providersCommand(ctx as never); return true; }
     if (isIntegrationWizardActive()) { clearIntegrationWizard(); clearProviderWizard(); await integrationsCommand(ctx as never); return true; }
   }
@@ -107,54 +109,44 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
     await ctx.reply("🎨 Image AI mode enabled. Send a photo to edit it, or send a text/voice prompt to generate an image. This applies only to the next image task.");
     return true;
   }
-  if (text === normalizeControlText(MAIN_BUTTONS.aiRules)) { if (await blockMenuWhileInteractionActive(ctx)) return true; await showAiRulesMenu(ctx); return true; }
+  if (text === normalizeControlText(MAIN_BUTTONS.aiRules)) { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return true; await showAiRulesMenu(ctx); return true; }
   return false;
 }
 async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> { if (assistantRunState.hasActiveRuns()) return true; const activeInteraction = interactionManager.getSnapshot(); if (!activeInteraction) return false; if (activeInteraction.kind === "inline") { await closeActiveInlineMenu(ctx, "reply-keyboard-navigation"); return false; } logger.debug(`[Bot] Blocking menu open while interaction active: kind=${activeInteraction.kind}, expectedInput=${activeInteraction.expectedInput}`); await ctx.reply(t("interaction.blocked.finish_current")); return true; }
-async function handleCompactModeButton(ctx: Context): Promise<boolean> { if (ctx.message?.text !== MAIN_BUTTONS.compact(getCompactOutputMode())) return false; if (await blockMenuWhileInteractionActive(ctx)) return true; const enabled = !getCompactOutputMode(); setCompactOutputMode(enabled); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {}); return true; }
+async function handleCompactModeButton(ctx: Context): Promise<boolean> { if (ctx.message?.text !== MAIN_BUTTONS.compact(getCompactOutputMode())) return false; clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return true; const enabled = !getCompactOutputMode(); setCompactOutputMode(enabled); const keyboard = keyboardManager.getKeyboard(); await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {}); return true; }
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
   botInstance = bot; currentEnsureEventSubscription = deps.ensureEventSubscription;
   bot.on("message", async (ctx, next) => { if (ctx.chat?.id) { agentArtifactDeliveryService.setChatId(ctx.chat.id); deps.setTelegramContext(bot, ctx.chat.id); } await next(); });
   bot.on("message:text", async (ctx, next) => { if (await handlePriorityControlButton(ctx)) return; await next(); });
   bot.on("message:text", unknownCommandMiddleware);
   bot.hears(/^❌ Cancel$/, async (ctx) => { if (isProviderWizardActive()) { clearProviderWizard(); clearIntegrationWizard(); await providersCommand(ctx as never); return; } if (isIntegrationWizardActive()) { clearIntegrationWizard(); clearProviderWizard(); await integrationsCommand(ctx as never); return; } });
-  bot.hears(/^⚙️ Settings$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await settingsCommand(ctx as never); });
-  bot.hears(/^🕘 History$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await sessionsCommand(ctx as never); });
-  bot.hears(/^💬 New Chat$/, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
+  bot.hears(/^⚙️ Settings$/, async (ctx) => { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await settingsCommand(ctx as never); });
+  bot.hears(/^🕘 History$/, async (ctx) => { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await sessionsCommand(ctx as never); });
+  bot.hears(/^💬 New Chat$/, async (ctx) => { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.hears(/^📦 Compact: (?:ON|OFF)$/, handleCompactModeButton);
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; const keyboard = keyboardManager.getKeyboard(); if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
-  bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
-  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAiRulesMenu(ctx); } catch (err) { logger.error("[Bot] Error showing models menu:", err); await ctx.reply(t("error.load_models")); } });
-  bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
-  bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showVariantSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing variants menu:", err); await ctx.reply(t("error.load_variants")); } });
+  bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
+  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await showAiRulesMenu(ctx); } catch (err) { logger.error("[Bot] Error showing models menu:", err); await ctx.reply(t("error.load_models")); } });
+  bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { try { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
+  bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => { try { clearImageMode(); pendingImage = null; if (await blockMenuWhileInteractionActive(ctx)) return; await showVariantSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing variants menu:", err); await ctx.reply(t("error.load_variants")); } });
   bot.on("message:text", async (ctx, next) => { const text = ctx.message?.text; if (text) logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`); await next(); });
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
   bot.on("message:voice", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
   bot.on("message:audio", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
   bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
   bot.on("message:photo", async (ctx) => {
-    deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id);
-    const caption = ctx.message.caption?.trim() ?? "";
+    deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); const caption = ctx.message.caption?.trim() ?? "";
     if (/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) { await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim()); return; }
-    if (isImageModeActive()) {
-      const source = await downloadPhoto(ctx);
-      rememberPendingImage({ ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS });
-      if (caption) {
-        await handleImageModeText(ctx, caption);
-      } else {
-        await ctx.reply("🖼️ Photo received. Now send the edit instruction as text or voice.");
-      }
-      return;
-    }
+    if (isImageModeActive()) { const source = await downloadPhoto(ctx); rememberPendingImage({ ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS }); if (caption) await handleImageModeText(ctx, caption); else await ctx.reply("🖼️ Photo received. Now send the edit instruction as text or voice."); return; }
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
   bot.on("message:document", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.on("message:text", async (ctx) => {
     const text = ctx.message?.text?.trim();
     if (!text) return;
-    deps.setTelegramContext(bot, ctx.chat.id);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+    deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id);
     if (text.startsWith("/")) return;
+    // Reply-keyboard labels are UI events, never user prompts. This guard must run before Image Mode.
     if (REPLY_KEYBOARD_TEXT.has(text) || /^📦 Compact: (?:ON|OFF)$/.test(text)) return;
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
