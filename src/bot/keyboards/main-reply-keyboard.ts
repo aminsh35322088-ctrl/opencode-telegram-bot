@@ -10,7 +10,7 @@ const MAIN_BUTTONS = {
   newChat: "💬 New Chat",
   aiRules: "🧠 AI Rules",
   settings: "⚙️ Settings",
-  editImage: "🎨 Edit Image",
+  imageAi: "🎨 Image AI",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
   pause: "⏸️ Pause",
   resume: "▶️ Resume",
@@ -35,13 +35,13 @@ function addRunningControls(keyboard: Keyboard, paused: boolean): void {
 function addIdleControls(keyboard: Keyboard, compactOutputMode: boolean): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.aiRules).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
-  keyboard.text(MAIN_BUTTONS.editImage).row();
+  keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(MAIN_BUTTONS.settings).row();
 }
 
 function addPausedControls(keyboard: Keyboard): void {
   keyboard.text(MAIN_BUTTONS.aiRules).text(MAIN_BUTTONS.newChat).row();
-  keyboard.text(MAIN_BUTTONS.editImage).row();
+  keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
 }
 
