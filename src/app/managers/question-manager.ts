@@ -38,7 +38,7 @@ class QuestionManager {
 
   setChatId(chatId: number): void { this.state.chatId = chatId; }
   getChatId(): number | null { return this.state.chatId; }
-  isActiveForChat(chatId: number | undefined): boolean { return this.state.isActive && chatId !== undefined && this.state.chatId === chatId; }
+  isActiveForChat(chatId: number | undefined): boolean { return this.state.isActive && chatId !== undefined && (this.state.chatId === null || this.state.chatId === chatId); }
 
   getRequestID(): string | null { return this.state.requestID; }
   getCurrentQuestion(): Question | null { return this.state.questions[this.state.currentIndex] ?? null; }
