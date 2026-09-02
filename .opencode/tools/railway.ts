@@ -70,8 +70,8 @@ function stringifyResult(value: unknown): string {
 }
 
 export default tool({
-  description: "Railway operations tool. Use this tool for Railway status, logs, variables, authentication, and deployments instead of running the Railway CLI through the shell. Prefer explicit project/environment/service when targeting a resource. Each call performs exactly one Railway operation and returns structured success or failure data."
-  ,args: {
+  description: "Railway operations tool. Use this tool for Railway status, logs, variables, authentication, and deployments instead of running the Railway CLI through the shell. Prefer explicit project/environment/service when targeting a resource. Each call performs exactly one Railway operation and returns structured success or failure data.",
+  args: {
     action: tool.schema.enum(["whoami", "status", "logs", "variables", "deploy"]).describe("One Railway operation: whoami=verify account auth; status=inspect project/services; logs=read deploy or build logs; variables=list service variables; deploy=trigger railway up."),
     project: tool.schema.string().optional().describe("Railway project name or ID. Required for unlinked operations when the selected credential is project-scoped; omit only when the CLI can safely infer the target."),
     environment: tool.schema.string().optional().describe("Railway environment name or ID. Use with project for deterministic targeting."),
@@ -107,8 +107,6 @@ export default tool({
         command.push("whoami", "--json");
         break;
       case "status":
-        // Railway's documented status command already returns the full linked
-        // environment overview. Explicit scope flags make it independent of cwd.
         command.push("status", "--json");
         addScope(command, project, environment, args.service);
         break;
@@ -135,7 +133,7 @@ export default tool({
     else railwayEnv.RAILWAY_API_TOKEN = token;
 
     const startedAt = Date.now();
-    logger.info?.(`[RailwayTool] start action=${args.action} account=${account?.name ?? "Unknown"} tokenType=${tokenType ?? "unknown"} project=${project ?? "-"} environment=${environment ?? "-"} service=${args.service?.trim() ?? "-"}`);
+    console.info(`[RailwayTool] start action=${args.action} account=${account?.name ?? "Unknown"} tokenType=${tokenType ?? "unknown"} project=${project ?? "-"} environment=${environment ?? "-"} service=${args.service?.trim() ?? "-"}`);
 
     try {
       const { stdout, stderr } = await execFileAsync(RAILWAY_BIN, command, {
@@ -145,40 +143,17 @@ export default tool({
         env: railwayEnv,
       });
       const output = `${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.trim();
-      logger.info?.(`[RailwayTool] success action=${args.action} durationMs=${Date.now() - startedAt}`);
-      return stringifyResult({
-        ok: true,
-        account: account?.name ?? "Unknown",
-        tokenType: tokenType ?? "unknown",
-        project: project ?? null,
-        environment: environment ?? null,
-        service: args.service?.trim() ?? null,
-        action: args.action,
-        command: `railway ${command.join(" ")}`,
-        durationMs: Date.now() - startedAt,
-        output: redact(output, token).slice(-MAX_OUTPUT),
-      });
+      const durationMs = Date.now() - startedAt;
+      console.info(`[RailwayTool] success action=${args.action} durationMs=${durationMs}`);
+      return stringifyResult({ ok: true, account: account?.name ?? "Unknown", tokenType: tokenType ?? "unknown", project: project ?? null, environment: environment ?? null, service: args.service?.trim() ?? null, action: args.action, command: `railway ${command.join(" ")}`, durationMs, output: redact(output, token).slice(-MAX_OUTPUT) });
     } catch (error) {
       const e = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string; signal?: string };
       const stdout = typeof e.stdout === "string" ? e.stdout : "";
       const stderr = typeof e.stderr === "string" ? e.stderr : "";
       const output = redact(`${stdout}${stderr ? `\n${stderr}` : ""}`.trim(), token).slice(-MAX_OUTPUT);
-      logger.error?.(`[RailwayTool] failure action=${args.action} durationMs=${Date.now() - startedAt} code=${e.code ?? "unknown"}`);
-      return stringifyResult({
-        ok: false,
-        account: account?.name ?? "Unknown",
-        tokenType: tokenType ?? "unknown",
-        project: project ?? null,
-        environment: environment ?? null,
-        service: args.service?.trim() ?? null,
-        action: args.action,
-        command: `railway ${command.join(" ")}`,
-        durationMs: Date.now() - startedAt,
-        exitCode: e.code ?? null,
-        signal: e.signal ?? null,
-        output,
-        hint: "Use the returned error/output to correct the target or arguments before retrying; do not repeat an identical failed call indefinitely.",
-      });
+      const durationMs = Date.now() - startedAt;
+      console.error(`[RailwayTool] failure action=${args.action} durationMs=${durationMs} code=${e.code ?? "unknown"}`);
+      return stringifyResult({ ok: false, account: account?.name ?? "Unknown", tokenType: tokenType ?? "unknown", project: project ?? null, environment: environment ?? null, service: args.service?.trim() ?? null, action: args.action, command: `railway ${command.join(" ")}`, durationMs, exitCode: e.code ?? null, signal: e.signal ?? null, output, hint: "Correct the target or arguments using the returned error/output before retrying; do not repeat an identical failed call indefinitely." });
     }
   },
 });
