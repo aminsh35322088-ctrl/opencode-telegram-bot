@@ -61,17 +61,17 @@ if [ -f /app/opencode.json ]; then
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
-# A persisted current session created before the persistent workspace migration
-# can point at /app. Do not silently remap that old session ID to a different
-# directory; clear only those legacy selections so a fresh session is created
-# in /data/workspace on the next prompt.
+# A persisted current session created before the persistent-workspace migration
+# may still point at a legacy directory. Preserve the session ID and selection;
+# only normalize the directory to the new persistent workspace. This prevents
+# a restart/deploy from making existing chats disappear from the active session.
 SETTINGS_FILE="/data/settings.json"
 if [ -f "$SETTINGS_FILE" ] && command -v jq >/dev/null 2>&1; then
   SETTINGS_TMP="${SETTINGS_FILE}.$$"
-  if jq 'if (.currentSession.directory? == "/app" or .currentSession.directory? == "/app/workspace" or .currentSession.directory? == "/tmp/site") then del(.currentSession) else . end' "$SETTINGS_FILE" > "$SETTINGS_TMP" 2>/dev/null; then
+  if jq 'if (.currentSession.directory? == "/app" or .currentSession.directory? == "/app/workspace" or .currentSession.directory? == "/tmp/site") then .currentSession.directory = "/data/workspace" else . end' "$SETTINGS_FILE" > "$SETTINGS_TMP" 2>/dev/null; then
     if ! cmp -s "$SETTINGS_FILE" "$SETTINGS_TMP"; then
       mv "$SETTINGS_TMP" "$SETTINGS_FILE"
-      printf '%s\n' "[railway] Cleared legacy current session directory; next session will use /data/workspace"
+      printf '%s\n' "[railway] Preserved current session and normalized legacy directory -> /data/workspace"
     else
       rm -f "$SETTINGS_TMP"
     fi
