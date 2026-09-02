@@ -18,6 +18,12 @@ interface StoredRoleSelections {
   selections: AiRoleSelection;
 }
 
+interface LegacyStoredRoleSelections {
+  version: 1;
+  legacy?: AiRoleSelection;
+  chats?: Record<string, AiRoleSelection>;
+}
+
 const FILE = "ai-role-selection.json";
 
 function filePath(): string {
@@ -28,32 +34,98 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isRoleSelection(value: unknown): value is AiRoleSelection {
-  return isRecord(value);
+function isValidRoleModel(value: unknown): value is { providerID: string; modelID: string } {
+  return (
+    isRecord(value) &&
+    typeof value.providerID === "string" &&
+    value.providerID.trim().length > 0 &&
+    typeof value.modelID === "string" &&
+    value.modelID.trim().length > 0
+  );
 }
 
-function normalizeStored(value: unknown): StoredRoleSelections {
-  if (
-    isRecord(value) &&
-    value.version === 2 &&
-    isRoleSelection(value.selections)
-  ) {
-    return { version: 2, selections: value.selections };
+function isRoleSelection(value: unknown): value is AiRoleSelection {
+  if (!isRecord(value)) return false;
+
+  const knownRoles: AiRole[] = ["coding", "image", "video", "stt"];
+  return Object.keys(value).every((key) => knownRoles.includes(key as AiRole) && isValidRoleModel(value[key]));
+}
+
+function normalizeRoleSelection(value: unknown): AiRoleSelection {
+  if (!isRecord(value)) return {};
+
+  const selections: AiRoleSelection = {};
+  const roles: AiRole[] = ["coding", "image", "video", "stt"];
+  for (const role of roles) {
+    const candidate = value[role];
+    if (isValidRoleModel(candidate)) {
+      selections[role] = {
+        providerID: candidate.providerID.trim(),
+        modelID: candidate.modelID.trim(),
+      };
+    }
+  }
+  return selections;
+}
+
+function firstLegacyChatSelection(chats: unknown): AiRoleSelection | undefined {
+  if (!isRecord(chats)) return undefined;
+
+  const entries = Object.values(chats);
+  for (const entry of entries) {
+    const selection = normalizeRoleSelection(entry);
+    if (Object.keys(selection).length > 0) return selection;
+  }
+
+  return undefined;
+}
+
+function normalizeStored(value: unknown): { stored: StoredRoleSelections; migrated: boolean } {
+  if (isRecord(value) && value.version === 2 && isRoleSelection(value.selections)) {
+    return {
+      stored: { version: 2, selections: normalizeRoleSelection(value.selections) },
+      migrated: false,
+    };
+  }
+
+  if (isRecord(value) && value.version === 1) {
+    const legacy = normalizeRoleSelection(value.legacy);
+    const fromChat = firstLegacyChatSelection(value.chats);
+    const selections = Object.keys(legacy).length > 0 ? legacy : fromChat ?? {};
+
+    return {
+      stored: { version: 2, selections },
+      migrated: true,
+    };
   }
 
   if (isRoleSelection(value)) {
-    return { version: 2, selections: value };
+    return {
+      stored: { version: 2, selections: normalizeRoleSelection(value) },
+      migrated: false,
+    };
   }
 
-  return { version: 2, selections: {} };
+  return {
+    stored: { version: 2, selections: {} },
+    migrated: false,
+  };
 }
 
 async function read(): Promise<StoredRoleSelections> {
   try {
     const value = JSON.parse(await fs.readFile(filePath(), "utf8")) as unknown;
-    return normalizeStored(value);
+    const result = normalizeStored(value);
+
+    if (result.migrated) {
+      logger.info("[AI Rules] Loaded legacy v1 AI Rules and migrated them to the deployment-wide singleton model.");
+    }
+
+    return result.stored;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 2, selections: {} };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { version: 2, selections: {} };
+    }
     throw error;
   }
 }
