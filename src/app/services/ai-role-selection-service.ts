@@ -61,15 +61,24 @@ function normalizeRoleSelection(value: unknown): AiRoleSelection {
   return selections;
 }
 
-function firstLegacyChatSelection(chats: unknown): AiRoleSelection | undefined {
-  if (!isRecord(chats)) return undefined;
+function mergeRoleSelections(...sources: unknown[]): AiRoleSelection {
+  const merged: AiRoleSelection = {};
 
-  for (const entry of Object.values(chats)) {
-    const selection = normalizeRoleSelection(entry);
-    if (Object.keys(selection).length > 0) return selection;
+  for (const source of sources) {
+    const selection = normalizeRoleSelection(source);
+    for (const role of AI_ROLES) {
+      const candidate = selection[role];
+      if (!merged[role] && candidate) {
+        merged[role] = candidate;
+      }
+    }
   }
 
-  return undefined;
+  return merged;
+}
+
+function chatSelections(chats: unknown): unknown[] {
+  return isRecord(chats) ? Object.values(chats) : [];
 }
 
 function normalizeStored(value: unknown): { stored: StoredRoleSelections; migrated: boolean } {
@@ -84,20 +93,16 @@ function normalizeStored(value: unknown): { stored: StoredRoleSelections; migrat
   }
 
   if (isRecord(value) && value.version === 1) {
-    // v1 was the temporary multi-chat format. The single-user architecture is
-    // deployment-wide, so prefer its legacy/global selection and only fall back
-    // to the first preserved chat selection when no global selection exists.
-    const legacy = normalizeRoleSelection(value.legacy);
-    const fromChat = firstLegacyChatSelection(value.chats);
-    const selections = Object.keys(legacy).length > 0 ? legacy : fromChat ?? {};
-
+    // v1 was the temporary multi-chat format. The current architecture is
+    // deployment-wide, so restore each configured role once, preferring the
+    // legacy/global value and then filling missing roles from preserved chats.
+    const sources = [value.legacy, ...chatSelections(value.chats)];
     return {
-      stored: { version: 2, selections },
+      stored: { version: 2, selections: mergeRoleSelections(...sources) },
       migrated: true,
     };
   }
 
-  // The original/global format was the role-selection object itself.
   if (isRoleSelection(value)) {
     return {
       stored: { version: 2, selections: normalizeRoleSelection(value) },
@@ -118,7 +123,7 @@ async function read(): Promise<StoredRoleSelections> {
 
     if (result.migrated) {
       logger.info(
-        "[AI Rules] Loaded legacy v1 AI Rules and migrated them to the deployment-wide singleton model.",
+        `[AI Rules] Restored v1 selections into deployment-wide singleton: roles=${Object.keys(result.stored.selections).join(",") || "none"}`,
       );
     }
 
