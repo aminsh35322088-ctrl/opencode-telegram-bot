@@ -45,6 +45,15 @@ class AssistantRunState {
     return this.runs.size > 0;
   }
 
+  hasActiveRun(sessionId: string): boolean {
+    return Boolean(sessionId && this.runs.has(sessionId));
+  }
+
+  getRun(sessionId: string): AssistantRunInfo | null {
+    const run = this.runs.get(sessionId);
+    return run ? { ...run } : null;
+  }
+
   markResponseCompleted(sessionId: string, info?: AssistantRunResolvedInfo): void {
     const run = this.runs.get(sessionId);
     if (!run) return;
