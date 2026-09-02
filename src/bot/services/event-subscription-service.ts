@@ -518,6 +518,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     }
 
     summaryAggregator.setOnCleared(() => {
+      interactionEventGate.clear();
       this.toolMessageBatcher.clearAll("summary_aggregator_clear");
       this.toolCallStreamer.clearAll("summary_aggregator_clear");
       this.clearAllResponseStreams("summary_aggregator_clear");
@@ -911,11 +912,41 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       ]);
 
       if (questionManager.isActive()) {
-        logger.warn("[Bot] Replacing active poll with a new one");
-
+        const previousRequestID = questionManager.getRequestID();
         const previousMessageIds = questionManager.getMessageIds();
+        logger.warn(
+          `[Bot] Replacing active poll with a new one: previousRequestID=${previousRequestID ?? "none"}, newRequestID=${requestID}`,
+        );
         for (const messageId of previousMessageIds) {
           await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch(() => {});
+        }
+
+        const currentProject = getCurrentProject();
+        const currentSessionForReject = getCurrentSession();
+        const directoryForReject =
+          currentSessionForReject?.directory ?? currentProject?.worktree;
+        if (previousRequestID && directoryForReject) {
+          try {
+            const response = await opencodeClient.question.reject({
+              requestID: previousRequestID,
+              directory: directoryForReject,
+            });
+            if (response.error) {
+              logger.warn(
+                `[Bot] Failed to reject replaced question ${previousRequestID}:`,
+                response.error,
+              );
+            } else {
+              logger.info(
+                `[Bot] Rejected replaced question: requestID=${previousRequestID}`,
+              );
+            }
+          } catch (error) {
+            logger.warn(
+              `[Bot] Exception rejecting replaced question ${previousRequestID}:`,
+              error,
+            );
+          }
         }
 
         clearAllInteractionState("question_replaced_by_new_poll");
@@ -1136,6 +1167,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionIdle(async (sessionId) => {
+      interactionEventGate.clearSession(sessionId);
       resetStreamThrottle(sessionId);
       await markAttachedSessionIdle(sessionId);
       // Cleared unconditionally: a session can go idle after it stopped being
@@ -1197,6 +1229,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionError(async (sessionId, message) => {
+      interactionEventGate.clearSession(sessionId);
       await markAttachedSessionIdle(sessionId);
       this.clearToolElapsedState(sessionId, "session_error");
 
