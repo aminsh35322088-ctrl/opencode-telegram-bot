@@ -23,7 +23,7 @@ import { helpCommand } from "../commands/help-command.js";
 import { statusCommand } from "../commands/status-command.js";
 import { updateCommand } from "../commands/update-command.js";
 import { memoryCommand, rememberCommand, forgetCommand } from "../commands/memory-command.js";
-import { handleImageTextPrompt, imageCommand, editCommand } from "../commands/media-command.js";
+import { imageCommand, editCommand } from "../commands/media-command.js";
 import { BOT_COMMANDS } from "../commands/definitions.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "../handlers/message-merger.js";
@@ -52,7 +52,6 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
       }
       if (await handleProviderWizardMessage(ctx)) return;
       if (await handleIntegrationMessage(ctx)) return;
-      if (!ctx.message.text.startsWith("/") && await handleImageTextPrompt(ctx, ctx.message.text.trim())) return;
     }
     await next();
   });
