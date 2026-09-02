@@ -7,7 +7,6 @@ import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
 import { flushSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
-import { reconcileStoredModelSelection } from "../services/model-selection-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
@@ -65,7 +64,6 @@ export async function startBotApp(): Promise<void> {
   process.on("uncaughtException", uncaughtExceptionHandler);
 
   await loadSettings();
-  await reconcileStoredModelSelection();
   const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => {
     logger.warn("[RailwayIntegration] Could not initialize Railway token from environment; continuing without Railway integration", error);
     return false;

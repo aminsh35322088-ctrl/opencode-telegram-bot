@@ -46,11 +46,13 @@ async function withTimeout<T>(
   }
 }
 
-async function isOpencodeServerHealthy(): Promise<boolean> {
+async function isOpencodeServerHealthy(logTimeout = true): Promise<boolean> {
   try {
     const result = await withTimeout(opencodeClient.global.health(), HEALTH_CHECK_TIMEOUT_MS);
     if (result === HEALTH_CHECK_TIMED_OUT) {
-      logger.warn(`[OpenCodeAutoRestart] Health-check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms`);
+      if (logTimeout) {
+        logger.warn(`[OpenCodeAutoRestart] Health-check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms`);
+      }
       return false;
     }
 
@@ -65,7 +67,7 @@ async function waitForOpencodeServerReady(timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isOpencodeServerHealthy()) return true;
+    if (await isOpencodeServerHealthy(false)) return true;
     await sleep(SERVER_READY_POLL_INTERVAL_MS);
   }
 
@@ -130,7 +132,7 @@ export class OpencodeAutoRestartService {
     this.checkInProgress = true;
 
     try {
-      if (await isOpencodeServerHealthy()) {
+      if (await isOpencodeServerHealthy(reason !== "startup")) {
         this.consecutiveHealthFailures = 0;
         logger.debug(`[OpenCodeAutoRestart] Health-check succeeded: reason=${reason}`);
         if (!this.serverWasHealthy) {
