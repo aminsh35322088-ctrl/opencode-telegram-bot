@@ -33,13 +33,13 @@ function getOptionalMessageFormatModeEnvVar(key: string, defaultValue: MessageFo
   const value = getEnvVar(key, false); if (!value) return defaultValue;
   const normalized = value.trim().toLowerCase(); return normalized === "raw" || normalized === "markdown" ? normalized : defaultValue;
 }
-function parseTelegramAllowedUserIds(): number[] {
+function parseTelegramAllowedUserId(): number {
   const raw = getEnvVar("TELEGRAM_ALLOWED_USER_ID").trim();
-  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
-  if (values.length === 0) throw new Error("TELEGRAM_ALLOWED_USER_ID must contain one or more valid positive Telegram user IDs separated by commas.");
-  const ids = values.map((value) => Number(value));
-  if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error("TELEGRAM_ALLOWED_USER_ID must contain one or more valid positive Telegram user IDs separated by commas.");
-  return [...new Set(ids)];
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error("TELEGRAM_ALLOWED_USER_ID must contain one valid positive Telegram user ID.");
+  }
+  return id;
 }
 export function parseInitialSettingsPreset(): Record<string, unknown> {
   const raw = getEnvVar("INITIAL_SETTINGS_PRESET", false).trim(); if (!raw) return {};
@@ -52,15 +52,15 @@ function getOptionalSttRequestFormatEnvVar(key: string, defaultValue: SttRequest
   const value = getEnvVar(key, false); if (!value) return defaultValue;
   const normalized = value.trim().toLowerCase(); return VALID_STT_REQUEST_FORMATS.includes(normalized as SttRequestFormat) ? normalized as SttRequestFormat : defaultValue;
 }
-export function buildTelegramConfig(): { token: string; allowedUserId: number; allowedUserIds: number[]; proxyUrl: string; apiRoot: string; proxySecret: string; forceIpv4: boolean } {
+export function buildTelegramConfig(): { token: string; allowedUserId: number; proxyUrl: string; apiRoot: string; proxySecret: string; forceIpv4: boolean } {
   const proxyUrl = getEnvVar("TELEGRAM_PROXY_URL", false);
   const apiRoot = getEnvVar("TELEGRAM_API_ROOT", false).replace(/\/+$/, "");
   const proxySecret = getEnvVar("TELEGRAM_PROXY_SECRET", false);
   const forceIpv4 = getOptionalBooleanEnvVar("TELEGRAM_FORCE_IPV4", false);
-  const allowedUserIds = parseTelegramAllowedUserIds();
+  const allowedUserId = parseTelegramAllowedUserId();
   if (proxyUrl && apiRoot) throw new Error("TELEGRAM_PROXY_URL and TELEGRAM_API_ROOT are alternative connectivity modes and cannot be used together. TELEGRAM_PROXY_URL tunnels TCP through a SOCKS/HTTP forward proxy; TELEGRAM_API_ROOT routes API calls through an HTTPS reverse proxy. Pick one.");
   if (proxySecret && !apiRoot) throw new Error("TELEGRAM_PROXY_SECRET requires TELEGRAM_API_ROOT to be set. Without a custom API root, the secret header would be sent to api.telegram.org.");
-  return { token: getEnvVar("TELEGRAM_BOT_TOKEN"), allowedUserId: allowedUserIds[0]!, allowedUserIds, proxyUrl, apiRoot, proxySecret, forceIpv4 };
+  return { token: getEnvVar("TELEGRAM_BOT_TOKEN"), allowedUserId, proxyUrl, apiRoot, proxySecret, forceIpv4 };
 }
 export const config = {
   telegram: buildTelegramConfig(),
