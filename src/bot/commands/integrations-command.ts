@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
-import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount } from "../../app/services/railway-integration-service.js";
+import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -27,6 +27,29 @@ function callbackMessageId(ctx: Context): number | null {
 
 function wizardKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Integrations", "integration:menu");
+}
+
+function railwayValidationError(validation: RailwayTokenValidation): Error {
+  switch (validation.reason) {
+    case "unauthorized":
+      return new Error("Railway rejected this token (unauthorized). Check that it is active and copied correctly.");
+    case "timeout":
+      return new Error("Railway API validation timed out. Please try again.");
+    case "network":
+      return new Error("Could not reach the Railway API. Please try again in a moment.");
+    case "api_error":
+      return new Error("Railway API rejected the validation request. Please check the token type and try again.");
+    default:
+      return new Error("This Railway token could not be validated. Use a valid Railway Account/API token or a project token.");
+  }
+}
+
+function railwayValidationSuccess(validation: RailwayTokenValidation): string {
+  if (validation.tokenType === "project") {
+    return `✅ Token verified · Project token\nProject: ${validation.projectId}\nEnvironment: ${validation.environmentId}`;
+  }
+  const identity = [validation.subjectName, validation.subjectEmail].filter(Boolean).join(" · ");
+  return `✅ Token verified · Account token${identity ? `\n${identity}` : ""}`;
 }
 
 export function isIntegrationWizardActive(ctxOrChatId: Context | number): boolean {
@@ -202,12 +225,23 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
         railway.name = text;
         railway.step = "token";
         await deleteInput(ctx);
-        await editWizard(ctx, railway.messageId, "➕ Add Railway Account\n\n2/2 · API Token\n\nSend the token as a message. Telegram will delete it when possible.");
+        await editWizard(ctx, railway.messageId, "➕ Add Railway Account\n\n2/2 · API Token\n\nSend the token as a message. It will be verified with Railway before it is saved.");
         return true;
       }
+
       await deleteInput(ctx);
+      const validation = await validateRailwayToken(text);
+      if (!validation.valid) {
+        await editWizard(
+          ctx,
+          railway.messageId,
+          `➕ Add Railway Account\n\n2/2 · API Token\n\n❌ ${railwayValidationError(validation).message}\n\nThe token was not saved. Send a valid token to retry, or press Cancel.`,
+        );
+        return true;
+      }
+
       const account = await addRailwayAccount(railway.name!, text);
-      await finishWizard(ctx, key, railway.messageId, `✅ Railway account “${account.name}” added and selected.`);
+      await finishWizard(ctx, key, railway.messageId, `${railwayValidationSuccess(validation)}\n\n✅ Railway account “${account.name}” added and selected.`);
       return true;
     }
     return false;
