@@ -95,6 +95,7 @@ import {
   interactionManager,
 } from "../../app/managers/interaction-manager.js";
 import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";
+import { opencodeClient } from "../../opencode/client.js";
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const SESSION_RETRY_PREFIX = "🔁";
@@ -920,11 +921,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         for (const messageId of previousMessageIds) {
           await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch(() => {});
         }
-
-        const currentProject = getCurrentProject();
-        const currentSessionForReject = getCurrentSession();
-        const directoryForReject =
-          currentSessionForReject?.directory ?? currentProject?.worktree;
+        const directoryForReject = currentSession.directory;
         if (previousRequestID && directoryForReject) {
           try {
             const response = await opencodeClient.question.reject({
