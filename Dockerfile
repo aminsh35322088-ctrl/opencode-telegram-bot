@@ -24,3 +24,5 @@ COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 RUN chmod +x ./railway-entrypoint.sh
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./railway-entrypoint.sh"]
+
+# Force Railway to observe the current main revision and rebuild the existing service.
