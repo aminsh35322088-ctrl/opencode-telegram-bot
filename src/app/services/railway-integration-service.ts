@@ -6,12 +6,26 @@ const INTEGRATIONS_DIR = "integrations";
 const RAILWAY_DIR = "railway";
 const INDEX_FILENAME = "accounts.json";
 const ACCOUNT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const RAILWAY_GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
+const TOKEN_VALIDATION_TIMEOUT_MS = 10000;
 
 export interface RailwayAccount {
   id: string;
   name: string;
   tokenFile: string;
   createdAt: string;
+}
+
+export type RailwayTokenType = "account" | "project";
+
+export interface RailwayTokenValidation {
+  valid: boolean;
+  tokenType?: RailwayTokenType;
+  subjectName?: string;
+  subjectEmail?: string;
+  projectId?: string;
+  environmentId?: string;
+  reason?: "invalid" | "unauthorized" | "timeout" | "network" | "api_error";
 }
 
 interface RailwayIndex {
@@ -158,6 +172,81 @@ async function writeAccountToken(account: RailwayAccount, token: string): Promis
 async function getActiveAccountFromIndex(index: RailwayIndex): Promise<RailwayAccount | null> {
   const active = index.accounts.find((account) => account.id === index.activeId) ?? index.accounts[0];
   return active ?? null;
+}
+
+interface RailwayGraphqlPayload {
+  data?: {
+    me?: { name?: string | null; email?: string | null } | null;
+    projectToken?: { projectId?: string | null; environmentId?: string | null } | null;
+  };
+  errors?: Array<{ message?: string; extensions?: { code?: string } }>;
+}
+
+async function railwayGraphql(token: string, query: string, headerName: "Authorization" | "Project-Access-Token"): Promise<{ response: Response; payload: RailwayGraphqlPayload }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TOKEN_VALIDATION_TIMEOUT_MS);
+  try {
+    const response = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        [headerName]: headerName === "Authorization" ? `Bearer ${token}` : token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+      signal: controller.signal,
+    });
+
+    let payload: RailwayGraphqlPayload = {};
+    try {
+      payload = (await response.json()) as RailwayGraphqlPayload;
+    } catch {
+      payload = {};
+    }
+    return { response, payload };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Validates a Railway credential against the live public GraphQL API without persisting or mutating process.env. */
+export async function validateRailwayToken(tokenValue: string): Promise<RailwayTokenValidation> {
+  const token = normalizeToken(tokenValue);
+
+  try {
+    const accountAttempt = await railwayGraphql(token, "query { me { name email } }", "Authorization");
+    const accountMe = accountAttempt.payload.data?.me;
+    if (accountAttempt.response.ok && accountMe) {
+      return {
+        valid: true,
+        tokenType: "account",
+        subjectName: accountMe.name ?? undefined,
+        subjectEmail: accountMe.email ?? undefined,
+      };
+    }
+
+    const projectAttempt = await railwayGraphql(token, "query { projectToken { projectId environmentId } }", "Project-Access-Token");
+    const projectToken = projectAttempt.payload.data?.projectToken;
+    if (projectAttempt.response.ok && projectToken?.projectId && projectToken.environmentId) {
+      return {
+        valid: true,
+        tokenType: "project",
+        projectId: projectToken.projectId,
+        environmentId: projectToken.environmentId,
+      };
+    }
+
+    const status = projectAttempt.response.status || accountAttempt.response.status;
+    if (status === 401 || status === 403) return { valid: false, reason: "unauthorized" };
+
+    const apiError = [...(accountAttempt.payload.errors ?? []), ...(projectAttempt.payload.errors ?? [])][0];
+    if (apiError?.message) return { valid: false, reason: "api_error" };
+    return { valid: false, reason: "invalid" };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return { valid: false, reason: "timeout" };
+    }
+    return { valid: false, reason: "network" };
+  }
 }
 
 export async function listRailwayAccounts(): Promise<RailwayAccount[]> {
