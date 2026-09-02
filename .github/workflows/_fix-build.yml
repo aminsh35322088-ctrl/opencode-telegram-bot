@@ -1,6 +1,5 @@
 name: Fix merged interaction build
 on:
-  workflow_dispatch:
   push:
     branches: [main]
 permissions:
@@ -8,38 +7,39 @@ permissions:
 jobs:
   fix:
     runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
-      - name: Patch imports and project lookup
+      - name: Patch and verify build
+        shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p = Path('src/bot/services/event-subscription-service.ts')
           s = p.read_text()
 
           client_import = 'import { opencodeClient } from "../../opencode/client.js";'
-          events_import = 'import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";'
           if client_import not in s:
-              if events_import not in s:
+              anchor = 'import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";'
+              if anchor not in s:
                   raise SystemExit('events import anchor not found')
-              s = s.replace(events_import, events_import + '\n' + client_import, 1)
+              s = s.replace(anchor, anchor + '\n' + client_import, 1)
 
-          old = '''        const currentProject = getCurrentProject();
-        const currentSessionForReject = getCurrentSession();
-        const directoryForReject =
-          currentSessionForReject?.directory ?? currentProject?.worktree;'''
-          new = '''        const directoryForReject = currentSession.directory;'''
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif 'const directoryForReject = currentSession.directory;' not in s:
+          pattern = re.compile(
+              r'\s*const currentProject = getCurrentProject\(\);\n'
+              r'\s*const currentSessionForReject = getCurrentSession\(\);\n'
+              r'\s*const directoryForReject =\n'
+              r'\s*currentSessionForReject\?\.directory \?\? currentProject\?\.worktree;'
+          )
+          s, count = pattern.subn('\n        const directoryForReject = currentSession.directory;', s, count=1)
+          if count == 0 and 'const directoryForReject = currentSession.directory;' not in s:
               raise SystemExit('question replacement directory block not found')
-
           p.write_text(s)
           PY
           npm ci
           npm run build
-      - name: Commit and push fix
+      - name: Commit source fix
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
