@@ -15,9 +15,9 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai
 const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const LEGACY_GEMINI_IMAGE_PROVIDER_ID = "gemini-image";
 const CAPABILITIES: AiCapability[] = ["coding", "image", "video", "stt"];
-const LABEL: Record<AiCapability, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", video: "🎬 Video AI", stt: "🎙️ Speech-to-Text" };
-type ImageStep = "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
-interface PendingProvider { step: "slot" | "name" | "url" | "key" | "groq-stt-key" | "gemini-chat-key" | ImageStep; capability?: AiCapability; name?: string; baseURL?: string; apiKey?: string; model?: string; editModel?: string; accountId?: string; messageId: number; }
+const LABEL: Record<AiCapability, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", "image-conversation": "💬 Image AI Conversation", video: "🎬 Video AI", stt: "🎙️ Speech-to-Text" };
+type ImageStep = "image-gemini-key" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
+interface PendingProvider { step: "slot" | "name" | "url" | "key" | "groq-stt-key" | ImageStep; capability?: AiCapability; name?: string; baseURL?: string; apiKey?: string; model?: string; editModel?: string; accountId?: string; messageId: number; }
 let pending: PendingProvider | null = null;
 function messageId(ctx: Context): number | null { const m = ctx.callbackQuery?.message; return m && "message_id" in m && typeof m.message_id === "number" ? m.message_id : null; }
 function wizardKeyboard(back = "provider:menu") { return new InlineKeyboard().text("❌ Cancel", "provider:cancel").text("← Back", back); }
@@ -29,18 +29,23 @@ async function restartOpenCodeAfterProviderChange() { const configPath = await s
 
 async function renderImage(ctx: Context, id?: number, notice?: string) {
   const providers = await listImageAiProviders();
+  const customProviders = await listCustomProviders();
+  const conversation = customProviders.find((p) => p.id === GEMINI_PROVIDER_ID && p.capability === "image-conversation");
   const cloudflare = providers.find((p) => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
   const custom = providers.find((p) => p.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
   const cloudflareValidation = cloudflare ? await validateConfiguredCloudflareCredentials() : { valid: false };
   const k = new InlineKeyboard();
+  k.row().text(conversation ? `💬 Gemini · Active ✅` : "💬 Gemini Conversation AI", "provider:image:gemini:configure");
+  if (conversation) k.row().text("🗑️ Remove Gemini Conversation", "provider:image:gemini:remove");
   k.row().text(cloudflare ? "☁️ Cloudflare Workers AI · Active ✅" : "☁️ Cloudflare Workers AI", "provider:image:cloudflare:configure");
   k.row().text(custom ? "🔌 Custom API · Active ✅" : "🔌 Custom API", "provider:image:custom:configure");
   if (cloudflare && cloudflareValidation.valid) k.row().text("🗑️ Remove Cloudflare", "provider:image:cloudflare:remove");
   if (custom) k.row().text("🗑️ Remove Custom API", "provider:image:custom:remove");
   k.row().text("← Custom Provider API", "provider:menu").text("✖ Close", "provider:close");
+  const conversationStatus = conversation ? `✅ ${conversation.models[0]?.name ?? GEMINI_MODEL}` : "⚪ Not configured";
   const status = cloudflare ? (cloudflareValidation.valid ? "✅ Verified" : "⚠️ Needs verification") : "⚪ Not configured";
-  const lines = [`☁️ Cloudflare Workers AI: ${status}`, cloudflare ? `Model: ${cloudflare.model}` : "", `🔌 Custom API: ${custom ? `✅ ${custom.model}${custom.editModel ? ` / edit: ${custom.editModel}` : ""}` : "⚪ Not configured"}`].filter(Boolean);
-  const text = `${notice ? `${notice}\n\n` : ""}🎨 Image AI\n\n${lines.join("\n")}\n\nChoose one provider. Cloudflare supports generation + editing with FLUX.2 Klein 4B.`;
+  const lines = [`💬 Conversation AI: ${conversationStatus}`, `☁️ Image Generator: ${cloudflare ? status : "⚪ Not configured"}`, cloudflare ? `Model: ${cloudflare.model}` : "", `🔌 Image Custom API: ${custom ? `✅ ${custom.model}${custom.editModel ? ` / edit: ${custom.editModel}` : ""}` : "⚪ Not configured"}`].filter(Boolean);
+  const text = `${notice ? `${notice}\n\n` : ""}🎨 Image AI\n\n${lines.join("\n")}\n\nConversation AI handles natural-language decisions; the image provider handles generation and editing.`;
   if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
 }
 async function renderSlot(ctx: Context, c: AiCapability, id?: number, notice?: string) {
@@ -53,7 +58,7 @@ async function renderSlot(ctx: Context, c: AiCapability, id?: number, notice?: s
 }
 async function renderProviders(ctx: Context, id?: number, notice?: string) {
   const ps = await listCustomProviders(); const k = new InlineKeyboard(); for (const c of CAPABILITIES) k.row().text(LABEL[c], `provider:slot:${c}`); k.row().text("← Advanced", "provider:advanced").text("✖ Close", "provider:close");
-  const text = `${notice ? `${notice}\n\n` : ""}🔌 Custom Provider API\n\n${CAPABILITIES.map((c) => `${LABEL[c]}: ${ps.filter((p) => p.capability === c).map((p) => p.name).join(", ") || "Not configured"}`).join("\n")}\n\nImage AI has only two provider types: Cloudflare Workers AI and Custom API.`;
+  const text = `${notice ? `${notice}\n\n` : ""}🔌 Custom Provider API\n\n${CAPABILITIES.map((c) => `${LABEL[c]}: ${ps.filter((p) => p.capability === c).map((p) => p.name).join(", ") || "Not configured"}`).join("\n")}\n\nImage AI has separate Conversation AI and image-generation providers.`;
   if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
 }
 export async function providersCommand(ctx: CommandContext<Context>) { clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx as Context); }
@@ -68,6 +73,8 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (d.startsWith("provider:add:")) { const c = d.slice("provider:add:".length) as AiCapability; if (!CAPABILITIES.includes(c) || c === "image") return true; const id = messageId(ctx); if (id === null) return true; pending = { step: "name", capability: c, messageId: id }; await editWizard(ctx, id, `➕ Add ${LABEL[c]} Provider\n\n1/3 · Provider name`); return true; }
   if (d.startsWith("provider:slot:")) { const c = d.slice("provider:slot:".length) as AiCapability; const id = messageId(ctx); if (CAPABILITIES.includes(c)) await renderSlot(ctx, c, id ?? undefined); return true; }
   if (d === "provider:image:menu") { const id = messageId(ctx); await renderImage(ctx, id ?? undefined); return true; }
+  if (d === "provider:image:gemini:configure") { const id = messageId(ctx); if (id === null) return true; pending = { step: "image-gemini-key", messageId: id }; await editWizard(ctx, id, "💬 Gemini Conversation AI\n\nSend your Gemini API key.\n\nThis Gemini is used only by Image AI Conversation and is excluded from Coding AI.", "provider:image:menu"); return true; }
+  if (d === "provider:image:gemini:remove") { clearProviderWizard(); await deleteCustomProvider(GEMINI_PROVIDER_ID); await restartOpenCodeAfterProviderChange(); const id = messageId(ctx); await renderImage(ctx, id ?? undefined, "🗑️ Gemini Conversation AI removed."); return true; }
   if (d === "provider:image:cloudflare:configure") { const id = messageId(ctx); if (id === null) return true; pending = { step: "image-cloudflare-account", messageId: id }; await editWizard(ctx, id, "☁️ Cloudflare Workers AI\n\n1/2 · Send your Cloudflare Account ID\n\nIt must be the 32-character Account ID.\n🔐 It will be verified before storage.", "provider:image:menu"); return true; }
   if (d === "provider:image:cloudflare:remove") { clearProviderWizard(); await removeCloudflareCredentials(); const id = messageId(ctx); await renderImage(ctx, id ?? undefined, "🗑️ Cloudflare Workers AI credentials removed."); return true; }
   if (d === "provider:image:custom:configure") { const id = messageId(ctx); if (id === null) return true; pending = { step: "image-custom-base-url", messageId: id }; await editWizard(ctx, id, "🔌 Custom API\n\n1/4 · Base URL", "provider:image:menu"); return true; }
@@ -83,13 +90,13 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
 export async function handleProviderWizardMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text?.trim(); const s = pending; if (!ctx.chat?.id || !text || !s) return false;
   try {
+    if (s.step === "image-gemini-key") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "💬 Verifying Gemini Conversation AI…", "provider:image:menu"); const r = await fetch(`${GEMINI_BASE_URL}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${text}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: GEMINI_MODEL, messages: [{ role: "user", content: "Reply with exactly: OK" }], max_tokens: 4, stream: false }), signal: AbortSignal.timeout(20_000) }); const raw = await r.text().catch(() => ""); if (!r.ok) throw new Error(`Gemini verification failed (HTTP ${r.status}): ${raw.slice(0, 180)}`); await saveCustomProvider({ id: GEMINI_PROVIDER_ID, name: "Gemini", baseURL: GEMINI_BASE_URL, apiKey: text, models: [{ id: GEMINI_MODEL, name: "Gemini 3.1 Flash-Lite" }], capability: "image-conversation" }); await deleteCustomProvider(LEGACY_GEMINI_IMAGE_PROVIDER_ID); clearProviderWizard(); await restartOpenCodeAfterProviderChange(); await renderImage(ctx, s.messageId, "✅ Gemini verified and activated for 💬 Image AI Conversation only."); return true; }
     if (s.step === "image-cloudflare-account") { if (!/^[a-f0-9]{32}$/i.test(text)) { await deleteInput(ctx); await editWizard(ctx, s.messageId, "❌ Invalid Cloudflare Account ID. Send the 32-character Account ID again.", "provider:image:menu"); return true; } s.accountId = text; s.step = "image-cloudflare-token"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "☁️ Cloudflare Workers AI\n\n2/2 · Send your API Token\n\n🔐 Token is never displayed or logged and is stored only after verification.", "provider:image:menu"); return true; }
     if (s.step === "image-cloudflare-token") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "☁️ Verifying Cloudflare token + Account ID…", "provider:image:menu"); const result = await configureCloudflareCredentials(s.accountId!, text); if (!result.valid) throw new Error(`Cloudflare verification failed: ${result.reason}`); clearProviderWizard(); await renderImage(ctx, s.messageId, "✅ Cloudflare Workers AI verified and activated."); return true; }
     if (s.step === "image-custom-base-url") { s.baseURL = text.replace(/\/+$/g, ""); try { const u = new URL(s.baseURL); if (!["http:", "https:"].includes(u.protocol)) throw 0; } catch { await editWizard(ctx, s.messageId, "🔌 Invalid Base URL. Try again.", "provider:image:menu"); return true; } s.step = "image-custom-model"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Custom API\n\n2/4 · Generation model", "provider:image:menu"); return true; }
     if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Custom API\n\n3/4 · Edit model or `none`", "provider:image:menu"); return true; }
     if (s.step === "image-custom-edit-model") { if (text.toLowerCase() !== "none") s.editModel = text; s.step = "image-custom-key"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Custom API\n\n4/4 · API key", "provider:image:menu"); return true; }
     if (s.step === "image-custom-key") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Verifying Custom API…", "provider:image:menu"); const options: { baseURL: string; model: string; editModel?: string } = { baseURL: s.baseURL!, model: s.model! }; if (s.editModel) options.editModel = s.editModel; await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, options); clearProviderWizard(); await renderImage(ctx, s.messageId, "✅ Custom API verified and activated."); return true; }
-    if (s.step === "gemini-chat-key") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "🤖 Verifying Gemini API key…"); const r = await fetch(`${GEMINI_BASE_URL}/models/${GEMINI_MODEL}`, { headers: { Authorization: `Bearer ${text}` }, signal: AbortSignal.timeout(15_000) }); if (!r.ok) throw new Error(`Gemini verification failed: HTTP ${r.status}`); await saveCustomProvider({ id: GEMINI_PROVIDER_ID, name: "Gemini", baseURL: GEMINI_BASE_URL, apiKey: text, models: [{ id: GEMINI_MODEL, name: "Gemini 3.1 Flash-Lite" }], capability: "coding" }); await deleteCustomProvider(LEGACY_GEMINI_IMAGE_PROVIDER_ID); clearProviderWizard(); await restartOpenCodeAfterProviderChange(); await renderProviders(ctx, s.messageId, "✅ Gemini verified and activated in 💻 Coding AI."); return true; }
     if (s.step === "groq-stt-key") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "🎤 Verifying Groq…"); await configureGroqStt(text); clearProviderWizard(); await renderSlot(ctx, "stt", s.messageId, "✅ Groq Voice STT verified and activated."); return true; }
     if (s.step === "slot") return true;
     if (s.step === "name") { s.name = text; s.step = "url"; await deleteInput(ctx); await editWizard(ctx, s.messageId, `➕ Add ${LABEL[s.capability!]} Provider\n\n2/3 · Base URL`); return true; }
