@@ -28,7 +28,7 @@ interface ImageConversationState {
   expiresAt: number;
 }
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const PREFERRED_GEMINI_MODEL = "gemini-3.1-flash-lite";
 const CONVERSATION_TTL_MS = 45 * 60 * 1000;
 const MAX_TURNS = 12;
 
@@ -131,6 +131,11 @@ function buildUserContent(text: string, image?: { buffer: Buffer; mimeType: stri
   return content;
 }
 
+function selectGeminiModel(models: { id: string }[]): string {
+  const preferred = models.find((model) => model.id === PREFERRED_GEMINI_MODEL);
+  return preferred?.id ?? models[0]?.id ?? PREFERRED_GEMINI_MODEL;
+}
+
 async function askGemini(state: ImageConversationState, text: string): Promise<{ reply: string; operation: ImageConversationOperation; instruction: string }> {
   const provider = await getCustomProviderConfig("gemini");
   if (!provider) throw new Error("Gemini is not configured. Configure Gemini from /providers first.");
@@ -144,7 +149,13 @@ async function askGemini(state: ImageConversationState, text: string): Promise<{
   const response = await fetch(`${provider.apiUrl}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${provider.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: GEMINI_MODEL, messages, temperature: 0.4, max_tokens: 700, stream: false }),
+    body: JSON.stringify({
+      model: selectGeminiModel(provider.models),
+      messages,
+      temperature: 0.4,
+      max_tokens: 700,
+      stream: false,
+    }),
     signal: AbortSignal.timeout(45_000),
   });
 
@@ -199,6 +210,13 @@ export async function handleImageConversationText(chatId: number, text: string):
     return { reply: decision.reply, operation: "chat" };
   }
 
+  if (decision.operation === "edit" && !state.currentImage) {
+    const reply = "برای ویرایش، اول یک تصویر بفرست تا روی همان تصویر ادامه بدیم.";
+    state.turns = pruneTurns([...state.turns, { role: "assistant", content: reply }]);
+    await saveState(chatId, state);
+    return { reply, operation: "chat" };
+  }
+
   const result = decision.operation === "edit" && state.currentImage
     ? await editImageWithFallback(state.currentImage.buffer, state.currentImage.mimeType, decision.instruction)
     : await generateImageWithFallback(decision.instruction);
@@ -206,7 +224,7 @@ export async function handleImageConversationText(chatId: number, text: string):
   state.currentImage = result;
   state.expiresAt = Date.now() + CONVERSATION_TTL_MS;
   await saveState(chatId, state);
-  return { ...result, reply: decision.reply, operation: decision.operation, image: result };
+  return { reply: decision.reply, operation: decision.operation, image: result };
 }
 
 export async function handleImageConversationImage(chatId: number, image: { buffer: Buffer; mimeType: string }, instruction = "Create a natural continuation of this image and preserve the important details."): Promise<ImageConversationResult> {
@@ -231,5 +249,3 @@ export async function __resetImageConversationStateForTests(): Promise<void> {
   __resetImageConversationStoreForTests();
   storeLoaded = false;
 }
-
-void GEMINI_MODEL;
