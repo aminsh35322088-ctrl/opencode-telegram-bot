@@ -35,11 +35,8 @@ function getOptionalMessageFormatModeEnvVar(key: string, defaultValue: MessageFo
 }
 function parseTelegramAllowedUserId(): number {
   const raw = getEnvVar("TELEGRAM_ALLOWED_USER_ID").trim();
-  // Accept the legacy comma-separated value during migration, but only ever
-  // use the first ID. Runtime authorization is strictly single-user.
-  const firstValue = raw.split(",")[0]?.trim() ?? "";
-  const id = Number(firstValue);
-  if (!Number.isSafeInteger(id) || id <= 0) {
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id <= 0 || String(id) !== raw) {
     throw new Error("TELEGRAM_ALLOWED_USER_ID must contain one valid positive Telegram user ID.");
   }
   return id;
