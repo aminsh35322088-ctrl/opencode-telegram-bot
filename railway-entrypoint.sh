@@ -114,6 +114,6 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
 
 exec su -s /bin/sh node -c 'exec node /app/dist/index.js'
