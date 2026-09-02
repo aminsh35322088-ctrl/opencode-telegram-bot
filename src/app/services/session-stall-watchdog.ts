@@ -36,6 +36,7 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
   const recent = messages.slice(-2).map((message) => {
     const record = asRecord(message);
     const info = asRecord(record?.info);
+    const time = asRecord(info?.time);
     const parts = Array.isArray(record?.parts)
       ? record.parts.map((part) => {
           const partRecord = asRecord(part);
@@ -53,11 +54,11 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
     return {
       messageId: typeof info?.id === "string" ? info.id : undefined,
       role: typeof info?.role === "string" ? info.role : undefined,
-      created: asRecord(info?.time)?.created,
-      updated: asRecord(info?.time)?.updated,
-      completed: asRecord(info?.time)?.completed,
+      created: time?.created,
+      updated: time?.updated,
+      completed: time?.completed,
       parts,
-    } as unknown as string;
+    };
   });
 
   return JSON.stringify(recent);
@@ -65,11 +66,7 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
 
 async function getMessages(sessionId: string, directory: string): Promise<unknown[] | null> {
   try {
-    const { data, error } = await opencodeClient.session.messages({
-      sessionID: sessionId,
-      directory,
-      limit: MESSAGE_LIMIT,
-    });
+    const { data, error } = await opencodeClient.session.messages({ sessionID: sessionId, directory, limit: MESSAGE_LIMIT });
     if (error || !Array.isArray(data)) return null;
     return data as unknown[];
   } catch (error) {
@@ -92,16 +89,9 @@ async function getStatus(sessionId: string, directory: string): Promise<SessionS
 async function requestAbort(sessionId: string, directory: string): Promise<boolean> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ABORT_REQUEST_TIMEOUT_MS);
-
   try {
-    const { data, error } = await opencodeClient.session.abort(
-      { sessionID, directory },
-      { signal: controller.signal },
-    );
-
-    logger.warn(
-      `[StallWatchdog] Abort result: session=${sessionId}, result=${String(data)}, error=${error ? "yes" : "no"}`,
-    );
+    const { data, error } = await opencodeClient.session.abort({ sessionID, directory }, { signal: controller.signal });
+    logger.warn(`[StallWatchdog] Abort result: session=${sessionId}, result=${String(data)}, error=${error ? "yes" : "no"}`);
     return !error && data === true;
   } catch (error) {
     logger.warn(`[StallWatchdog] Abort request failed: session=${sessionId}`, error);
@@ -113,13 +103,11 @@ async function requestAbort(sessionId: string, directory: string): Promise<boole
 
 async function waitForIdle(sessionId: string, directory: string): Promise<boolean> {
   const deadline = Date.now() + ABORT_CONFIRMATION_TIMEOUT_MS;
-
   while (Date.now() < deadline) {
     const status = await getStatus(sessionId, directory);
     if (!status || status.type === "idle" || status.type === "error") return true;
     await sleep(POLL_INTERVAL_MS);
   }
-
   return false;
 }
 
@@ -129,13 +117,8 @@ async function clearLocalRunState(sessionId: string, reason: string): Promise<vo
   await markAttachedSessionIdle(sessionId);
 }
 
-export function startSessionStallWatchdog(options: {
-  sessionId: string;
-  directory: string;
-  model: string;
-}): void {
-  const existing = activeWatchdogs.get(options.sessionId);
-  if (existing) return;
+export function startSessionStallWatchdog(options: { sessionId: string; directory: string; model: string }): void {
+  if (activeWatchdogs.has(options.sessionId)) return;
 
   const controller = new AbortController();
   activeWatchdogs.set(options.sessionId, controller);
@@ -143,10 +126,7 @@ export function startSessionStallWatchdog(options: {
   void (async () => {
     let lastFingerprint = "";
     let lastMeaningfulProgressAt = Date.now();
-
-    logger.debug(
-      `[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, stallAfterMs=${STALL_AFTER_MS}`,
-    );
+    logger.debug(`[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, stallAfterMs=${STALL_AFTER_MS}`);
 
     try {
       while (!controller.signal.aborted) {
@@ -160,6 +140,8 @@ export function startSessionStallWatchdog(options: {
         const messages = await getMessages(options.sessionId, options.directory);
         if (!messages) continue;
 
+        // A running tool is genuine work. Do not kill long installs, builds, tests,
+        // or other commands merely because they produce no new assistant text.
         if (hasRunningToolPart(messages)) {
           lastMeaningfulProgressAt = Date.now();
           continue;
@@ -175,32 +157,23 @@ export function startSessionStallWatchdog(options: {
         const stalledForMs = Date.now() - lastMeaningfulProgressAt;
         if (stalledForMs < STALL_AFTER_MS) continue;
 
-        logger.warn(
-          `[StallWatchdog] Session stalled: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}, status=${status.type}. Requesting abort before OpenCode retry loop can wedge the session further.`,
-        );
-
+        logger.warn(`[StallWatchdog] Session stalled: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}, status=${status.type}. Requesting abort.`);
         const aborted = await requestAbort(options.sessionId, options.directory);
         if (!aborted) {
-          logger.error(
-            `[StallWatchdog] Could not confirm abort request: session=${options.sessionId}; preserving local busy state.`,
-          );
+          logger.error(`[StallWatchdog] Could not confirm abort request: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
 
         const idle = await waitForIdle(options.sessionId, options.directory);
         if (!idle) {
-          logger.error(
-            `[StallWatchdog] Abort acknowledged but session did not become idle: session=${options.sessionId}; preserving local busy state.`,
-          );
+          logger.error(`[StallWatchdog] Abort acknowledged but session did not become idle: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
 
         await clearLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
-        logger.warn(
-          `[StallWatchdog] Recovered stalled session: session=${options.sessionId}, model=${options.model}`,
-        );
+        logger.warn(`[StallWatchdog] Recovered stalled session: session=${options.sessionId}, model=${options.model}`);
         return;
       }
     } catch (error) {
