@@ -50,6 +50,11 @@ async function providersForRole(role: AiRole): Promise<CandidateProvider[]> {
   return result;
 }
 
+function selectedModelLabel(role: AiRole, selected: Awaited<ReturnType<typeof getAiRoleSelections>>): string {
+  const item = selected[role];
+  return item ? ` · ${item.modelID}` : "";
+}
+
 export async function showAiRulesMenu(ctx: Context, notice?: string): Promise<void> {
   await renderRoles(ctx, notice);
 }
@@ -95,7 +100,7 @@ export async function handleAiRoleCallback(ctx: Context): Promise<boolean> {
   const selected = provider?.models[modelIndex];
   if (selected) {
     await setAiRoleSelection(role, selected.providerID, selected.modelID);
-    await renderRoleProviders(ctx, role, "✅ AI Rule updated.");
+    await renderRoles(ctx, "✅ AI Rule updated.");
   }
   return true;
 }
@@ -104,7 +109,8 @@ async function renderRoles(ctx: Context, notice?: string): Promise<void> {
   const selected = await getAiRoleSelections();
   const keyboard = new InlineKeyboard();
   for (const role of ROLES) {
-    keyboard.text(`${AI_ROLE_LABELS[role]}${selected[role] ? " · ✅" : ""}`, `${ROLE_PREFIX}${role}`).row();
+    const model = selectedModelLabel(role, selected);
+    keyboard.text(`${AI_ROLE_LABELS[role]}${model}`, `${ROLE_PREFIX}${role}`).row();
   }
   keyboard.text("← Back", BACK);
   const lines = ROLES.map((role) => {
