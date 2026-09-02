@@ -18,13 +18,8 @@ interface StoredRoleSelections {
   selections: AiRoleSelection;
 }
 
-interface LegacyStoredRoleSelections {
-  version: 1;
-  legacy?: AiRoleSelection;
-  chats?: Record<string, AiRoleSelection>;
-}
-
 const FILE = "ai-role-selection.json";
+const AI_ROLES: readonly AiRole[] = ["coding", "image", "video", "stt"];
 
 function filePath(): string {
   return path.join(getRuntimePaths().appHome, FILE);
@@ -46,24 +41,22 @@ function isValidRoleModel(value: unknown): value is { providerID: string; modelI
 
 function isRoleSelection(value: unknown): value is AiRoleSelection {
   if (!isRecord(value)) return false;
-
-  const knownRoles: AiRole[] = ["coding", "image", "video", "stt"];
-  return Object.keys(value).every((key) => knownRoles.includes(key as AiRole) && isValidRoleModel(value[key]));
+  return Object.keys(value).every(
+    (key) => AI_ROLES.includes(key as AiRole) && isValidRoleModel(value[key]),
+  );
 }
 
 function normalizeRoleSelection(value: unknown): AiRoleSelection {
   if (!isRecord(value)) return {};
 
   const selections: AiRoleSelection = {};
-  const roles: AiRole[] = ["coding", "image", "video", "stt"];
-  for (const role of roles) {
+  for (const role of AI_ROLES) {
     const candidate = value[role];
-    if (isValidRoleModel(candidate)) {
-      selections[role] = {
-        providerID: candidate.providerID.trim(),
-        modelID: candidate.modelID.trim(),
-      };
-    }
+    if (!isValidRoleModel(candidate)) continue;
+    selections[role] = {
+      providerID: candidate.providerID.trim(),
+      modelID: candidate.modelID.trim(),
+    };
   }
   return selections;
 }
@@ -71,8 +64,7 @@ function normalizeRoleSelection(value: unknown): AiRoleSelection {
 function firstLegacyChatSelection(chats: unknown): AiRoleSelection | undefined {
   if (!isRecord(chats)) return undefined;
 
-  const entries = Object.values(chats);
-  for (const entry of entries) {
+  for (const entry of Object.values(chats)) {
     const selection = normalizeRoleSelection(entry);
     if (Object.keys(selection).length > 0) return selection;
   }
@@ -83,12 +75,18 @@ function firstLegacyChatSelection(chats: unknown): AiRoleSelection | undefined {
 function normalizeStored(value: unknown): { stored: StoredRoleSelections; migrated: boolean } {
   if (isRecord(value) && value.version === 2 && isRoleSelection(value.selections)) {
     return {
-      stored: { version: 2, selections: normalizeRoleSelection(value.selections) },
+      stored: {
+        version: 2,
+        selections: normalizeRoleSelection(value.selections),
+      },
       migrated: false,
     };
   }
 
   if (isRecord(value) && value.version === 1) {
+    // v1 was the temporary multi-chat format. The single-user architecture is
+    // deployment-wide, so prefer its legacy/global selection and only fall back
+    // to the first preserved chat selection when no global selection exists.
     const legacy = normalizeRoleSelection(value.legacy);
     const fromChat = firstLegacyChatSelection(value.chats);
     const selections = Object.keys(legacy).length > 0 ? legacy : fromChat ?? {};
@@ -99,6 +97,7 @@ function normalizeStored(value: unknown): { stored: StoredRoleSelections; migrat
     };
   }
 
+  // The original/global format was the role-selection object itself.
   if (isRoleSelection(value)) {
     return {
       stored: { version: 2, selections: normalizeRoleSelection(value) },
@@ -118,7 +117,9 @@ async function read(): Promise<StoredRoleSelections> {
     const result = normalizeStored(value);
 
     if (result.migrated) {
-      logger.info("[AI Rules] Loaded legacy v1 AI Rules and migrated them to the deployment-wide singleton model.");
+      logger.info(
+        "[AI Rules] Loaded legacy v1 AI Rules and migrated them to the deployment-wide singleton model.",
+      );
     }
 
     return result.stored;
@@ -163,7 +164,10 @@ export async function setAiRoleSelection(
   const value = await read();
   value.selections = {
     ...value.selections,
-    [role]: { providerID: normalizedProviderID, modelID: normalizedModelID },
+    [role]: {
+      providerID: normalizedProviderID,
+      modelID: normalizedModelID,
+    },
   };
   await write(value);
 }
