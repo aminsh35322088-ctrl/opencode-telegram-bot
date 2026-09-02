@@ -8,7 +8,6 @@ import { summaryAggregator } from "../../app/managers/summary-aggregation-manage
 import { clearPermissionInteraction, syncPermissionInteractionState } from "../menus/permission-menu.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
-import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
@@ -114,9 +113,6 @@ async function handlePermissionReply(
   const directory = currentSession?.directory ?? currentProject?.worktree;
 
   if (!directory || !chatId) {
-    permissionManager.clear();
-    clearPermissionInteraction("permission_invalid_runtime_context");
-
     await ctx.answerCallbackQuery({
       text: t("permission.no_active_request_callback"),
       show_alert: true,
@@ -130,66 +126,64 @@ async function handlePermissionReply(
     reject: t("permission.reply.reject"),
   };
 
-  await ctx.answerCallbackQuery({ text: replyLabels[reply] });
-  await ctx.deleteMessage().catch(() => {});
-
-  summaryAggregator.stopTypingIndicator();
-
+  // Keep the Telegram prompt alive until the OpenCode server has accepted the
+  // reply. Deleting the message and clearing local state before this request
+  // finishes can leave the agent waiting forever with no visible control.
   logger.info(
     `[PermissionHandler] Sending permission reply: ${reply}, requestIDs=${requestIDs.join(",")}`,
   );
 
-  safeBackgroundTask({
-    taskName: "permission.reply",
-    task: async () => {
-      let firstError: unknown = null;
-      let lastResponse: Awaited<ReturnType<typeof opencodeClient.permission.reply>> | null = null;
+  await ctx.answerCallbackQuery({ text: replyLabels[reply] });
 
-      for (const requestID of requestIDs) {
-        const response = await opencodeClient.permission.reply({
-          requestID,
-          directory,
-          reply,
-        });
-        lastResponse = response;
+  let firstError: unknown = null;
 
-        if (!response.error) {
-          continue;
-        }
+  for (const requestID of requestIDs) {
+    const response = await opencodeClient.permission.reply({
+      requestID,
+      directory,
+      reply,
+    });
 
-        if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
-          logger.debug(
-            `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
-          );
-          continue;
-        }
+    if (!response.error) {
+      continue;
+    }
 
-        firstError ??= response.error;
-      }
+    if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
+      logger.debug(
+        `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
+      );
+      continue;
+    }
 
-      return { ...lastResponse, error: firstError };
-    },
-    onSuccess: ({ error }) => {
-      if (error) {
-        if (isPermissionRequestNotFound(error)) {
-          logger.debug(
-            `[PermissionHandler] Permission request already resolved: requestIDs=${requestIDs.join(",")}`,
-          );
-          return;
-        }
+    firstError ??= response.error;
+  }
 
-        logger.error("[PermissionHandler] Failed to send permission reply:", error);
-        if (ctx.api && chatId) {
-          void ctx.api.sendMessage(chatId, t("permission.send_reply_error")).catch(() => {});
-        }
-        return;
-      }
+  if (firstError) {
+    logger.error("[PermissionHandler] Failed to send permission reply:", firstError);
+    syncPermissionInteractionState({
+      lastReplyError: true,
+      requestIDs,
+    });
+    await ctx.api
+      .sendMessage(chatId, t("permission.send_reply_error"))
+      .catch(() => {});
+    return;
+  }
 
-      logger.info("[PermissionHandler] Permission reply sent successfully");
-    },
-  });
-
+  // The request is now accepted by OpenCode. Remove only this exact Telegram
+  // prompt; other pending permissions remain independently actionable.
   permissionManager.removeByMessageId(callbackMessageId);
+
+  if (callbackMessageId !== null) {
+    await ctx.api.deleteMessage(chatId, callbackMessageId).catch((err) => {
+      logger.warn(
+        `[PermissionHandler] Failed to delete resolved permission message ${callbackMessageId}:`,
+        err,
+      );
+    });
+  }
+
+  summaryAggregator.stopTypingIndicator();
 
   if (!permissionManager.isActive()) {
     clearPermissionInteraction("permission_replied");
