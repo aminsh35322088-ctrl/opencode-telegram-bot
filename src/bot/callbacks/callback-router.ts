@@ -42,12 +42,14 @@ async function handleCatalogListBack(ctx: Context, data: string): Promise<boolea
 async function handleImageAiCallback(ctx: Context, data: string): Promise<boolean> {
   if (data === "imageai:generate") {
     activateImageMode("generate");
+    clearInteractionErrorState("interaction", "image_ai_mode_selected");
     await ctx.answerCallbackQuery().catch(() => {});
     await ctx.editMessageText("🎨 <b>Image AI · Generate</b>\n\nSend a text or voice prompt and I’ll generate a new image.", { parse_mode: "HTML" }).catch(() => {});
     return true;
   }
   if (data === "imageai:edit") {
     activateImageMode("edit");
+    clearInteractionErrorState("interaction", "image_ai_mode_selected");
     await ctx.answerCallbackQuery().catch(() => {});
     await ctx.editMessageText("🖌️ <b>Image AI · Edit</b>\n\nSend a photo with a caption/instruction, or send a photo first and then the edit instruction.", { parse_mode: "HTML" }).catch(() => {});
     return true;
