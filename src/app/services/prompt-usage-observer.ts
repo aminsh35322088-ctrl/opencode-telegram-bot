@@ -8,16 +8,16 @@ type UsageClient = {
 };
 
 type PromptUsageSnapshot = {
-  input?: number | undefined;
-  output?: number | undefined;
-  reasoning?: number | undefined;
-  cacheRead?: number | undefined;
-  cacheWrite?: number | undefined;
-  total?: number | undefined;
-  cost?: number | undefined;
+  input?: number;
+  output?: number;
+  reasoning?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  total?: number;
+  cost?: number;
 };
 
-const MAX_OBSERVE_MS = 5 * 60 * 1000;
+const MAX_OBSERVE_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 5000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -36,12 +36,10 @@ function extractUsage(message: unknown): PromptUsageSnapshot | null {
   const messageRecord = asRecord(message);
   const info = asRecord(messageRecord?.info);
   if (!info) return null;
-
   const tokens = asRecord(info.tokens);
   const usage = asRecord(info.usage);
   const source = tokens ?? usage;
   if (!source) return null;
-
   return {
     input: getNumber(source, "input", "promptTokens", "prompt_tokens"),
     output: getNumber(source, "output", "completionTokens", "completion_tokens"),
@@ -54,17 +52,11 @@ function extractUsage(message: unknown): PromptUsageSnapshot | null {
 }
 
 function formatUsage(usage: PromptUsageSnapshot): string {
-  const fields = [
-    ["input", usage.input],
-    ["output", usage.output],
-    ["reasoning", usage.reasoning],
-    ["cacheRead", usage.cacheRead],
-    ["cacheWrite", usage.cacheWrite],
-    ["total", usage.total],
-    ["cost", usage.cost],
-  ].filter(([, value]) => value !== undefined);
-
-  return fields.map(([name, value]) => `${name}=${value}`).join(" ");
+  const fields: Array<[string, number | undefined]> = [
+    ["input", usage.input], ["output", usage.output], ["reasoning", usage.reasoning],
+    ["cacheRead", usage.cacheRead], ["cacheWrite", usage.cacheWrite], ["total", usage.total], ["cost", usage.cost],
+  ];
+  return fields.filter(([, value]) => value !== undefined).map(([name, value]) => `${name}=${value}`).join(" ");
 }
 
 function isBusyStatus(data: unknown, sessionId: string): boolean {
@@ -78,45 +70,28 @@ export function observePromptUsage(
   options: { sessionId: string; directory: string; model: string; promptChars: number },
 ): void {
   const startedAt = Date.now();
-
   void (async () => {
     let lastLoggedSignature = "";
-
     while (Date.now() - startedAt < MAX_OBSERVE_MS) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
       try {
         const statusResponse = await client.session.status({ directory: options.directory });
         if (statusResponse.error) continue;
-
         if (isBusyStatus(statusResponse.data, options.sessionId)) continue;
-
-        const response = await client.session.messages({
-          sessionID: options.sessionId,
-          directory: options.directory,
-          limit: 20,
-        });
+        const response = await client.session.messages({ sessionID: options.sessionId, directory: options.directory, limit: 20 });
         if (response.error || !Array.isArray(response.data)) return;
-
         const usages = response.data.map(extractUsage).filter((usage): usage is PromptUsageSnapshot => usage !== null);
         const usage = usages.at(-1);
         if (!usage) return;
-
         const signature = formatUsage(usage);
         if (signature === lastLoggedSignature) return;
         lastLoggedSignature = signature;
-
-        logger.info(
-          `[LLM Usage] session=${options.sessionId} model=${options.model} promptChars=${options.promptChars} elapsedMs=${Date.now() - startedAt} ${signature}`,
-        );
+        logger.info(`[LLM Usage] session=${options.sessionId} model=${options.model} promptChars=${options.promptChars} elapsedMs=${Date.now() - startedAt} ${signature}`);
         return;
       } catch (error) {
         logger.debug("[LLM Usage] Observation probe failed:", error);
       }
     }
-
-    logger.warn(
-      `[LLM Usage] Observation window expired: session=${options.sessionId} model=${options.model} elapsedMs=${Date.now() - startedAt}`,
-    );
+    logger.debug(`[LLM Usage] Observation window expired without a final usage snapshot: session=${options.sessionId} model=${options.model} elapsedMs=${Date.now() - startedAt}`);
   })();
 }
