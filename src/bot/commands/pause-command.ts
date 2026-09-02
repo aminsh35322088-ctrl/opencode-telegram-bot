@@ -66,6 +66,9 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
 
     if (error && !localRunActive && !foregroundActive) throw error;
 
+    // OpenCode's session.status can lag real tool/session activity. The bot's
+    // own run state is set before prompt execution and is therefore a second
+    // independent signal. Abort when either source says work is active.
     if (!isActiveStatus(state?.type) && !localRunActive && !foregroundActive) {
       await ctx.reply("ℹ️ Nothing is running right now, so there is nothing to pause.");
       return;
