@@ -1,22 +1,23 @@
 import type { Context } from "grammy";
 
-interface Bucket { timestamps: number[]; lastNoticeAt: number; }
+interface Bucket {
+  timestamps: number[];
+  lastNoticeAt: number;
+}
 
 const WINDOW_MS = 10_000;
 const MAX_UPDATES = 30;
 const NOTICE_COOLDOWN_MS = 15_000;
-const buckets = new Map<number, Bucket>();
+let bucket: Bucket = { timestamps: [], lastNoticeAt: 0 };
 
-export async function inboundRateLimitMiddleware(ctx: Context, next: () => Promise<unknown>): Promise<unknown> {
-  const chatId = ctx.chat?.id ?? ctx.from?.id;
-  if (!chatId) return next();
-
+export async function inboundRateLimitMiddleware(
+  ctx: Context,
+  next: () => Promise<unknown>,
+): Promise<unknown> {
   const now = Date.now();
-  const bucket = buckets.get(chatId) ?? { timestamps: [], lastNoticeAt: 0 };
   bucket.timestamps = bucket.timestamps.filter((timestamp) => now - timestamp < WINDOW_MS);
 
   if (bucket.timestamps.length >= MAX_UPDATES) {
-    buckets.set(chatId, bucket);
     if (now - bucket.lastNoticeAt >= NOTICE_COOLDOWN_MS) {
       bucket.lastNoticeAt = now;
       if (ctx.callbackQuery) {
@@ -29,10 +30,9 @@ export async function inboundRateLimitMiddleware(ctx: Context, next: () => Promi
   }
 
   bucket.timestamps.push(now);
-  buckets.set(chatId, bucket);
   return next();
 }
 
 export function clearInboundRateLimitState(): void {
-  buckets.clear();
+  bucket = { timestamps: [], lastNoticeAt: 0 };
 }
