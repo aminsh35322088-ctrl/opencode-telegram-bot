@@ -1,0 +1,42 @@
+name: Fix merged interaction build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch imports and project lookup
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/bot/services/event-subscription-service.ts')
+          s = p.read_text()
+          if 'from "../../opencode/client.js"' not in s:
+              s = s.replace('import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";', 'import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";\nimport { opencodeClient } from "../../opencode/client.js";')
+          old = '''        const currentProject = getCurrentProject();\n        const currentSessionForReject = getCurrentSession();\n        const directoryForReject =\n          currentSessionForReject?.directory ?? currentProject?.worktree;'''
+          new = '''        const directoryForReject = currentSession.directory;'''
+          if old not in s:
+              raise SystemExit('expected broken block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          npm run build
+      - name: Commit and push fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/bot/services/event-subscription-service.ts
+          git commit -m "fix: correct question replacement dependencies" || exit 0
+          git push
+      - name: Remove temporary workflow
+        run: |
+          rm -f .github/workflows/_fix-build.yml
+          git add .github/workflows/_fix-build.yml
+          git commit -m "chore: remove temporary build fix workflow"
+          git push
