@@ -15,7 +15,7 @@ export function imageIntentRouter(bot: Bot<Context>): void {
     const text = ctx.message?.text?.trim();
     if (!chatId || !text || text.startsWith("/")) return next();
     if (CONTROL_TEXT.has(text) || /^📦 Compact: (?:ON|OFF)$/u.test(text)) return next();
-    if (isProviderWizardActive(chatId) || isIntegrationWizardActive(chatId) || questionManager.isActive()) return next();
+    if (isProviderWizardActive() || isIntegrationWizardActive() || questionManager.isActive()) return next();
     const decision = detectMultimodalIntent(text);
     logger.debug(`[Orchestrator] route=${decision.route} action=${decision.action} confidence=${decision.confidence} chatId=${chatId} reason=${decision.reason}`);
     if (decision.route === "image" && decision.action === "generate") {
