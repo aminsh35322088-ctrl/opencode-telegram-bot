@@ -31,30 +31,37 @@ function createBlockDecision(inputType: IncomingInputType, state: InteractionSta
 function createBusyBlockDecision(inputType: IncomingInputType, state: InteractionState | null, reason: BlockReason, command?: string): GuardDecision { return { allow: false, inputType, state, reason, command, busy: true }; }
 function isAllowedRenameCancelCallback(ctx: Context, state: InteractionState): boolean { return state.kind === "rename" && state.expectedInput === "text" && ctx.callbackQuery?.data === "rename:cancel"; }
 function isAllowedTaskCallback(ctx: Context, state: InteractionState): boolean { return state.kind === "task" && (ctx.callbackQuery?.data === "task:cancel" || ctx.callbackQuery?.data === "task:retry-schedule"); }
+function isStateForChat(state: InteractionState, chatId?: number): boolean {
+  if (state.kind !== "inline") return true;
+  const stateChatId = state.metadata.chatId;
+  if (typeof stateChatId !== "number" || typeof chatId !== "number") return true;
+  return stateChatId === chatId;
+}
 
 export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   const rawState = interactionManager.getSnapshot();
   const state = rawState?.kind === "question" && !questionManager.isActiveForChat(ctx.chat?.id) ? null : rawState;
+  const scopedState = state && isStateForChat(state, ctx.chat?.id) ? state : null;
   const { inputType, command } = classifyIncomingInput(ctx);
-  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, state, command, foregroundSessionState.isBusy() || attachManager.isBusy());
+  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, scopedState, command, foregroundSessionState.isBusy() || attachManager.isBusy());
   const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
-  if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
-  if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, state, command, true);
-  if (inputType === "text" && state?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, state, command, isBusy);
-  if (state && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, state, "expired", command, isBusy); }
+  if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
+  if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, scopedState, command, true);
+  if (inputType === "text" && scopedState?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
+  if (scopedState && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, scopedState, "expired", command, isBusy); }
   if (isBusy) {
-    if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, state, command, true); return createBusyBlockDecision(inputType, state, "command_not_allowed", command); }
-    if (state && allowsBusyInteraction(state.kind)) {
-      if (state.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, state, command, true); return createBusyBlockDecision(inputType, state, "expected_text", command); }
-      if (state.expectedInput === inputType) return createAllowDecision(inputType, state, command, true);
-      return createBusyBlockDecision(inputType, state, getExpectedInputBlockReason(state.expectedInput), command);
+    if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "command_not_allowed", command); }
+    if (scopedState && allowsBusyInteraction(scopedState.kind)) {
+      if (scopedState.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "expected_text", command); }
+      if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command, true);
+      return createBusyBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);
     }
-    return createBusyBlockDecision(inputType, state, "expected_text", command);
+    return createBusyBlockDecision(inputType, scopedState, "expected_text", command);
   }
-  if (!state) return createAllowDecision(inputType, null, command);
-  if (inputType === "command") { if (command === "/start") return createAllowDecision(inputType, state, command); if (command && state.allowedCommands.includes(command)) return createAllowDecision(inputType, state, command); return createBlockDecision(inputType, state, "command_not_allowed", command); }
-  if (state.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, state, command); return createBlockDecision(inputType, state, "expected_text", command); }
-  if (inputType === "callback" && (isAllowedRenameCancelCallback(ctx, state) || isAllowedTaskCallback(ctx, state))) return createAllowDecision(inputType, state, command);
-  if (state.expectedInput === inputType) return createAllowDecision(inputType, state, command);
-  return createBlockDecision(inputType, state, getExpectedInputBlockReason(state.expectedInput), command);
+  if (!scopedState) return createAllowDecision(inputType, null, command);
+  if (inputType === "command") { if (command === "/start") return createAllowDecision(inputType, scopedState, command); if (command && scopedState.allowedCommands.includes(command)) return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "command_not_allowed", command); }
+  if (scopedState.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "expected_text", command); }
+  if (inputType === "callback" && (isAllowedRenameCancelCallback(ctx, scopedState) || isAllowedTaskCallback(ctx, scopedState))) return createAllowDecision(inputType, scopedState, command);
+  if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command);
+  return createBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);
 }

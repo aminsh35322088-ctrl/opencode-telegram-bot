@@ -130,7 +130,12 @@ export async function interactionGuardMiddleware(ctx: Context, next: NextFunctio
   );
 
   if (ctx.callbackQuery) {
-    await ctx.answerCallbackQuery({ text: message }).catch(() => {});
+    // A callback can outlive the interaction that created its inline keyboard.
+    // Never surface a text-oriented choice prompt for such a stale button press.
+    await ctx.answerCallbackQuery({
+      text: t("inline.inactive_callback"),
+      show_alert: false,
+    }).catch(() => {});
     return;
   }
 
