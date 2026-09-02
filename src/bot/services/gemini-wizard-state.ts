@@ -1,13 +1,13 @@
-const activeGeminiWizards = new Set<number>();
+let activeGeminiWizard = false;
 
-export function markGeminiWizard(chatId: number): void {
-  activeGeminiWizards.add(chatId);
+export function markGeminiWizard(): void {
+  activeGeminiWizard = true;
 }
 
-export function clearGeminiWizard(chatId: number): void {
-  activeGeminiWizards.delete(chatId);
+export function clearGeminiWizard(): void {
+  activeGeminiWizard = false;
 }
 
-export function isGeminiWizardActive(chatId: number): boolean {
-  return activeGeminiWizards.has(chatId);
+export function isGeminiWizardActive(): boolean {
+  return activeGeminiWizard;
 }
