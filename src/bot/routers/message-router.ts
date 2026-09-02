@@ -38,17 +38,49 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
 
-interface MessageRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number) => void; }
-interface PendingImage { buffer: Buffer; mimeType: string; expiresAt: number; }
+interface MessageRouterDeps {
+  ensureEventSubscription: (directory: string) => Promise<void>;
+  setTelegramContext: (bot: Bot<Context>, chatId: number) => void;
+}
+interface PendingImage {
+  buffer: Buffer;
+  mimeType: string;
+  expiresAt: number;
+}
 const PENDING_IMAGE_TTL_MS = 10 * 60 * 1000;
-const pendingImages = new Map<number, PendingImage>();
+let pendingImage: PendingImage | null = null;
 const IMAGE_EDIT_INTENT_PATTERN = /\b(?:edit|change|modify|remove|replace|add|delete|background|backdrop|style|transform|enhance|upscale|crop|resize|retouch|make|turn|generate|دستکاری|ویرایش|تغییر|حذف|اضافه|پس.?زمینه|بک.?گراند|کیفیت|بزرگ|کوچک|تبدیل|بساز|درست)\b/iu;
 const CONTROL_TEXT = { cancel: "❌ Cancel", pause: MAIN_BUTTONS.pause, abort: MAIN_BUTTONS.abort, resume: MAIN_BUTTONS.resume } as const;
 const REPLY_KEYBOARD_TEXT: ReadonlySet<string> = new Set([CONTROL_TEXT.cancel, CONTROL_TEXT.pause, CONTROL_TEXT.resume, CONTROL_TEXT.abort, MAIN_BUTTONS.history, MAIN_BUTTONS.newChat, MAIN_BUTTONS.aiRules, MAIN_BUTTONS.settings, MAIN_BUTTONS.editImage]);
 function normalizeControlText(text: string): string { return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim(); }
 function isImageEditIntent(text: string): boolean { return IMAGE_EDIT_INTENT_PATTERN.test(text); }
-function rememberPendingImage(chatId: number, image: PendingImage): void { pendingImages.set(chatId, image); setTimeout(() => { const current = pendingImages.get(chatId); if (current === image) pendingImages.delete(chatId); }, PENDING_IMAGE_TTL_MS).unref?.(); }
-async function handlePendingImageEdit(ctx: Context, text: string): Promise<boolean> { const chatId = ctx.chat?.id; if (!chatId || !isImageEditIntent(text)) return false; const pending = pendingImages.get(chatId); if (!pending || pending.expiresAt <= Date.now()) { pendingImages.delete(chatId); return false; } pendingImages.delete(chatId); if (!(await isMediaAiConfigured())) { await ctx.reply("🎨 Image AI is not configured. Open /providers and add the image provider."); return true; } try { await ctx.replyWithChatAction("upload_photo"); const result = await editImage(pending.buffer, pending.mimeType, text); await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" }); } catch (error) { await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`); } return true; }
+function rememberPendingImage(image: PendingImage): void {
+  pendingImage = image;
+  setTimeout(() => {
+    if (pendingImage === image) pendingImage = null;
+  }, PENDING_IMAGE_TTL_MS).unref?.();
+}
+async function handlePendingImageEdit(ctx: Context, text: string): Promise<boolean> {
+  if (!ctx.chat || !isImageEditIntent(text)) return false;
+  if (!pendingImage || pendingImage.expiresAt <= Date.now()) {
+    pendingImage = null;
+    return false;
+  }
+  const image = pendingImage;
+  pendingImage = null;
+  if (!(await isMediaAiConfigured())) {
+    await ctx.reply("🎨 Image AI is not configured. Open /providers and add the image provider.");
+    return true;
+  }
+  try {
+    await ctx.replyWithChatAction("upload_photo");
+    const result = await editImage(image.buffer, image.mimeType, text);
+    await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), { caption: "✨ Edited with Image AI" });
+  } catch (error) {
+    await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return true;
+}
 let botInstance: Bot<Context> | null = null;
 let currentEnsureEventSubscription: ((directory: string) => Promise<void>) | null = null;
 async function handlePriorityControlButton(ctx: Context): Promise<boolean> { const rawText = ctx.message?.text; const chatId = ctx.chat?.id; if (!rawText || !chatId) return false; const text = normalizeControlText(rawText); if (text === normalizeControlText(CONTROL_TEXT.pause)) { logger.info(`[Bot] Control button received: Pause chatId=${chatId}`); await pauseCurrentChat(ctx); return true; } if (text === normalizeControlText(CONTROL_TEXT.resume)) { logger.info(`[Bot] Control button received: Resume chatId=${chatId}`); if (botInstance && currentEnsureEventSubscription) await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription }); return true; } if (text === normalizeControlText(CONTROL_TEXT.abort)) { logger.info(`[Bot] Control button received: Abort chatId=${chatId}`); await abortCurrentOperation(ctx); return true; } if (text === normalizeControlText(CONTROL_TEXT.cancel)) { logger.info(`[Bot] Control button received: Cancel chatId=${chatId}`); if (isProviderWizardActive(chatId)) { clearProviderWizard(chatId); clearIntegrationWizard(chatId); await providersCommand(ctx as never); return true; } if (isIntegrationWizardActive(chatId)) { clearIntegrationWizard(chatId); clearProviderWizard(chatId); await integrationsCommand(ctx as never); return true; } } if (text === normalizeControlText(MAIN_BUTTONS.editImage)) { await ctx.reply("🎨 Send the photo you want to edit, then describe the change in your next message. You can also put the instruction directly in the photo caption."); return true; } if (text === normalizeControlText(MAIN_BUTTONS.aiRules)) { if (await blockMenuWhileInteractionActive(ctx)) return true; await showAiRulesMenu(ctx); return true; } return false; }
@@ -66,7 +98,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.hears(/^📦 Compact: (?:ON|OFF)$/, handleCompactModeButton);
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => { if (await blockMenuWhileInteractionActive(ctx)) return; const label = ctx.message?.text; const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null; const keyboard = keyboardManager.getKeyboard(); if (queuedPrompt) { promptQueue.removeById(queuedPrompt.id); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); return; } await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {}); });
   bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAgentSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing agent menu:", err); await ctx.reply(t("error.load_agents")); } });
-  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAiRulesMenu(ctx); } catch (err) { logger.error("[Bot] Error showing AI Rules menu:", err); await ctx.reply(t("error.load_models")); } });
+  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showAiRulesMenu(ctx); } catch (err) { logger.error("[Bot] Error showing models menu:", err); await ctx.reply(t("error.load_models")); } });
   bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await handleContextButtonPress(ctx); } catch (err) { logger.error("[Bot] Error handling context button:", err); await ctx.reply(t("error.context_button")); } });
   bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => { try { if (await blockMenuWhileInteractionActive(ctx)) return; await showVariantSelectionMenu(ctx); } catch (err) { logger.error("[Bot] Error showing variant menu:", err); await ctx.reply(t("error.load_variants")); } });
   bot.on("message:text", async (ctx, next) => { const text = ctx.message?.text; if (text) logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`); await next(); });
@@ -74,7 +106,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message:voice", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
   bot.on("message:audio", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); await handleVoiceMessage(ctx, voicePromptDeps); });
   bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
-  bot.on("message:photo", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); const caption = ctx.message.caption?.trim() ?? ""; if (/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) { await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim()); return; } const source = await downloadPhoto(ctx); rememberPendingImage(ctx.chat.id, { ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS }); if (caption && isImageEditIntent(caption)) { await editPhotoMessage(ctx, caption); pendingImages.delete(ctx.chat.id); return; } await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
+  bot.on("message:photo", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); const caption = ctx.message.caption?.trim() ?? ""; if (/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) { await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim()); return; } const source = await downloadPhoto(ctx); rememberPendingImage({ ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS }); if (caption && isImageEditIntent(caption)) { await editPhotoMessage(ctx, caption); pendingImage = null; return; } await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.on("message:document", async (ctx) => { deps.setTelegramContext(bot, ctx.chat.id); agentArtifactDeliveryService.setChatId(ctx.chat.id); await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }); });
   bot.on("message:text", async (ctx) => {
     const text = ctx.message?.text?.trim();
