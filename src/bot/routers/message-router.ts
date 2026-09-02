@@ -44,7 +44,7 @@ import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
-import { activateImageMode, clearImageMode, getImageMode } from "../../app/services/image-mode-service.js";
+import { clearImageMode, getImageMode } from "../../app/services/image-mode-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
