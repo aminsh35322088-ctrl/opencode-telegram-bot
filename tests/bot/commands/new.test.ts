@@ -7,6 +7,7 @@ import { t } from "../../../src/i18n/index.js";
 const mocked = vi.hoisted(() => ({
   sessionCreateMock: vi.fn(),
   getCurrentProjectMock: vi.fn(),
+  getCurrentSessionDirectoryMock: vi.fn(),
   attachToSessionMock: vi.fn(),
   ensureEventSubscriptionMock: vi.fn(),
 }));
@@ -25,6 +26,7 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
   setCurrentSession: vi.fn(),
+  getCurrentSessionDirectory: mocked.getCurrentSessionDirectoryMock,
 }));
 
 vi.mock("../../../src/app/services/session-cache-service.js", () => ({
@@ -54,7 +56,12 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     initialize: vi.fn(),
     updateAgent: vi.fn(),
     getContextInfo: vi.fn(() => null),
+    setPaused: vi.fn(),
   },
+}));
+
+vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
+  clearPausedSession: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({
@@ -98,6 +105,8 @@ describe("bot/commands/new", () => {
     foregroundSessionState.__resetForTests();
     mocked.sessionCreateMock.mockReset();
     mocked.getCurrentProjectMock.mockReset();
+    mocked.getCurrentSessionDirectoryMock.mockReset();
+    mocked.getCurrentSessionDirectoryMock.mockReturnValue("/repo");
     mocked.attachToSessionMock.mockReset();
     mocked.attachToSessionMock.mockResolvedValue({
       busy: false,
@@ -128,6 +137,7 @@ describe("bot/commands/new", () => {
     const ctx = createContext();
     await newCommand(ctx as never, createDeps());
 
+    expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(1);
     expect(mocked.attachToSessionMock).toHaveBeenCalledWith({
       bot: expect.any(Object),
       chatId: 123,
@@ -144,5 +154,26 @@ describe("bot/commands/new", () => {
         reply_markup: { keyboard: true },
       }),
     );
+  });
+
+  it("allows only one concurrent session creation", async () => {
+    let releaseCreate!: (value: { data: { id: string; title: string }; error: null }) => void;
+    const createDeferred = new Promise<{ data: { id: string; title: string }; error: null }>((resolve) => {
+      releaseCreate = resolve;
+    });
+    mocked.sessionCreateMock.mockReturnValueOnce(createDeferred);
+
+    const first = newCommand(createContext() as never, createDeps());
+    await Promise.resolve();
+    const second = newCommand(createContext() as never, createDeps());
+
+    await second;
+    expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(1);
+
+    releaseCreate({ data: { id: "session-3", title: "Session Three" }, error: null });
+    await first;
+
+    expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(1);
+    expect(mocked.attachToSessionMock).toHaveBeenCalledTimes(1);
   });
 });
