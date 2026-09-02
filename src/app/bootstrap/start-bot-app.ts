@@ -9,6 +9,7 @@ import { flushSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { reconcileStoredModelSelection } from "../services/model-selection-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
+import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearServiceStateFile } from "../../runtime/service/manager.js";
@@ -65,6 +66,11 @@ export async function startBotApp(): Promise<void> {
 
   await loadSettings();
   await reconcileStoredModelSelection();
+  const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => {
+    logger.warn("[RailwayIntegration] Could not initialize Railway token from environment; continuing without Railway integration", error);
+    return false;
+  });
+  logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
   try {
     process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig();
   } catch (error) {

@@ -14,6 +14,7 @@
     "image-inspect": "allow",
     "safe-download": "allow",
     "send-file": "allow",
+    "railway": "allow",
     "external_directory": {
       "/data/logs/**": "allow"
     }
