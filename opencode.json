@@ -1,5 +1,14 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "railway": {
+      "type": "local",
+      "command": ["sh", "/app/scripts/railway-mcp.sh"],
+      "enabled": true,
+      "codemode": false,
+      "timeout": 30000
+    }
+  },
   "permission": {
     "webfetch": "allow",
     "websearch": "allow",
