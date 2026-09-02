@@ -22,7 +22,25 @@ export interface NewCommandDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
-export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps) {
+// A Telegram update can be retried while the first handler is still running.
+// Keep /new single-flight so two concurrent deliveries cannot create two
+// OpenCode sessions for the same deployment.
+let newSessionCreation: Promise<void> | null = null;
+
+export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
+  if (newSessionCreation) {
+    logger.warn("[Bot] Ignored concurrent /new request while session creation is already in progress");
+    return;
+  }
+
+  newSessionCreation = createNewSession(ctx, deps).finally(() => {
+    newSessionCreation = null;
+  });
+
+  await newSessionCreation;
+}
+
+async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
   try {
     clearPausedSession();
     keyboardManager.setPaused(false);
