@@ -173,8 +173,6 @@ export async function validateRailwayToken(tokenValue: string): Promise<RailwayT
       return { valid: true, tokenType: "project", projectId: projectToken.projectId, environmentId: projectToken.environmentId };
     }
 
-    // Workspace tokens use Authorization: Bearer, but cannot use `me` because that query is scoped to a personal account.
-    // Listing one project is sufficient to prove the credential is accepted while staying within workspace scope.
     const workspaceAttempt = await railwayGraphql(token, "query { projects { edges { node { id name } } } }", "Authorization");
     const workspaceProjects = workspaceAttempt.payload.data?.projects?.edges;
     if (workspaceAttempt.response.ok && Array.isArray(workspaceProjects)) {
@@ -299,14 +297,29 @@ export async function initializeRailwayTokenFromEnvironment(): Promise<boolean> 
   return withStoreLock(async () => {
     const index = await readIndex();
     if (index.accounts.length) return true;
-    const envToken = process.env.RAILWAY_TOKEN?.trim();
+
+    // Railway CLI distinguishes account/workspace tokens (RAILWAY_API_TOKEN)
+    // from project-scoped tokens (RAILWAY_TOKEN). Preserve that distinction
+    // when bootstrapping the persistent integration store.
+    const accountToken = process.env.RAILWAY_API_TOKEN?.trim();
+    const projectToken = process.env.RAILWAY_TOKEN?.trim();
+    const envToken = accountToken || projectToken;
     if (!envToken) return false;
+
     const token = normalizeToken(envToken);
-    const account: RailwayAccount = { id: "railway", name: "Railway", tokenFile: "railway.token", createdAt: new Date().toISOString(), tokenType: "project" };
+    const tokenType: RailwayTokenType = accountToken ? "account" : "project";
+    const account: RailwayAccount = {
+      id: "railway",
+      name: "Railway",
+      tokenFile: "railway.token",
+      createdAt: new Date().toISOString(),
+      tokenType,
+    };
     await writeAccountToken(account, token);
     try { await writeIndex({ accounts: [account], activeId: account.id }); }
     catch (error) { await fs.rm(getAccountTokenPath(account), { force: true }).catch(() => {}); throw error; }
     delete process.env.RAILWAY_TOKEN;
+    delete process.env.RAILWAY_API_TOKEN;
     await applyActiveRailwayToken();
     return true;
   });
