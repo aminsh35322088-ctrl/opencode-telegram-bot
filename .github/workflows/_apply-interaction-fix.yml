@@ -1,0 +1,81 @@
+name: _apply-interaction-fix
+
+on:
+  push:
+    branches:
+      - fix/interaction-permission-question-races
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch interaction event gates
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/bot/services/event-subscription-service.ts")
+          text = path.read_text()
+
+          imp = 'import { permissionManager } from "../../app/managers/permission-manager.js";\n'
+          gate = imp + 'import { interactionEventGate } from "../../app/services/interaction-event-gate.js";\n'
+          if 'interaction-event-gate.js' not in text:
+              text = text.replace(imp, gate, 1)
+
+          old = '''    summaryAggregator.setOnPartial((sessionId, messageId, messageText) => {\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          new = '''    summaryAggregator.setOnPartial((sessionId, messageId, messageText) => {\n      if (interactionEventGate.isBlocked(sessionId)) {\n        logger.debug(`[Bot] Suppressing assistant partial while interaction is pending: session=${sessionId}`);\n        return;\n      }\n\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          old = '''    summaryAggregator.setOnRootToolUpdate((toolInfo) => {\n      const currentSession = getCurrentSession();'''
+          new = '''    summaryAggregator.setOnRootToolUpdate((toolInfo) => {\n      if (interactionEventGate.isBlocked(toolInfo.sessionId)) {\n        logger.debug(`[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);\n        return;\n      }\n\n      const currentSession = getCurrentSession();'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          old = '''    summaryAggregator.setOnTool(async (toolInfo) => {\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          new = '''    summaryAggregator.setOnTool(async (toolInfo) => {\n      if (interactionEventGate.isBlocked(toolInfo.sessionId)) {\n        logger.debug(`[Bot] Suppressing completed tool notification while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);\n        return;\n      }\n\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          old = '''    summaryAggregator.setOnToolFile(async (fileInfo) => {\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          new = '''    summaryAggregator.setOnToolFile(async (fileInfo) => {\n      if (interactionEventGate.isBlocked(fileInfo.sessionId)) {\n        logger.debug(`[Bot] Suppressing tool file while interaction is pending: session=${fileInfo.sessionId}, tool=${fileInfo.tool}`);\n        return;\n      }\n\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          old = '''    summaryAggregator.setOnThinking(async (update) => {\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          new = '''    summaryAggregator.setOnThinking(async (update) => {\n      if (interactionEventGate.isBlocked(update.sessionId)) {\n        logger.debug(`[Bot] Suppressing thinking while interaction is pending: session=${update.sessionId}`);\n        return;\n      }\n\n      if (!this.botInstance || !this.chatIdInstance) {'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          old = '''    summaryAggregator.setOnPermission(async (request) => {\n      const generation = permissionManager.getGeneration();'''
+          new = '''    summaryAggregator.setOnPermission(async (request) => {\n      interactionEventGate.mark("permission", request.sessionID, request.id);\n      const generation = permissionManager.getGeneration();'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          old = '''    summaryAggregator.setOnPermissionReplied(async (_sessionId, requestID) => {\n      const messageIds = permissionManager.resolveRequest(requestID);'''
+          new = '''    summaryAggregator.setOnPermissionReplied(async (_sessionId, requestID) => {\n      const messageIds = permissionManager.resolveRequest(requestID);\n      interactionEventGate.release("permission", _sessionId, requestID);'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+          workflow = Path(".github/workflows/_apply-interaction-fix.yml")
+          workflow.unlink(missing_ok=True)
+
+      - name: Commit patched files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/bot/services/event-subscription-service.ts .github/workflows/_apply-interaction-fix.yml
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "fix: gate assistant activity while interaction is pending"
+          git push
