@@ -11,7 +11,8 @@ import {
 
 const SERVER_READY_TIMEOUT_MS = 15000;
 const SERVER_READY_POLL_INTERVAL_MS = 500;
-const HEALTH_CHECK_TIMEOUT_MS = 3000;
+const HEALTH_CHECK_TIMEOUT_MS = 5000;
+const HEALTH_FAILURES_BEFORE_RESTART = 2;
 const HEALTH_CHECK_TIMED_OUT = Symbol("health-check-timed-out");
 
 function sleep(ms: number): Promise<void> {
@@ -49,9 +50,7 @@ async function isOpencodeServerHealthy(): Promise<boolean> {
   try {
     const result = await withTimeout(opencodeClient.global.health(), HEALTH_CHECK_TIMEOUT_MS);
     if (result === HEALTH_CHECK_TIMED_OUT) {
-      logger.warn(
-        `[OpenCodeAutoRestart] Health-check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms`,
-      );
+      logger.warn(`[OpenCodeAutoRestart] Health-check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms`);
       return false;
     }
 
@@ -79,6 +78,7 @@ export class OpencodeAutoRestartService {
   private started = false;
   private checkInProgress = false;
   private serverWasHealthy = false;
+  private consecutiveHealthFailures = 0;
 
   async start(): Promise<boolean> {
     if (this.started || !config.opencode.autoRestartEnabled) return false;
@@ -96,9 +96,10 @@ export class OpencodeAutoRestartService {
 
     this.started = true;
     this.localTarget = localTarget;
+    this.consecutiveHealthFailures = 0;
 
     logger.info(
-      `[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}`,
+      `[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}, healthTimeoutMs=${HEALTH_CHECK_TIMEOUT_MS}, failuresBeforeRestart=${HEALTH_FAILURES_BEFORE_RESTART}`,
     );
 
     await this.checkAndRestart("startup");
@@ -120,6 +121,7 @@ export class OpencodeAutoRestartService {
     this.started = false;
     this.localTarget = null;
     this.serverWasHealthy = false;
+    this.consecutiveHealthFailures = 0;
   }
 
   private async checkAndRestart(reason: "startup" | "interval"): Promise<void> {
@@ -129,6 +131,7 @@ export class OpencodeAutoRestartService {
 
     try {
       if (await isOpencodeServerHealthy()) {
+        this.consecutiveHealthFailures = 0;
         logger.debug(`[OpenCodeAutoRestart] Health-check succeeded: reason=${reason}`);
         if (!this.serverWasHealthy) {
           this.serverWasHealthy = true;
@@ -137,6 +140,16 @@ export class OpencodeAutoRestartService {
         return;
       }
 
+      this.consecutiveHealthFailures += 1;
+      logger.warn(
+        `[OpenCodeAutoRestart] Health-check failed: reason=${reason}, consecutiveFailures=${this.consecutiveHealthFailures}/${HEALTH_FAILURES_BEFORE_RESTART}`,
+      );
+
+      if (this.consecutiveHealthFailures < HEALTH_FAILURES_BEFORE_RESTART) {
+        return;
+      }
+
+      this.consecutiveHealthFailures = 0;
       this.serverWasHealthy = false;
       opencodeReadyLifecycle.notifyUnavailable(`auto_restart_${reason}`);
 
@@ -148,7 +161,7 @@ export class OpencodeAutoRestartService {
       }
 
       logger.warn(
-        `[OpenCodeAutoRestart] OpenCode server is unavailable, starting local server: reason=${reason}, port=${this.localTarget.port}`,
+        `[OpenCodeAutoRestart] OpenCode server is unavailable after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks, starting local server: reason=${reason}, port=${this.localTarget.port}`,
       );
 
       const childProcess = startLocalOpencodeServer(this.localTarget);
