@@ -3,7 +3,10 @@ import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 import { pathToFileURL } from "node:url";
 
-type RailwayIntegrationStore = typeof import("../../src/app/services/railway-integration-service.js");
+interface RailwayIntegrationStore {
+  getRailwayToken(): Promise<string>;
+  getActiveRailwayAccount(): Promise<{ name: string } | null>;
+}
 
 const execFileAsync = promisify(execFile);
 const RAILWAY_BIN = "/usr/local/bin/railway";
@@ -12,7 +15,7 @@ const DEFAULT_TIMEOUT_MS = 30000;
 const STORE_PATH = "/app/dist/app/services/railway-integration-service.js";
 
 async function getStore(): Promise<RailwayIntegrationStore> {
-  return import(pathToFileURL(STORE_PATH).href);
+  return import(pathToFileURL(STORE_PATH).href) as Promise<RailwayIntegrationStore>;
 }
 
 function clampTimeout(value?: number): number {
