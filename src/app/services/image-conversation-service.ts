@@ -1,5 +1,12 @@
 import { getCustomProviderConfig } from "./custom-provider-service.js";
 import { editImageWithFallback, generateImageWithFallback } from "./image-ai-provider-service.js";
+import {
+  getImageConversationState,
+  setImageConversationState,
+  deleteImageConversationState,
+  loadImageConversationStore,
+  type SerializedImageConversationState,
+} from "../stores/image-conversation-store.js";
 import { logger } from "../../utils/logger.js";
 
 export type ImageConversationOperation = "generate" | "edit" | "chat";
@@ -24,7 +31,40 @@ interface ImageConversationState {
 const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const CONVERSATION_TTL_MS = 45 * 60 * 1000;
 const MAX_TURNS = 12;
-const states = new Map<number, ImageConversationState>();
+
+let storeLoaded = false;
+
+async function ensureStoreLoaded(): Promise<void> {
+  if (!storeLoaded) {
+    await loadImageConversationStore();
+    storeLoaded = true;
+  }
+}
+
+function deserializeState(serialized: SerializedImageConversationState): ImageConversationState {
+  const currentImage = serialized.currentImageBase64
+    ? {
+        buffer: Buffer.from(serialized.currentImageBase64, "base64"),
+        mimeType: serialized.currentImageMimeType ?? "image/png",
+      }
+    : undefined;
+
+  return {
+    turns: serialized.turns,
+    currentImage,
+    expiresAt: serialized.expiresAt,
+  };
+}
+
+function serializeState(state: ImageConversationState): SerializedImageConversationState {
+  return {
+    turns: state.turns,
+    currentImageBase64: state.currentImage?.buffer.toString("base64"),
+    currentImageMimeType: state.currentImage?.mimeType,
+    expiresAt: state.expiresAt,
+    updatedAt: Date.now(),
+  };
+}
 
 const SYSTEM_PROMPT = `You are the conversational brain of a Telegram Image AI mode.\nYour job is to have a natural, friendly conversation in the user's language and decide whether the user wants an image operation.\nReturn ONLY valid JSON with this exact shape: {"reply": string, "operation": "generate"|"edit"|"chat", "instruction": string}.\nRules:\n- "reply" is a concise natural response to the user.\n- "instruction" is the complete image instruction for the image generator/editor; write it in clear English when useful, preserving important user details.\n- Use "edit" when a current image exists and the user asks to modify, refine, transform, remove, add, recolor, relight, or otherwise change it.\n- Use "generate" when the user asks for a new image or a new scene and there is no current image, or when they explicitly ask for a fresh generation.\n- Use "chat" for questions, greetings, clarifications, or requests that do not require an image.\n- Do not claim an image was changed/generated unless the operation says so.\n- Use the conversation context and the current image to resolve references such as "that one", "the tower on the right", or "make it darker".`;
 
@@ -32,21 +72,31 @@ function pruneTurns(turns: ConversationTurn[]): ConversationTurn[] {
   return turns.length > MAX_TURNS ? turns.slice(-MAX_TURNS) : turns;
 }
 
-function getState(chatId: number): ImageConversationState | undefined {
-  const state = states.get(chatId);
-  if (!state) return undefined;
-  if (state.expiresAt <= Date.now()) {
-    states.delete(chatId);
-    return undefined;
+function getStateSync(chatId: number): ImageConversationState | undefined {
+  const serialized = getImageConversationState(chatId);
+  if (!serialized) return undefined;
+  return deserializeState(serialized);
+}
+
+async function getState(chatId: number): Promise<ImageConversationState | undefined> {
+  await ensureStoreLoaded();
+  return getStateSync(chatId);
+}
+
+async function upsertState(chatId: number): Promise<ImageConversationState> {
+  await ensureStoreLoaded();
+  const existing = getStateSync(chatId);
+  if (existing) {
+    existing.expiresAt = Date.now() + CONVERSATION_TTL_MS;
+    return existing;
   }
-  state.expiresAt = Date.now() + CONVERSATION_TTL_MS;
+  const state: ImageConversationState = { turns: [], expiresAt: Date.now() + CONVERSATION_TTL_MS };
+  setImageConversationState(chatId, serializeState(state));
   return state;
 }
 
-function upsertState(chatId: number): ImageConversationState {
-  const state = getState(chatId) ?? { turns: [], expiresAt: Date.now() + CONVERSATION_TTL_MS };
-  states.set(chatId, state);
-  return state;
+async function saveState(chatId: number, state: ImageConversationState): Promise<void> {
+  setImageConversationState(chatId, serializeState(state));
 }
 
 function extractText(payload: unknown): string {
@@ -110,27 +160,32 @@ async function askGemini(state: ImageConversationState, text: string): Promise<{
   }
 }
 
-export function isImageConversationActive(chatId: number): boolean {
-  return Boolean(getState(chatId));
+export async function isImageConversationActive(chatId: number): Promise<boolean> {
+  const state = await getState(chatId);
+  return Boolean(state);
 }
 
-export function activateImageConversation(chatId: number): void {
-  states.set(chatId, { turns: [], expiresAt: Date.now() + CONVERSATION_TTL_MS });
+export async function activateImageConversation(chatId: number): Promise<void> {
+  await ensureStoreLoaded();
+  const state: ImageConversationState = { turns: [], expiresAt: Date.now() + CONVERSATION_TTL_MS };
+  setImageConversationState(chatId, serializeState(state));
   logger.info(`[ImageConversation] activated chatId=${chatId}`);
 }
 
-export function clearImageConversation(chatId: number): void {
-  states.delete(chatId);
+export async function clearImageConversation(chatId: number): Promise<void> {
+  await ensureStoreLoaded();
+  deleteImageConversationState(chatId);
   logger.info(`[ImageConversation] cleared chatId=${chatId}`);
 }
 
-export function setCurrentImage(chatId: number, image: { buffer: Buffer; mimeType: string }): void {
-  const state = upsertState(chatId);
+export async function setCurrentImage(chatId: number, image: { buffer: Buffer; mimeType: string }): Promise<void> {
+  const state = await upsertState(chatId);
   state.currentImage = image;
+  await saveState(chatId, state);
 }
 
 export async function handleImageConversationText(chatId: number, text: string): Promise<ImageConversationResult> {
-  const state = upsertState(chatId);
+  const state = await upsertState(chatId);
   const decision = await askGemini(state, text);
 
   state.turns = pruneTurns([
@@ -140,6 +195,7 @@ export async function handleImageConversationText(chatId: number, text: string):
   ]);
 
   if (decision.operation === "chat" || !decision.instruction) {
+    await saveState(chatId, state);
     return { reply: decision.reply, operation: "chat" };
   }
 
@@ -149,22 +205,31 @@ export async function handleImageConversationText(chatId: number, text: string):
 
   state.currentImage = result;
   state.expiresAt = Date.now() + CONVERSATION_TTL_MS;
+  await saveState(chatId, state);
   return { ...result, reply: decision.reply, operation: decision.operation, image: result };
 }
 
 export async function handleImageConversationImage(chatId: number, image: { buffer: Buffer; mimeType: string }, instruction = "Create a natural continuation of this image and preserve the important details."): Promise<ImageConversationResult> {
-  const state = upsertState(chatId);
+  const state = await upsertState(chatId);
   state.currentImage = image;
   const result = await editImageWithFallback(image.buffer, image.mimeType, instruction);
   state.currentImage = result;
   state.expiresAt = Date.now() + CONVERSATION_TTL_MS;
   const reply = "عکس رو گرفتم. از همین تصویر ادامه می‌دیم؛ بگو چه تغییری می‌خوای.";
   state.turns = pruneTurns([...state.turns, { role: "assistant", content: reply }]);
+  await saveState(chatId, state);
   return { reply, operation: "edit", image: result };
 }
 
-export function __resetImageConversationStateForTests(): void {
-  states.clear();
+export async function getConversationHistory(chatId: number): Promise<ConversationTurn[]> {
+  const state = await getState(chatId);
+  return state?.turns ?? [];
+}
+
+export async function __resetImageConversationStateForTests(): Promise<void> {
+  const { __resetImageConversationStoreForTests } = await import("../stores/image-conversation-store.js");
+  __resetImageConversationStoreForTests();
+  storeLoaded = false;
 }
 
 void GEMINI_MODEL;

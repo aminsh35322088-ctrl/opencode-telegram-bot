@@ -44,25 +44,25 @@ export function registerImageAiConversationMiddleware(bot: Bot<Context>, deps: I
     const text = ctx.message?.text?.trim();
 
     if (text === MAIN_BUTTONS.imageAi) {
-      if (isImageConversationActive(chatId)) {
-        clearImageConversation(chatId);
+      if (await isImageConversationActive(chatId)) {
+        await clearImageConversation(chatId);
         await ctx.reply("❌ <b>Image AI</b> closed. Back to normal chat.", { parse_mode: "HTML" });
       } else {
-        activateImageConversation(chatId);
+        await activateImageConversation(chatId);
         await ctx.reply("🎨 <b>Image AI is active.</b>\nTalk to me naturally and we’ll create and refine images together.\n\nTap 🎨 Image AI again to exit.", { parse_mode: "HTML" });
       }
       return;
     }
 
-    if (!isImageConversationActive(chatId)) return next();
+    if (!(await isImageConversationActive(chatId))) return next();
 
     if (text?.startsWith("/")) {
-      clearImageConversation(chatId);
+      await clearImageConversation(chatId);
       return next();
     }
 
     if (text && isExitControl(text)) {
-      clearImageConversation(chatId);
+      await clearImageConversation(chatId);
       return next();
     }
 
@@ -81,7 +81,7 @@ export function registerImageAiConversationMiddleware(bot: Bot<Context>, deps: I
     if (ctx.message?.photo) {
       try {
         const image = await downloadPhoto(ctx);
-        setCurrentImage(chatId, image);
+        await setCurrentImage(chatId, image);
         const caption = ctx.message.caption?.trim();
         if (!caption) {
           await ctx.reply("🖼️ Got it. This image is now the current image for our conversation. Tell me what you want to change.");
