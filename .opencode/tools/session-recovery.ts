@@ -73,13 +73,18 @@ async function waitForIdle(sessionId: string, waitMs: number, signal: AbortSigna
     const state = await getSessionState(sessionId, signal);
     if (state.state === "idle" || state.state === "not-found") return state.state;
     if (state.state === "unknown" && state.status >= 400) return state.state;
+
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, POLL_INTERVAL_MS);
+      let timer: ReturnType<typeof setTimeout>;
       const onAbort = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);
         reject(new Error("aborted"));
       };
+      timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, POLL_INTERVAL_MS);
       signal.addEventListener("abort", onAbort, { once: true });
     });
   }
