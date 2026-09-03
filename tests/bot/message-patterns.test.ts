@@ -21,12 +21,12 @@ describe("bot/message-patterns", () => {
       modelID: "openai/gpt-4o",
     });
 
-    const modelButtonText = getButtonText(defined(keyboard.keyboard[1]?.[0]));
+    const modelButtonText = getButtonText(defined(keyboard.keyboard[2]?.[0]));
     expect(modelButtonText).toMatch(MODEL_BUTTON_TEXT_PATTERN);
   });
 
-  it("matches single-line model button text", () => {
-    expect("🧠 cliproxyapi2/gpt-5.3-codex").toMatch(MODEL_BUTTON_TEXT_PATTERN);
+  it("matches full model and provider button text", () => {
+    expect("🧠 cliproxyapi2/gpt-5.3-codex\ncliproxyapi2").toMatch(MODEL_BUTTON_TEXT_PATTERN);
   });
 
   it("does not treat custom agent labels as model buttons", () => {
@@ -39,9 +39,10 @@ describe("bot/message-patterns", () => {
       modelID: "openai/gpt-4o",
     });
 
-    const variantButtonText = getButtonText(defined(keyboard.keyboard[1]?.[1]));
+    const variantButtonText = "💡 Default";
     expect(variantButtonText).toMatch(VARIANT_BUTTON_TEXT_PATTERN);
     expect("💭 Default").toMatch(VARIANT_BUTTON_TEXT_PATTERN);
+    expect(getButtonText(defined(keyboard.keyboard[1]?.[1]))).toBe("📦 Compact: OFF");
   });
 
   it("does not match plain prompt text", () => {
@@ -85,6 +86,7 @@ describe("bot/message-patterns", () => {
     expect(isReplyKeyboardButtonText(getButtonText(defined(keyboard.keyboard[0]?.[1])))).toBe(true);
     expect(isReplyKeyboardButtonText(getButtonText(defined(keyboard.keyboard[1]?.[0])))).toBe(true);
     expect(isReplyKeyboardButtonText(getButtonText(defined(keyboard.keyboard[1]?.[1])))).toBe(true);
+    expect(isReplyKeyboardButtonText(getButtonText(defined(keyboard.keyboard[2]?.[0])))).toBe(true);
     expect(isReplyKeyboardButtonText(formatQueuedPromptButtonLabel(1, "queued"))).toBe(true);
     expect(isReplyKeyboardButtonText("Create a migration plan")).toBe(false);
   });
@@ -94,7 +96,7 @@ describe("bot/message-patterns", () => {
       "🕘 History",
       "💬 New Chat",
       "⚙️ Settings",
-      "🎨 Edit Image",
+      "🎨 Image AI",
       "📦 Compact: ON",
       "📦 Compact: OFF",
       "⏸️ Pause",

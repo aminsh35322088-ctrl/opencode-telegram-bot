@@ -38,14 +38,14 @@ function addRunningControls(keyboard: Keyboard, paused: boolean): void {
 
 function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
-  keyboard.text(getModelButtonLabel(currentModel)).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
-  keyboard.text(MAIN_BUTTONS.imageAi).row();
+  keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
+  keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.settings).row();
 }
 
 function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
-  keyboard.text(getModelButtonLabel(currentModel)).text(MAIN_BUTTONS.newChat).row();
-  keyboard.text(MAIN_BUTTONS.imageAi).row();
+  keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.imageAi).row();
+  keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
 }
 

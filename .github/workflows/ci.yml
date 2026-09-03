@@ -8,203 +8,45 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  cleanup:
-    if: "contains(github.event.head_commit.message, '[run-cleanup]')"
-    name: Cleanup legacy audio replies
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.14
-          cache: npm
-
-      - name: Remove legacy audio reply code
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path: str, old: str, new: str) -> None:
-              p = Path(path)
-              text = p.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"Expected exactly one match in {path}, found {count}")
-              p.write_text(text.replace(old, new, 1))
-
-          replace_once(
-              "src/bot/services/event-subscription-service.ts",
-              'import { sendTtsResponseForSession } from "../handlers/tts-response-handler.js";\n',
-              "",
-          )
-          replace_once(
-              "src/bot/services/event-subscription-service.ts",
-              '''\n          await sendTtsResponseForSession({\n            api: botApi,\n            sessionId,\n            chatId,\n            text: messageText,\n          });''',
-              "",
-          )
-
-          replace_once(
-              "src/app/stores/settings-store.ts",
-              '''\nexport type TtsMode = "off" | "all" | "auto";\n\nexport function getTtsMode(): TtsMode {\n  return currentSettings.ttsMode ?? "off";\n}\n\nexport function setTtsMode(mode: TtsMode): void {\n  currentSettings.ttsMode = mode;\n  void writeSettingsFile(currentSettings);\n}\n''',
-              "",
-          )
-          replace_once("src/app/stores/settings-store.ts", '    "ttsMode",\n', "")
-          replace_once(
-              "src/app/stores/settings-store.ts",
-              '''    if (key === "ttsMode") {\n      if (typeof value !== "string" || !VALID_TTS_MODES.includes(value as TtsMode)) {\n        throw new Error(\n          `INITIAL_SETTINGS_PRESET: invalid value for "ttsMode"; expected one of ${VALID_TTS_MODES.join(", ")}.`,\n        );\n      }\n      if (currentSettings.ttsMode === undefined) {\n        currentSettings.ttsMode = value as TtsMode;\n      }\n    } else if (key === "responseStreamingMode") {''',
-              '''    if (key === "responseStreamingMode") {''',
-          )
-          replace_once("src/app/stores/settings-store.ts", 'const VALID_TTS_MODES: readonly TtsMode[] = ["off", "all", "auto"];\n', "")
-          replace_once(
-              "src/app/stores/settings-store.ts",
-              '''\n  if ("ttsEnabled" in loadedSettings) {\n    const oldEnabled = (loadedSettings as Record<string, unknown>).ttsEnabled;\n    loadedSettings.ttsMode = oldEnabled === true ? "all" : "off";\n    delete (loadedSettings as Record<string, unknown>).ttsEnabled;\n    requiresRewrite = true;\n  }\n''',
-              "",
-          )
-          replace_once("src/app/types/settings.ts", '  ttsMode?: "off" | "all" | "auto" | undefined;\n', "")
-
-          p = Path("src/config.ts")
-          text = p.read_text()
-          replace_once("src/config.ts", 'export type TtsProvider = "openai" | "google" | "elevenlabs" | "edge";\n', "")
-          text = p.read_text()
-          start = text.index("const VALID_TTS_PROVIDERS:")
-          end = text.index("const VALID_STT_REQUEST_FORMATS:")
-          text = text[:start] + text[end:]
-          old_config = '''  tts: (() => {\n    const provider = getOptionalTtsProviderEnvVar("TTS_PROVIDER", "openai");\n    const defaultVoice =\n      provider === "google"\n        ? "en-US-Studio-O"\n        : provider === "elevenlabs"\n          ? "21m00Tcm4TlvDq8ikWAM"\n          : provider === "edge"\n            ? "en-US-EmmaMultilingualNeural"\n            : "alloy";\n    const defaultModel =\n      provider === "elevenlabs" ? "eleven_flash_v2_5" : "gpt-4o-mini-tts";\n    return {\n      apiUrl: getEnvVar("TTS_API_URL", false),\n      apiKey: getEnvVar("TTS_API_KEY", false),\n      provider,\n      model: getEnvVar("TTS_MODEL", false) || defaultModel,\n      voice: getEnvVar("TTS_VOICE", false) || defaultVoice,\n    };\n  })(),\n'''
-          count = text.count(old_config)
-          if count != 1:
-              raise SystemExit(f"Expected exactly one TTS config block, found {count}")
-          p.write_text(text.replace(old_config, "", 1))
-
-          for p in Path("src/i18n").glob("*.ts"):
-              p.write_text("".join(line for line in p.read_text().splitlines(keepends=True) if not any(marker in line for marker in ('"status.line.tts"', '"status.tts.', '"tts.', '"settings.tts.label"'))))
-
-          for filename in (".env.example", "README.md"):
-              p = Path(filename)
-              if p.exists():
-                  p.write_text("".join(line for line in p.read_text().splitlines(keepends=True) if "TTS_" not in line))
-
-          for filename in (
-              "src/app/services/edge-tts.ts",
-              "src/app/services/tts-service.ts",
-              "src/bot/handlers/tts-response-handler.ts",
-              "tests/app/services/edge-tts.test.ts",
-              "tests/app/services/tts-service.test.ts",
-              "tests/bot/handlers/tts-response-handler.test.ts",
-          ):
-              p = Path(filename)
-              if p.exists():
-                  p.unlink()
-          PY
-
-          npm uninstall @google-cloud/text-to-speech --ignore-scripts --no-audit --no-fund
-
-          if grep -RInE 'TTS_|ttsMode|getTtsMode|setTtsMode|sendTts|tts-service|edge-tts|status\.tts|settings\.tts' src tests .env.example README.md --exclude-dir=node_modules --exclude-dir=.git; then
-            echo "Stale audio-reply references remain."
-            exit 1
-          fi
-
-      - name: Format and validate cleaned tree
-        run: |
-          npx prettier --write "src/**/*.ts" "tests/**/*.ts"
-          git diff --check
-          npm ci
-          npm run lint
-          npm run typecheck
-          npm run build
-          npm run test
-
-      - name: Restore normal CI and push validated cleanup
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > .github/workflows/ci.yml <<'EOF'
-          name: CI
-
-          on:
-            push:
-              branches: [main]
-            pull_request:
-              branches: [main]
-            workflow_dispatch:
-
-          permissions:
-            contents: read
-
-          concurrency:
-            group: ci-${{ github.workflow }}-${{ github.ref }}
-            cancel-in-progress: true
-
-          jobs:
-            quality:
-              name: Lint, Typecheck, Build, Test
-              runs-on: ubuntu-latest
-              timeout-minutes: 15
-
-              steps:
-                - name: Checkout
-                  uses: actions/checkout@v4
-
-                - name: Setup Node.js
-                  uses: actions/setup-node@v4
-                  with:
-                    node-version: 22.14
-                    cache: npm
-
-                - name: Install dependencies
-                  run: npm ci
-
-                - name: Lint
-                  run: npm run lint
-
-                - name: Typecheck
-                  run: npm run typecheck
-
-                - name: Build
-                  run: npm run build
-
-                - name: Test
-                  run: npm run test
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "chore: remove legacy audio replies and finalize settings cleanup [cleanup-complete]"
-          git push origin HEAD:main
-
   quality:
-    if: "!contains(github.event.head_commit.message, '[run-cleanup]')"
     name: Lint, Typecheck, Build, Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22.14
           cache: npm
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Changelog policy
+        if: github.event_name == 'pull_request'
+        run: npm run check:changelog
+
       - name: Lint
         run: npm run lint
+
       - name: Typecheck
         run: npm run typecheck
+
       - name: Build
         run: npm run build
+
       - name: Test
         run: npm run test
