@@ -15,7 +15,7 @@ function buttonTextAt(
 }
 
 describe("bot/keyboards/main-reply-keyboard", () => {
-  it("creates the balanced idle main keyboard", () => {
+  it("creates the idle main keyboard with a full-width model selector", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: false },
@@ -23,7 +23,8 @@ describe("bot/keyboards/main-reply-keyboard", () => {
 
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
       [{ text: "🕘 History" }, { text: "💬 New Chat" }],
-      [{ text: "🧠 openrouter\nopenai/gpt-4o" }, { text: "📦 Compact: OFF" }],
+      [{ text: "🎨 Image AI" }, { text: "📦 Compact: OFF" }],
+      [{ text: "🧠 openai/gpt-4o\nopenrouter" }],
       [{ text: "⚙️ Settings" }],
     ]);
     expect(keyboard.resize_keyboard).toBe(true);
@@ -47,9 +48,10 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 1, 0)).toBe("❌ 2. second");
     expect(buttonTextAt(keyboard, 2, 0)).toBe("🕘 History");
     expect(buttonTextAt(keyboard, 2, 1)).toBe("💬 New Chat");
-    expect(buttonTextAt(keyboard, 3, 0)).toBe("🧠 openrouter\nopenai/gpt-4o");
+    expect(buttonTextAt(keyboard, 3, 0)).toBe("🎨 Image AI");
     expect(buttonTextAt(keyboard, 3, 1)).toBe("📦 Compact: OFF");
-    expect(buttonTextAt(keyboard, 4, 0)).toBe("⚙️ Settings");
+    expect(buttonTextAt(keyboard, 4, 0)).toBe("🧠 openai/gpt-4o\nopenrouter");
+    expect(buttonTextAt(keyboard, 5, 0)).toBe("⚙️ Settings");
   });
 
   it("keeps running controls isolated from idle controls", () => {
