@@ -16,13 +16,7 @@ export const MODEL_PROVIDERS_CALLBACK_PREFIX = "model:providers:";
 export const MODEL_PROVIDER_CALLBACK_PREFIX = "model:provider:";
 export const MODEL_PROVIDER_MODEL_CALLBACK_PREFIX = "model:pick:";
 
-interface ModelsPaginationRange {
-  page: number;
-  totalPages: number;
-  startIndex: number;
-  endIndex: number;
-}
-
+interface ModelsPaginationRange { page: number; totalPages: number; startIndex: number; endIndex: number; }
 type ModelListKind = "favorites" | "recent";
 
 export function buildModelListCallback(kind: ModelListKind, index: number): string {
@@ -56,28 +50,25 @@ function sameModel(a: ModelInfo | FavoriteModel, b: ModelInfo | FavoriteModel): 
   return a.providerID === b.providerID && a.modelID === b.modelID;
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+}
+
 function modelLabel(model: FavoriteModel, active: boolean, icon: string): string {
   return `${active ? "✅" : icon} ${model.modelID}\n${model.providerID}`;
 }
 
-function buildModelSelectionMenuText(
-  currentModel: ModelInfo | undefined,
-  modelLists: ModelSelectionLists,
-): string {
+function buildModelSelectionMenuText(currentModel: ModelInfo | undefined, modelLists: ModelSelectionLists): string {
   const current = currentModel?.providerID && currentModel.modelID
     ? [
         "🟢 <b>Current model</b>",
-        `<code>${currentModel.modelID}</code>`,
-        `${currentModel.providerID}${currentModel.variant && currentModel.variant !== "default" ? ` · ${currentModel.variant}` : ""}`,
+        `<code>${escapeHtml(currentModel.modelID)}</code>`,
+        `${escapeHtml(currentModel.providerID)}${currentModel.variant && currentModel.variant !== "default" ? ` · ${escapeHtml(currentModel.variant)}` : ""}`,
       ]
     : ["🟢 <b>Current model</b>", "No model selected"];
 
-  const favoriteCount = modelLists.favorites.filter(
-    (model) => !currentModel || !sameModel(model, currentModel),
-  ).length;
-  const recentCount = modelLists.recent.filter(
-    (model) => !currentModel || !sameModel(model, currentModel),
-  ).length;
+  const favoriteCount = modelLists.favorites.filter((model) => !currentModel || !sameModel(model, currentModel)).length;
+  const recentCount = modelLists.recent.filter((model) => !currentModel || !sameModel(model, currentModel)).length;
 
   return [
     "🤖 <b>Model Center</b>",
@@ -91,83 +82,47 @@ function buildModelSelectionMenuText(
   ].join("\n");
 }
 
-export async function buildModelSelectionMenu(
-  currentModel?: ModelInfo,
-  modelLists?: ModelSelectionLists,
-): Promise<InlineKeyboard> {
+export async function buildModelSelectionMenu(currentModel?: ModelInfo, modelLists?: ModelSelectionLists): Promise<InlineKeyboard> {
   const keyboard = new InlineKeyboard();
   const lists = modelLists ?? (await getModelSelectionLists());
   const active = currentModel?.providerID && currentModel.modelID ? currentModel : undefined;
 
   const addButton = (model: FavoriteModel, icon: string, kind: ModelListKind, index: number): void => {
     if (active && sameModel(model, active)) return;
-    keyboard
-      .text(modelLabel(model, false, icon), buildModelListCallback(kind, index))
-      .row();
+    keyboard.text(modelLabel(model, false, icon), buildModelListCallback(kind, index)).row();
   };
 
   lists.favorites.forEach((model, index) => addButton(model, "⭐", "favorites", index));
   lists.recent.forEach((model, index) => addButton(model, "🕘", "recent", index));
 
-  keyboard
-    .text("🔎 Search models", MODEL_SEARCH_CALLBACK)
-    .text("🧩 Browse providers", `${MODEL_PROVIDERS_CALLBACK_PREFIX}0`)
-    .row();
+  keyboard.text("🔎 Search models", MODEL_SEARCH_CALLBACK).text("🧩 Browse providers", `${MODEL_PROVIDERS_CALLBACK_PREFIX}0`).row();
   keyboard.text("← Back", MODEL_SETTINGS_BACK_CALLBACK);
 
-  if (lists.favorites.length === 0 && lists.recent.length === 0) {
-    logger.warn("[ModelHandler] No favorite or recent models found");
-  }
-
+  if (lists.favorites.length === 0 && lists.recent.length === 0) logger.warn("[ModelHandler] No favorite or recent models found");
   return keyboard;
 }
 
-export async function buildModelRootMenuView(
-  currentModel: ModelInfo | undefined,
-  modelLists: ModelSelectionLists,
-): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  return {
-    text: buildModelSelectionMenuText(currentModel, modelLists),
-    keyboard: await buildModelSelectionMenu(currentModel, modelLists),
-  };
+export async function buildModelRootMenuView(currentModel: ModelInfo | undefined, modelLists: ModelSelectionLists): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  return { text: buildModelSelectionMenuText(currentModel, modelLists), keyboard: await buildModelSelectionMenu(currentModel, modelLists) };
 }
 
-function appendPaginationRow(
-  keyboard: InlineKeyboard,
-  page: number,
-  totalPages: number,
-  buildCallback: (page: number) => string,
-): void {
+function appendPaginationRow(keyboard: InlineKeyboard, page: number, totalPages: number, buildCallback: (page: number) => string): void {
   if (totalPages <= 1) return;
   if (page > 0) keyboard.text("‹ Prev", buildCallback(page - 1));
   if (page < totalPages - 1) keyboard.text("Next ›", buildCallback(page + 1));
   keyboard.row();
 }
 
-function appendPageIndicator(
-  text: string,
-  page: number,
-  totalPages: number,
-  indicatorKey: "model.providers.page_indicator" | "model.provider_models.page_indicator",
-): string {
+function appendPageIndicator(text: string, page: number, totalPages: number, indicatorKey: "model.providers.page_indicator" | "model.provider_models.page_indicator"): string {
   return totalPages <= 1 ? text : `${text}\n\n${t(indicatorKey, { current: String(page + 1), total: String(totalPages) })}`;
 }
 
-export function buildProvidersMenuView(
-  providers: ProviderInfo[],
-  page: number,
-): { text: string; keyboard: InlineKeyboard; page: number } {
+export function buildProvidersMenuView(providers: ProviderInfo[], page: number): { text: string; keyboard: InlineKeyboard; page: number } {
   const keyboard = new InlineKeyboard();
-  const { page: normalizedPage, totalPages, startIndex, endIndex } = calculateModelsPaginationRange(
-    providers.length,
-    page,
-    config.bot.modelsListLimit,
-  );
+  const { page: normalizedPage, totalPages, startIndex, endIndex } = calculateModelsPaginationRange(providers.length, page, config.bot.modelsListLimit);
 
   providers.slice(startIndex, endIndex).forEach((provider, index) => {
-    keyboard
-      .text(`🧩 ${provider.name}\n${provider.modelCount} models`, `${MODEL_PROVIDER_CALLBACK_PREFIX}${startIndex + index}:0`)
-      .row();
+    keyboard.text(`🧩 ${provider.name}\n${provider.modelCount} models`, `${MODEL_PROVIDER_CALLBACK_PREFIX}${startIndex + index}:0`).row();
   });
 
   appendPaginationRow(keyboard, normalizedPage, totalPages, (targetPage) => `${MODEL_PROVIDERS_CALLBACK_PREFIX}${targetPage}`);
@@ -177,65 +132,34 @@ export function buildProvidersMenuView(
     ? "🧩 <b>Providers</b>\n\nNo providers are currently available."
     : "🧩 <b>Providers</b>\n\nChoose a provider to browse its models.";
 
-  return {
-    text: appendPageIndicator(baseText, normalizedPage, totalPages, "model.providers.page_indicator"),
-    keyboard,
-    page: normalizedPage,
-  };
+  return { text: appendPageIndicator(baseText, normalizedPage, totalPages, "model.providers.page_indicator"), keyboard, page: normalizedPage };
 }
 
-export function buildProviderModelsMenuView(
-  provider: ProviderInfo,
-  providerIndex: number,
-  models: FavoriteModel[],
-  page: number,
-  providersPage: number,
-  currentModel?: ModelInfo,
-): { text: string; keyboard: InlineKeyboard; page: number; pageModels: FavoriteModel[] } {
+export function buildProviderModelsMenuView(provider: ProviderInfo, providerIndex: number, models: FavoriteModel[], page: number, providersPage: number, currentModel?: ModelInfo): { text: string; keyboard: InlineKeyboard; page: number; pageModels: FavoriteModel[] } {
   const keyboard = new InlineKeyboard();
-  const { page: normalizedPage, totalPages, startIndex, endIndex } = calculateModelsPaginationRange(
-    models.length,
-    page,
-    config.bot.modelsListLimit,
-  );
+  const { page: normalizedPage, totalPages, startIndex, endIndex } = calculateModelsPaginationRange(models.length, page, config.bot.modelsListLimit);
   const pageModels = models.slice(startIndex, endIndex);
 
   pageModels.forEach((model, index) => {
     const active = !!currentModel && sameModel(model, currentModel);
-    keyboard
-      .text(modelLabel(model, active, "🤖"), `${MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}${index}`)
-      .row();
+    keyboard.text(modelLabel(model, active, "🤖"), `${MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}${index}`).row();
   });
 
   appendPaginationRow(keyboard, normalizedPage, totalPages, (targetPage) => `${MODEL_PROVIDER_CALLBACK_PREFIX}${providerIndex}:${targetPage}`);
   keyboard.text("← Providers", `${MODEL_PROVIDERS_CALLBACK_PREFIX}${providersPage}`);
 
   const baseText = pageModels.length === 0
-    ? `🧩 <b>${provider.name}</b>\n\nNo models are currently available.`
-    : `🧩 <b>${provider.name}</b>\n\nChoose a model.`;
+    ? `🧩 <b>${escapeHtml(provider.name)}</b>\n\nNo models are currently available.`
+    : `🧩 <b>${escapeHtml(provider.name)}</b>\n\nChoose a model.`;
 
-  return {
-    text: appendPageIndicator(baseText, normalizedPage, totalPages, "model.provider_models.page_indicator"),
-    keyboard,
-    page: normalizedPage,
-    pageModels,
-  };
+  return { text: appendPageIndicator(baseText, normalizedPage, totalPages, "model.provider_models.page_indicator"), keyboard, page: normalizedPage, pageModels };
 }
 
-export function calculateModelsPaginationRange(
-  totalItems: number,
-  page: number,
-  pageSize: number,
-): ModelsPaginationRange {
+export function calculateModelsPaginationRange(totalItems: number, page: number, pageSize: number): ModelsPaginationRange {
   const safePageSize = Math.max(1, pageSize);
   const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
   const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
-  return {
-    page: normalizedPage,
-    totalPages,
-    startIndex: normalizedPage * safePageSize,
-    endIndex: Math.min((normalizedPage + 1) * safePageSize, totalItems),
-  };
+  return { page: normalizedPage, totalPages, startIndex: normalizedPage * safePageSize, endIndex: Math.min((normalizedPage + 1) * safePageSize, totalItems) };
 }
 
 export async function showModelSelectionMenu(ctx: Context): Promise<void> {
@@ -243,13 +167,7 @@ export async function showModelSelectionMenu(ctx: Context): Promise<void> {
     const currentModel = fetchCurrentModel();
     const modelLists = await getModelSelectionLists();
     const { text, keyboard } = await buildModelRootMenuView(currentModel, modelLists);
-    await replyWithInlineMenu(ctx, {
-      menuKind: "model",
-      text,
-      keyboard,
-      parseMode: "HTML",
-      metadata: { modelLists },
-    });
+    await replyWithInlineMenu(ctx, { menuKind: "model", text, keyboard, parseMode: "HTML", metadata: { modelLists } });
   } catch (err) {
     logger.error("[ModelHandler] Error showing model menu:", err);
     await ctx.reply(t("model.menu.error"));
