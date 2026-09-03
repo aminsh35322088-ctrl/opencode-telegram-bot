@@ -60,3 +60,4 @@ describe("settings model selection route", () => {
     expect(view?.text).toContain("Choose the model for the current chat.");
   });
 });
+
