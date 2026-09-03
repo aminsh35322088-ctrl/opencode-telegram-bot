@@ -1,5 +1,4 @@
 import { Context } from "grammy";
-import { readFile } from "node:fs/promises";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
@@ -14,12 +13,20 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
+import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion } from "../../app/services/version-info-service.js";
 
-const VERSION_FILE = "/app/.opencode-version";
+async function sendBotUpdateNotice(ctx: Context): Promise<void> {
+  const notice = await getBotUpdateNotice();
+  if (!notice) return;
 
-async function getOpenCodeVersion(): Promise<string> {
-  try { return (await readFile(VERSION_FILE, "utf8")).trim() || "unknown"; }
-  catch { return "unknown"; }
+  await ctx.reply(
+    `🚀 Bot updated\n\nv${notice.previousVersion} → <b>v${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`,
+    { parse_mode: "HTML" },
+  );
+
+  if (notice.changelog) {
+    await ctx.reply(`📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`);
+  }
 }
 
 export async function startCommand(ctx: Context): Promise<void> {
@@ -49,12 +56,13 @@ export async function startCommand(ctx: Context): Promise<void> {
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
 
   const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID) : "Not configured";
-  const version = await getOpenCodeVersion();
+  const openCodeVersion = await getOpenCodeVersion();
   const text = [
     "⚡ <b>OpenCode Telegram</b>",
     "",
     "🟢 <b>Ready</b>",
-    `🧠 OpenCode <b>v${version}</b>`,
+    `🤖 Bot <b>v${BOT_VERSION}</b>`,
+    `🧠 OpenCode <b>v${openCodeVersion}</b>`,
     `🤖 ${modelDisplay}`,
     `🛠️ ${currentAgent}`,
     "",
@@ -63,5 +71,6 @@ export async function startCommand(ctx: Context): Promise<void> {
     "💬 Start a fresh chat or open 🕘 History to continue an existing conversation.",
   ].join("\n");
 
+  await sendBotUpdateNotice(ctx);
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false, false) });
 }
