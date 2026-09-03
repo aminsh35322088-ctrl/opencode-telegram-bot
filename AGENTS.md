@@ -123,14 +123,16 @@ Use `src/utils/logger.ts` with level-based logs. Keep detailed diagnostics under
 
 ### Agent validation commands
 
-- Prefer `.opencode/tools/full-diagnostics.ts` before recovery, repeated testing, or infrastructure debugging.
-- Use `.opencode/tools/test-runner.ts` for project test, build, lint, or typecheck validation instead of raw shell commands.
-- Never use `npx` for tools already installed in the container (`tsc`, `vitest`, `eslint`, `tsx`); it can trigger package resolution/downloads and make diagnostics appear hung.
+- **MANDATORY:** When validating this project or any checked-out review/worktree copy of this project, use `.opencode/tools/test-runner.ts` for `test`, `build`, `lint`, and `typecheck` whenever that tool is available. Do not substitute an equivalent raw `bash`, `npm`, `npx`, `tsc`, or `vitest` command.
+- If the validation tool reports `NOT TESTABLE`, diagnose that result first; do not bypass it by launching the same validation through `npx` or raw `tsc`.
+- **NEVER use `npx` for validation.** The container already provides the common validation toolchain; `npx` can perform package resolution/downloads and can appear permanently stuck.
+- **NEVER append `| head`, `| tail`, or another output-limiting pipeline to a validation command.** It can hide the producer's exit status and leave the producer running after the consumer exits.
 - Never run `rm -rf node_modules` as a routine validation step.
 - Never run `npm ci` as a routine interactive test step. `npm ci` is for clean CI/container provisioning.
 - When dependencies are actually missing, inspect `package.json`, the lockfile, and the current dependency tree first; use the dependency manager tool instead of repeatedly starting from zero.
 - Keep validation commands bounded and do not hide exit codes behind pipelines.
-- If validation times out, investigate the process/network/tool lifecycle instead of blindly reinstalling dependencies.
+- For a review worktree such as `/tmp/review-pr28`, pass that worktree to the validation tool rather than manually reproducing its package-manager command in `bash`.
+- If a validation command times out, investigate the process/network/tool lifecycle instead of blindly reinstalling dependencies.
 
 ### Recovery path for stuck agent work
 
