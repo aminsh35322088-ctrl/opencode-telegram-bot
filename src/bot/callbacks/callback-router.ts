@@ -30,7 +30,7 @@ import { clearLsPathIndex, clearOpenPathIndex } from "../menus/file-browser-menu
 import { buildAdvancedSettingsView, buildSettingsMenuView } from "../menus/settings-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { MODEL_SETTINGS_BACK_CALLBACK } from "../menus/model-selection-menu.js";
-import { markGeminiWizard, clearGeminiWizard } from "../services/gemini-wizard-state.js";
+
 import { activateImageMode } from "../../app/services/image-mode-service.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
@@ -63,8 +63,6 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
     if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id);
-    if (data === "provider:gemini:configure") markGeminiWizard();
-    if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
     let errorScope: InteractionErrorScope = "interaction";
     try {
       if (await handleImageAiCallback(ctx, data)) return;
@@ -80,7 +78,6 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     } catch (err) {
       logger.error("[Bot] Error handling callback:", err);
       clearInteractionErrorState(errorScope, "callback_handler_error");
-      clearGeminiWizard();
       await ctx.answerCallbackQuery({ text: t("callback.processing_error") }).catch(() => {});
     }
   });
