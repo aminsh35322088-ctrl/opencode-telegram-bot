@@ -39,7 +39,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
 
     const label = buttonTextAt(keyboard, 2, 0);
     expect(label).toContain("🧠 vendor/very-long-model-name");
-    expect(label).toContain(" · very-long-provider-name");
+    expect(label).toContain(" · very-long-pro");
     expect(label).not.toContain("\n");
     expect(label.length).toBeLessThanOrEqual(48);
     expect(label.endsWith("…")).toBe(true);
