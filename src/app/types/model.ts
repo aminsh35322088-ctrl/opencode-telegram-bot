@@ -30,18 +30,11 @@ export interface ModelSelectionLists {
 }
 
 /**
- * Format model for button display (compact format)
- * @param providerID Provider ID
- * @param modelID Model ID
- * @returns Formatted string "providerID/modelID"
+ * Format the current model for the persistent reply keyboard.
+ * Keep the model and provider intact: this button now has its own full-width row.
  */
 export function formatModelForButton(providerID: string, modelID: string): string {
-  // If model name is too long, we only truncate the model part
-  const displayModelId = modelID.length > 20 ? `${modelID.substring(0, 17)}...` : modelID;
-  const displayProviderId =
-    providerID.length > 15 ? `${providerID.substring(0, 12)}...` : providerID;
-
-  return `🧠 ${displayProviderId}\n${displayModelId}`;
+  return `🧠 ${modelID}\n${providerID}`;
 }
 
 /**
