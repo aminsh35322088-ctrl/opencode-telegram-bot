@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { InlineKeyboard } from "grammy";
-import { showAiRulesMenu } from "./ai-role-selection-callback-handler.js";
+import { showModelSelectionMenu } from "./model-selection-callback-handler.js";
 import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
@@ -31,7 +31,7 @@ import {
   buildContextSettingsView,
   buildNotificationsSettingsView,
   buildSettingsMenuView,
-  SETTINGS_AI_RULES_CALLBACK,
+  SETTINGS_MODEL_CALLBACK,
   SETTINGS_ADVANCED_CALLBACK,
   SETTINGS_APPEARANCE_CALLBACK,
   SETTINGS_ASSISTANT_FOOTER_CALLBACK,
@@ -65,14 +65,13 @@ async function renderSettingsView(ctx: Context, view: { text: string; keyboard: 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
   if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) return false;
-  if (callbackData === SETTINGS_AI_RULES_CALLBACK) {
-    await ctx.answerCallbackQuery().catch(() => {});
-    await showAiRulesMenu(ctx);
-    return true;
-  }
   if (!(await ensureActiveInlineMenu(ctx, "settings"))) return true;
   try {
     switch (callbackData) {
+      case SETTINGS_MODEL_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await showModelSelectionMenu(ctx);
+        return true;
       case SETTINGS_APPEARANCE_CALLBACK:
         await ctx.answerCallbackQuery();
         await renderSettingsView(ctx, buildAppearanceSettingsView());
