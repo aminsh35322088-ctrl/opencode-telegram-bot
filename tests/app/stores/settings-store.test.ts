@@ -7,11 +7,13 @@ import {
   __resetSettingsForTests,
   flushSettings,
   getCompactOutputMode,
+  getMessageFormatMode,
   getPromptQueueEnabled,
   getResponseStreamingMode,
   getShowThinkingContent,
   loadSettings,
   setCompactOutputMode,
+  setMessageFormatMode,
 } from "../../../src/app/stores/settings-store.js";
 
 describe("settings-store", () => {
@@ -37,15 +39,17 @@ describe("settings-store", () => {
     expect(getShowThinkingContent()).toBe(true);
     expect(getPromptQueueEnabled()).toBe(false);
     expect(getResponseStreamingMode()).toBe("edit");
+    expect(["raw", "markdown"]).toContain(getMessageFormatMode());
   });
 
   it("loads persisted current settings", async () => {
-    await writeFile(path.join(tempHome, "settings.json"), JSON.stringify({ compactOutputMode: true, promptQueueEnabled: true, responseStreamingMode: "draft", showThinkingContent: false }));
+    await writeFile(path.join(tempHome, "settings.json"), JSON.stringify({ compactOutputMode: true, promptQueueEnabled: true, responseStreamingMode: "draft", showThinkingContent: false, messageFormatMode: "raw" }));
     await loadSettings();
     expect(getCompactOutputMode()).toBe(true);
     expect(getPromptQueueEnabled()).toBe(true);
     expect(getResponseStreamingMode()).toBe("draft");
     expect(getShowThinkingContent()).toBe(false);
+    expect(getMessageFormatMode()).toBe("raw");
   });
 
   it("persists compact mode", async () => {
@@ -54,6 +58,15 @@ describe("settings-store", () => {
     await flushSettings();
     const settings = JSON.parse(await readFile(path.join(tempHome, "settings.json"), "utf8"));
     expect(settings.compactOutputMode).toBe(true);
+  });
+
+  it("persists message format mode", async () => {
+    await loadSettings();
+    setMessageFormatMode("raw");
+    await flushSettings();
+    const settings = JSON.parse(await readFile(path.join(tempHome, "settings.json"), "utf8"));
+    expect(settings.messageFormatMode).toBe("raw");
+    expect(getMessageFormatMode()).toBe("raw");
   });
 
   it("recovers from a corrupted settings file using the backup", async () => {
