@@ -41,6 +41,8 @@ The production container is intentionally equipped as a general-purpose coding w
 - SQLite 3
 - native build tooling: gcc/g++, make, pkg-config
 
+The production image also preinstalls common validation tools globally (`tsc`, `vitest`, `eslint`, `tsx`) so repeated interactive checks should not download packages.
+
 When a user asks for an archive, **create a real archive with the shell tooling** (for example `zip -r project.zip project/` or `tar -czf project.tar.gz project/`). Do not write archive bytes through the text-file `write` tool and do not rename a text file to an archive extension. After creating an archive, verify it with `file`, `unzip -t`, or the appropriate archive checker.
 
 ### Sending generated files to Telegram
@@ -258,6 +260,25 @@ Important:
 ### Agent validation commands
 
 - For project test, build, lint, or typecheck validation, prefer the dedicated `.opencode/tools/test-runner.ts` tool instead of raw shell commands.
-- Keep validation commands bounded and avoid pipelines that hide exit codes or truncate diagnostic output.
-- Never delete tests or source files merely to make validation pass. Fix the underlying issue or report the failure.
-- If validation times out, treat it as a real failure and report the timeout rather than repeatedly rerunning the same command.
+- Never use `npx` for tools already installed in the container (`tsc`, `vitest`, `eslint`, `tsx`). This can trigger package resolution/downloads and make diagnostics appear hung.
+- Never run `rm -rf node_modules` as a routine validation step.
+- Never run `npm ci` as a routine interactive test step. `npm ci` is for clean CI/container provisioning and intentionally recreates `node_modules`.
+- When dependencies are actually missing, inspect `package.json`, the lockfile, and the current `node_modules` state first; use the dependency manager tool to repair/reuse the tree rather than repeatedly starting from zero.
+- Keep validation commands bounded and avoid pipelines that hide exit codes or truncate diagnostic output. If a pipeline is necessary, use `pipefail` and preserve the original command status.
+- If validation times out, treat it as a real failure and investigate the process/network/tool lifecycle rather than blindly reinstalling dependencies.
+
+### Recovery path for stuck agent work
+
+When an interactive coding/test command appears stuck:
+1. Stop repeating the same command or reinstalling dependencies.
+2. Inspect the current session status and recent events.
+3. Use the `session-recovery` tool to probe and, when appropriate, abort the stuck session.
+4. Retry the smallest useful operation (for example a focused test, typecheck, or direct tool invocation).
+5. If the same route fails again, switch to another validation method rather than looping indefinitely.
+6. Preserve the diagnostic evidence so a later recovery does not erase the original failure mode.
+
+### OpenCode SSE / recovery guidance
+
+- Treat the SSE connection as a long-lived transport. Do not shorten its idle timeout merely to make recovery faster.
+- Let the event subscriber reconnect a wedged stream; let the independent OpenCode health monitor decide whether the server process itself needs restarting.
+- Prefer a targeted session abort/recovery over restarting the whole bot process. Preserve session history and avoid repeating side effects that may already have completed.
