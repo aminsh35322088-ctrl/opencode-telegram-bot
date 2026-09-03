@@ -13,7 +13,7 @@ import {
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
-export const SETTINGS_AI_RULES_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}ai_rules`;
+export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
@@ -38,9 +38,9 @@ function appendSettingsBackButton(keyboard: InlineKeyboard): void { keyboard.row
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "⚙️ Settings\n\nConfigure AI Rules, reply presentation, notifications, context display, and integrations.",
+    text: "⚙️ Settings\n\nConfigure the active model, reply presentation, notifications, context display, and integrations.",
     keyboard: new InlineKeyboard()
-      .text("🧠 AI Rules", SETTINGS_AI_RULES_CALLBACK).row()
+      .text("🤖 Model selection", SETTINGS_MODEL_CALLBACK).row()
       .text("🎨 Appearance", SETTINGS_APPEARANCE_CALLBACK).row()
       .text("🔔 Notifications", SETTINGS_NOTIFICATIONS_CALLBACK).row()
       .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
