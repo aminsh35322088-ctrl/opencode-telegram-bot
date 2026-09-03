@@ -117,5 +117,18 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
     .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: ["🛠 Advanced", "", "Power-user controls and OpenCode integrations.", "", "🔗 MCP Servers — inspect and enable/disable connected MCP servers.", "🧠 Skills — browse reusable Agent workflows available to OpenCode.", "🧩 Custom Commands — browse project-defined OpenCode command templates."].join("\n"), keyboard };
+  return {
+    text: [
+      "🛠 Advanced",
+      "",
+      "Power-user controls and OpenCode integrations.",
+      "",
+      "🔌 API Providers — configure provider credentials and available models.",
+      "🔗 Integrations — manage connected external integrations.",
+      "🔗 MCP Servers — inspect and enable/disable connected MCP servers.",
+      "🧠 Skills — browse reusable Agent workflows available to OpenCode.",
+      "🧩 Custom Commands — browse project-defined OpenCode command templates.",
+    ].join("\n"),
+    keyboard,
+  };
 }
