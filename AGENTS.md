@@ -31,25 +31,17 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 
 ## Coding environment
 
-The production container is intentionally equipped as a general-purpose coding workspace. In addition to Node.js/npm and Git, it provides:
+The production container is intentionally equipped as a general-purpose coding workspace. In addition to Node.js/npm and Git, it provides shell utilities, search/navigation tools, GitHub CLI, Python, SQLite, and native build tooling.
 
-- shell utilities: bash/sh, curl, wget, jq, less, tree, file, procps
-- search/navigation: ripgrep (`rg`), fd, find
-- version control: git, git-lfs, GitHub CLI (`gh`), openssh-client, rsync
-- archives: `zip`, `unzip`, `tar`, `gzip/bzip2/xz` support
-- Python 3 with pip and venv
-- SQLite 3
-- native build tooling: gcc/g++, make, pkg-config
+The production image also preinstalls common validation tools globally (`tsc`, `vitest`, `eslint`, `tsx`) so repeated interactive checks should not download packages.
 
-When a user asks for an archive, **create a real archive with the shell tooling** (for example `zip -r project.zip project/` or `tar -czf project.tar.gz project/`). Do not write archive bytes through the text-file `write` tool and do not rename a text file to an archive extension. After creating an archive, verify it with `file`, `unzip -t`, or the appropriate archive checker.
+When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
 
 ### Sending generated files to Telegram
 
-When the user asks to receive a generated file, archive, website, image, document, build artifact, or other output file, use the custom `send_file` tool after the file has been created and verified. The tool accepts arbitrary file formats; do not maintain or invent an extension whitelist and do not rename a file merely to make it match one.
+When the user asks to receive a generated file, archive, website, image, document, build artifact, or other output file, use the custom `send_file` tool after the file has been created and verified.
 
-For multi-file projects, create a real archive first, verify it, then call `send_file` with the archive path. Keep the actual binary path and filename unchanged.
-
-The `send_file` tool is intentionally the agent's explicit delivery decision. The Telegram bridge independently validates the path, size, and sensitive-file policy before uploading it with `sendDocument`. This is the preferred delivery path because files such as `/tmp/*.zip` are not guaranteed to emit project file events.
+For multi-file projects, create a real archive first, verify it, then call `send_file` with the archive path.
 
 ## Architecture
 
@@ -95,150 +87,31 @@ OpenCode Server
 
 ### Think Before Coding
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-### Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+Don't assume. Before implementing, state assumptions, surface tradeoffs, and prefer the simplest solution that meets the request.
 
 ### Surgical Changes
 
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
+Touch only what is necessary. Do not refactor unrelated code or delete unrelated dead code.
 
 ### Goal-Driven Execution
 
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
+Define success criteria and verify them. For bugs, reproduce the failure, fix the underlying issue, and run focused validation before broader validation.
 
 ### Git
 
 - **Commits:** Never create commits automatically. Commit only when the user explicitly asks.
 
-### Windows / PowerShell
-
-- Keep in mind the runtime environment is Windows.
-- Avoid fragile one-liners that can break in PowerShell.
-- Use absolute paths when working with file tools (`read`, `write`, `edit`).
-
 ## Coding rules
-
-### Language
 
 - Code, identifiers, comments, and in-code documentation must be in English.
 - User-facing Telegram messages should be localized through i18n.
+- Use TypeScript strict mode and existing project style.
+- Use `async/await` for asynchronous control flow.
+- Log errors with context and never expose stack traces to users.
 
-### Code style
+## Logging
 
-- Use TypeScript strict mode.
-- Use ESLint + Prettier.
-- Prefer `const` over `let`.
-- Use clear names and avoid unnecessary abbreviations.
-- Keep functions small and focused.
-- Prefer `async/await` over chained `.then()`.
-
-### Error handling
-
-- Use `try/catch` around async operations.
-- Log errors with context (session ID, operation type, etc.).
-- Send understandable error messages to users.
-- Never expose stack traces to users.
-
-### Bot commands
-
-The command list is centralized in `src/bot/commands/definitions.ts`.
-
-```typescript
-const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
-  { command: "status", descriptionKey: "cmd.description.status" },
-  { command: "new", descriptionKey: "cmd.description.new" },
-  { command: "abort", descriptionKey: "cmd.description.stop" },
-  { command: "sessions", descriptionKey: "cmd.description.sessions" },
-  { command: "projects", descriptionKey: "cmd.description.projects" },
-  { command: "rename", descriptionKey: "cmd.description.rename" },
-  { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
-  { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
-  { command: "help", descriptionKey: "cmd.description.help" },
-];
-```
-
-Important:
-
-- When adding a command, update `definitions.ts` only.
-- The same source is used for Telegram `setMyCommands` and help/docs.
-- Do not duplicate command lists elsewhere.
-
-### Logging
-
-The project uses `src/utils/logger.ts` with level-based logs.
-
-Log files:
-
-- In source mode logs are stored `<project root>/logs` by default.
-- Each source-mode bot run writes to a separate file named `bot-YYYY-MM-DD_HH-MM-SS_<pid>.log`.
-- The `logs/` directory is gitignored, so search inside it directly: use `path: "logs"` with `pattern: "*.log"`.
-- Installed mode writes under the installed app home `logs` directory and uses daily files named `bot-YYYY-MM-DD.log`.
-
-Levels:
-
-- **DEBUG** - detailed diagnostics (callbacks, keyboard build, SSE internals, polling flow)
-- **INFO** - key lifecycle events (session/task start/finish, status changes)
-- **WARN** - recoverable issues (timeouts, retries, unauthorized attempts)
-- **ERROR** - critical failures requiring attention
-
-Use:
-
-```typescript
-import { logger } from "../utils/logger.js";
-
-logger.debug("[Component] Detailed operation", details);
-logger.info("[Component] Important event occurred");
-logger.warn("[Component] Recoverable problem", error);
-logger.error("[Component] Critical failure", error);
-```
-
-Important:
-
-- Do not use raw `console.log` / `console.error` directly in feature code; use logger.
-- Put internal diagnostics under `debug`.
-- Keep important operational events under `info`.
-- Default level is `info`.
+Use `src/utils/logger.ts` with level-based logs. Keep detailed diagnostics under `debug`, operational lifecycle events under `info`, recoverable issues under `warn`, and critical failures under `error`. Avoid raw console logging in feature code.
 
 ## Testing
 
@@ -248,16 +121,21 @@ Important:
 - Integration-style tests around OpenCode SDK interaction using mocks
 - Focus on critical paths; avoid over-testing trivial code
 
-### Test structure
-
-- Tests live in `tests/` (organized by module)
-- Use descriptive test names
-- Follow Arrange-Act-Assert
-- Use `vi.mock()` for external dependencies
-
 ### Agent validation commands
 
-- For project test, build, lint, or typecheck validation, prefer the dedicated `.opencode/tools/test-runner.ts` tool instead of raw shell commands.
-- Keep validation commands bounded and avoid pipelines that hide exit codes or truncate diagnostic output.
-- Never delete tests or source files merely to make validation pass. Fix the underlying issue or report the failure.
-- If validation times out, treat it as a real failure and report the timeout rather than repeatedly rerunning the same command.
+- Prefer `.opencode/tools/test-runner.ts` for project test, build, lint, or typecheck validation instead of raw shell commands.
+- Never use `npx` for tools already installed in the container (`tsc`, `vitest`, `eslint`, `tsx`); it can trigger package resolution/downloads and make diagnostics appear hung.
+- Never run `rm -rf node_modules` as a routine validation step.
+- Never run `npm ci` as a routine interactive test step. `npm ci` is for clean CI/container provisioning.
+- When dependencies are actually missing, inspect `package.json`, the lockfile, and the current dependency tree first; use the dependency manager tool instead of repeatedly starting from zero.
+- Keep validation commands bounded and do not hide exit codes behind pipelines.
+- If validation times out, investigate the process/network/tool lifecycle instead of blindly reinstalling dependencies.
+
+### Recovery path for stuck agent work
+
+1. Stop repeating the same command or reinstalling dependencies.
+2. Inspect the current session status and recent events.
+3. Use the `session-recovery` tool to inspect and, when appropriate, abort the stuck session.
+4. Retry the smallest useful operation.
+5. If the same route fails again, switch to another validation method.
+6. Preserve diagnostic evidence so recovery does not erase the original failure mode.
