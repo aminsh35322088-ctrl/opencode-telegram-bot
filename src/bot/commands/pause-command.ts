@@ -23,6 +23,31 @@ function isActiveStatus(type: string | undefined): boolean {
   return type === "busy" || type === "retry";
 }
 
+async function hasActiveRemoteTool(sessionId: string, directory: string): Promise<boolean> {
+  try {
+    const { data: messages, error } = await opencodeClient.session.messages({
+      sessionID: sessionId,
+      directory,
+      limit: 10,
+    });
+
+    if (error || !messages) {
+      return false;
+    }
+
+    return messages.some((message) =>
+      (message.parts as Array<{ type?: string; state?: { status?: string } }>).some(
+        (part) =>
+          part.type === "tool" &&
+          (part.state?.status === "running" || part.state?.status === "pending"),
+      ),
+    );
+  } catch (error) {
+    logger.debug("[Pause] Failed to inspect recent tool parts:", error);
+    return false;
+  }
+}
+
 function describeAbortResult(result: AbortResult): string {
   switch (result) {
     case "confirmed":
@@ -59,17 +84,18 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
     const foregroundActive = foregroundSessionState.getBusySessions().some(
       (busySession) => busySession.sessionId === session.id,
     );
+    const remoteToolActive = await hasActiveRemoteTool(session.id, session.directory);
 
     logger.info(
-      `[Pause] Button invoked: session=${session.id}, status=${state?.type ?? "missing"}, statusError=${error ? "yes" : "no"}, localRunActive=${localRunActive}, foregroundActive=${foregroundActive}`,
+      `[Pause] Button invoked: session=${session.id}, status=${state?.type ?? "missing"}, statusError=${error ? "yes" : "no"}, localRunActive=${localRunActive}, foregroundActive=${foregroundActive}, remoteToolActive=${remoteToolActive}`,
     );
 
-    if (error && !localRunActive && !foregroundActive) throw error;
+    if (error && !localRunActive && !foregroundActive && !remoteToolActive) throw error;
 
-    // OpenCode's session.status can lag real tool/session activity. The bot's
-    // own run state is set before prompt execution and is therefore a second
-    // independent signal. Abort when either source says work is active.
-    if (!isActiveStatus(state?.type) && !localRunActive && !foregroundActive) {
+    // OpenCode's session.status and the bot's local lifecycle state can briefly
+    // report idle/error while a tool part is still running. The recent message
+    // history is the final independent signal used to keep Pause actionable.
+    if (!isActiveStatus(state?.type) && !localRunActive && !foregroundActive && !remoteToolActive) {
       await ctx.reply("ℹ️ Nothing is running right now, so there is nothing to pause.");
       return;
     }
