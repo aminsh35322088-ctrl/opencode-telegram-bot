@@ -4,6 +4,7 @@ import type { ProjectInfo } from "../types/project.js";
 import type { SessionDirectoryCacheInfo, SessionInfo } from "../types/session.js";
 import { cloneScheduledTask, type ScheduledTask } from "../types/scheduled-task.js";
 import type {
+  MessageFormatMode,
   ResponseStreamingMode,
   ScheduledTaskSessionIgnoreInfo,
   Settings,
@@ -129,11 +130,6 @@ export function flushSettings(): Promise<void> {
 
 let currentSettings: Settings = {};
 
-/**
- * Project selection is intentionally no longer persisted or used as application state.
- * The active session directory is the single source of truth for the workspace.
- * A transient ProjectInfo is returned only for legacy callers that still consume this API.
- */
 export function getCurrentProject(): ProjectInfo {
   const directory = currentSettings.currentSession?.directory ?? process.cwd();
   return {
@@ -143,12 +139,10 @@ export function getCurrentProject(): ProjectInfo {
   };
 }
 
-/** @deprecated Project selection has been removed; the session directory is authoritative. */
 export function setCurrentProject(_projectInfo: ProjectInfo): void {
   void writeSettingsFile(currentSettings);
 }
 
-/** @deprecated Project selection has been removed. */
 export function clearProject(): void {
   void writeSettingsFile(currentSettings);
 }
@@ -194,7 +188,7 @@ export function setShowAssistantRunFooter(enabled: boolean): void {
   void writeSettingsFile(currentSettings);
 }
 
-export type { ResponseStreamingMode };
+export type { MessageFormatMode, ResponseStreamingMode };
 
 export function getResponseStreamingMode(): ResponseStreamingMode {
   return currentSettings.responseStreamingMode === "draft" ? "draft" : "edit";
@@ -202,6 +196,15 @@ export function getResponseStreamingMode(): ResponseStreamingMode {
 
 export function setResponseStreamingMode(mode: ResponseStreamingMode): void {
   currentSettings.responseStreamingMode = mode;
+  void writeSettingsFile(currentSettings);
+}
+
+export function getMessageFormatMode(): MessageFormatMode {
+  return currentSettings.messageFormatMode ?? config.bot.messageFormatMode;
+}
+
+export function setMessageFormatMode(mode: MessageFormatMode): void {
+  currentSettings.messageFormatMode = mode;
   void writeSettingsFile(currentSettings);
 }
 
@@ -306,6 +309,7 @@ export function __resetSettingsForTests(): void {
 }
 
 const VALID_STREAMING_MODES: readonly ResponseStreamingMode[] = ["edit", "draft"];
+const VALID_MESSAGE_FORMAT_MODES: readonly MessageFormatMode[] = ["raw", "markdown"];
 
 function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
   const knownKeys = new Set([
@@ -313,6 +317,7 @@ function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
     "showThinkingContent",
     "showAssistantRunFooter",
     "responseStreamingMode",
+    "messageFormatMode",
     "sendDiffFileAttachments",
     "promptQueueEnabled",
   ]);
@@ -324,16 +329,22 @@ function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
       );
     }
     if (key === "responseStreamingMode") {
-      if (
-        typeof value !== "string" ||
-        !VALID_STREAMING_MODES.includes(value as ResponseStreamingMode)
-      ) {
+      if (typeof value !== "string" || !VALID_STREAMING_MODES.includes(value as ResponseStreamingMode)) {
         throw new Error(
           `INITIAL_SETTINGS_PRESET: invalid value for "responseStreamingMode"; expected one of ${VALID_STREAMING_MODES.join(", ")}.`,
         );
       }
       if (currentSettings.responseStreamingMode === undefined) {
         currentSettings.responseStreamingMode = value as ResponseStreamingMode;
+      }
+    } else if (key === "messageFormatMode") {
+      if (typeof value !== "string" || !VALID_MESSAGE_FORMAT_MODES.includes(value as MessageFormatMode)) {
+        throw new Error(
+          `INITIAL_SETTINGS_PRESET: invalid value for "messageFormatMode"; expected one of ${VALID_MESSAGE_FORMAT_MODES.join(", ")}.`,
+        );
+      }
+      if (currentSettings.messageFormatMode === undefined) {
+        currentSettings.messageFormatMode = value as MessageFormatMode;
       }
     } else {
       if (typeof value !== "boolean") {
