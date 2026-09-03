@@ -7,7 +7,15 @@ import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_TIMEOUT_MS = 15 * 60 * 1000;
+
 type Mode = "test" | "build" | "lint" | "typecheck";
+
+type PackageJson = {
+  scripts?: Record<string, string>;
+  packageManager?: string;
+};
 
 function managerFor(worktree: string, packageJson: Record<string, unknown>): { bin: string; prefix: string[] } {
   if (packageJson.packageManager && typeof packageJson.packageManager === "string") {
@@ -56,8 +64,23 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
 }
 
+function validationTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.OPENCODE_TEST_TIMEOUT_MS ?? "", 10);
+  if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_TIMEOUT_MS;
+  return Math.min(configured, MAX_TIMEOUT_MS);
+}
+
+function buildValidationEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, CI: process.env.CI || "1" };
+  const extraBin = ["/usr/local/bin", "/usr/bin"];
+  const existingPath = env.PATH?.split(path.delimiter) ?? [];
+  env.PATH = [...extraBin, ...existingPath.filter((entry) => !extraBin.includes(entry))].join(path.delimiter);
+  env.NPM_CONFIG_CACHE = env.NPM_CONFIG_CACHE || "/data/.cache/npm";
+  return env;
+}
+
 export default tool({
-  description: "Run the project's test, build, lint, or typecheck script. Automatically finds package.json in the worktree (including project subdirectories).",
+  description: "Run the project's test, build, lint, or typecheck script without installing dependencies. Reuses the existing dependency tree, prefers the container's preinstalled toolchain when a local binary is absent, and aborts stalled validation after a bounded timeout.",
   args: {
     mode: tool.schema.enum(["test", "build", "lint", "typecheck"]).describe("Validation task to run."),
     filter: tool.schema.string().optional().describe("Optional test file, test name, or script argument."),
@@ -70,7 +93,7 @@ export default tool({
 
     const projectRoot = path.dirname(packageJsonPath);
     const raw = await fs.readFile(packageJsonPath, "utf8");
-    const pkg = JSON.parse(raw) as { scripts?: Record<string, string>; packageManager?: string };
+    const pkg = JSON.parse(raw) as PackageJson;
     const script = pkg.scripts?.[args.mode];
     if (!script) return `NOT TESTABLE: No '${args.mode}' script is defined in ${packageJsonPath}.`;
 
@@ -78,18 +101,29 @@ export default tool({
     const command = [...manager.prefix, args.mode];
     if (args.filter) command.push("--", args.filter);
 
+    const timeoutMs = validationTimeoutMs();
+    const startedAt = Date.now();
+
     try {
       const { stdout, stderr } = await execFileAsync(manager.bin, command, {
         cwd: projectRoot,
         maxBuffer: 4 * 1024 * 1024,
-        env: { ...process.env, CI: process.env.CI || "1" },
+        env: buildValidationEnv(),
         signal: context.abort,
+        timeout: timeoutMs,
+        killSignal: "SIGTERM",
       });
-      return `PASS: ${manager.bin} ${command.join(" ")} (project: ${projectRoot})\n${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.slice(-12000);
+      return `PASS: ${manager.bin} ${command.join(" ")} (project: ${projectRoot}, elapsedMs=${Date.now() - startedAt})\n${stdout.trim()}${stderr.trim() ? `\n${stderr.trim()}` : ""}`.slice(-12000);
     } catch (error) {
       const e = error as { code?: number | string; stdout?: string; stderr?: string; message?: string };
-      const status = isAbortError(error) || context.abort.aborted ? "ABORTED" : `FAIL (${e.code ?? "unknown"})`;
-      return `${status}: ${manager.bin} ${command.join(" ")} (project: ${projectRoot})\n${e.stdout ?? ""}\n${e.stderr ?? e.message ?? ""}`.slice(-12000);
+      const elapsedMs = Date.now() - startedAt;
+      const timedOut = e.code === "ETIMEDOUT";
+      const status = isAbortError(error) || context.abort.aborted
+        ? "ABORTED"
+        : timedOut
+          ? `TIMEOUT after ${elapsedMs}ms`
+          : `FAIL (${e.code ?? "unknown"})`;
+      return `${status}: ${manager.bin} ${command.join(" ")} (project: ${projectRoot})\nNo dependency installation was attempted.\n${e.stdout ?? ""}\n${e.stderr ?? e.message ?? ""}`.slice(-12000);
     }
   },
 });
