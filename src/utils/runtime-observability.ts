@@ -8,6 +8,7 @@ const DEFAULT_BUSY_WARN_MS = 300_000;
 const REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_EVENT_LOOP_WARN_MS = 2_000;
 const DEFAULT_EVENT_LOOP_CRITICAL_MS = 10_000;
+const STARTUP_GRACE_MS = 5_000;
 
 type SessionStatus = "busy" | "retry" | "idle" | "not-found" | "unknown";
 
@@ -94,6 +95,7 @@ function measureEventLoopLag(): Promise<number> {
 
 export class RuntimeObservabilityWatchdog {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private busySinceBySession = new Map<string, number>();
   private warnedBusySessions = new Set<string>();
@@ -117,14 +119,19 @@ export class RuntimeObservabilityWatchdog {
     logger.info(
       `[RuntimeWatchdog] enabled intervalMs=${this.intervalMs} busyWarnMs=${this.busyWarnMs} eventLoopWarnMs=${this.eventLoopWarnMs} eventLoopCriticalMs=${this.eventLoopCriticalMs}`,
     );
-    void this.sample("startup");
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null;
+      void this.sample("startup");
+    }, STARTUP_GRACE_MS);
     this.timer = setInterval(() => void this.sample("interval"), this.intervalMs);
     this.timer.unref?.();
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    if (this.startupTimer) clearTimeout(this.startupTimer);
     this.timer = null;
+    this.startupTimer = null;
     this.running = false;
     this.busySinceBySession.clear();
     this.warnedBusySessions.clear();
