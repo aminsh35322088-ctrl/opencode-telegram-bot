@@ -4,6 +4,7 @@ import type { SessionDirectoryCacheInfo, SessionInfo } from "./session.js";
 import type { ScheduledTask } from "./scheduled-task.js";
 
 export type ResponseStreamingMode = "edit" | "draft";
+export type MessageFormatMode = "raw" | "markdown";
 
 export interface ScheduledTaskSessionIgnoreInfo {
   sessionId: string;
@@ -20,6 +21,7 @@ export interface Settings {
   showThinkingContent?: boolean | undefined;
   showAssistantRunFooter?: boolean | undefined;
   responseStreamingMode?: ResponseStreamingMode | undefined;
+  messageFormatMode?: MessageFormatMode | undefined;
   sendDiffFileAttachments?: boolean | undefined;
   promptQueueEnabled?: boolean | undefined;
   sessionDirectoryCache?: SessionDirectoryCacheInfo | undefined;
