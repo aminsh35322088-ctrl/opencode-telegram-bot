@@ -25,10 +25,10 @@ function timeoutMs(value?: number): number {
   return Math.min(value, MAX_TIMEOUT_MS);
 }
 
-async function httpCheck(endpoint: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+async function httpCheck(endpoint: string, signal: AbortSignal, timeout: number): Promise<Record<string, unknown>> {
   const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs());
+  const timer = setTimeout(() => controller.abort(), timeout);
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort, { once: true });
   try {
@@ -51,9 +51,9 @@ async function httpCheck(endpoint: string, signal: AbortSignal): Promise<Record<
   }
 }
 
-async function command(bin: string, args: string[], cwd: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+async function command(bin: string, args: string[], cwd: string, signal: AbortSignal, timeout: number): Promise<Record<string, unknown>> {
   try {
-    const result = await execFileAsync(bin, args, { cwd, timeout: timeoutMs(), maxBuffer: 512 * 1024, signal, killSignal: "SIGTERM" });
+    const result = await execFileAsync(bin, args, { cwd, timeout, maxBuffer: 512 * 1024, signal, killSignal: "SIGTERM" });
     return { ok: true, output: result.stdout.trim().slice(0, 2000) };
   } catch (error) {
     const e = error as { code?: string | number; stdout?: string; stderr?: string; message?: string };
@@ -94,24 +94,26 @@ export default tool({
   async execute(args, context) {
     const started = Date.now();
     const detail = args.detail ?? "full";
+    const timeout = timeoutMs(args.timeoutMs);
     const result: Record<string, unknown> = {
       ok: true,
       mode: detail,
+      timeoutMs: timeout,
       opencode: { address: apiUrl() },
       checks: {},
     };
     const checks = result.checks as Record<string, unknown>;
 
-    const health = await httpCheck("/global/health", context.abort);
+    const health = await httpCheck("/global/health", context.abort, timeout);
     checks.opencodeHealth = health;
     if (!health.ok) {
-      const fallback = await httpCheck("/", context.abort);
+      const fallback = await httpCheck("/", context.abort, timeout);
       checks.opencodeRoot = fallback;
       if (!fallback.ok) result.ok = false;
     }
 
     if (args.sessionId) {
-      const sessions = await httpCheck("/session/status", context.abort);
+      const sessions = await httpCheck("/session/status", context.abort, timeout);
       let sessionState = "unknown";
       if (sessions.ok && typeof sessions.body === "object" && sessions.body !== null) {
         const direct = (sessions.body as Record<string, unknown>)[args.sessionId];
@@ -137,11 +139,10 @@ export default tool({
 
     if (detail === "full") {
       checks.project = await packageCheck(context.worktree);
-      const disk = await command("df", ["-h", "/data"], context.worktree, context.abort);
-      checks.disk = disk;
+      checks.disk = await command("df", ["-h", "/data"], context.worktree, context.abort, timeout);
       const tools: Record<string, unknown> = {};
       for (const [name, argsList] of [["node", ["--version"]], ["npm", ["--version"]], ["git", ["--version"]], ["tsc", ["--version"]], ["vitest", ["--version"]], ["eslint", ["--version"]]] as const) {
-        tools[name] = await command(name, argsList, context.worktree, context.abort);
+        tools[name] = await command(name, argsList, context.worktree, context.abort, timeout);
       }
       checks.executables = tools;
     }
