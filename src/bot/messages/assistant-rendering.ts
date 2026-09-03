@@ -1,5 +1,4 @@
-import { config } from "../../config.js";
-import { getCompactOutputMode } from "../../app/stores/settings-store.js";
+import { getCompactOutputMode, getMessageFormatMode } from "../../app/stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
 import { chunkPlainText, chunkTelegramRenderedBlocks } from "../render/chunker.js";
 import { renderTelegramBlocks, renderTelegramParts, toRenderedBlocks } from "../render/pipeline.js";
@@ -8,7 +7,7 @@ import type { StreamingMessagePayload } from "../streaming/response-streamer.js"
 
 export function createPlainRenderedParts(text: string): TelegramRenderedPart[] { return chunkPlainText(text); }
 
-function useAssistantEntitiesFormat(): boolean { return config.bot.messageFormatMode === "markdown"; }
+function useAssistantEntitiesFormat(): boolean { return getMessageFormatMode() === "markdown"; }
 
 /** Compact mode reduces presentation noise without rewriting the model's meaning. */
 export function normalizeAssistantReplyForDisplay(text: string): string {
