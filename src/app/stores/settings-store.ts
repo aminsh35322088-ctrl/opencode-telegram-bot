@@ -177,7 +177,7 @@ export function setCompactOutputMode(enabled: boolean): void {
 }
 
 export function getShowThinkingContent(): boolean {
-  return currentSettings.showThinkingContent ?? true;
+  return currentSettings.showThinkingContent ?? false;
 }
 
 export function setShowThinkingContent(enabled: boolean): void {
