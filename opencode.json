@@ -8,6 +8,7 @@
     "package-manager": "allow",
     "database-query": "allow",
     "test-runner": "allow",
+    "session-recovery": "allow",
     "network-diagnostics": "allow",
     "system-diagnostics": "allow",
     "logs-observability": "allow",
