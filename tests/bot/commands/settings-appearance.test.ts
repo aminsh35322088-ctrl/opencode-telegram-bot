@@ -5,6 +5,7 @@ import {
   SETTINGS_BACK_CALLBACK,
   SETTINGS_COMPACT_OUTPUT_CALLBACK,
   SETTINGS_DIFF_FILES_CALLBACK,
+  SETTINGS_MESSAGE_FORMAT_CALLBACK,
   SETTINGS_RESPONSE_STREAMING_CALLBACK,
   SETTINGS_THINKING_CONTENT_CALLBACK,
 } from "../../../src/bot/menus/settings-menu.js";
@@ -26,6 +27,7 @@ describe("appearance settings UI", () => {
     expect(callbacks).toContain(SETTINGS_COMPACT_OUTPUT_CALLBACK);
     expect(callbacks).toContain(SETTINGS_THINKING_CONTENT_CALLBACK);
     expect(callbacks).toContain(SETTINGS_RESPONSE_STREAMING_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_MESSAGE_FORMAT_CALLBACK);
     expect(callbacks).toContain(SETTINGS_ASSISTANT_FOOTER_CALLBACK);
     expect(callbacks).toContain(SETTINGS_DIFF_FILES_CALLBACK);
     expect(callbacks).toContain(SETTINGS_BACK_CALLBACK);
@@ -37,6 +39,7 @@ describe("appearance settings UI", () => {
     expect(text).toContain("Compact output");
     expect(text).toContain("Thinking details");
     expect(text).toContain("Reply streaming");
+    expect(text).toContain("Message format");
     expect(text).toContain("Run footer");
     expect(text).toContain("Diff files");
   });
