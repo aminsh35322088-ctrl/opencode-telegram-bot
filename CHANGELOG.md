@@ -4,12 +4,11 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
-### Changed
-- Redesigned model selection into a cleaner Model Center with explicit current-model, favorites, recent, search, and provider browsing flows.
-- Removed redundant per-model and per-provider `verified` labels; provider/API validation remains part of the connection and catalog validation flow.
-- Moved the persistent model selector to a dedicated full-width reply-keyboard row and moved Image AI into the compact control row.
-- Preserved existing model-selection callback namespaces and added safe HTML escaping for dynamic model/provider values.
-- Preserved full model IDs and provider IDs in the persistent model button instead of truncating them.
+## [0.25.1] - 2026-09-03
+
+### Fixed
+- Normalized the persistent model selector label into a single clean line.
+- Added a bounded display length with balanced truncation for very long model and provider IDs so the full-width keyboard button stays visually consistent.
 
 ## [0.25.0] - 2026-09-03
 
@@ -23,6 +22,10 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - Settings now exposes Model selection instead of the removed AI Rules entry.
 - Appearance settings include persisted Message format (Markdown/Raw).
 - `/start` shows both the bot version and OpenCode version.
+- Redesigned model selection into a cleaner Model Center with explicit current-model, favorites, recent, search, and provider browsing flows.
+- Removed redundant per-model and per-provider `verified` labels; provider/API validation remains part of the connection and catalog validation flow.
+- Moved the persistent model selector to a dedicated full-width reply-keyboard row and moved Image AI into the compact control row.
+- Preserved existing model-selection callback namespaces and added safe HTML escaping for dynamic model/provider values.
 
 ## [0.24.1]
 
