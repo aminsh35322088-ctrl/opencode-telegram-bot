@@ -57,8 +57,22 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
     .text(settingButton("📊 Run footer", formatBooleanSettingValue(footer)), SETTINGS_ASSISTANT_FOOTER_CALLBACK).row()
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(diff)), SETTINGS_DIFF_FILES_CALLBACK);
   appendSettingsBackButton(keyboard);
-  const compactDescription = compact ? "ON · tighter tool output, less visual noise, mobile-first formatting." : "OFF · full reply presentation is preserved.";
-  return { text: ["🎨 Appearance", "", "Control how model replies look and stream in Telegram.", "", `📦 Compact output — ${compactDescription}`, `✍️ Streaming — ${formatResponseStreamingModeValue(streaming)}`, "", "These options change presentation only; they do not impose provider token or cost limits."].join("\n"), keyboard };
+  return {
+    text: [
+      "🎨 Appearance",
+      "",
+      "Control how model replies look and stream in Telegram.",
+      "",
+      `📦 Compact output — ${compact ? "ON" : "OFF"} · ${compact ? "tighter tool output and less visual noise." : "full reply presentation is preserved."}`,
+      `🧠 Thinking details — ${thinking ? "ON" : "OFF"} · ${thinking ? "show model reasoning details when available." : "hide reasoning details from the chat."}`,
+      `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)} · ${streaming === "draft" ? "use Telegram draft-style streaming when supported." : "edit the live reply message as it grows."}`,
+      `📊 Run footer — ${footer ? "ON" : "OFF"} · ${footer ? "show completion/run metadata in the reply footer." : "hide the assistant run footer."}`,
+      `📎 Diff files — ${diff ? "ON" : "OFF"} · ${diff ? "send generated diff files when available." : "keep diff attachments out of replies."}`,
+      "",
+      "These options change chat presentation/behavior only; they do not impose provider token or cost limits.",
+    ].join("\n"),
+    keyboard,
+  };
 }
 
 export function buildNotificationsSettingsView(): { text: string; keyboard: InlineKeyboard } {
