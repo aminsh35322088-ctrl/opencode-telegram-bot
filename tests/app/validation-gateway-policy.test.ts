@@ -6,23 +6,33 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("validation gateway policy", () => {
-  it("blocks direct validation/download paths in OpenCode permissions", async () => {
+  it("blocks direct validation/download paths even when wrapped", async () => {
     const config = JSON.parse(await readFile(path.join(root, "opencode.json"), "utf8")) as {
       permission?: { bash?: Record<string, string> };
     };
     const bash = config.permission?.bash ?? {};
     for (const pattern of [
-      "npx *",
-      "npm ci *",
-      "npm install *",
-      "npm exec *",
-      "tsc *",
-      "vitest *",
-      "eslint *",
-      "npm run test *",
-      "npm run typecheck *",
-      "npm run lint *",
-      "npm run build *",
+      "*npx*",
+      "*npm ci*",
+      "*npm install*",
+      "*npm exec*",
+      "*npm test*",
+      "*npm run test*",
+      "*npm run typecheck*",
+      "*npm run lint*",
+      "*npm run build*",
+      "*pnpm install*",
+      "*pnpm dlx*",
+      "*pnpm test*",
+      "*yarn install*",
+      "*yarn dlx*",
+      "*yarn test*",
+      "*bun install*",
+      "*bunx*",
+      "*bun test*",
+      "*tsc *",
+      "*vitest *",
+      "*eslint *",
     ]) {
       expect(bash[pattern]).toBe("deny");
     }
