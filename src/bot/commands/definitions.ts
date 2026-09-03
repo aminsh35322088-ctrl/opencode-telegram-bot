@@ -14,8 +14,9 @@ interface BotCommandI18nDefinition {
 }
 
 const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
-  { command: "start", description: "🚀 Start bot & show OpenCode version" },
-  { command: "update", description: "🔄 Check for a newer OpenCode version" },
+  { command: "start", description: "🚀 Start bot & show bot/OpenCode versions" },
+  { command: "update", description: "🔄 Check for bot/OpenCode updates" },
+  { command: "all", description: "🧰 All integrated versions (use /all version info)" },
   { command: "help", description: "❓ Show help & available features" },
   { command: "status", description: "📡 Show server & session status" },
   { command: "sessions", description: "🕘 Browse saved sessions" },
