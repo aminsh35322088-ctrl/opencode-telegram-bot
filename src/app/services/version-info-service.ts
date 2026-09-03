@@ -6,7 +6,9 @@ import packageJson from "../../../package.json" with { type: "json" };
 const execFileAsync = promisify(execFile);
 const OPENCODE_VERSION_FILE = "/app/.opencode-version";
 const RELEASE_NOTES_DIR = "/app/docs/release-notes";
-const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified";
+// Version the marker filename so a previously persisted marker from the first
+// 0.25.0 rollout cannot suppress the first notification for that release.
+const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified-v2";
 
 export const BOT_VERSION = packageJson.version;
 
