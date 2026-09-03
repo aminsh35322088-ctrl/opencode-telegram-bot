@@ -36,10 +36,6 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Basic ${Buffer.from(credentials).toString("base64")}` };
 }
 
-function timeoutSignal(ms: number): AbortSignal {
-  return AbortSignal.timeout(ms);
-}
-
 function extractSessionStatus(data: unknown, sessionId: string): SessionStatus {
   if (!data || typeof data !== "object") return "unknown";
   const record = data as Record<string, unknown>;
@@ -57,7 +53,7 @@ async function checkHealth(): Promise<{ status: WatchdogSnapshot["health"]; late
   try {
     const response = await fetch(`${apiBaseUrl()}/global/health`, {
       headers: authHeaders(),
-      signal: timeoutSignal(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const latencyMs = Date.now() - startedAt;
     if (!response.ok) return { status: "unhealthy", latencyMs };
@@ -77,7 +73,7 @@ async function checkSession(sessionId: string): Promise<{ status: SessionStatus;
   try {
     const response = await fetch(`${apiBaseUrl()}/session/status`, {
       headers: authHeaders(),
-      signal: timeoutSignal(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) return { status: "unknown", elapsedMs: Date.now() - startedAt };
     return {
@@ -87,6 +83,13 @@ async function checkSession(sessionId: string): Promise<{ status: SessionStatus;
   } catch {
     return { status: "unknown", elapsedMs: Date.now() - startedAt };
   }
+}
+
+function measureEventLoopLag(): Promise<number> {
+  const scheduledAt = Date.now();
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(Math.max(0, Date.now() - scheduledAt)), 0);
+  });
 }
 
 export class RuntimeObservabilityWatchdog {
@@ -132,14 +135,14 @@ export class RuntimeObservabilityWatchdog {
   private async sample(reason: "startup" | "interval"): Promise<void> {
     if (!this.running) return;
 
-    const loopStartedAt = Date.now();
     const session = getCurrentSession();
     const sessionId = session?.id ?? null;
-    const healthPromise = checkHealth();
-    const sessionPromise = sessionId ? checkSession(sessionId) : Promise.resolve({ status: "not-found" as const, elapsedMs: 0 });
-    const [health, sessionResult] = await Promise.all([healthPromise, sessionPromise]);
+    const [health, sessionResult, eventLoopLagMs] = await Promise.all([
+      checkHealth(),
+      sessionId ? checkSession(sessionId) : Promise.resolve({ status: "not-found" as const, elapsedMs: 0 }),
+      measureEventLoopLag(),
+    ]);
 
-    const eventLoopLagMs = Math.max(0, Date.now() - loopStartedAt);
     const now = Date.now();
     let sessionBusyForMs = 0;
 
