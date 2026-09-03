@@ -13,6 +13,7 @@ const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified-v2";
 export const BOT_VERSION = packageJson.version;
 
 const BUILT_IN_RELEASE_NOTES: Record<string, string> = {
+  "0.25.1": `# v0.25.1\n\n## Model selector\n- Normalized the persistent model selector into a single clean line.\n- Long model and provider IDs are bounded with balanced truncation so the full-width keyboard button stays visually consistent.\n`,
   "0.25.0": `# v0.25.0\n\n## Versioning\n- Added an independent Telegram Bot version, separate from the bundled OpenCode version.\n- The bot now identifies itself as v0.25.0 while OpenCode remains independently versioned.\n\n## Update notifications\n- /start and /update detect a bot-version migration and show previous → current.\n- The migration notification is persisted so the same update is not repeatedly announced.\n- OpenCode update reporting remains separate from the bot release version.\n\n## Version inventory\n- Added /all version info to inspect the running stack.\n- Reports the bot version, OpenCode version, Node.js/npm runtime, installed runtime dependencies, and integrated CLI/system tools when available.\n\n## Settings release\n- Replaced the obsolete Settings AI Rules entry with Model selection.\n- Expanded Appearance controls, including runtime Message format (Markdown/Raw).\n- Added persisted Message format state and regression coverage across Settings routing and rendering.`,
 };
 
