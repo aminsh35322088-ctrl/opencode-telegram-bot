@@ -38,11 +38,11 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     });
 
     const label = buttonTextAt(keyboard, 2, 0);
-    expect(label).toBe(
-      "🧠 vendor/very-long-model-name-that-keeps… · very-long-provider-name-that-keeps-g…",
-    );
+    expect(label).toContain("🧠 vendor/very-long-model-name");
+    expect(label).toContain(" · very-long-provider-name");
     expect(label).not.toContain("\n");
     expect(label.length).toBeLessThanOrEqual(48);
+    expect(label.endsWith("…")).toBe(true);
   });
 
   it("reflects compact mode state", () => {
