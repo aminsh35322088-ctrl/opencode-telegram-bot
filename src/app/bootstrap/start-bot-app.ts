@@ -14,6 +14,7 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearServiceStateFile } from "../../runtime/service/manager.js";
 import { getServiceStateFilePathFromEnv, isServiceChildProcess } from "../../runtime/service/env.js";
 import { flushLogger, getLogFilePath, initializeLogger, logger } from "../../utils/logger.js";
+import { RuntimeObservabilityWatchdog } from "../../utils/runtime-observability.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -77,6 +78,8 @@ export async function startBotApp(): Promise<void> {
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
   await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
+  const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog();
+  runtimeObservabilityWatchdog.start();
   safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => {
     const monitorStarted = await opencodeAutoRestartService.start();
     if (!monitorStarted) {
@@ -89,7 +92,7 @@ export async function startBotApp(): Promise<void> {
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shutdownStarted) return;
     shutdownStarted = true; logger.info(`[App] Received ${signal}, shutting down...`);
-    cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown();
+    runtimeObservabilityWatchdog.stop(); cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown();
     shutdownTimeout = setTimeout(() => { logger.warn(`[App] Shutdown did not finish in ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`); void flushSettingsWithTimeout().then(() => flushLoggerWithTimeout()).finally(() => process.exit(0)); }, SHUTDOWN_TIMEOUT_MS);
     shutdownTimeout.unref?.();
     try { bot.stop(); } catch (error) { logger.warn("[App] Failed to stop Telegram bot cleanly", error); }
@@ -103,7 +106,7 @@ export async function startBotApp(): Promise<void> {
   try {
     await bot.start({ drop_pending_updates: true, onStart: (botInfo) => logger.info(`Bot @${botInfo.username} started!`) });
   } finally {
-    process.off("unhandledRejection", unhandledRejectionHandler); process.off("uncaughtException", uncaughtExceptionHandler); process.off("SIGINT", handleSigint); process.off("SIGTERM", handleSigterm);
+    runtimeObservabilityWatchdog.stop(); process.off("unhandledRejection", unhandledRejectionHandler); process.off("uncaughtException", uncaughtExceptionHandler); process.off("SIGINT", handleSigint); process.off("SIGTERM", handleSigterm);
     if (shutdownTimeout) { clearTimeout(shutdownTimeout); shutdownTimeout = null; }
     cleanupBotRuntime("app_shutdown_complete"); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown();
     await clearManagedServiceState().catch((error) => logger.warn("[App] Failed to clear managed service state", error));
