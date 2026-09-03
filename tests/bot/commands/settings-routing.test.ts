@@ -7,6 +7,7 @@ import {
   buildSettingsMenuView,
   SETTINGS_ADVANCED_CALLBACK,
   SETTINGS_APPEARANCE_CALLBACK,
+  SETTINGS_BACK_CALLBACK,
   SETTINGS_CONTEXT_CALLBACK,
   SETTINGS_NOTIFICATIONS_CALLBACK,
 } from "../../../src/bot/menus/settings-menu.js";
@@ -27,8 +28,13 @@ describe("settings top-level routing contracts", () => {
 
   it("keeps Context read-only and gives every Settings subview a return path", () => {
     expect(buildContextSettingsView().keyboard.inline_keyboard.flat()).toHaveLength(1);
-    expect(buildAppearanceSettingsView().text).toContain("← Settings");
-    expect(buildNotificationsSettingsView().text).toContain("Notifications");
-    expect(buildAdvancedSettingsView().text).toContain("Advanced");
+    for (const view of [buildAppearanceSettingsView(), buildNotificationsSettingsView(), buildAdvancedSettingsView()]) {
+      const callbacks = view.keyboard.inline_keyboard.flatMap((row) =>
+        row.flatMap((button) =>
+          "callback_data" in button && typeof button.callback_data === "string" ? [button.callback_data] : [],
+        ),
+      );
+      expect(callbacks).toContain(SETTINGS_BACK_CALLBACK);
+    }
   });
 });
