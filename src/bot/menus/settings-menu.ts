@@ -1,11 +1,13 @@
 import { InlineKeyboard } from "grammy";
 import {
   getCompactOutputMode,
+  getMessageFormatMode,
   getPromptQueueEnabled,
   getResponseStreamingMode,
   getSendDiffFileAttachments,
   getShowAssistantRunFooter,
   getShowThinkingContent,
+  type MessageFormatMode,
   type ResponseStreamingMode,
 } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -19,6 +21,7 @@ export const SETTINGS_ADVANCED_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}advanced`;
 export const SETTINGS_COMPACT_OUTPUT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}compact_output`;
 export const SETTINGS_THINKING_CONTENT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}thinking_content`;
 export const SETTINGS_RESPONSE_STREAMING_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}response_streaming`;
+export const SETTINGS_MESSAGE_FORMAT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}message_format`;
 export const SETTINGS_DIFF_FILES_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}diff_files`;
 export const SETTINGS_ASSISTANT_FOOTER_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}assistant_footer`;
 export const SETTINGS_PROMPT_QUEUE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}prompt_queue`;
@@ -29,6 +32,7 @@ export const SETTINGS_BACK_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}back`;
 
 export function formatBooleanSettingValue(enabled: boolean): string { return enabled ? "ON" : "OFF"; }
 export function formatResponseStreamingModeValue(mode: ResponseStreamingMode): string { return mode === "draft" ? "Live draft" : "Live edit"; }
+export function formatMessageFormatModeValue(mode: MessageFormatMode): string { return mode === "raw" ? "Raw" : "Markdown"; }
 function settingButton(label: string, value: string): string { return `${label}: ${value}`; }
 function appendSettingsBackButton(keyboard: InlineKeyboard): void { keyboard.row().text("← Settings", SETTINGS_BACK_CALLBACK); }
 
@@ -48,12 +52,14 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
   const compact = getCompactOutputMode();
   const thinking = getShowThinkingContent();
   const streaming = getResponseStreamingMode();
+  const format = getMessageFormatMode();
   const footer = getShowAssistantRunFooter();
   const diff = getSendDiffFileAttachments();
   const keyboard = new InlineKeyboard()
     .text(settingButton("📦 Compact output", formatBooleanSettingValue(compact)), SETTINGS_COMPACT_OUTPUT_CALLBACK).row()
     .text(settingButton("🧠 Thinking details", formatBooleanSettingValue(thinking)), SETTINGS_THINKING_CONTENT_CALLBACK).row()
     .text(`✍️ Reply streaming: ${formatResponseStreamingModeValue(streaming)}`, SETTINGS_RESPONSE_STREAMING_CALLBACK).row()
+    .text(`📝 Message format: ${formatMessageFormatModeValue(format)}`, SETTINGS_MESSAGE_FORMAT_CALLBACK).row()
     .text(settingButton("📊 Run footer", formatBooleanSettingValue(footer)), SETTINGS_ASSISTANT_FOOTER_CALLBACK).row()
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(diff)), SETTINGS_DIFF_FILES_CALLBACK);
   appendSettingsBackButton(keyboard);
@@ -66,6 +72,7 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
       `📦 Compact output — ${compact ? "ON" : "OFF"} · ${compact ? "tighter tool output and less visual noise." : "full reply presentation is preserved."}`,
       `🧠 Thinking details — ${thinking ? "ON" : "OFF"} · ${thinking ? "show model reasoning details when available." : "hide reasoning details from the chat."}`,
       `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)} · ${streaming === "draft" ? "use Telegram draft-style streaming when supported." : "edit the live reply message as it grows."}`,
+      `📝 Message format — ${formatMessageFormatModeValue(format)} · ${format === "raw" ? "send replies as plain text without Telegram entity formatting." : "render supported Markdown-style formatting."}`,
       `📊 Run footer — ${footer ? "ON" : "OFF"} · ${footer ? "show completion/run metadata in the reply footer." : "hide the assistant run footer."}`,
       `📎 Diff files — ${diff ? "ON" : "OFF"} · ${diff ? "send generated diff files when available." : "keep diff attachments out of replies."}`,
       "",
