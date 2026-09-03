@@ -55,7 +55,7 @@ function firstLine(value: string): string {
 function extractVersion(value: string): string {
   const line = firstLine(value).replace(/^v(?=\d)/i, "");
   const match = line.match(/\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/);
-  return match?.[0] ?? line || "unknown";
+  return match?.[0] ?? (line || "unknown");
 }
 
 async function readTextFile(path: string): Promise<string | null> {
