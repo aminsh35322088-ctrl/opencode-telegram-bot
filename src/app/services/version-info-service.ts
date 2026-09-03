@@ -10,6 +10,10 @@ const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified";
 
 export const BOT_VERSION = packageJson.version;
 
+const BUILT_IN_RELEASE_NOTES: Record<string, string> = {
+  "0.25.0": `# v0.25.0\n\n## Versioning\n- Added an independent Telegram Bot version, separate from the bundled OpenCode version.\n- The bot now identifies itself as v0.25.0 while OpenCode remains independently versioned.\n\n## Update notifications\n- /start and /update detect a bot-version migration and show previous → current.\n- The migration notification is persisted so the same update is not repeatedly announced.\n- OpenCode update reporting remains separate from the bot release version.\n\n## Version inventory\n- Added /all version info to inspect the running stack.\n- Reports the bot version, OpenCode version, Node.js/npm runtime, installed runtime dependencies, and integrated CLI/system tools when available.\n\n## Settings release\n- Replaced the obsolete Settings AI Rules entry with Model selection.\n- Expanded Appearance controls, including runtime Message format (Markdown/Raw).\n- Added persisted Message format state and regression coverage across Settings routing and rendering.`,
+};
+
 interface VersionEntry {
   name: string;
   version: string;
@@ -133,20 +137,11 @@ export async function getVersionSnapshot(): Promise<VersionSnapshot> {
 }
 
 export async function getCurrentReleaseChangelog(): Promise<string | null> {
-  return readTextFile(`${RELEASE_NOTES_DIR}/v${BOT_VERSION}.md`);
+  return (await readTextFile(`${RELEASE_NOTES_DIR}/v${BOT_VERSION}.md`)) ?? BUILT_IN_RELEASE_NOTES[BOT_VERSION] ?? null;
 }
 
 export async function getBotUpdateNotice(): Promise<{ previousVersion: string; currentVersion: string; changelog: string | null } | null> {
-  const previousVersion = await readTextFile(BOT_VERSION_NOTIFIED_FILE);
-  if (!previousVersion) {
-    try {
-      const { writeFile } = await import("node:fs/promises");
-      await writeFile(BOT_VERSION_NOTIFIED_FILE, `${BOT_VERSION}\n`, "utf8");
-    } catch {
-      // Notification state is best-effort; the command itself remains usable.
-    }
-    return null;
-  }
+  const previousVersion = await readTextFile(BOT_VERSION_NOTIFIED_FILE) ?? "0.24.1";
 
   if (previousVersion === BOT_VERSION) return null;
 
