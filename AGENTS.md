@@ -19,7 +19,7 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 
 ### Core dependencies
 
-- `grammy` - Telegram Bot API framework (https://grammy.dev/)
+- `grammy` - Telegram Bot API framework
 - `@grammyjs/menu` - inline keyboards and menus
 - `@opencode-ai/sdk` - official OpenCode Server SDK
 - `dotenv` - environment variable loading
@@ -123,7 +123,8 @@ Use `src/utils/logger.ts` with level-based logs. Keep detailed diagnostics under
 
 ### Agent validation commands
 
-- Prefer `.opencode/tools/test-runner.ts` for project test, build, lint, or typecheck validation instead of raw shell commands.
+- Prefer `.opencode/tools/full-diagnostics.ts` before recovery, repeated testing, or infrastructure debugging.
+- Use `.opencode/tools/test-runner.ts` for project test, build, lint, or typecheck validation instead of raw shell commands.
 - Never use `npx` for tools already installed in the container (`tsc`, `vitest`, `eslint`, `tsx`); it can trigger package resolution/downloads and make diagnostics appear hung.
 - Never run `rm -rf node_modules` as a routine validation step.
 - Never run `npm ci` as a routine interactive test step. `npm ci` is for clean CI/container provisioning.
@@ -133,9 +134,10 @@ Use `src/utils/logger.ts` with level-based logs. Keep detailed diagnostics under
 
 ### Recovery path for stuck agent work
 
-1. Stop repeating the same command or reinstalling dependencies.
-2. Inspect the current session status and recent events.
-3. Use the `session-recovery` tool to inspect and, when appropriate, abort the stuck session.
-4. Retry the smallest useful operation.
-5. If the same route fails again, switch to another validation method.
-6. Preserve diagnostic evidence so recovery does not erase the original failure mode.
+1. Run `full-diagnostics` with the affected session ID.
+2. Stop repeating the same command or reinstalling dependencies.
+3. Inspect the current session status and recent events.
+4. Use the `session-recovery` tool to inspect and, when appropriate, abort the stuck session.
+5. Retry the smallest useful operation.
+6. If the same route fails again, switch to another validation method.
+7. Preserve diagnostic evidence so recovery does not erase the original failure mode.
