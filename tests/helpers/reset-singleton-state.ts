@@ -41,6 +41,8 @@ export async function resetSingletonState(): Promise<void> {
     { __resetPromptQueueDispatchForTests },
     { promptAttachment },
     { __resetStreamThrottleForTests },
+    { __resetSessionStallWatchdogsForTests },
+    { __resetPromptRecoveryStateForTests },
     loggerModule,
   ] = await Promise.all([
     import("../../src/app/managers/question-manager.js"),
@@ -57,11 +59,15 @@ export async function resetSingletonState(): Promise<void> {
     import("../../src/bot/handlers/prompt-queue-dispatch.js"),
     import("../../src/app/managers/prompt-attachment-manager.js"),
     import("../../src/bot/streaming/stream-throttle.js"),
+    import("../../src/app/services/session-stall-watchdog.js"),
+    import("../../src/bot/handlers/prompt.js"),
     import("../../src/utils/logger.js"),
   ]);
 
   stopEventListening();
   __resetStreamThrottleForTests();
+  __resetSessionStallWatchdogsForTests();
+  __resetPromptRecoveryStateForTests();
   questionManager.clear();
   permissionManager.clear();
   renameManager.clear();
@@ -97,8 +103,6 @@ export async function resetSingletonState(): Promise<void> {
   keyboard.chatId = null;
   keyboard.lastUpdateTime = 0;
 
-  // Test files that mock the pinned manager module supply their own stub,
-  // which has nothing to reset.
   if (typeof pinnedMessageManager.__resetForTests === "function") {
     pinnedMessageManager.__resetForTests();
   }

@@ -13,7 +13,11 @@ const MESSAGE_LIMIT = 6;
 type SessionStatus = { type?: string };
 
 const activeWatchdogs = new Map<string, AbortController>();
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
@@ -24,7 +28,6 @@ function hasRunningToolPart(messages: unknown[]): boolean {
   const record = asRecord(latest);
   const parts = record?.parts;
   if (!Array.isArray(parts)) return false;
-
   return parts.some((part) => {
     const partRecord = asRecord(part);
     const state = asRecord(partRecord?.state);
@@ -52,7 +55,6 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
           };
         })
       : [];
-
     return {
       messageId: typeof info?.id === "string" ? info.id : undefined,
       role: typeof info?.role === "string" ? info.role : undefined,
@@ -62,7 +64,6 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
       parts,
     };
   });
-
   return JSON.stringify(recent);
 }
 
@@ -119,46 +120,57 @@ async function clearLocalRunState(sessionId: string, reason: string): Promise<vo
   await markAttachedSessionIdle(sessionId);
 }
 
-export function startSessionStallWatchdog(options: { sessionId: string; directory: string; model: string }): void {
-  if (activeWatchdogs.has(options.sessionId)) return;
+export interface StalledSessionInfo {
+  sessionId: string;
+  directory: string;
+  attempt: number;
+  agent?: string;
+  modelConfig?: { providerID: string; modelID: string };
+  variant?: string;
+}
 
+export interface StartSessionStallWatchdogOptions {
+  sessionId: string;
+  directory: string;
+  model: string;
+  agent?: string;
+  modelConfig?: { providerID: string; modelID: string };
+  variant?: string;
+  attempt?: number;
+  onStalled: (info: StalledSessionInfo) => void | Promise<void>;
+}
+
+export function startSessionStallWatchdog(options: StartSessionStallWatchdogOptions): void {
+  if (activeWatchdogs.has(options.sessionId)) return;
+  const attempt = options.attempt ?? 1;
   const controller = new AbortController();
   activeWatchdogs.set(options.sessionId, controller);
 
   void (async () => {
     let lastFingerprint = "";
     let lastMeaningfulProgressAt = Date.now();
-    logger.debug(`[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, stallAfterMs=${STALL_AFTER_MS}`);
-
+    logger.debug(`[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, attempt=${attempt}, stallAfterMs=${STALL_AFTER_MS}`);
     try {
       while (!controller.signal.aborted) {
         await sleep(POLL_INTERVAL_MS);
         if (controller.signal.aborted) return;
-
         const status = await getStatus(options.sessionId, options.directory);
         if (!status || status.type === "idle" || status.type === "error") return;
         if (status.type !== "busy" && status.type !== "retry") continue;
-
         const messages = await getMessages(options.sessionId, options.directory);
         if (!messages) continue;
-
-        // A currently-running tool is genuine work. Historical tool parts are
-        // ignored so a stale `running` record cannot defeat recovery forever.
         if (hasRunningToolPart(messages)) {
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
-
         const fingerprint = buildMeaningfulFingerprint(messages);
         if (fingerprint !== lastFingerprint) {
           lastFingerprint = fingerprint;
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
-
         const stalledForMs = Date.now() - lastMeaningfulProgressAt;
         if (stalledForMs < STALL_AFTER_MS) continue;
-
         logger.warn(`[StallWatchdog] Session stalled: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}, status=${status.type}. Requesting abort.`);
         const aborted = await requestAbort(options.sessionId, options.directory);
         if (!aborted) {
@@ -166,16 +178,27 @@ export function startSessionStallWatchdog(options: { sessionId: string; director
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
-
         const idle = await waitForIdle(options.sessionId, options.directory);
         if (!idle) {
           logger.error(`[StallWatchdog] Abort acknowledged but session did not become idle: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
-
         await clearLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
-        logger.warn(`[StallWatchdog] Recovered stalled session: session=${options.sessionId}, model=${options.model}`);
+        logger.warn(`[StallWatchdog] Recovered stalled session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}`);
+        activeWatchdogs.delete(options.sessionId);
+        try {
+          await options.onStalled({
+            sessionId: options.sessionId,
+            directory: options.directory,
+            attempt,
+            agent: options.agent,
+            modelConfig: options.modelConfig,
+            variant: options.variant,
+          });
+        } catch (error) {
+          logger.error(`[StallWatchdog] onStalled callback failed: session=${options.sessionId}, attempt=${attempt}`, error);
+        }
         return;
       }
     } catch (error) {

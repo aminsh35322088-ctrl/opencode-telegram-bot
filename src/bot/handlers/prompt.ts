@@ -23,25 +23,26 @@ import { attachToSession, detachAttachedSession, markAttachedSessionBusy, markAt
 import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { resolvePendingAttachment } from "../../app/services/prompt-attachment-service.js";
-import { startSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
+import { startSessionStallWatchdog, type StalledSessionInfo } from "../../app/services/session-stall-watchdog.js";
 import type { ModelInfo } from "../../app/types/model.js";
+
+const MAX_AUTO_STALL_RETRIES = 1;
+const STALL_RECOVERY_PROMPT =
+  "The previous attempt on this task made no visible progress for several minutes and was aborted automatically. " +
+  "Continue the same task, but use a different approach or diagnostic strategy than before — the previous approach did not make progress.";
 
 export function clearPromptResponseMode(_sessionId: string): void {}
 let botInstance: Bot<Context> | null = null;
 let telegramChatId: number | null = null;
+const autoRecoveryInFlight = new Set<string>();
 export function getPromptBotInstance(): Bot<Context> | null { return botInstance; }
 export function getPromptChatId(): number | null { return telegramChatId; }
+export function __resetPromptRecoveryStateForTests(): void { autoRecoveryInFlight.clear(); }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
   try {
-    if (assistantRunState.hasActiveRun(sessionId)) {
-      logger.debug(`[Bot] Local run state says session is busy: session=${sessionId}`);
-      return true;
-    }
-    if (foregroundSessionState.getBusySessions().some((session) => session.sessionId === sessionId)) {
-      logger.debug(`[Bot] Foreground run state says session is busy: session=${sessionId}`);
-      return true;
-    }
+    if (assistantRunState.hasActiveRun(sessionId)) return true;
+    if (foregroundSessionState.getBusySessions().some((session) => session.sessionId === sessionId)) return true;
     const { data, error } = await opencodeClient.session.status({ directory });
     if (error || !data) return false;
     const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
@@ -91,6 +92,108 @@ async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; 
   return opencodeClient.session.promptAsync(retryWithoutModel);
 }
 
+async function dispatchRecoveryPrompt(info: StalledSessionInfo): Promise<void> {
+  const session = { id: info.sessionId, directory: info.directory };
+  const attempt = info.attempt + 1;
+  const bot = botInstance;
+  const chatId = telegramChatId;
+  try {
+    const currentAgent = info.agent ?? await resolveProjectAgent(getStoredAgent());
+    const storedModel = getStoredModel();
+    const recoveryModel = info.modelConfig ?? (storedModel.providerID && storedModel.modelID ? { providerID: storedModel.providerID, modelID: storedModel.modelID } : undefined);
+    const recoveryVariant = info.variant ?? storedModel.variant;
+    const promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string } = {
+      sessionID: session.id,
+      directory: session.directory,
+      parts: [{ type: "text", text: STALL_RECOVERY_PROMPT }],
+      agent: currentAgent,
+    };
+    if (recoveryModel) {
+      promptOptions.model = recoveryModel;
+      promptOptions.variant = recoveryVariant;
+    }
+    foregroundSessionState.markBusy(session.id, session.directory);
+    await markAttachedSessionBusy(session.id);
+    assistantRunState.startRun(session.id, {
+      startedAt: Date.now(),
+      configuredAgent: currentAgent,
+      configuredProviderID: recoveryModel?.providerID,
+      configuredModelID: recoveryModel?.modelID,
+    });
+    startSessionStallWatchdog({
+      sessionId: session.id,
+      directory: session.directory,
+      model: recoveryModel ? `${recoveryModel.providerID}/${recoveryModel.modelID}` : "OpenCode/default",
+      agent: currentAgent,
+      modelConfig: recoveryModel,
+      variant: recoveryVariant,
+      attempt,
+      onStalled: handleSessionStalled,
+    });
+    if (chatId !== null) await keyboardManager.sendKeyboardUpdate(chatId);
+    logger.warn(`[StallWatchdog] Dispatching auto-recovery prompt: session=${session.id}, attempt=${attempt}`);
+    safeBackgroundTask({
+      taskName: "session.promptAsync.stall_recovery",
+      task: () => promptAsyncWithModelRecovery(promptOptions),
+      onSuccess: ({ error }) => {
+        if (!error) {
+          logger.info(`[StallWatchdog] Auto-recovery prompt accepted by OpenCode: session=${session.id}, attempt=${attempt}`);
+          return;
+        }
+        foregroundSessionState.markIdle(session.id);
+        void markAttachedSessionIdle(session.id);
+        assistantRunState.clearRun(session.id, "stall_recovery_prompt_api_error");
+        if (chatId !== null) void keyboardManager.sendKeyboardUpdate(chatId, true);
+        logger.error(`[StallWatchdog] OpenCode API returned an error for the auto-recovery prompt: session=${session.id}, attempt=${attempt}`);
+        logger.error("[StallWatchdog] Auto-recovery prompt error details:", formatErrorDetails(error, 6000));
+        if (bot && chatId !== null) void bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
+      },
+      onError: (error) => {
+        foregroundSessionState.markIdle(session.id);
+        void markAttachedSessionIdle(session.id);
+        assistantRunState.clearRun(session.id, "stall_recovery_prompt_background_error");
+        if (chatId !== null) void keyboardManager.sendKeyboardUpdate(chatId, true);
+        logger.error(`[StallWatchdog] Auto-recovery prompt background task failed: session=${session.id}, attempt=${attempt}`);
+        logger.error("[StallWatchdog] Auto-recovery background failure details:", formatErrorDetails(error, 6000));
+        if (bot && chatId !== null) void bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
+      },
+    });
+  } catch (error) {
+    logger.error(`[StallWatchdog] Failed to dispatch auto-recovery prompt: session=${session.id}, attempt=${attempt}`, error);
+    if (bot && chatId !== null) await bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
+  }
+}
+
+async function handleSessionStalled(info: StalledSessionInfo): Promise<void> {
+  const bot = botInstance;
+  const chatId = telegramChatId;
+  if (info.attempt > MAX_AUTO_STALL_RETRIES) {
+    logger.warn(`[StallWatchdog] Giving up after ${info.attempt} stalled attempt(s): session=${info.sessionId}`);
+    if (bot && chatId !== null) await bot.api.sendMessage(chatId, t("stop.success")).catch(() => {});
+    return;
+  }
+  const currentSession = getCurrentSession();
+  if (!currentSession || currentSession.id !== info.sessionId) {
+    logger.info(`[StallWatchdog] Skipping auto-recovery; session is no longer active: session=${info.sessionId}`);
+    return;
+  }
+  if (autoRecoveryInFlight.has(info.sessionId)) {
+    logger.warn(`[StallWatchdog] Skipping duplicate auto-recovery: session=${info.sessionId}`);
+    return;
+  }
+  if (await isSessionBusy(info.sessionId, info.directory)) {
+    logger.info(`[StallWatchdog] Skipping auto-recovery; session became busy again: session=${info.sessionId}`);
+    return;
+  }
+  autoRecoveryInFlight.add(info.sessionId);
+  try {
+    if (bot && chatId !== null) await bot.api.sendMessage(chatId, t("progress.compact.retrying")).catch(() => {});
+    await dispatchRecoveryPrompt(info);
+  } finally {
+    autoRecoveryInFlight.delete(info.sessionId);
+  }
+}
+
 export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
   const currentProject = getCurrentProject();
@@ -118,6 +221,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     const variantName = formatVariantForButton(currentModel.variant || "default");
     await ctx.reply(t("bot.session_created", { title: currentSession.title }), { reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName) });
   }
+  if (autoRecoveryInFlight.has(currentSession.id)) { await ctx.reply(t("bot.session_busy")); return false; }
   if (await isSessionBusy(currentSession.id, currentSession.directory)) { await ctx.reply(t("bot.session_busy")); return false; }
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
@@ -137,7 +241,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
-    startSessionStallWatchdog({ sessionId: currentSession.id, directory: currentSession.directory, model: storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default" });
+    startSessionStallWatchdog({ sessionId: currentSession.id, directory: currentSession.directory, model: storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default", agent: currentAgent, modelConfig: storedModel.providerID && storedModel.modelID ? { providerID: storedModel.providerID, modelID: storedModel.modelID } : undefined, variant: storedModel.variant, attempt: 1, onStalled: handleSessionStalled });
     await keyboardManager.sendKeyboardUpdate(ctx.chat!.id);
     if (text.trim()) externalUserInputSuppressionManager.register(currentSession.id, text);
     safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
