@@ -9,6 +9,7 @@
     "database-query": "allow",
     "test-runner": "allow",
     "session-recovery": "allow",
+    "full-diagnostics": "allow",
     "network-diagnostics": "allow",
     "system-diagnostics": "allow",
     "logs-observability": "allow",
