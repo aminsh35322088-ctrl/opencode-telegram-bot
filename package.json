@@ -1,6 +1,6 @@
 {
   "name": "@grinev/opencode-telegram-bot",
-  "version": "0.24.1",
+  "version": "0.25.0",
   "description": "Telegram bot client for OpenCode to run and monitor coding tasks from chat.",
   "type": "module",
   "main": "./dist/index.js",
@@ -63,7 +63,7 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "socks-proxy-agent": "^8.0.5",
-    "unified": "^11.0.5",
+    "unified": "^11.0.0",
     "ws": "^8.21.1"
   },
   "devDependencies": {
