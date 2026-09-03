@@ -13,9 +13,15 @@ function getButtons() {
   return buildAppearanceSettingsView().keyboard.inline_keyboard.flatMap((row) => row);
 }
 
+function getCallbackData(): string[] {
+  return getButtons().flatMap((button) =>
+    "callback_data" in button && typeof button.callback_data === "string" ? [button.callback_data] : [],
+  );
+}
+
 describe("appearance settings UI", () => {
   it("exposes every appearance control with a matching callback", () => {
-    const callbacks = getButtons().map((button) => button.callback_data);
+    const callbacks = getCallbackData();
 
     expect(callbacks).toContain(SETTINGS_COMPACT_OUTPUT_CALLBACK);
     expect(callbacks).toContain(SETTINGS_THINKING_CONTENT_CALLBACK);
