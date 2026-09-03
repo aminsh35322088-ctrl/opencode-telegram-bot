@@ -34,7 +34,7 @@ describe("settings-store", () => {
   it("loads current defaults", async () => {
     await loadSettings();
     expect(getCompactOutputMode()).toBe(false);
-    expect(getShowThinkingContent()).toBe(true);
+    expect(getShowThinkingContent()).toBe(false);
     expect(getPromptQueueEnabled()).toBe(false);
     expect(getResponseStreamingMode()).toBe("edit");
   });
