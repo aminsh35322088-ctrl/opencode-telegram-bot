@@ -3,15 +3,18 @@ import { deliverThinkingMessage } from "../../../src/bot/messages/thinking-messa
 import { t } from "../../../src/i18n/index.js";
 
 describe("bot/messages/thinking-message", () => {
-  it("sends thinking immediately", () => {
+  it("enqueues one thinking message without duplicating the live queue", () => {
     const batcher = {
-      enqueue: vi.fn(),
-      sendTextNow: vi.fn(),
+      enqueueUniqueByPrefix: vi.fn(),
     };
 
     deliverThinkingMessage("s1", batcher);
 
-    expect(batcher.sendTextNow).toHaveBeenCalledWith("s1", t("bot.thinking"), "thinking_started");
-    expect(batcher.enqueue).not.toHaveBeenCalled();
+    expect(batcher.enqueueUniqueByPrefix).toHaveBeenCalledWith(
+      "s1",
+      t("bot.thinking"),
+      "thinking_started",
+    );
+    expect(batcher.enqueueUniqueByPrefix).toHaveBeenCalledTimes(1);
   });
 });
