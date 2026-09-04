@@ -17,10 +17,7 @@ import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
-import {
-  createTelegramTopicWorkspace,
-  deleteTelegramTopicWorkspace,
-} from "../../app/services/telegram-topic-workspace-service.js";
+import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 
 export interface NewCommandDeps {
@@ -28,9 +25,6 @@ export interface NewCommandDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
-// A Telegram update can be retried while the first handler is still running.
-// Keep /new single-flight so two concurrent deliveries cannot create two
-// OpenCode sessions for the same deployment.
 let newSessionCreation: Promise<void> | null = null;
 
 export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
@@ -38,11 +32,9 @@ export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandD
     logger.warn("[Bot] Ignored concurrent /new request while session creation is already in progress");
     return;
   }
-
   newSessionCreation = createNewSession(ctx, deps).finally(() => {
     newSessionCreation = null;
   });
-
   await newSessionCreation;
 }
 
@@ -54,7 +46,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
   try {
     clearPausedSession();
     keyboardManager.setPaused(false);
-
     if (isForegroundBusy()) {
       await replyBusyBlocked(ctx);
       return;
@@ -62,29 +53,17 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
 
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
     logger.debug("[Bot] Creating new session in isolated topic workspace:", directory);
-
     const { data: session, error } = await opencodeClient.session.create({ directory });
-
-    if (error || !session) {
-      throw error || new Error("No data received from server");
-    }
+    if (error || !session) throw error || new Error("No data received from server");
 
     sessionId = session.id;
-    logger.info(
-      `[Bot] Created new isolated session via /new command: id=${session.id}, directory=${directory}`,
-    );
-
-    const sessionInfo: SessionInfo = {
-      id: session.id,
-      title: session.title,
-      directory,
-    };
-
+    logger.info(`[Bot] Created new isolated session via /new command: id=${session.id}, directory=${directory}`);
+    const sessionInfo: SessionInfo = { id: session.id, title: session.title, directory };
     const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
     topicBindingCreated = true;
     setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
-
     setCurrentSession(sessionInfo);
+    keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding.threadId, session.id);
     clearAllInteractionState("session_created");
     await ingestSessionInfoForCache(session);
 
@@ -97,44 +76,28 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
 
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const currentModel = getStoredModel();
-    keyboardManager.updateAgent(currentAgent);
-    const contextInfo = keyboardManager.getContextInfo();
+    keyboardManager.updateAgent(currentAgent, session.id);
+    const contextInfo = keyboardManager.getContextInfo(session.id);
     const variantName = formatVariantForButton(currentModel.variant || "default");
     const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName);
 
     await deps.bot.api.sendMessage(
       ctx.chat.id,
       `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
-      {
-        message_thread_id: binding.threadId,
-        ...(keyboard ? { reply_markup: keyboard } : {}),
-      },
+      { message_thread_id: binding.threadId, ...(keyboard ? { reply_markup: keyboard } : {}) },
     );
 
-    logger.info(
-      `[TelegramTopics] New Chat opened in isolated workspace: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`,
-    );
+    logger.info(`[TelegramTopics] New Chat opened in isolated workspace: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`);
   } catch (error) {
     logger.error("[Bot] Error creating session:", error);
-
-    // Before the Telegram topic is persisted, the workspace/session are
-    // disposable setup state. Once a topic binding exists, keep everything so
-    // a later retry cannot orphan a live Telegram topic or its session data.
     if (directory && !topicBindingCreated) {
       if (sessionId) {
-        try {
-          await opencodeClient.session.delete({ sessionID: sessionId, directory });
-        } catch (cleanupError) {
-          logger.warn(`[TelegramTopics] Failed to clean up orphaned session: ${sessionId}`, cleanupError);
-        }
+        try { await opencodeClient.session.delete({ sessionID: sessionId, directory }); }
+        catch (cleanupError) { logger.warn(`[TelegramTopics] Failed to clean up orphaned session: ${sessionId}`, cleanupError); }
       }
-      try {
-        await deleteTelegramTopicWorkspace(directory);
-      } catch (cleanupError) {
-        logger.warn(`[TelegramTopics] Failed to clean up workspace: ${directory}`, cleanupError);
-      }
+      try { await deleteTelegramTopicWorkspace(directory); }
+      catch (cleanupError) { logger.warn(`[TelegramTopics] Failed to clean up workspace: ${directory}`, cleanupError); }
     }
-
     await ctx.reply(t("new.create_error"));
   }
 }
