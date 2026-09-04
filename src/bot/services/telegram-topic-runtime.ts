@@ -91,13 +91,8 @@ function createTopicAwareApi(api: ApiLike, topic?: TelegramTopicContext): ApiLik
       }
 
       return (...args: unknown[]) => {
-        // Explicit topic bindings are immutable. The shared event bot also
-        // supports the currently active Topic for the legacy single-foreground
-        // runtime path used by incoming Topic prompts.
         const resolvedTopic = topic ?? activeTopic;
-        if (!resolvedTopic) {
-          return value.apply(target, args);
-        }
+        if (!resolvedTopic) return value.apply(target, args);
 
         const chatId = typeof args[0] === "number" ? args[0] : undefined;
         if (chatId !== undefined && chatId !== resolvedTopic.chatId) {
