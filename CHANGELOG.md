@@ -19,6 +19,8 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - Provider model lists are paginated to keep large catalogs usable and within Telegram keyboard/message limits.
 - Persistent Model Select button detection now matches only the canonical single-line model/provider format, preventing it from being misclassified as a normal prompt.
 - Model selection actions use short runtime callback tokens instead of embedding arbitrary provider/model IDs in Telegram callback data.
+- Live provider discovery no longer silently truncates catalogs at 100 models; refreshes now preserve the full provider `/models` response.
+- Model Center callback-token state is bounded to prevent unbounded growth during long-running bot sessions.
 
 ## [0.25.1] - 2026-09-03
 

@@ -15,6 +15,7 @@ export const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
 export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
 
 const MODELS_PER_PAGE = 8;
+const MAX_ACTION_MODELS = 4096;
 const actionModels = new Map<string, ModelInfo>();
 
 function modelKey(model: FavoriteModel | ModelInfo): string {
@@ -26,11 +27,17 @@ function actionToken(model: ModelInfo): string {
     .update(`${modelKey(model)}:${model.variant ?? "default"}`)
     .digest("base64url")
     .slice(0, 10);
+  actionModels.delete(token);
   actionModels.set(token, {
     providerID: model.providerID,
     modelID: model.modelID,
     variant: model.variant ?? "default",
   });
+  while (actionModels.size > MAX_ACTION_MODELS) {
+    const oldest = actionModels.keys().next().value as string | undefined;
+    if (!oldest) break;
+    actionModels.delete(oldest);
+  }
   return token;
 }
 
