@@ -16,7 +16,7 @@ describe("model/types", () => {
   });
 
   it("normalizes common model tokens", () => {
-    expect(formatModelName("deepseek/deepseek-r1")).toBe("DeepSeek R 1");
+    expect(formatModelName("deepseek/deepseek-r1")).toBe("DeepSeek R1");
     expect(formatModelName("qwen/qwen3-coder")).toBe("Qwen 3 Coder");
   });
 
