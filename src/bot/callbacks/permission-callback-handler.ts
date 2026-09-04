@@ -111,6 +111,7 @@ async function handlePermissionReply(
   const currentSession = getCurrentSession();
   const chatId = ctx.chat?.id;
   const directory = currentSession?.directory ?? currentProject?.worktree;
+  const permissionType = permissionManager.getPermissionType(callbackMessageId);
 
   if (!directory || !chatId) {
     await ctx.answerCallbackQuery({
@@ -126,9 +127,6 @@ async function handlePermissionReply(
     reject: t("permission.reply.reject"),
   };
 
-  // Keep the Telegram prompt alive until the OpenCode server has accepted the
-  // reply. Deleting the message and clearing local state before this request
-  // finishes can leave the agent waiting forever with no visible control.
   logger.info(
     `[PermissionHandler] Sending permission reply: ${reply}, requestIDs=${requestIDs.join(",")}`,
   );
@@ -170,8 +168,20 @@ async function handlePermissionReply(
     return;
   }
 
-  // The request is now accepted by OpenCode. Remove only this exact Telegram
-  // prompt; other pending permissions remain independently actionable.
+  if (reply === "always" && permissionType) {
+    try {
+      await permissionManager.rememberAlwaysAllowed(chatId, permissionType);
+      logger.info(
+        `[PermissionHandler] Persisted Always Allow for chat=${chatId} permission=${permissionType}`,
+      );
+    } catch (error) {
+      logger.warn(
+        `[PermissionHandler] Failed to persist Always Allow for chat=${chatId} permission=${permissionType}`,
+        error,
+      );
+    }
+  }
+
   permissionManager.removeByMessageId(callbackMessageId);
 
   if (callbackMessageId !== null) {

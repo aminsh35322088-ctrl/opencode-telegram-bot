@@ -17,6 +17,8 @@ import {
   MODEL_CENTER_SEARCH_CANCEL,
   MODEL_CENTER_SELECT_PREFIX,
   resolveModelCenterAction,
+  resolveModelCenterFavoriteTarget,
+  type ModelCenterFavoriteTarget,
 } from "../menus/model-center-menu.js";
 import { fetchCurrentModel, getProviders, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
@@ -69,14 +71,16 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       return await render(ctx, await buildModelCenterProvider(provider, page, fetchCurrentModel()));
     }
     if (data.startsWith(MODEL_CENTER_FAVORITE_PREFIX)) {
-      const model = resolveModelCenterAction(data.slice(MODEL_CENTER_FAVORITE_PREFIX.length));
-      if (!model) {
+      const token = data.slice(MODEL_CENTER_FAVORITE_PREFIX.length);
+      const model = resolveModelCenterAction(token);
+      const target = resolveModelCenterFavoriteTarget(token);
+      if (!model || !target) {
         await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {});
         return true;
       }
       const added = await toggleFavoriteModel(model);
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
-      return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
+      return await renderFavoriteTarget(ctx, target);
     }
     if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
       const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
@@ -92,6 +96,22 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     logger.error("[ModelCenter] Callback failed", error);
     await ctx.answerCallbackQuery({ text: "Model Center action failed.", show_alert: true }).catch(() => {});
     return true;
+  }
+}
+
+async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTarget): Promise<boolean> {
+  switch (target.kind) {
+    case "root":
+      return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
+    case "list":
+      return await render(ctx, await buildModelCenterList(target.list, fetchCurrentModel()));
+    case "provider": {
+      const provider = (await getProviders()).find((item) => item.id === target.providerID);
+      if (!provider) return await render(ctx, await buildModelCenterProviders());
+      return await render(ctx, await buildModelCenterProvider(provider, target.page, fetchCurrentModel()));
+    }
+    case "search":
+      return await render(ctx, await buildModelCenterSearchResults(target.query, fetchCurrentModel()));
   }
 }
 
@@ -145,9 +165,6 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   const previousModel = fetchCurrentModel();
   const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
-  // OpenCode pins a selected model to the active session. Retire the current
-  // bot session when the user switches models so the next prompt cannot reuse
-  // an old session/model pair behind the UI's back.
   if (modelChanged && getCurrentSession()) {
     stopEventListening();
     summaryAggregator.clear();
@@ -161,9 +178,6 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
     logger.info(`[ModelCenter] Retired current session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
   }
 
-  // Selecting a model completes the Model Center interaction. Clear it before
-  // touching Telegram so a follow-up free-form prompt is never mistaken for
-  // an unanswered inline menu choice.
   interactionManager.clear("model_selected");
 
   selectModel(modelInfo);
@@ -177,9 +191,6 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
 
   const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
-  // `switched()` owns the callback acknowledgement for model selection. Do not
-  // acknowledge the same Telegram callback twice; Telegram treats the second
-  // acknowledgement as an expired/invalid callback query.
   await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
 

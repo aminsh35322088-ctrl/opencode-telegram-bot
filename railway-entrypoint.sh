@@ -1,25 +1,27 @@
 #!/bin/sh
 set -eu
 
-: "${OPENCODE_API_URL:=http://127.0.0.1:4096}"
-: "${OPENCODE_AUTO_RESTART_ENABLED:=true}"
-: "${OPENCODE_AUTO_START_IN_CONTAINER:=true}"
-: "${OPENCODE_MONITOR_INTERVAL_SEC:=60}"
-: "${OPENCODE_MODEL_PROVIDER:=opencode}"
-: "${OPENCODE_MODEL_ID:=big-pickle}"
-: "${OPEN_BROWSER_ROOTS:=/data/workspace}"
-: "${OPENCODE_CONFIG_DIR:=/data/.config/opencode}"
-: "${OPENCODE_TELEGRAM_WORKSPACE:=/data/workspace}"
-: "${OPENCODE_EXPERIMENTAL_LSP_TOOL:=true}"
-: "${OPENCODE_ENABLE_EXA:=1}"
-: "${PLAYWRIGHT_BROWSERS_PATH:=/opt/ms-playwright}"
+# Runtime configuration is intentionally fixed in the image. Railway only
+# supplies the two Telegram credentials used by the application.
+OPENCODE_API_URL="http://127.0.0.1:4096"
+OPENCODE_AUTO_RESTART_ENABLED="true"
+OPENCODE_AUTO_START_IN_CONTAINER="true"
+OPENCODE_MONITOR_INTERVAL_SEC="60"
+OPENCODE_MODEL_PROVIDER="opencode"
+OPENCODE_MODEL_ID="big-pickle"
+OPEN_BROWSER_ROOTS="/data/workspace"
+OPENCODE_CONFIG_DIR="/data/.config/opencode"
+OPENCODE_TELEGRAM_WORKSPACE="/data/workspace"
+OPENCODE_EXPERIMENTAL_LSP_TOOL="true"
+OPENCODE_ENABLE_EXA="1"
+PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
 
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
 
 # OpenCode's global config/tool location for HOME=/data + XDG_CONFIG_HOME=/data/.config.
-GLOBAL_OPENCODE_DIR="${XDG_CONFIG_HOME:-/data/.config}/opencode"
+GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR"
 
@@ -87,11 +89,6 @@ GITHUB_TOKEN_FILE="/data/integrations/github.token"
 if [ -s "$GITHUB_TOKEN_FILE" ]; then
   GITHUB_TOKEN="$(cat "$GITHUB_TOKEN_FILE")"
   export GITHUB_TOKEN
-elif [ -n "${GITHUB_TOKEN:-}" ]; then
-  mkdir -p "$(dirname "$GITHUB_TOKEN_FILE")"
-  printf '%s\n' "$GITHUB_TOKEN" > "$GITHUB_TOKEN_FILE"
-  chmod 600 "$GITHUB_TOKEN_FILE"
-  chown node:node "$GITHUB_TOKEN_FILE"
 fi
 
 cat > /data/run/github-credential-helper.sh <<'EOF'

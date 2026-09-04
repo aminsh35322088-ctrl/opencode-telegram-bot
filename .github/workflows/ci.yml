@@ -39,14 +39,29 @@ jobs:
         if: github.event_name == 'pull_request'
         run: npm run check:changelog
 
+      - name: Materialize CI-only test suite
+        run: |
+          cp -a .github/ci-tests/tests ./tests
+          cp .github/ci-tests/tsconfig.test.json ./tsconfig.test.json
+          cp .github/ci-tests/vitest.config.ts ./vitest.config.ts
+
       - name: Lint
-        run: npm run lint
+        run: |
+          npm run lint
+          npx eslint tests --max-warnings=0
 
       - name: Typecheck
-        run: npm run typecheck
+        run: |
+          npm run typecheck
+          npx tsc -p tsconfig.test.json --noEmit
 
       - name: Build
         run: npm run build
 
       - name: Test
-        run: npm run test
+        run: npx vitest run
+
+      - name: Remove materialized test suite
+        if: always()
+        run: |
+          rm -rf tests tsconfig.test.json vitest.config.ts
