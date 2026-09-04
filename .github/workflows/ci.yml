@@ -58,10 +58,10 @@ jobs:
         run: npm run build
 
       - name: Test
-        run: npx vitest run
+        run: npx --yes vitest@3.2.4 run
 
       - name: Remove materialized test suite
         if: always()
         run: |
-          rm -rf tests tsconfig.test.json vitest.config.ts
+          rm -rf tests tsconfig.test.ts vitest.config.ts
           rm -rf coverage
