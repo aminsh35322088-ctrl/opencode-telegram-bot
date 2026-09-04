@@ -6,8 +6,8 @@ import { questionManager } from "../managers/question-manager.js";
 import { permissionManager } from "../managers/permission-manager.js";
 import type { PermissionRequest } from "../types/permission.js";
 import type { SessionInfo } from "../types/session.js";
-import { getCurrentSession } from "./session-service.js";
-import { getCurrentProject } from "../stores/settings-store.js";
+import { clearSession, getCurrentSession } from "./session-service.js";
+import { getCurrentProject, getCurrentModel } from "../stores/settings-store.js";
 import { attachManager } from "../managers/attach-manager.js";
 import { resetStreamThrottle } from "../../bot/streaming/stream-throttle.js";
 import { logger } from "../../utils/logger.js";
@@ -73,6 +73,70 @@ async function syncPinnedAttachState(): Promise<void> {
 
   const attached = attachManager.getSnapshot();
   await attachPresentation.syncAttachState(attached !== null, attached?.busy ?? false);
+}
+
+async function getLastUserTurnModel(
+  sessionId: string,
+  directory: string,
+): Promise<{ providerID: string; modelID: string } | null> {
+  try {
+    const response = await opencodeClient.session.messages({
+      sessionID: sessionId,
+      directory,
+      limit: 50,
+    });
+    if (response.error || !response.data) {
+      if (!isExpectedOpencodeUnavailableError(response.error)) {
+        logger.debug(`[Attach] Could not inspect session model history: session=${sessionId}`, response.error);
+      }
+      return null;
+    }
+
+    for (const message of [...response.data].reverse()) {
+      const info = message.info as { role?: string; model?: { providerID?: string; modelID?: string } };
+      if (
+        info.role === "user" &&
+        typeof info.model?.providerID === "string" &&
+        typeof info.model.modelID === "string" &&
+        info.model.providerID &&
+        info.model.modelID
+      ) {
+        return { providerID: info.model.providerID, modelID: info.model.modelID };
+      }
+    }
+  } catch (error) {
+    if (!isExpectedOpencodeUnavailableError(error)) {
+      logger.debug(`[Attach] Session model history lookup failed: session=${sessionId}`, error);
+    }
+  }
+
+  return null;
+}
+
+async function currentSessionMatchesSelectedModel(session: SessionInfo): Promise<boolean> {
+  const selected = getCurrentModel();
+  if (!selected?.providerID || !selected.modelID) {
+    return true;
+  }
+
+  const lastTurnModel = await getLastUserTurnModel(session.id, session.directory);
+  if (!lastTurnModel) {
+    // An empty session has no pinned user-turn model yet, so it is safe to use
+    // the newly selected model for its first prompt.
+    return true;
+  }
+
+  const matches =
+    lastTurnModel.providerID === selected.providerID &&
+    lastTurnModel.modelID === selected.modelID;
+
+  if (!matches) {
+    logger.warn(
+      `[Attach] Stored session model mismatch; session=${session.id} actual=${lastTurnModel.providerID}/${lastTurnModel.modelID} selected=${selected.providerID}/${selected.modelID}`,
+    );
+  }
+
+  return matches;
 }
 
 async function restorePendingQuestion(
@@ -227,6 +291,14 @@ export async function restoreAttachedCurrentSession(
       logger.warn(
         `[Attach] OpenCode server is unavailable; skipping followed session restore: session=${currentSession.id}, directory=${currentSession.directory}`,
       );
+      return false;
+    }
+
+    if (!(await currentSessionMatchesSelectedModel(currentSession))) {
+      logger.info(
+        `[Attach] Discarding stale followed session before restore: session=${currentSession.id}`,
+      );
+      clearSession();
       return false;
     }
 
