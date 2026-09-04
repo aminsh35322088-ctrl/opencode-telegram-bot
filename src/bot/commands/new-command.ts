@@ -1,5 +1,5 @@
-import type { Bot } from "grammy";
-import { CommandContext, Context } from "grammy";
+import type { Bot, Context } from "grammy";
+import { CommandContext } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
@@ -8,6 +8,7 @@ import { clearAllInteractionState } from "../../app/managers/interaction-manager
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { isForegroundBusy } from "../../app/services/run-control-service.js";
@@ -19,84 +20,73 @@ import { clearPausedSession } from "../../app/managers/paused-session-manager.js
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
+import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
+import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
-export interface NewCommandDeps {
-  bot: Bot<Context>;
-  ensureEventSubscription: (directory: string) => Promise<void>;
-}
-
-let newSessionCreation: Promise<void> | null = null;
+export interface NewCommandDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
 
 export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
-  if (newSessionCreation) {
-    logger.warn("[Bot] Ignored concurrent /new request while session creation is already in progress");
-    return;
-  }
-  newSessionCreation = createNewSession(ctx, deps).finally(() => {
-    newSessionCreation = null;
-  });
-  await newSessionCreation;
+  await createNewSession(ctx, deps);
 }
 
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
   let directory: string | null = null;
   let sessionId: string | null = null;
   let topicBindingCreated = false;
-
   try {
     clearPausedSession();
-    keyboardManager.setPaused(false);
-    if (isForegroundBusy()) {
-      await replyBusyBlocked(ctx);
-      return;
-    }
+    if (isForegroundBusy()) { await replyBusyBlocked(ctx); return; }
 
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
-    logger.debug("[Bot] Creating new session in isolated topic workspace:", directory);
     const { data: session, error } = await opencodeClient.session.create({ directory });
-    if (error || !session) throw error || new Error("No data received from server");
-
+    if (error || !session) throw error || new Error("No session received from OpenCode");
     sessionId = session.id;
-    logger.info(`[Bot] Created new isolated session via /new command: id=${session.id}, directory=${directory}`);
     const sessionInfo: SessionInfo = { id: session.id, title: session.title, directory };
+
+    const initialAgent = await resolveProjectAgent(getStoredAgent());
+    const initialModel = getStoredModel();
+    const initialCompact = getCompactOutputMode();
     const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
     topicBindingCreated = true;
-    setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
-    setCurrentSession(sessionInfo);
-    keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding.threadId, session.id);
-    clearAllInteractionState("session_created");
-    await ingestSessionInfoForCache(session);
-
-    await attachToSession({
-      bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding.threadId }),
-      chatId: ctx.chat.id,
+    await initializeTopicRuntimeState(binding.chatId, binding.threadId, {
       session: sessionInfo,
-      ensureEventSubscription: deps.ensureEventSubscription,
+      agent: initialAgent,
+      model: initialModel,
+      compactOutputMode: initialCompact,
+    });
+    ensureTopicRuntimeStateSync(binding.chatId, binding.threadId, { session: sessionInfo, agent: initialAgent, model: initialModel, compactOutputMode: initialCompact });
+
+    setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
+    await runInTopicRuntimeContext({ chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id }, async () => {
+      setCurrentSession(sessionInfo);
+      keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding.threadId, session.id);
+      keyboardManager.updateAgent(initialAgent, session.id);
+      keyboardManager.updateModel(initialModel, session.id);
+      clearAllInteractionState("session_created");
+
+      await ingestSessionInfoForCache(session);
+      await attachToSession({
+        bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding.threadId }),
+        chatId: ctx.chat.id,
+        session: sessionInfo,
+        ensureEventSubscription: deps.ensureEventSubscription,
+      });
+
+      const contextInfo = keyboardManager.getContextInfo(session.id);
+      const variantName = formatVariantForButton(initialModel.variant || "default");
+      const keyboard = createMainKeyboard(initialAgent, initialModel, contextInfo ?? undefined, variantName);
+      await deps.bot.api.sendMessage(ctx.chat.id, `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`, {
+        message_thread_id: binding.threadId,
+        ...(keyboard ? { reply_markup: keyboard } : {}),
+      });
     });
 
-    const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const currentModel = getStoredModel();
-    keyboardManager.updateAgent(currentAgent, session.id);
-    const contextInfo = keyboardManager.getContextInfo(session.id);
-    const variantName = formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName);
-
-    await deps.bot.api.sendMessage(
-      ctx.chat.id,
-      `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
-      { message_thread_id: binding.threadId, ...(keyboard ? { reply_markup: keyboard } : {}) },
-    );
-
-    logger.info(`[TelegramTopics] New Chat opened in isolated workspace: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`);
+    logger.info(`[TelegramTopics] New Chat opened: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`);
   } catch (error) {
     logger.error("[Bot] Error creating session:", error);
     if (directory && !topicBindingCreated) {
-      if (sessionId) {
-        try { await opencodeClient.session.delete({ sessionID: sessionId, directory }); }
-        catch (cleanupError) { logger.warn(`[TelegramTopics] Failed to clean up orphaned session: ${sessionId}`, cleanupError); }
-      }
-      try { await deleteTelegramTopicWorkspace(directory); }
-      catch (cleanupError) { logger.warn(`[TelegramTopics] Failed to clean up workspace: ${directory}`, cleanupError); }
+      if (sessionId) { try { await opencodeClient.session.delete({ sessionID: sessionId, directory }); } catch (cleanupError) { logger.warn(`[TelegramTopics] Failed to clean orphan session ${sessionId}`, cleanupError); } }
+      try { await deleteTelegramTopicWorkspace(directory); } catch (cleanupError) { logger.warn(`[TelegramTopics] Failed to clean workspace ${directory}`, cleanupError); }
     }
     await ctx.reply(t("new.create_error"));
   }
