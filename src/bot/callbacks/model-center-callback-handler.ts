@@ -98,7 +98,7 @@ async function beginSearch(ctx: Context): Promise<boolean> {
   interactionManager.start({
     kind: "custom",
     expectedInput: "text",
-    metadata: { flow: SEARCH_FLOW, stage: "input" satisfies ModelCenterSearchState["stage"] },
+    metadata: { flow: SEARCH_FLOW, stage: "input", ...(ctx.chat ? { chatId: ctx.chat.id } : {}) },
   });
   await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML" });
   return true;
@@ -120,7 +120,12 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
     interactionManager.start({
       kind: "inline",
       expectedInput: "callback",
-      metadata: { menuKind: "model", flow: SEARCH_FLOW, stage: "results" satisfies ModelCenterSearchState["stage"] },
+      metadata: {
+        menuKind: "model",
+        flow: SEARCH_FLOW,
+        stage: "results" satisfies ModelCenterSearchState["stage"],
+        ...(ctx.chat ? { chatId: ctx.chat.id } : {}),
+      },
     });
     return true;
   } catch (error) {
@@ -133,6 +138,11 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
 
 async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo): Promise<void> {
   if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id);
+
+  // Selecting a model completes the Model Center interaction. Clear it before
+  // touching Telegram so a follow-up free-form prompt is never mistaken for
+  // an unanswered inline menu choice.
+  interactionManager.clear("model_selected");
 
   selectModel(modelInfo);
   await recordRecentModel(modelInfo);
@@ -154,6 +164,6 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
 async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(view.text, { reply_markup: view.keyboard, parse_mode: "HTML" }).catch(() => {});
-  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id } });
+  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}) } });
   return true;
 }
