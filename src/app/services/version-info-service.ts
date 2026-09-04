@@ -11,7 +11,8 @@ const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified-v3";
 export const BOT_VERSION = packageJson.version;
 
 const BUILT_IN_RELEASE_NOTES: Record<string, string> = {
-  "0.25.3": `# v0.25.3\n\n## Model names\n- Model Center buttons now show only clean, human-readable model names.\n- Provider/company names are no longer repeated beside individual models.\n- Live provider-advertised model names are preserved when available.\n- Search matches both model IDs and their advertised names.\n\n## Reliability\n- Release Changelog delivery now has a built-in runtime fallback, so it is available even when release-note markdown is not shipped with the production package.\n- Version migration state is recorded only after the update notice and Changelog are successfully sent.\n\n## Tooling\n- Updated model-format regression coverage for the canonical model-only presentation.`,
+  "0.26.0": `# v0.26.0\n\n## Telegram Topics\n- Coding sessions now live in dedicated private Telegram Topics.\n- Each Topic is bound to its own OpenCode session and isolated workspace.\n- The main private chat is now a control center for starting sessions and configuration instead of a shared coding transcript.\n- Added per-topic Pause, Resume, Abort, Model, Image AI, and Delete Chat controls.\n- Topic routing survives bot restarts through lightweight session/topic bindings.\n\n## Workspace and session isolation\n- Every new coding Topic gets a dedicated working directory based on the configured project source.\n- Session history, code changes, generated files, attachments, and local assets remain inside the Topic workspace.\n- Topic deletion is scoped to the selected session, workspace, Telegram Topic, and binding; the main project is protected by path guards.\n\n## Image AI\n- Preserved the existing Generate Image and Edit Image flows inside Topics.\n- Image AI mode is isolated per coding session to prevent cross-Topic state leakage.\n- Generated and edited assets are stored in the Topic workspace for direct use by Coding AI.\n\n## Reply context\n- Replying to a Topic message now gives Coding AI the referenced text or caption.\n- Replied photos and documents are downloaded into the Topic workspace and attached to the prompt without crossing Topic boundaries.\n\n## Reliability and routing\n- Topic-aware Telegram routing was added for streaming, tool output, callbacks, and progress messages.\n- Pause state and keyboard state are scoped to individual sessions instead of being globally shared.\n- Duplicate Topic creation for the same session is prevented with per-session single-flight handling.\n- Callback routing resolves the Topic from the callback message itself, avoiding reliance on the current global chat context.\n\n## Model Center and provider updates\n- The canonical Model Center and live custom-provider model catalog improvements from the 0.25.x line are included in this release.\n- Model labels remain clean and human-readable while provider-advertised names and searchable model IDs are preserved.\n\n## Release\n- Telegram Bot version: v0.26.0.\n- OpenCode keeps its independent version lifecycle.`,
+  "0.25.3": `# v0.25.3\n\n## Model names\n- Model Center buttons now show only clean, human-readable model names.\n- Provider/company names are no longer repeated beside individual models.\n- Live provider-advertised model names are preserved when available.\n- Search matches both model IDs and advertised names.\n\n## Reliability\n- Release Changelog delivery now has a built-in runtime fallback, so it is available even when release-note markdown is not shipped with the production package.\n- Version migration state is recorded only after the update notice and Changelog are successfully sent.\n\n## Tooling\n- Updated model-format regression coverage for the canonical model-only presentation.`,
   "0.25.2": `# v0.25.2\n\n## Model Center\n- Reworked Model Center into the single canonical model UI with Favorites, Recent Models, provider browsing, model search, and per-model favorite controls.\n- Added persistent favorite and recent model state with bounded recent history.\n- Added automatic custom-provider model catalog refresh every 5 minutes, plus an immediate refresh when Model Center opens.\n\n## Navigation and reliability\n- All Model Center callbacks now use the dedicated mc:* namespace.\n- Persistent model-selector keyboard navigation now opens the same Model Center used by Settings.\n- Removed the obsolete legacy Model Center menu and legacy model callback routing.\n- Added bounded runtime callback tokens for Telegram callback data.`,
   "0.25.1": `# v0.25.1\n\n## Model selector\n- Normalized the persistent model selector into a single clean line.\n- Long model and provider IDs are bounded with balanced truncation so the full-width keyboard button stays visually consistent.\n`,
   "0.25.0": `# v0.25.0\n\n## Versioning\n- Added an independent Telegram Bot version, separate from the bundled OpenCode version.\n- The bot now identifies itself as v0.25.0 while OpenCode remains independently versioned.\n\n## Update notifications\n- /start and /update detect a bot-version migration and show previous → current.\n- The migration notification is persisted so the same update is not repeatedly announced.\n- OpenCode update reporting remains separate from the bot release version.\n\n## Version inventory\n- Added /all version info to inspect the running stack.\n- Reports the bot version, OpenCode version, Node.js/npm runtime, installed runtime dependencies, and integrated CLI/system tools when available.\n\n## Settings release\n- Replaced the obsolete Settings AI Rules entry with Model selection.\n- Expanded Appearance controls, including runtime Message format (Markdown/Raw).\n- Added persisted Message format state and regression coverage across Settings routing and rendering.`,
@@ -55,139 +56,16 @@ const VERSION_COMMANDS: VersionCommand[] = [
   { name: "ImageMagick", command: "convert", args: ["-version"], kind: "tool" },
 ];
 
-function firstLine(value: string): string {
-  return value.split("\n", 1)[0]?.trim() ?? value.trim();
-}
-
-function extractVersion(value: string): string {
-  const line = firstLine(value).replace(/^v(?=\d)/i, "");
-  const match = line.match(/\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/);
-  return match?.[0] ?? (line || "unknown");
-}
-
-async function readTextFile(path: string): Promise<string | null> {
-  try {
-    const value = (await readFile(path, "utf8")).trim();
-    return value || null;
-  } catch {
-    return null;
-  }
-}
-
-async function commandVersion(command: VersionCommand): Promise<VersionEntry | null> {
-  try {
-    const { stdout, stderr } = await execFileAsync(command.command, command.args, {
-      timeout: 3000,
-      windowsHide: true,
-    });
-    const output = stdout.trim() || stderr.trim();
-    if (!output) return null;
-    return { name: command.name, version: extractVersion(output), kind: command.kind };
-  } catch {
-    return null;
-  }
-}
-
-async function dependencyVersions(): Promise<VersionEntry[]> {
-  const dependencies = packageJson.dependencies ?? {};
-  const entries: VersionEntry[] = [];
-
-  for (const name of Object.keys(dependencies)) {
-    try {
-      const metadata = JSON.parse(await readFile(`/app/node_modules/${name}/package.json`, "utf8")) as { version?: unknown };
-      if (typeof metadata.version === "string") entries.push({ name, version: metadata.version, kind: "dependency" });
-    } catch {
-      entries.push({ name, version: "not installed", kind: "dependency" });
-    }
-  }
-
-  return entries;
-}
-
-export async function getOpenCodeVersion(): Promise<string> {
-  return (await readTextFile(OPENCODE_VERSION_FILE)) ?? "unknown";
-}
-
-export interface VersionSnapshot {
-  botVersion: string;
-  openCodeVersion: string;
-  nodeVersion: string;
-  entries: VersionEntry[];
-}
-
-export async function getVersionSnapshot(): Promise<VersionSnapshot> {
-  const [openCodeVersion, dependencies, tools] = await Promise.all([
-    getOpenCodeVersion(),
-    dependencyVersions(),
-    Promise.all(VERSION_COMMANDS.map(commandVersion)),
-  ]);
-
-  const runtimeEntries: VersionEntry[] = [
-    { name: "Node.js", version: process.version.replace(/^v/, ""), kind: "runtime" },
-    ...tools.filter((entry): entry is VersionEntry => entry !== null),
-  ];
-
-  return {
-    botVersion: BOT_VERSION,
-    openCodeVersion,
-    nodeVersion: process.version.replace(/^v/, ""),
-    entries: [
-      { name: "OpenCode", version: openCodeVersion, kind: "core" },
-      ...runtimeEntries,
-      ...dependencies,
-    ],
-  };
-}
-
-export async function getCurrentReleaseChangelog(): Promise<string | null> {
-  return (await readTextFile(`${RELEASE_NOTES_DIR}/v${BOT_VERSION}.md`)) ?? BUILT_IN_RELEASE_NOTES[BOT_VERSION] ?? null;
-}
-
-export async function getBotUpdateNotice(): Promise<{
-  previousVersion: string;
-  currentVersion: string;
-  changelog: string | null;
-} | null> {
-  const previousVersion = (await readTextFile(BOT_VERSION_NOTIFIED_FILE)) ?? "0.24.1";
-  if (previousVersion === BOT_VERSION) return null;
-  return { previousVersion, currentVersion: BOT_VERSION, changelog: await getCurrentReleaseChangelog() };
-}
-
-export async function markBotVersionNotified(version = BOT_VERSION): Promise<void> {
-  try {
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(BOT_VERSION_NOTIFIED_FILE, `${version}\n`, "utf8");
-  } catch {
-    // A failed state write may cause the same version to be announced again later.
-  }
-}
-
-export function formatVersionSnapshot(snapshot: VersionSnapshot): string {
-  const core = snapshot.entries.filter((entry) => entry.kind === "core");
-  const runtime = snapshot.entries.filter((entry) => entry.kind === "runtime");
-  const tools = snapshot.entries.filter((entry) => entry.kind === "tool");
-  const dependencies = snapshot.entries.filter((entry) => entry.kind === "dependency");
-
-  const section = (title: string, entries: VersionEntry[]): string[] => {
-    if (entries.length === 0) return [];
-    return [title, ...entries.map((entry) => `• ${entry.name}: ${entry.version}`), ""];
-  };
-
-  return [
-    "🧰 <b>All Version Info</b>",
-    "",
-    ...section("🤖 Core", [{ name: "Telegram Bot", version: snapshot.botVersion, kind: "core" }, ...core]),
-    ...section("🖥️ Runtime", runtime),
-    ...section("🛠️ Integrated Tools", tools),
-    ...section("📦 Runtime Dependencies", dependencies),
-  ].join("\n").trim();
-}
-
-export async function formatCurrentVersionSummary(): Promise<string> {
-  const snapshot = await getVersionSnapshot();
-  return [
-    `🤖 Bot <b>v${snapshot.botVersion}</b>`,
-    `🧠 OpenCode <b>v${snapshot.openCodeVersion}</b>`,
-    `🟢 Node.js <b>v${snapshot.nodeVersion}</b>`,
-  ].join("\n");
-}
+function firstLine(value: string): string { return value.split("\n", 1)[0]?.trim() ?? value.trim(); }
+function extractVersion(value: string): string { const line = firstLine(value).replace(/^v(?=\d)/i, ""); const match = line.match(/\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/); return match?.[0] ?? (line || "unknown"); }
+async function readTextFile(path: string): Promise<string | null> { try { const value = (await readFile(path, "utf8")).trim(); return value || null; } catch { return null; } }
+async function commandVersion(command: VersionCommand): Promise<VersionEntry | null> { try { const { stdout, stderr } = await execFileAsync(command.command, command.args, { timeout: 3000, windowsHide: true }); const output = stdout.trim() || stderr.trim(); if (!output) return null; return { name: command.name, version: extractVersion(output), kind: command.kind }; } catch { return null; } }
+async function dependencyVersions(): Promise<VersionEntry[]> { const dependencies = packageJson.dependencies ?? {}; const entries: VersionEntry[] = []; for (const name of Object.keys(dependencies)) { try { const metadata = JSON.parse(await readFile(`/app/node_modules/${name}/package.json`, "utf8")) as { version?: unknown }; if (typeof metadata.version === "string") entries.push({ name, version: metadata.version, kind: "dependency" }); } catch { entries.push({ name, version: "not installed", kind: "dependency" }); } } return entries; }
+export async function getOpenCodeVersion(): Promise<string> { return (await readTextFile(OPENCODE_VERSION_FILE)) ?? "unknown"; }
+export interface VersionSnapshot { botVersion: string; openCodeVersion: string; nodeVersion: string; entries: VersionEntry[]; }
+export async function getVersionSnapshot(): Promise<VersionSnapshot> { const [openCodeVersion, dependencies, tools] = await Promise.all([getOpenCodeVersion(), dependencyVersions(), Promise.all(VERSION_COMMANDS.map(commandVersion))]); const runtimeEntries: VersionEntry[] = [{ name: "Node.js", version: process.version.replace(/^v/, ""), kind: "runtime" }, ...tools.filter((entry): entry is VersionEntry => entry !== null)]; return { botVersion: BOT_VERSION, openCodeVersion, nodeVersion: process.version.replace(/^v/, ""), entries: [{ name: "OpenCode", version: openCodeVersion, kind: "core" }, ...runtimeEntries, ...dependencies] }; }
+export async function getCurrentReleaseChangelog(): Promise<string | null> { return (await readTextFile(`${RELEASE_NOTES_DIR}/v${BOT_VERSION}.md`)) ?? BUILT_IN_RELEASE_NOTES[BOT_VERSION] ?? null; }
+export async function getBotUpdateNotice(): Promise<{ previousVersion: string; currentVersion: string; changelog: string | null; } | null> { const previousVersion = (await readTextFile(BOT_VERSION_NOTIFIED_FILE)) ?? "0.24.1"; if (previousVersion === BOT_VERSION) return null; return { previousVersion, currentVersion: BOT_VERSION, changelog: await getCurrentReleaseChangelog() }; }
+export async function markBotVersionNotified(version = BOT_VERSION): Promise<void> { try { const { writeFile } = await import("node:fs/promises"); await writeFile(BOT_VERSION_NOTIFIED_FILE, `${version}\n`, "utf8"); } catch { /* A failed state write may cause the same version to be announced again. */ } }
+export function formatVersionSnapshot(snapshot: VersionSnapshot): string { const core = snapshot.entries.filter((entry) => entry.kind === "core"); const runtime = snapshot.entries.filter((entry) => entry.kind === "runtime"); const tools = snapshot.entries.filter((entry) => entry.kind === "tool"); const dependencies = snapshot.entries.filter((entry) => entry.kind === "dependency"); const section = (title: string, entries: VersionEntry[]): string[] => { if (entries.length === 0) return []; return [title, ...entries.map((entry) => `• ${entry.name}: ${entry.version}`), ""]; }; return ["🧰 <b>All Version Info</b>", "", ...section("🤖 Core", [{ name: "Telegram Bot", version: snapshot.botVersion, kind: "core" }, ...core]), ...section("🖥️ Runtime", runtime), ...section("🛠️ Integrated Tools", tools), ...section("📦 Runtime Dependencies", dependencies)].join("\n").trim(); }
+export async function formatCurrentVersionSummary(): Promise<string> { const snapshot = await getVersionSnapshot(); return [`🤖 Bot <b>v${snapshot.botVersion}</b>`, `🧠 OpenCode <b>v${snapshot.openCodeVersion}</b>`, `🟢 Node.js <b>v${snapshot.nodeVersion}</b>`].join("\n"); }
