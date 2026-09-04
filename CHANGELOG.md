@@ -4,6 +4,24 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+## [0.25.3] - 2026-09-04
+
+### Changed
+- Simplified model labels throughout Model Center to show the model name only; provider/company names are no longer repeated on model buttons.
+- Added human-friendly model-name formatting so IDs such as `gpt-5.1-codex` render as readable model names while preserving the original provider/model IDs internally.
+- Model search now matches both model IDs and their advertised display names.
+
+### Fixed
+- Custom Provider model display names from the live `/models` catalog are now preserved and shown instead of falling back to raw IDs.
+- `/start` and `/update` now use a built-in release-notes fallback, so Changelog delivery does not depend on `docs/release-notes` being present in the runtime image.
+- Update notifications mark a version as delivered only after the notification and Changelog messages are successfully sent, preventing a failed Changelog send from being silently suppressed.
+- Updated the model-format regression tests to match the canonical model-only button format.
+- Corrected the release version used by the package metadata to `v0.25.3`.
+
+### Release / Update notification
+- Bot version is now `v0.25.3`.
+- `/start` and `/update` show the previous → current bot version and the current release Changelog once per installed version.
+
 ## [0.25.2] - 2026-09-04
 
 ### Added
