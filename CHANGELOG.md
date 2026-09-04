@@ -13,6 +13,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ### Changed
 - The main private chat is now used for controls and session creation, while each coding session lives in its own Telegram Topic.
 - Topic deletion now removes only the bound OpenCode session, isolated workspace, Telegram Topic, and binding.
+- Kept PR28 Image Conversion out of this change set; it remains a separate future Topic flow.
 
 ## [0.25.3] - 2026-09-04
 
