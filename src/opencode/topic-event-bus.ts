@@ -5,7 +5,7 @@ import { isRecord } from "../utils/type-guards.js";
 import { isExpectedOpencodeUnavailableError } from "../utils/opencode-error.js";
 import { agentArtifactDeliveryService } from "../bot/services/agent-artifact-delivery-service.js";
 import { isDeterministicProviderRetryError } from "./provider-error-policy.js";
-import { findTelegramTopicBindingByDirectory, findTelegramTopicBindingBySessionId } from "../app/services/telegram-topic-store.js";
+import { findTelegramTopicBindingsByDirectory, findTelegramTopicBindingBySessionId } from "../app/services/telegram-topic-store.js";
 import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { topicTelemetry } from "../utils/topic-observability.js";
 
@@ -33,7 +33,16 @@ function dispatchToSubscribers(event: EventLike): void { void (async () => {
   const sessionId = getSessionId(event);
   const eventDirectory = getEventDirectory(event);
   let binding = sessionId ? await findTelegramTopicBindingBySessionId(sessionId) : null;
-  if (!binding && eventDirectory) binding = await findTelegramTopicBindingByDirectory(eventDirectory);
+  let directoryBindingCount = 0;
+  if (!binding && eventDirectory) {
+    const directoryBindings = await findTelegramTopicBindingsByDirectory(eventDirectory);
+    directoryBindingCount = directoryBindings.length;
+    if (directoryBindings.length === 1) binding = directoryBindings[0];
+    else if (directoryBindings.length > 1) {
+      topicTelemetry("ambiguous_directory_route_blocked", { directory: eventDirectory }, { type: event.type, bindingCount: directoryBindings.length });
+      return;
+    }
+  }
   const targets = [...subscribers.values()].filter((subscriber) => {
     if (binding) {
       if (normalizeDirectory(subscriber.directory) !== normalizeDirectory(binding.directory)) return false;
@@ -48,7 +57,7 @@ function dispatchToSubscribers(event: EventLike): void { void (async () => {
     threadId: binding?.threadId,
     sessionId: binding?.sessionId ?? sessionId ?? undefined,
     directory: binding?.directory ?? eventDirectory ?? undefined,
-  }, { type: event.type, targets: targets.length });
+  }, { type: event.type, targets: targets.length, directoryBindingCount });
   const sdkEvent = event as unknown as Event;
   for (const target of targets) {
     const invoke = async () => {
