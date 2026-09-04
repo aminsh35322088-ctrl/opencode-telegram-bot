@@ -8,7 +8,7 @@ import { clearAllInteractionState } from "../../app/managers/interaction-manager
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { getCompactOutputMode } from "../../app/stores/settings-store.js";
+import { getTopicDefaults } from "../../app/stores/settings-store.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { isForegroundBusy } from "../../app/services/run-control-service.js";
@@ -25,9 +25,7 @@ import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-conte
 
 export interface NewCommandDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
 
-export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
-  await createNewSession(ctx, deps);
-}
+export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> { await createNewSession(ctx, deps); }
 
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
   let directory: string | null = null;
@@ -43,18 +41,25 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     sessionId = session.id;
     const sessionInfo: SessionInfo = { id: session.id, title: session.title, directory };
 
-    const initialAgent = await resolveProjectAgent(getStoredAgent());
-    const initialModel = getStoredModel();
-    const initialCompact = getCompactOutputMode();
+    const defaults = getTopicDefaults();
+    const initialAgent = defaults.agent ?? await resolveProjectAgent(getStoredAgent());
+    const initialModel = defaults.model ?? getStoredModel();
+    const initialCompact = defaults.compactOutputMode;
     const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
     topicBindingCreated = true;
     await initializeTopicRuntimeState(binding.chatId, binding.threadId, {
+      ...defaults,
+      session: sessionInfo,
+      agent: initialAgent,
+      model: initialModel,
+    });
+    ensureTopicRuntimeStateSync(binding.chatId, binding.threadId, {
+      ...defaults,
       session: sessionInfo,
       agent: initialAgent,
       model: initialModel,
       compactOutputMode: initialCompact,
     });
-    ensureTopicRuntimeStateSync(binding.chatId, binding.threadId, { session: sessionInfo, agent: initialAgent, model: initialModel, compactOutputMode: initialCompact });
 
     setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
     await runInTopicRuntimeContext({ chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id }, async () => {
@@ -73,7 +78,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       });
 
       const contextInfo = keyboardManager.getContextInfo(session.id);
-      const variantName = formatVariantForButton(initialModel.variant || "default");
+      const variantName = formatVariantForButton(defaults.variant || initialModel.variant || "default");
       const keyboard = createMainKeyboard(initialAgent, initialModel, contextInfo ?? undefined, variantName);
       await deps.bot.api.sendMessage(ctx.chat.id, `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`, {
         message_thread_id: binding.threadId,
