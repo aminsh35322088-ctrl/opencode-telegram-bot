@@ -39,7 +39,6 @@ const EXCLUDED_NAMES = new Set([
 export async function createTelegramTopicWorkspace(chatId: number): Promise<string> {
   const fs = await import("fs/promises");
   const sessionId = randomUUID();
-  const root = getWorkspaceRoot();
   const target = workspacePath(chatId, sessionId);
   const source = getSourceRoot();
 
