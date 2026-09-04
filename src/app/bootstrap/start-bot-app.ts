@@ -8,6 +8,7 @@ import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } fro
 import { flushSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
+import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -21,95 +22,28 @@ const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
 const LOG_FLUSH_TIMEOUT_MS = 1000;
 
-async function getBotVersion(): Promise<string> {
-  try {
-    const packageJsonPath = new URL("../../../package.json", import.meta.url);
-    const packageJsonContent = await readFile(packageJsonPath, "utf-8");
-    const packageJson = JSON.parse(packageJsonContent) as { version?: string };
-    return packageJson.version ?? "unknown";
-  } catch (error) { logger.warn("[App] Failed to read bot version", error); return "unknown"; }
-}
+async function getBotVersion(): Promise<string> { try { const packageJsonPath = new URL("../../../package.json", import.meta.url); const packageJsonContent = await readFile(packageJsonPath, "utf-8"); const packageJson = JSON.parse(packageJsonContent) as { version?: string }; return packageJson.version ?? "unknown"; } catch (error) { logger.warn("[App] Failed to read bot version", error); return "unknown"; } }
 
 export async function startBotApp(): Promise<void> {
   await initializeLogger();
-  const mode = getRuntimeMode();
-  const runtimePaths = getRuntimePaths();
-  const version = await getBotVersion();
-  const logFilePath = getLogFilePath();
-  logger.info(`Starting OpenCode Telegram Bot v${version}...`);
-  logger.info(`Node.js ${process.version} on ${process.platform} ${process.arch}`);
-  logger.info(`Config loaded from ${runtimePaths.envFilePath}`);
-  if (logFilePath) logger.info(`Logs are written to ${logFilePath}`);
-  logger.info(`Allowed User ID: ${config.telegram.allowedUserId}`);
-  logger.debug(`[Runtime] Application start mode: ${mode}`);
-
+  const mode = getRuntimeMode(); const runtimePaths = getRuntimePaths(); const version = await getBotVersion(); const logFilePath = getLogFilePath();
+  logger.info(`Starting OpenCode Telegram Bot v${version}...`); logger.info(`Node.js ${process.version} on ${process.platform} ${process.arch}`); logger.info(`Config loaded from ${runtimePaths.envFilePath}`); if (logFilePath) logger.info(`Logs are written to ${logFilePath}`); logger.info(`Allowed User ID: ${config.telegram.allowedUserId}`); logger.debug(`[Runtime] Application start mode: ${mode}`);
   let serviceStateCleared = false;
-  const clearManagedServiceState = async (): Promise<void> => {
-    if (!isServiceChildProcess() || serviceStateCleared) return;
-    const stateFilePath = getServiceStateFilePathFromEnv();
-    if (!stateFilePath) return;
-    try { await fs.access(stateFilePath); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") { serviceStateCleared = true; return; }
-      throw error;
-    }
-    await clearServiceStateFile(stateFilePath); serviceStateCleared = true;
-  };
-  const flushSettingsWithTimeout = (): Promise<void> => Promise.race([flushSettings(), new Promise<void>((resolve) => setTimeout(resolve, SETTINGS_FLUSH_TIMEOUT_MS))]);
-  const flushLoggerWithTimeout = (): Promise<void> => Promise.race([flushLogger(), new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_TIMEOUT_MS))]);
-  const unhandledRejectionHandler = (reason: unknown): void => { logger.error("[App] Unhandled promise rejection", reason); };
-  const uncaughtExceptionHandler = (error: Error): void => {
-    logger.error("[App] Uncaught exception", error);
-    void clearManagedServiceState().catch(() => {}).then(() => flushSettingsWithTimeout()).then(() => flushLoggerWithTimeout()).finally(() => process.exit(1));
-  };
-  process.on("unhandledRejection", unhandledRejectionHandler);
-  process.on("uncaughtException", uncaughtExceptionHandler);
-
+  const clearManagedServiceState = async (): Promise<void> => { if (!isServiceChildProcess() || serviceStateCleared) return; const stateFilePath = getServiceStateFilePathFromEnv(); if (!stateFilePath) return; try { await fs.access(stateFilePath); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { serviceStateCleared = true; return; } throw error; } await clearServiceStateFile(stateFilePath); serviceStateCleared = true; };
+  const flushSettingsWithTimeout = (): Promise<void> => Promise.race([flushSettings(), new Promise<void>((resolve) => setTimeout(resolve, SETTINGS_FLUSH_TIMEOUT_MS))]); const flushLoggerWithTimeout = (): Promise<void> => Promise.race([flushLogger(), new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_TIMEOUT_MS))]);
+  const unhandledRejectionHandler = (reason: unknown): void => { logger.error("[App] Unhandled promise rejection", reason); }; const uncaughtExceptionHandler = (error: Error): void => { logger.error("[App] Uncaught exception", error); void clearManagedServiceState().catch(() => {}).then(() => flushSettingsWithTimeout()).then(() => flushLoggerWithTimeout()).finally(() => process.exit(1)); };
+  process.on("unhandledRejection", unhandledRejectionHandler); process.on("uncaughtException", uncaughtExceptionHandler);
   await loadSettings();
-  const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => {
-    logger.warn("[RailwayIntegration] Could not initialize Railway token from environment; continuing without Railway integration", error);
-    return false;
-  });
-  logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
-  try {
-    process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig();
-  } catch (error) {
-    logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error);
-  }
+  const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => { logger.warn("[RailwayIntegration] Could not initialize Railway token from environment; continuing without Railway integration", error); return false; }); logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
+  try { process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig(); } catch (error) { logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error); }
+  startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
-  const bot = createBot();
-  await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
-  const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog();
-  runtimeObservabilityWatchdog.start();
-  safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => {
-    const monitorStarted = await opencodeAutoRestartService.start();
-    if (!monitorStarted) {
-      await notifyOpencodeReadyIfHealthy("startup");
-    }
-  } });
-
-  let shutdownStarted = false;
-  let shutdownTimeout: ReturnType<typeof setTimeout> | null = null;
-  const shutdown = (signal: NodeJS.Signals): void => {
-    if (shutdownStarted) return;
-    shutdownStarted = true; logger.info(`[App] Received ${signal}, shutting down...`);
-    runtimeObservabilityWatchdog.stop(); cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown();
-    shutdownTimeout = setTimeout(() => { logger.warn(`[App] Shutdown did not finish in ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`); void flushSettingsWithTimeout().then(() => flushLoggerWithTimeout()).finally(() => process.exit(0)); }, SHUTDOWN_TIMEOUT_MS);
-    shutdownTimeout.unref?.();
-    try { bot.stop(); } catch (error) { logger.warn("[App] Failed to stop Telegram bot cleanly", error); }
-    void clearManagedServiceState().catch((error) => logger.warn("[App] Failed to clear managed service state", error));
-  };
-  const handleSigint = (): void => shutdown("SIGINT"); const handleSigterm = (): void => shutdown("SIGTERM");
-  process.on("SIGINT", handleSigint); process.on("SIGTERM", handleSigterm);
-  const webhookInfo = await bot.api.getWebhookInfo();
-  if (webhookInfo.pending_update_count > 0) logger.info(`[Bot] Dropping ~${webhookInfo.pending_update_count} update(s) queued while the bot was offline`);
-  if (webhookInfo.url) { logger.info(`[Bot] Webhook detected: ${webhookInfo.url}, removing...`); await bot.api.deleteWebhook(); logger.info("[Bot] Webhook removed, switching to long polling"); }
-  try {
-    await bot.start({ drop_pending_updates: true, onStart: (botInfo) => logger.info(`Bot @${botInfo.username} started!`) });
-  } finally {
-    runtimeObservabilityWatchdog.stop(); process.off("unhandledRejection", unhandledRejectionHandler); process.off("uncaughtException", uncaughtExceptionHandler); process.off("SIGINT", handleSigint); process.off("SIGTERM", handleSigterm);
-    if (shutdownTimeout) { clearTimeout(shutdownTimeout); shutdownTimeout = null; }
-    cleanupBotRuntime("app_shutdown_complete"); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown();
-    await clearManagedServiceState().catch((error) => logger.warn("[App] Failed to clear managed service state", error));
-    await flushSettings();
-  }
+  const bot = createBot(); await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
+  const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog(); runtimeObservabilityWatchdog.start();
+  safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => { const monitorStarted = await opencodeAutoRestartService.start(); if (!monitorStarted) await notifyOpencodeReadyIfHealthy("startup"); } });
+  let shutdownStarted = false; let shutdownTimeout: ReturnType<typeof setTimeout> | null = null;
+  const shutdown = (signal: NodeJS.Signals): void => { if (shutdownStarted) return; shutdownStarted = true; logger.info(`[App] Received ${signal}, shutting down...`); runtimeObservabilityWatchdog.stop(); stopModelCatalogRefreshService(); cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown(); shutdownTimeout = setTimeout(() => { logger.warn(`[App] Shutdown did not finish in ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`); void flushSettingsWithTimeout().then(() => flushLoggerWithTimeout()).finally(() => process.exit(0)); }, SHUTDOWN_TIMEOUT_MS); shutdownTimeout.unref?.(); try { bot.stop(); } catch (error) { logger.warn("[App] Failed to stop Telegram bot cleanly", error); } void clearManagedServiceState().catch((error) => logger.warn("[App] Failed to clear managed service state", error)); };
+  const handleSigint = (): void => shutdown("SIGINT"); const handleSigterm = (): void => shutdown("SIGTERM"); process.on("SIGINT", handleSigint); process.on("SIGTERM", handleSigterm);
+  const webhookInfo = await bot.api.getWebhookInfo(); if (webhookInfo.pending_update_count > 0) logger.info(`[Bot] Dropping ~${webhookInfo.pending_update_count} update(s) queued while the bot was offline`); if (webhookInfo.url) { logger.info(`[Bot] Webhook detected: ${webhookInfo.url}, removing...`); await bot.api.deleteWebhook(); logger.info("[Bot] Webhook removed, switching to long polling"); }
+  try { await bot.start({ drop_pending_updates: true, onStart: (botInfo) => logger.info(`Bot @${botInfo.username} started!`) }); } finally { runtimeObservabilityWatchdog.stop(); stopModelCatalogRefreshService(); process.off("unhandledRejection", unhandledRejectionHandler); process.off("uncaughtException", uncaughtExceptionHandler); process.off("SIGINT", handleSigint); process.off("SIGTERM", handleSigterm); if (shutdownTimeout) { clearTimeout(shutdownTimeout); shutdownTimeout = null; } cleanupBotRuntime("app_shutdown_complete"); opencodeAutoRestartService.stop(); scheduledTaskRuntime.shutdown(); await clearManagedServiceState().catch((error) => logger.warn("[App] Failed to clear managed service state", error)); await flushSettings(); }
 }
