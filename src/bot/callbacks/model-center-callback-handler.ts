@@ -145,7 +145,9 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
 
   const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
-  await ctx.answerCallbackQuery().catch(() => {});
+  // `switched()` owns the callback acknowledgement for model selection. Do not
+  // acknowledge the same Telegram callback twice; Telegram treats the second
+  // acknowledgement as an expired/invalid callback query.
   await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
 
