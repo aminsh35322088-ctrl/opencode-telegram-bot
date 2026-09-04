@@ -111,13 +111,13 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
         "",
         "The current run was interrupted safely. Your session, files, and history are still intact.",
         "",
-        "Change the model/provider or recharge your API, then tap <b>▶️ Resume</b>.",
+        "Send a new prompt to continue from here, or tap <b>▶️ Resume</b> to continue without additional instructions.",
       ].join("\n"),
       { parse_mode: "HTML" },
     );
 
     const keyboard = keyboardManager.getKeyboard(session.id);
-    if (keyboard) await ctx.reply("▶️ Resume is ready.", { reply_markup: keyboard });
+    if (keyboard) await ctx.reply("▶️ Resume is ready. Sending a prompt will resume automatically.", { reply_markup: keyboard });
   } catch (error) {
     logger.error("[Pause] Failed to pause current chat:", error);
     await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption.");
@@ -137,8 +137,6 @@ export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): P
     return;
   }
 
-  // Capture the user's visible model before dispatch. Resume must continue
-  // with that exact selection instead of re-routing through the Coding AI Rule.
   const resumeModel = getStoredModel();
   clearPausedSession(session.id);
   keyboardManager.setPaused(false, session.id);
@@ -164,5 +162,48 @@ export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): P
     await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true, session.id);
     logger.error("[Resume] Failed to resume paused chat:", error);
     await ctx.reply("⚠️ Resume failed. The chat remains paused so you can change model/provider safely.");
+  }
+}
+
+export async function resumePausedChatWithPrompt(
+  ctx: Context,
+  text: string,
+  deps: ProcessPromptDeps,
+): Promise<boolean> {
+  const currentSession = getCurrentSession();
+  if (!currentSession || !isChatPaused(currentSession.id)) return false;
+
+  const session = getPausedSession(currentSession.id);
+  if (!session) return false;
+
+  const prompt = text.trim();
+  if (!prompt) return false;
+
+  const selectedModel = getStoredModel();
+  clearPausedSession(session.id);
+  keyboardManager.setPaused(false, session.id);
+
+  logger.info(
+    `[Pause] Implicit resume from user prompt: session=${session.id}, promptLength=${prompt.length}`,
+  );
+
+  try {
+    const dispatched = await processUserPrompt(ctx, prompt, deps, [], selectedModel);
+    if (!dispatched) {
+      setPausedSession(session);
+      keyboardManager.setPaused(true, session.id);
+      await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true, session.id);
+      return false;
+    }
+
+    await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true, session.id);
+    return true;
+  } catch (error) {
+    setPausedSession(session);
+    keyboardManager.setPaused(true, session.id);
+    await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true, session.id);
+    logger.error("[Pause] Failed implicit resume from user prompt:", error);
+    await ctx.reply("⚠️ The prompt could not resume the paused chat. The chat remains paused.");
+    return false;
   }
 }
