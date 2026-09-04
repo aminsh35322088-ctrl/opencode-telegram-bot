@@ -70,7 +70,7 @@ export async function startCommand(ctx: Context): Promise<void> {
     "",
     "Build, debug and control OpenCode directly from Telegram.",
     "",
-    "💬 Start a fresh chat or open 🕘 History to continue an existing conversation.",
+    "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
   ].join("\n");
 
   await sendBotUpdateNotice(ctx);
