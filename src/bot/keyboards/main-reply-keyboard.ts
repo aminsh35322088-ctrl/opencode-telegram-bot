@@ -35,6 +35,7 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
 function addRunningControls(keyboard: Keyboard, paused: boolean): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   keyboard.text(MAIN_BUTTONS.imageAi).row();
+  keyboard.text(MAIN_BUTTONS.settings).text(MAIN_BUTTONS.deleteChat).row();
 }
 
 function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean): void {
@@ -48,7 +49,7 @@ function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
   keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
-  keyboard.text(MAIN_BUTTONS.deleteChat).row();
+  keyboard.text(MAIN_BUTTONS.settings).text(MAIN_BUTTONS.deleteChat).row();
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
