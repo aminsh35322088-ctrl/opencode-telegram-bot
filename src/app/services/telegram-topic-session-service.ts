@@ -17,6 +17,9 @@ type SessionMessage = {
   info?: {
     role?: string;
     summary?: boolean;
+    time?: {
+      created?: number;
+    };
   };
   parts?: Array<{
     type?: string;
@@ -108,12 +111,18 @@ async function migrateSessionMessages(api: Api, binding: TelegramTopicBinding): 
   const messages = (response.data as unknown as SessionMessage[])
     .filter((message) => message.info?.role === "user" || message.info?.role === "assistant")
     .filter((message) => !(message.info?.role === "assistant" && message.info?.summary))
-    .map((message) => {
+    .map((message, index) => {
       const text = extractText(message);
       if (!text) return null;
-      return migrationLine(message.info?.role === "user" ? "user" : "assistant", text);
+      return {
+        index,
+        created: message.info?.time?.created ?? index,
+        text: migrationLine(message.info?.role === "user" ? "user" : "assistant", text),
+      };
     })
-    .filter((value): value is string => value !== null);
+    .filter((value): value is { index: number; created: number; text: string } => value !== null)
+    .sort((a, b) => a.created - b.created || a.index - b.index)
+    .map((value) => value.text);
 
   let cursor = Math.max(0, started.migrationCursor);
   for (; cursor < messages.length; cursor += 1) {
