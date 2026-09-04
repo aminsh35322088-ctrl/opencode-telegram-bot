@@ -15,10 +15,11 @@ import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
+import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { formatModelForButton } from "../../app/types/model.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
-  MODEL_BUTTON_TEXT_PATTERN,
   QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
   VARIANT_BUTTON_TEXT_PATTERN,
   isReplyKeyboardButtonText,
@@ -76,6 +77,12 @@ function normalizeControlText(text: string): string {
     .replace(/\uFE0F/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getCurrentModelButtonText(): string {
+  const model = getStoredModel();
+  if (!model.providerID || !model.modelID) return "🧠 Model";
+  return formatModelForButton(model.providerID, model.modelID, model.name);
 }
 
 function resetImageInteraction(): void {
@@ -240,9 +247,11 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
       return;
     }
 
-    // Reply-keyboard presses arrive from Telegram as normal text messages, so
-    // consume known controls before any interaction-specific text handler.
-    if (isReplyKeyboardButtonText(text)) {
+    // Reply-keyboard presses arrive from Telegram as normal text messages.
+    // Dynamic model labels are recognized only by exact current-label matching;
+    // this prevents ordinary prompts such as "🧠 Explain this architecture 2026" from being controls.
+    const knownReplyKeyboardButtonTexts = new Set<string>([getCurrentModelButtonText()]);
+    if (isReplyKeyboardButtonText(text, knownReplyKeyboardButtonTexts)) {
       if (text !== MAIN_BUTTONS.imageAi) resetImageInteraction();
       await next();
       return;
@@ -342,7 +351,12 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
   });
 
-  bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => {
+  bot.on("message:text", async (ctx, next) => {
+    if (normalizeControlText(ctx.message.text) !== normalizeControlText(getCurrentModelButtonText())) {
+      await next();
+      return;
+    }
+
     try {
       resetImageInteraction();
       if (await blockMenuWhileInteractionActive(ctx)) return;
