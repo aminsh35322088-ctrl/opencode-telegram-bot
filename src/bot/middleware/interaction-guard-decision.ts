@@ -7,6 +7,8 @@ import { attachManager } from "../../app/managers/attach-manager.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN, isReplyKeyboardButtonText } from "../message-patterns.js";
 import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
+import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { formatModelForButton } from "../../app/types/model.js";
 
 const BUSY_ALLOWED_COMMANDS = ["/abort", "/detach", "/status", "/help", "/opencode_stop"] as const;
 const BUSY_ALLOWED_COMMAND_SET = new Set<string>(BUSY_ALLOWED_COMMANDS);
@@ -15,7 +17,14 @@ const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && BUSY_ALLOWED_COMMAND_SET.has(command)); }
 function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
-function isReplyKeyboardPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && isReplyKeyboardButtonText(text); }
+function isReplyKeyboardPress(ctx: Context): boolean {
+  const text = ctx.message?.text;
+  if (typeof text !== "string") return false;
+  const model = getStoredModel();
+  const knownButtonTexts = new Set<string>();
+  if (model.providerID && model.modelID) knownButtonTexts.add(formatModelForButton(model.providerID, model.modelID, model.name));
+  return isReplyKeyboardButtonText(text, knownButtonTexts);
+}
 function isSetupWizardText(ctx: Context): boolean { return Boolean(ctx.message?.text && (isProviderWizardActive() || isIntegrationWizardActive())); }
 function isRootNavigationText(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && ROOT_NAVIGATION_TEXTS.has(text); }
 function normalizeIncomingCommand(text: string): string | null { const trimmed = text.trim(); if (!trimmed.startsWith("/")) return null; const token = trimmed.split(/\s+/)[0]; if (!token) return null; const withoutMention = token.split("@")[0]?.toLowerCase(); return !withoutMention || withoutMention.length <= 1 ? null : withoutMention; }

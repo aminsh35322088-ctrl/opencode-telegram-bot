@@ -8,6 +8,10 @@ import {
 } from "../handlers/prompt-queue-dispatch.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { isImageAiOperationActive } from "../../app/services/image-mode-service.js";
+import { isReplyKeyboardButtonText } from "../message-patterns.js";
+import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { formatModelForButton } from "../../app/types/model.js";
 
 function getInteractionBlockedMessage(
   reason: BlockReason | undefined,
@@ -88,7 +92,26 @@ function getInteractionBlockedMessage(
   }
 }
 
+function isImageOperationControl(ctx: Context): boolean {
+  const text = ctx.message?.text;
+  if (typeof text !== "string") return false;
+  const model = getStoredModel();
+  const knownButtonTexts = new Set<string>();
+  if (model.providerID && model.modelID) {
+    knownButtonTexts.add(formatModelForButton(model.providerID, model.modelID, model.name));
+  }
+  return isReplyKeyboardButtonText(text, knownButtonTexts);
+}
+
 export async function interactionGuardMiddleware(ctx: Context, next: NextFunction): Promise<void> {
+  // Image AI owns the session until its result is delivered. Do not let
+  // ordinary text/voice-driven prompt paths enter Coding AI while the image
+  // provider is still working. Reply-keyboard controls remain available.
+  if (ctx.message?.text && isImageAiOperationActive() && !isImageOperationControl(ctx)) {
+    await ctx.reply("⏳ Image AI is still working on the current request. Please wait for the image to be delivered.").catch(() => {});
+    return;
+  }
+
   let decision = resolveInteractionGuardDecision(ctx);
 
   if (!decision.allow && decision.busy) {
