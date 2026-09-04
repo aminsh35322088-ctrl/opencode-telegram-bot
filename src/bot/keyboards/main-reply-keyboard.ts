@@ -98,9 +98,8 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
  * Pause and Resume are one toggle: only the action matching the current state
  * is rendered. Abort remains available to terminate the current run.
  */
-export function createTopicKeyboard(options: { paused?: boolean; running?: boolean } = {}): Keyboard {
-  const paused = Boolean(options.paused);
-  const toggleButton = paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause;
+export function createTopicKeyboard(options: { paused?: boolean } = {}): Keyboard {
+  const toggleButton = options.paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause;
 
   return new Keyboard()
     .text(toggleButton)
