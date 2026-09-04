@@ -1,6 +1,6 @@
 import type { Api } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { clearSession } from "./session-service.js";
+import { clearSession, getCurrentSession } from "./session-service.js";
 import { removeTelegramTopicBinding, type TelegramTopicBinding } from "./telegram-topic-store.js";
 import { deleteTelegramTopicWorkspace, isTelegramTopicWorkspace } from "./telegram-topic-workspace-service.js";
 import { logger } from "../../utils/logger.js";
@@ -34,18 +34,11 @@ export async function deleteTelegramTopicSession(
   await api.deleteForumTopic(binding.chatId, binding.threadId);
   await removeTelegramTopicBinding(binding.chatId, binding.sessionId);
 
-  if (clearSessionMatches(binding)) {
+  if (getCurrentSession()?.id === binding.sessionId) {
     clearSession();
   }
 
   logger.info(
     `[TelegramTopics] Permanently deleted topic session: session=${binding.sessionId}, chat=${binding.chatId}, thread=${binding.threadId}, directory=${binding.directory}`,
   );
-}
-
-function clearSessionMatches(binding: TelegramTopicBinding): boolean {
-  // The settings store is intentionally cleared by the caller when the
-  // deleted session is the active one. This helper exists to keep the service
-  // side-effect explicit and testable.
-  return false;
 }
