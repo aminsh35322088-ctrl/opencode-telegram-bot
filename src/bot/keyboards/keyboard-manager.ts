@@ -57,21 +57,54 @@ class KeyboardManager {
     return this.states.get(this.key(this.activeSessionId(sessionId)));
   }
 
-  public updateAgent(agent: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.currentAgent = agent; }
-  public updateModel(model: ModelInfo, sessionId?: string): void { const state = this.state(sessionId); if (!state) return; state.currentModel = model; state.variantName = formatVariantForButton(model.variant || "default"); }
-  public updateVariant(variantId: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.variantName = formatVariantForButton(variantId); }
-  public setPaused(paused: boolean, sessionId?: string): void { const state = this.state(sessionId); if (state) state.paused = paused; }
-  public updateContext(tokensUsed: number, tokensLimit: number, sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = { tokensUsed, tokensLimit }; }
-  public clearContext(sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = null; }
-  public getContextInfo(sessionId?: string): ContextInfo | null { return this.state(sessionId)?.contextInfo ?? null; }
+  public updateAgent(agent: string, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.currentAgent = agent;
+  }
+
+  public updateModel(model: ModelInfo, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (!state) return;
+    state.currentModel = model;
+    state.variantName = formatVariantForButton(model.variant || "default");
+  }
+
+  public updateVariant(variantId: string, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.variantName = formatVariantForButton(variantId);
+  }
+
+  public setPaused(paused: boolean, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.paused = paused;
+  }
+
+  public updateContext(tokensUsed: number, tokensLimit: number, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.contextInfo = { tokensUsed, tokensLimit };
+  }
+
+  public clearContext(sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.contextInfo = null;
+  }
+
+  public getContextInfo(sessionId?: string): ContextInfo | null {
+    return this.state(sessionId)?.contextInfo ?? null;
+  }
 
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     const effectiveSessionId = this.activeSessionId(sessionId);
-    const running = effectiveSessionId ? assistantRunState.hasActiveRun(effectiveSessionId) : assistantRunState.hasActiveRuns();
+    const running = effectiveSessionId
+      ? assistantRunState.hasActiveRun(effectiveSessionId)
+      : assistantRunState.hasActiveRuns();
     const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
 
-    if (isTopic) return createTopicKeyboard();
+    if (isTopic) {
+      const paused = state.sessionId ? isChatPaused(state.sessionId) : state.paused;
+      return createTopicKeyboard({ paused });
+    }
 
     if (!state) {
       return createMainKeyboard(
@@ -103,8 +136,12 @@ class KeyboardManager {
     this.lastUpdateTimes.set(key, now);
 
     try {
-      const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(effectiveSessionId) };
-      if (state?.sessionId && state.threadId !== undefined) options.message_thread_id = state.threadId;
+      const options: Record<string, unknown> = {
+        reply_markup: this.buildKeyboard(effectiveSessionId),
+      };
+      if (state?.sessionId && state.threadId !== undefined) {
+        options.message_thread_id = state.threadId;
+      }
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
@@ -115,9 +152,18 @@ class KeyboardManager {
     return this.state(sessionId) ? this.buildKeyboard(sessionId) : undefined;
   }
 
-  public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
-  public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)); }
-  public clearSession(sessionId: string): void { this.states.delete(this.key(sessionId)); this.lastUpdateTimes.delete(this.key(sessionId)); }
+  public getState(sessionId?: string): KeyboardState | undefined {
+    return this.state(sessionId);
+  }
+
+  public isInitialized(sessionId?: string): boolean {
+    return Boolean(this.state(sessionId));
+  }
+
+  public clearSession(sessionId: string): void {
+    this.states.delete(this.key(sessionId));
+    this.lastUpdateTimes.delete(this.key(sessionId));
+  }
 }
 
 export const keyboardManager = new KeyboardManager();
