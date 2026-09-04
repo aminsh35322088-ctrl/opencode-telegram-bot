@@ -13,6 +13,7 @@ function sameModelMetadata(a: CatalogModel, b: CatalogModel): boolean {
     && a.name === b.name
     && a.freeStatus === b.freeStatus
     && a.freeConfidence === b.freeConfidence
+    && a.freeSource === b.freeSource
     && a.freeReason === b.freeReason
     && JSON.stringify(a.pricing ?? null) === JSON.stringify(b.pricing ?? null);
 }
