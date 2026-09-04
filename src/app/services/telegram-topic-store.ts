@@ -8,6 +8,7 @@ export interface TelegramTopicBinding {
   sessionId: string;
   directory: string;
   createdAt: string;
+  title?: string;
 }
 
 function getStorePath(): string {
@@ -34,7 +35,8 @@ async function readBindings(): Promise<TelegramTopicBinding[]> {
         typeof value.threadId === "number" &&
         typeof value.sessionId === "string" &&
         typeof value.directory === "string" &&
-        typeof value.createdAt === "string"
+        typeof value.createdAt === "string" &&
+        (value.title === undefined || typeof value.title === "string")
       );
     });
   } catch (error) {
@@ -59,7 +61,9 @@ async function writeBindings(bindings: TelegramTopicBinding[]): Promise<void> {
   }
 }
 
-async function mutateBindings(mutator: (bindings: TelegramTopicBinding[]) => TelegramTopicBinding[]): Promise<void> {
+async function mutateBindings(
+  mutator: (bindings: TelegramTopicBinding[]) => TelegramTopicBinding[],
+): Promise<void> {
   const operation = writeQueue.catch(() => {}).then(async () => {
     const bindings = await readBindings();
     await writeBindings(mutator(bindings));
