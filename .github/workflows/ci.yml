@@ -34,9 +34,6 @@ jobs:
       - name: Install project dependencies
         run: npm install
 
-      - name: Install CI-only test runner
-        run: npm install --no-save vitest@4.1.10
-
       - name: Changelog policy
         if: github.event_name == 'pull_request'
         run: npm run check:changelog
