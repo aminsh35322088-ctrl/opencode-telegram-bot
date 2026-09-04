@@ -42,12 +42,12 @@ function modelButtonLabel(
   model: FavoriteModel | ModelInfo,
   active: boolean,
   favorite: boolean,
-  showProvider: boolean,
+  providerName?: string,
 ): string {
   const marker = favorite ? "⭐" : "";
   const icon = active ? "🟢" : "🧠";
-  return showProvider
-    ? `${icon} ${model.modelID}${marker}\n${model.providerID}`
+  return providerName
+    ? `${icon} ${model.modelID}${marker}\n${providerName}`
     : `${icon} ${model.modelID}${marker}`;
 }
 
@@ -57,6 +57,10 @@ async function appendModelRows(
   current?: ModelInfo,
   showProvider = true,
 ): Promise<void> {
+  const providerNames = showProvider
+    ? new Map((await getProviders()).map((provider) => [provider.id, provider.name]))
+    : undefined;
+
   for (const model of models) {
     const info = {
       providerID: model.providerID,
@@ -66,9 +70,10 @@ async function appendModelRows(
     const token = actionToken(info);
     const favorite = await isFavoriteModel(model);
     const active = !!current && modelKey(current) === modelKey(model);
+    const providerName = providerNames?.get(model.providerID) ?? model.providerID;
 
     keyboard.text(
-      modelButtonLabel(model, active, favorite, showProvider),
+      modelButtonLabel(model, active, favorite, showProvider ? providerName : undefined),
       `${MODEL_CENTER_SELECT_PREFIX}${token}`,
     );
     keyboard
@@ -131,7 +136,7 @@ export async function buildModelCenterList(
   const title = kind === "favorites" ? "⭐ <b>FAVORITE MODELS</b>" : "🕘 <b>RECENT MODELS</b>";
   return {
     text: models.length
-      ? `${title}\n\n⭐ marks a favorite model. Select a model or tap ⭐ to change favorites.`
+      ? `${title}\n\n⭐ marks a favorite model. The provider name is shown under each model.`
       : `${title}\n\nNo models here yet.`,
     keyboard,
   };
@@ -197,7 +202,7 @@ export async function searchModelCenter(
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
     text: models.length
-      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>`
+      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nProvider name is shown under each model.`
       : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`,
     keyboard,
   };
