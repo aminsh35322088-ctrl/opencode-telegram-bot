@@ -58,8 +58,6 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
 
   if (options.running) {
     addRunningControls(keyboard, effectivePaused);
-    // Keep Image AI reachable from the Topic while a coding run is active.
-    keyboard.text(MAIN_BUTTONS.imageAi).row();
     return keyboard.resized().persistent();
   }
 
