@@ -9,6 +9,11 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - Added persistent favorite and recent model storage with bounded recent history.
 - Added automatic custom-provider model catalog refresh across all configured API keys every 5 minutes, plus an immediate refresh when Model Center opens.
 
+### Changed
+- Favorite models are now marked with `⭐` directly beside the model name everywhere they appear in Model Center lists, making favorite state visible without relying only on the action button.
+- Recent Models and Search now show each model's provider beneath the model name so identical model IDs from different providers remain distinguishable.
+- Provider-specific model lists no longer repeat the provider ID on every model button; the provider is already established by the current screen, leaving the button focused on the model name.
+
 ### Fixed
 - Custom-provider catalogs are now authoritative over stale OpenCode provider model lists, preventing counts such as 110 from persisting after a provider is reduced to 8 models.
 - Provider model lists are paginated to keep large catalogs usable and within Telegram keyboard/message limits.
