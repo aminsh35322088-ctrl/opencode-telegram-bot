@@ -16,6 +16,7 @@ export const MODEL_CENTER_SEARCH_AGAIN = "mc:search:again";
 export const MODEL_CENTER_SEARCH_CANCEL = "mc:search:cancel";
 export const MODEL_CENTER_SETTINGS_BACK = "mc:settings_back";
 export const MODEL_CENTER_PROVIDER_PREFIX = "mc:provider:";
+export const MODEL_CENTER_PROVIDER_FREE_PREFIX = "mc:provider-free:";
 export const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
 export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
 
@@ -39,6 +40,9 @@ function actionToken(model: ModelInfo): string {
     modelID: model.modelID,
     name: model.name,
     variant: model.variant ?? "default",
+    freeStatus: model.freeStatus,
+    freeConfidence: model.freeConfidence,
+    pricing: model.pricing,
   });
   while (actionModels.size > MAX_ACTION_MODELS) {
     const oldest = actionModels.keys().next().value as string | undefined;
@@ -54,7 +58,7 @@ export function resolveModelCenterAction(token: string): ModelInfo | null {
 
 function modelButtonLabel(model: FavoriteModel | ModelInfo, active: boolean, favorite: boolean): string {
   const marker = favorite ? " ⭐" : "";
-  const icon = active ? "🟢" : "🧠";
+  const icon = active ? "🟢" : model.freeStatus === "free" && model.freeConfidence === "high" ? "🆓" : model.freeStatus === "free" ? "🟡" : "🧠";
   return `${icon} ${formatModelName(model.modelID, model.name)}${marker}`;
 }
 
@@ -72,6 +76,9 @@ async function appendModelRows(
       modelID: model.modelID,
       name: model.name,
       variant: "default",
+      freeStatus: model.freeStatus,
+      freeConfidence: model.freeConfidence,
+      pricing: model.pricing,
     };
     const token = actionToken(info);
     const favorite = favoriteKeys.has(modelKey(model));
@@ -134,26 +141,37 @@ export async function buildModelCenterList(kind: "favorites" | "recent", current
 export async function buildModelCenterProviders(): Promise<{ text: string; keyboard: InlineKeyboard }> {
   const providers = await getProviders();
   const keyboard = new InlineKeyboard();
-  providers.forEach((provider) => keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row());
+  providers.forEach((provider) => {
+    const free = provider.freeModelCount ? ` · 🆓 ${provider.freeModelCount}` : "";
+    keyboard.text(`🧩 ${provider.name} · ${provider.modelCount}${free}`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
+  });
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
-    text: providers.length ? "🧩 <b>PROVIDERS</b>\n\nLive model catalog from every available provider." : "🧩 <b>PROVIDERS</b>\n\nNo providers are currently available.",
+    text: providers.length
+      ? "🧩 <b>PROVIDERS</b>\n\nLive model catalog from every available provider. 🆓 counts are verified-free models based on provider metadata."
+      : "🧩 <b>PROVIDERS</b>\n\nNo providers are currently available.",
     keyboard,
   };
 }
 
-export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
+export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo, freeOnly = false): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
   const models = await getProviderModels(provider.id);
-  const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
+  const verifiedFree = models.filter((model) => model.freeStatus === "free" && model.freeConfidence === "high");
+  const visibleModels = freeOnly ? verifiedFree : models;
+  const totalPages = Math.max(1, Math.ceil(visibleModels.length / MODELS_PER_PAGE));
   const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
-  const pageModels = models.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE);
+  const pageModels = visibleModels.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE);
   const keyboard = new InlineKeyboard();
+  if (!freeOnly && verifiedFree.length) keyboard.text(`🆓 Verified free · ${verifiedFree.length}`, `${MODEL_CENTER_PROVIDER_FREE_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
   await appendModelRows(keyboard, pageModels, current);
-  appendPagination(keyboard, normalizedPage, totalPages, (target) => `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:${target}`);
+  const paginationPrefix = freeOnly ? MODEL_CENTER_PROVIDER_FREE_PREFIX : MODEL_CENTER_PROVIDER_PREFIX;
+  appendPagination(keyboard, normalizedPage, totalPages, (target) => `${paginationPrefix}${encodeURIComponent(provider.id)}:${target}`);
+  if (freeOnly) keyboard.text("← All models", `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
   keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row();
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+  const filterText = freeOnly ? `verified-free models only · ${verifiedFree.length} found` : `${models.length} live models · ${verifiedFree.length} verified-free`;
   return {
-    text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${models.length} live models · page ${normalizedPage + 1}/${totalPages}.\nTap a model to select it or ☆/⭐ to manage favorites.`,
+    text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${filterText} · page ${normalizedPage + 1}/${totalPages}.\n🆓 means authoritative free pricing/metadata; 🟡 is a lower-confidence free hint.`,
     keyboard,
     page: normalizedPage,
   };

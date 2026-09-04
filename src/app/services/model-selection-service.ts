@@ -48,7 +48,7 @@ function dedupeModels(models: FavoriteModel[]): FavoriteModel[] {
     const key = getModelKey(model.providerID, model.modelID);
     const existing = unique.get(key);
     if (!existing) unique.set(key, model);
-    else if (!existing.name && model.name) unique.set(key, { ...existing, name: model.name });
+    else if ((!existing.name && model.name) || (!existing.freeStatus && model.freeStatus)) unique.set(key, { ...existing, ...model });
   }
   return [...unique.values()];
 }
@@ -57,12 +57,12 @@ function filterModelsByCatalog(models: FavoriteModel[], valid: Set<string> | nul
   return valid ? models.filter((m) => valid.has(getModelKey(m.providerID, m.modelID))) : models;
 }
 
-function enrichModelNames(models: FavoriteModel[]): FavoriteModel[] {
+function enrichModelMetadata(models: FavoriteModel[]): FavoriteModel[] {
   if (!cachedAllModels) return models;
   const catalogByKey = new Map(cachedAllModels.map((model) => [getModelKey(model.providerID, model.modelID), model]));
   return models.map((model) => {
     const catalogModel = catalogByKey.get(getModelKey(model.providerID, model.modelID));
-    return catalogModel?.name ? { ...model, name: catalogModel.name } : model;
+    return catalogModel ? { ...model, ...catalogModel } : model;
   });
 }
 
@@ -113,24 +113,36 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
         }
         providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID));
         byProvider.set(provider.id, providerModels);
-        providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
+        providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length, freeModelCount: 0 });
       }
 
       for (const provider of customProviders) {
         const providerModels = dedupeModels(
-          provider.models.map((model) => ({ providerID: provider.id, modelID: model.id, name: model.name })),
+          provider.models.map((model) => ({
+            providerID: provider.id,
+            modelID: model.id,
+            name: model.name,
+            freeStatus: model.freeStatus,
+            freeConfidence: model.freeConfidence,
+            pricing: model.pricing,
+          })),
         );
         byProvider.set(provider.id, providerModels);
         for (const model of providerModels) {
           valid.add(getModelKey(model.providerID, model.modelID));
           all.push(model);
         }
-        providers.push({ id: provider.id, name: provider.name, modelCount: providerModels.length });
+        providers.push({
+          id: provider.id,
+          name: provider.name,
+          modelCount: providerModels.length,
+          freeModelCount: providerModels.filter((model) => model.freeStatus === "free" && model.freeConfidence === "high").length,
+        });
       }
 
       const env = getEnvDefaultModel();
       if (env && !providers.some((provider) => provider.id === env.providerID)) {
-        providers.push({ id: env.providerID, name: env.providerID === "opencode" ? "OpenCode" : env.providerID, modelCount: 1 });
+        providers.push({ id: env.providerID, name: env.providerID === "opencode" ? "OpenCode" : env.providerID, modelCount: 1, freeModelCount: 0 });
         byProvider.set(env.providerID, [env]);
         logger.warn(`[ModelManager] Catalog omitted configured provider ${env.providerID}; preserving its configured default model for UI/recovery.`);
       } else if (env && !(byProvider.get(env.providerID) ?? []).some((model) => model.modelID === env.modelID)) {
@@ -195,12 +207,12 @@ export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
     const fs = await import("fs/promises");
     const state = JSON.parse(await fs.readFile(getOpenCodeModelStatePath(), "utf-8")) as OpenCodeModelState;
     const valid = await getValidModelKeys();
-    const favorites = enrichModelNames(
+    const favorites = enrichModelMetadata(
       env
         ? dedupeModels([...filterModelsByCatalog(normalizeFavoriteModels(state), valid), env])
         : filterModelsByCatalog(normalizeFavoriteModels(state), valid),
     );
-    const recent = enrichModelNames(filterModelsByCatalog(normalizeRecentModels(state), valid));
+    const recent = enrichModelMetadata(filterModelsByCatalog(normalizeRecentModels(state), valid));
     const keys = new Set(favorites.map((m) => getModelKey(m.providerID, m.modelID)));
     return { favorites, recent: dedupeModels(recent).filter((m) => !keys.has(getModelKey(m.providerID, m.modelID))) };
   } catch (err) {
@@ -245,13 +257,16 @@ export async function getProviders() {
 
 export async function getProvidersForCapability(capability: AiCapability) {
   const customProviders = await listCustomProvidersByCapability(capability);
-  if (capability !== "coding") return customProviders.map((p) => ({ id: p.id, name: p.name, modelCount: p.models.length }));
+  if (capability !== "coding") return customProviders.map((p) => ({ id: p.id, name: p.name, modelCount: p.models.length, freeModelCount: p.models.filter((model) => model.freeStatus === "free" && model.freeConfidence === "high").length }));
   await getValidModelKeys();
-  const merged = new Map((cachedProviders ?? []).map((provider) => [provider.id, { id: provider.id, name: provider.name, modelCount: provider.modelCount }]));
+  const merged = new Map((cachedProviders ?? []).map((provider) => [provider.id, { id: provider.id, name: provider.name, modelCount: provider.modelCount, freeModelCount: provider.freeModelCount ?? 0 }]));
   for (const provider of customProviders) {
     const existing = merged.get(provider.id);
-    if (existing) existing.modelCount = Math.max(existing.modelCount, provider.models.length);
-    else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length });
+    const freeModelCount = provider.models.filter((model) => model.freeStatus === "free" && model.freeConfidence === "high").length;
+    if (existing) {
+      existing.modelCount = Math.max(existing.modelCount, provider.models.length);
+      existing.freeModelCount = Math.max(existing.freeModelCount ?? 0, freeModelCount);
+    } else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length, freeModelCount });
   }
   return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
@@ -266,11 +281,11 @@ export async function getProviderModelsForCapability(providerID: string, capabil
     await getValidModelKeys();
     const openCodeModels = cachedModelsByProvider?.get(providerID) ?? [];
     const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-    const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name })) ?? [];
+    const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name, freeStatus: m.freeStatus, freeConfidence: m.freeConfidence, pricing: m.pricing })) ?? [];
     return dedupeModels([...openCodeModels, ...customModels]);
   }
   const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-  return provider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name })) ?? [];
+  return provider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name, freeStatus: m.freeStatus, freeConfidence: m.freeConfidence, pricing: m.pricing })) ?? [];
 }
 
 export async function resolveCatalogModel(providerID: string, modelID: string, options?: { forceRefresh?: boolean }): Promise<ModelInfo | null> {

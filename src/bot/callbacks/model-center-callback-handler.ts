@@ -10,6 +10,7 @@ import {
   MODEL_CENTER_FAVORITES,
   MODEL_CENTER_PROVIDERS,
   MODEL_CENTER_PROVIDER_PREFIX,
+  MODEL_CENTER_PROVIDER_FREE_PREFIX,
   MODEL_CENTER_RECENT,
   MODEL_CENTER_ROOT,
   MODEL_CENTER_SEARCH,
@@ -51,6 +52,19 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       interactionManager.clear("model_search_cancelled");
       await ctx.deleteMessage().catch(() => {});
       return true;
+    }
+    if (data.startsWith(MODEL_CENTER_PROVIDER_FREE_PREFIX)) {
+      const parts = data.slice(MODEL_CENTER_PROVIDER_FREE_PREFIX.length).split(":");
+      if (parts.length !== 2) return true;
+      const providerID = decodeURIComponent(parts[0] ?? "");
+      const page = Number.parseInt(parts[1] ?? "0", 10);
+      if (!providerID || !Number.isInteger(page) || page < 0) return true;
+      const provider = (await getProviders()).find((item) => item.id === providerID);
+      if (!provider) {
+        await ctx.answerCallbackQuery({ text: "Provider is no longer available.", show_alert: true }).catch(() => {});
+        return true;
+      }
+      return await render(ctx, await buildModelCenterProvider(provider, page, fetchCurrentModel(), true));
     }
     if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
       const parts = data.slice(MODEL_CENTER_PROVIDER_PREFIX.length).split(":");
