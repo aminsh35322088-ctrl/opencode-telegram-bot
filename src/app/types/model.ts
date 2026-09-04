@@ -5,6 +5,7 @@
 export interface ModelInfo {
   providerID: string;
   modelID: string;
+  name?: string | undefined;
   variant?: string | undefined;
 }
 
@@ -16,6 +17,7 @@ export interface VariantInfo {
 export interface FavoriteModel {
   providerID: string;
   modelID: string;
+  name?: string | undefined;
 }
 
 export interface ProviderInfo {
@@ -36,31 +38,59 @@ function truncateLabel(value: string, maxLength: number): string {
   return `${value.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
+const MODEL_TOKEN_CASE: Record<string, string> = {
+  ai: "AI",
+  api: "API",
+  chatgpt: "ChatGPT",
+  claude: "Claude",
+  deepseek: "DeepSeek",
+  gemini: "Gemini",
+  glm: "GLM",
+  gpt: "GPT",
+  grok: "Grok",
+  kimi: "Kimi",
+  llama: "Llama",
+  mistral: "Mistral",
+  minimax: "MiniMax",
+  qwen: "Qwen",
+};
+
 /**
- * Format the current model for the persistent reply keyboard.
- * Keep it on one line and bound the total label length so long model/provider
- * IDs cannot make the full-width button visually uneven.
+ * Convert a provider model ID/name into a compact, human-friendly label.
+ * The original provider/model IDs remain untouched for selection and API calls.
  */
-export function formatModelForButton(providerID: string, modelID: string): string {
-  const prefix = "🧠 ";
-  const separator = " · ";
-  const available = MODEL_BUTTON_MAX_LENGTH - prefix.length;
-  const combined = `${modelID}${separator}${providerID}`;
+export function formatModelName(modelID: string, advertisedName?: string): string {
+  const raw = advertisedName?.trim() || modelID.trim();
+  const withoutNamespace = raw.includes("/") ? raw.slice(raw.lastIndexOf("/") + 1) : raw;
+  const normalized = withoutNamespace
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([0-9])/gi, "$1 $2")
+    .replace(/([0-9])([a-z])/gi, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  if (combined.length <= available) return `${prefix}${combined}`;
+  if (!normalized) return modelID;
 
-  const modelBudget = Math.max(8, Math.floor((available - separator.length) * 0.62));
-  const providerBudget = Math.max(8, available - separator.length - modelBudget);
-
-  return `${prefix}${truncateLabel(modelID, modelBudget)}${separator}${truncateLabel(providerID, providerBudget)}`;
+  return normalized
+    .split(" ")
+    .map((part) => MODEL_TOKEN_CASE[part.toLowerCase()] ?? part)
+    .join(" ");
 }
 
 /**
- * Format model for display in messages (full format)
- * @param providerID Provider ID
- * @param modelID Model ID
- * @returns Formatted string "providerID / modelID"
+ * Format the active model for the persistent reply keyboard.
+ * Only the model name is shown; provider/company names are intentionally omitted.
  */
-export function formatModelForDisplay(providerID: string, modelID: string): string {
-  return `${providerID} / ${modelID}`;
+export function formatModelForButton(_providerID: string, modelID: string, advertisedName?: string): string {
+  const prefix = "🧠 ";
+  const label = formatModelName(modelID, advertisedName);
+  const available = MODEL_BUTTON_MAX_LENGTH - prefix.length;
+  return `${prefix}${truncateLabel(label, available)}`;
+}
+
+/**
+ * Format a model for user-facing messages without exposing the provider ID.
+ */
+export function formatModelForDisplay(_providerID: string, modelID: string, advertisedName?: string): string {
+  return formatModelName(modelID, advertisedName);
 }
