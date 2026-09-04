@@ -132,21 +132,21 @@ export async function loadTopicRuntimeStates(): Promise<void> {
 
 function queuePersist(): void { writeQueue = writeQueue.catch(() => {}).then(() => persist()).catch(() => {}); }
 
-export function createTopicSettings(defaults: Partial<TopicDefaults> = {}): TopicSettings {
+type TopicSettingsSeed = Partial<TopicDefaults> & Partial<Pick<TopicSettings, "session" | "workspaceDirectory">>;
+
+export function createTopicSettings(seed: TopicSettingsSeed = {}): TopicSettings {
   const now = new Date().toISOString();
   return {
     ...DEFAULT_TOPIC_DEFAULTS,
-    ...defaults,
+    ...seed,
+    session: seed.session ? { ...seed.session } : undefined,
+    workspaceDirectory: seed.workspaceDirectory,
     runState: "idle",
     updatedAt: now,
   };
 }
 
-export async function initializeTopicRuntimeState(
-  chatId: number,
-  threadId: number,
-  defaults?: Partial<TopicDefaults> & Partial<Pick<TopicSettings, "session" | "workspaceDirectory">>,
-): Promise<TopicRuntimeState> {
+export async function initializeTopicRuntimeState(chatId: number, threadId: number, defaults?: TopicSettingsSeed): Promise<TopicRuntimeState> {
   await loadTopicRuntimeStates();
   return ensureTopicRuntimeStateSync(chatId, threadId, defaults);
 }
@@ -161,11 +161,7 @@ export async function getTopicRuntimeState(chatId: number, threadId: number): Pr
   return getTopicRuntimeStateSync(chatId, threadId);
 }
 
-export function ensureTopicRuntimeStateSync(
-  chatId: number,
-  threadId: number,
-  defaults?: Partial<TopicDefaults> & Partial<Pick<TopicSettings, "session" | "workspaceDirectory">>,
-): TopicRuntimeState {
+export function ensureTopicRuntimeStateSync(chatId: number, threadId: number, defaults?: TopicSettingsSeed): TopicRuntimeState {
   const existing = states.get(key(chatId, threadId));
   if (existing) return clone(existing);
 
@@ -185,24 +181,15 @@ export function ensureTopicRuntimeStateSync(
   return clone(created);
 }
 
-export function updateTopicRuntimeStateSync(
-  chatId: number,
-  threadId: number,
-  patch: Partial<TopicSettings> & Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>,
-): TopicRuntimeState {
+export function updateTopicRuntimeStateSync(chatId: number, threadId: number, patch: Partial<TopicSettings> & Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>): TopicRuntimeState {
   const previous = ensureTopicRuntimeStateSync(chatId, threadId);
-  const settingsPatch: Partial<TopicSettings> = {
-    ...patch,
-    session: patch.session === undefined ? previous.settings.session : patch.session,
-    model: patch.model === undefined ? previous.settings.model : patch.model,
-    agent: patch.agent === undefined ? previous.settings.agent : patch.agent,
-    compactOutputMode: patch.compactOutputMode === undefined ? previous.settings.compactOutputMode : patch.compactOutputMode,
-  };
   const nextSettings: TopicSettings = {
     ...previous.settings,
-    ...settingsPatch,
-    session: settingsPatch.session ? { ...settingsPatch.session } : undefined,
-    model: settingsPatch.model ? { ...settingsPatch.model } : undefined,
+    ...patch,
+    session: patch.session === undefined ? previous.settings.session : patch.session ? { ...patch.session } : undefined,
+    model: patch.model === undefined ? previous.settings.model : patch.model ? { ...patch.model } : undefined,
+    agent: patch.agent === undefined ? previous.settings.agent : patch.agent,
+    compactOutputMode: patch.compactOutputMode === undefined ? previous.settings.compactOutputMode : patch.compactOutputMode,
     updatedAt: new Date().toISOString(),
   };
   const next: TopicRuntimeState = {
@@ -219,11 +206,7 @@ export function updateTopicRuntimeStateSync(
   return clone(next);
 }
 
-export async function updateTopicRuntimeState(
-  chatId: number,
-  threadId: number,
-  patch: Partial<TopicSettings> & Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>,
-): Promise<TopicRuntimeState> {
+export async function updateTopicRuntimeState(chatId: number, threadId: number, patch: Partial<TopicSettings> & Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>): Promise<TopicRuntimeState> {
   await loadTopicRuntimeStates();
   return updateTopicRuntimeStateSync(chatId, threadId, patch);
 }
