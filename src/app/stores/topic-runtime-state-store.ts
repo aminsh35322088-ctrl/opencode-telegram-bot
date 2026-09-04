@@ -17,117 +17,27 @@ const states = new Map<string, TopicRuntimeState>();
 let loaded = false;
 let loadPromise: Promise<void> | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
-
 function key(chatId: number, threadId: number): string { return `${chatId}:${threadId}`; }
 function storePath(): string { return path.join(path.dirname(getRuntimePaths().settingsFilePath), "telegram-topic-runtime.json"); }
-function clone(state: TopicRuntimeState): TopicRuntimeState {
-  return { ...state, session: state.session ? { ...state.session } : undefined, model: state.model ? { ...state.model } : undefined };
-}
-
-async function persist(): Promise<void> {
-  const fs = await import("fs/promises");
-  const target = storePath();
-  const temp = `${target}.tmp`;
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(temp, JSON.stringify([...states.values()], null, 2), "utf8");
-  await fs.rename(temp, target);
-}
-
+function clone(state: TopicRuntimeState): TopicRuntimeState { return { ...state, session: state.session ? { ...state.session } : undefined, model: state.model ? { ...state.model } : undefined }; }
+async function persist(): Promise<void> { const fs = await import("fs/promises"); const target = storePath(); const temp = `${target}.tmp`; await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(temp, JSON.stringify([...states.values()], null, 2), "utf8"); await fs.rename(temp, target); }
 export async function loadTopicRuntimeStates(): Promise<void> {
   if (loaded) return;
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     const fs = await import("fs/promises");
-    try {
-      const raw = await fs.readFile(storePath(), "utf8");
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        for (const value of parsed) {
-          if (!value || typeof value !== "object") continue;
-          const candidate = value as Partial<TopicRuntimeState>;
-          if (typeof candidate.chatId !== "number" || typeof candidate.threadId !== "number" || typeof candidate.updatedAt !== "string") continue;
-          states.set(key(candidate.chatId, candidate.threadId), clone(candidate as TopicRuntimeState));
-        }
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    } finally {
-      loaded = true;
-      loadPromise = null;
-    }
+    try { const raw = await fs.readFile(storePath(), "utf8"); const parsed: unknown = JSON.parse(raw); if (Array.isArray(parsed)) for (const value of parsed) { if (!value || typeof value !== "object") continue; const candidate = value as Partial<TopicRuntimeState>; if (typeof candidate.chatId !== "number" || typeof candidate.threadId !== "number" || typeof candidate.updatedAt !== "string") continue; states.set(key(candidate.chatId, candidate.threadId), clone(candidate as TopicRuntimeState)); } }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    finally { loaded = true; loadPromise = null; }
   })();
   return loadPromise;
 }
-
-function queuePersist(): void {
-  writeQueue = writeQueue.catch(() => {}).then(() => persist()).catch(() => {});
-}
-
-export function getTopicRuntimeStateSync(chatId: number, threadId: number): TopicRuntimeState | null {
-  const state = states.get(key(chatId, threadId));
-  return state ? clone(state) : null;
-}
-
-export async function getTopicRuntimeState(chatId: number, threadId: number): Promise<TopicRuntimeState | null> {
-  await loadTopicRuntimeStates();
-  return getTopicRuntimeStateSync(chatId, threadId);
-}
-
-export function ensureTopicRuntimeStateSync(
-  chatId: number,
-  threadId: number,
-  defaults?: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>,
-): TopicRuntimeState {
-  const existing = states.get(key(chatId, threadId));
-  if (existing) return clone(existing);
-  const created: TopicRuntimeState = {
-    chatId,
-    threadId,
-    session: defaults?.session ? { ...defaults.session } : undefined,
-    model: defaults?.model ? { ...defaults.model } : undefined,
-    agent: defaults?.agent,
-    compactOutputMode: defaults?.compactOutputMode,
-    updatedAt: new Date().toISOString(),
-  };
-  states.set(key(chatId, threadId), created);
-  queuePersist();
-  return clone(created);
-}
-
-export function updateTopicRuntimeStateSync(
-  chatId: number,
-  threadId: number,
-  patch: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>,
-): TopicRuntimeState {
-  const previous = ensureTopicRuntimeStateSync(chatId, threadId);
-  const next: TopicRuntimeState = {
-    ...previous,
-    ...patch,
-    session: patch.session === undefined ? previous.session : patch.session ? { ...patch.session } : undefined,
-    model: patch.model === undefined ? previous.model : patch.model ? { ...patch.model } : undefined,
-    updatedAt: new Date().toISOString(),
-  };
-  states.set(key(chatId, threadId), next);
-  queuePersist();
-  return clone(next);
-}
-
-export async function updateTopicRuntimeState(
-  chatId: number,
-  threadId: number,
-  patch: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>,
-): Promise<TopicRuntimeState> {
-  await loadTopicRuntimeStates();
-  return updateTopicRuntimeStateSync(chatId, threadId, patch);
-}
-
-export async function removeTopicRuntimeState(chatId: number, threadId: number): Promise<void> {
-  await loadTopicRuntimeStates();
-  states.delete(key(chatId, threadId));
-  queuePersist();
-}
-
-export async function listTopicRuntimeStates(): Promise<TopicRuntimeState[]> {
-  await loadTopicRuntimeStates();
-  return [...states.values()].map(clone);
-}
+function queuePersist(): void { writeQueue = writeQueue.catch(() => {}).then(() => persist()).catch(() => {}); }
+export async function initializeTopicRuntimeState(chatId: number, threadId: number, defaults?: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>): Promise<TopicRuntimeState> { await loadTopicRuntimeStates(); return ensureTopicRuntimeStateSync(chatId, threadId, defaults); }
+export function getTopicRuntimeStateSync(chatId: number, threadId: number): TopicRuntimeState | null { const state = states.get(key(chatId, threadId)); return state ? clone(state) : null; }
+export async function getTopicRuntimeState(chatId: number, threadId: number): Promise<TopicRuntimeState | null> { await loadTopicRuntimeStates(); return getTopicRuntimeStateSync(chatId, threadId); }
+export function ensureTopicRuntimeStateSync(chatId: number, threadId: number, defaults?: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>): TopicRuntimeState { const existing = states.get(key(chatId, threadId)); if (existing) return clone(existing); const created: TopicRuntimeState = { chatId, threadId, session: defaults?.session ? { ...defaults.session } : undefined, model: defaults?.model ? { ...defaults.model } : undefined, agent: defaults?.agent, compactOutputMode: defaults?.compactOutputMode, updatedAt: new Date().toISOString() }; states.set(key(chatId, threadId), created); queuePersist(); return clone(created); }
+export function updateTopicRuntimeStateSync(chatId: number, threadId: number, patch: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>): TopicRuntimeState { const previous = ensureTopicRuntimeStateSync(chatId, threadId); const next: TopicRuntimeState = { ...previous, ...patch, session: patch.session === undefined ? previous.session : patch.session ? { ...patch.session } : undefined, model: patch.model === undefined ? previous.model : patch.model ? { ...patch.model } : undefined, updatedAt: new Date().toISOString() }; states.set(key(chatId, threadId), next); queuePersist(); return clone(next); }
+export async function updateTopicRuntimeState(chatId: number, threadId: number, patch: Partial<Pick<TopicRuntimeState, "session" | "model" | "agent" | "compactOutputMode">>): Promise<TopicRuntimeState> { await loadTopicRuntimeStates(); return updateTopicRuntimeStateSync(chatId, threadId, patch); }
+export async function removeTopicRuntimeState(chatId: number, threadId: number): Promise<void> { await loadTopicRuntimeStates(); states.delete(key(chatId, threadId)); queuePersist(); }
+export async function listTopicRuntimeStates(): Promise<TopicRuntimeState[]> { await loadTopicRuntimeStates(); return [...states.values()].map(clone); }
