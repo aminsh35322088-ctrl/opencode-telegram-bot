@@ -25,6 +25,7 @@ export const TOPIC_BUTTONS = {
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
   imageAi: MAIN_BUTTONS.imageAi,
+  compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   modelCenter: "🧠 Model Center",
   deleteChat: MAIN_BUTTONS.deleteChat,
   topicSettings: MAIN_BUTTONS.topicSettings,
@@ -93,19 +94,19 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   return keyboard.resized().persistent();
 }
 
-/**
- * Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session.
- * Pause and Resume are one toggle: only the action matching the current state
- * is rendered. Abort remains available to terminate the current run.
- */
-export function createTopicKeyboard(options: { paused?: boolean } = {}): Keyboard {
-  const toggleButton = options.paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause;
+/** Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session. */
+export function createTopicKeyboard(options: { paused?: boolean; compactOutputMode?: boolean } = {}): Keyboard {
+  const paused = options.paused ?? false;
+  const compact = options.compactOutputMode ?? getCompactOutputMode();
+  const toggleButton = paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause;
 
   return new Keyboard()
     .text(toggleButton)
     .text(TOPIC_BUTTONS.abort)
     .row()
     .text(TOPIC_BUTTONS.imageAi)
+    .text(TOPIC_BUTTONS.compact(compact))
+    .row()
     .text(TOPIC_BUTTONS.modelCenter)
     .row()
     .text(TOPIC_BUTTONS.deleteChat)
