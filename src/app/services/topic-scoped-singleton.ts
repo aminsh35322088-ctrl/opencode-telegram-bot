@@ -8,6 +8,38 @@ function topicKey(): string | null {
   return topic ? `${topic.chatId}:${topic.threadId}` : null;
 }
 
+function copySharedConfiguration<T extends object>(source: T, target: T): void {
+  for (const key of Reflect.ownKeys(source)) {
+    if (typeof key !== "string") continue;
+
+    // These fields are configuration/callbacks shared by all Topic instances.
+    // Mutable collections are intentionally not copied because they must remain
+    // isolated inside each Topic-scoped instance.
+    if (!key.startsWith("on") && key !== "bot" && key !== "chatId" && key !== "typingIndicatorEnabled") {
+      continue;
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor || !("value" in descriptor)) continue;
+
+    const value = descriptor.value;
+    if (
+      value === null ||
+      typeof value === "function" ||
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        writable: true,
+        value,
+      });
+    }
+  }
+}
+
 export function installTopicScopedSingleton<T extends object>(target: T): T {
   if (installedTargets.has(target)) return target;
   installedTargets.add(target);
@@ -32,6 +64,7 @@ export function installTopicScopedSingleton<T extends object>(target: T): T {
         if (!instance) {
           const Constructor = (target as T & { constructor: new () => T }).constructor;
           instance = new Constructor();
+          copySharedConfiguration(target, instance);
           instanceMap.set(key, instance);
         }
         return original.apply(instance, args);
