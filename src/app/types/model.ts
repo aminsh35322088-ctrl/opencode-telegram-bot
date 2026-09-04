@@ -2,7 +2,7 @@
  * Model types and formatting utilities
  */
 
-import type { FreeModelConfidence, FreeModelStatus, ModelPricing } from "../services/model-verification-service.js";
+import type { FreeModelConfidence, FreeModelEvidenceSource, FreeModelStatus, ModelPricing } from "../services/model-verification-service.js";
 
 export interface ModelInfo {
   providerID: string;
@@ -11,6 +11,7 @@ export interface ModelInfo {
   variant?: string | undefined;
   freeStatus?: FreeModelStatus | undefined;
   freeConfidence?: FreeModelConfidence | undefined;
+  freeSource?: FreeModelEvidenceSource | undefined;
   pricing?: ModelPricing | undefined;
 }
 
@@ -25,6 +26,7 @@ export interface FavoriteModel {
   name?: string | undefined;
   freeStatus?: FreeModelStatus | undefined;
   freeConfidence?: FreeModelConfidence | undefined;
+  freeSource?: FreeModelEvidenceSource | undefined;
   pricing?: ModelPricing | undefined;
 }
 
