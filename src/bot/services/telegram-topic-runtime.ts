@@ -10,6 +10,8 @@ export interface TelegramTopicRuntimeDependencies {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
+// Retained for legacy/control-plane callers. Topic event delivery itself must
+// never resolve its destination from this mutable process-global value.
 let activeTopic: TelegramTopicContext | null = null;
 let runtimeDependencies: TelegramTopicRuntimeDependencies | null = null;
 
@@ -79,7 +81,7 @@ function addThreadToArgs(args: unknown[], threadId: number): unknown[] {
   return patched;
 }
 
-function createTopicAwareApi(api: ApiLike): ApiLike {
+function createTopicAwareApi(api: ApiLike, topic?: TelegramTopicContext): ApiLike {
   return new Proxy(api, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver);
@@ -91,9 +93,15 @@ function createTopicAwareApi(api: ApiLike): ApiLike {
       }
 
       return (...args: unknown[]) => {
-        const chatId = typeof args[0] === "number" ? args[0] : undefined;
-        const topic = getActiveTelegramTopic(chatId);
+        // A bound topic is immutable for the lifetime of this Bot wrapper.
+        // Never fall back to the mutable process-global topic here: doing so
+        // lets concurrent sessions overwrite each other's Telegram destination.
         if (!topic) {
+          return value.apply(target, args);
+        }
+
+        const chatId = typeof args[0] === "number" ? args[0] : undefined;
+        if (chatId !== undefined && chatId !== topic.chatId) {
           return value.apply(target, args);
         }
 
@@ -104,13 +112,15 @@ function createTopicAwareApi(api: ApiLike): ApiLike {
 }
 
 /**
- * The event subscription service intentionally receives this wrapper instead
- * of the application Bot instance. This keeps all event-stream deliveries in
- * the active Telegram topic without changing the application's control-plane
- * API calls.
+ * Event subscriptions receive a bot bound to one immutable Telegram Topic.
+ * This removes a class of cross-topic routing bugs caused by mutable global
+ * topic state when more than one OpenCode session is active.
  */
-export function createTopicAwareBot(bot: Bot<Context>): Bot<Context> {
-  const topicAwareApi = createTopicAwareApi(bot.api);
+export function createTopicAwareBot(
+  bot: Bot<Context>,
+  topic?: TelegramTopicContext,
+): Bot<Context> {
+  const topicAwareApi = createTopicAwareApi(bot.api, topic);
   return new Proxy(bot, {
     get(target, property, receiver) {
       if (property === "api") return topicAwareApi;
