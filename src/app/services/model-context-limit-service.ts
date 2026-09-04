@@ -2,7 +2,11 @@ import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
 import { isExpectedOpencodeUnavailableError } from "../../utils/opencode-error.js";
 
-export const DEFAULT_CONTEXT_LIMIT = 200000;
+/**
+ * Zero means OpenCode/provider metadata did not expose a trustworthy limit.
+ * We must not present a fabricated context window (for example 200K) to users.
+ */
+export const DEFAULT_CONTEXT_LIMIT = 0;
 
 const PROVIDER_CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -31,7 +35,7 @@ async function refreshContextLimitCache(): Promise<void> {
 
       if (error || !data) {
         if (isExpectedOpencodeUnavailableError(error)) {
-          logger.warn("[ModelContextLimit] OpenCode server unavailable; using default context limit");
+          logger.debug("[ModelContextLimit] OpenCode server unavailable; context limits remain unknown");
         } else {
           logger.warn("[ModelContextLimit] Failed to fetch providers:", error);
         }
@@ -41,8 +45,9 @@ async function refreshContextLimitCache(): Promise<void> {
       contextLimitCache.clear();
       for (const provider of data.providers) {
         for (const [modelID, model] of Object.entries(provider.models)) {
-          if (model?.limit?.context) {
-            contextLimitCache.set(getModelKey(provider.id, modelID), model.limit.context);
+          const contextLimit = model?.limit?.context;
+          if (typeof contextLimit === "number" && Number.isFinite(contextLimit) && contextLimit > 0) {
+            contextLimitCache.set(getModelKey(provider.id, modelID), contextLimit);
           }
         }
       }
@@ -53,7 +58,7 @@ async function refreshContextLimitCache(): Promise<void> {
       );
     } catch (error) {
       if (isExpectedOpencodeUnavailableError(error)) {
-        logger.warn("[ModelContextLimit] OpenCode server unavailable; using default context limit");
+        logger.debug("[ModelContextLimit] OpenCode server unavailable; context limits remain unknown");
       } else {
         logger.warn("[ModelContextLimit] Error refreshing providers cache:", error);
       }
