@@ -30,6 +30,7 @@
     "check:changelog": "node scripts/check-changelog.mjs",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
     "format": "prettier --write \"src/**/*.ts\""
   },
   "repository": {
@@ -60,6 +61,8 @@
     "node-fetch": "^2.7.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
+    "socks-proxy-agent": "^8.0.5",
+    "unified": "^11.0.0",
     "socks-proxy-agent": "^8.0.5",
     "unified": "^11.0.0",
     "ws": "^8.21.1"
