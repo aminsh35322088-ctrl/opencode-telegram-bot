@@ -25,7 +25,7 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   );
 
   if (notice.changelog) {
-    await ctx.reply(`📋 <b>Changelog v${notice.currentVersion}</b>\n\n${notice.changelog}`, { parse_mode: "Markdown" });
+    await ctx.reply(`📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`);
   }
 
   await markBotVersionNotified(notice.currentVersion);
