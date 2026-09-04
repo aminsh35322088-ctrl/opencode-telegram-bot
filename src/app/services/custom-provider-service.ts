@@ -3,7 +3,7 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { discoverProviderModels, type DiscoveredProviderModel } from "./model-verification-service.js";
-import type { FreeModelConfidence, FreeModelStatus, ModelPricing } from "./model-verification-service.js";
+import type { FreeModelConfidence, FreeModelEvidenceSource, FreeModelStatus, ModelPricing } from "./model-verification-service.js";
 
 export type AiCapability = "coding" | "image" | "video" | "stt";
 export interface CustomProviderModel {
@@ -11,6 +11,7 @@ export interface CustomProviderModel {
   name: string;
   freeStatus?: FreeModelStatus;
   freeConfidence?: FreeModelConfidence;
+  freeSource?: FreeModelEvidenceSource;
   freeReason?: string;
   pricing?: ModelPricing;
 }
@@ -45,6 +46,7 @@ function toCustomProviderModel(model: DiscoveredProviderModel): CustomProviderMo
     name: model.name,
     freeStatus: model.freeStatus,
     freeConfidence: model.freeConfidence,
+    freeSource: model.freeSource,
     freeReason: model.freeReason,
     ...(model.pricing ? { pricing: model.pricing } : {}),
   };
