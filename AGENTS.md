@@ -4,8 +4,8 @@ Instructions for AI agents working on this project.
 
 ## About the project
 
-**opencode-telegram-bot** is a Telegram bot that acts as a mobile client for OpenCode.
-It lets a user run and monitor coding tasks on a local machine through Telegram.
+**opencode-telegram-bot** is a Telegram bot client for OpenCode.
+It lets users run and monitor coding tasks through Telegram.
 
 Functional requirements, features, and development status are in [PRODUCT.md](./PRODUCT.md).
 
@@ -24,16 +24,13 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 - `@opencode-ai/sdk` - official OpenCode Server SDK
 - `dotenv` - environment variable loading
 
-### Test dependencies
+## Runtime environment
 
-- Vitest
-- Mocks/stubs via `vi.mock()`
+The Railway production image is a runtime environment, not a CI runner.
+It intentionally does not ship the repository's CI-only test suite or a global validation toolchain.
+Do not install testing, linting, typechecking, or build-validation tools into the production runtime.
 
-## Coding environment
-
-The production container is intentionally equipped as a general-purpose coding workspace. In addition to Node.js/npm and Git, it provides shell utilities, search/navigation tools, GitHub CLI, Python, SQLite, and native build tooling.
-
-The production image also preinstalls common validation tools globally (`tsc`, `vitest`, `eslint`, `tsx`) so repeated interactive checks should not download packages.
+The production application may use the existing runtime/coding utilities and the custom OpenCode tools, but dependency-management actions are for application/workspace operations only; they are not a validation path.
 
 When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
 
@@ -95,7 +92,7 @@ Touch only what is necessary. Do not refactor unrelated code or delete unrelated
 
 ### Goal-Driven Execution
 
-Define success criteria and verify them. For bugs, reproduce the failure, fix the underlying issue, and run focused validation before broader validation.
+Define success criteria and verify them. For bugs, reproduce the failure, fix the underlying issue, and validate through the repository's GitHub Actions CI instead of running local validation in the production runtime.
 
 ### Git
 
@@ -109,37 +106,40 @@ Define success criteria and verify them. For bugs, reproduce the failure, fix th
 - Use `async/await` for asynchronous control flow.
 - Log errors with context and never expose stack traces to users.
 
-## Logging
+## Validation policy: GitHub Actions only
 
-Use `src/utils/logger.ts` with level-based logs. Keep detailed diagnostics under `debug`, operational lifecycle events under `info`, recoverable issues under `warn`, and critical failures under `error`. Avoid raw console logging in feature code.
+GitHub Actions is the sole validation authority for this repository.
+The CI workflow is defined in `.github/workflows/ci.yml` and owns linting, typechecking, building, and the test suite.
+The test source/configuration lives under `.github/ci-tests/` and is materialized only inside the GitHub Actions runner.
 
-## Testing
+### Mandatory rules
 
-### What to test
+- **NEVER run tests locally** in the Railway container, OpenCode session, project workspace, or a review worktree.
+- **NEVER run local lint, typecheck, build, or equivalent validation** as a substitute for GitHub Actions.
+- **NEVER invoke** `vitest`, `jest`, `mocha`, `pytest`, Playwright test runners, or any other test runner locally.
+- **NEVER install** test runners, linters, typecheckers, or validation-only packages to make local validation possible.
+- **NEVER recreate** the CI-only `tests/`, `e2e/`, `vitest.config.ts`, or `tsconfig.test.json` files in the production workspace.
+- Do not use the dependency-management tool to obtain or install a validation toolchain.
+- Do not bypass the CI policy with equivalent commands through `bash`, `node`, `npx`, `npm exec`, `pnpm`, `yarn`, `bun`, or direct binaries.
 
-- Unit tests for business logic, formatters, managers, runtime helpers
-- Integration-style tests around OpenCode SDK interaction using mocks
-- Focus on critical paths; avoid over-testing trivial code
+### GitHub Actions workflow
 
-### Agent validation commands
+When validation is required:
 
-- **MANDATORY:** When validating this project or any checked-out review/worktree copy of this project, use `.opencode/tools/test-runner.ts` for `test`, `build`, `lint`, and `typecheck` whenever that tool is available. Do not substitute an equivalent raw `bash`, `npm`, `npx`, `tsc`, or `vitest` command.
-- If the validation tool reports `NOT TESTABLE`, diagnose that result first; do not bypass it by launching the same validation through `npx` or raw `tsc`.
-- **NEVER use `npx` for validation.** The container already provides the common validation toolchain; `npx` can perform package resolution/downloads and can appear permanently stuck.
-- **NEVER append `| head`, `| tail`, or another output-limiting pipeline to a validation command.** It can hide the producer's exit status and leave the producer running after the consumer exits.
-- Never run `rm -rf node_modules` as a routine validation step.
-- Never run `npm ci` as a routine interactive test step. `npm ci` is for clean CI/container provisioning.
-- When dependencies are actually missing, inspect `package.json`, the lockfile, and the current dependency tree first; use the dependency manager tool instead of repeatedly starting from zero.
-- Keep validation commands bounded and do not hide exit codes behind pipelines.
-- For a review worktree such as `/tmp/review-pr28`, pass that worktree to the validation tool rather than manually reproducing its package-manager command in `bash`.
-- If a validation command times out, investigate the process/network/tool lifecycle instead of blindly reinstalling dependencies.
+1. Make the smallest source/configuration change needed.
+2. Push or commit the authorized change so `.github/workflows/ci.yml` runs on GitHub.
+3. Inspect the GitHub Actions result/logs.
+4. Fix failures from the CI evidence and let GitHub Actions validate the next revision.
 
-### Recovery path for stuck agent work
+Do not attempt to reproduce CI validation locally in the production bot. A CI failure is a GitHub Actions signal to fix the source, not a reason to install a local validation stack.
+
+### Recovery for runtime/session problems
+
+Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session:
 
 1. Run `full-diagnostics` with the affected session ID.
 2. Stop repeating the same command or reinstalling dependencies.
 3. Inspect the current session status and recent events.
 4. Use the `session-recovery` tool to inspect and, when appropriate, abort the stuck session.
-5. Retry the smallest useful operation.
-6. If the same route fails again, switch to another validation method.
-7. Preserve diagnostic evidence so recovery does not erase the original failure mode.
+5. Retry the smallest useful runtime operation.
+6. Preserve diagnostic evidence so recovery does not erase the original failure mode.
