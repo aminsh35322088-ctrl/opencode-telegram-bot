@@ -4,6 +4,14 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+### Changed
+- Moved the repository's automated test suite out of the production tree and into `.github/ci-tests`; GitHub Actions now materializes and removes the suite only inside the CI workspace.
+- Removed the OpenCode `test-runner` tool and production-side test executables/install steps so Railway runtime no longer carries Vitest, pytest, TypeScript, or ESLint just for validation.
+
+### Fixed
+- `Always Allow` permission decisions are now persisted by Telegram chat and permission type, so later requests in the same chat are auto-approved instead of repeatedly showing confirmation prompts.
+- Persisted `Always Allow` rules survive bot restarts and are only created after OpenCode successfully accepts the original approval.
+
 ## [0.25.3] - 2026-09-04
 
 ### Changed

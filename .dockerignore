@@ -25,6 +25,13 @@ backups/
 node_modules/
 dist/
 
+# CI-only validation suite (never send test assets to production images)
+.github/ci-tests/
+tests/
+e2e/
+vitest.config.ts
+tsconfig.test.json
+
 # OS
 .DS_Store
 Thumbs.db

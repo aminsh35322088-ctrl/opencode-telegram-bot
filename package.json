@@ -28,11 +28,9 @@
     "release:rc": "node scripts/release-prepare.mjs rc",
     "release:notes:preview": "node scripts/release-notes-preview.mjs",
     "check:changelog": "node scripts/check-changelog.mjs",
-    "lint": "eslint src tests --max-warnings=0",
-    "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.ts\""
   },
   "repository": {
     "type": "git",
