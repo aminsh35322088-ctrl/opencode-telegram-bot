@@ -12,7 +12,7 @@ const MAIN_BUTTONS = {
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`, pause: "⏸️ Pause", resume: "▶️ Resume", abort: "🛑 Abort",
 } as const;
 export const TOPIC_SETTINGS_BUTTON = MAIN_BUTTONS.topicSettings;
-export interface MainKeyboardOptions { queuedPromptLabels?: string[]; paused?: boolean; running?: boolean; compactOutputMode?: boolean; }
+export interface MainKeyboardOptions { queuedPromptLabels?: string[]; paused?: boolean; running?: boolean; compactOutputMode?: boolean; isTopic?: boolean; }
 function getModelButtonLabel(currentModel: ModelInfo): string { if (!currentModel.providerID || !currentModel.modelID) return "🧠 Model"; return formatModelForButton(currentModel.providerID, currentModel.modelID, currentModel.name); }
 function getSettingsButton(isTopic: boolean): string { return isTopic ? MAIN_BUTTONS.topicSettings : MAIN_BUTTONS.mainSettings; }
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void { for (const label of labels) keyboard.text(label).row(); }
@@ -27,7 +27,7 @@ function addControls(keyboard: Keyboard, currentModel: ModelInfo, isTopic: boole
   keyboard.row();
 }
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
-  const keyboard = new Keyboard(); const isTopic = Boolean(getActiveTelegramTopic());
+  const keyboard = new Keyboard(); const isTopic = options.isTopic ?? Boolean(getActiveTelegramTopic());
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
   addControls(keyboard, currentModel, isTopic, options.paused ?? isChatPaused(), options.running ?? false, options.compactOutputMode ?? getCompactOutputMode());
   return keyboard.resized().persistent();
