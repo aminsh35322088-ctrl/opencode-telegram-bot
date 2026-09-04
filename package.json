@@ -36,7 +36,7 @@
     "node-fetch": "^2.7.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
-    "socks-proxy-agent": "^8.0.5",
+    "socks-proxy-agent": "^8.0.0",
     "unified": "^11.0.0",
     "ws": "^8.21.1"
   },
@@ -48,7 +48,7 @@
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^10.8.0",
-    "eslint-config-prettier": "^10.1.0",
+    "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",
