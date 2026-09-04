@@ -104,7 +104,6 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
   ]);
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
-    const callbackSessionId = await resolveCallbackTopicSession(ctx);
     if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id);
     if (data === "provider:gemini:configure") markGeminiWizard();
     if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
@@ -128,6 +127,5 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
       clearGeminiWizard();
       await ctx.answerCallbackQuery({ text: t("callback.processing_error") }).catch(() => {});
     }
-    void callbackSessionId;
   });
 }
