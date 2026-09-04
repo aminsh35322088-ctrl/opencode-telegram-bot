@@ -4,7 +4,7 @@ import type { FavoriteModel } from "../types/model.js";
 
 const MAX_RECENT_MODELS = 10;
 const MODEL_STATE_FILENAME = "model-preferences.json";
-interface StoredModelRef { providerID?: string; modelID?: string; name?: string; variant?: string; }
+interface StoredModelRef { providerID?: string; modelID?: string; name?: string; }
 interface ModelPreferencesState { favorite?: StoredModelRef[]; recent?: StoredModelRef[]; [key: string]: unknown; }
 
 // Keep Telegram bot preferences in their own namespace. OpenCode owns
@@ -23,7 +23,7 @@ function normalize(models: unknown): FavoriteModel[] {
     if (typeof model !== "object" || model === null) return [];
     const item = model as StoredModelRef;
     return typeof item.providerID === "string" && item.providerID && typeof item.modelID === "string" && item.modelID
-      ? [{ providerID: item.providerID, modelID: item.modelID, ...(item.name ? { name: item.name } : {}), ...(item.variant ? { variant: item.variant as FavoriteModel["variant"] } : {}) }]
+      ? [{ providerID: item.providerID, modelID: item.modelID, ...(item.name ? { name: item.name } : {}) }]
       : [];
   });
 }
