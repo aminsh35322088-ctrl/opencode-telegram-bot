@@ -63,8 +63,6 @@
     "remark-parse": "^11.0.0",
     "socks-proxy-agent": "^8.0.5",
     "unified": "^11.0.0",
-    "socks-proxy-agent": "^8.0.5",
-    "unified": "^11.0.0",
     "ws": "^8.21.1"
   },
   "devDependencies": {
