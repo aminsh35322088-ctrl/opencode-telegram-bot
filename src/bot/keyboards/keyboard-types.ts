@@ -1,17 +1,15 @@
 import type { ModelInfo } from "../../app/types/model.js";
 
-/**
- * Context information for keyboard button
- */
 export interface ContextInfo {
   tokensUsed: number;
   tokensLimit: number;
 }
 
-/**
- * Keyboard state containing all information for building the Reply Keyboard
- */
+/** Keyboard state owned by one OpenCode session / Telegram Topic. */
 export interface KeyboardState {
+  sessionId?: string;
+  chatId?: number;
+  threadId?: number;
   currentAgent: string;
   currentModel: ModelInfo;
   contextInfo: ContextInfo | null;
