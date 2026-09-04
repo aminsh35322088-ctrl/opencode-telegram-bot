@@ -16,8 +16,21 @@ const REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS = [
   ROOT_REPLY_BUTTON_TEXT_PATTERN,
 ];
 
+function normalizeReplyKeyboardText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\uFE0F/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function isReplyKeyboardButtonText(text: string, knownButtonTexts?: ReadonlySet<string>): boolean {
-  const normalized = text.trim();
-  if (knownButtonTexts?.has(normalized)) return true;
+  const normalized = normalizeReplyKeyboardText(text);
+  if (knownButtonTexts) {
+    for (const knownText of knownButtonTexts) {
+      if (normalizeReplyKeyboardText(knownText) === normalized) return true;
+    }
+  }
   return REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
