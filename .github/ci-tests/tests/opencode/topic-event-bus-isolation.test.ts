@@ -57,8 +57,8 @@ describe("topic-event-bus session isolation", () => {
   });
 
   it("delivers same-directory events only to the matching Topic session", async () => {
-    const eventA = { type: "message.updated", properties: { sessionID: "session-a", directory: "/workspace" } } as Event;
-    const eventB = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as Event;
+    const eventA = { type: "message.updated", properties: { sessionID: "session-a", directory: "/workspace" } } as unknown as Event;
+    const eventB = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as unknown as Event;
 
     globalEventMock.mockImplementationOnce(async (options: { signal: AbortSignal }) => ({
       stream: createStream([eventA, eventB], options.signal),
@@ -80,7 +80,7 @@ describe("topic-event-bus session isolation", () => {
 
   it("can unsubscribe one Topic without removing another Topic on the same directory", async () => {
     let release = false;
-    const eventB = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as Event;
+    const eventB = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as unknown as Event;
 
     globalEventMock.mockImplementation(async (options: { signal: AbortSignal }) => ({
       stream: (async function* () {
