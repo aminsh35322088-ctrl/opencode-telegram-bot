@@ -1,21 +1,27 @@
-import { createHash } from "node:crypto";
+import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { getFavoriteModels, getRecentModels, isFavoriteModel } from "../../app/services/model-preferences-service.js";
+import { getFavoriteModels, getRecentModels } from "../../app/services/model-preferences-service.js";
 import { getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
+import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import type { FavoriteModel, ModelInfo, ProviderInfo } from "../../app/types/model.js";
+import { replyWithInlineMenu } from "./inline-menu.js";
 
-export const MODEL_CENTER_CALLBACK_PREFIX = "mc:";
 export const MODEL_CENTER_ROOT = "mc:root";
 export const MODEL_CENTER_FAVORITES = "mc:favorites";
 export const MODEL_CENTER_RECENT = "mc:recent";
 export const MODEL_CENTER_PROVIDERS = "mc:providers";
-export const MODEL_CENTER_SEARCH = "model:search";
+export const MODEL_CENTER_SEARCH = "mc:search";
+export const MODEL_CENTER_SEARCH_AGAIN = "mc:search:again";
+export const MODEL_CENTER_SEARCH_CANCEL = "mc:search:cancel";
+export const MODEL_CENTER_SEARCH_RESULT_PREFIX = "mc:result:";
+export const MODEL_CENTER_SETTINGS_BACK = "mc:settings_back";
 export const MODEL_CENTER_PROVIDER_PREFIX = "mc:provider:";
 export const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
 export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
 
 const MODELS_PER_PAGE = 8;
 const MAX_ACTION_MODELS = 4096;
+const SEARCH_RESULTS_LIMIT = 10;
 const actionModels = new Map<string, ModelInfo>();
 
 function modelKey(model: FavoriteModel | ModelInfo): string {
@@ -23,10 +29,7 @@ function modelKey(model: FavoriteModel | ModelInfo): string {
 }
 
 function actionToken(model: ModelInfo): string {
-  const token = createHash("sha256")
-    .update(`${modelKey(model)}:${model.variant ?? "default"}`)
-    .digest("base64url")
-    .slice(0, 10);
+  const token = Buffer.from(`${modelKey(model)}:${model.variant ?? "default"}`).toString("base64url").slice(0, 10);
   actionModels.delete(token);
   actionModels.set(token, {
     providerID: model.providerID,
@@ -54,8 +57,8 @@ function modelButtonLabel(
   const marker = favorite ? "⭐" : "";
   const icon = active ? "🟢" : "🧠";
   return providerName
-    ? `${icon} ${model.modelID}${marker}\n${providerName}`
-    : `${icon} ${model.modelID}${marker}`;
+    ? `${icon} ${escapeHtml(model.modelID)}${marker}\n${escapeHtml(providerName)}`
+    : `${icon} ${escapeHtml(model.modelID)}${marker}`;
 }
 
 async function appendModelRows(
@@ -64,9 +67,12 @@ async function appendModelRows(
   current?: ModelInfo,
   showProvider = true,
 ): Promise<void> {
-  const providerNames = showProvider
-    ? new Map((await getProviders()).map((provider) => [provider.id, provider.name]))
-    : undefined;
+  const [providers, favorites] = await Promise.all([
+    showProvider ? getProviders() : Promise.resolve([]),
+    getFavoriteModels(),
+  ]);
+  const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
+  const favoriteKeys = new Set(favorites.map(modelKey));
 
   for (const model of models) {
     const info = {
@@ -75,9 +81,9 @@ async function appendModelRows(
       variant: "default",
     } satisfies ModelInfo;
     const token = actionToken(info);
-    const favorite = await isFavoriteModel(model);
+    const favorite = favoriteKeys.has(modelKey(model));
     const active = !!current && modelKey(current) === modelKey(model);
-    const providerName = providerNames?.get(model.providerID) ?? model.providerID;
+    const providerName = providerNames.get(model.providerID) ?? model.providerID;
 
     keyboard.text(
       modelButtonLabel(model, active, favorite, showProvider ? providerName : undefined),
@@ -113,7 +119,7 @@ export async function buildModelCenterRoot(
     .row();
   keyboard.text("🔎 Search models", MODEL_CENTER_SEARCH).row();
   keyboard.text("🧩 Browse providers", MODEL_CENTER_PROVIDERS).row();
-  keyboard.text("← Back", "model:settings_back");
+  keyboard.text("← Back", MODEL_CENTER_SETTINGS_BACK);
 
   const currentBlock = current?.providerID && current.modelID
     ? `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(current.modelID)}</code>\n${escapeHtml(current.providerID)}`
@@ -129,6 +135,18 @@ export async function buildModelCenterRoot(
     ].join("\n"),
     keyboard,
   };
+}
+
+export async function showModelCenterMenu(ctx: Context): Promise<void> {
+  await refreshAllCustomProviderModels();
+  const view = await buildModelCenterRoot();
+  await replyWithInlineMenu(ctx, {
+    menuKind: "model",
+    text: view.text,
+    keyboard: view.keyboard,
+    parseMode: "HTML",
+    metadata: { modelLists: { favorites: [], recent: [] } },
+  });
 }
 
 export async function buildModelCenterList(
@@ -154,7 +172,7 @@ export async function buildModelCenterProviders(): Promise<{ text: string; keybo
   const keyboard = new InlineKeyboard();
   providers.forEach((provider) =>
     keyboard
-      .text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`)
+      .text(`🧩 ${escapeHtml(provider.name)} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`)
       .row(),
   );
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
@@ -180,7 +198,6 @@ export async function buildModelCenterProvider(
   );
   const keyboard = new InlineKeyboard();
 
-  // The provider is already established by this screen, so don't repeat it on every model button.
   await appendModelRows(keyboard, pageModels, current, false);
   appendPagination(
     keyboard,
@@ -198,18 +215,21 @@ export async function buildModelCenterProvider(
   };
 }
 
-export async function searchModelCenter(
+export async function buildModelCenterSearchResults(
   query: string,
   current?: ModelInfo,
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const models = await searchModels(query);
+  const models = (await searchModels(query)).slice(0, SEARCH_RESULTS_LIMIT);
   const keyboard = new InlineKeyboard();
-  // Search can contain identical model IDs from different providers, so keep provider visible here.
   await appendModelRows(keyboard, models, current, true);
-  keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+  keyboard
+    .text("🔎 Search again", MODEL_CENTER_SEARCH_AGAIN)
+    .text("Cancel", MODEL_CENTER_SEARCH_CANCEL)
+    .row();
+
   return {
     text: models.length
-      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nProvider name is shown under each model.`
+      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nProvider name is shown under each result.`
       : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`,
     keyboard,
   };
