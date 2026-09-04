@@ -110,7 +110,7 @@ export function findTopicRuntimeStateBySessionSync(sessionId: string): TopicRunt
 
 export async function getTopicRuntimeState(chatId: number, threadId: number): Promise<TopicRuntimeState | null> { await loadTopicRuntimeStates(); return getTopicRuntimeStateSync(chatId, threadId); }
 export function ensureTopicRuntimeStateSync(chatId: number, threadId: number, defaults?: TopicSettingsSeed): TopicRuntimeState {
-  const existing = states.get(key(chatId, threadId);
+  const existing = states.get(key(chatId, threadId));
   if (existing) return clone(existing);
   const settings = createTopicSettings(defaults);
   const created: TopicRuntimeState = { chatId, threadId, settings, session: settings.session, model: settings.model, agent: settings.agent, compactOutputMode: settings.compactOutputMode, updatedAt: settings.updatedAt };
