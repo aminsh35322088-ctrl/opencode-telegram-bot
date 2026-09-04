@@ -1,6 +1,9 @@
+import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 import type { SessionInfo } from "../types/session.js";
 
 const pausedSessions = new Map<string, SessionInfo>();
+
+function scopedSessionId(sessionId?: string): string | undefined { return sessionId ?? getTopicRuntimeContext()?.sessionId; }
 
 export function setPausedSession(session: SessionInfo): void {
   if (!session.id) return;
@@ -8,8 +11,9 @@ export function setPausedSession(session: SessionInfo): void {
 }
 
 export function getPausedSession(sessionId?: string): SessionInfo | null {
-  if (sessionId !== undefined) {
-    const session = pausedSessions.get(sessionId);
+  const scopedId = scopedSessionId(sessionId);
+  if (scopedId !== undefined) {
+    const session = pausedSessions.get(scopedId);
     return session ? { ...session } : null;
   }
 
@@ -18,22 +22,19 @@ export function getPausedSession(sessionId?: string): SessionInfo | null {
 }
 
 export function clearPausedSession(sessionId?: string): void {
-  if (sessionId === undefined) {
-    pausedSessions.clear();
+  const scopedId = scopedSessionId(sessionId);
+  if (scopedId !== undefined) {
+    pausedSessions.delete(scopedId);
     return;
   }
-  pausedSessions.delete(sessionId);
+  pausedSessions.clear();
 }
 
 export function isChatPaused(sessionId?: string): boolean {
-  if (sessionId !== undefined) return pausedSessions.has(sessionId);
+  const scopedId = scopedSessionId(sessionId);
+  if (scopedId !== undefined) return pausedSessions.has(scopedId);
   return pausedSessions.size > 0;
 }
 
-export function getPausedSessionIds(): string[] {
-  return [...pausedSessions.keys()];
-}
-
-export function clearAllPausedSessions(): void {
-  pausedSessions.clear();
-}
+export function getPausedSessionIds(): string[] { return [...pausedSessions.keys()]; }
+export function clearAllPausedSessions(): void { pausedSessions.clear(); }
