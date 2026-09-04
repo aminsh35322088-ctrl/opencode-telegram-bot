@@ -59,10 +59,11 @@ export async function showTelegramTopicDeleteConfirmation(ctx: Context): Promise
       "This action cannot be undone.",
     {
       parse_mode: "HTML",
+      message_thread_id: topic.threadId,
       reply_markup: new InlineKeyboard()
         .text("🗑 Delete permanently", DELETE_CONFIRM_CALLBACK)
         .text("Cancel", DELETE_CANCEL_CALLBACK),
-    },
+    } as never,
   );
 }
 
