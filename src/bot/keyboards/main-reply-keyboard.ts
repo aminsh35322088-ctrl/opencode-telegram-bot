@@ -4,8 +4,10 @@ import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getCompactOutputMode } from "../../app/stores/settings-store.js";
+import { getActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 
 const MAIN_BUTTONS = {
+  history: "🕘 History",
   newChat: "💬 New Chat",
   settings: "⚙️ Settings",
   imageAi: "🎨 Image AI",
@@ -32,37 +34,45 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
   for (const label of labels) keyboard.text(label).row();
 }
 
-function addRunningControls(keyboard: Keyboard, paused: boolean): void {
+function addRunningControls(keyboard: Keyboard, paused: boolean, isTopic: boolean): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   keyboard.text(MAIN_BUTTONS.imageAi).row();
-  keyboard.text(MAIN_BUTTONS.settings).text(MAIN_BUTTONS.deleteChat).row();
+  keyboard.text(MAIN_BUTTONS.settings);
+  if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
+  keyboard.row();
 }
 
-function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean): void {
-  keyboard.text(MAIN_BUTTONS.newChat).row();
+function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean, isTopic: boolean): void {
+  keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
-  keyboard.text(MAIN_BUTTONS.settings).text(MAIN_BUTTONS.deleteChat).row();
+  keyboard.text(MAIN_BUTTONS.settings);
+  if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
+  keyboard.row();
 }
 
-function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
-  keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.imageAi).row();
+function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo, isTopic: boolean): void {
+  keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
+  keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
-  keyboard.text(MAIN_BUTTONS.settings).text(MAIN_BUTTONS.deleteChat).row();
+  keyboard.text(MAIN_BUTTONS.settings);
+  if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
+  keyboard.row();
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
   const effectivePaused = options.paused ?? isChatPaused();
+  const isTopic = Boolean(getActiveTelegramTopic());
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
 
   if (options.running) {
-    addRunningControls(keyboard, effectivePaused);
+    addRunningControls(keyboard, effectivePaused, isTopic);
     return keyboard.resized().persistent();
   }
-  if (effectivePaused) addPausedControls(keyboard, currentModel);
-  else addIdleControls(keyboard, currentModel, options.compactOutputMode ?? getCompactOutputMode());
+  if (effectivePaused) addPausedControls(keyboard, currentModel, isTopic);
+  else addIdleControls(keyboard, currentModel, options.compactOutputMode ?? getCompactOutputMode(), isTopic);
   return keyboard.resized().persistent();
 }
 
