@@ -6,7 +6,12 @@ export interface TelegramTopicContext {
   threadId: number;
 }
 
+export interface TelegramTopicRuntimeDependencies {
+  ensureEventSubscription: (directory: string) => Promise<void>;
+}
+
 let activeTopic: TelegramTopicContext | null = null;
+let runtimeDependencies: TelegramTopicRuntimeDependencies | null = null;
 
 export function setActiveTelegramTopic(context: TelegramTopicContext | null): void {
   activeTopic = context;
@@ -16,6 +21,16 @@ export function getActiveTelegramTopic(chatId?: number): TelegramTopicContext | 
   if (!activeTopic) return null;
   if (chatId !== undefined && activeTopic.chatId !== chatId) return null;
   return activeTopic;
+}
+
+export function setTelegramTopicRuntimeDependencies(
+  dependencies: TelegramTopicRuntimeDependencies,
+): void {
+  runtimeDependencies = dependencies;
+}
+
+export function getTelegramTopicRuntimeDependencies(): TelegramTopicRuntimeDependencies | null {
+  return runtimeDependencies;
 }
 
 const TOPIC_SEND_METHODS = new Set([
