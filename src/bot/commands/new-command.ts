@@ -68,7 +68,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     await ingestSessionInfoForCache(session);
 
     await attachToSession({
-      bot: createTopicAwareBot(deps.bot),
+      bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding.threadId }),
       chatId: ctx.chat.id,
       session: sessionInfo,
       ensureEventSubscription: deps.ensureEventSubscription,
