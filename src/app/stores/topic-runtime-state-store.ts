@@ -98,9 +98,19 @@ type TopicSettingsSeed = Partial<TopicDefaults> & Partial<Pick<TopicSettings, "s
 export function createTopicSettings(seed: TopicSettingsSeed = {}): TopicSettings { const now = new Date().toISOString(); return { ...DEFAULT_TOPIC_DEFAULTS, ...seed, session: seed.session ? { ...seed.session } : undefined, workspaceDirectory: seed.workspaceDirectory, runState: "idle", updatedAt: now }; }
 export async function initializeTopicRuntimeState(chatId: number, threadId: number, defaults?: TopicSettingsSeed): Promise<TopicRuntimeState> { await loadTopicRuntimeStates(); return ensureTopicRuntimeStateSync(chatId, threadId, defaults); }
 export function getTopicRuntimeStateSync(chatId: number, threadId: number): TopicRuntimeState | null { const state = states.get(key(chatId, threadId)); return state ? clone(state) : null; }
+
+/** Fast lookup used by synchronous Telegram API callbacks. The store must have been loaded at startup. */
+export function findTopicRuntimeStateBySessionSync(sessionId: string): TopicRuntimeState | null {
+  for (const state of states.values()) {
+    const candidateSessionId = state.settings.session?.id ?? state.session?.id;
+    if (candidateSessionId === sessionId) return clone(state);
+  }
+  return null;
+}
+
 export async function getTopicRuntimeState(chatId: number, threadId: number): Promise<TopicRuntimeState | null> { await loadTopicRuntimeStates(); return getTopicRuntimeStateSync(chatId, threadId); }
 export function ensureTopicRuntimeStateSync(chatId: number, threadId: number, defaults?: TopicSettingsSeed): TopicRuntimeState {
-  const existing = states.get(key(chatId, threadId));
+  const existing = states.get(key(chatId, threadId);
   if (existing) return clone(existing);
   const settings = createTopicSettings(defaults);
   const created: TopicRuntimeState = { chatId, threadId, settings, session: settings.session, model: settings.model, agent: settings.agent, compactOutputMode: settings.compactOutputMode, updatedAt: settings.updatedAt };
