@@ -43,13 +43,13 @@ function isMainControlText(text: string): boolean {
   return isReplyKeyboardButtonText(text, new Set([getCurrentModelButtonText()]));
 }
 
-function hasConfigurationInteraction(): boolean {
+function hasConfigurationInteraction(sessionId?: string): boolean {
   return (
     interactionManager.getSnapshot() !== null ||
     questionManager.isActive() ||
     isProviderWizardActive() ||
     isIntegrationWizardActive() ||
-    getImageMode() !== null
+    getImageMode(sessionId) !== null
   );
 }
 
@@ -68,7 +68,10 @@ async function attachBoundTopicSession(ctx: Context, binding: Awaited<ReturnType
   keyboardManager.bindTopic(ctx.api, binding.chatId, binding.threadId, binding.sessionId);
   if (attachManager.isAttachedSession(binding.sessionId, binding.directory)) return true;
   try {
-    const topicBot = createTopicAwareBot({ api: ctx.api } as unknown as Bot<Context>);
+    const topicBot = createTopicAwareBot(
+      { api: ctx.api } as unknown as Bot<Context>,
+      { chatId: binding.chatId, threadId: binding.threadId },
+    );
     const runtime = getTelegramTopicRuntimeDependencies();
     if (!runtime) throw new Error("Telegram topic runtime dependencies are not initialized");
     await attachToSession({
@@ -107,7 +110,10 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
     setCurrentSession(sessionInfo);
     keyboardManager.bindTopic(ctx.api, chatId, binding.threadId, session.id);
     clearAllInteractionState("telegram_topic_session_opened");
-    const topicBot = createTopicAwareBot({ api: ctx.api } as unknown as Bot<Context>);
+    const topicBot = createTopicAwareBot(
+      { api: ctx.api } as unknown as Bot<Context>,
+      { chatId, threadId: binding.threadId },
+    );
     const runtime = getTelegramTopicRuntimeDependencies();
     if (!runtime) throw new Error("Telegram topic runtime dependencies are not initialized");
     await attachToSession({ bot: topicBot, chatId, session: sessionInfo, ensureEventSubscription: runtime.ensureEventSubscription });
@@ -158,7 +164,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   const message = ctx.message;
   if (message) {
     const text = "text" in message && typeof message.text === "string" ? message.text.trim() : "";
-    const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction();
+    const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(getCurrentSession()?.id);
     if (!allowedMainInput) {
       await ctx.reply(MAIN_CHAT_ONLY_HELP).catch(() => {});
       return;
