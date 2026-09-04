@@ -9,11 +9,14 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - Added per-topic Pause, Resume, Abort, Model, Image AI, and Delete Chat controls.
 - Preserved the existing Image AI Generate and Edit flows inside each coding Topic, with generated/edited assets stored in that Topic workspace.
 - Added reply-to-message context for Topic conversations, including referenced text/captions and downloaded image/document attachments.
+- Added implicit Resume from a user prompt while a Topic is paused; the prompt is delivered to the existing session so the model can incorporate the instruction into the interrupted task.
 
 ### Changed
 - The main private chat is now used for controls and session creation, while each coding session lives in its own Telegram Topic.
 - Topic deletion now removes only the bound OpenCode session, isolated workspace, Telegram Topic, and binding.
 - Topic-aware routing now carries streaming, tool/progress output, callbacks, pause state, keyboard state, and Image AI mode within the active session boundary.
+- While Image AI is generating or editing, Coding AI input is blocked until the image operation completes; generated/edited assets are saved against the session captured for that operation.
+- Reserved Topic reply-keyboard controls are prevented from falling through to Coding AI prompt handling.
 - Model Center and live custom-provider catalog improvements from the 0.25.x line remain part of the current bot experience.
 - Updated `/start` to point users toward New Chat and existing Topics instead of the removed History flow.
 
@@ -22,6 +25,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - Scoped paused sessions and Image AI modes by OpenCode session instead of keeping a single global value.
 - Callback Topic resolution now uses the callback message's own chat/thread identity rather than assuming the current global chat context.
 - Topic workspace cleanup is path-guarded so deleting a Topic cannot remove the main project directory.
+- Fixed paused-prompt handling so the user's actual instruction resumes the same session instead of being reduced to a generic Resume signal.
 
 ### Release / Update notification
 - Bot version is now `v0.26.0`.

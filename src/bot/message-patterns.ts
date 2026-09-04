@@ -6,7 +6,7 @@ export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s(?:(?:(?:GPT|ChatGPT|Claude|Dee
 export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/;
 export const CONTEXT_BUTTON_TEXT_PATTERN = /^📊(?:\s|$)/;
 export const QUEUED_PROMPT_BUTTON_TEXT_PATTERN = /^❌\s\d+\.\s/;
-export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙️ Settings|🎨 Image AI|📦 Compact: (?:ON|OFF)|⏸️ Pause|▶️ Resume|🛑 Abort)$/;
+export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙️ Settings|🎨 Image AI|🗑️ Delete Chat|📦 Compact: (?:ON|OFF)|⏸️ Pause|▶️ Resume|🛑 Abort)$/;
 
 const REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS = [
   AGENT_MODE_BUTTON_TEXT_PATTERN,
