@@ -3,8 +3,7 @@ import type { InlineKeyboard } from "grammy";
 import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
-import { fetchCurrentModel, getModelSelectionLists } from "../../app/services/model-selection-service.js";
-import { buildModelRootMenuView } from "../menus/model-selection-menu.js";
+import { fetchCurrentModel } from "../../app/services/model-selection-service.js";
 import {
   getCompactOutputMode,
   getMessageFormatMode,
@@ -26,6 +25,8 @@ import {
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendInlineMenuCancelButton, ensureActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu.js";
+import { buildModelCenterRoot } from "../menus/model-center-menu.js";
+import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import {
   buildAdvancedSettingsView,
   buildAppearanceSettingsView,
@@ -64,9 +65,15 @@ async function renderSettingsView(ctx: Context, view: { text: string; keyboard: 
 }
 
 async function showModelSelectionMenu(ctx: Context): Promise<void> {
-  const modelLists = await getModelSelectionLists();
-  const view = await buildModelRootMenuView(fetchCurrentModel(), modelLists);
-  await replyWithInlineMenu(ctx, { menuKind: "model", text: view.text, keyboard: view.keyboard, metadata: { modelLists } });
+  await refreshAllCustomProviderModels();
+  const view = await buildModelCenterRoot(fetchCurrentModel());
+  await replyWithInlineMenu(ctx, {
+    menuKind: "model",
+    text: view.text,
+    keyboard: view.keyboard,
+    parseMode: "HTML",
+    metadata: { modelLists: { favorites: [], recent: [] } },
+  });
 }
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
@@ -118,9 +125,6 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_COMPACT_OUTPUT_CALLBACK:
         setCompactOutputMode(!getCompactOutputMode());
         break;
-      case SETTINGS_THINKING_CONTENT_CALLBACK:
-        setShowThinkingContent(!getShowThinkingContent());
-        break;
       case SETTINGS_RESPONSE_STREAMING_CALLBACK:
         setResponseStreamingMode(getNextResponseStreamingMode(getResponseStreamingMode()));
         break;
@@ -130,22 +134,27 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_DIFF_FILES_CALLBACK:
         setSendDiffFileAttachments(!getSendDiffFileAttachments());
         break;
+      case SETTINGS_THINKING_CONTENT_CALLBACK:
+        setShowThinkingContent(!getShowThinkingContent());
+        break;
       case SETTINGS_ASSISTANT_FOOTER_CALLBACK:
         setShowAssistantRunFooter(!getShowAssistantRunFooter());
         break;
       case SETTINGS_PROMPT_QUEUE_CALLBACK:
         setPromptQueueEnabled(!getPromptQueueEnabled());
-        destination = buildNotificationsSettingsView;
         break;
       default:
-        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
-        return true;
+        return false;
     }
-    await ctx.answerCallbackQuery({ text: t("settings.saved") });
+
+    if (callbackData === SETTINGS_CONTEXT_CALLBACK) destination = buildContextSettingsView;
+    else if (callbackData === SETTINGS_NOTIFICATIONS_CALLBACK) destination = buildNotificationsSettingsView;
+
+    await ctx.answerCallbackQuery();
     await renderSettingsView(ctx, destination());
     return true;
   } catch (error) {
-    logger.error("[Settings] Error handling settings callback:", error);
+    logger.error("[Settings] Callback failed", error);
     await ctx.answerCallbackQuery({ text: t("callback.processing_error") }).catch(() => {});
     return true;
   }
