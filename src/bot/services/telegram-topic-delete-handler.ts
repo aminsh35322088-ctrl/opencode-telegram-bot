@@ -110,15 +110,15 @@ export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<b
     );
   } catch (error) {
     logger.error(
-      `[TelegramTopics] Failed to permanently delete topic: session=${binding.sessionId}, thread=${binding.threadId}`,
+      `[TelegramTopics] Topic deletion completed with cleanup error: session=${binding.sessionId}, thread=${binding.threadId}`,
       error,
     );
     await ctx.answerCallbackQuery({
-      text: "Deletion failed. The Topic was kept so cleanup can be retried.",
+      text: "Topic deletion completed with a cleanup error. Check logs.",
       show_alert: true,
     }).catch(() => {});
     await ctx.editMessageText(
-      "❌ <b>Chat deletion failed.</b>\n\nThe Topic was kept and no Telegram Topic deletion was performed. Please retry after fixing the reported error.",
+      "⚠️ <b>Chat deletion completed with a cleanup error.</b>\n\nThe Telegram Topic was removed, but one or more local cleanup steps failed. Check the bot logs before taking further action.",
       { parse_mode: "HTML" },
     ).catch(() => {});
   }
