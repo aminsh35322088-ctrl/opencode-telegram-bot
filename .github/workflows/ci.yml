@@ -30,10 +30,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.14
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install project dependencies
+        run: npm install
+
+      - name: Install CI-only test runner
+        run: npm install --no-save vitest@4.1.10
 
       - name: Changelog policy
         if: github.event_name == 'pull_request'
@@ -65,3 +67,4 @@ jobs:
         if: always()
         run: |
           rm -rf tests tsconfig.test.json vitest.config.ts
+          rm -rf coverage
