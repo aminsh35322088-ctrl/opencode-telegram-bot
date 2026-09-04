@@ -2,6 +2,23 @@
 
 All notable Telegram-bot changes are documented here. OpenCode has its own independent release/version lifecycle.
 
+## [0.26.2] - 2026-09-04
+
+### Fixed
+- Hardened Topic keyboard routing so reserved controls cannot fall through into Coding AI prompt handling.
+- Fixed paused Topic prompts so sending a new instruction resumes the existing session with the actual prompt instead of a generic Resume signal.
+- Prevented Image AI generation/editing from racing with Coding AI input in the same session.
+- Fixed Image AI assets being associated with the wrong active session when session context changes during generation/editing.
+
+### Changed
+- Image AI operations now mark the owning session busy for the duration of generation/editing and return it to idle reliably.
+- Topic-aware session routing now keeps streaming, tool/progress output, callbacks, pause state, keyboard state, and Image AI state scoped to the active session.
+- Removed duplicate `socks-proxy-agent` and `unified` dependency entries from `package.json`.
+
+### Release / Update notification
+- Bot version is now `v0.26.2`.
+- `/start` and `/update` show the previous → current bot version and the v0.26.2 release notes once per installed version.
+
 ## [0.26.0] - 2026-09-04
 
 ### Added
@@ -35,7 +52,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ### Changed
 - Simplified model labels throughout Model Center to show the model name only; provider/company names are no longer repeated on model buttons.
-- Added human-friendly model-name formatting so IDs such as `gpt-5.1-codex` render as readable model names while preserving the original provider/model IDs internally.
+- Added human-friendly model-name formatting so IDs such as `gpt-5.1-codex` render as readable model names while preserving the original provider/model IDs.
 - Model search now matches both model IDs and their advertised display names.
 
 ### Fixed
