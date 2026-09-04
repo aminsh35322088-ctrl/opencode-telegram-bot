@@ -8,13 +8,13 @@ import { logger } from "../../utils/logger.js";
 import { handleTaskTextInput } from "../commands/task-command.js";
 import { handleProviderWizardMessage, isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
 import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
-import { handleModelSearchTextInput } from "../callbacks/model-selection-callback-handler.js";
+import { handleModelSearchTextInput } from "../callbacks/model-center-callback-handler.js";
 import { handleQuestionTextAnswer } from "../callbacks/question-callback-handler.js";
 import { handleRenameTextAnswer } from "../callbacks/rename-callback-handler.js";
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
-import { showAiRulesMenu } from "../callbacks/ai-role-selection-callback-handler.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
+import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
@@ -240,7 +240,8 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
       return;
     }
 
-    // Keyboard events are UI controls, never prompts. This guard must run before Image Mode.
+    // Reply-keyboard presses arrive from Telegram as normal text messages, so
+    // consume known controls before any interaction-specific text handler.
     if (isReplyKeyboardButtonText(text)) {
       if (text !== MAIN_BUTTONS.imageAi) resetImageInteraction();
       await next();
@@ -313,8 +314,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
-  bot.hears(/^📦 Compact: (?:ON|OFF)$/, handleCompactModeButton);
-
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => {
     resetImageInteraction();
     if (await blockMenuWhileInteractionActive(ctx)) return;
@@ -345,9 +344,9 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     try {
       resetImageInteraction();
       if (await blockMenuWhileInteractionActive(ctx)) return;
-      await showAiRulesMenu(ctx);
+      await showModelCenterMenu(ctx);
     } catch (err) {
-      logger.error("[Bot] Error showing models menu:", err);
+      logger.error("[Bot] Error showing model center:", err);
       await ctx.reply(t("error.load_models"));
     }
   });
