@@ -47,7 +47,7 @@ export async function showTelegramTopicDeleteConfirmation(ctx: Context): Promise
     return;
   }
 
-  if (assistantRunState.hasActiveRuns()) {
+  if (assistantRunState.hasActiveRun(binding.sessionId)) {
     await ctx.reply("⏳ Please wait for the current task to finish before deleting this Chat.");
     return;
   }
@@ -83,14 +83,14 @@ export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<b
     return true;
   }
 
-  if (assistantRunState.hasActiveRuns()) {
-    await ctx.answerCallbackQuery({ text: "Finish the current task first", show_alert: true }).catch(() => {});
-    return true;
-  }
-
   const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
   if (!binding) {
     await ctx.answerCallbackQuery({ text: "Topic is already deleted", show_alert: true }).catch(() => {});
+    return true;
+  }
+
+  if (assistantRunState.hasActiveRun(binding.sessionId)) {
+    await ctx.answerCallbackQuery({ text: "Finish the current task first", show_alert: true }).catch(() => {});
     return true;
   }
 
