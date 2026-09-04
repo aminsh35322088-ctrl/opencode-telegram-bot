@@ -9,6 +9,7 @@ const MAIN_BUTTONS = {
   newChat: "💬 New Chat",
   settings: "⚙️ Settings",
   imageAi: "🎨 Image AI",
+  deleteChat: "🗑️ Delete Chat",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
   pause: "⏸️ Pause",
   resume: "▶️ Resume",
@@ -39,13 +40,14 @@ function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOut
   keyboard.text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
-  keyboard.text(MAIN_BUTTONS.settings).row();
+  keyboard.text(MAIN_BUTTONS.settings).text(MAIN_BUTTONS.deleteChat).row();
 }
 
 function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
   keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
+  keyboard.text(MAIN_BUTTONS.deleteChat).row();
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
