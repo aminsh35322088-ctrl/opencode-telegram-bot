@@ -27,10 +27,10 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 ## Runtime environment
 
 The Railway production image is a runtime environment, not a CI runner.
-It intentionally does not ship the repository's CI-only test suite or a global validation toolchain.
+It intentionally does not ship the repository's CI-only test suite or a validation toolchain.
 Do not install testing, linting, typechecking, or build-validation tools into the production runtime.
 
-The production application may use the existing runtime/coding utilities and the custom OpenCode tools, but dependency-management actions are for application/workspace operations only; they are not a validation path.
+The production application may use the existing runtime/coding utilities and custom OpenCode tools. Dependency-management actions are for application/workspace operations only; they are not a validation path.
 
 When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
 
@@ -133,13 +133,6 @@ When validation is required:
 
 Do not attempt to reproduce CI validation locally in the production bot. A CI failure is a GitHub Actions signal to fix the source, not a reason to install a local validation stack.
 
-### Recovery for runtime/session problems
+### Runtime diagnostics
 
-Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session:
-
-1. Run `full-diagnostics` with the affected session ID.
-2. Stop repeating the same command or reinstalling dependencies.
-3. Inspect the current session status and recent events.
-4. Use the `session-recovery` tool to inspect and, when appropriate, abort the stuck session.
-5. Retry the smallest useful runtime operation.
-6. Preserve diagnostic evidence so recovery does not erase the original failure mode.
+Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session, use `full-diagnostics` and `session-recovery` to inspect and recover the runtime session; never switch to local CI/test execution.
