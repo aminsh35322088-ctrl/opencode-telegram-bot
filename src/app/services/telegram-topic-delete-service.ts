@@ -24,6 +24,21 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
     topicTelemetry("delete_refused_unmanaged_workspace", context);
     throw new Error(`Refusing to delete topic session with unmanaged directory: ${binding.directory}`);
   }
+
+  // Delete the Telegram Topic first. This is the only hard gate: if Telegram
+  // refuses the deletion (permissions/network/etc.), we must not destroy the
+  // OpenCode session or workspace and leave an orphaned binding behind.
+  try {
+    await api.deleteForumTopic(binding.chatId, binding.threadId);
+  } catch (error) {
+    if (!isAlreadyDeletedTopicError(error)) {
+      topicTelemetry("telegram_topic_delete_failed", context);
+      throw error;
+    }
+    logger.info(`[TelegramTopics] Telegram Topic already deleted: chat=${binding.chatId}, thread=${binding.threadId}`);
+  }
+  topicTelemetry("telegram_topic_deleted", context);
+
   let sessionDeleteError: unknown = null;
   try {
     const { data, error } = await opencodeClient.session.delete({ sessionID: binding.sessionId, directory: binding.directory });
@@ -39,10 +54,6 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
   topicTelemetry("event_subscription_removed", context);
   await deleteTelegramTopicWorkspace(binding.directory);
   topicTelemetry("workspace_deleted", context);
-
-  try { await api.deleteForumTopic(binding.chatId, binding.threadId); }
-  catch (error) { if (!isAlreadyDeletedTopicError(error)) throw error; logger.info(`[TelegramTopics] Telegram Topic already deleted: chat=${binding.chatId}, thread=${binding.threadId}`); }
-  topicTelemetry("telegram_topic_deleted", context);
 
   promptQueue.clearSession(binding.sessionId, "telegram_topic_deleted");
   promptAttachment.clearSession(binding.sessionId, "telegram_topic_deleted");
