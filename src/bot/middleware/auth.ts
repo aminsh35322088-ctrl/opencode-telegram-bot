@@ -65,17 +65,22 @@ function hasConfigurationInteraction(): boolean {
   );
 }
 
+function bindingTitle(binding: Awaited<ReturnType<typeof findTelegramTopicBindingByThread>>): string {
+  return binding?.title?.trim() || `Session ${binding?.sessionId.slice(0, 8) ?? "unknown"}`;
+}
+
 async function attachBoundTopicSession(
   ctx: Context,
   binding: Awaited<ReturnType<typeof findTelegramTopicBindingByThread>>,
 ): Promise<boolean> {
   if (!binding || !ctx.chat) return false;
 
+  const title = bindingTitle(binding);
   const currentSession = getCurrentSession();
   if (currentSession?.id !== binding.sessionId || currentSession.directory !== binding.directory) {
     setCurrentSession({
       id: binding.sessionId,
-      title: binding.title,
+      title,
       directory: binding.directory,
     });
     clearAllInteractionState("telegram_topic_session_switch");
@@ -97,7 +102,7 @@ async function attachBoundTopicSession(
       chatId: ctx.chat.id,
       session: {
         id: binding.sessionId,
-        title: binding.title,
+        title,
         directory: binding.directory,
       },
       ensureEventSubscription: runtime.ensureEventSubscription,
