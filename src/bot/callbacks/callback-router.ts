@@ -32,6 +32,10 @@ import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { MODEL_CENTER_SETTINGS_BACK } from "../menus/model-center-menu.js";
 import { markGeminiWizard, clearGeminiWizard } from "../services/gemini-wizard-state.js";
 import { activateImageMode } from "../../app/services/image-mode-service.js";
+import {
+  handleTelegramTopicDeleteCallback,
+  registerTelegramTopicDeleteHandlers,
+} from "../services/telegram-topic-delete-handler.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -81,6 +85,8 @@ async function handleImageAiCallback(ctx: Context, data: string): Promise<boolea
 }
 
 export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDeps): void {
+  registerTelegramTopicDeleteHandlers(bot);
+
   const routes = new Map<string, CallbackRoute>([
     ["agent", { name: "agent", handlers: [handleAgentSelect], errorScope: "interaction" }],
     ["attach", { name: "attach", handlers: [handlePromptAttachmentCancel], errorScope: "interaction" }],
@@ -113,6 +119,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     let errorScope: InteractionErrorScope = "interaction";
     try {
       if (await handleImageAiCallback(ctx, data)) return;
+      if (await handleTelegramTopicDeleteCallback(ctx)) return;
       if (await handleBackgroundSessionOpen(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })) return;
       if (await handleInlineMenuCancel(ctx)) { clearOpenPathIndex(); clearLsPathIndex(); return; }
       if (await handleSettingsChildNavigation(ctx, data)) return;
