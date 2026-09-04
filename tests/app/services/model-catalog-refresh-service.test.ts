@@ -6,12 +6,17 @@ const base = {
   name: "Model A",
   freeStatus: "unknown" as const,
   freeConfidence: "none" as const,
+  freeSource: "none" as const,
   freeReason: "missing pricing",
 };
 
 describe("model catalog refresh comparison", () => {
   it("detects metadata-only changes for the same model ID", () => {
-    expect(__catalogsEqualForTests([base], [{ ...base, freeStatus: "free", freeConfidence: "high", freeReason: "zero pricing" }])).toBe(false);
+    expect(__catalogsEqualForTests([base], [{ ...base, freeStatus: "free", freeConfidence: "high", freeSource: "pricing", freeReason: "zero pricing" }])).toBe(false);
+  });
+
+  it("detects evidence-source changes for the same classification", () => {
+    expect(__catalogsEqualForTests([base], [{ ...base, freeSource: "heuristic" }])).toBe(false);
   });
 
   it("treats identical model metadata as unchanged", () => {
