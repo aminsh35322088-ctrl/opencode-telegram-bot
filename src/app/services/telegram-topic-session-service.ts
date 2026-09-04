@@ -39,6 +39,7 @@ async function persistNewBinding(
     sessionId: session.id,
     directory: session.directory,
     createdAt: new Date().toISOString(),
+    title: session.title,
   };
   await saveTelegramTopicBinding(binding);
   return binding;
@@ -57,7 +58,7 @@ async function openSessionInTopicInternal(
   const binding = await persistNewBinding(chatId, session, threadId);
 
   logger.info(
-    `[TelegramTopics] Created topic binding: session=${session.id}, chat=${chatId}, thread=${threadId}, title="${title}"`,
+    `[TelegramTopics] Created topic binding: session=${session.id}, chat=${chatId}, thread=${threadId}, title="${title}", directory=${session.directory}`,
   );
 
   return binding;
@@ -65,8 +66,8 @@ async function openSessionInTopicInternal(
 
 /**
  * Creates exactly one Telegram Topic for an OpenCode session.
- * The OpenCode session is the durable conversation memory; Telegram only
- * provides the topic/thread presentation and routing identity.
+ * Each new session is expected to have its own isolated working directory;
+ * Telegram only provides the topic/thread presentation and routing identity.
  */
 export async function openSessionInTelegramTopic(
   api: Api,
