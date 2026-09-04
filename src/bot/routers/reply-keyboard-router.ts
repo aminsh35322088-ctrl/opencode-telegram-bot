@@ -20,11 +20,10 @@ import { MAIN_BUTTONS } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
-import { handleProviderWizardMessage, isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
-import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
+import { isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
+import { isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
 import { clearImageMode } from "../../app/services/image-mode-service.js";
 import { isReplyKeyboardButtonText, AGENT_MODE_BUTTON_TEXT_PATTERN, CONTEXT_BUTTON_TEXT_PATTERN, QUEUED_PROMPT_BUTTON_TEXT_PATTERN, VARIANT_BUTTON_TEXT_PATTERN } from "../message-patterns.js";
-import { normalizeReplyKeyboardText } from "../message-patterns.js";
 
 interface ReplyKeyboardRouterDeps {
   bot: Bot<Context>;
@@ -109,7 +108,6 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
       if (text === normalized("❌ Cancel")) {
         if (isProviderWizardActive()) {
           clearProviderWizard();
-          clearProviderWizard();
           await providersCommand(ctx as never);
           return;
         }
@@ -169,19 +167,18 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
       if (QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
         if (!await menuAllowed(ctx)) return;
         const queued = findQueuedPromptByButtonLabel(raw);
+        const keyboard = keyboardManager.getKeyboard();
         if (queued) {
           promptQueue.removeById(queued.id);
-          const keyboard = keyboardManager.getKeyboard();
           await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {});
         } else {
-          const keyboard = keyboardManager.getKeyboard();
           await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});
         }
         return;
       }
 
       if (text === normalized(MAIN_BUTTONS.deleteChat)) {
-        await ctx.reply("🗑️ Delete Chat is available from the Topic controls.");
+        await ctx.reply("🗑️ Delete Chat is currently handled by the Topic controls.");
         return;
       }
     } catch (error) {
