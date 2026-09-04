@@ -2,9 +2,10 @@ import { Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
+import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 
-export const MAIN_BUTTONS = {
+const MAIN_BUTTONS = {
   newChat: "💬 New Chat",
   settings: "⚙️ Settings",
   imageAi: "🎨 Image AI",
@@ -35,10 +36,6 @@ function addRunningControls(keyboard: Keyboard, paused: boolean): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
 }
 
-function addImageAiButton(keyboard: Keyboard): void {
-  keyboard.text(MAIN_BUTTONS.imageAi).row();
-}
-
 function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean): void {
   keyboard.text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
@@ -55,13 +52,12 @@ function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
-  const effectivePaused = options.paused ?? false;
+  const effectivePaused = options.paused ?? isChatPaused();
 
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
 
   if (options.running) {
     addRunningControls(keyboard, effectivePaused);
-    addImageAiButton(keyboard);
     return keyboard.resized().persistent();
   }
 
@@ -111,3 +107,5 @@ export function createAgentKeyboard(currentAgent: string): Keyboard {
 export function removeKeyboard(): { remove_keyboard: true } {
   return { remove_keyboard: true };
 }
+
+export { MAIN_BUTTONS };
