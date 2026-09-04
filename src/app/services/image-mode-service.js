@@ -7,5 +7,5 @@ export function activateImageMode() {
 }
 
 export function createImageModeKeyboard() {
-  return new InlineKeyboard();
+  return new InlineKeyboard().text("🖼️ Generate", `${IMAGE_MODE_CALLBACK_PREFIX}generate`).text("✏️ Edit", `${IMAGE_MODE_CALLBACK_PREFIX}edit`);
 }
