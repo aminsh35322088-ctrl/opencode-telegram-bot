@@ -80,7 +80,6 @@ describe("topic-event-bus session isolation", () => {
 
   it("can unsubscribe one Topic without removing another Topic on the same directory", async () => {
     let release = false;
-    const eventA = { type: "message.updated", properties: { sessionID: "session-a", directory: "/workspace" } } as Event;
     const eventB = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as Event;
 
     globalEventMock.mockImplementation(async (options: { signal: AbortSignal }) => ({
