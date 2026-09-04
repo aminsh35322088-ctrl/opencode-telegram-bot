@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import { getFavoriteModels, getRecentModels } from "../../app/services/model-preferences-service.js";
-import { getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
+import { fetchCurrentModel, getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
 import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo } from "../../app/types/model.js";
 import type { Context } from "grammy";
@@ -109,7 +109,7 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
 
 export async function showModelCenterMenu(ctx: Context): Promise<void> {
   await refreshAllCustomProviderModels();
-  const view = await buildModelCenterRoot();
+  const view = await buildModelCenterRoot(fetchCurrentModel());
   await replyWithInlineMenu(ctx, {
     menuKind: "model",
     text: view.text,
