@@ -4,114 +4,163 @@ import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
-import {
-  getCompactOutputMode,
-} from "../../app/stores/settings-store.js";
+import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
+import { findTelegramTopicBindingBySession } from "../../app/services/telegram-topic-store.js";
 
 class KeyboardManager {
-  private state: KeyboardState | null = null;
+  private readonly states = new Map<string, KeyboardState>();
   private api: Api | null = null;
-  private chatId: number | null = null;
-  private lastUpdateTime = 0;
+  private legacyChatId: number | null = null;
+  private readonly lastUpdateTimes = new Map<string, number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
-  public initialize(api: Api, chatId: number): void {
-    this.api = api;
-    this.chatId = chatId;
+  private key(sessionId?: string): string {
+    return sessionId || "__legacy__";
+  }
 
-    if (!this.state) {
+  public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
+    this.api = api;
+    this.legacyChatId = chatId;
+    const key = this.key(sessionId);
+    if (!this.states.has(key)) {
       const currentModel = getStoredModel();
-      this.state = {
+      this.states.set(key, {
+        sessionId,
+        chatId,
+        threadId,
         currentAgent: getStoredAgent(),
         currentModel,
         contextInfo: null,
         variantName: formatVariantForButton(currentModel.variant || "default"),
-        paused: isChatPaused(),
-      };
+        paused: sessionId ? isChatPaused(sessionId) : isChatPaused(),
+      });
+      return;
     }
+    const state = this.states.get(key)!;
+    state.chatId = chatId;
+    if (threadId !== undefined) state.threadId = threadId;
   }
 
-  public updateAgent(agent: string): void {
-    if (this.state) this.state.currentAgent = agent;
+  public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void {
+    this.initialize(api, chatId, sessionId, threadId);
   }
 
-  public updateModel(model: ModelInfo): void {
-    if (!this.state) return;
-    this.state.currentModel = model;
-    this.state.variantName = formatVariantForButton(model.variant || "default");
+  private activeSessionId(sessionId?: string): string | undefined {
+    return sessionId ?? getCurrentSession()?.id;
   }
 
-  public updateVariant(variantId: string): void {
-    if (this.state) this.state.variantName = formatVariantForButton(variantId);
+  private state(sessionId?: string): KeyboardState | undefined {
+    return this.states.get(this.key(this.activeSessionId(sessionId)));
   }
 
-  public setPaused(paused: boolean): void {
-    if (this.state) this.state.paused = paused;
+  public updateAgent(agent: string, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.currentAgent = agent;
   }
 
-  public updateContext(tokensUsed: number, tokensLimit: number): void {
-    if (this.state) this.state.contextInfo = { tokensUsed, tokensLimit };
+  public updateModel(model: ModelInfo, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (!state) return;
+    state.currentModel = model;
+    state.variantName = formatVariantForButton(model.variant || "default");
   }
 
-  public clearContext(): void {
-    if (this.state) this.state.contextInfo = null;
+  public updateVariant(variantId: string, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.variantName = formatVariantForButton(variantId);
   }
 
-  public getContextInfo(): ContextInfo | null {
-    return this.state?.contextInfo ?? null;
+  public setPaused(paused: boolean, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.paused = paused;
   }
 
-  private buildKeyboard() {
-    if (!this.state) {
+  public updateContext(tokensUsed: number, tokensLimit: number, sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.contextInfo = { tokensUsed, tokensLimit };
+  }
+
+  public clearContext(sessionId?: string): void {
+    const state = this.state(sessionId);
+    if (state) state.contextInfo = null;
+  }
+
+  public getContextInfo(sessionId?: string): ContextInfo | null {
+    return this.state(sessionId)?.contextInfo ?? null;
+  }
+
+  private buildKeyboard(sessionId?: string) {
+    const state = this.state(sessionId);
+    const effectiveSessionId = this.activeSessionId(sessionId);
+    const running = effectiveSessionId
+      ? assistantRunState.hasActiveRun(effectiveSessionId)
+      : assistantRunState.hasActiveRuns();
+
+    if (!state) {
       return createMainKeyboard({ providerID: "", modelID: "" }, {
         paused: false,
-        running: assistantRunState.hasActiveRuns(),
+        running,
         compactOutputMode: getCompactOutputMode(),
       });
     }
 
-    return createMainKeyboard(this.state.currentModel, {
+    return createMainKeyboard(state.currentModel, {
       queuedPromptLabels: getQueuedPromptButtonLabels(),
-      paused: this.state.paused,
-      running: assistantRunState.hasActiveRuns(),
+      paused: state.sessionId ? isChatPaused(state.sessionId) : state.paused,
+      running,
       compactOutputMode: getCompactOutputMode(),
     });
   }
 
-  public async sendKeyboardUpdate(chatId?: number, force = false): Promise<void> {
+  public async sendKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
     if (!this.api) return;
-    const targetChatId = chatId ?? this.chatId;
+    const effectiveSessionId = this.activeSessionId(sessionId);
+    const state = this.state(effectiveSessionId);
+    const targetChatId = chatId ?? state?.chatId ?? this.legacyChatId;
     if (!targetChatId) return;
 
+    const key = this.key(effectiveSessionId);
     const now = Date.now();
-    if (!force && now - this.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) return;
-    this.lastUpdateTime = now;
+    const previous = this.lastUpdateTimes.get(key) ?? 0;
+    if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
+    this.lastUpdateTimes.set(key, now);
 
     try {
-      await this.api.sendMessage(targetChatId, t("keyboard.updated"), {
-        reply_markup: this.buildKeyboard(),
-      });
+      const options: Record<string, unknown> = {
+        reply_markup: this.buildKeyboard(effectiveSessionId),
+      };
+      if (effectiveSessionId) {
+        const binding = await findTelegramTopicBindingBySession(targetChatId, effectiveSessionId);
+        if (binding) options.message_thread_id = binding.threadId;
+      }
+      await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
     }
   }
 
-  public getKeyboard() {
-    return this.state ? this.buildKeyboard() : undefined;
+  public getKeyboard(sessionId?: string) {
+    return this.state(sessionId) ? this.buildKeyboard(sessionId) : undefined;
   }
 
-  public getState(): KeyboardState | undefined {
-    return this.state ?? undefined;
+  public getState(sessionId?: string): KeyboardState | undefined {
+    return this.state(sessionId);
   }
 
-  public isInitialized(): boolean {
-    return this.state !== null;
+  public isInitialized(sessionId?: string): boolean {
+    return Boolean(this.state(sessionId));
+  }
+
+  public clearSession(sessionId: string): void {
+    this.states.delete(this.key(sessionId));
+    this.lastUpdateTimes.delete(this.key(sessionId));
   }
 }
 
