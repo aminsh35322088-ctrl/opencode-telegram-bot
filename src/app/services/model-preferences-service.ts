@@ -64,3 +64,5 @@ export async function recordRecentModel(model: FavoriteModel): Promise<void> {
   state.recent = [model, ...recent].slice(0, MAX_RECENT_MODELS);
   await writeState(state);
 }
+
+// Keep persisted records aligned with the FavoriteModel type.
