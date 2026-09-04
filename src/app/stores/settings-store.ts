@@ -4,6 +4,7 @@ import type { ProjectInfo } from "../types/project.js";
 import type { SessionDirectoryCacheInfo, SessionInfo } from "../types/session.js";
 import { cloneScheduledTask, type ScheduledTask } from "../types/scheduled-task.js";
 import type { MessageFormatMode, ResponseStreamingMode, ScheduledTaskSessionIgnoreInfo, Settings } from "../types/settings.js";
+import type { TopicDefaults, TopicSettings } from "../types/topic-settings.js";
 import { config } from "../../config.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
@@ -57,6 +58,17 @@ function writeSettingsFile(settings: Settings): Promise<void> {
 }
 export function flushSettings(): Promise<void> { return settingsWriteQueue; }
 
+const DEFAULT_TOPIC_DEFAULTS: TopicDefaults = {
+  compactOutputMode: false,
+  showThinkingContent: true,
+  responseStreamingMode: "edit",
+  messageFormatMode: "markdown",
+  showAssistantRunFooter: true,
+  sendDiffFileAttachments: true,
+  promptQueueEnabled: false,
+  variant: undefined,
+};
+
 let currentSettings: Settings = {};
 function currentTopicState() { const context = getTopicRuntimeContext(); return context ? getTopicRuntimeStateSync(context.chatId, context.threadId) : null; }
 function updateTopic(patch: Parameters<typeof updateTopicRuntimeStateSync>[2]): void {
@@ -64,6 +76,17 @@ function updateTopic(patch: Parameters<typeof updateTopicRuntimeStateSync>[2]): 
   if (!context) return;
   updateTopicRuntimeStateSync(context.chatId, context.threadId, patch);
 }
+
+export function getGlobalSettings(): Settings { return { ...currentSettings }; }
+export function getCurrentTopicSettings(): TopicSettings | undefined { return currentTopicState()?.settings; }
+export function getTopicDefaults(): TopicDefaults { return { ...DEFAULT_TOPIC_DEFAULTS, ...(currentSettings.topicDefaults ?? {}) }; }
+export function setTopicDefaults(defaults: TopicDefaults): void {
+  currentSettings.topicDefaults = { ...DEFAULT_TOPIC_DEFAULTS, ...defaults };
+  void writeSettingsFile(currentSettings);
+}
+export function updateTopicDefaults(patch: Partial<TopicDefaults>): void { setTopicDefaults({ ...getTopicDefaults(), ...patch }); }
+export function getEffectiveTopicSettings(): TopicSettings | undefined { return currentTopicState()?.settings; }
+export function updateCurrentTopicSettings(patch: Partial<TopicSettings>): void { updateTopic(patch); }
 
 export function getCurrentProject(): ProjectInfo {
   const session = getCurrentSession();
@@ -73,7 +96,7 @@ export function getCurrentProject(): ProjectInfo {
 export function setCurrentProject(_projectInfo: ProjectInfo): void { void writeSettingsFile(currentSettings); }
 export function clearProject(): void { void writeSettingsFile(currentSettings); }
 
-export function getCurrentSession(): SessionInfo | undefined { return currentTopicState()?.session ?? currentSettings.currentSession; }
+export function getCurrentSession(): SessionInfo | undefined { return currentTopicState()?.settings.session ?? currentSettings.currentSession; }
 export function setCurrentSession(sessionInfo: SessionInfo): void {
   if (getTopicRuntimeContext()) { updateTopic({ session: sessionInfo }); return; }
   currentSettings.currentSession = sessionInfo; void writeSettingsFile(currentSettings);
@@ -93,28 +116,28 @@ export function rememberAlwaysAllowedPermission(chatId: number, permission: stri
   return writeSettingsFile(currentSettings);
 }
 
-export function getCompactOutputMode(): boolean { return currentTopicState()?.compactOutputMode ?? currentSettings.compactOutputMode ?? false; }
+export function getCompactOutputMode(): boolean { return currentTopicState()?.settings.compactOutputMode ?? currentSettings.compactOutputMode ?? getTopicDefaults().compactOutputMode; }
 export function setCompactOutputMode(enabled: boolean): void {
   if (getTopicRuntimeContext()) { updateTopic({ compactOutputMode: enabled }); return; }
   currentSettings.compactOutputMode = enabled; void writeSettingsFile(currentSettings);
 }
-export function getShowThinkingContent(): boolean { return currentSettings.showThinkingContent ?? true; }
-export function setShowThinkingContent(enabled: boolean): void { currentSettings.showThinkingContent = enabled; void writeSettingsFile(currentSettings); }
-export function getShowAssistantRunFooter(): boolean { return currentSettings.showAssistantRunFooter ?? true; }
-export function setShowAssistantRunFooter(enabled: boolean): void { currentSettings.showAssistantRunFooter = enabled; void writeSettingsFile(currentSettings); }
+export function getShowThinkingContent(): boolean { return currentTopicState()?.settings.showThinkingContent ?? currentSettings.showThinkingContent ?? getTopicDefaults().showThinkingContent; }
+export function setShowThinkingContent(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ showThinkingContent: enabled }); return; } currentSettings.showThinkingContent = enabled; void writeSettingsFile(currentSettings); }
 export type { MessageFormatMode, ResponseStreamingMode };
-export function getResponseStreamingMode(): ResponseStreamingMode { return currentSettings.responseStreamingMode === "draft" ? "draft" : "edit"; }
-export function setResponseStreamingMode(mode: ResponseStreamingMode): void { currentSettings.responseStreamingMode = mode; void writeSettingsFile(currentSettings); }
-export function getMessageFormatMode(): MessageFormatMode { return currentSettings.messageFormatMode ?? config.bot.messageFormatMode; }
-export function setMessageFormatMode(mode: MessageFormatMode): void { currentSettings.messageFormatMode = mode; void writeSettingsFile(currentSettings); }
-export function getSendDiffFileAttachments(): boolean { return currentSettings.sendDiffFileAttachments ?? true; }
-export function setSendDiffFileAttachments(enabled: boolean): void { currentSettings.sendDiffFileAttachments = enabled; void writeSettingsFile(currentSettings); }
-export function getPromptQueueEnabled(): boolean { return currentSettings.promptQueueEnabled ?? false; }
-export function setPromptQueueEnabled(enabled: boolean): void { currentSettings.promptQueueEnabled = enabled; void writeSettingsFile(currentSettings); }
-export function getCurrentAgent(): string | undefined { return currentTopicState()?.agent ?? currentSettings.currentAgent; }
+export function getResponseStreamingMode(): ResponseStreamingMode { return currentTopicState()?.settings.responseStreamingMode ?? currentSettings.responseStreamingMode ?? getTopicDefaults().responseStreamingMode; }
+export function setResponseStreamingMode(mode: ResponseStreamingMode): void { if (getTopicRuntimeContext()) { updateTopic({ responseStreamingMode: mode }); return; } currentSettings.responseStreamingMode = mode; void writeSettingsFile(currentSettings); }
+export function getMessageFormatMode(): MessageFormatMode { return currentTopicState()?.settings.messageFormatMode ?? currentSettings.messageFormatMode ?? getTopicDefaults().messageFormatMode ?? config.bot.messageFormatMode; }
+export function setMessageFormatMode(mode: MessageFormatMode): void { if (getTopicRuntimeContext()) { updateTopic({ messageFormatMode: mode }); return; } currentSettings.messageFormatMode = mode; void writeSettingsFile(currentSettings); }
+export function getShowAssistantRunFooter(): boolean { return currentTopicState()?.settings.showAssistantRunFooter ?? currentSettings.showAssistantRunFooter ?? getTopicDefaults().showAssistantRunFooter; }
+export function setShowAssistantRunFooter(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ showAssistantRunFooter: enabled }); return; } currentSettings.showAssistantRunFooter = enabled; void writeSettingsFile(currentSettings); }
+export function getSendDiffFileAttachments(): boolean { return currentTopicState()?.settings.sendDiffFileAttachments ?? currentSettings.sendDiffFileAttachments ?? getTopicDefaults().sendDiffFileAttachments; }
+export function setSendDiffFileAttachments(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ sendDiffFileAttachments: enabled }); return; } currentSettings.sendDiffFileAttachments = enabled; void writeSettingsFile(currentSettings); }
+export function getPromptQueueEnabled(): boolean { return currentTopicState()?.settings.promptQueueEnabled ?? currentSettings.promptQueueEnabled ?? getTopicDefaults().promptQueueEnabled; }
+export function setPromptQueueEnabled(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ promptQueueEnabled: enabled }); return; } currentSettings.promptQueueEnabled = enabled; void writeSettingsFile(currentSettings); }
+export function getCurrentAgent(): string | undefined { return currentTopicState()?.settings.agent ?? currentSettings.currentAgent; }
 export function setCurrentAgent(agentName: string): void { if (getTopicRuntimeContext()) { updateTopic({ agent: agentName }); return; } currentSettings.currentAgent = agentName; void writeSettingsFile(currentSettings); }
 export function clearCurrentAgent(): void { if (getTopicRuntimeContext()) { updateTopic({ agent: undefined }); return; } currentSettings.currentAgent = undefined; void writeSettingsFile(currentSettings); }
-export function getCurrentModel(): ModelInfo | undefined { return currentTopicState()?.model ?? currentSettings.currentModel; }
+export function getCurrentModel(): ModelInfo | undefined { return currentTopicState()?.settings.model ?? currentSettings.currentModel; }
 export function setCurrentModel(modelInfo: ModelInfo): void { if (getTopicRuntimeContext()) { updateTopic({ model: modelInfo }); return; } currentSettings.currentModel = modelInfo; void writeSettingsFile(currentSettings); }
 export function clearCurrentModel(): void { if (getTopicRuntimeContext()) { updateTopic({ model: undefined }); return; } currentSettings.currentModel = undefined; void writeSettingsFile(currentSettings); }
 export function getPinnedMessageId(): number | undefined { return currentSettings.pinnedMessageId; }
@@ -134,7 +157,7 @@ const VALID_MESSAGE_FORMAT_MODES: readonly MessageFormatMode[] = ["raw", "markdo
 function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
   const knownKeys = new Set(["compactOutputMode", "showThinkingContent", "showAssistantRunFooter", "responseStreamingMode", "messageFormatMode", "sendDiffFileAttachments", "promptQueueEnabled"]);
   for (const [key, value] of Object.entries(preset)) {
-    if (!knownKeys.has(key)) throw new Error(`INITIAL_SETTINGS_PRESET: unknown key "${key}".`);
+    if (!knownKeys.has(key)) throw new Error(`INITIAL_SETTINGS_PRESET: unknown key \"${key}\".`);
     if (key === "responseStreamingMode") {
       if (typeof value !== "string" || !VALID_STREAMING_MODES.includes(value as ResponseStreamingMode)) throw new Error(`INITIAL_SETTINGS_PRESET: invalid responseStreamingMode.`);
       if (currentSettings.responseStreamingMode === undefined) currentSettings.responseStreamingMode = value as ResponseStreamingMode;
@@ -142,7 +165,7 @@ function applyInitialSettingsPreset(preset: Record<string, unknown>): void {
       if (typeof value !== "string" || !VALID_MESSAGE_FORMAT_MODES.includes(value as MessageFormatMode)) throw new Error(`INITIAL_SETTINGS_PRESET: invalid messageFormatMode.`);
       if (currentSettings.messageFormatMode === undefined) currentSettings.messageFormatMode = value as MessageFormatMode;
     } else {
-      if (typeof value !== "boolean") throw new Error(`INITIAL_SETTINGS_PRESET: "${key}" must be a boolean.`);
+      if (typeof value !== "boolean") throw new Error(`INITIAL_SETTINGS_PRESET: \"${key}\" must be a boolean.`);
       if (key === "compactOutputMode" && currentSettings.compactOutputMode === undefined) currentSettings.compactOutputMode = value;
       if (key === "showThinkingContent" && currentSettings.showThinkingContent === undefined) currentSettings.showThinkingContent = value;
       if (key === "showAssistantRunFooter" && currentSettings.showAssistantRunFooter === undefined) currentSettings.showAssistantRunFooter = value;
@@ -158,5 +181,6 @@ export async function loadSettings(): Promise<void> {
   currentSettings.scheduledTasks = cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [];
   currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(loadedSettings.scheduledTaskSessionIgnores) ?? [];
   currentSettings.alwaysAllowedPermissions = Array.isArray(loadedSettings.alwaysAllowedPermissions) ? loadedSettings.alwaysAllowedPermissions.filter((rule) => rule && typeof rule.chatId === "number" && typeof rule.permission === "string" && typeof rule.createdAt === "string") : [];
+  currentSettings.topicDefaults = { ...DEFAULT_TOPIC_DEFAULTS, ...(loadedSettings.topicDefaults ?? {}) };
   applyInitialSettingsPreset(config.bot.initialSettingsPreset);
 }
