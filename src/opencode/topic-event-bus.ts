@@ -10,7 +10,7 @@ import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.
 
 export type TopicEventCallback = (event: Event) => void | Promise<void>;
 type EventLike = { type: string; properties: Record<string, unknown> };
-interface Subscriber { directory: string; callback: TopicEventCallback; }
+interface Subscriber { directory: string; sessionId?: string; callback: TopicEventCallback; }
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
 const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
@@ -21,7 +21,7 @@ let controller: AbortController | null = null;
 let generation = 0;
 const abortedRetrySessions = new Set<string>();
 function normalizeDirectory(directory: string): string { return directory.replace(/\\/g, "/").replace(/\/+$/u, "").toLowerCase(); }
-function subscriberKey(directory: string, callback: TopicEventCallback): string { return `${normalizeDirectory(directory)}:${String(callback)}`; }
+function subscriberKey(directory: string, callback: TopicEventCallback, sessionId?: string): string { return `${normalizeDirectory(directory)}:${sessionId ?? "*"}:${String(callback)}`; }
 function isEventLike(value: unknown): value is EventLike { return isRecord(value) && typeof value.type === "string" && isRecord(value.properties); }
 function getSessionId(event: EventLike): string | null { const p = event.properties; const candidates: unknown[] = [p["sessionID"], p["sessionId"], p["id"]]; if (isRecord(p["info"])) candidates.push(p["info"]["sessionID"], p["info"]["sessionId"]); if (isRecord(p["part"])) candidates.push(p["part"]["sessionID"], p["part"]["sessionId"]); return candidates.find((value): value is string => typeof value === "string" && value.length > 0) ?? null; }
 function getEventDirectory(event: EventLike): string | null { const candidates: unknown[] = [event.properties["directory"], event.properties["worktree"]]; if (isRecord(event.properties["info"])) candidates.push(event.properties["info"]["directory"], event.properties["info"]["worktree"]); return candidates.find((value): value is string => typeof value === "string" && value.length > 0) ?? null; }
@@ -34,8 +34,12 @@ function dispatchToSubscribers(event: EventLike): void { void (async () => {
   let binding = sessionId ? await findTelegramTopicBindingBySessionId(sessionId) : null;
   if (!binding && eventDirectory) binding = await findTelegramTopicBindingByDirectory(eventDirectory);
   const targets = [...subscribers.values()].filter((subscriber) => {
-    if (binding) return normalizeDirectory(subscriber.directory) === normalizeDirectory(binding.directory);
-    return eventDirectory ? normalizeDirectory(subscriber.directory) === normalizeDirectory(eventDirectory) : false;
+    if (binding) {
+      if (normalizeDirectory(subscriber.directory) !== normalizeDirectory(binding.directory)) return false;
+      return !subscriber.sessionId || subscriber.sessionId === binding.sessionId;
+    }
+    if (eventDirectory && normalizeDirectory(subscriber.directory) !== normalizeDirectory(eventDirectory)) return false;
+    return !subscriber.sessionId || subscriber.sessionId === sessionId;
   });
   if (targets.length === 0) return;
   const sdkEvent = event as unknown as Event;
@@ -44,13 +48,14 @@ function dispatchToSubscribers(event: EventLike): void { void (async () => {
       try {
         await agentArtifactDeliveryService.processEvent(sdkEvent);
         await target.callback(sdkEvent);
-      } catch (error) { logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory}`, error); }
+      } catch (error) { logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error); }
     };
-    if (binding) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, invoke);
+    if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, invoke);
     else await invoke();
   }
 })(); }
 async function startGlobalListener(localGeneration: number, localController: AbortController): Promise<void> { let reconnectAttempt = 0; while (controller === localController && !localController.signal.aborted && generation === localGeneration && subscribers.size > 0) { try { const globalEvents = (opencodeClient as typeof opencodeClient & { global?: { event?: (options?: { signal?: AbortSignal }) => Promise<{ stream?: AsyncGenerator<unknown, unknown, unknown> | null }> } }).global; if (!globalEvents?.event) throw new Error("Global event subscription is not available"); const result = await globalEvents.event({ signal: localController.signal }); if (!result.stream) throw new Error(FATAL_NO_STREAM_ERROR); reconnectAttempt = 0; logger.info(`[SessionTrace] phase=topic_global_stream_active generation=${localGeneration}`); for await (const rawEvent of result.stream) { if (localController.signal.aborted || controller !== localController || generation !== localGeneration) break; if (!isEventLike(rawEvent)) continue; const retryStatus = isRecord(rawEvent.properties["status"]) ? rawEvent.properties["status"] : null; const retrySessionId = rawEvent.properties["sessionID"]; if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] === "retry" && typeof retryStatus["message"] === "string" && isDeterministicProviderRetryError(retryStatus["message"])) { const binding = await findTelegramTopicBindingBySessionId(retrySessionId); abortDeterministicRetrySession(retrySessionId, retryStatus["message"], binding?.directory ?? "", typeof retryStatus["attempt"] === "number" ? retryStatus["attempt"] : undefined); continue; } dispatchToSubscribers(rawEvent); } } catch (error) { if (localController.signal.aborted || controller !== localController || generation !== localGeneration) break; if (!(error instanceof Error && (error.message === "SSE aborted" || error.message === SSE_IDLE_TIMEOUT_ERROR)) && !isExpectedOpencodeUnavailableError(error)) logger.warn("[TopicEventBus] Global event stream failed; retrying", error); reconnectAttempt++; if (!(await wait(getReconnectDelayMs(reconnectAttempt), localController.signal))) break; } } }
-export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback): () => void { const key = subscriberKey(directory, callback); subscribers.set(key, { directory, callback }); if (!listenerPromise) { controller = new AbortController(); const localController = controller; const localGeneration = ++generation; listenerPromise = startGlobalListener(localGeneration, localController).finally(() => { if (controller === localController) { controller = null; listenerPromise = null; } }); } return () => { subscribers.delete(key); if (subscribers.size === 0) stopTopicEventBus(); }; }
+export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string): () => void { const key = subscriberKey(directory, callback, sessionId); subscribers.set(key, { directory, sessionId, callback }); if (!listenerPromise) { controller = new AbortController(); const localController = controller; const localGeneration = ++generation; listenerPromise = startGlobalListener(localGeneration, localController).finally(() => { if (controller === localController) { controller = null; listenerPromise = null; } }); } return () => { subscribers.delete(key); if (subscribers.size === 0) stopTopicEventBus(); }; }
+export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); } if (subscribers.size === 0) stopTopicEventBus(); }
 export function stopTopicEventBus(): void { generation++; controller?.abort(); controller = null; listenerPromise = null; subscribers.clear(); abortedRetrySessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped generation=${generation}`); }
 export function setTopicEventBusIdleTimeoutForTests(_timeoutMs: number): void {}
