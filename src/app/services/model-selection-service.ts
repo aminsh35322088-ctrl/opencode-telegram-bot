@@ -91,8 +91,8 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
         return cachedValidModelKeys;
       }
 
-      const customProviders = await listCustomProviders();
-      const customProviderIds = new Set(customProviders.map((provider) => provider.id));
+      const customProviders = await listCustomProvidersByCapability("coding");
+      const customProviderIds = new Set((await listCustomProviders()).map((provider) => provider.id));
       const valid = new Set<string>();
       const all: FavoriteModel[] = [];
       const providers: ProviderInfo[] = [];
@@ -146,7 +146,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       cachedModelsByProvider = byProvider;
       modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
       logger.info(
-        `[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, providerIds=${providers.map((p) => p.id).join(",")}, copilot=removed, customProviders=authoritative`,
+        `[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, providerIds=${providers.map((p) => p.id).join(",")}, copilot=removed, customProviders=coding-only`,
       );
       return valid;
     } catch (err) {
