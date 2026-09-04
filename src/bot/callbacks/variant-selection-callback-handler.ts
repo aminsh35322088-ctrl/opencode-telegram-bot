@@ -10,21 +10,18 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { clearActiveInlineMenu, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
+import { getCurrentTopicSettings, updateCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
 
 function getTopicThreadId(ctx: Context): number | undefined {
   const message = ctx.callbackQuery?.message;
-  const threadId = message && "message_thread_id" in message
-    ? (message as { message_thread_id?: number }).message_thread_id
-    : undefined;
+  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
   return typeof threadId === "number" ? threadId : undefined;
 }
 
 export async function handleVariantSelect(ctx: Context): Promise<boolean> {
   const callbackQuery = ctx.callbackQuery;
   if (!callbackQuery?.data || !callbackQuery.data.startsWith("variant:")) return false;
-
-  const isActiveMenu = await ensureActiveInlineMenu(ctx, "variant");
-  if (!isActiveMenu) return true;
+  if (!(await ensureActiveInlineMenu(ctx, "variant"))) return true;
   logger.debug(`[VariantHandler] Received callback: ${callbackQuery.data}`);
 
   const threadId = getTopicThreadId(ctx);
@@ -40,17 +37,22 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
       return true;
     }
 
-    setCurrentVariant(variantId);
+    if (getCurrentTopicSettings()) {
+      updateCurrentTopicSettings({ variant: variantId });
+      const nextModel = { ...currentModel, variant: variantId };
+      updateCurrentTopicSettings({ model: nextModel });
+    } else {
+      updateTopicDefaults({ variant: variantId });
+      setCurrentVariant(variantId);
+    }
+
     const updatedModel = getStoredModel();
     keyboardManager.updateModel(updatedModel);
     keyboardManager.updateVariant(variantId);
-
     const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const contextInfo = pinnedMessageManager.getContextInfo() ??
-      (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
+    const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
     keyboardManager.updateAgent(currentAgent);
     if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-
     const keyboard = createMainKeyboard(currentAgent, updatedModel, contextInfo ?? undefined, formatVariantForButton(variantId));
     clearActiveInlineMenu("variant_selected", ctx.chat?.id, threadId);
     await switched(ctx, t("variant.changed_message", { name: formatVariantForDisplay(variantId) }), keyboard);
