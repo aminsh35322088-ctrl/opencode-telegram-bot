@@ -10,6 +10,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ### Changed
 - Conflicting free/paid evidence is no longer forced into a binary classification; affected models remain `unknown` so a misleading provider catalog cannot silently mark a paid model as free (or vice versa).
+- Custom-provider refreshes now detect metadata-only catalog changes, so a model changing from paid to free (or vice versa) is persisted even when its model ID stays unchanged.
 
 ## [0.25.3] - 2026-09-04
 

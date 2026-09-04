@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { analyzeModel, discoverProviderModels, isVerifiedFreeModel } from "../../../../src/app/services/model-verification-service.js";
+import { analyzeModel, discoverProviderModels, isVerifiedFreeModel } from "../../../src/app/services/model-verification-service.js";
 
 describe("model verification", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -75,5 +75,11 @@ describe("model verification", () => {
     expect(models).toHaveLength(3);
     expect(models.find((model) => model.id === "free")).toMatchObject({ freeStatus: "free", freeConfidence: "high" });
     expect(models.find((model) => model.id === "unknown")).toMatchObject({ freeStatus: "unknown", freeConfidence: "none" });
+  });
+
+  it("prefers provider metadata over a low-confidence free-name hint", () => {
+    const result = analyzeModel({ id: "free-looking-model", name: "free", pricing: { prompt: "0.001", completion: "0.001" } });
+    expect(result.status).toBe("paid");
+    expect(result.confidence).toBe("high");
   });
 });
