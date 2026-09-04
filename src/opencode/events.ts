@@ -4,6 +4,7 @@ import { logger } from "../utils/logger.js";
 import { isRecord } from "../utils/type-guards.js";
 import { isExpectedOpencodeUnavailableError } from "../utils/opencode-error.js";
 import { agentArtifactDeliveryService } from "../bot/services/agent-artifact-delivery-service.js";
+import { isDeterministicProviderRetryError } from "./provider-error-policy.js";
 
 type EventCallback = (event: Event) => void;
 type EventStreamSource = "global" | "legacy";
@@ -14,6 +15,15 @@ type EventStreamSubscription = {
 type EventSubscriptionResult = { stream?: AsyncGenerator<unknown, unknown, unknown> | null };
 type OptionalGlobalEventApi = { event?: (options?: { signal?: AbortSignal }) => Promise<EventSubscriptionResult> };
 type OptionalGlobalEventClient = { global?: OptionalGlobalEventApi };
+
+type RetryEventProperties = {
+  sessionID?: unknown;
+  status?: {
+    type?: unknown;
+    message?: unknown;
+    attempt?: unknown;
+  };
+};
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
@@ -30,6 +40,7 @@ let activeDirectory: string | null = null;
 let streamAbortController: AbortController | null = null;
 let listenerGeneration = 0;
 let consecutiveTimeouts = 0;
+const abortedDeterministicRetrySessions = new Set<string>();
 
 function traceEvent(event: Event, phase: string): void {
   const properties: Record<string, unknown> = isRecord(event.properties) ? event.properties : {};
@@ -136,6 +147,35 @@ function normalizeEvent(rawEvent: unknown, source: EventStreamSource, directory:
   return source === "global" ? normalizeGlobalEvent(rawEvent, directory) : isEventLike(rawEvent) ? rawEvent : null;
 }
 
+function getDeterministicRetryInfo(event: Event): { sessionId: string; message: string; attempt?: number } | null {
+  if (event.type !== "session.status" || !isRecord(event.properties)) return null;
+  const properties = event.properties as RetryEventProperties;
+  if (typeof properties.sessionID !== "string") return null;
+  const status = properties.status;
+  if (!status || status.type !== "retry" || typeof status.message !== "string") return null;
+  if (!isDeterministicProviderRetryError(status.message)) return null;
+  return {
+    sessionId: properties.sessionID,
+    message: status.message.trim(),
+    ...(typeof status.attempt === "number" ? { attempt: status.attempt } : {}),
+  };
+}
+
+function abortDeterministicRetrySession(sessionId: string, message: string, directory: string, attempt?: number): void {
+  if (abortedDeterministicRetrySessions.has(sessionId)) return;
+  abortedDeterministicRetrySessions.add(sessionId);
+  logger.warn(`[ProviderPolicy] Aborting non-retryable provider error: session=${sessionId} attempt=${attempt ?? "n/a"} message=${message}`);
+  void opencodeClient.session.abort({ sessionID: sessionId, directory }).then((result) => {
+    if (result.error) {
+      logger.warn(`[ProviderPolicy] Failed to abort deterministic retry session=${sessionId}`, result.error);
+      return;
+    }
+    logger.info(`[ProviderPolicy] Deterministic retry aborted: session=${sessionId}`);
+  }).catch((error) => {
+    logger.warn(`[ProviderPolicy] Exception aborting deterministic retry session=${sessionId}`, error);
+  });
+}
+
 async function subscribeToGlobalEventStream(signal: AbortSignal): Promise<EventStreamSubscription> {
   const globalEvents = (opencodeClient as OptionalGlobalEventClient).global;
   if (!globalEvents?.event) throw new Error("Global event subscription is not available");
@@ -222,6 +262,19 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
             if (!normalizedEvent) continue;
             traceEvent(normalizedEvent, "event_received");
             agentArtifactDeliveryService.processEvent(normalizedEvent);
+
+            const deterministicRetry = getDeterministicRetryInfo(normalizedEvent);
+            if (deterministicRetry) {
+              abortDeterministicRetrySession(
+                deterministicRetry.sessionId,
+                deterministicRetry.message,
+                directory,
+                deterministicRetry.attempt,
+              );
+              usefulEventCount++;
+              continue;
+            }
+
             if (normalizedEvent.type !== "server.connected") usefulEventCount++;
             const callbackSnapshot = eventCallback;
             if (callbackSnapshot) {
@@ -286,6 +339,7 @@ export function stopEventListening(): void {
   eventStream = null;
   activeDirectory = null;
   agentArtifactDeliveryService.clear();
+  abortedDeterministicRetrySessions.clear();
   logger.info(`[SessionTrace] phase=listener_stop_requested generation=${listenerGeneration}`);
 }
 
