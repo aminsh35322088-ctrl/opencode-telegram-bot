@@ -16,10 +16,7 @@ async function isOpenCodeReady(): Promise<boolean> {
   }
 }
 
-function modelsMatch(
-  previous: Array<{ id: string; name: string }>,
-  next: Array<{ id: string; name: string }>,
-): boolean {
+function modelsMatch(previous: Array<{ id: string; name: string }>, next: Array<{ id: string; name: string }>): boolean {
   if (previous.length !== next.length) return false;
   const nextById = new Map(next.map((model) => [model.id, model.name]));
   return previous.every((model) => nextById.get(model.id) === model.name);
