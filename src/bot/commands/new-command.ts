@@ -9,7 +9,6 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getTopicDefaults } from "../../app/stores/settings-store.js";
-import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { isForegroundBusy } from "../../app/services/run-control-service.js";
 import { replyBusyBlocked } from "../messages/busy-blocked-renderer.js";
@@ -91,7 +90,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           ensureEventSubscription: deps.ensureEventSubscription,
         });
 
-        const keyboard = createTopicKeyboard({ paused: false, running: false });
+        const keyboard = createTopicKeyboard({ paused: false });
         await deps.bot.api.sendMessage(
           ctx.chat.id,
           `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
