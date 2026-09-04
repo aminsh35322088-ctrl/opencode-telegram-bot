@@ -34,14 +34,11 @@ import { clearSession, getCurrentSession } from "../../app/services/session-serv
 import { stopEventListening } from "../../opencode/events.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 import { logger } from "../../utils/logger.js";
+import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
 
 const SEARCH_FLOW = "model-search";
 interface ModelCenterSearchState { stage: "input" | "results"; }
-function getTopicThreadId(ctx: Context): number | undefined {
-  const message = ctx.callbackQuery?.message;
-  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
-  return typeof threadId === "number" ? threadId : undefined;
-}
+function getTopicThreadId(ctx: Context): number | undefined { const message = ctx.callbackQuery?.message; const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined; return typeof threadId === "number" ? threadId : undefined; }
 
 export async function handleModelCenterCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
@@ -52,12 +49,7 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     if (data === MODEL_CENTER_RECENT) return await render(ctx, await buildModelCenterList("recent", fetchCurrentModel()));
     if (data === MODEL_CENTER_PROVIDERS) return await render(ctx, await buildModelCenterProviders());
     if (data === MODEL_CENTER_SEARCH || data === MODEL_CENTER_SEARCH_AGAIN) return beginSearch(ctx);
-    if (data === MODEL_CENTER_SEARCH_CANCEL) {
-      await ctx.answerCallbackQuery().catch(() => {});
-      interactionManager.clear("model_search_cancelled");
-      await ctx.deleteMessage().catch(() => {});
-      return true;
-    }
+    if (data === MODEL_CENTER_SEARCH_CANCEL) { await ctx.answerCallbackQuery().catch(() => {}); interactionManager.clear("model_search_cancelled"); await ctx.deleteMessage().catch(() => {}); return true; }
     if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
       const parts = data.slice(MODEL_CENTER_PROVIDER_PREFIX.length).split(":");
       if (parts.length !== 2) return true;
@@ -127,7 +119,7 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
     const view = await buildModelCenterSearchResults(query, fetchCurrentModel());
     const threadId = ctx.message && "message_thread_id" in ctx.message ? (ctx.message as { message_thread_id?: number }).message_thread_id : undefined;
     await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard, ...(typeof threadId === "number" ? { message_thread_id: threadId } : {}) } as never);
-    interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { menuKind: "model", flow: SEARCH_FLOW, stage: "results" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(typeof threadId === "number" ? { threadId } : {}) } });
+    interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { menuKind: "model", flow: SEARCH_FLOW, stage: "results", ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(typeof threadId === "number" ? { threadId } : {}) } });
     return true;
   } catch (error) {
     logger.error("[ModelCenter] Search failed", error);
@@ -144,17 +136,18 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   const previousModel = fetchCurrentModel();
   const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
-  if (modelChanged && currentSession) {
+  if (modelChanged && currentSession && getCurrentTopicSettings()) {
     stopEventListening();
     summaryAggregator.clear();
     clearSession();
     keyboardManager.clearContext();
     try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
-    logger.info(`[ModelCenter] Retired current session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
+    logger.info(`[ModelCenter] Retired current Topic session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
   }
 
   interactionManager.clear("model_selected");
   selectModel(modelInfo);
+  if (!getCurrentTopicSettings()) updateTopicDefaults({ model: modelInfo });
   await recordRecentModel(modelInfo);
   keyboardManager.updateModel(modelInfo);
   await pinnedMessageManager.refreshContextLimit();
