@@ -1,5 +1,10 @@
 import type { Event } from "@opencode-ai/sdk/v2";
-import { subscribeToTopicEvents, stopTopicEventBus, stopTopicEventSubscription, setTopicEventBusIdleTimeoutForTests } from "./topic-event-bus.js";
+import {
+  subscribeToTopicEvents,
+  stopTopicEventBus,
+  stopTopicEventSubscription as stopTopicEventSubscriptionInBus,
+  setTopicEventBusIdleTimeoutForTests,
+} from "./topic-event-bus.js";
 
 type EventCallback = (event: Event) => void;
 const subscriptions = new Map<string, { directory: string; sessionId?: string; callback: EventCallback; stop: () => void }>();
@@ -24,10 +29,6 @@ export function stopTopicEventSubscription(directory: string, sessionId?: string
     subscriptions.delete(key);
   }
   stopTopicEventSubscriptionInBus(directory, sessionId);
-}
-
-function stopTopicEventSubscriptionInBus(directory: string, sessionId?: string): void {
-  stopTopicEventSubscription(directory, sessionId);
 }
 
 export function stopEventListening(): void {
