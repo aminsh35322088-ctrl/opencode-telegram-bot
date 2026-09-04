@@ -99,12 +99,28 @@ function contextGauge(tokensUsed: number, tokensLimit: number): string {
 export function buildContextSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const info = keyboardManager.getContextInfo();
   if (!info || info.tokensLimit <= 0) {
-    return { text: "🧠 Context\n\nNo active session context usage is available yet.\n\nStart a chat and this page will show the real context window usage reported by OpenCode/provider metadata.\n\nThe bot does not invent token limits or provider costs.", keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
+    return {
+      text: "🧠 Context\n\nNo observed context usage is available yet.\n\nStart a chat and this page will show the effective input context reported for the latest model generation when provider metadata is available.\n\nThe bot never invents a context window or a free-tier request cap.",
+      keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
+    };
   }
   const percent = Math.round((info.tokensUsed / info.tokensLimit) * 100);
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
   return {
-    text: ["🧠 Context", "", health, "", contextGauge(info.tokensUsed, info.tokensLimit), `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`, "", "📌 This is observed session context usage, not a billing estimate.", "🗜️ Compaction remains a presentation/execution strategy and never changes the provider's actual billing rules."].join("\n"),
+    text: [
+      "🧠 Context",
+      "",
+      health,
+      "",
+      contextGauge(info.tokensUsed, info.tokensLimit),
+      `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`,
+      "",
+      "📌 Effective input context — latest observed input + cache-read tokens used for the model generation.",
+      "📐 Model window — the OpenCode/provider context limit when exposed by provider metadata.",
+      "⚠️ Free-tier request caps are provider-side constraints and are shown only when explicitly reported; they are not inferred from the model window.",
+      "",
+      "🗜️ Compaction changes the conversation context sent to the model, but does not change the provider's billing or free-tier rules.",
+    ].join("\n"),
     keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
