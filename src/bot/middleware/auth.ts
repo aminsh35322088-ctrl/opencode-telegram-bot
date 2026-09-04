@@ -15,7 +15,11 @@ import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { isReplyKeyboardButtonText } from "../message-patterns.js";
 import { openSessionInTelegramTopic, sendToTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
+import {
+  createTopicAwareBot,
+  getTelegramTopicRuntimeDependencies,
+  setActiveTelegramTopic,
+} from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
@@ -83,6 +87,11 @@ async function attachBoundTopicSession(
 
   try {
     const topicBot = createTopicAwareBot({ api: ctx.api } as unknown as Bot<Context>);
+    const runtime = getTelegramTopicRuntimeDependencies();
+    if (!runtime) {
+      throw new Error("Telegram topic runtime dependencies are not initialized");
+    }
+
     await attachToSession({
       bot: topicBot,
       chatId: ctx.chat.id,
@@ -91,7 +100,7 @@ async function attachBoundTopicSession(
         title: binding.title,
         directory: binding.directory,
       },
-      ensureEventSubscription: async () => {},
+      ensureEventSubscription: runtime.ensureEventSubscription,
     });
     return true;
   } catch (error) {
@@ -139,11 +148,16 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
     clearAllInteractionState("telegram_topic_session_opened");
 
     const topicBot = createTopicAwareBot({ api: ctx.api } as unknown as Bot<Context>);
+    const runtime = getTelegramTopicRuntimeDependencies();
+    if (!runtime) {
+      throw new Error("Telegram topic runtime dependencies are not initialized");
+    }
+
     await attachToSession({
       bot: topicBot,
       chatId,
       session: sessionInfo,
-      ensureEventSubscription: async () => {},
+      ensureEventSubscription: runtime.ensureEventSubscription,
     });
 
     await sendToTelegramTopic(
