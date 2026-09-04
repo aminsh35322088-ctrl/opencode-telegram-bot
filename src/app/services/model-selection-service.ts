@@ -29,17 +29,20 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
     try {
       const response = await opencodeClient.config.providers();
       if (response.error || !response.data) { logFailure(response.error, "error"); return cachedValidModelKeys; }
+      const customProviders = await listCustomProviders();
+      const customProviderIds = new Set(customProviders.map((provider) => provider.id));
       const valid = new Set<string>(); const all: FavoriteModel[] = []; const providers: ProviderInfo[] = []; const byProvider = new Map<string, FavoriteModel[]>();
       for (const provider of response.data.providers) {
-        if (provider.id === COPILOT_PROVIDER_ID) continue;
+        if (provider.id === COPILOT_PROVIDER_ID || customProviderIds.has(provider.id)) continue;
         const providerModels: FavoriteModel[] = Object.keys(provider.models).map((modelID) => ({ providerID: provider.id, modelID }));
         for (const model of providerModels) { valid.add(getModelKey(model.providerID, model.modelID)); all.push(model); }
         providerModels.sort((a, b) => a.modelID.localeCompare(b.modelID)); byProvider.set(provider.id, providerModels); providers.push({ id: provider.id, name: provider.name || provider.id, modelCount: providerModels.length });
       }
-      for (const provider of await listCustomProviders()) {
-        const merged = dedupeModels([...(byProvider.get(provider.id) ?? []), ...provider.models.map((model) => ({ providerID: provider.id, modelID: model.id }))]); byProvider.set(provider.id, merged);
-        for (const model of merged) { valid.add(getModelKey(model.providerID, model.modelID)); if (!all.some((item) => getModelKey(item.providerID, item.modelID) === getModelKey(model.providerID, model.modelID))) all.push(model); }
-        const existing = providers.find((item) => item.id === provider.id); if (existing) existing.modelCount = merged.length; else providers.push({ id: provider.id, name: provider.name, modelCount: merged.length });
+      for (const provider of customProviders) {
+        const providerModels = dedupeModels(provider.models.map((model) => ({ providerID: provider.id, modelID: model.id })));
+        byProvider.set(provider.id, providerModels);
+        for (const model of providerModels) { valid.add(getModelKey(model.providerID, model.modelID)); all.push(model); }
+        providers.push({ id: provider.id, name: provider.name, modelCount: providerModels.length });
       }
       const env = getEnvDefaultModel();
       if (env && !providers.some((provider) => provider.id === env.providerID)) {
@@ -50,7 +53,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
         const merged = dedupeModels([...(byProvider.get(env.providerID) ?? []), env]); byProvider.set(env.providerID, merged); providers.find((provider) => provider.id === env.providerID)!.modelCount = merged.length;
       }
       providers.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)); cachedValidModelKeys = valid; cachedAllModels = all; cachedProviders = providers; cachedModelsByProvider = byProvider; modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
-      logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, providerIds=${providers.map((p) => p.id).join(",")}, copilot=removed`); return valid;
+      logger.info(`[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, providerIds=${providers.map((p) => p.id).join(",")}, copilot=removed, customProviders=authoritative`); return valid;
     } catch (err) { logFailure(err, "exception"); return cachedValidModelKeys; } finally { modelCatalogFetchInFlight = null; }
   })(); return modelCatalogFetchInFlight;
 }
@@ -59,6 +62,7 @@ function normalizeRecentModels(state: OpenCodeModelState): FavoriteModel[] { ret
 function getOpenCodeModelStatePath() { const xdg = process.env.XDG_STATE_HOME; if (xdg?.trim()) return path.join(xdg, "opencode", "model.json"); const home = process.env.HOME || process.env.USERPROFILE || ""; return path.join(home, ".local", "state", "opencode", "model.json"); }
 export async function getModelSelectionLists(): Promise<ModelSelectionLists> { const env = getEnvDefaultModel(); try { const fs = await import("fs/promises"); const state = JSON.parse(await fs.readFile(getOpenCodeModelStatePath(), "utf-8")) as OpenCodeModelState; const valid = await getValidModelKeys(); const favorites = env ? dedupeModels([...filterModelsByCatalog(normalizeFavoriteModels(state), valid), env]) : filterModelsByCatalog(normalizeFavoriteModels(state), valid); const recent = filterModelsByCatalog(normalizeRecentModels(state), valid); const keys = new Set(favorites.map((m) => getModelKey(m.providerID, m.modelID))); return { favorites, recent: dedupeModels(recent).filter((m) => !keys.has(getModelKey(m.providerID, m.modelID))) }; } catch (err) { if (env) return { favorites: [env], recent: [] }; logger.warn("[ModelManager] OpenCode model state unavailable; returning empty favorites/recent:", err); return { favorites: [], recent: [] }; } }
 export async function reconcileStoredModelSelection(options?: { forceCatalogRefresh?: boolean }) { const valid = options?.forceCatalogRefresh ? await getValidModelKeys({ force: true }) : await getValidModelKeys(); const current = getCurrentModel(); if (!current?.providerID || !current.modelID || !valid || valid.has(getModelKey(current.providerID, current.modelID))) return; const fallback = getEnvDefaultModel(); if (fallback && valid.has(getModelKey(fallback.providerID, fallback.modelID))) { logger.warn(`[ModelManager] Stored model unavailable; falling back to ${getModelKey(fallback.providerID, fallback.modelID)}`); setCurrentModel({ ...fallback, variant: "default" }); } }
+export async function refreshModelCatalog(): Promise<void> { await getValidModelKeys({ force: true }); }
 export function __resetModelCatalogCacheForTests() { cachedValidModelKeys = null; cachedAllModels = null; cachedProviders = null; cachedModelsByProvider = null; modelCatalogCacheExpiresAt = 0; modelCatalogFetchInFlight = null; }
 export async function getFavoriteModels() { return (await getModelSelectionLists()).favorites; }
 export async function getProviders() { await getValidModelKeys(); return cachedProviders ?? []; }
