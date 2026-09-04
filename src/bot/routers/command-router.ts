@@ -55,5 +55,13 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
     }
     await next();
   });
+  bot.hears(/^⚙(?:️)? (?:Main Settings|Topic Settings|Settings)$/u, async (ctx) => {
+    try {
+      await settingsCommand(ctx as never);
+    } catch (error) {
+      logger.error("[Bot] Error opening settings from reply keyboard:", error);
+      await ctx.reply("❌ Could not open Settings. Please try again.");
+    }
+  });
   bot.command("start", startCommand); bot.command("update", updateCommand); bot.command("all", allVersionInfoCommand); bot.command("help", helpCommand); bot.command("status", statusCommand); bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand); bot.command("opencode_start", opencodeStartCommand); bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState })); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand); bot.command("messages", messagesCommand); bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand); bot.command("rename", renameCommand); bot.command("commands", commandsCommand); bot.command("skills", skillsCommand); bot.command("mcps", mcpsCommand); bot.command("memory", memoryCommand); bot.command("remember", rememberCommand); bot.command("forget", forgetCommand); bot.command("image", imageCommand); bot.command("edit", editCommand);
 }
