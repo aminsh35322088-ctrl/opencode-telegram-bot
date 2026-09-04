@@ -8,6 +8,7 @@ import { promptQueue } from "../managers/prompt-queue-manager.js";
 import { promptAttachment } from "../managers/prompt-attachment-manager.js";
 import { interactionManager } from "../managers/interaction-manager.js";
 import { keyboardManager } from "../../bot/keyboards/keyboard-manager.js";
+import { stopTopicEventSubscription } from "../../opencode/events.js";
 import { logger } from "../../utils/logger.js";
 
 function isAlreadyDeletedTopicError(error: unknown): boolean {
@@ -25,6 +26,7 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
   } catch (error) { sessionDeleteError = error; }
   if (sessionDeleteError) logger.warn(`[TelegramTopics] Session cleanup returned an error; continuing with idempotent Topic cleanup: session=${binding.sessionId}`, sessionDeleteError);
 
+  stopTopicEventSubscription(binding.directory, binding.sessionId);
   await deleteTelegramTopicWorkspace(binding.directory);
 
   try { await api.deleteForumTopic(binding.chatId, binding.threadId); }
