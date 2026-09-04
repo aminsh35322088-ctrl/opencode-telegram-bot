@@ -28,6 +28,9 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
+import { clearSession, getCurrentSession } from "../../app/services/session-service.js";
+import { stopEventListening } from "../../opencode/events.js";
+import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 import { logger } from "../../utils/logger.js";
 
 const SEARCH_FLOW = "model-search";
@@ -98,7 +101,7 @@ async function beginSearch(ctx: Context): Promise<boolean> {
   interactionManager.start({
     kind: "custom",
     expectedInput: "text",
-    metadata: { flow: SEARCH_FLOW, stage: "input", ...(ctx.chat ? { chatId: ctx.chat.id } : {}) },
+    metadata: { flow: SEARCH_FLOW, stage: "input" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}) },
   });
   await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML" });
   return true;
@@ -138,6 +141,25 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
 
 async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo): Promise<void> {
   if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id);
+
+  const previousModel = fetchCurrentModel();
+  const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
+
+  // OpenCode pins a selected model to the active session. Retire the current
+  // bot session when the user switches models so the next prompt cannot reuse
+  // an old session/model pair behind the UI's back.
+  if (modelChanged && getCurrentSession()) {
+    stopEventListening();
+    summaryAggregator.clear();
+    clearSession();
+    keyboardManager.clearContext();
+    try {
+      await pinnedMessageManager.clear();
+    } catch (error) {
+      logger.debug("[ModelCenter] Could not clear pinned message during model switch", error);
+    }
+    logger.info(`[ModelCenter] Retired current session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
+  }
 
   // Selecting a model completes the Model Center interaction. Clear it before
   // touching Telegram so a follow-up free-form prompt is never mistaken for
