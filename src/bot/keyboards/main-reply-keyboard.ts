@@ -9,7 +9,9 @@ import { getActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 const MAIN_BUTTONS = {
   history: "🕘 History",
   newChat: "💬 New Chat",
-  settings: "⚙️ Settings",
+  mainSettings: "⚙️ Main Settings",
+  topicSettings: "⚙️ Topic Settings",
+  settings: "⚙️ Main Settings",
   imageAi: "🎨 Image AI",
   deleteChat: "🗑️ Delete Chat",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
@@ -30,14 +32,24 @@ function getModelButtonLabel(currentModel: ModelInfo): string {
   return formatModelForButton(currentModel.providerID, currentModel.modelID, currentModel.name);
 }
 
+function getSettingsButton(isTopic: boolean): string {
+  return isTopic ? MAIN_BUTTONS.topicSettings : MAIN_BUTTONS.mainSettings;
+}
+
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
   for (const label of labels) keyboard.text(label).row();
 }
 
-function addRunningControls(keyboard: Keyboard, paused: boolean, isTopic: boolean): void {
+function addRunningControls(
+  keyboard: Keyboard,
+  currentModel: ModelInfo,
+  paused: boolean,
+  isTopic: boolean,
+): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   keyboard.text(MAIN_BUTTONS.imageAi).row();
-  keyboard.text(MAIN_BUTTONS.settings);
+  keyboard.text(getModelButtonLabel(currentModel)).row();
+  keyboard.text(getSettingsButton(isTopic));
   if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
   keyboard.row();
 }
@@ -46,7 +58,7 @@ function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOut
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
-  keyboard.text(MAIN_BUTTONS.settings);
+  keyboard.text(getSettingsButton(isTopic));
   if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
   keyboard.row();
 }
@@ -56,7 +68,7 @@ function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo, isTopic:
   keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.resume).text(MAIN_BUTTONS.abort).row();
-  keyboard.text(MAIN_BUTTONS.settings);
+  keyboard.text(getSettingsButton(isTopic));
   if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
   keyboard.row();
 }
@@ -68,7 +80,7 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
 
   if (options.running) {
-    addRunningControls(keyboard, effectivePaused, isTopic);
+    addRunningControls(keyboard, currentModel, effectivePaused, isTopic);
     return keyboard.resized().persistent();
   }
   if (effectivePaused) addPausedControls(keyboard, currentModel, isTopic);
