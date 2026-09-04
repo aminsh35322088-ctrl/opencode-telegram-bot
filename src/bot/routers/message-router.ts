@@ -314,6 +314,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
+  bot.hears(/^📦 Compact: (?:ON|OFF)$/, handleCompactModeButton);
+
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => {
     resetImageInteraction();
     if (await blockMenuWhileInteractionActive(ctx)) return;
