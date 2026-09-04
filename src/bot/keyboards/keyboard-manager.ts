@@ -102,7 +102,9 @@ class KeyboardManager {
     const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
 
     if (isTopic) {
-      const paused = state.sessionId ? isChatPaused(state.sessionId) : state.paused;
+      const topicState = state;
+      if (!topicState) return createMainKeyboard({ providerID: "", modelID: "" }, { running, isTopic: false });
+      const paused = topicState.sessionId ? isChatPaused(topicState.sessionId) : topicState.paused;
       return createTopicKeyboard({ paused });
     }
 
