@@ -37,7 +37,7 @@ function dispatchToSubscribers(event: EventLike): void { void (async () => {
   if (!binding && eventDirectory) {
     const directoryBindings = await findTelegramTopicBindingsByDirectory(eventDirectory);
     directoryBindingCount = directoryBindings.length;
-    if (directoryBindings.length === 1) binding = directoryBindings[0];
+    if (directoryBindings.length === 1) binding = directoryBindings[0] ?? null;
     else if (directoryBindings.length > 1) {
       topicTelemetry("ambiguous_directory_route_blocked", { directory: eventDirectory }, { type: event.type, bindingCount: directoryBindings.length });
       return;
