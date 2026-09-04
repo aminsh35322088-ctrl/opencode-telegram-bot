@@ -31,7 +31,6 @@ jobs:
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-          cache: npm
 
       - name: Show tool versions
         run: |
@@ -94,7 +93,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.determine.outputs.should_release == 'true'
-        run: npm ci
+        run: npm install
 
       - name: Lint
         if: steps.determine.outputs.should_release == 'true'
@@ -121,8 +120,6 @@ jobs:
           BODY_FILE="$RUNNER_TEMP/release-notes.md"
           CURATED_FILE="docs/release-notes/v${CURRENT_VERSION}.md"
 
-          # Prefer curated release notes committed alongside the version bump;
-          # fall back to generating them from the commit log when absent.
           if [[ -f "$CURATED_FILE" ]]; then
             echo "Using curated release notes: $CURATED_FILE"
             cp "$CURATED_FILE" "$BODY_FILE"
