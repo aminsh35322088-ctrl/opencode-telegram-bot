@@ -2,19 +2,12 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 
-export type TelegramTopicMigrationStatus = "pending" | "migrating" | "completed" | "failed";
-
 export interface TelegramTopicBinding {
   chatId: number;
   threadId: number;
   sessionId: string;
   directory: string;
-  title: string;
-  migrationStatus: TelegramTopicMigrationStatus;
-  migrationCursor: number;
   createdAt: string;
-  updatedAt: string;
-  migratedAt?: string;
 }
 
 function getStorePath(): string {
@@ -41,14 +34,7 @@ async function readBindings(): Promise<TelegramTopicBinding[]> {
         typeof value.threadId === "number" &&
         typeof value.sessionId === "string" &&
         typeof value.directory === "string" &&
-        typeof value.title === "string" &&
-        (value.migrationStatus === "pending" ||
-          value.migrationStatus === "migrating" ||
-          value.migrationStatus === "completed" ||
-          value.migrationStatus === "failed") &&
-        typeof value.migrationCursor === "number" &&
-        typeof value.createdAt === "string" &&
-        typeof value.updatedAt === "string"
+        typeof value.createdAt === "string"
       );
     });
   } catch (error) {
@@ -73,9 +59,13 @@ async function writeBindings(bindings: TelegramTopicBinding[]): Promise<void> {
   }
 }
 
-function enqueueWrite(bindings: TelegramTopicBinding[]): Promise<void> {
-  writeQueue = writeQueue.catch(() => {}).then(() => writeBindings(bindings));
-  return writeQueue;
+async function mutateBindings(mutator: (bindings: TelegramTopicBinding[]) => TelegramTopicBinding[]): Promise<void> {
+  const operation = writeQueue.catch(() => {}).then(async () => {
+    const bindings = await readBindings();
+    await writeBindings(mutator(bindings));
+  });
+  writeQueue = operation;
+  await operation;
 }
 
 export async function listTelegramTopicBindings(): Promise<TelegramTopicBinding[]> {
@@ -99,39 +89,23 @@ export async function findTelegramTopicBindingByThread(
 }
 
 export async function saveTelegramTopicBinding(binding: TelegramTopicBinding): Promise<void> {
-  const bindings = await readBindings();
-  const index = bindings.findIndex(
-    (item) =>
-      (item.chatId === binding.chatId && item.sessionId === binding.sessionId) ||
-      (item.chatId === binding.chatId && item.threadId === binding.threadId),
-  );
-
-  if (index >= 0) {
-    bindings[index] = binding;
-  } else {
-    bindings.push(binding);
-  }
-
-  await enqueueWrite(bindings);
-}
-
-export async function updateTelegramTopicBinding(
-  binding: TelegramTopicBinding,
-  changes: Partial<TelegramTopicBinding>,
-): Promise<TelegramTopicBinding> {
-  const next: TelegramTopicBinding = {
-    ...binding,
-    ...changes,
-    updatedAt: new Date().toISOString(),
-  };
-  await saveTelegramTopicBinding(next);
-  return next;
+  await mutateBindings((bindings) => {
+    const index = bindings.findIndex(
+      (item) =>
+        (item.chatId === binding.chatId && item.sessionId === binding.sessionId) ||
+        (item.chatId === binding.chatId && item.threadId === binding.threadId),
+    );
+    if (index >= 0) {
+      bindings[index] = binding;
+    } else {
+      bindings.push(binding);
+    }
+    return bindings;
+  });
 }
 
 export async function removeTelegramTopicBinding(chatId: number, sessionId: string): Promise<void> {
-  const bindings = await readBindings();
-  const filtered = bindings.filter(
-    (binding) => !(binding.chatId === chatId && binding.sessionId === sessionId),
+  await mutateBindings((bindings) =>
+    bindings.filter((binding) => !(binding.chatId === chatId && binding.sessionId === sessionId)),
   );
-  await enqueueWrite(filtered);
 }
