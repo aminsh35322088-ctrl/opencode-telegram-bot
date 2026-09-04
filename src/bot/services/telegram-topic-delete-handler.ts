@@ -35,7 +35,7 @@ function getTopicFromCallback(ctx: Context): { chatId: number; threadId: number 
   return { chatId, threadId };
 }
 
-async function showDeleteConfirmation(ctx: Context): Promise<void> {
+export async function showTelegramTopicDeleteConfirmation(ctx: Context): Promise<void> {
   const topic = getTopicFromMessage(ctx);
   if (!topic) return;
 
@@ -64,7 +64,7 @@ async function showDeleteConfirmation(ctx: Context): Promise<void> {
   );
 }
 
-async function handleDeleteCallback(ctx: Context): Promise<boolean> {
+export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (data !== DELETE_CONFIRM_CALLBACK && data !== DELETE_CANCEL_CALLBACK) return false;
 
@@ -117,7 +117,7 @@ async function handleDeleteCallback(ctx: Context): Promise<boolean> {
 }
 
 export function registerTelegramTopicDeleteHandlers(bot: Bot<Context>): void {
-  bot.hears(MAIN_BUTTONS.deleteChat, showDeleteConfirmation);
-  bot.callbackQuery(DELETE_CONFIRM_CALLBACK, handleDeleteCallback);
-  bot.callbackQuery(DELETE_CANCEL_CALLBACK, handleDeleteCallback);
+  bot.hears(MAIN_BUTTONS.deleteChat, showTelegramTopicDeleteConfirmation);
+  bot.callbackQuery(DELETE_CONFIRM_CALLBACK, handleTelegramTopicDeleteCallback);
+  bot.callbackQuery(DELETE_CANCEL_CALLBACK, handleTelegramTopicDeleteCallback);
 }
