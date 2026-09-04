@@ -43,9 +43,12 @@ class KeyboardManager {
   public clearContext(sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = null; }
   public getContextInfo(sessionId?: string): ContextInfo | null { return this.state(sessionId)?.contextInfo ?? null; }
   private buildKeyboard(sessionId?: string) {
-    const state = this.state(sessionId); const effectiveSessionId = this.activeSessionId(sessionId); const running = effectiveSessionId ? assistantRunState.hasActiveRun(effectiveSessionId) : assistantRunState.hasActiveRuns();
-    if (!state) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running, compactOutputMode: getCompactOutputMode() });
-    return createMainKeyboard(state.currentModel, { queuedPromptLabels: getQueuedPromptButtonLabels(effectiveSessionId), paused: state.sessionId ? isChatPaused(state.sessionId) : state.paused, running, compactOutputMode: getCompactOutputMode() });
+    const state = this.state(sessionId);
+    const effectiveSessionId = this.activeSessionId(sessionId);
+    const running = effectiveSessionId ? assistantRunState.hasActiveRun(effectiveSessionId) : assistantRunState.hasActiveRuns();
+    const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
+    if (!state) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running, compactOutputMode: getCompactOutputMode(), isTopic: false });
+    return createMainKeyboard(state.currentModel, { queuedPromptLabels: getQueuedPromptButtonLabels(effectiveSessionId), paused: state.sessionId ? isChatPaused(state.sessionId) : state.paused, running, compactOutputMode: getCompactOutputMode(), isTopic });
   }
   public async sendKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
     if (!this.api) return;
