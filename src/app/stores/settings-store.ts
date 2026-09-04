@@ -161,6 +161,32 @@ export function clearSession(): void {
   void writeSettingsFile(currentSettings);
 }
 
+export function isPermissionAlwaysAllowed(chatId: number, permission: string): boolean {
+  return (
+    currentSettings.alwaysAllowedPermissions?.some(
+      (rule) => rule.chatId === chatId && rule.permission === permission,
+    ) ?? false
+  );
+}
+
+export function rememberAlwaysAllowedPermission(chatId: number, permission: string): Promise<void> {
+  const current = currentSettings.alwaysAllowedPermissions ?? [];
+  if (current.some((rule) => rule.chatId === chatId && rule.permission === permission)) {
+    return Promise.resolve();
+  }
+
+  currentSettings.alwaysAllowedPermissions = [
+    ...current,
+    {
+      chatId,
+      permission,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  return writeSettingsFile(currentSettings);
+}
+
 export function getCompactOutputMode(): boolean {
   return currentSettings.compactOutputMode ?? false;
 }
@@ -403,6 +429,15 @@ export async function loadSettings(): Promise<void> {
   currentSettings.scheduledTasks = cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [];
   currentSettings.scheduledTaskSessionIgnores =
     cloneScheduledTaskSessionIgnores(loadedSettings.scheduledTaskSessionIgnores) ?? [];
+  currentSettings.alwaysAllowedPermissions = Array.isArray(loadedSettings.alwaysAllowedPermissions)
+    ? loadedSettings.alwaysAllowedPermissions.filter(
+        (rule) =>
+          rule &&
+          typeof rule.chatId === "number" &&
+          typeof rule.permission === "string" &&
+          typeof rule.createdAt === "string",
+      )
+    : [];
 
   applyInitialSettingsPreset(config.bot.initialSettingsPreset);
 

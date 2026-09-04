@@ -11,6 +11,12 @@ export interface ScheduledTaskSessionIgnoreInfo {
   createdAt: string;
 }
 
+export interface AlwaysAllowedPermissionInfo {
+  chatId: number;
+  permission: string;
+  createdAt: string;
+}
+
 export interface Settings {
   currentProject?: ProjectInfo | undefined;
   currentSession?: SessionInfo | undefined;
@@ -27,4 +33,5 @@ export interface Settings {
   sessionDirectoryCache?: SessionDirectoryCacheInfo | undefined;
   scheduledTasks?: ScheduledTask[] | undefined;
   scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[] | undefined;
+  alwaysAllowedPermissions?: AlwaysAllowedPermissionInfo[] | undefined;
 }

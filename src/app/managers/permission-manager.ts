@@ -3,6 +3,10 @@ import type {
   PermissionRequest,
   PermissionState,
 } from "../types/permission.js";
+import {
+  isPermissionAlwaysAllowed,
+  rememberAlwaysAllowedPermission,
+} from "../stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
 
 class PermissionManager {
@@ -14,17 +18,14 @@ class PermissionManager {
   private resolvedRequestIDs = new Set<string>();
   private generation = 0;
 
-  private getRequestSignature(request: PermissionRequest): string {
-    return JSON.stringify({
-      sessionID: request.sessionID,
-      permission: request.permission,
-      patterns: [...request.patterns].sort(),
-    });
+  isAlwaysAllowed(chatId: number, request: PermissionRequest): boolean {
+    return isPermissionAlwaysAllowed(chatId, request.permission);
   }
 
-  /**
-   * Register a new permission request message
-   */
+  rememberAlwaysAllowed(chatId: number, permission: string): Promise<void> {
+    return rememberAlwaysAllowedPermission(chatId, permission);
+  }
+
   startPermission(
     request: PermissionRequest,
     messageId: number,
@@ -44,8 +45,6 @@ class PermissionManager {
     const previous = this.state.requestsByMessageId.get(messageId);
     if (previous) {
       logger.warn(`[PermissionManager] Message ID already tracked, replacing: ${messageId}`);
-      // Drop the replaced request's signature so it cannot later group new
-      // requests behind a message that now shows something else.
       this.state.messageIdBySignature.delete(this.getRequestSignature(previous));
     }
 
@@ -60,9 +59,6 @@ class PermissionManager {
     return true;
   }
 
-  /**
-   * Attach an equivalent OpenCode request to an already visible Telegram permission message.
-   */
   addEquivalentRequest(
     request: PermissionRequest,
     generation: number = this.generation,
@@ -102,9 +98,6 @@ class PermissionManager {
     return { messageId, request: visibleRequest, count: requestIds.length };
   }
 
-  /**
-   * Get permission request by Telegram message ID
-   */
   getRequest(messageId: number | null): PermissionRequest | null {
     if (messageId === null) {
       return null;
@@ -113,16 +106,10 @@ class PermissionManager {
     return this.state.requestsByMessageId.get(messageId) ?? null;
   }
 
-  /**
-   * Get request ID for API reply by Telegram message ID
-   */
   getRequestID(messageId: number | null): string | null {
     return this.getRequest(messageId)?.id ?? null;
   }
 
-  /**
-   * Get all OpenCode request IDs grouped behind a Telegram message.
-   */
   getRequestIDs(messageId: number | null): string[] {
     if (messageId === null) {
       return [];
@@ -131,30 +118,18 @@ class PermissionManager {
     return [...(this.state.requestIdsByMessageId.get(messageId) ?? [])];
   }
 
-  /**
-   * Get permission type (bash, edit, etc.) by message ID
-   */
   getPermissionType(messageId: number | null): string | null {
     return this.getRequest(messageId)?.permission ?? null;
   }
 
-  /**
-   * Get patterns (commands/files) by message ID
-   */
   getPatterns(messageId: number | null): string[] {
     return this.getRequest(messageId)?.patterns ?? [];
   }
 
-  /**
-   * Check if callback message ID belongs to active permission request
-   */
   isActiveMessage(messageId: number | null): boolean {
     return messageId !== null && this.state.requestsByMessageId.has(messageId);
   }
 
-  /**
-   * Get latest Telegram message ID
-   */
   getMessageId(): number | null {
     const messageIds = this.getMessageIds();
     if (messageIds.length === 0) {
@@ -164,16 +139,10 @@ class PermissionManager {
     return messageIds[messageIds.length - 1] ?? null;
   }
 
-  /**
-   * Get Telegram message IDs for all active requests
-   */
   getMessageIds(): number[] {
     return Array.from(this.state.requestsByMessageId.keys());
   }
 
-  /**
-   * Remove permission request by Telegram message ID
-   */
   removeByMessageId(messageId: number | null): PermissionRequest | null {
     const request = this.getRequest(messageId);
     if (!request || messageId === null) {
@@ -191,9 +160,6 @@ class PermissionManager {
     return request;
   }
 
-  /**
-   * Remove all Telegram messages tracking an OpenCode permission request ID
-   */
   resolveRequest(requestID: string): number[] {
     this.resolvedRequestIDs.add(requestID);
     const removedMessageIds: number[] = [];
@@ -227,23 +193,14 @@ class PermissionManager {
     return this.generation;
   }
 
-  /**
-   * Get number of active permission requests
-   */
   getPendingCount(): number {
     return this.state.requestsByMessageId.size;
   }
 
-  /**
-   * Check if there are active permission requests
-   */
   isActive(): boolean {
     return this.state.requestsByMessageId.size > 0;
   }
 
-  /**
-   * Clear state after reply
-   */
   clear(): void {
     logger.debug(
       `[PermissionManager] Clearing permission state: pending=${this.state.requestsByMessageId.size}`,
@@ -256,6 +213,14 @@ class PermissionManager {
     };
     this.resolvedRequestIDs.clear();
     this.generation++;
+  }
+
+  private getRequestSignature(request: PermissionRequest): string {
+    return JSON.stringify({
+      sessionID: request.sessionID,
+      permission: request.permission,
+      patterns: [...request.patterns].sort(),
+    });
   }
 }
 

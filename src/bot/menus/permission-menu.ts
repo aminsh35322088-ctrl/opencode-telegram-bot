@@ -2,12 +2,13 @@ import { Context, InlineKeyboard } from "grammy";
 import { permissionManager } from "../../app/managers/permission-manager.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
+import { getCurrentProject, getCurrentSession } from "../../app/stores/settings-store.js";
+import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
 import type { PermissionRequest } from "../../app/types/permission.js";
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
 
-// Permission type display names
 const PERMISSION_NAME_KEYS: Record<string, I18nKey> = {
   bash: "permission.name.bash",
   edit: "permission.name.edit",
@@ -23,7 +24,6 @@ const PERMISSION_NAME_KEYS: Record<string, I18nKey> = {
   external_directory: "permission.name.external_directory",
 };
 
-// Permission type emojis
 const PERMISSION_EMOJIS: Record<string, string> = {
   bash: "⚡",
   edit: "✏️",
@@ -75,6 +75,52 @@ export function syncPermissionInteractionState(metadata: Record<string, unknown>
   });
 }
 
+async function autoAllowRememberedPermission(
+  chatId: number,
+  request: PermissionRequest,
+): Promise<boolean> {
+  if (!permissionManager.isAlwaysAllowed(chatId, request)) {
+    return false;
+  }
+
+  const currentProject = getCurrentProject();
+  const currentSession = getCurrentSession();
+  const directory = currentSession?.directory ?? currentProject.worktree;
+  if (!directory) {
+    logger.warn(
+      `[PermissionHandler] Cannot auto-allow remembered permission without a directory: requestID=${request.id}`,
+    );
+    return false;
+  }
+
+  try {
+    const response = await opencodeClient.permission.reply({
+      requestID: request.id,
+      directory,
+      reply: "always",
+    });
+
+    if (response.error) {
+      logger.warn(
+        `[PermissionHandler] Remembered Always Allow reply failed; showing prompt: requestID=${request.id}`,
+        response.error,
+      );
+      return false;
+    }
+
+    logger.info(
+      `[PermissionHandler] Auto-allowed remembered permission: chat=${chatId} permission=${request.permission} requestID=${request.id}`,
+    );
+    return true;
+  } catch (error) {
+    logger.warn(
+      `[PermissionHandler] Remembered Always Allow reply threw; showing prompt: requestID=${request.id}`,
+      error,
+    );
+    return false;
+  }
+}
+
 /**
  * Show permission request message with inline buttons
  */
@@ -94,10 +140,13 @@ export async function showPermissionRequest(
     return;
   }
 
+  if (await autoAllowRememberedPermission(chatId, request)) {
+    summaryAggregator.stopTypingIndicator();
+    return;
+  }
+
   const grouped = permissionManager.addEquivalentRequest(request, generation);
   if (grouped) {
-    // Re-render the visible prompt so the user can see the answer will apply
-    // to more than one pending request.
     await bot
       .editMessageText(
         chatId,
@@ -147,9 +196,6 @@ export async function showPermissionRequest(
   }
 }
 
-/**
- * Format permission request text
- */
 function formatPermissionText(request: PermissionRequest, groupedCount: number = 1): string {
   const emoji = PERMISSION_EMOJIS[request.permission] || "🔐";
   const nameKey = PERMISSION_NAME_KEYS[request.permission];
@@ -157,7 +203,6 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
 
   let text = t("permission.header", { emoji, name });
 
-  // Show patterns (commands/files)
   if (request.patterns.length > 0) {
     request.patterns.forEach((pattern) => {
       text += `• ${pattern}\n`;
@@ -171,9 +216,6 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
   return text;
 }
 
-/**
- * Build inline keyboard with permission buttons
- */
 function buildPermissionKeyboard(): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
