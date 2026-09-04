@@ -93,11 +93,13 @@ export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<b
     return true;
   }
 
+  const wasCurrentSession = getCurrentSession()?.id === binding.sessionId;
+
   try {
     await ctx.answerCallbackQuery({ text: "Deleting…" }).catch(() => {});
     await deleteTelegramTopicSession(ctx.api, binding);
 
-    if (getCurrentSession()?.id === binding.sessionId) {
+    if (wasCurrentSession) {
       detachAttachedSession("telegram_topic_deleted");
       clearAllInteractionState("telegram_topic_deleted");
     }
