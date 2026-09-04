@@ -10,8 +10,6 @@ export interface TelegramTopicRuntimeDependencies {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
-// Retained for legacy/control-plane callers. Topic event delivery itself must
-// never resolve its destination from this mutable process-global value.
 let activeTopic: TelegramTopicContext | null = null;
 let runtimeDependencies: TelegramTopicRuntimeDependencies | null = null;
 
@@ -93,19 +91,20 @@ function createTopicAwareApi(api: ApiLike, topic?: TelegramTopicContext): ApiLik
       }
 
       return (...args: unknown[]) => {
-        // A bound topic is immutable for the lifetime of this Bot wrapper.
-        // Never fall back to the mutable process-global topic here: doing so
-        // lets concurrent sessions overwrite each other's Telegram destination.
-        if (!topic) {
+        // Explicit topic bindings are immutable. The shared event bot also
+        // supports the currently active Topic for the legacy single-foreground
+        // runtime path used by incoming Topic prompts.
+        const resolvedTopic = topic ?? activeTopic;
+        if (!resolvedTopic) {
           return value.apply(target, args);
         }
 
         const chatId = typeof args[0] === "number" ? args[0] : undefined;
-        if (chatId !== undefined && chatId !== topic.chatId) {
+        if (chatId !== undefined && chatId !== resolvedTopic.chatId) {
           return value.apply(target, args);
         }
 
-        return value.apply(target, addThreadToArgs(args, topic.threadId));
+        return value.apply(target, addThreadToArgs(args, resolvedTopic.threadId));
       };
     },
   });
@@ -113,8 +112,8 @@ function createTopicAwareApi(api: ApiLike, topic?: TelegramTopicContext): ApiLik
 
 /**
  * Event subscriptions receive a bot bound to one immutable Telegram Topic.
- * This removes a class of cross-topic routing bugs caused by mutable global
- * topic state when more than one OpenCode session is active.
+ * When no explicit binding is supplied, the shared event bot follows the
+ * active foreground Topic set by session creation/selection.
  */
 export function createTopicAwareBot(
   bot: Bot<Context>,
