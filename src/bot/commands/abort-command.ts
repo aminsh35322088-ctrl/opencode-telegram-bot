@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { getCurrentSession } from "../../app/services/session-service.js";
+import { getEffectiveCurrentSession } from "../../app/services/session-service.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -20,119 +20,33 @@ export type AbortResult = "confirmed" | "unconfirmed" | "maybe-finished" | "time
 interface AbortCurrentOperationOptions { notifyUser?: boolean; }
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 function abortLocalStreaming(): void { clearAllInteractionState("abort_command"); }
-function setTopicRunState(runState: "idle" | "running" | "paused" | "aborting"): void {
-  const context = getTopicRuntimeContext();
-  if (context) updateTopicRuntimeStateSync(context.chatId, context.threadId, { runState });
-}
-async function releaseAbortBusyState(sessionId: string, reason: string): Promise<void> {
-  stopSessionStallWatchdog(sessionId);
-  foregroundSessionState.markIdle(sessionId);
-  assistantRunState.clearRun(sessionId, reason);
-  await markAttachedSessionIdle(sessionId);
-  setTopicRunState("idle");
-}
-
-async function restoreControlsAfterAbort(ctx: Context, sessionId: string): Promise<void> {
-  const topic = getTopicRuntimeContext();
-  if (topic?.sessionId === sessionId && topic.threadId !== undefined) {
-    // Abort is terminal for the current run, but it must not escape the Topic.
-    // The Topic keyboard stays visible with Pause (not Main History/New Chat).
-    keyboardManager.setPaused(false, sessionId);
-    await keyboardManager.sendKeyboardUpdate(topic.chatId, true, sessionId);
-    return;
-  }
-
-  keyboardManager.setPaused(false, sessionId);
-  const keyboard = keyboardManager.getKeyboard(sessionId);
-  if (!keyboard || !ctx.chat?.id) return;
-  await ctx.reply("⌨️ Controls restored.", { reply_markup: keyboard });
-}
-
-async function pollSessionStatus(sessionId: string, directory: string, maxWaitMs = 5000): Promise<SessionState> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < maxWaitMs) {
-    try {
-      const { data, error } = await opencodeClient.session.status({ directory });
-      if (error || !data) break;
-      const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
-      if (!sessionStatus) return "not-found";
-      if (sessionStatus.type === "idle" || sessionStatus.type === "error") return "idle";
-      if (sessionStatus.type !== "busy" && sessionStatus.type !== "retry") return "not-found";
-      await sleep(250);
-    } catch (error) { logger.warn("[Abort] Failed to poll session status:", error); break; }
-  }
-  return "busy";
-}
+function setTopicRunState(runState: "idle" | "running" | "paused" | "aborting"): void { const context = getTopicRuntimeContext(); if (context) updateTopicRuntimeStateSync(context.chatId, context.threadId, { runState }); }
+async function releaseAbortBusyState(sessionId: string, reason: string): Promise<void> { stopSessionStallWatchdog(sessionId); foregroundSessionState.markIdle(sessionId); assistantRunState.clearRun(sessionId, reason); await markAttachedSessionIdle(sessionId); setTopicRunState("idle"); }
+async function restoreControlsAfterAbort(ctx: Context, sessionId: string): Promise<void> { const topic = getTopicRuntimeContext(); if (topic?.sessionId === sessionId && topic.threadId !== undefined) { keyboardManager.setPaused(false, sessionId); await keyboardManager.sendKeyboardUpdate(topic.chatId, true, sessionId); return; } keyboardManager.setPaused(false, sessionId); const keyboard = keyboardManager.getKeyboard(sessionId); if (!keyboard || !ctx.chat?.id) return; await ctx.reply("⌨️ Controls restored.", { reply_markup: keyboard }); }
+async function pollSessionStatus(sessionId: string, directory: string, maxWaitMs = 5000): Promise<SessionState> { const startedAt = Date.now(); while (Date.now() - startedAt < maxWaitMs) { try { const { data, error } = await opencodeClient.session.status({ directory }); if (error || !data) break; const sessionStatus = (data as Record<string, { type?: string }>)[sessionId]; if (!sessionStatus) return "not-found"; if (sessionStatus.type === "idle" || sessionStatus.type === "error") return "idle"; if (sessionStatus.type !== "busy" && sessionStatus.type !== "retry") return "not-found"; await sleep(250); } catch (error) { logger.warn("[Abort] Failed to poll session status:", error); break; } } return "busy"; }
 
 export async function abortCurrentOperation(ctx: Context, options: AbortCurrentOperationOptions = {}): Promise<AbortResult> {
   const notifyUser = options.notifyUser ?? true;
   try {
-    abortLocalStreaming();
-    promptQueue.clear("abort_command");
-    promptAttachment.clear("abort_command");
-    const currentSession = getCurrentSession();
+    abortLocalStreaming(); promptQueue.clear("abort_command"); promptAttachment.clear("abort_command");
+    const currentSession = await getEffectiveCurrentSession();
     if (!currentSession) { if (notifyUser) await ctx.reply(t("stop.no_active_session")); return "no-session"; }
     setTopicRunState("aborting");
-
-    let waitingMessageId: number | null = null;
-    let chatId: number | null = null;
-    if (notifyUser) {
-      const waitingMessage = await ctx.reply(t("stop.in_progress"));
-      waitingMessageId = waitingMessage.message_id;
-      chatId = ctx.chat?.id ?? null;
-      if (!chatId) { logger.warn("[Abort] Chat context is missing while aborting active session"); setTopicRunState("idle"); return "error"; }
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    markUserAbortRequested(currentSession.id);
+    let waitingMessageId: number | null = null; let chatId: number | null = null;
+    if (notifyUser) { const waitingMessage = await ctx.reply(t("stop.in_progress")); waitingMessageId = waitingMessage.message_id; chatId = ctx.chat?.id ?? null; if (!chatId) { logger.warn("[Abort] Chat context is missing while aborting active session"); setTopicRunState("idle"); return "error"; } }
+    const controller = new AbortController(); const timeoutId = setTimeout(() => controller.abort(), 5000); markUserAbortRequested(currentSession.id);
     try {
       logger.info(`[Abort] Requesting session abort: session=${currentSession.id}`);
       const { data: abortResult, error: abortError } = await opencodeClient.session.abort({ sessionID: currentSession.id, directory: currentSession.directory }, { signal: controller.signal });
       clearTimeout(timeoutId);
       logger.info(`[Abort] Abort API result: session=${currentSession.id}, result=${String(abortResult)}, error=${abortError ? "yes" : "no"}`);
-      if (abortError) {
-        setTopicRunState("running");
-        logger.warn("[Abort] Abort request failed; preserving local busy state because remote abort is unconfirmed:", abortError);
-        if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_unconfirmed"));
-        return "unconfirmed";
-      }
-      if (abortResult !== true) {
-        const finalStatus = await pollSessionStatus(currentSession.id, currentSession.directory, 1500);
-        if (finalStatus !== "busy" && finalStatus !== "retry") await releaseAbortBusyState(currentSession.id, "abort_maybe_finished"); else setTopicRunState("running");
-        if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_maybe_finished"));
-        return finalStatus === "busy" || finalStatus === "retry" ? "unconfirmed" : "maybe-finished";
-      }
-
-      const finalStatus = await pollSessionStatus(currentSession.id, currentSession.directory, 5000);
-      logger.info(`[Abort] Final session status after abort: session=${currentSession.id}, status=${finalStatus}`);
-      if (finalStatus === "idle" || finalStatus === "not-found") {
-        await releaseAbortBusyState(currentSession.id, "abort_confirmed");
-        if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
-        await restoreControlsAfterAbort(ctx, currentSession.id);
-        return "confirmed";
-      }
-      setTopicRunState("running");
-      if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_still_busy"));
-      return "unconfirmed";
-    } catch (error) {
-      clearTimeout(timeoutId);
-      setTopicRunState("running");
-      if (error instanceof Error && error.name === "AbortError") {
-        logger.warn(`[Abort] Abort API request timed out: session=${currentSession.id}; preserving local busy state`);
-        if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_timeout"));
-        return "timeout";
-      }
-      logger.error("[Abort] Error while aborting session; preserving local busy state:", error);
-      if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_local_only"));
-      return "error";
-    }
-  } catch (error) {
-    setTopicRunState("idle");
-    logger.error("[Abort] Unexpected error:", error);
-    if (options.notifyUser ?? true) await ctx.reply(t("stop.error"));
-    return "error";
-  }
+      if (abortError) { setTopicRunState("running"); logger.warn("[Abort] Abort request failed; preserving local busy state because remote abort is unconfirmed:", abortError); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_unconfirmed")); return "unconfirmed"; }
+      if (abortResult !== true) { const finalStatus = await pollSessionStatus(currentSession.id, currentSession.directory, 1500); if (finalStatus !== "busy" && finalStatus !== "retry") await releaseAbortBusyState(currentSession.id, "abort_maybe_finished"); else setTopicRunState("running"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_maybe_finished")); return finalStatus === "busy" || finalStatus === "retry" ? "unconfirmed" : "maybe-finished"; }
+      const finalStatus = await pollSessionStatus(currentSession.id, currentSession.directory, 5000); logger.info(`[Abort] Final session status after abort: session=${currentSession.id}, status=${finalStatus}`);
+      if (finalStatus === "idle" || finalStatus === "not-found") { await releaseAbortBusyState(currentSession.id, "abort_confirmed"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success")); await restoreControlsAfterAbort(ctx, currentSession.id); return "confirmed"; }
+      setTopicRunState("running"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_still_busy")); return "unconfirmed";
+    } catch (error) { clearTimeout(timeoutId); setTopicRunState("running"); if (error instanceof Error && error.name === "AbortError") { logger.warn(`[Abort] Abort API request timed out: session=${currentSession.id}; preserving local busy state`); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_timeout")); return "timeout"; } logger.error("[Abort] Error while aborting session; preserving local busy state:", error); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_local_only")); return "error"; }
+  } catch (error) { setTopicRunState("idle"); logger.error("[Abort] Unexpected error:", error); if (options.notifyUser ?? true) await ctx.reply(t("stop.error")); return "error"; }
 }
 
 export async function abortCommand(ctx: Context): Promise<void> { await abortCurrentOperation(ctx); }
