@@ -1,6 +1,6 @@
 # OpenCode Agent Toolbelt
 
-This repository now ships an expanded agent toolbelt for the Railway runtime. OpenCode's built-in `bash`, `read`, `write`, `edit`, `grep`, `glob`, `webfetch`, `websearch`, and experimental `lsp` tools remain available; the files under `.opencode/tools/` add structured capabilities on top.
+This repository ships a focused agent toolbelt for the Railway runtime. OpenCode's built-in `bash`, `read`, `write`, `edit`, `grep`, `glob`, `webfetch`, `websearch`, and experimental `lsp` tools remain available; the files under `.opencode/tools/` add structured capabilities on top.
 
 ## Built-in capabilities
 
@@ -13,14 +13,16 @@ This repository now ships an expanded agent toolbelt for the Railway runtime. Op
 | Tool | Purpose | Permission |
 |---|---|---|
 | `browser` | Playwright browser automation: navigation, snapshots, clicks, forms, screenshots, tabs, console and network inspection | ask |
-| `test-runner` | Run project test/build/lint/typecheck scripts | allow |
-| `package-manager` | Detect npm/pnpm/yarn/bun and install/add/remove/update/list dependencies | ask |
 | `network-diagnostics` | DNS, HTTP and TCP connectivity checks | allow |
 | `system-diagnostics` | CPU, RAM, uptime, disk and process inspection | allow |
 | `database-query` | Read-only SQLite queries and schema inspection | ask |
 | `logs-observability` | Search recent runtime/application logs | allow |
 | `image-inspect` | Inspect image format, dimensions, colorspace and metadata | allow |
 | `send-file` | Deliver generated artifacts to Telegram | existing |
+| `railway` | Structured Railway project, deployment, environment and log operations | allow |
+| `safe-download` | Bounded file retrieval for supported user-requested downloads | allow |
+| `session-recovery` | Diagnose and recover stalled OpenCode sessions | allow |
+| `full-diagnostics` | Combined runtime/session diagnostics | allow |
 
 ## Browser runtime
 
@@ -34,4 +36,10 @@ The browser tool is approval-gated because it can interact with external website
 
 ## Cloud integrations
 
-Railway, Cloudflare, Vercel and other cloud APIs are intentionally **not** custom tools in this PR. They belong in **Settings → Integrations**, where credentials can be stored and switched independently, just like GitHub.
+Railway, Cloudflare, Vercel and other cloud APIs are intentionally handled through Settings → Integrations, where credentials can be stored and switched independently, just like GitHub.
+
+## Dependency and validation policy
+
+The Railway runtime has no custom package-management capability. Dependency changes are made in source control and resolved during the GitHub Actions / container build process; the running bot must not install, update, remove, or execute packages on demand.
+
+Validation is owned by GitHub Actions. The production runtime does not ship the CI-only test suite or local validation toolchain.
