@@ -39,13 +39,8 @@ function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void
       const directoryBindings = await findTelegramTopicBindingsByDirectory(directoryForLookup);
       directoryBindingCount = directoryBindings.length;
       if (directoryBindings.length === 1) binding = directoryBindings[0] ?? null;
-      else if (directoryBindings.length > 1 && sessionId) {
-        const matching = directoryBindings.find((candidate) => candidate.sessionId === sessionId);
-        if (matching) binding = matching;
-      } else if (directoryBindings.length > 1) {
-        topicTelemetry("ambiguous_directory_route_blocked", { directory: directoryForLookup }, { type: event.type, bindingCount: directoryBindings.length });
-        return;
-      }
+      else if (directoryBindings.length > 1 && sessionId) binding = directoryBindings.find((candidate) => candidate.sessionId === sessionId) ?? null;
+      else if (directoryBindings.length > 1) { topicTelemetry("ambiguous_directory_route_blocked", { directory: directoryForLookup }, { type: event.type, bindingCount: directoryBindings.length }); return; }
     }
   }
   const effectiveDirectory = normalizeDirectory(scopedDirectory ?? eventDirectory ?? binding?.directory ?? "");
@@ -59,17 +54,49 @@ function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void
   topicTelemetry("event_dispatch", { chatId: binding?.chatId, threadId: binding?.threadId, sessionId: binding?.sessionId ?? sessionId ?? undefined, directory: binding?.directory ?? eventDirectory ?? scopedDirectory ?? undefined }, { type: event.type, targets: targets.length, directoryBindingCount });
   const sdkEvent = event as unknown as Event;
   for (const target of targets) {
-    const invoke = async () => {
-      try { await agentArtifactDeliveryService.processEvent(sdkEvent); await target.callback(sdkEvent); }
-      catch (error) { logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error); }
-    };
-    if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, invoke);
-    else await invoke();
+    const invoke = async () => { try { await agentArtifactDeliveryService.processEvent(sdkEvent); await target.callback(sdkEvent); } catch (error) { logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error); } };
+    if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, invoke); else await invoke();
   }
 })(); }
-async function startDirectoryListener(directory: string, localController: AbortController): Promise<void> { let reconnectAttempt = 0; const normalized = normalizeDirectory(directory); while (!localController.signal.aborted && directoryListeners.get(normalized)?.controller === localController && subscribersForDirectory(normalized).length > 0) { try { const clientWithEvent = opencodeClient as typeof opencodeClient & { event?: (options?: { directory?: string; signal?: AbortSignal }) => Promise<{ stream?: AsyncGenerator<unknown, unknown, unknown> | null }> }; if (!clientWithEvent.event) { logger.warn(`[TopicEventBus] OpenCode directory event API is unavailable; directory=${directory}`); return; } const result = await clientWithEvent.event({ directory, signal: localController.signal }); if (!result.stream) throw new Error(FATAL_NO_STREAM_ERROR); reconnectAttempt = 0; logger.info(`[SessionTrace] phase=topic_directory_stream_active directory=${directory}`); topicTelemetry("directory_stream_active", { directory }, { subscriberCount: subscribersForDirectory(normalized).length }); for await (const rawEvent of result.stream) { if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break; if (!isEventLike(rawEvent)) continue; const retryStatus = isRecord(rawEvent.properties["status"]) ? rawEvent.properties["status"] : null; const retrySessionId = rawEvent.properties["sessionID"]; if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] === "retry" && typeof retryStatus["message"] === "string" && isDeterministicProviderRetryError(retryStatus["message"])) { abortDeterministicRetrySession(retrySessionId, retryStatus["message"], directory, typeof retryStatus["attempt"] === "number" ? retryStatus["attempt"] : undefined); continue; } dispatchToSubscribers(rawEvent, directory); } } catch (error) { if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break; if (!(error instanceof Error && (error.message === "SSE aborted" || error.message === SSE_IDLE_TIMEOUT_ERROR)) && !isExpectedOpencodeUnavailableError(error)) logger.warn(`[TopicEventBus] Directory event stream failed; retrying: directory=${directory}`, error); reconnectAttempt++; if (!(await wait(getReconnectDelayMs(reconnectAttempt), localController.signal))) break; } } }
+async function startDirectoryListener(directory: string, localController: AbortController): Promise<void> {
+  let reconnectAttempt = 0;
+  const normalized = normalizeDirectory(directory);
+  while (!localController.signal.aborted && directoryListeners.get(normalized)?.controller === localController && subscribersForDirectory(normalized).length > 0) {
+    try {
+      const clientWithEvent = opencodeClient as typeof opencodeClient & { event?: { subscribe: (options?: { directory?: string; signal?: AbortSignal }) => Promise<{ stream?: AsyncGenerator<unknown, unknown, unknown> | null }> } };
+      const eventApi = clientWithEvent.event;
+      if (!eventApi?.subscribe) { logger.warn(`[TopicEventBus] OpenCode event.subscribe API is unavailable; directory=${directory}`); return; }
+      logger.info(`[SessionTrace] phase=topic_directory_stream_connecting directory=${directory}`);
+      const result = await eventApi.subscribe({ directory, signal: localController.signal });
+      if (!result.stream) throw new Error(FATAL_NO_STREAM_ERROR);
+      reconnectAttempt = 0;
+      logger.info(`[SessionTrace] phase=topic_directory_stream_active directory=${directory}`);
+      topicTelemetry("directory_stream_active", { directory }, { subscriberCount: subscribersForDirectory(normalized).length });
+      for await (const rawEvent of result.stream) {
+        if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break;
+        if (!isEventLike(rawEvent)) continue;
+        const retryStatus = isRecord(rawEvent.properties["status"]) ? rawEvent.properties["status"] : null;
+        const retrySessionId = rawEvent.properties["sessionID"];
+        if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] === "retry" && typeof retryStatus["message"] === "string" && isDeterministicProviderRetryError(retryStatus["message"])) { abortDeterministicRetrySession(retrySessionId, retryStatus["message"], directory, typeof retryStatus["attempt"] === "number" ? retryStatus["attempt"] : undefined); continue; }
+        dispatchToSubscribers(rawEvent, directory);
+      }
+    } catch (error) {
+      if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break;
+      if (!(error instanceof Error && (error.message === "SSE aborted" || error.message === SSE_IDLE_TIMEOUT_ERROR)) && !isExpectedOpencodeUnavailableError(error)) logger.warn(`[TopicEventBus] Directory event stream failed; retrying: directory=${directory}`, error);
+      reconnectAttempt++;
+      if (!(await wait(getReconnectDelayMs(reconnectAttempt), localController.signal))) break;
+    }
+  }
+}
 function subscribersForDirectory(normalizedDirectory: string): Subscriber[] { return [...subscribers.values()].filter((subscriber) => normalizeDirectory(subscriber.directory) === normalizedDirectory); }
-function ensureDirectoryListener(directory: string): void { const normalized = normalizeDirectory(directory); if (directoryListeners.has(normalized)) return; const controller = new AbortController(); const listener: DirectoryListener = { directory, controller, promise: Promise.resolve() }; listener.promise = startDirectoryListener(directory, controller).finally(() => { if (directoryListeners.get(normalized)?.controller === controller) directoryListeners.delete(normalized); }); directoryListeners.set(normalized, listener); }
+function ensureDirectoryListener(directory: string): void {
+  const normalized = normalizeDirectory(directory);
+  if (directoryListeners.has(normalized)) return;
+  const controller = new AbortController();
+  const listener: DirectoryListener = { directory, controller, promise: Promise.resolve() };
+  directoryListeners.set(normalized, listener);
+  listener.promise = startDirectoryListener(directory, controller).finally(() => { if (directoryListeners.get(normalized)?.controller === controller) directoryListeners.delete(normalized); });
+}
 function stopDirectoryListenerIfUnused(directory: string): void { const normalized = normalizeDirectory(directory); if (subscribersForDirectory(normalized).length > 0) return; const listener = directoryListeners.get(normalized); if (!listener) return; listener.controller.abort(); directoryListeners.delete(normalized); }
 export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string): () => void { const key = subscriberKey(directory, callback, sessionId); subscribers.set(key, { directory, sessionId, callback }); topicTelemetry("subscription_added", { sessionId, directory }, { subscriberCount: subscribers.size, scoped: sessionId !== undefined }); ensureDirectoryListener(directory); return () => { if (subscribers.delete(key)) { topicTelemetry("subscription_removed", { sessionId, directory }, { subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); } }; }
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
