@@ -4,6 +4,13 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+### Added
+- Added high-confidence free-model detection for custom-provider `/models` catalogs using explicit free metadata, zero-cost pricing, provider `:free` variants, and a conservative unknown state when the provider does not expose reliable pricing.
+- Preserved model pricing/free metadata through custom-provider refreshes and exposed verified-free counts plus a verified-free filter in Model Center.
+
+### Changed
+- Conflicting free/paid evidence is no longer forced into a binary classification; affected models remain `unknown` so a misleading provider catalog cannot silently mark a paid model as free (or vice versa).
+
 ## [0.25.3] - 2026-09-04
 
 ### Changed
