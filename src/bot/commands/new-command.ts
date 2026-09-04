@@ -1,7 +1,7 @@
 import type { Bot } from "grammy";
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { setCurrentSession, getCurrentSessionDirectory } from "../../app/services/session-service.js";
+import { setCurrentSession } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
@@ -17,6 +17,10 @@ import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
+import {
+  createTelegramTopicWorkspace,
+  deleteTelegramTopicWorkspace,
+} from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 
 export interface NewCommandDeps {
@@ -43,6 +47,10 @@ export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandD
 }
 
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
+  let directory: string | null = null;
+  let sessionId: string | null = null;
+  let topicBindingCreated = false;
+
   try {
     clearPausedSession();
     keyboardManager.setPaused(false);
@@ -52,8 +60,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       return;
     }
 
-    const directory = getCurrentSessionDirectory();
-    logger.debug("[Bot] Creating new session for directory:", directory);
+    directory = await createTelegramTopicWorkspace(ctx.chat.id);
+    logger.debug("[Bot] Creating new session in isolated topic workspace:", directory);
 
     const { data: session, error } = await opencodeClient.session.create({ directory });
 
@@ -61,8 +69,9 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       throw error || new Error("No data received from server");
     }
 
+    sessionId = session.id;
     logger.info(
-      `[Bot] Created new session via /new command: id=${session.id}, title="${session.title}", directory=${directory}`,
+      `[Bot] Created new isolated session via /new command: id=${session.id}, directory=${directory}`,
     );
 
     const sessionInfo: SessionInfo = {
@@ -72,6 +81,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     };
 
     const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
+    topicBindingCreated = true;
     setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
 
     setCurrentSession(sessionInfo);
@@ -102,10 +112,29 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     );
 
     logger.info(
-      `[TelegramTopics] New Chat opened in topic: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}`,
+      `[TelegramTopics] New Chat opened in isolated workspace: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`,
     );
   } catch (error) {
     logger.error("[Bot] Error creating session:", error);
+
+    // Before the Telegram topic is persisted, the workspace/session are
+    // disposable setup state. Once a topic binding exists, keep everything so
+    // a later retry cannot orphan a live Telegram topic or its session data.
+    if (directory && !topicBindingCreated) {
+      if (sessionId) {
+        try {
+          await opencodeClient.session.delete({ sessionID: sessionId, directory });
+        } catch (cleanupError) {
+          logger.warn(`[TelegramTopics] Failed to clean up orphaned session: ${sessionId}`, cleanupError);
+        }
+      }
+      try {
+        await deleteTelegramTopicWorkspace(directory);
+      } catch (cleanupError) {
+        logger.warn(`[TelegramTopics] Failed to clean up workspace: ${directory}`, cleanupError);
+      }
+    }
+
     await ctx.reply(t("new.create_error"));
   }
 }
