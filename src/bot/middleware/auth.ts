@@ -127,6 +127,11 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
 
   try {
     const currentProject = getCurrentProject();
+    if (!currentProject) {
+      await ctx.answerCallbackQuery({ text: t("sessions.select_project_first"), show_alert: true }).catch(() => {});
+      return true;
+    }
+
     const { data: session, error } = await opencodeClient.session.get({
       sessionID: sessionId,
       directory: currentProject.worktree,
