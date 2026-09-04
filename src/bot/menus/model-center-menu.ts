@@ -4,6 +4,7 @@ import { getFavoriteModels, getRecentModels } from "../../app/services/model-pre
 import { fetchCurrentModel, getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
 import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo } from "../../app/types/model.js";
+import { logger } from "../../utils/logger.js";
 import type { Context } from "grammy";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
