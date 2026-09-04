@@ -99,9 +99,6 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       modelButton,
     ]);
 
-    // Telegram clients may keep the old persistent keyboard visible until a new
-    // message arrives. In a Topic, Main-only controls must always be consumed,
-    // never forwarded to the prompt pipeline.
     if (topic && mainButtonTexts.has(text) && !topicButtonTexts.has(text)) {
       logger.info(`[Bot] Ignoring stale Main Reply Keyboard button in Topic: thread=${ctx.message.message_thread_id}, text=${raw}`);
       return;
@@ -115,6 +112,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
 
     if (!looksLikeButton) return next();
     clearImageMode();
+    logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
 
     try {
       if (isExact(text, TOPIC_BUTTONS.imageAi) || (!topic && isExact(text, MAIN_BUTTONS.imageAi))) {
