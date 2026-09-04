@@ -1,8 +1,8 @@
 export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^(📋|🛠️|💬|🔍|📝|📄|📦|🤖)\s.+\s(?:Mode|Agent)$/;
 
-// Kept for dedicated model routing/tests. Dynamic model labels are matched
-// exactly by the router against the label currently rendered in the keyboard.
-export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s.+$/;
+// Kept for dedicated model routing/tests. The actual router matches the
+// current rendered model label exactly, so arbitrary 🧠 prompts cannot collide.
+export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s(?:(?:(?:GPT|ChatGPT|Claude|DeepSeek|Gemini|GLM|Grok|Kimi|Llama|Mistral|MiniMax|Qwen|Yi|Command|Nova|Sonnet|Opus|Haiku|o[1-9]|r[1-9])\b.*))$/i;
 export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/;
 export const CONTEXT_BUTTON_TEXT_PATTERN = /^📊(?:\s|$)/;
 export const QUEUED_PROMPT_BUTTON_TEXT_PATTERN = /^❌\s\d+\.\s/;
