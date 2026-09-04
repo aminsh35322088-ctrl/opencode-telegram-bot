@@ -125,6 +125,9 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_COMPACT_OUTPUT_CALLBACK:
         setCompactOutputMode(!getCompactOutputMode());
         break;
+      case SETTINGS_THINKING_CONTENT_CALLBACK:
+        setShowThinkingContent(!getShowThinkingContent());
+        break;
       case SETTINGS_RESPONSE_STREAMING_CALLBACK:
         setResponseStreamingMode(getNextResponseStreamingMode(getResponseStreamingMode()));
         break;
@@ -134,27 +137,22 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_DIFF_FILES_CALLBACK:
         setSendDiffFileAttachments(!getSendDiffFileAttachments());
         break;
-      case SETTINGS_THINKING_CONTENT_CALLBACK:
-        setShowThinkingContent(!getShowThinkingContent());
-        break;
       case SETTINGS_ASSISTANT_FOOTER_CALLBACK:
         setShowAssistantRunFooter(!getShowAssistantRunFooter());
         break;
       case SETTINGS_PROMPT_QUEUE_CALLBACK:
         setPromptQueueEnabled(!getPromptQueueEnabled());
+        destination = buildNotificationsSettingsView;
         break;
       default:
-        return false;
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
     }
-
-    if (callbackData === SETTINGS_CONTEXT_CALLBACK) destination = buildContextSettingsView;
-    else if (callbackData === SETTINGS_NOTIFICATIONS_CALLBACK) destination = buildNotificationsSettingsView;
-
-    await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery({ text: t("settings.saved") });
     await renderSettingsView(ctx, destination());
     return true;
   } catch (error) {
-    logger.error("[Settings] Callback failed", error);
+    logger.error("[Settings] Error handling settings callback:", error);
     await ctx.answerCallbackQuery({ text: t("callback.processing_error") }).catch(() => {});
     return true;
   }
