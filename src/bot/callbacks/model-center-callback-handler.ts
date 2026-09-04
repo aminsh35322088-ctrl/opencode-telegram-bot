@@ -36,15 +36,16 @@ import { summaryAggregator } from "../../app/managers/summary-aggregation-manage
 import { logger } from "../../utils/logger.js";
 
 const SEARCH_FLOW = "model-search";
-
-interface ModelCenterSearchState {
-  stage: "input" | "results";
+interface ModelCenterSearchState { stage: "input" | "results"; }
+function getTopicThreadId(ctx: Context): number | undefined {
+  const message = ctx.callbackQuery?.message;
+  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
+  return typeof threadId === "number" ? threadId : undefined;
 }
 
 export async function handleModelCenterCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data?.startsWith("mc:")) return false;
-
   try {
     if (data === MODEL_CENTER_ROOT) return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
     if (data === MODEL_CENTER_FAVORITES) return await render(ctx, await buildModelCenterList("favorites", fetchCurrentModel()));
@@ -64,30 +65,21 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       const page = Number.parseInt(parts[1] ?? "0", 10);
       if (!providerID || !Number.isInteger(page) || page < 0) return true;
       const provider = (await getProviders()).find((item) => item.id === providerID);
-      if (!provider) {
-        await ctx.answerCallbackQuery({ text: "Provider is no longer available.", show_alert: true }).catch(() => {});
-        return true;
-      }
+      if (!provider) { await ctx.answerCallbackQuery({ text: "Provider is no longer available.", show_alert: true }).catch(() => {}); return true; }
       return await render(ctx, await buildModelCenterProvider(provider, page, fetchCurrentModel()));
     }
     if (data.startsWith(MODEL_CENTER_FAVORITE_PREFIX)) {
       const token = data.slice(MODEL_CENTER_FAVORITE_PREFIX.length);
       const model = resolveModelCenterAction(token);
       const target = resolveModelCenterFavoriteTarget(token);
-      if (!model || !target) {
-        await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {});
-        return true;
-      }
+      if (!model || !target) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
       const added = await toggleFavoriteModel(model);
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
       return await renderFavoriteTarget(ctx, target);
     }
     if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
       const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
-      if (!model) {
-        await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {});
-        return true;
-      }
+      if (!model) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
       await applyModelSelectionAndNotify(ctx, model);
       return true;
     }
@@ -101,55 +93,41 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
 
 async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTarget): Promise<boolean> {
   switch (target.kind) {
-    case "root":
-      return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
-    case "list":
-      return await render(ctx, await buildModelCenterList(target.list, fetchCurrentModel()));
+    case "root": return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
+    case "list": return await render(ctx, await buildModelCenterList(target.list, fetchCurrentModel()));
     case "provider": {
       const provider = (await getProviders()).find((item) => item.id === target.providerID);
       if (!provider) return await render(ctx, await buildModelCenterProviders());
       return await render(ctx, await buildModelCenterProvider(provider, target.page, fetchCurrentModel()));
     }
-    case "search":
-      return await render(ctx, await buildModelCenterSearchResults(target.query, fetchCurrentModel()));
+    case "search": return await render(ctx, await buildModelCenterSearchResults(target.query, fetchCurrentModel()));
   }
 }
 
 async function beginSearch(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.deleteMessage().catch(() => {});
-  interactionManager.start({
-    kind: "custom",
-    expectedInput: "text",
-    metadata: { flow: SEARCH_FLOW, stage: "input" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}) },
-  });
-  await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML" });
+  const threadId = getTopicThreadId(ctx);
+  interactionManager.start({ kind: "custom", expectedInput: "text", metadata: { flow: SEARCH_FLOW, stage: "input" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
+  await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML", ...(threadId !== undefined ? { message_thread_id: threadId } : {}) } as never);
   return true;
 }
 
 export async function handleModelSearchTextInput(ctx: Context): Promise<boolean> {
   const state = interactionManager.getSnapshot();
   if (!state || state.kind !== "custom" || state.metadata.flow !== SEARCH_FLOW || state.metadata.stage !== "input") return false;
-
-  const query = ctx.message?.text?.trim() ?? "";
-  if (!query) {
-    await ctx.reply("🔎 Send a model name or ID to search.");
-    return true;
+  if (typeof state.metadata.chatId === "number" && state.metadata.chatId !== ctx.chat?.id) return false;
+  if (typeof state.metadata.threadId === "number") {
+    const threadId = ctx.message && "message_thread_id" in ctx.message ? (ctx.message as { message_thread_id?: number }).message_thread_id : undefined;
+    if (threadId !== state.metadata.threadId) return false;
   }
-
+  const query = ctx.message?.text?.trim() ?? "";
+  if (!query) { await ctx.reply("🔎 Send a model name or ID to search."); return true; }
   try {
     const view = await buildModelCenterSearchResults(query, fetchCurrentModel());
-    await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
-    interactionManager.start({
-      kind: "inline",
-      expectedInput: "callback",
-      metadata: {
-        menuKind: "model",
-        flow: SEARCH_FLOW,
-        stage: "results" satisfies ModelCenterSearchState["stage"],
-        ...(ctx.chat ? { chatId: ctx.chat.id } : {}),
-      },
-    });
+    const threadId = ctx.message && "message_thread_id" in ctx.message ? (ctx.message as { message_thread_id?: number }).message_thread_id : undefined;
+    await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard, ...(typeof threadId === "number" ? { message_thread_id: threadId } : {}) } as never);
+    interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { menuKind: "model", flow: SEARCH_FLOW, stage: "results" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(typeof threadId === "number" ? { threadId } : {}) } });
     return true;
   } catch (error) {
     logger.error("[ModelCenter] Search failed", error);
@@ -160,36 +138,30 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
 }
 
 async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo): Promise<void> {
-  if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id);
-
+  const threadId = getTopicThreadId(ctx);
+  const currentSession = getCurrentSession();
+  if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id, currentSession?.id, threadId);
   const previousModel = fetchCurrentModel();
   const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
-  if (modelChanged && getCurrentSession()) {
+  if (modelChanged && currentSession) {
     stopEventListening();
     summaryAggregator.clear();
     clearSession();
     keyboardManager.clearContext();
-    try {
-      await pinnedMessageManager.clear();
-    } catch (error) {
-      logger.debug("[ModelCenter] Could not clear pinned message during model switch", error);
-    }
+    try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
     logger.info(`[ModelCenter] Retired current session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
   }
 
   interactionManager.clear("model_selected");
-
   selectModel(modelInfo);
   await recordRecentModel(modelInfo);
   keyboardManager.updateModel(modelInfo);
   await pinnedMessageManager.refreshContextLimit();
-
   const currentAgent = await resolveProjectAgent(getStoredAgent());
   const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
   keyboardManager.updateAgent(currentAgent);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-
   const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
   await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
@@ -197,6 +169,7 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
 async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(view.text, { reply_markup: view.keyboard, parse_mode: "HTML" }).catch(() => {});
-  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}) } });
+  const threadId = getTopicThreadId(ctx);
+  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
   return true;
 }
