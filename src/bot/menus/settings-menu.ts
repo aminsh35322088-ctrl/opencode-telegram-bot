@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import {
   getCompactOutputMode,
+  getCurrentTopicSettings,
   getMessageFormatMode,
   getPromptQueueEnabled,
   getResponseStreamingMode,
@@ -10,6 +11,7 @@ import {
   type MessageFormatMode,
   type ResponseStreamingMode,
 } from "../../app/stores/settings-store.js";
+import { getTopicDefaults } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
@@ -18,6 +20,9 @@ export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearan
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
 export const SETTINGS_ADVANCED_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}advanced`;
+export const SETTINGS_TOPIC_DEFAULTS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}topic_defaults`;
+export const SETTINGS_AGENT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}agent`;
+export const SETTINGS_VARIANT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}variant`;
 export const SETTINGS_COMPACT_OUTPUT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}compact_output`;
 export const SETTINGS_THINKING_CONTENT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}thinking_content`;
 export const SETTINGS_RESPONSE_STREAMING_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}response_streaming`;
@@ -34,17 +39,66 @@ export function formatBooleanSettingValue(enabled: boolean): string { return ena
 export function formatResponseStreamingModeValue(mode: ResponseStreamingMode): string { return mode === "draft" ? "Live draft" : "Live edit"; }
 export function formatMessageFormatModeValue(mode: MessageFormatMode): string { return mode === "raw" ? "Raw" : "Markdown"; }
 function settingButton(label: string, value: string): string { return `${label}: ${value}`; }
-function appendSettingsBackButton(keyboard: InlineKeyboard): void { keyboard.row().text("← Settings", SETTINGS_BACK_CALLBACK); }
+function appendSettingsBackButton(keyboard: InlineKeyboard, label = "← Settings"): void { keyboard.row().text(label, SETTINGS_BACK_CALLBACK); }
+
+function formatTopicModel(): string {
+  const settings = getCurrentTopicSettings();
+  return settings?.model ? `${settings.model.providerID}/${settings.model.modelID}` : "Inherited default";
+}
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
+  const isTopic = Boolean(getCurrentTopicSettings());
+  if (isTopic) {
+    return {
+      text: "🧵 Topic Settings\n\nEverything on this page belongs only to the current Topic. Changing another Topic cannot mutate these values.",
+      keyboard: new InlineKeyboard()
+        .text(`🤖 Model: ${formatTopicModel()}`, SETTINGS_MODEL_CALLBACK).row()
+        .text("🧑‍💻 Agent", SETTINGS_AGENT_CALLBACK)
+        .text("🎛 Variant", SETTINGS_VARIANT_CALLBACK).row()
+        .text("🎨 Reply & Output", SETTINGS_APPEARANCE_CALLBACK).row()
+        .text("📥 Prompt Queue", SETTINGS_NOTIFICATIONS_CALLBACK).row()
+        .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK),
+    };
+  }
+
   return {
-    text: "⚙️ Settings\n\nConfigure the active model, reply presentation, notifications, context display, and integrations.",
+    text: "⚙️ Main Settings\n\nGlobal configuration for the bot, providers, integrations, and Topic creation defaults.",
     keyboard: new InlineKeyboard()
-      .text("🤖 Model selection", SETTINGS_MODEL_CALLBACK).row()
-      .text("🎨 Appearance", SETTINGS_APPEARANCE_CALLBACK).row()
-      .text("🔔 Notifications", SETTINGS_NOTIFICATIONS_CALLBACK).row()
-      .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
-      .text("🛠 Advanced", SETTINGS_ADVANCED_CALLBACK),
+      .text("🤖 Default Model", SETTINGS_MODEL_CALLBACK).row()
+      .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
+      .text("🔌 Providers & Models", "provider:menu").row()
+      .text("🔗 Integrations", "integration:menu").row()
+      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
+  };
+}
+
+export function buildTopicDefaultsSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  const defaults = getTopicDefaults();
+  const keyboard = new InlineKeyboard()
+    .text(settingButton("📦 Compact", formatBooleanSettingValue(defaults.compactOutputMode)), SETTINGS_COMPACT_OUTPUT_CALLBACK).row()
+    .text(settingButton("🧠 Thinking", formatBooleanSettingValue(defaults.showThinkingContent)), SETTINGS_THINKING_CONTENT_CALLBACK).row()
+    .text(`✍️ Streaming: ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, SETTINGS_RESPONSE_STREAMING_CALLBACK).row()
+    .text(`📝 Format: ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, SETTINGS_MESSAGE_FORMAT_CALLBACK).row()
+    .text(settingButton("📊 Run footer", formatBooleanSettingValue(defaults.showAssistantRunFooter)), SETTINGS_ASSISTANT_FOOTER_CALLBACK).row()
+    .text(settingButton("📎 Diff files", formatBooleanSettingValue(defaults.sendDiffFileAttachments)), SETTINGS_DIFF_FILES_CALLBACK).row()
+    .text(settingButton("📥 Prompt queue", formatBooleanSettingValue(defaults.promptQueueEnabled)), SETTINGS_PROMPT_QUEUE_CALLBACK);
+  appendSettingsBackButton(keyboard);
+  return {
+    text: [
+      "🧩 Topic Defaults",
+      "",
+      "These values are copied into a Topic only when that Topic is created.",
+      "Changing defaults later never mutates existing Topics.",
+      "",
+      `📦 Compact — ${defaults.compactOutputMode ? "ON" : "OFF"}`,
+      `🧠 Thinking — ${defaults.showThinkingContent ? "ON" : "OFF"}`,
+      `✍️ Streaming — ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`,
+      `📝 Format — ${formatMessageFormatModeValue(defaults.messageFormatMode)}`,
+      `📊 Run footer — ${defaults.showAssistantRunFooter ? "ON" : "OFF"}`,
+      `📎 Diff files — ${defaults.sendDiffFileAttachments ? "ON" : "OFF"}`,
+      `📥 Prompt queue — ${defaults.promptQueueEnabled ? "ON" : "OFF"}`,
+    ].join("\n"),
+    keyboard,
   };
 }
 
@@ -65,18 +119,16 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
   appendSettingsBackButton(keyboard);
   return {
     text: [
-      "🎨 Appearance",
+      "🎨 Reply & Output",
       "",
-      "Control how model replies look and stream in Telegram.",
+      "These settings apply only to the current Topic.",
       "",
-      `📦 Compact output — ${compact ? "ON" : "OFF"} · ${compact ? "tighter tool output and less visual noise." : "full reply presentation is preserved."}`,
-      `🧠 Thinking details — ${thinking ? "ON" : "OFF"} · ${thinking ? "show model reasoning details when available." : "hide reasoning details from the chat."}`,
-      `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)} · ${streaming === "draft" ? "use Telegram draft-style streaming when supported." : "edit the live reply message as it grows."}`,
-      `📝 Message format — ${formatMessageFormatModeValue(format)} · ${format === "raw" ? "send replies as plain text without Telegram entity formatting." : "render supported Markdown-style formatting."}`,
-      `📊 Run footer — ${footer ? "ON" : "OFF"} · ${footer ? "show completion/run metadata in the reply footer." : "hide the assistant run footer."}`,
-      `📎 Diff files — ${diff ? "ON" : "OFF"} · ${diff ? "send generated diff files when available." : "keep diff attachments out of replies."}`,
-      "",
-      "These options change chat presentation/behavior only; they do not impose provider token or cost limits.",
+      `📦 Compact output — ${compact ? "ON" : "OFF"}`,
+      `🧠 Thinking details — ${thinking ? "ON" : "OFF"}`,
+      `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)}`,
+      `📝 Message format — ${formatMessageFormatModeValue(format)}`,
+      `📊 Run footer — ${footer ? "ON" : "OFF"}`,
+      `📎 Diff files — ${diff ? "ON" : "OFF"}`,
     ].join("\n"),
     keyboard,
   };
@@ -86,7 +138,7 @@ export function buildNotificationsSettingsView(): { text: string; keyboard: Inli
   const queue = getPromptQueueEnabled();
   const keyboard = new InlineKeyboard().text(settingButton("📥 Prompt queue", formatBooleanSettingValue(queue)), SETTINGS_PROMPT_QUEUE_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "🔔 Notifications\n\nControl how incoming prompts are handled while another task is running.", keyboard };
+  return { text: "📥 Prompt Queue\n\nThis queue belongs only to the current Topic.", keyboard };
 }
 
 function contextGauge(tokensUsed: number, tokensLimit: number): string {
@@ -98,29 +150,14 @@ function contextGauge(tokensUsed: number, tokensLimit: number): string {
 
 export function buildContextSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const info = keyboardManager.getContextInfo();
-  if (!info || info.tokensLimit <= 0) {
-    return {
-      text: "🧠 Context\n\nNo observed context usage is available yet.\n\nStart a chat and this page will show the effective input context reported for the latest model generation when provider metadata is available.\n\nThe bot never invents a context window or a free-tier request cap.",
-      keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
-    };
-  }
+  if (!info || info.tokensLimit <= 0) return {
+    text: "🧠 Context\n\nNo observed context usage is available yet.",
+    keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
+  };
   const percent = Math.round((info.tokensUsed / info.tokensLimit) * 100);
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
   return {
-    text: [
-      "🧠 Context",
-      "",
-      health,
-      "",
-      contextGauge(info.tokensUsed, info.tokensLimit),
-      `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`,
-      "",
-      "📌 Effective input context — latest observed input + cache-read tokens used for the model generation.",
-      "📐 Model window — the OpenCode/provider context limit when exposed by provider metadata.",
-      "⚠️ Free-tier request caps are provider-side constraints and are shown only when explicitly reported; they are not inferred from the model window.",
-      "",
-      "🗜️ Compaction changes the conversation context sent to the model, but does not change the provider's billing or free-tier rules.",
-    ].join("\n"),
+    text: ["🧠 Context", "", health, "", contextGauge(info.tokensUsed, info.tokensLimit), `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`, "", "📌 Latest observed input context.", "📐 Model window from provider metadata when available."].join("\n"),
     keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
@@ -134,17 +171,7 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK);
   appendSettingsBackButton(keyboard);
   return {
-    text: [
-      "🛠 Advanced",
-      "",
-      "Power-user controls and OpenCode integrations.",
-      "",
-      "🔌 API Providers — configure provider credentials and available models.",
-      "🔗 Integrations — manage connected external integrations.",
-      "🔗 MCP Servers — inspect and enable/disable connected MCP servers.",
-      "🧠 Skills — browse reusable Agent workflows available to OpenCode.",
-      "🧩 Custom Commands — browse project-defined OpenCode command templates.",
-    ].join("\n"),
+    text: "🛠 Advanced\n\nGlobal integrations and OpenCode configuration.",
     keyboard,
   };
 }
