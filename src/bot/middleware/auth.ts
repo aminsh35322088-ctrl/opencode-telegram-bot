@@ -15,6 +15,7 @@ import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { isReplyKeyboardButtonText } from "../message-patterns.js";
 import { openSessionInTelegramTopic, sendToTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import {
   createTopicAwareBot,
   getTelegramTopicRuntimeDependencies,
@@ -33,15 +34,7 @@ function getTopicMessage(ctx: Context): { chatId: number; threadId: number } | n
     | undefined;
   const chatId = message?.chat?.id;
   const threadId = message?.message_thread_id;
-
-  if (
-    typeof chatId !== "number" ||
-    typeof threadId !== "number" ||
-    !message?.is_topic_message
-  ) {
-    return null;
-  }
-
+  if (typeof chatId !== "number" || typeof threadId !== "number" || !message?.is_topic_message) return null;
   return { chatId, threadId };
 }
 
@@ -78,33 +71,23 @@ async function attachBoundTopicSession(
   const title = bindingTitle(binding);
   const currentSession = getCurrentSession();
   if (currentSession?.id !== binding.sessionId || currentSession.directory !== binding.directory) {
-    setCurrentSession({
-      id: binding.sessionId,
-      title,
-      directory: binding.directory,
-    });
+    setCurrentSession({ id: binding.sessionId, title, directory: binding.directory });
     clearAllInteractionState("telegram_topic_session_switch");
   }
 
-  if (attachManager.isAttachedSession(binding.sessionId, binding.directory)) {
-    return true;
-  }
+  keyboardManager.bindTopic(ctx.api, binding.chatId, binding.threadId, binding.sessionId);
+
+  if (attachManager.isAttachedSession(binding.sessionId, binding.directory)) return true;
 
   try {
     const topicBot = createTopicAwareBot({ api: ctx.api } as unknown as Bot<Context>);
     const runtime = getTelegramTopicRuntimeDependencies();
-    if (!runtime) {
-      throw new Error("Telegram topic runtime dependencies are not initialized");
-    }
+    if (!runtime) throw new Error("Telegram topic runtime dependencies are not initialized");
 
     await attachToSession({
       bot: topicBot,
       chatId: ctx.chat.id,
-      session: {
-        id: binding.sessionId,
-        title,
-        directory: binding.directory,
-      },
+      session: { id: binding.sessionId, title, directory: binding.directory },
       ensureEventSubscription: runtime.ensureEventSubscription,
     });
     return true;
@@ -120,9 +103,7 @@ async function attachBoundTopicSession(
 async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   const chatId = ctx.chat?.id;
-  if (!data?.startsWith(SESSION_CONTINUE_CALLBACK_PREFIX) || typeof chatId !== "number") {
-    return false;
-  }
+  if (!data?.startsWith(SESSION_CONTINUE_CALLBACK_PREFIX) || typeof chatId !== "number") return false;
 
   const sessionId = data.slice(SESSION_CONTINUE_CALLBACK_PREFIX.length).trim();
   if (!sessionId) {
@@ -137,31 +118,19 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
       return true;
     }
 
-    const { data: session, error } = await opencodeClient.session.get({
-      sessionID: sessionId,
-      directory: currentProject.worktree,
-    });
+    const { data: session, error } = await opencodeClient.session.get({ sessionID: sessionId, directory: currentProject.worktree });
+    if (error || !session) throw error ?? new Error("Failed to load the selected session");
 
-    if (error || !session) {
-      throw error ?? new Error("Failed to load the selected session");
-    }
-
-    const sessionInfo = {
-      id: session.id,
-      title: session.title,
-      directory: currentProject.worktree,
-    };
+    const sessionInfo = { id: session.id, title: session.title, directory: currentProject.worktree };
     const binding = await openSessionInTelegramTopic(ctx.api, chatId, sessionInfo);
-
     setActiveTelegramTopic({ chatId, threadId: binding.threadId });
     setCurrentSession(sessionInfo);
+    keyboardManager.bindTopic(ctx.api, chatId, binding.threadId, session.id);
     clearAllInteractionState("telegram_topic_session_opened");
 
     const topicBot = createTopicAwareBot({ api: ctx.api } as unknown as Bot<Context>);
     const runtime = getTelegramTopicRuntimeDependencies();
-    if (!runtime) {
-      throw new Error("Telegram topic runtime dependencies are not initialized");
-    }
+    if (!runtime) throw new Error("Telegram topic runtime dependencies are not initialized");
 
     await attachToSession({
       bot: topicBot,
@@ -170,17 +139,10 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
       ensureEventSubscription: runtime.ensureEventSubscription,
     });
 
-    await sendToTelegramTopic(
-      ctx.api,
-      binding,
-      t("sessions.selected", { title: session.title }),
-    );
-
+    await sendToTelegramTopic(ctx.api, binding, t("sessions.selected", { title: session.title }));
     await ctx.answerCallbackQuery().catch(() => {});
     await ctx.deleteMessage().catch(() => {});
-    logger.info(
-      `[TelegramTopics] Opened History session in topic: session=${session.id}, chat=${chatId}, thread=${binding.threadId}`,
-    );
+    logger.info(`[TelegramTopics] Opened History session in topic: session=${session.id}, chat=${chatId}, thread=${binding.threadId}`);
   } catch (error) {
     logger.error("[TelegramTopics] Failed to continue session in topic:", error);
     await ctx.answerCallbackQuery({
@@ -195,25 +157,19 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
 export async function authMiddleware(ctx: Context, next: NextFunction): Promise<void> {
   const userId = ctx.from?.id;
   const allowedUserId = config.telegram.allowedUserId;
-
-  logger.debug(
-    `[Auth] Checking access: userId=${userId}, allowedUserId=${allowedUserId}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`,
-  );
+  logger.debug(`[Auth] Checking access: userId=${userId}, allowedUserId=${allowedUserId}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`);
 
   if (userId !== allowedUserId) {
     logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
     return;
   }
 
-  if (await handleSessionContinueCallback(ctx)) {
-    return;
-  }
+  if (await handleSessionContinueCallback(ctx)) return;
 
   const topic = getTopicMessage(ctx);
   if (topic) {
     setActiveTelegramTopic(topic);
     const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
-
     if (binding) {
       const attached = await attachBoundTopicSession(ctx, binding);
       if (!attached) {
@@ -226,12 +182,9 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
 
     const text = ctx.message && "text" in ctx.message ? String(ctx.message.text ?? "").trim() : "";
     if (!text.startsWith("/")) {
-      await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, {
-        message_thread_id: topic.threadId,
-      }).catch(() => {});
+      await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, { message_thread_id: topic.threadId }).catch(() => {});
       return;
     }
-
     await next();
     return;
   }
@@ -239,16 +192,11 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   const message = ctx.message;
   if (message) {
     const text = "text" in message && typeof message.text === "string" ? message.text.trim() : "";
-    const allowedMainInput =
-      text.startsWith("/") ||
-      isMainControlText(text) ||
-      hasConfigurationInteraction();
-
+    const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction();
     if (!allowedMainInput) {
       await ctx.reply(MAIN_CHAT_ONLY_HELP).catch(() => {});
       return;
     }
   }
-
   await next();
 }
