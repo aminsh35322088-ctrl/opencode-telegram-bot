@@ -1,4 +1,5 @@
 import { resetAllStreamThrottles, resetStreamThrottle } from "../../bot/streaming/stream-throttle.js";
+import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 import { logger } from "../../utils/logger.js";
 
 export interface AssistantRunStartInfo {
@@ -28,31 +29,20 @@ class AssistantRunState {
   startRun(sessionId: string, info: AssistantRunStartInfo): void {
     if (!sessionId) return;
     resetStreamThrottle(sessionId);
-    this.runs.set(sessionId, {
-      sessionId,
-      startedAt: info.startedAt,
-      configuredAgent: info.configuredAgent,
-      configuredProviderID: info.configuredProviderID,
-      configuredModelID: info.configuredModelID,
-      hasCompletedResponse: false,
-    });
-    logger.debug(
-      `[AssistantRunState] Started run: session=${sessionId}, agent=${info.configuredAgent || "unknown"}, model=${info.configuredProviderID || "unknown"}/${info.configuredModelID || "unknown"}`,
-    );
+    this.runs.set(sessionId, { sessionId, startedAt: info.startedAt, configuredAgent: info.configuredAgent, configuredProviderID: info.configuredProviderID, configuredModelID: info.configuredModelID, hasCompletedResponse: false });
+    logger.debug(`[AssistantRunState] Started run: session=${sessionId}, agent=${info.configuredAgent || "unknown"}, model=${info.configuredProviderID || "unknown"}/${info.configuredModelID || "unknown"}`);
   }
+
+  private getScopedSessionId(): string | undefined { return getTopicRuntimeContext()?.sessionId; }
 
   hasActiveRuns(): boolean {
-    return this.runs.size > 0;
+    const sessionId = this.getScopedSessionId();
+    return sessionId ? this.hasActiveRun(sessionId) : this.runs.size > 0;
   }
 
-  hasActiveRun(sessionId: string): boolean {
-    return Boolean(sessionId && this.runs.has(sessionId));
-  }
+  hasActiveRun(sessionId: string): boolean { return Boolean(sessionId && this.runs.has(sessionId)); }
 
-  getRun(sessionId: string): AssistantRunInfo | null {
-    const run = this.runs.get(sessionId);
-    return run ? { ...run } : null;
-  }
+  getRun(sessionId: string): AssistantRunInfo | null { const run = this.runs.get(sessionId); return run ? { ...run } : null; }
 
   markResponseCompleted(sessionId: string, info?: AssistantRunResolvedInfo): void {
     const run = this.runs.get(sessionId);
