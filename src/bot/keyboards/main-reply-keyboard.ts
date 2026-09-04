@@ -25,7 +25,7 @@ export interface MainKeyboardOptions {
 
 function getModelButtonLabel(currentModel: ModelInfo): string {
   if (!currentModel.providerID || !currentModel.modelID) return "🧠 Model";
-  return formatModelForButton(currentModel.providerID, currentModel.modelID);
+  return formatModelForButton(currentModel.providerID, currentModel.modelID, currentModel.name);
 }
 
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
