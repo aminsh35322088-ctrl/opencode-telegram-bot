@@ -48,7 +48,15 @@ function dedupeModels(models: FavoriteModel[]): FavoriteModel[] {
     const key = getModelKey(model.providerID, model.modelID);
     const existing = unique.get(key);
     if (!existing) unique.set(key, model);
-    else if ((!existing.name && model.name) || (!existing.freeStatus && model.freeStatus)) unique.set(key, { ...existing, ...model });
+    else {
+      const merged = { ...existing, ...model };
+      if (existing.name && !model.name) merged.name = existing.name;
+      if (existing.freeStatus && !model.freeStatus) merged.freeStatus = existing.freeStatus;
+      if (existing.freeConfidence && !model.freeConfidence) merged.freeConfidence = existing.freeConfidence;
+      if (existing.freeSource && !model.freeSource) merged.freeSource = existing.freeSource;
+      if (existing.pricing && !model.pricing) merged.pricing = existing.pricing;
+      unique.set(key, merged);
+    }
   }
   return [...unique.values()];
 }
@@ -124,6 +132,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
             name: model.name,
             freeStatus: model.freeStatus,
             freeConfidence: model.freeConfidence,
+            freeSource: model.freeSource,
             pricing: model.pricing,
           })),
         );
@@ -281,11 +290,11 @@ export async function getProviderModelsForCapability(providerID: string, capabil
     await getValidModelKeys();
     const openCodeModels = cachedModelsByProvider?.get(providerID) ?? [];
     const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-    const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name, freeStatus: m.freeStatus, freeConfidence: m.freeConfidence, pricing: m.pricing })) ?? [];
+    const customModels = customProvider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name, freeStatus: m.freeStatus, freeConfidence: m.freeConfidence, freeSource: m.freeSource, pricing: m.pricing })) ?? [];
     return dedupeModels([...openCodeModels, ...customModels]);
   }
   const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-  return provider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name, freeStatus: m.freeStatus, freeConfidence: m.freeConfidence, pricing: m.pricing })) ?? [];
+  return provider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name, freeStatus: m.freeStatus, freeConfidence: m.freeConfidence, freeSource: m.freeSource, pricing: m.pricing })) ?? [];
 }
 
 export async function resolveCatalogModel(providerID: string, modelID: string, options?: { forceRefresh?: boolean }): Promise<ModelInfo | null> {
