@@ -10,10 +10,10 @@ export const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
 const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
 
-interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; }
+interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; threadId?: number; }
 interface InlineMenuReplyOptions { menuKind: InlineMenuKind; text: string; keyboard: InlineKeyboard; parseMode?: "Markdown" | "HTML"; metadata?: InteractionMetadata; }
 
-const activeInlineMenus = new Map<number, ActiveInlineMenuMetadata>();
+const activeInlineMenus = new Map<string, ActiveInlineMenuMetadata>();
 
 export function isInlineMenuKind(value: string): value is InlineMenuKind { return INLINE_MENU_KINDS.includes(value as InlineMenuKind); }
 function getCallbackMessageId(ctx: Context): number | null { const message = ctx.callbackQuery?.message; if (!message || !("message_id" in message)) return null; const id = (message as { message_id?: number }).message_id; return typeof id === "number" ? id : null; }
@@ -22,11 +22,12 @@ function getTopicThreadId(ctx: Context): number | null {
   const message = (ctx.message ?? ctx.callbackQuery?.message) as { message_thread_id?: number } | undefined;
   return typeof message?.message_thread_id === "number" ? message.message_thread_id : null;
 }
+function menuKey(chatId: number, threadId?: number): string { return `${chatId}:${threadId ?? 0}`; }
 function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInlineMenuMetadata | null {
   if (!state || state.kind !== "inline") return null;
-  const menuKind = state.metadata.menuKind; const messageId = state.metadata.messageId;
+  const menuKind = state.metadata.menuKind; const messageId = state.metadata.messageId; const threadId = state.metadata.threadId;
   if (typeof menuKind !== "string" || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
-  return { menuKind, messageId };
+  return { menuKind, messageId, ...(typeof threadId === "number" ? { threadId } : {}) };
 }
 function getInlineCancelCallbackData(menuKind: InlineMenuKind): string { return `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`; }
 
@@ -42,75 +43,83 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
   const replyOptions: { reply_markup: InlineKeyboard; parse_mode?: "Markdown" | "HTML" } = { reply_markup: keyboard };
   if (options.parseMode) replyOptions.parse_mode = options.parseMode;
 
+  const chatId = getChatId(ctx);
+  const threadId = getTopicThreadId(ctx);
   let messageId: number;
   const callbackMessageId = getCallbackMessageId(ctx);
-  if (callbackMessageId !== null && ctx.chat?.id) {
+  if (callbackMessageId !== null && chatId !== null) {
     try {
-      await ctx.api.editMessageText(ctx.chat.id, callbackMessageId, options.text, replyOptions);
+      await ctx.api.editMessageText(chatId, callbackMessageId, options.text, replyOptions);
       messageId = callbackMessageId;
     } catch (error) {
       logger.debug("[InlineMenu] Could not edit callback message; falling back to reply", error);
-      const topicThreadId = getTopicThreadId(ctx);
       const message = await ctx.reply(options.text, {
         ...replyOptions,
-        ...(topicThreadId !== null ? { message_thread_id: topicThreadId } : {}),
+        ...(threadId !== null ? { message_thread_id: threadId } : {}),
       } as never);
       messageId = message.message_id;
     }
   } else {
-    const topicThreadId = getTopicThreadId(ctx);
     const message = await ctx.reply(options.text, {
       ...replyOptions,
-      ...(topicThreadId !== null ? { message_thread_id: topicThreadId } : {}),
+      ...(threadId !== null ? { message_thread_id: threadId } : {}),
     } as never);
     messageId = message.message_id;
   }
 
-  const chatId = getChatId(ctx);
-  if (chatId !== null) activeInlineMenus.set(chatId, { menuKind: options.menuKind, messageId });
-  interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { ...options.metadata, menuKind: options.menuKind, messageId, ...(chatId !== null ? { chatId } : {}) } });
-  logger.debug(`[InlineMenu] Opened/updated menu: kind=${options.menuKind}, messageId=${messageId}, chatId=${chatId ?? "none"}`);
+  if (chatId !== null) activeInlineMenus.set(menuKey(chatId, threadId ?? undefined), { menuKind: options.menuKind, messageId, ...(threadId !== null ? { threadId } : {}) });
+  interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { ...options.metadata, menuKind: options.menuKind, messageId, ...(chatId !== null ? { chatId } : {}), ...(threadId !== null ? { threadId } : {}) } });
+  logger.debug(`[InlineMenu] Opened/updated menu: kind=${options.menuKind}, messageId=${messageId}, chatId=${chatId ?? "none"}, threadId=${threadId ?? "main"}`);
   return messageId;
 }
 
 export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuKind): Promise<boolean> {
   const chatId = getChatId(ctx);
-  const activeMetadata = chatId !== null ? activeInlineMenus.get(chatId) ?? null : null;
+  const threadId = getTopicThreadId(ctx);
+  const activeMetadata = chatId !== null ? activeInlineMenus.get(menuKey(chatId, threadId ?? undefined)) ?? null : null;
   const callbackMessageId = getCallbackMessageId(ctx);
   const callbackData = ctx.callbackQuery?.data ?? "";
   const isActive = !!activeMetadata && callbackMessageId !== null && activeMetadata.menuKind === menuKind && activeMetadata.messageId === callbackMessageId;
   if (isActive) return true;
 
   if (chatId !== null && callbackMessageId !== null && (callbackData.startsWith(`${menuKind}:`) || callbackData.startsWith(`${INLINE_MENU_CANCEL_PREFIX}${menuKind}`))) {
-    activeInlineMenus.set(chatId, { menuKind, messageId: callbackMessageId });
-    logger.debug(`[InlineMenu] Rehydrated menu from callback: kind=${menuKind}, messageId=${callbackMessageId}, chatId=${chatId}`);
+    activeInlineMenus.set(menuKey(chatId, threadId ?? undefined), { menuKind, messageId: callbackMessageId, ...(threadId !== null ? { threadId } : {}) });
+    logger.debug(`[InlineMenu] Rehydrated menu from callback: kind=${menuKind}, messageId=${callbackMessageId}, chatId=${chatId}, threadId=${threadId ?? "main"}`);
     return true;
   }
 
-  logger.debug(`[InlineMenu] Stale callback ignored: expectedKind=${menuKind}, callbackMessageId=${callbackMessageId || "none"}, chatId=${chatId ?? "none"}`);
+  logger.debug(`[InlineMenu] Stale callback ignored: expectedKind=${menuKind}, callbackMessageId=${callbackMessageId || "none"}, chatId=${chatId ?? "none"}, threadId=${threadId ?? "main"}`);
   await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
   return false;
 }
 
 export function getActiveInlineMenu(chatId?: number): ActiveInlineMenuMetadata | null {
-  if (typeof chatId === "number") return activeInlineMenus.get(chatId) ?? null;
-  return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
+  if (typeof chatId !== "number") return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
+  const activeEntries = [...activeInlineMenus.entries()].filter(([key]) => key.startsWith(`${chatId}:`));
+  const active = activeEntries.at(-1)?.[1];
+  return active ?? null;
 }
 
 export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {
   const chatId = getChatId(ctx);
-  const active = chatId !== null ? activeInlineMenus.get(chatId) ?? null : null;
-  if (!active || !ctx.chat?.id) { clearActiveInlineMenu(reason, chatId ?? undefined); return; }
+  const threadId = getTopicThreadId(ctx);
+  const active = chatId !== null ? activeInlineMenus.get(menuKey(chatId, threadId ?? undefined)) ?? null : null;
+  if (!active || !ctx.chat?.id) { clearActiveInlineMenu(reason, chatId ?? undefined, threadId ?? undefined); return; }
   await ctx.api.deleteMessage(ctx.chat.id, active.messageId).catch(() => {});
-  clearActiveInlineMenu(reason, chatId ?? undefined);
+  clearActiveInlineMenu(reason, chatId ?? undefined, threadId ?? undefined);
 }
 
-export function clearActiveInlineMenu(reason: string, chatId?: number): void {
-  if (typeof chatId === "number") activeInlineMenus.delete(chatId);
-  else activeInlineMenus.clear();
+export function clearActiveInlineMenu(reason: string, chatId?: number, threadId?: number): void {
+  if (typeof chatId === "number") {
+    activeInlineMenus.delete(menuKey(chatId, threadId));
+    if (threadId === undefined) {
+      for (const key of activeInlineMenus.keys()) if (key.startsWith(`${chatId}:`)) activeInlineMenus.delete(key);
+    }
+  } else activeInlineMenus.clear();
   const state = interactionManager.getSnapshot();
   if (state?.kind !== "inline") return;
-  const stateChatId = state.metadata.chatId;
+  const stateChatId = state.metadata.chatId; const stateThreadId = state.metadata.threadId;
   if (typeof chatId === "number" && typeof stateChatId === "number" && stateChatId !== chatId) return;
+  if (typeof threadId === "number" && typeof stateThreadId === "number" && stateThreadId !== threadId) return;
   interactionManager.clear(reason);
 }
