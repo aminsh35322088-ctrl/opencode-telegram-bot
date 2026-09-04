@@ -1,9 +1,12 @@
-import type { Context } from "grammy";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
+import { resumePausedChatWithPrompt } from "../commands/pause-command.js";
+import type { Context } from "grammy";
 import { logger } from "../../utils/logger.js";
 import { isReplyKeyboardButtonText } from "../message-patterns.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
+import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 
 const TELEGRAM_SPLIT_CHUNK_MIN_LENGTH = 4000;
 
@@ -70,6 +73,19 @@ export function queuePromptForMerging(
   // not consume a control before the prompt router.
   if (isReservedReplyKeyboardText(text)) {
     logger.debug(`[Bot] Ignoring reply-keyboard control in prompt merger: chatId=${chatId}, text=${JSON.stringify(text)}`);
+    return;
+  }
+
+  // A paused session accepts the next normal prompt as an implicit Resume.
+  // Dispatch it immediately into the same session rather than buffering it or
+  // creating a separate run. resumePausedChatWithPrompt clears the paused flag
+  // before dispatch so the keyboard returns to ⏸️ Pause while work continues.
+  const currentSession = getCurrentSession();
+  if (currentSession && isChatPaused(currentSession.id)) {
+    logger.info(`[Pause] Treating incoming prompt as implicit resume: session=${currentSession.id}, chatId=${chatId}`);
+    void resumePausedChatWithPrompt(ctx, text, deps).catch((err) => {
+      logger.error(`[Pause] Failed to resume paused chat from prompt (chatId=${chatId})`, err);
+    });
     return;
   }
 
