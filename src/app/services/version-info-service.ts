@@ -6,7 +6,7 @@ import packageJson from "../../../package.json" with { type: "json" };
 const execFileAsync = promisify(execFile);
 const OPENCODE_VERSION_FILE = "/app/.opencode-version";
 const RELEASE_NOTES_DIR = "/app/docs/release-notes";
-const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified-v2";
+const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified-v3";
 
 export const BOT_VERSION = packageJson.version;
 
