@@ -4,6 +4,7 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { deleteTelegramTopicSession } from "../../app/services/telegram-topic-delete-service.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
+import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { logger } from "../../utils/logger.js";
 import { MAIN_BUTTONS } from "../keyboards/main-reply-keyboard.js";
 
@@ -94,6 +95,7 @@ export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<b
   try {
     await ctx.answerCallbackQuery({ text: "Deleting…" }).catch(() => {});
     await deleteTelegramTopicSession(ctx.api, binding);
+    detachAttachedSession("telegram_topic_deleted");
     clearAllInteractionState("telegram_topic_deleted");
     logger.info(
       `[TelegramTopics] Delete confirmation completed: session=${binding.sessionId}, thread=${binding.threadId}`,
