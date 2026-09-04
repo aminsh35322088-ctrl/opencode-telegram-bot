@@ -16,14 +16,8 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import {
-  openSessionInTelegramTopic,
-  sendToTelegramTopic,
-} from "../../app/services/telegram-topic-session-service.js";
-import {
-  createTopicAwareBot,
-  setActiveTelegramTopic,
-} from "../services/telegram-topic-runtime.js";
+import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
+import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -98,19 +92,14 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const variantName = formatVariantForButton(currentModel.variant || "default");
     const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName);
 
-    const topicMessage = t("new.created", { title: session.title });
-    await sendToTelegramTopic(
-      deps.bot.api,
-      binding,
-      keyboard ? `${topicMessage}\n\nUse this Topic for the conversation.` : topicMessage,
-    );
-
-    if (keyboard) {
-      await deps.bot.api.sendMessage(ctx.chat.id, "", {
+    await deps.bot.api.sendMessage(
+      ctx.chat.id,
+      `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
+      {
         message_thread_id: binding.threadId,
-        reply_markup: keyboard,
-      });
-    }
+        ...(keyboard ? { reply_markup: keyboard } : {}),
+      },
+    );
 
     logger.info(
       `[TelegramTopics] New Chat opened in topic: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}`,
