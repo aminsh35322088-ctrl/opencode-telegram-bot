@@ -34,6 +34,7 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
 
 function addRunningControls(keyboard: Keyboard, paused: boolean): void {
   keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
+  keyboard.text(MAIN_BUTTONS.imageAi).row();
 }
 
 function addIdleControls(keyboard: Keyboard, currentModel: ModelInfo, compactOutputMode: boolean): void {
@@ -53,20 +54,14 @@ function addPausedControls(keyboard: Keyboard, currentModel: ModelInfo): void {
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
   const effectivePaused = options.paused ?? isChatPaused();
-
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
 
   if (options.running) {
     addRunningControls(keyboard, effectivePaused);
     return keyboard.resized().persistent();
   }
-
-  if (effectivePaused) {
-    addPausedControls(keyboard, currentModel);
-  } else {
-    addIdleControls(keyboard, currentModel, options.compactOutputMode ?? getCompactOutputMode());
-  }
-
+  if (effectivePaused) addPausedControls(keyboard, currentModel);
+  else addIdleControls(keyboard, currentModel, options.compactOutputMode ?? getCompactOutputMode());
   return keyboard.resized().persistent();
 }
 
@@ -89,15 +84,8 @@ export function createMainKeyboard(
   paused = false,
   running = false,
 ): Keyboard {
-  if (typeof first !== "string") {
-    return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
-  }
-
-  return buildMainKeyboard(second as ModelInfo, {
-    queuedPromptLabels,
-    paused,
-    running,
-  });
+  if (typeof first !== "string") return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
+  return buildMainKeyboard(second as ModelInfo, { queuedPromptLabels, paused, running });
 }
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
