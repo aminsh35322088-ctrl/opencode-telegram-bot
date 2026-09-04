@@ -27,11 +27,6 @@ import { isReplyKeyboardButtonText, AGENT_MODE_BUTTON_TEXT_PATTERN, CONTEXT_BUTT
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 
-interface ReplyKeyboardRouterDeps {
-  bot: Bot<Context>;
-  ensureEventSubscription: (directory: string) => Promise<void>;
-}
-
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
 }
@@ -41,9 +36,12 @@ function currentModelButton(): string {
   return model.providerID && model.modelID ? formatModelForButton(model.providerID, model.modelID, model.name) : "🧠 Model";
 }
 
-function isTopicRoute(): boolean {
-  const context = getTopicRuntimeContext();
-  return Boolean(context?.sessionId && context.threadId !== undefined);
+/** Prefer the actual Telegram update over AsyncLocalStorage so stale/client-side keyboard presses are isolated too. */
+function isTopicMessage(ctx: Context): boolean {
+  const message = ctx.message as { message_thread_id?: number; is_topic_message?: boolean } | undefined;
+  if (typeof message?.message_thread_id === "number") return message.is_topic_message !== false;
+  const runtime = getTopicRuntimeContext();
+  return Boolean(runtime?.sessionId && runtime.threadId !== undefined);
 }
 
 function isExact(text: string, candidate: string): boolean {
@@ -59,22 +57,27 @@ async function menuAllowed(ctx: Context): Promise<boolean> {
   return false;
 }
 
-export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboardRouterDeps): void {
+export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void> }): void {
   bot.on("message:text", async (ctx, next) => {
     const raw = ctx.message.text;
     const text = normalized(raw);
     if (!text) return next();
 
-    const topic = isTopicRoute();
+    const topic = isTopicMessage(ctx);
     const modelButton = normalized(currentModelButton());
+    const compactOn = normalized(MAIN_BUTTONS.compact(true));
+    const compactOff = normalized(MAIN_BUTTONS.compact(false));
     const topicButtonTexts = new Set([
       normalized(TOPIC_BUTTONS.abort),
       normalized(TOPIC_BUTTONS.pause),
       normalized(TOPIC_BUTTONS.resume),
       normalized(TOPIC_BUTTONS.imageAi),
+      compactOn,
+      compactOff,
       normalized(TOPIC_BUTTONS.modelCenter),
       normalized(TOPIC_BUTTONS.deleteChat),
       normalized(TOPIC_BUTTONS.topicSettings),
+      modelButton,
     ]);
     const mainButtonTexts = new Set([
       normalized(MAIN_BUTTONS.history),
@@ -83,8 +86,8 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
       normalized(MAIN_BUTTONS.topicSettings),
       normalized(MAIN_BUTTONS.imageAi),
       normalized(MAIN_BUTTONS.deleteChat),
-      normalized(MAIN_BUTTONS.compact(getCompactOutputMode())),
-      normalized(MAIN_BUTTONS.compact(!getCompactOutputMode())),
+      compactOn,
+      compactOff,
       normalized(MAIN_BUTTONS.pause),
       normalized(MAIN_BUTTONS.resume),
       normalized(MAIN_BUTTONS.abort),
@@ -92,25 +95,25 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
       modelButton,
     ]);
 
+    // Telegram clients may keep the old persistent keyboard visible until a new
+    // message arrives. In a Topic, Main-only controls must always be consumed,
+    // never forwarded to the prompt pipeline.
+    if (topic && mainButtonTexts.has(text) && !topicButtonTexts.has(text)) {
+      logger.info(`[Bot] Ignoring stale Main Reply Keyboard button in Topic: thread=${ctx.message.message_thread_id}, text=${raw}`);
+      return;
+    }
+
     const activeRouteButtons = topic ? topicButtonTexts : mainButtonTexts;
     const looksLikeButton = activeRouteButtons.has(text) ||
       (!topic && (isReplyKeyboardButtonText(text, new Set([currentModelButton()])) ||
         AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
         QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text)));
 
-    // A stale Main keyboard can remain visible in a Topic client until Telegram
-    // receives a newer reply keyboard. Never let those stale labels become prompts.
-    if (topic && mainButtonTexts.has(text) && !topicButtonTexts.has(text)) {
-      logger.info(`[Bot] Ignoring stale Main Reply Keyboard button in Topic: thread=${getTopicRuntimeContext()?.threadId}, text=${raw}`);
-      return;
-    }
-
     if (!looksLikeButton) return next();
-
     clearImageMode();
 
     try {
-      if (isExact(text, TOPIC_BUTTONS.imageAi) || isExact(text, MAIN_BUTTONS.imageAi)) {
+      if (isExact(text, TOPIC_BUTTONS.imageAi) || (!topic && isExact(text, MAIN_BUTTONS.imageAi))) {
         await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", {
           parse_mode: "HTML",
           reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit"),
@@ -118,37 +121,46 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
         return;
       }
 
-      if (isExact(text, TOPIC_BUTTONS.pause) || isExact(text, MAIN_BUTTONS.pause)) {
-        logger.info(`[Bot] Reply Keyboard dispatch: Pause chatId=${ctx.chat.id} topic=${topic}`);
+      if (isExact(text, TOPIC_BUTTONS.pause) || (!topic && isExact(text, MAIN_BUTTONS.pause))) {
         await pauseCurrentChat(ctx);
         return;
       }
 
-      if (isExact(text, TOPIC_BUTTONS.resume) || isExact(text, MAIN_BUTTONS.resume)) {
-        logger.info(`[Bot] Reply Keyboard dispatch: Resume chatId=${ctx.chat.id} topic=${topic}`);
+      if (isExact(text, TOPIC_BUTTONS.resume) || (!topic && isExact(text, MAIN_BUTTONS.resume))) {
         await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription });
         return;
       }
 
-      if (isExact(text, TOPIC_BUTTONS.abort) || isExact(text, MAIN_BUTTONS.abort)) {
-        logger.info(`[Bot] Reply Keyboard dispatch: Abort chatId=${ctx.chat.id} topic=${topic}`);
+      if (isExact(text, TOPIC_BUTTONS.abort) || (!topic && isExact(text, MAIN_BUTTONS.abort))) {
         await abortCurrentOperation(ctx);
         return;
       }
 
       if (isExact(text, "❌ Cancel")) {
         if (isProviderWizardActive()) {
-          clearProviderWizard();
-          clearIntegrationWizard();
-          await providersCommand(ctx as never);
-          return;
+          clearProviderWizard(); clearIntegrationWizard(); await providersCommand(ctx as never); return;
         }
         if (isIntegrationWizardActive()) {
-          clearIntegrationWizard();
-          clearProviderWizard();
-          await integrationsCommand(ctx as never);
-          return;
+          clearIntegrationWizard(); clearProviderWizard(); await integrationsCommand(ctx as never); return;
         }
+        return;
+      }
+
+      if (topic && (isExact(text, compactOn) || isExact(text, compactOff))) {
+        if (!await menuAllowed(ctx)) return;
+        const enabled = !getCompactOutputMode();
+        setCompactOutputMode(enabled);
+        const keyboard = keyboardManager.getKeyboard();
+        await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {});
+        return;
+      }
+
+      if (!topic && (isExact(text, compactOn) || isExact(text, compactOff))) {
+        if (!await menuAllowed(ctx)) return;
+        const enabled = !getCompactOutputMode();
+        setCompactOutputMode(enabled);
+        const keyboard = keyboardManager.getKeyboard();
+        await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {});
         return;
       }
 
@@ -162,50 +174,39 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
         return;
       }
 
+      if (topic && isExact(text, TOPIC_BUTTONS.deleteChat)) {
+        await showTelegramTopicDeleteConfirmation(ctx);
+        return;
+      }
+
       if (!topic && isExact(text, MAIN_BUTTONS.history)) {
         if (await menuAllowed(ctx)) await sessionsCommand(ctx as never);
         return;
       }
-
       if (!topic && isExact(text, MAIN_BUTTONS.newChat)) {
         if (await menuAllowed(ctx)) await newCommand(ctx as never, deps);
         return;
       }
-
       if (!topic && (isExact(text, MAIN_BUTTONS.mainSettings) || isExact(text, MAIN_BUTTONS.topicSettings))) {
         if (await menuAllowed(ctx)) await settingsCommand(ctx as never);
         return;
       }
-
-      if (!topic && (isExact(text, MAIN_BUTTONS.compact(getCompactOutputMode())) || isExact(text, MAIN_BUTTONS.compact(!getCompactOutputMode())))) {
-        if (!await menuAllowed(ctx)) return;
-        const enabled = !getCompactOutputMode();
-        setCompactOutputMode(enabled);
-        const keyboard = keyboardManager.getKeyboard();
-        await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {});
-        return;
-      }
-
       if (!topic && isExact(text, modelButton)) {
         if (await menuAllowed(ctx)) await showModelCenterMenu(ctx);
         return;
       }
-
       if (!topic && AGENT_MODE_BUTTON_TEXT_PATTERN.test(text)) {
         if (await menuAllowed(ctx)) await showAgentSelectionMenu(ctx);
         return;
       }
-
       if (!topic && CONTEXT_BUTTON_TEXT_PATTERN.test(text)) {
         if (await menuAllowed(ctx)) await handleContextButtonPress(ctx);
         return;
       }
-
       if (!topic && VARIANT_BUTTON_TEXT_PATTERN.test(text)) {
         if (await menuAllowed(ctx)) await showVariantSelectionMenu(ctx);
         return;
       }
-
       if (!topic && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
         if (!await menuAllowed(ctx)) return;
         const queued = findQueuedPromptByButtonLabel(raw);
@@ -219,13 +220,8 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboa
         return;
       }
 
-      if (topic && isExact(text, TOPIC_BUTTONS.deleteChat)) {
-        await showTelegramTopicDeleteConfirmation(ctx);
-        return;
-      }
-
-      // Consume any recognized active-route keyboard label even when a future
-      // route-specific action has not been wired yet; never fall through to the prompt pipeline.
+      // A button is a control message, never a prompt. Consume it even if its
+      // action is intentionally unavailable in the current state.
       if (activeRouteButtons.has(text)) return;
     } catch (error) {
       logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error);
