@@ -18,6 +18,10 @@ const activeInlineMenus = new Map<number, ActiveInlineMenuMetadata>();
 export function isInlineMenuKind(value: string): value is InlineMenuKind { return INLINE_MENU_KINDS.includes(value as InlineMenuKind); }
 function getCallbackMessageId(ctx: Context): number | null { const message = ctx.callbackQuery?.message; if (!message || !("message_id" in message)) return null; const id = (message as { message_id?: number }).message_id; return typeof id === "number" ? id : null; }
 function getChatId(ctx: Context): number | null { return typeof ctx.chat?.id === "number" ? ctx.chat.id : null; }
+function getTopicThreadId(ctx: Context): number | null {
+  const message = (ctx.message ?? ctx.callbackQuery?.message) as { message_thread_id?: number } | undefined;
+  return typeof message?.message_thread_id === "number" ? message.message_thread_id : null;
+}
 function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInlineMenuMetadata | null {
   if (!state || state.kind !== "inline") return null;
   const menuKind = state.metadata.menuKind; const messageId = state.metadata.messageId;
@@ -46,11 +50,19 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
       messageId = callbackMessageId;
     } catch (error) {
       logger.debug("[InlineMenu] Could not edit callback message; falling back to reply", error);
-      const message = await ctx.reply(options.text, replyOptions);
+      const topicThreadId = getTopicThreadId(ctx);
+      const message = await ctx.reply(options.text, {
+        ...replyOptions,
+        ...(topicThreadId !== null ? { message_thread_id: topicThreadId } : {}),
+      } as never);
       messageId = message.message_id;
     }
   } else {
-    const message = await ctx.reply(options.text, replyOptions);
+    const topicThreadId = getTopicThreadId(ctx);
+    const message = await ctx.reply(options.text, {
+      ...replyOptions,
+      ...(topicThreadId !== null ? { message_thread_id: topicThreadId } : {}),
+    } as never);
     messageId = message.message_id;
   }
 
