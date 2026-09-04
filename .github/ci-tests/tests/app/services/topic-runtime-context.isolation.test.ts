@@ -3,7 +3,7 @@ import {
   getTopicRuntimeContext,
   runInTopicRuntimeContext,
   withTopicSession,
-} from "../../../../../src/app/services/topic-runtime-context.js";
+} from "../../../src/app/services/topic-runtime-context.js";
 
 describe("Topic runtime context isolation", () => {
   it("keeps concurrent topic/session context isolated across async work", async () => {
