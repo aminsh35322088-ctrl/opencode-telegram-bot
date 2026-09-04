@@ -24,6 +24,7 @@ export interface DiscoveredProviderModel {
   name: string;
   freeStatus: FreeModelStatus;
   freeConfidence: FreeModelConfidence;
+  freeSource: FreeModelEvidenceSource;
   freeReason: string;
   pricing?: ModelPricing;
 }
@@ -199,6 +200,7 @@ export async function discoverProviderModels(baseURL: string, apiKey: string): P
       name,
       freeStatus: analysis.status,
       freeConfidence: analysis.confidence,
+      freeSource: analysis.source,
       freeReason: analysis.reason,
       ...(analysis.pricing ? { pricing: analysis.pricing } : {}),
     });
