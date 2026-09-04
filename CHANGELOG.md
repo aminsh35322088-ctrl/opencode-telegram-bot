@@ -4,23 +4,32 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-09-04
+
 ### Added
-- Reworked Model Center with dedicated Favorites, Recent Models, provider browsing, model search, and per-model favorite controls.
-- Added persistent favorite and recent model storage with bounded recent history.
-- Added automatic custom-provider model catalog refresh across all configured API keys every 5 minutes, plus an immediate refresh when Model Center opens.
+- Reworked Model Center into the single canonical model UI with Favorites, Recent Models, provider browsing, model search, and per-model favorite controls.
+- Added persistent favorite and recent model state with bounded recent history.
+- Added automatic custom-provider model catalog refresh every 5 minutes, plus an immediate refresh when Model Center opens.
 
 ### Changed
-- Favorite models are now marked with `⭐` directly beside the model name everywhere they appear in Model Center lists, making favorite state visible without relying only on the action button.
-- Recent Models and Search now show each model's provider beneath the model name so identical model IDs from different providers remain distinguishable.
-- Provider-specific model lists no longer repeat the provider ID on every model button; the provider is already established by the current screen, leaving the button focused on the model name.
+- All Model Center callbacks now use the dedicated `mc:*` namespace.
+- Persistent model-selector keyboard navigation now opens the same Model Center used by Settings.
+- Favorites and Recent results show the provider beneath each model so identical model IDs remain distinguishable.
+- Provider-specific model pages no longer repeat the provider ID on every model button.
+- Custom-provider catalogs are authoritative for Model Center and replace stale OpenCode copies.
 
 ### Fixed
-- Custom-provider catalogs are now authoritative over stale OpenCode provider model lists, preventing counts such as 110 from persisting after a provider is reduced to 8 models.
-- Provider model lists are paginated to keep large catalogs usable and within Telegram keyboard/message limits.
-- Persistent Model Select button detection now matches only the canonical single-line model/provider format, preventing it from being misclassified as a normal prompt.
-- Model selection actions use short runtime callback tokens instead of embedding arbitrary provider/model IDs in Telegram callback data.
-- Live provider discovery no longer silently truncates catalogs at 100 models; refreshes now preserve the full provider `/models` response.
-- Model Center callback-token state is bounded to prevent unbounded growth during long-running bot sessions.
+- Removed the obsolete legacy Model Center menu implementation.
+- Removed legacy model callback routing and its model-index/provider-index selection flow.
+- Large provider catalogs remain paginated and live provider refreshes no longer truncate `/models` responses at 100 entries.
+- Short runtime callback tokens keep Telegram callback data bounded while a bounded in-memory token cache prevents unbounded session growth.
+- Persistent Model Select button detection remains restricted to the canonical single-line model/provider format.
+- The persistent keyboard no longer opens the obsolete AI Rules screen when the user wants to change the active model.
+
+### Release / Update notification
+- Bot version is now `v0.25.2`.
+- `/start` detects the bot-version migration and sends the previous → current version notice plus `docs/release-notes/v0.25.2.md` once per installed version.
+- `/start` continues to show both the Telegram Bot and bundled OpenCode versions.
 
 ## [0.25.1] - 2026-09-03
 
@@ -43,7 +52,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - Redesigned model selection into a cleaner Model Center with explicit current-model, favorites, recent, search, and provider browsing flows.
 - Removed redundant per-model and per-provider `verified` labels; provider/API validation remains part of the connection and catalog validation flow.
 - Moved the persistent model selector to a dedicated full-width reply-keyboard row and moved Image AI into the compact control row.
-- Preserved existing model-selection callback namespaces and added safe HTML escaping for dynamic model/provider values.
+- Preserved model-selection callback namespaces and added safe HTML escaping for dynamic model/provider values.
 
 ## [0.24.1]
 
