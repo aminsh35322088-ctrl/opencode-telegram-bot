@@ -16,6 +16,14 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
+import {
+  openSessionInTelegramTopic,
+  sendToTelegramTopic,
+} from "../../app/services/telegram-topic-session-service.js";
+import {
+  createTopicAwareBot,
+  setActiveTelegramTopic,
+} from "../services/telegram-topic-runtime.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -68,12 +76,16 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       title: session.title,
       directory,
     };
+
+    const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
+    setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
+
     setCurrentSession(sessionInfo);
     clearAllInteractionState("session_created");
     await ingestSessionInfoForCache(session);
 
     await attachToSession({
-      bot: deps.bot,
+      bot: createTopicAwareBot(deps.bot),
       chatId: ctx.chat.id,
       session: sessionInfo,
       ensureEventSubscription: deps.ensureEventSubscription,
@@ -86,9 +98,23 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const variantName = formatVariantForButton(currentModel.variant || "default");
     const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName);
 
-    await ctx.reply(t("new.created", { title: session.title }), {
-      reply_markup: keyboard,
-    });
+    const topicMessage = t("new.created", { title: session.title });
+    await sendToTelegramTopic(
+      deps.bot.api,
+      binding,
+      keyboard ? `${topicMessage}\n\nUse this Topic for the conversation.` : topicMessage,
+    );
+
+    if (keyboard) {
+      await deps.bot.api.sendMessage(ctx.chat.id, "", {
+        message_thread_id: binding.threadId,
+        reply_markup: keyboard,
+      });
+    }
+
+    logger.info(
+      `[TelegramTopics] New Chat opened in topic: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}`,
+    );
   } catch (error) {
     logger.error("[Bot] Error creating session:", error);
     await ctx.reply(t("new.create_error"));
