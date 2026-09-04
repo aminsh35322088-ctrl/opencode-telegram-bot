@@ -15,7 +15,6 @@ import {
   MODEL_CENTER_SEARCH,
   MODEL_CENTER_SEARCH_AGAIN,
   MODEL_CENTER_SEARCH_CANCEL,
-  MODEL_CENTER_SEARCH_RESULT_PREFIX,
   MODEL_CENTER_SELECT_PREFIX,
   resolveModelCenterAction,
 } from "../menus/model-center-menu.js";
@@ -76,9 +75,8 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
       return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
     }
-    if (data.startsWith(MODEL_CENTER_SELECT_PREFIX) || data.startsWith(MODEL_CENTER_SEARCH_RESULT_PREFIX)) {
-      const prefix = data.startsWith(MODEL_CENTER_SELECT_PREFIX) ? MODEL_CENTER_SELECT_PREFIX : MODEL_CENTER_SEARCH_RESULT_PREFIX;
-      const model = resolveModelCenterAction(data.slice(prefix.length));
+    if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
+      const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
       if (!model) {
         await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {});
         return true;
@@ -148,7 +146,7 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
 
   const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
   await ctx.answerCallbackQuery().catch(() => {});
-  await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID)}`, keyboard);
+  await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
 
 async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<boolean> {
