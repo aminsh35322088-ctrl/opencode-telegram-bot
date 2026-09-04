@@ -1,6 +1,6 @@
 # OpenCode Telegram Bot — Railway Edition
 
-A Telegram client for OpenCode designed to run continuously on Railway. It lets you control OpenCode, run coding tasks, manage sessions, switch models, browse files, configure custom OpenAI-compatible providers, manage integrations, and use a compact Telegram UI.
+A Telegram client for OpenCode designed to run continuously on Railway. It lets you control OpenCode, run coding tasks, manage sessions, switch models through the canonical Model Center, browse files, configure custom OpenAI-compatible providers, manage integrations, and use a compact Telegram UI.
 
 ## Architecture
 
@@ -58,11 +58,27 @@ The persistent bottom keyboard is intentionally compact:
 └──────────────────┴──────────────────┘
 ```
 
+The **🧠 Model** button and **Settings → Model selection** both open the same canonical **Model Center 3**. There is no separate legacy model-selector UI.
+
 Advanced controls are organized inside **Settings** so the main keyboard stays uncluttered.
 
 Settings includes model selection, Token Guard, output/streaming options, audio replies, message queue, API Providers, and Integrations.
 
 Menus use inline buttons and edit the existing menu message whenever possible. Navigation uses **Back** for parent menus and **Close** for Settings instead of creating unnecessary Telegram messages.
+
+### Model Center 3
+
+Model Center is the single source of truth for model selection in the Telegram UI:
+
+- `⭐ Favorites` with persistent per-model favorite state.
+- `🕘 Recent models` with persistent recent history.
+- `🔎 Search models` across the live catalog.
+- `🧩 Browse providers` with paginated provider model lists.
+- Live custom-provider refresh on entry and every 5 minutes in the background.
+- Custom-provider model catalogs are authoritative over stale OpenCode copies.
+- Model actions use short runtime callback tokens with bounded in-memory state.
+
+Selecting a model updates the persistent bottom keyboard immediately and records the model in Recent Models.
 
 ### Recent chat history
 
@@ -83,7 +99,7 @@ The provider wizard asks for:
 2. Base URL, for example `https://tabitoken.com/v1`
 3. API key
 
-The bot validates OpenAI-compatible providers, discovers their models, stores the API key separately under `/data`, generates the OpenCode provider configuration, and makes the provider available to the model picker.
+The bot validates OpenAI-compatible providers, discovers their models from `/models`, stores the API key separately under `/data`, generates the OpenCode provider configuration, and exposes the verified live catalog to Model Center.
 
 API keys are never displayed by the bot. The Telegram message containing a key is deleted when Telegram permits it.
 
