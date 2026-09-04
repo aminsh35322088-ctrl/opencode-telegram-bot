@@ -4,6 +4,16 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+### Added
+- Added private Telegram Topic-backed coding sessions with isolated OpenCode sessions and per-topic workspaces.
+- Added per-topic Pause, Resume, Abort, Model, Image AI, and Delete Chat controls.
+- Preserved the existing Image AI Generate and Edit flows inside each coding Topic, with generated/edited assets stored in that Topic workspace.
+- Added reply-to-message context for Topic conversations, including referenced text/captions and downloaded image/document attachments.
+
+### Changed
+- The main private chat is now used for controls and session creation, while each coding session lives in its own Telegram Topic.
+- Topic deletion now removes only the bound OpenCode session, isolated workspace, Telegram Topic, and binding.
+
 ## [0.25.3] - 2026-09-04
 
 ### Changed
