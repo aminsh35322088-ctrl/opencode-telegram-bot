@@ -8,7 +8,7 @@ import { handleCompactConfirm } from "./context-control-callback-handler.js";
 import { handleLsCallback, handleOpenCallback } from "./file-browser-callback-handler.js";
 import { handleInlineMenuCancel } from "./inline-menu-cancel-callback-handler.js";
 import { handleMcpsCallback } from "./mcp-catalog-callback-handler.js";
-import { handleMessagesCallback } from "./message-history-callback-callback-handler.js";
+import { handleMessagesCallback } from "./message-history-callback-handler.js";
 import { handleModelCenterCallback } from "./model-center-callback-handler.js";
 import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
