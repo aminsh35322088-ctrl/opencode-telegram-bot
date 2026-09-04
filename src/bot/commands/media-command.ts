@@ -1,6 +1,7 @@
 import { InputFile, type Context } from "grammy";
 import { downloadPhoto, downloadRepliedPhoto } from "../services/media-ai-service.js";
 import { generateImageWithFallback, editImageWithFallback, hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";
+import { saveTopicImageAsset } from "../../app/services/telegram-topic-image-asset-service.js";
 export { downloadPhoto } from "../services/media-ai-service.js";
 
 export async function editImage(image: Buffer, mimeType: string, prompt: string) {
@@ -30,9 +31,13 @@ async function sendGeneratedImage(ctx: Context, prompt: string): Promise<void> {
   }
   await ctx.replyWithChatAction("upload_photo");
   const result = await generateImageWithFallback(prompt.trim());
+  const asset = await saveTopicImageAsset(result.buffer, result.mimeType, "generated");
+  const caption = asset
+    ? `🎨 Generated with Image AI\n📁 ${asset.relativePath}`
+    : "🎨 Generated with Image AI";
   await ctx.replyWithPhoto(
     new InputFile(result.buffer, `generated.${result.mimeType.split("/")[1] ?? "png"}`),
-    { caption: "🎨 Generated with Image AI" },
+    { caption },
   );
 }
 
@@ -58,9 +63,13 @@ export async function editCommand(ctx: Context): Promise<void> {
     const source = await downloadRepliedPhoto(ctx);
     await ctx.replyWithChatAction("upload_photo");
     const result = await editImageWithFallback(source.buffer, source.mimeType, prompt);
+    const asset = await saveTopicImageAsset(result.buffer, result.mimeType, "edited");
+    const caption = asset
+      ? `✨ Edited with Image AI\n📁 ${asset.relativePath}`
+      : "✨ Edited with Image AI";
     await ctx.replyWithPhoto(
       new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`),
-      { caption: "✨ Edited with Image AI" },
+      { caption },
     );
   } catch (error) {
     await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -90,9 +99,13 @@ export async function handlePhotoCaptionMessage(ctx: Context, prompt: string): P
     const source = await downloadPhoto(ctx);
     await ctx.replyWithChatAction("upload_photo");
     const result = await editImageWithFallback(source.buffer, source.mimeType, prompt.trim());
+    const asset = await saveTopicImageAsset(result.buffer, result.mimeType, "edited");
+    const caption = asset
+      ? `✨ Edited with Image AI\n📁 ${asset.relativePath}`
+      : "✨ Edited with Image AI";
     await ctx.replyWithPhoto(
       new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`),
-      { caption: "✨ Edited with Image AI" },
+      { caption },
     );
   } catch (error) {
     await ctx.reply(`❌ Image editing failed: ${error instanceof Error ? error.message : String(error)}`);

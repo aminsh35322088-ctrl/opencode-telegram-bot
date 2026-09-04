@@ -30,11 +30,7 @@ async function hasActiveRemoteTool(sessionId: string, directory: string): Promis
       directory,
       limit: 10,
     });
-
-    if (error || !messages) {
-      return false;
-    }
-
+    if (error || !messages) return false;
     return messages.some((message) =>
       (message.parts as Array<{ type?: string; state?: { status?: string } }>).some(
         (part) =>
@@ -50,18 +46,12 @@ async function hasActiveRemoteTool(sessionId: string, directory: string): Promis
 
 function describeAbortResult(result: AbortResult): string {
   switch (result) {
-    case "confirmed":
-      return "⏸️ Pause confirmed.";
-    case "timeout":
-      return "⚠️ OpenCode did not confirm the stop before the timeout. The chat was not marked paused.";
-    case "unconfirmed":
-      return "⚠️ OpenCode did not confirm a safe stop. The chat was not marked paused.";
-    case "maybe-finished":
-      return "ℹ️ The run appears to have finished before the stop completed.";
-    case "no-session":
-      return "ℹ️ There is no active chat to pause.";
-    default:
-      return "⚠️ Pause failed. The chat was not marked paused.";
+    case "confirmed": return "⏸️ Pause confirmed.";
+    case "timeout": return "⚠️ OpenCode did not confirm the stop before the timeout. The chat was not marked paused.";
+    case "unconfirmed": return "⚠️ OpenCode did not confirm a safe stop. The chat was not marked paused.";
+    case "maybe-finished": return "ℹ️ The run appears to have finished before the stop completed.";
+    case "no-session": return "ℹ️ There is no active chat to pause.";
+    default: return "⚠️ Pause failed. The chat was not marked paused.";
   }
 }
 
@@ -91,10 +81,6 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
     );
 
     if (error && !localRunActive && !foregroundActive && !remoteToolActive) throw error;
-
-    // OpenCode's session.status and the bot's local lifecycle state can briefly
-    // report idle/error while a tool part is still running. The recent message
-    // history is the final independent signal used to keep Pause actionable.
     if (!isActiveStatus(state?.type) && !localRunActive && !foregroundActive && !remoteToolActive) {
       await ctx.reply("ℹ️ Nothing is running right now, so there is nothing to pause.");
       return;
@@ -110,7 +96,7 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
     }
 
     setPausedSession(session);
-    keyboardManager.setPaused(true);
+    keyboardManager.setPaused(true, session.id);
 
     const model = getStoredModel();
     const displayModel = formatModelForDisplay(model.providerID, model.modelID);
@@ -130,10 +116,8 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
       { parse_mode: "HTML" },
     );
 
-    const keyboard = keyboardManager.getKeyboard();
-    if (keyboard) {
-      await ctx.reply("▶️ Resume is ready.", { reply_markup: keyboard });
-    }
+    const keyboard = keyboardManager.getKeyboard(session.id);
+    if (keyboard) await ctx.reply("▶️ Resume is ready.", { reply_markup: keyboard });
   } catch (error) {
     logger.error("[Pause] Failed to pause current chat:", error);
     await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption.");
@@ -141,42 +125,43 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
 }
 
 export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): Promise<void> {
-  const session = getPausedSession();
-  if (!session) {
+  const currentSession = getCurrentSession();
+  if (!currentSession) {
     await ctx.reply("ℹ️ There is no paused chat to resume.");
     return;
   }
 
-  if (getCurrentSession()?.id !== session.id) {
-    await ctx.reply("⚠️ The paused chat is not the active chat. Open it from 🕘 History first.");
+  const session = getPausedSession(currentSession.id);
+  if (!session) {
+    await ctx.reply("ℹ️ This chat is not paused.");
     return;
   }
 
   // Capture the user's visible model before dispatch. Resume must continue
   // with that exact selection instead of re-routing through the Coding AI Rule.
   const resumeModel = getStoredModel();
-  clearPausedSession();
-  keyboardManager.setPaused(false);
+  clearPausedSession(session.id);
+  keyboardManager.setPaused(false, session.id);
 
   try {
     const dispatched = await processUserPrompt(ctx, RESUME_PROMPT, deps, [], resumeModel);
     if (!dispatched) {
       setPausedSession(session);
-      keyboardManager.setPaused(true);
-      await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true);
+      keyboardManager.setPaused(true, session.id);
+      await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true, session.id);
       return;
     }
 
     const displayModel = formatModelForDisplay(resumeModel.providerID, resumeModel.modelID);
-    const keyboard = keyboardManager.getKeyboard();
+    const keyboard = keyboardManager.getKeyboard(session.id);
     await ctx.reply(
       `▶️ Resuming <b>${session.title}</b> with <b>${displayModel}</b>.`,
       { parse_mode: "HTML", ...(keyboard ? { reply_markup: keyboard } : {}) },
     );
   } catch (error) {
     setPausedSession(session);
-    keyboardManager.setPaused(true);
-    await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true);
+    keyboardManager.setPaused(true, session.id);
+    await keyboardManager.sendKeyboardUpdate(ctx.chat?.id, true, session.id);
     logger.error("[Resume] Failed to resume paused chat:", error);
     await ctx.reply("⚠️ Resume failed. The chat remains paused so you can change model/provider safely.");
   }

@@ -19,7 +19,6 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "all", description: "🧰 All integrated versions (use /all version info)" },
   { command: "help", description: "❓ Show help & available features" },
   { command: "status", description: "📡 Show server & session status" },
-  { command: "sessions", description: "🕘 Browse saved sessions" },
   { command: "settings", description: "⚙️ Configure bot settings" },
   { command: "providers", description: "🔌 Manage AI providers" },
   { command: "rename", description: "🏷️ Rename the current session" },

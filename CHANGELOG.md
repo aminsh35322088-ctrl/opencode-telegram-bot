@@ -4,13 +4,16 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
-### Changed
-- Moved the repository's automated test suite out of the production tree and into `.github/ci-tests`; GitHub Actions now materializes and removes the suite only inside the CI workspace.
-- Removed the OpenCode `test-runner` tool and production-side test executables/install steps so Railway runtime no longer carries Vitest, pytest, TypeScript, or ESLint just for validation.
+### Added
+- Added private Telegram Topic-backed coding sessions with isolated OpenCode sessions and per-topic workspaces.
+- Added per-topic Pause, Resume, Abort, Model, Image AI, and Delete Chat controls.
+- Preserved the existing Image AI Generate and Edit flows inside each coding Topic, with generated/edited assets stored in that Topic workspace.
+- Added reply-to-message context for Topic conversations, including referenced text/captions and downloaded image/document attachments.
 
-### Fixed
-- `Always Allow` permission decisions are now persisted by Telegram chat and permission type, so later requests in the same chat are auto-approved instead of repeatedly showing confirmation prompts.
-- Persisted `Always Allow` rules survive bot restarts and are only created after OpenCode successfully accepts the original approval.
+### Changed
+- The main private chat is now used for controls and session creation, while each coding session lives in its own Telegram Topic.
+- Topic deletion now removes only the bound OpenCode session, isolated workspace, Telegram Topic, and binding.
+- Kept PR28 Image Conversion out of this change set; it remains a separate future Topic flow.
 
 ## [0.25.3] - 2026-09-04
 
