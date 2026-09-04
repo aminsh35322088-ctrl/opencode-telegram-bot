@@ -50,8 +50,8 @@ export async function saveCustomProvider(input: { id?: string; name: string; bas
   const requestedModels = Array.isArray(input.models) ? input.models.filter((model) => typeof model?.id === "string" && model.id.trim()).map((model) => ({ id: model.id.trim(), name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : model.id.trim() })) : [];
   if (!requestedModels.length) throw new Error("At least one provider model is required");
   const discovered = await discoverModels(baseURL, key);
-  const discoveredIds = new Set(discovered.map((model) => model.id));
-  const verifiedModels = requestedModels.filter((model) => discoveredIds.has(model.id));
+  const discoveredById = new Map(discovered.map((model) => [model.id, model]));
+  const verifiedModels = requestedModels.map((model) => discoveredById.get(model.id)).filter((model): model is CustomProviderModel => Boolean(model));
   if (!verifiedModels.length) throw new Error("None of the configured models were returned by the provider");
   const now = new Date().toISOString(); const store = await readStore(); const existing = store.providers.find((provider) => provider.id === id); const keyFile = existing?.keyFile ?? path.join(PROVIDER_DIR, `${id}.key`); const absoluteKeyFile = path.join(getRuntimePaths().appHome, keyFile);
   await fs.mkdir(path.dirname(absoluteKeyFile), { recursive: true }); await fs.writeFile(absoluteKeyFile, `${key}\n`, { mode: 0o600 });
