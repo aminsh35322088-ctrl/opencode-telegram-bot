@@ -2,7 +2,7 @@
 
 All notable Telegram-bot changes are documented here. OpenCode has its own independent release/version lifecycle.
 
-## [Unreleased]
+## [0.26.0] - 2026-09-04
 
 ### Added
 - Added private Telegram Topic-backed coding sessions with isolated OpenCode sessions and per-topic workspaces.
@@ -13,7 +13,19 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ### Changed
 - The main private chat is now used for controls and session creation, while each coding session lives in its own Telegram Topic.
 - Topic deletion now removes only the bound OpenCode session, isolated workspace, Telegram Topic, and binding.
-- Kept PR28 Image Conversion out of this change set; it remains a separate future Topic flow.
+- Topic-aware routing now carries streaming, tool/progress output, callbacks, pause state, keyboard state, and Image AI mode within the active session boundary.
+- Model Center and live custom-provider catalog improvements from the 0.25.x line remain part of the current bot experience.
+- Updated `/start` to point users toward New Chat and existing Topics instead of the removed History flow.
+
+### Fixed
+- Prevented duplicate Topic creation for the same OpenCode session with per-session single-flight handling.
+- Scoped paused sessions and Image AI modes by OpenCode session instead of keeping a single global value.
+- Callback Topic resolution now uses the callback message's own chat/thread identity rather than assuming the current global chat context.
+- Topic workspace cleanup is path-guarded so deleting a Topic cannot remove the main project directory.
+
+### Release / Update notification
+- Bot version is now `v0.26.0`.
+- `/start` and `/update` show the previous → current bot version and the v0.26.0 release notes once per installed version.
 
 ## [0.25.3] - 2026-09-04
 
