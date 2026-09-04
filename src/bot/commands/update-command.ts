@@ -1,5 +1,5 @@
 import { Context } from "grammy";
-import { getBotUpdateNotice, getOpenCodeVersion, BOT_VERSION } from "../../app/services/version-info-service.js";
+import { getBotUpdateNotice, getOpenCodeVersion, BOT_VERSION, markBotVersionNotified } from "../../app/services/version-info-service.js";
 
 const RELEASE_VERSION_URL = "https://raw.githubusercontent.com/aminsh35322088-ctrl/opencode-telegram-bot/main/.opencode-version";
 
@@ -26,6 +26,8 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   if (notice.changelog) {
     await ctx.reply(`📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`);
   }
+
+  await markBotVersionNotified(notice.currentVersion);
 }
 
 export async function updateCommand(ctx: Context): Promise<void> {
