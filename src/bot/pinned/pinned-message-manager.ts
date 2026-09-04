@@ -67,7 +67,10 @@ class PinnedMessageManager {
       const lastAssistant = [...data].reverse().find((message) => message.info.role === "assistant");
       const info = lastAssistant?.info as unknown as { tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } }; cost?: number } | undefined;
       const tokens = info?.tokens;
-      if (tokens) this.state.tokensUsed = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write;
+      // `input + cache.read` is the closest provider-independent representation
+      // of the context consumed by the latest generation. Output/reasoning and
+      // cache writes are usage/billing metadata, not input context occupancy.
+      if (tokens) this.state.tokensUsed = tokens.input + tokens.cache.read;
       if (typeof info?.cost === "number") this.state.cost = info.cost;
       this.state.sessionId = sessionId;
       this.notifyKeyboard();
@@ -75,8 +78,8 @@ class PinnedMessageManager {
   }
 
   async onSessionCompacted(sessionId: string, directory: string): Promise<void> { await this.loadContextFromHistory(sessionId, directory); }
-  async onMessageComplete(tokens: TokensInfo): Promise<void> { this.state.tokensUsed = tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite; this.notifyKeyboard(); }
-  updateTokensSilent(tokens: TokensInfo): void { this.state.tokensUsed = tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite; }
+  async onMessageComplete(tokens: TokensInfo): Promise<void> { this.state.tokensUsed = tokens.input + tokens.cacheRead; this.notifyKeyboard(); }
+  updateTokensSilent(tokens: TokensInfo): void { this.state.tokensUsed = tokens.input + tokens.cacheRead; }
   async refresh(): Promise<void> { await this.refreshContextLimit(); }
   async onCostUpdate(cost: number): Promise<void> { if (Number.isFinite(cost)) this.state.cost = (this.state.cost || 0) + cost; }
   setOnKeyboardUpdate(callback: (tokensUsed: number, tokensLimit: number) => void): void { this.onKeyboardUpdateCallback = callback; this.notifyKeyboard(); }
@@ -105,7 +108,7 @@ class PinnedMessageManager {
 
   __resetForTests(): void {
     this.api = null; this.chatId = null; this.contextLimit = DEFAULT_CONTEXT_LIMIT; this.onKeyboardUpdateCallback = undefined;
-    this.state = { messageId: null, chatId: null, sessionId: null, sessionTitle: t("pinned.default_session_title"), attachActive: false, attachBusy: false, projectPath: "", projectBranch: null, projectWorktreePath: null, tokensUsed: 0, tokensLimit: DEFAULT_CONTEXT_LIMIT, lastUpdated: 0, changedFiles: [], cost: 0 };
+    this.state = { messageId: null, chatId: null, sessionId: null, sessionTitle: t("pinned.default_session_title"), attachActive: false, attachBusy: false, projectPath: "", projectBranch: null, projectWorktreePath: null, tokensUsed: 0, tokensLimit: DEFAULT_CONTEXT_LIMIT, lastUpdated: 0, changedFiles: [], lastUpdated: 0, changedFiles: [], cost: 0 };
   }
 
   private notifyKeyboard(): void { if (this.onKeyboardUpdateCallback && this.state.tokensLimit > 0) this.onKeyboardUpdateCallback(this.state.tokensUsed, this.state.tokensLimit); }
