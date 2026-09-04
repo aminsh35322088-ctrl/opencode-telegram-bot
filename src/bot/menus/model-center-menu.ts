@@ -16,16 +16,197 @@ export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
 
 const MODELS_PER_PAGE = 8;
 const actionModels = new Map<string, ModelInfo>();
-function modelKey(model: FavoriteModel | ModelInfo): string { return `${model.providerID}/${model.modelID}`; }
-function actionToken(model: ModelInfo): string { const token = createHash("sha256").update(`${modelKey(model)}:${model.variant ?? "default"}`).digest("base64url").slice(0, 10); actionModels.set(token, { providerID: model.providerID, modelID: model.modelID, variant: model.variant ?? "default" }); return token; }
-export function resolveModelCenterAction(token: string): ModelInfo | null { return actionModels.get(token) ?? null; }
-function modelButtonLabel(model: FavoriteModel | ModelInfo, active: boolean): string { return `${active ? "🟢" : "🧠"} ${model.modelID}\n${model.providerID}`; }
-async function appendModelRows(keyboard: InlineKeyboard, models: FavoriteModel[], current?: ModelInfo): Promise<void> { for (const model of models) { const info = { providerID: model.providerID, modelID: model.modelID, variant: "default" } satisfies ModelInfo; const token = actionToken(info); const favorite = await isFavoriteModel(model); keyboard.text(modelButtonLabel(model, !!current && modelKey(current) === modelKey(model)), `${MODEL_CENTER_SELECT_PREFIX}${token}`); keyboard.text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`).row(); } }
-function appendPagination(keyboard: InlineKeyboard, page: number, totalPages: number, callback: (page: number) => string): void { if (totalPages <= 1) return; if (page > 0) keyboard.text("‹ Prev", callback(page - 1)); if (page < totalPages - 1) keyboard.text("Next ›", callback(page + 1)); keyboard.row(); }
 
-export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> { const favorites = await getFavoriteModels(); const recent = await getRecentModels(); const keyboard = new InlineKeyboard(); keyboard.text(`⭐ Favorites · ${favorites.length}`, MODEL_CENTER_FAVORITES).text(`🕘 Recent models · ${recent.length}`, MODEL_CENTER_RECENT).row(); keyboard.text("🔎 Search models", MODEL_CENTER_SEARCH).row(); keyboard.text("🧩 Browse providers", MODEL_CENTER_PROVIDERS).row(); keyboard.text("← Back", "model:settings_back"); const currentBlock = current?.providerID && current.modelID ? `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(current.modelID)}</code>\n${escapeHtml(current.providerID)}` : "🟢 <b>CURRENT MODEL</b>\nNo model selected"; return { text: ["🤖 <b>MODEL CENTER</b>", "", currentBlock, "", "Select a model, manage favorites, or browse the live provider catalog."].join("\n"), keyboard }; }
-export async function buildModelCenterList(kind: "favorites" | "recent", current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> { const models = kind === "favorites" ? await getFavoriteModels() : await getRecentModels(); const keyboard = new InlineKeyboard(); await appendModelRows(keyboard, models, current); keyboard.text("← Model Center", MODEL_CENTER_ROOT); const title = kind === "favorites" ? "⭐ <b>FAVORITE MODELS</b>" : "🕘 <b>RECENT MODELS</b>"; return { text: models.length ? `${title}\n\nSelect a model or tap ⭐ to change favorites.` : `${title}\n\nNo models here yet.`, keyboard }; }
-export async function buildModelCenterProviders(): Promise<{ text: string; keyboard: InlineKeyboard }> { const providers = await getProviders(); const keyboard = new InlineKeyboard(); providers.forEach((provider) => keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row()); keyboard.text("← Model Center", MODEL_CENTER_ROOT); return { text: providers.length ? "🧩 <b>PROVIDERS</b>\n\nLive model catalog from every available provider." : "🧩 <b>PROVIDERS</b>\n\nNo providers are currently available.", keyboard }; }
-export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> { const models = await getProviderModels(provider.id); const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE)); const normalizedPage = Math.min(Math.max(0, page), totalPages - 1); const pageModels = models.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE); const keyboard = new InlineKeyboard(); await appendModelRows(keyboard, pageModels, current); appendPagination(keyboard, normalizedPage, totalPages, (target) => `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:${target}`); keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row(); keyboard.text("← Model Center", MODEL_CENTER_ROOT); return { text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${models.length} live models · page ${normalizedPage + 1}/${totalPages}.\nTap a model to select it or ☆/⭐ to manage favorites.`, keyboard, page: normalizedPage }; }
-export async function searchModelCenter(query: string, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> { const models = await searchModels(query); const keyboard = new InlineKeyboard(); await appendModelRows(keyboard, models, current); keyboard.text("← Model Center", MODEL_CENTER_ROOT); return { text: models.length ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>` : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`, keyboard }; }
-function escapeHtml(value: string): string { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function modelKey(model: FavoriteModel | ModelInfo): string {
+  return `${model.providerID}/${model.modelID}`;
+}
+
+function actionToken(model: ModelInfo): string {
+  const token = createHash("sha256")
+    .update(`${modelKey(model)}:${model.variant ?? "default"}`)
+    .digest("base64url")
+    .slice(0, 10);
+  actionModels.set(token, {
+    providerID: model.providerID,
+    modelID: model.modelID,
+    variant: model.variant ?? "default",
+  });
+  return token;
+}
+
+export function resolveModelCenterAction(token: string): ModelInfo | null {
+  return actionModels.get(token) ?? null;
+}
+
+function modelButtonLabel(
+  model: FavoriteModel | ModelInfo,
+  active: boolean,
+  favorite: boolean,
+  showProvider: boolean,
+): string {
+  const marker = favorite ? "⭐" : "";
+  const icon = active ? "🟢" : "🧠";
+  return showProvider
+    ? `${icon} ${model.modelID}${marker}\n${model.providerID}`
+    : `${icon} ${model.modelID}${marker}`;
+}
+
+async function appendModelRows(
+  keyboard: InlineKeyboard,
+  models: FavoriteModel[],
+  current?: ModelInfo,
+  showProvider = true,
+): Promise<void> {
+  for (const model of models) {
+    const info = {
+      providerID: model.providerID,
+      modelID: model.modelID,
+      variant: "default",
+    } satisfies ModelInfo;
+    const token = actionToken(info);
+    const favorite = await isFavoriteModel(model);
+    const active = !!current && modelKey(current) === modelKey(model);
+
+    keyboard.text(
+      modelButtonLabel(model, active, favorite, showProvider),
+      `${MODEL_CENTER_SELECT_PREFIX}${token}`,
+    );
+    keyboard
+      .text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`)
+      .row();
+  }
+}
+
+function appendPagination(
+  keyboard: InlineKeyboard,
+  page: number,
+  totalPages: number,
+  callback: (page: number) => string,
+): void {
+  if (totalPages <= 1) return;
+  if (page > 0) keyboard.text("‹ Prev", callback(page - 1));
+  if (page < totalPages - 1) keyboard.text("Next ›", callback(page + 1));
+  keyboard.row();
+}
+
+export async function buildModelCenterRoot(
+  current?: ModelInfo,
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const favorites = await getFavoriteModels();
+  const recent = await getRecentModels();
+  const keyboard = new InlineKeyboard();
+  keyboard
+    .text(`⭐ Favorites · ${favorites.length}`, MODEL_CENTER_FAVORITES)
+    .text(`🕘 Recent models · ${recent.length}`, MODEL_CENTER_RECENT)
+    .row();
+  keyboard.text("🔎 Search models", MODEL_CENTER_SEARCH).row();
+  keyboard.text("🧩 Browse providers", MODEL_CENTER_PROVIDERS).row();
+  keyboard.text("← Back", "model:settings_back");
+
+  const currentBlock = current?.providerID && current.modelID
+    ? `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(current.modelID)}</code>\n${escapeHtml(current.providerID)}`
+    : "🟢 <b>CURRENT MODEL</b>\nNo model selected";
+
+  return {
+    text: [
+      "🤖 <b>MODEL CENTER</b>",
+      "",
+      currentBlock,
+      "",
+      "Select a model, manage favorites, or browse the live provider catalog.",
+    ].join("\n"),
+    keyboard,
+  };
+}
+
+export async function buildModelCenterList(
+  kind: "favorites" | "recent",
+  current?: ModelInfo,
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const models = kind === "favorites" ? await getFavoriteModels() : await getRecentModels();
+  const keyboard = new InlineKeyboard();
+  await appendModelRows(keyboard, models, current, true);
+  keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+
+  const title = kind === "favorites" ? "⭐ <b>FAVORITE MODELS</b>" : "🕘 <b>RECENT MODELS</b>";
+  return {
+    text: models.length
+      ? `${title}\n\n⭐ marks a favorite model. Select a model or tap ⭐ to change favorites.`
+      : `${title}\n\nNo models here yet.`,
+    keyboard,
+  };
+}
+
+export async function buildModelCenterProviders(): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const providers = await getProviders();
+  const keyboard = new InlineKeyboard();
+  providers.forEach((provider) =>
+    keyboard
+      .text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`)
+      .row(),
+  );
+  keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+  return {
+    text: providers.length
+      ? "🧩 <b>PROVIDERS</b>\n\nLive model catalog from every available provider."
+      : "🧩 <b>PROVIDERS</b>\n\nNo providers are currently available.",
+    keyboard,
+  };
+}
+
+export async function buildModelCenterProvider(
+  provider: ProviderInfo,
+  page: number,
+  current?: ModelInfo,
+): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
+  const models = await getProviderModels(provider.id);
+  const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
+  const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
+  const pageModels = models.slice(
+    normalizedPage * MODELS_PER_PAGE,
+    (normalizedPage + 1) * MODELS_PER_PAGE,
+  );
+  const keyboard = new InlineKeyboard();
+
+  // The provider is already established by this screen, so don't repeat it on every model button.
+  await appendModelRows(keyboard, pageModels, current, false);
+  appendPagination(
+    keyboard,
+    normalizedPage,
+    totalPages,
+    (target) => `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:${target}`,
+  );
+  keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row();
+  keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+
+  return {
+    text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${models.length} live models · page ${normalizedPage + 1}/${totalPages}.\nTap a model to select it or ☆/⭐ to manage favorites.`,
+    keyboard,
+    page: normalizedPage,
+  };
+}
+
+export async function searchModelCenter(
+  query: string,
+  current?: ModelInfo,
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const models = await searchModels(query);
+  const keyboard = new InlineKeyboard();
+  // Search can contain identical model IDs from different providers, so keep provider visible here.
+  await appendModelRows(keyboard, models, current, true);
+  keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+  return {
+    text: models.length
+      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>`
+      : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`,
+    keyboard,
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
