@@ -63,5 +63,5 @@ jobs:
       - name: Remove materialized test suite
         if: always()
         run: |
-          rm -rf tests tsconfig.test.ts vitest.config.ts
+          rm -rf tests tsconfig.test.json vitest.config.ts
           rm -rf coverage
