@@ -31,12 +31,23 @@ async function releaseAbortBusyState(sessionId: string, reason: string): Promise
   await markAttachedSessionIdle(sessionId);
   setTopicRunState("idle");
 }
-async function restoreMainKeyboard(ctx: Context): Promise<void> {
-  keyboardManager.setPaused(false);
-  const keyboard = keyboardManager.getKeyboard();
+
+async function restoreControlsAfterAbort(ctx: Context, sessionId: string): Promise<void> {
+  const topic = getTopicRuntimeContext();
+  if (topic?.sessionId === sessionId && topic.threadId !== undefined) {
+    // Abort is terminal for the current run, but it must not escape the Topic.
+    // The Topic keyboard stays visible with Pause (not Main History/New Chat).
+    keyboardManager.setPaused(false, sessionId);
+    await keyboardManager.sendKeyboardUpdate(topic.chatId, true, sessionId);
+    return;
+  }
+
+  keyboardManager.setPaused(false, sessionId);
+  const keyboard = keyboardManager.getKeyboard(sessionId);
   if (!keyboard || !ctx.chat?.id) return;
   await ctx.reply("⌨️ Controls restored.", { reply_markup: keyboard });
 }
+
 async function pollSessionStatus(sessionId: string, directory: string, maxWaitMs = 5000): Promise<SessionState> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < maxWaitMs) {
@@ -98,7 +109,7 @@ export async function abortCurrentOperation(ctx: Context, options: AbortCurrentO
       if (finalStatus === "idle" || finalStatus === "not-found") {
         await releaseAbortBusyState(currentSession.id, "abort_confirmed");
         if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
-        await restoreMainKeyboard(ctx);
+        await restoreControlsAfterAbort(ctx, currentSession.id);
         return "confirmed";
       }
       setTopicRunState("running");
