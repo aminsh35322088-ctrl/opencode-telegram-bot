@@ -108,7 +108,7 @@ class PinnedMessageManager {
 
   __resetForTests(): void {
     this.api = null; this.chatId = null; this.contextLimit = DEFAULT_CONTEXT_LIMIT; this.onKeyboardUpdateCallback = undefined;
-    this.state = { messageId: null, chatId: null, sessionId: null, sessionTitle: t("pinned.default_session_title"), attachActive: false, attachBusy: false, projectPath: "", projectBranch: null, projectWorktreePath: null, tokensUsed: 0, tokensLimit: DEFAULT_CONTEXT_LIMIT, lastUpdated: 0, changedFiles: [], lastUpdated: 0, changedFiles: [], cost: 0 };
+    this.state = { messageId: null, chatId: null, sessionId: null, sessionTitle: t("pinned.default_session_title"), attachActive: false, attachBusy: false, projectPath: "", projectBranch: null, projectWorktreePath: null, tokensUsed: 0, tokensLimit: DEFAULT_CONTEXT_LIMIT, lastUpdated: 0, changedFiles: [], cost: 0 };
   }
 
   private notifyKeyboard(): void { if (this.onKeyboardUpdateCallback && this.state.tokensLimit > 0) this.onKeyboardUpdateCallback(this.state.tokensUsed, this.state.tokensLimit); }
