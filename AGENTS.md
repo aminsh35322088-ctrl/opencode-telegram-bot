@@ -30,7 +30,8 @@ The Railway production image is a runtime environment, not a CI runner.
 It intentionally does not ship the repository's CI-only test suite or a validation toolchain.
 Do not install testing, linting, typechecking, or build-validation tools into the production runtime.
 
-The production application may use the existing runtime/coding utilities and custom OpenCode tools. Dependency-management actions are for application/workspace operations only; they are not a validation path.
+The production application uses only the runtime capabilities and custom OpenCode tools explicitly shipped with the image.
+Dependency changes belong to source control and the GitHub Actions build/deploy path, not to the running bot or its workspace.
 
 When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
 
@@ -119,7 +120,6 @@ The test source/configuration lives under `.github/ci-tests/` and is materialize
 - **NEVER invoke** `vitest`, `jest`, `mocha`, `pytest`, Playwright test runners, or any other test runner locally.
 - **NEVER install** test runners, linters, typecheckers, or validation-only packages to make local validation possible.
 - **NEVER recreate** the CI-only `tests/`, `e2e/`, `vitest.config.ts`, or `tsconfig.test.json` files in the production workspace.
-- Do not use the dependency-management tool to obtain or install a validation toolchain.
 - Do not bypass the CI policy with equivalent commands through `bash`, `node`, `npx`, `npm exec`, `pnpm`, `yarn`, `bun`, or direct binaries.
 
 ### GitHub Actions workflow
