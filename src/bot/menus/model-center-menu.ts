@@ -108,7 +108,14 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
 }
 
 export async function showModelCenterMenu(ctx: Context): Promise<void> {
-  await refreshAllCustomProviderModels();
+  // Provider discovery can legitimately take seconds when a custom endpoint is
+  // down. Never hold the Telegram reply open on network discovery. The refresh
+  // service deduplicates concurrent runs and the next render will use the fresh
+  // catalog once it is available.
+  void refreshAllCustomProviderModels().catch((error) => {
+    logger.warn("[ModelCenter] Background provider refresh failed", error);
+  });
+
   const view = await buildModelCenterRoot(fetchCurrentModel());
   await replyWithInlineMenu(ctx, {
     menuKind: "model",
