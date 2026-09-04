@@ -2,6 +2,7 @@ import type { ModelInfo } from "./model.js";
 import type { ProjectInfo } from "./project.js";
 import type { SessionDirectoryCacheInfo, SessionInfo } from "./session.js";
 import type { ScheduledTask } from "./scheduled-task.js";
+import type { TopicDefaults } from "./topic-settings.js";
 
 export type ResponseStreamingMode = "edit" | "draft";
 export type MessageFormatMode = "raw" | "markdown";
@@ -17,21 +18,34 @@ export interface AlwaysAllowedPermissionInfo {
   createdAt: string;
 }
 
-export interface Settings {
-  currentProject?: ProjectInfo | undefined;
-  currentSession?: SessionInfo | undefined;
-  currentAgent?: string | undefined;
-  currentModel?: ModelInfo | undefined;
-  pinnedMessageId?: number | undefined;
-  compactOutputMode?: boolean | undefined;
-  showThinkingContent?: boolean | undefined;
-  showAssistantRunFooter?: boolean | undefined;
-  responseStreamingMode?: ResponseStreamingMode | undefined;
-  messageFormatMode?: MessageFormatMode | undefined;
-  sendDiffFileAttachments?: boolean | undefined;
-  promptQueueEnabled?: boolean | undefined;
-  sessionDirectoryCache?: SessionDirectoryCacheInfo | undefined;
-  scheduledTasks?: ScheduledTask[] | undefined;
-  scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[] | undefined;
-  alwaysAllowedPermissions?: AlwaysAllowedPermissionInfo[] | undefined;
+/**
+ * Account/application-level configuration. Topic-local behavior is deliberately
+ * excluded from this interface; a Topic owns its own TopicSettings.
+ */
+export interface GlobalSettings {
+  pinnedMessageId?: number;
+  sessionDirectoryCache?: SessionDirectoryCacheInfo;
+  scheduledTasks?: ScheduledTask[];
+  scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[];
+  alwaysAllowedPermissions?: AlwaysAllowedPermissionInfo[];
+  topicDefaults?: TopicDefaults;
+}
+
+/**
+ * Legacy persisted shape kept during migration. New code should use
+ * GlobalSettings plus TopicSettings rather than treating this as a single
+ * mutable settings bag.
+ */
+export interface Settings extends GlobalSettings {
+  currentProject?: ProjectInfo;
+  currentSession?: SessionInfo;
+  currentAgent?: string;
+  currentModel?: ModelInfo;
+  compactOutputMode?: boolean;
+  showThinkingContent?: boolean;
+  showAssistantRunFooter?: boolean;
+  responseStreamingMode?: ResponseStreamingMode;
+  messageFormatMode?: MessageFormatMode;
+  sendDiffFileAttachments?: boolean;
+  promptQueueEnabled?: boolean;
 }
