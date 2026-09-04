@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { topicTelemetry } from "../../utils/topic-observability.js";
 
 export interface TopicRuntimeContext {
   chatId: number;
@@ -26,5 +27,7 @@ export function runInTopicRuntimeContext<T>(
 export function withTopicSession<T>(sessionId: string, callback: () => T): T {
   const current = storage.getStore();
   if (!current) return callback();
-  return storage.run({ ...current, sessionId }, callback);
+  const next = { ...current, sessionId };
+  topicTelemetry("context_session_bound", next);
+  return storage.run(next, callback);
 }
