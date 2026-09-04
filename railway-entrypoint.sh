@@ -20,14 +20,10 @@ export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CON
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
 
-# OpenCode's global config/tool location for HOME=/data + XDG_CONFIG_HOME=/data/.config.
 GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR"
 
-# Keep the historical /app/workspace path as a compatibility alias. Existing
-# persisted sessions may still reference it, while all actual workspace data
-# now lives on the Railway Volume under /data/workspace.
 if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     printf '%s\n' "[railway] Migrating image-local workspace contents to persistent volume"
@@ -37,9 +33,6 @@ if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
 fi
 ln -sfn /data/workspace /app/workspace
 
-# Some OpenCode agents may choose the historical /tmp/site path when creating
-# web projects. That path is ephemeral on Railway, so transparently alias it
-# to the same persistent shared workspace. Existing files are migrated first.
 if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
   if [ -d /tmp/site ] && [ "$(find /tmp/site -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     printf '%s\n' "[railway] Migrating legacy /tmp/site contents to persistent workspace"
@@ -49,24 +42,16 @@ if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
 fi
 ln -sfn /data/workspace /tmp/site
 
-# Persist the complete custom-tool bundle where OpenCode actually discovers
-# global tools. This also works when a session's project directory is /data/workspace.
 if [ -d /app/.opencode/tools ]; then
   cp -a /app/.opencode/tools/. "$GLOBAL_TOOLS_DIR/"
   chown -R node:node "$GLOBAL_TOOLS_DIR"
 fi
 
-# Make the project permission config available globally as well as at /app so
-# tool access does not depend on the OpenCode server's working directory.
 if [ -f /app/opencode.json ]; then
   cp /app/opencode.json "$GLOBAL_OPENCODE_DIR/opencode.json"
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
-# A persisted current session created before the persistent-workspace migration
-# may still point at a legacy directory. Preserve the session ID and selection;
-# only normalize the directory to the new persistent workspace. This prevents
-# a restart/deploy from making existing chats disappear from the active session.
 SETTINGS_FILE="/data/settings.json"
 if [ -f "$SETTINGS_FILE" ] && command -v jq >/dev/null 2>&1; then
   SETTINGS_TMP="${SETTINGS_FILE}.$$"
@@ -135,8 +120,7 @@ printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -na
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
 
-# Launch the bot from the persistent workspace. The local OpenCode server is
-# spawned by the bot and inherits this cwd, making its default project/worktree
-# and every context.worktree-based custom tool resolve to the persistent root.
+# Launch the bot from the persistent workspace. GitHub Actions is the sole
+# validation authority; the production process does not run CI or test suites.
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
 exec su -s /bin/sh node -c 'cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
