@@ -1,6 +1,10 @@
 import type { Bot, Context } from "grammy";
 import type { Api } from "grammy";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { installTopicScopedSingleton } from "../../app/services/topic-scoped-singleton.js";
+import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
+
+installTopicScopedSingleton(summaryAggregator);
 
 export interface TelegramTopicContext { chatId: number; threadId: number; }
 export interface TelegramTopicRuntimeDependencies { ensureEventSubscription: (directory: string) => Promise<void>; }
