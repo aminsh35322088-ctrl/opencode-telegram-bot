@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
+import type { SessionInfo } from "./session-service.js";
 import { getCurrentSession } from "./session-service.js";
 
 const IMAGE_DIR = path.join(".telegram", "image-ai");
@@ -8,8 +9,9 @@ export async function saveTopicImageAsset(
   buffer: Buffer,
   mimeType: string,
   kind: "generated" | "edited",
+  sessionOverride?: SessionInfo,
 ): Promise<{ absolutePath: string; relativePath: string } | null> {
-  const session = getCurrentSession();
+  const session = sessionOverride ?? getCurrentSession();
   if (!session?.directory) return null;
 
   const extension = mimeType.split("/")[1]?.split(";")[0]?.toLowerCase() || "png";

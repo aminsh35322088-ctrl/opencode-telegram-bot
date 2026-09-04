@@ -1,6 +1,9 @@
 import type { Context } from "grammy";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { logger } from "../../utils/logger.js";
+import { isReplyKeyboardButtonText } from "../message-patterns.js";
+import { formatModelForButton } from "../../app/types/model.js";
+import { getStoredModel } from "../../app/services/model-selection-service.js";
 
 const TELEGRAM_SPLIT_CHUNK_MIN_LENGTH = 4000;
 
@@ -15,6 +18,13 @@ interface PendingPrompt {
 // message (or one paste) as several consecutive updates; merging them here
 // turns those chunks into a single OpenCode prompt.
 const pendingByChat = new Map<number, PendingPrompt>();
+
+function isReservedReplyKeyboardText(text: string): boolean {
+  const model = getStoredModel();
+  const known = new Set<string>();
+  if (model.providerID && model.modelID) known.add(formatModelForButton(model.providerID, model.modelID, model.name));
+  return isReplyKeyboardButtonText(text, known);
+}
 
 function flushPending(chatId: number): void {
   const pending = pendingByChat.get(chatId);
@@ -54,6 +64,15 @@ export function queuePromptForMerging(
   mergeWindowMs: number,
 ): void {
   const chatId = ctx.chat!.id;
+
+  // Reply-keyboard controls are reserved protocol messages, never Coding AI
+  // input. This is a final safety net even if a Telegram/grammY matcher does
+  // not consume a control before the prompt router.
+  if (isReservedReplyKeyboardText(text)) {
+    logger.debug(`[Bot] Ignoring reply-keyboard control in prompt merger: chatId=${chatId}, text=${JSON.stringify(text)}`);
+    return;
+  }
+
   const existing = pendingByChat.get(chatId);
 
   if (mergeWindowMs <= 0 || (!existing && text.length < TELEGRAM_SPLIT_CHUNK_MIN_LENGTH)) {
