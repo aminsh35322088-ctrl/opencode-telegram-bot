@@ -36,12 +36,16 @@ function currentModelButton(): string {
   return model.providerID && model.modelID ? formatModelForButton(model.providerID, model.modelID, model.name) : "🧠 Model";
 }
 
-/** Prefer the actual Telegram update over AsyncLocalStorage so stale/client-side keyboard presses are isolated too. */
+/** Forum Topic updates are identified from Telegram itself, not from our persisted binding. */
 function isTopicMessage(ctx: Context): boolean {
   const message = ctx.message as { message_thread_id?: number; is_topic_message?: boolean } | undefined;
-  if (typeof message?.message_thread_id === "number") return message.is_topic_message !== false;
+  if (typeof message?.message_thread_id === "number") {
+    // Telegram's General topic is the special thread id 1. User-created/forum
+    // topics have their own thread id and must never fall through to prompts.
+    return message.message_thread_id !== 1 && message.is_topic_message !== false;
+  }
   const runtime = getTopicRuntimeContext();
-  return Boolean(runtime?.sessionId && runtime.threadId !== undefined);
+  return Boolean(runtime?.sessionId && runtime.threadId !== undefined && runtime.threadId !== 1);
 }
 
 function isExact(text: string, candidate: string): boolean {
@@ -146,6 +150,12 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         return;
       }
 
+      if (isExact(text, TOPIC_BUTTONS.modelCenter) || (!topic && isExact(text, modelButton))) {
+        if (!await menuAllowed(ctx)) return;
+        await showModelCenterMenu(ctx);
+        return;
+      }
+
       if (topic && (isExact(text, compactOn) || isExact(text, compactOff))) {
         if (!await menuAllowed(ctx)) return;
         const enabled = !getCompactOutputMode();
@@ -169,11 +179,6 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         return;
       }
 
-      if (topic && isExact(text, TOPIC_BUTTONS.modelCenter)) {
-        if (await menuAllowed(ctx)) await showModelCenterMenu(ctx);
-        return;
-      }
-
       if (topic && isExact(text, TOPIC_BUTTONS.deleteChat)) {
         await showTelegramTopicDeleteConfirmation(ctx);
         return;
@@ -189,10 +194,6 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       }
       if (!topic && (isExact(text, MAIN_BUTTONS.mainSettings) || isExact(text, MAIN_BUTTONS.topicSettings))) {
         if (await menuAllowed(ctx)) await settingsCommand(ctx as never);
-        return;
-      }
-      if (!topic && isExact(text, modelButton)) {
-        if (await menuAllowed(ctx)) await showModelCenterMenu(ctx);
         return;
       }
       if (!topic && AGENT_MODE_BUTTON_TEXT_PATTERN.test(text)) {
@@ -220,8 +221,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         return;
       }
 
-      // A button is a control message, never a prompt. Consume it even if its
-      // action is intentionally unavailable in the current state.
+      // A recognized Reply Keyboard label is a control message, never a prompt.
       if (activeRouteButtons.has(text)) return;
     } catch (error) {
       logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error);
