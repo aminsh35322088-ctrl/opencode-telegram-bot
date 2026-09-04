@@ -73,7 +73,8 @@ function assertManagedWorkspace(directory: string): string {
   }
 
   const segments = relative.split(path.sep);
-  if (segments.length !== 2 || !/^[-]?\d+$/.test(segments[0]) || !segments[1]) {
+  const [chatIdSegment, sessionIdSegment] = segments;
+  if (segments.length !== 2 || !chatIdSegment || !sessionIdSegment || !/^[-]?\d+$/.test(chatIdSegment)) {
     throw new Error(`Refusing to delete malformed topic workspace: ${directory}`);
   }
 
