@@ -3,8 +3,6 @@ import type { InlineKeyboard } from "grammy";
 import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
-import { fetchCurrentModel, getModelSelectionLists } from "../../app/services/model-selection-service.js";
-import { buildModelRootMenuView } from "../menus/model-selection-menu.js";
 import {
   getCompactOutputMode,
   getMessageFormatMode,
@@ -25,7 +23,8 @@ import {
 } from "../../app/stores/settings-store.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
-import { appendInlineMenuCancelButton, ensureActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu.js";
+import { appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
+import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import {
   buildAdvancedSettingsView,
   buildAppearanceSettingsView,
@@ -63,12 +62,6 @@ async function renderSettingsView(ctx: Context, view: { text: string; keyboard: 
   await ctx.editMessageText(view.text, { reply_markup: appendInlineMenuCancelButton(view.keyboard, "settings") });
 }
 
-async function showModelSelectionMenu(ctx: Context): Promise<void> {
-  const modelLists = await getModelSelectionLists();
-  const view = await buildModelRootMenuView(fetchCurrentModel(), modelLists);
-  await replyWithInlineMenu(ctx, { menuKind: "model", text: view.text, keyboard: view.keyboard, metadata: { modelLists } });
-}
-
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
   if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) return false;
@@ -77,7 +70,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
     switch (callbackData) {
       case SETTINGS_MODEL_CALLBACK:
         await ctx.answerCallbackQuery();
-        await showModelSelectionMenu(ctx);
+        await showModelCenterMenu(ctx);
         return true;
       case SETTINGS_APPEARANCE_CALLBACK:
         await ctx.answerCallbackQuery();
