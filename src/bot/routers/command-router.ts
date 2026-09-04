@@ -8,7 +8,6 @@ import { opencodeStopCommand } from "../commands/opencode-stop-command.js";
 import { worktreeCommand } from "../commands/worktree-command.js";
 import { openCommand } from "../commands/open-command.js";
 import { lsCommand } from "../commands/ls-command.js";
-import { sessionsCommand } from "../commands/sessions-command.js";
 import { messagesCommand } from "../commands/messages-command.js";
 import { abortCommand } from "../commands/abort-command.js";
 import { detachCommand } from "../commands/detach-command.js";
@@ -56,5 +55,5 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
     }
     await next();
   });
-  bot.command("start", startCommand); bot.command("update", updateCommand); bot.command("all", allVersionInfoCommand); bot.command("help", helpCommand); bot.command("status", statusCommand); bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand); bot.command("opencode_start", opencodeStartCommand); bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState })); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand); bot.command("sessions", sessionsCommand); bot.command("messages", messagesCommand); bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand); bot.command("rename", renameCommand); bot.command("commands", commandsCommand); bot.command("skills", skillsCommand); bot.command("mcps", mcpsCommand); bot.command("memory", memoryCommand); bot.command("remember", rememberCommand); bot.command("forget", forgetCommand); bot.command("image", imageCommand); bot.command("edit", editCommand);
+  bot.command("start", startCommand); bot.command("update", updateCommand); bot.command("all", allVersionInfoCommand); bot.command("help", helpCommand); bot.command("status", statusCommand); bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand); bot.command("opencode_start", opencodeStartCommand); bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState })); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand); bot.command("messages", messagesCommand); bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand); bot.command("rename", renameCommand); bot.command("commands", commandsCommand); bot.command("skills", skillsCommand); bot.command("mcps", mcpsCommand); bot.command("memory", memoryCommand); bot.command("remember", rememberCommand); bot.command("forget", forgetCommand); bot.command("image", imageCommand); bot.command("edit", editCommand);
 }
