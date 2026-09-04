@@ -64,8 +64,8 @@ export function formatModelName(modelID: string, advertisedName?: string): strin
   const withoutNamespace = raw.includes("/") ? raw.slice(raw.lastIndexOf("/") + 1) : raw;
   const normalized = withoutNamespace
     .replace(/[_-]+/g, " ")
-    .replace(/([a-z])([0-9])/gi, "$1 $2")
-    .replace(/([0-9])([a-z])/gi, "$1 $2")
+    .replace(/([a-z]{2,})([0-9])/gi, "$1 $2")
+    .replace(/([0-9])([a-z]{2,})/gi, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();
 
