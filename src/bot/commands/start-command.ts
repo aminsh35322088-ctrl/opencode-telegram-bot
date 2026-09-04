@@ -13,7 +13,7 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
-import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion } from "../../app/services/version-info-service.js";
+import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion, markBotVersionNotified } from "../../app/services/version-info-service.js";
 
 async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   const notice = await getBotUpdateNotice();
@@ -25,8 +25,10 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   );
 
   if (notice.changelog) {
-    await ctx.reply(`📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`);
+    await ctx.reply(`📋 <b>Changelog v${notice.currentVersion}</b>\n\n${notice.changelog}`, { parse_mode: "Markdown" });
   }
+
+  await markBotVersionNotified(notice.currentVersion);
 }
 
 export async function startCommand(ctx: Context): Promise<void> {
@@ -55,7 +57,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   keyboardManager.updateModel(currentModel);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
 
-  const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID) : "Not configured";
+  const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID, currentModel.name) : "Not configured";
   const openCodeVersion = await getOpenCodeVersion();
   const text = [
     "⚡ <b>OpenCode Telegram</b>",
