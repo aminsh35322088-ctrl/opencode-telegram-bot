@@ -42,10 +42,7 @@ async function isTopicMessage(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
   if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1) return false;
-
-  // Persisted Main identity is authoritative and must beat transient ALS.
   if (await isMainTelegramTopic(chatId, threadId)) return false;
-
   const runtime = getTopicRuntimeContext();
   if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) return true;
   return Boolean(await findTelegramTopicBindingByThread(chatId, threadId));
@@ -73,80 +70,48 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     const compactOn = normalized(MAIN_BUTTONS.compact(true));
     const compactOff = normalized(MAIN_BUTTONS.compact(false));
 
-    // IMPORTANT: this is the complete vocabulary of persistent keyboard
-    // controls. A control must NEVER fall through to prompt routing merely
-    // because it was pressed in the wrong scope (e.g. a stale Main keyboard
-    // button visible inside an AI Topic).
+    // Complete fixed-control vocabulary. Wrong-scope controls are consumed,
+    // never allowed to fall through into generic prompt handling.
     const exactControls = new Set([
-      normalized(MAIN_BUTTONS.history),
-      normalized(MAIN_BUTTONS.newChat),
-      normalized(MAIN_BUTTONS.mainSettings),
-      normalized(MAIN_BUTTONS.topicSettings),
-      normalized(MAIN_BUTTONS.imageAi),
-      normalized(MAIN_BUTTONS.deleteChat),
-      normalized(MAIN_BUTTONS.pause),
-      normalized(MAIN_BUTTONS.resume),
-      normalized(MAIN_BUTTONS.abort),
-      normalized(TOPIC_BUTTONS.modelCenter),
-      normalized("❌ Cancel"),
-      compactOn,
-      compactOff,
-      modelButton,
+      normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat),
+      normalized(MAIN_BUTTONS.mainSettings), normalized(MAIN_BUTTONS.topicSettings),
+      normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.deleteChat),
+      normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume),
+      normalized(MAIN_BUTTONS.abort), normalized(TOPIC_BUTTONS.modelCenter),
+      normalized("❌ Cancel"), compactOn, compactOff, modelButton,
     ]);
 
-    // Main-only dynamic controls are also keyboard controls even though their
-    // labels are not fixed constants.
     const dynamicMainControl = !topic && (
       isReplyKeyboardButtonText(text, new Set([currentModelButton()])) ||
-      AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) ||
-      CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
-      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) ||
-      VARIANT_BUTTON_TEXT_PATTERN.test(text)
+      AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
+      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text)
     );
 
-    const isKeyboardControl = exactControls.has(text) || dynamicMainControl;
-    if (!isKeyboardControl) return next();
+    if (!exactControls.has(text) && !dynamicMainControl) return next();
 
     clearImageMode();
     logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
 
-    // Scope validation happens BEFORE dispatch. A stale/wrong-scope keyboard
-    // press is consumed silently and can never reach generic text routing.
     const mainOnly = new Set([
-      normalized(MAIN_BUTTONS.history),
-      normalized(MAIN_BUTTONS.newChat),
+      normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat),
       normalized(MAIN_BUTTONS.mainSettings),
-      normalized(MAIN_BUTTONS.pause),
-      normalized(MAIN_BUTTONS.resume),
-      normalized(MAIN_BUTTONS.abort),
-      normalized(TOPIC_BUTTONS.modelCenter),
     ]);
     const topicOnly = new Set([
-      normalized(TOPIC_BUTTONS.deleteChat),
-      normalized(TOPIC_BUTTONS.topicSettings),
+      normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings),
       normalized(TOPIC_BUTTONS.modelCenter),
     ]);
-
-    // Shared controls are intentionally available in both scopes.
     const shared = new Set([
-      normalized(MAIN_BUTTONS.imageAi),
-      normalized(MAIN_BUTTONS.pause),
-      normalized(MAIN_BUTTONS.resume),
-      normalized(MAIN_BUTTONS.abort),
-      compactOn,
-      compactOff,
+      normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause),
+      normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff,
     ]);
-
     const isDynamicMain = !topic && (
-      AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) ||
-      CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
-      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) ||
-      VARIANT_BUTTON_TEXT_PATTERN.test(text) ||
+      AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
+      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text) ||
       isReplyKeyboardButtonText(text, new Set([currentModelButton()]))
     );
 
     const allowedInRoute = topic
-      ? topicOnly.has(text) || shared.has(text) || text === normalized(TOPIC_BUTTONS.modelCenter)
+      ? topicOnly.has(text) || shared.has(text)
       : mainOnly.has(text) || shared.has(text) || isDynamicMain || text === modelButton;
 
     if (!allowedInRoute) {
@@ -166,11 +131,11 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         if (isIntegrationWizardActive()) { clearIntegrationWizard(); await integrationsCommand(ctx as never); return; }
         return;
       }
-      if (isExact(text, TOPIC_BUTTONS.modelCenter) || (!topic && isExact(text, modelButton))) { if (!await menuAllowed(ctx)) return; await showModelCenterMenu(ctx); return; }
+      if (topic && isExact(text, TOPIC_BUTTONS.modelCenter)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
+      if (!topic && isExact(text, modelButton)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
       if (isExact(text, compactOn) || isExact(text, compactOff)) {
         if (!await menuAllowed(ctx)) return;
-        const enabled = !getCompactOutputMode();
-        setCompactOutputMode(enabled);
+        const enabled = !getCompactOutputMode(); setCompactOutputMode(enabled);
         const sessionId = topic ? getTopicRuntimeContext()?.sessionId : undefined;
         const keyboard = keyboardManager.getKeyboard(sessionId);
         await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {}); return;
@@ -185,14 +150,11 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       if (!topic && VARIANT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showVariantSelectionMenu(ctx); return; }
       if (!topic && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
         if (!await menuAllowed(ctx)) return;
-        const queued = findQueuedPromptByButtonLabel(raw);
-        const keyboard = keyboardManager.getKeyboard();
+        const queued = findQueuedPromptByButtonLabel(raw); const keyboard = keyboardManager.getKeyboard();
         if (queued) { promptQueue.removeById(queued.id); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); }
         else await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});
         return;
       }
-      // Defensive terminal consume: recognized keyboard controls can never
-      // become an ordinary AI prompt, even if a handler is added later.
       return;
     } catch (error) {
       logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error);
