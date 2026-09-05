@@ -26,6 +26,8 @@ import { clearImageMode } from "../../app/services/image-mode-service.js";
 import { isReplyKeyboardButtonText, AGENT_MODE_BUTTON_TEXT_PATTERN, CONTEXT_BUTTON_TEXT_PATTERN, QUEUED_PROMPT_BUTTON_TEXT_PATTERN, VARIANT_BUTTON_TEXT_PATTERN } from "../message-patterns.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
+import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { getMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -36,10 +38,23 @@ function currentModelButton(): string {
   return model.providerID && model.modelID ? formatModelForButton(model.providerID, model.modelID, model.name) : "🧠 Model";
 }
 
-/** AI Topic means an OpenCode-bound runtime context, not merely a Telegram thread. */
-function isTopicMessage(_ctx: Context): boolean {
+/**
+ * Resolve the keyboard scope from durable Telegram routing data, not from a
+ * stale/global runtime flag. A Main topic is a Telegram Topic too, but it is
+ * intentionally NOT an AI Topic and therefore keeps Main controls.
+ */
+async function isTopicMessage(ctx: Context): Promise<boolean> {
   const runtime = getTopicRuntimeContext();
-  return Boolean(runtime?.sessionId && runtime.threadId !== undefined && runtime.threadId !== 1);
+  if (runtime?.sessionId && runtime.threadId !== undefined && runtime.threadId !== 1) return true;
+
+  const chatId = ctx.chat?.id;
+  const threadId = ctx.message?.message_thread_id;
+  if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1) return false;
+
+  const main = await getMainTelegramTopic(chatId);
+  if (main?.threadId === threadId) return false;
+
+  return Boolean(await findTelegramTopicBindingByThread(chatId, threadId));
 }
 
 function isExact(text: string, candidate: string): boolean { return normalized(text) === normalized(candidate); }
@@ -59,7 +74,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     const text = normalized(raw);
     if (!text) return next();
 
-    const topic = isTopicMessage(ctx);
+    const topic = await isTopicMessage(ctx);
     const modelButton = normalized(currentModelButton());
     const compactOn = normalized(MAIN_BUTTONS.compact(true));
     const compactOff = normalized(MAIN_BUTTONS.compact(false));
@@ -76,7 +91,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     ]);
 
     if (topic && mainButtonTexts.has(text) && !topicButtonTexts.has(text)) {
-      logger.info(`[Bot] Ignoring stale Main Reply Keyboard button in AI Topic: thread=${getTopicRuntimeContext()?.threadId ?? 0}, text=${raw}`);
+      logger.info(`[Bot] Ignoring stale Main Reply Keyboard button in AI Topic: thread=${ctx.message.message_thread_id ?? 0}, text=${raw}`);
       return;
     }
 
@@ -85,7 +100,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     if (!looksLikeButton) return next();
 
     clearImageMode();
-    logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${getTopicRuntimeContext()?.threadId ?? 0} text=${raw}`);
+    logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${getTopicRuntimeContext()?.threadId ?? ctx.message.message_thread_id ?? 0} text=${raw}`);
 
     try {
       if (isExact(text, TOPIC_BUTTONS.imageAi) || (!topic && isExact(text, MAIN_BUTTONS.imageAi))) {
