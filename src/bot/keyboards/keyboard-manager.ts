@@ -12,6 +12,7 @@ import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
+import { logger } from "../../utils/logger.js";
 
 const MAIN_KEY = "__main__";
 
@@ -21,7 +22,6 @@ class KeyboardManager {
   private readonly lastUpdateTimes = new Map<string, number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
-  /** Explicit session wins; otherwise only an active Topic runtime may select a Topic state. */
   private key(sessionId?: string): string {
     return sessionId ?? getTopicRuntimeContext()?.sessionId ?? MAIN_KEY;
   }
@@ -148,14 +148,9 @@ class KeyboardManager {
       const options: Record<string, unknown> = {
         reply_markup: this.buildKeyboard(effectiveSessionId),
       };
-      // Both Main and Topic keyboards are pinned to their exact Telegram
-      // thread. Main has no OpenCode session, so it is identified by the
-      // persisted canonical mainThreadId instead of getCurrentSession().
       if (state?.threadId !== undefined) options.message_thread_id = state.threadId;
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) {
-      // A deleted/replaced Main Topic can leave a stale persisted thread id.
-      // Keep the state isolated; the next /start will adopt the new thread.
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
     }
   }
