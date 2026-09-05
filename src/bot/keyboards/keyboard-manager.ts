@@ -22,8 +22,16 @@ class KeyboardManager {
   private readonly lastUpdateTimes = new Map<string, number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
+  /**
+   * Keyboard identity is explicit by design:
+   * - no sessionId => Main keyboard, always MAIN_KEY
+   * - sessionId => exact AI Topic keyboard
+   * Never infer keyboard identity from AsyncLocalStorage. ALS can be present
+   * while a shared/global operation is executing and must not move Main state
+   * into an AI Topic (or vice versa).
+   */
   private key(sessionId?: string): string {
-    return sessionId ?? getTopicRuntimeContext()?.sessionId ?? MAIN_KEY;
+    return sessionId ?? MAIN_KEY;
   }
 
   public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
@@ -103,14 +111,17 @@ class KeyboardManager {
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     const effectiveSessionId = this.activeSessionId(sessionId);
+
+    // Main is not backed by an OpenCode session. A Topic run must therefore
+    // never make the Main keyboard show Abort/Pause/Resume.
     const running = effectiveSessionId
       ? assistantRunState.hasActiveRun(effectiveSessionId)
-      : assistantRunState.hasActiveRuns();
+      : false;
     const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
 
     if (isTopic) {
       const topicState = state;
-      if (!topicState) return createMainKeyboard({ providerID: "", modelID: "" }, { running, isTopic: false });
+      if (!topicState) return createMainKeyboard({ providerID: "", modelID: "" }, { running: false, isTopic: false });
       const paused = topicState.sessionId ? isChatPaused(topicState.sessionId) : topicState.paused;
       return createTopicKeyboard({ paused });
     }
@@ -118,14 +129,14 @@ class KeyboardManager {
     if (!state) {
       return createMainKeyboard(
         { providerID: "", modelID: "" },
-        { paused: false, running, compactOutputMode: getCompactOutputMode(), isTopic: false },
+        { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false },
       );
     }
 
     return createMainKeyboard(state.currentModel, {
-      queuedPromptLabels: getQueuedPromptButtonLabels(effectiveSessionId),
-      paused: state.paused,
-      running,
+      queuedPromptLabels: getQueuedPromptButtonLabels(),
+      paused: false,
+      running: false,
       compactOutputMode: getCompactOutputMode(),
       isTopic: false,
     });
