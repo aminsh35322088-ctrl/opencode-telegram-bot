@@ -6,12 +6,14 @@ import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
-import { logger } from "../../utils/logger.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
-import { getCurrentSession } from "../../app/services/session-service.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
+
+const MAIN_KEY = "__main__";
 
 class KeyboardManager {
   private readonly states = new Map<string, KeyboardState>();
@@ -19,8 +21,9 @@ class KeyboardManager {
   private readonly lastUpdateTimes = new Map<string, number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
+  /** Explicit session wins; otherwise only an active Topic runtime may select a Topic state. */
   private key(sessionId?: string): string {
-    return sessionId ?? getCurrentSession()?.id ?? "__main__";
+    return sessionId ?? getTopicRuntimeContext()?.sessionId ?? MAIN_KEY;
   }
 
   public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
@@ -29,10 +32,11 @@ class KeyboardManager {
     const existing = this.states.get(key);
     if (!existing) {
       const currentModel = getStoredModel();
+      const isMain = !sessionId;
       this.states.set(key, {
         sessionId,
         chatId,
-        threadId,
+        threadId: threadId ?? (isMain ? getMainTelegramThreadIdSync(chatId) ?? undefined : undefined),
         currentAgent: getStoredAgent(),
         currentModel,
         contextInfo: null,
@@ -43,6 +47,9 @@ class KeyboardManager {
     }
     existing.chatId = chatId;
     if (threadId !== undefined) existing.threadId = threadId;
+    if (!sessionId && existing.threadId === undefined) {
+      existing.threadId = getMainTelegramThreadIdSync(chatId) ?? undefined;
+    }
   }
 
   public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void {
@@ -50,11 +57,11 @@ class KeyboardManager {
   }
 
   private activeSessionId(sessionId?: string): string | undefined {
-    return sessionId ?? getCurrentSession()?.id;
+    return sessionId ?? getTopicRuntimeContext()?.sessionId;
   }
 
   private state(sessionId?: string): KeyboardState | undefined {
-    return this.states.get(this.key(this.activeSessionId(sessionId)));
+    return this.states.get(this.key(sessionId));
   }
 
   public updateAgent(agent: string, sessionId?: string): void {
@@ -117,7 +124,7 @@ class KeyboardManager {
 
     return createMainKeyboard(state.currentModel, {
       queuedPromptLabels: getQueuedPromptButtonLabels(effectiveSessionId),
-      paused: state.sessionId ? isChatPaused(state.sessionId) : state.paused,
+      paused: state.paused,
       running,
       compactOutputMode: getCompactOutputMode(),
       isTopic: false,
@@ -141,11 +148,14 @@ class KeyboardManager {
       const options: Record<string, unknown> = {
         reply_markup: this.buildKeyboard(effectiveSessionId),
       };
-      if (state?.sessionId && state.threadId !== undefined) {
-        options.message_thread_id = state.threadId;
-      }
+      // Both Main and Topic keyboards are pinned to their exact Telegram
+      // thread. Main has no OpenCode session, so it is identified by the
+      // persisted canonical mainThreadId instead of getCurrentSession().
+      if (state?.threadId !== undefined) options.message_thread_id = state.threadId;
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) {
+      // A deleted/replaced Main Topic can leave a stale persisted thread id.
+      // Keep the state isolated; the next /start will adopt the new thread.
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
     }
   }
