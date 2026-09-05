@@ -22,21 +22,12 @@ async function ensureMainTopic(ctx: Context): Promise<number | null> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return null;
 
-  // Telegram's private forum UI may create the /start topic itself before the
-  // bot receives the command. When that happens, the incoming thread is the
-  // exact Topic the user expects to become Main. Prefer that concrete thread
-  // over any previously persisted Main-topic pointer so we never create a
-  // second Topic for the same /start interaction.
   const incomingThreadId = ctx.message?.message_thread_id;
   if (typeof incomingThreadId === "number" && incomingThreadId > 1) {
     const incomingBinding = await findTelegramTopicBindingByThread(chatId, incomingThreadId);
     if (!incomingBinding) {
       try {
-        await ctx.api.raw.editForumTopic({
-          chat_id: chatId,
-          message_thread_id: incomingThreadId,
-          name: "General",
-        });
+        await ctx.api.raw.editForumTopic({ chat_id: chatId, message_thread_id: incomingThreadId, name: "General" });
         logger.info(`[TelegramTopics] Renamed incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`);
       } catch (error) {
         logger.warn(`[TelegramTopics] Could not rename incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`, error);
@@ -45,7 +36,6 @@ async function ensureMainTopic(ctx: Context): Promise<number | null> {
       logger.info(`[TelegramTopics] Adopted incoming /start topic as dedicated Main topic: chat=${chatId}, thread=${incomingThreadId}, title="General"`);
       return incomingThreadId;
     }
-
     logger.info(`[TelegramTopics] Ignoring /start inside bound AI topic: chat=${chatId}, thread=${incomingThreadId}, session=${incomingBinding.sessionId}`);
     return null;
   }
@@ -70,10 +60,16 @@ async function sendBotUpdateNotice(ctx: Context, threadId?: number | null): Prom
 }
 
 export async function startCommand(ctx: Context): Promise<void> {
+  // Resolve the canonical Main thread before touching keyboard state. This
+  // prevents a /start received while another Topic runtime is active from
+  // initializing the Main keyboard under that Topic's transient context.
+  const mainThreadId = await ensureMainTopic(ctx);
+
   if (ctx.chat) {
     if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
-    keyboardManager.initialize(ctx.api, ctx.chat.id);
+    keyboardManager.initialize(ctx.api, ctx.chat.id, undefined, mainThreadId ?? undefined);
   }
+
   await abortCurrentOperation(ctx, { notifyUser: false });
   detachAttachedSession("start_command_reset");
   foregroundSessionState.clearAll("start_command_reset");
@@ -85,6 +81,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   keyboardManager.clearContext();
   await pinnedMessageManager.clear();
   if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
+
   const currentAgent = getStoredAgent();
   const currentModel = getStoredModel();
   const variantName = formatVariantForButton(currentModel.variant || "default");
@@ -107,7 +104,6 @@ export async function startCommand(ctx: Context): Promise<void> {
     "",
     "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
   ].join("\n");
-  const mainThreadId = await ensureMainTopic(ctx);
   await sendBotUpdateNotice(ctx, mainThreadId);
   if (ctx.chat) {
     await ctx.api.sendMessage(ctx.chat.id, text, {
