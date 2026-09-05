@@ -37,8 +37,29 @@ async function readStore(): Promise<MainTopicStore> {
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== "object") return {};
 
-    // Migrate the original single-binding format without losing the persisted
-    // Main Topic thread_id when the store evolves to support multiple chats.
+    const legacy = normalizeBinding(value, (value as Partial<MainTopicBinding>).chatId ?? 0);
+    if (legacy) return { [String(legacy.chatId)]: legacy };
+
+    const store: MainTopicStore = {};
+    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+      const chatId = Number(key);
+      const binding = normalizeBinding(candidate, chatId);
+      if (binding) store[key] = binding;
+    }
+    return store;
+  } catch (error) {
+    if (isFileNotFound(error)) return {};
+    throw error;
+  }
+}
+
+function readStoreSync(): MainTopicStore {
+  const fs = require("fs") as typeof import("fs");
+  try {
+    const raw = fs.readFileSync(getStorePath(), "utf8");
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object") return {};
+
     const legacy = normalizeBinding(value, (value as Partial<MainTopicBinding>).chatId ?? 0);
     if (legacy) return { [String(legacy.chatId)]: legacy };
 
@@ -60,13 +81,27 @@ export async function getMainTelegramTopic(chatId: number): Promise<MainTopicBin
   return normalizeBinding(store[String(chatId)], chatId);
 }
 
+export function getMainTelegramTopicSync(chatId: number): MainTopicBinding | null {
+  const store = readStoreSync();
+  return normalizeBinding(store[String(chatId)], chatId);
+}
+
 export async function getMainTelegramThreadId(chatId: number): Promise<number | null> {
   return (await getMainTelegramTopic(chatId))?.threadId ?? null;
+}
+
+export function getMainTelegramThreadIdSync(chatId: number): number | null {
+  return getMainTelegramTopicSync(chatId)?.threadId ?? null;
 }
 
 export async function isMainTelegramTopic(chatId: number, threadId: number | undefined | null): Promise<boolean> {
   if (typeof threadId !== "number") return false;
   return (await getMainTelegramThreadId(chatId)) === threadId;
+}
+
+export function isMainTelegramTopicSync(chatId: number, threadId: number | undefined | null): boolean {
+  if (typeof threadId !== "number") return false;
+  return getMainTelegramThreadIdSync(chatId) === threadId;
 }
 
 export async function saveMainTelegramTopic(chatId: number, threadId: number, title = "General"): Promise<void> {
