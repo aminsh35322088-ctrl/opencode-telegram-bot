@@ -2,9 +2,7 @@ import { Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
-import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getCompactOutputMode } from "../../app/stores/settings-store.js";
-import { getActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 
 export const MAIN_BUTTONS = {
   history: "🕘 History",
@@ -81,13 +79,16 @@ function addControls(
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
-  const isTopic = options.isTopic ?? Boolean(getActiveTelegramTopic());
+  // Scope is explicit. Never inspect runtime/global Topic state here: this
+  // builder is also used by Main messages that can be sent while a Topic is
+  // executing. Topic keyboards have their own dedicated builder.
+  const isTopic = options.isTopic === true;
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
   addControls(
     keyboard,
     currentModel,
     isTopic,
-    options.paused ?? isChatPaused(),
+    options.paused ?? false,
     options.running ?? false,
     options.compactOutputMode ?? getCompactOutputMode(),
   );
@@ -138,7 +139,13 @@ export function createMainKeyboard(
   if (typeof first !== "string") {
     return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
   }
-  return buildMainKeyboard(second as ModelInfo, { queuedPromptLabels, paused, running });
+  // Legacy signature is Main-only by contract.
+  return buildMainKeyboard(second as ModelInfo, {
+    queuedPromptLabels,
+    paused,
+    running,
+    isTopic: false,
+  });
 }
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
