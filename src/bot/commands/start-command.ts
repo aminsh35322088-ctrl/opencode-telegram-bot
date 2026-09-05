@@ -14,6 +14,7 @@ import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
 import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion, markBotVersionNotified } from "../../app/services/version-info-service.js";
+import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { getMainTelegramTopic, saveMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
 import { logger } from "../../utils/logger.js";
 
@@ -21,31 +22,36 @@ async function ensureMainTopic(ctx: Context): Promise<number | null> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return null;
 
-  const existing = await getMainTelegramTopic(chatId);
-  if (existing) return existing.threadId;
-
-  // In a private forum, Telegram can turn a command sent from the All view
-  // into a new topic before the bot receives the command. Reuse that topic
-  // instead of creating a second one. This is what prevents the unwanted
-  // "/start" topic: the topic Telegram created for /start becomes our
-  // dedicated Main topic and is renamed to General.
+  // Telegram's private forum UI may create the /start topic itself before the
+  // bot receives the command. When that happens, the incoming thread is the
+  // exact Topic the user expects to become Main. Prefer that concrete thread
+  // over any previously persisted Main-topic pointer so we never create a
+  // second Topic for the same /start interaction.
   const incomingThreadId = ctx.message?.message_thread_id;
   if (typeof incomingThreadId === "number" && incomingThreadId > 1) {
-    try {
-      await ctx.api.raw.editForumTopic({
-        chat_id: chatId,
-        message_thread_id: incomingThreadId,
-        name: "General",
-      });
-    } catch (error) {
-      // Renaming is best-effort. The important invariant is that the exact
-      // incoming topic is persisted as Main so no duplicate topic is created.
-      logger.warn(`[TelegramTopics] Could not rename incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`, error);
+    const incomingBinding = await findTelegramTopicBindingByThread(chatId, incomingThreadId);
+    if (!incomingBinding) {
+      try {
+        await ctx.api.raw.editForumTopic({
+          chat_id: chatId,
+          message_thread_id: incomingThreadId,
+          name: "General",
+        });
+        logger.info(`[TelegramTopics] Renamed incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`);
+      } catch (error) {
+        logger.warn(`[TelegramTopics] Could not rename incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`, error);
+      }
+      await saveMainTelegramTopic(chatId, incomingThreadId, "General");
+      logger.info(`[TelegramTopics] Adopted incoming /start topic as dedicated Main topic: chat=${chatId}, thread=${incomingThreadId}, title="General"`);
+      return incomingThreadId;
     }
-    await saveMainTelegramTopic(chatId, incomingThreadId, "General");
-    logger.info(`[TelegramTopics] Reused incoming /start topic as dedicated Main topic: chat=${chatId}, thread=${incomingThreadId}, title="General"`);
-    return incomingThreadId;
+
+    logger.info(`[TelegramTopics] Ignoring /start inside bound AI topic: chat=${chatId}, thread=${incomingThreadId}, session=${incomingBinding.sessionId}`);
+    return null;
   }
+
+  const existing = await getMainTelegramTopic(chatId);
+  if (existing) return existing.threadId;
 
   const result = await ctx.api.raw.createForumTopic({ chat_id: chatId, name: "General" });
   if (!result.message_thread_id) throw new Error("Telegram created the General topic without a message_thread_id");
