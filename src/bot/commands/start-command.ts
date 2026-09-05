@@ -14,20 +14,27 @@ import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
 import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion, markBotVersionNotified } from "../../app/services/version-info-service.js";
+import { getMainTelegramTopic, saveMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
+import { logger } from "../../utils/logger.js";
 
-async function sendBotUpdateNotice(ctx: Context): Promise<void> {
+async function ensureMainTopic(ctx: Context): Promise<number | null> {
+  const chatId = ctx.chat?.id;
+  if (typeof chatId !== "number") return null;
+  const existing = await getMainTelegramTopic(chatId);
+  if (existing) return existing.threadId;
+  const result = await ctx.api.raw.createForumTopic({ chat_id: chatId, name: "General" });
+  if (!result.message_thread_id) throw new Error("Telegram created the General topic without a message_thread_id");
+  await saveMainTelegramTopic(chatId, result.message_thread_id, "General");
+  logger.info(`[TelegramTopics] Created dedicated Main topic: chat=${chatId}, thread=${result.message_thread_id}, title="General"`);
+  return result.message_thread_id;
+}
+
+async function sendBotUpdateNotice(ctx: Context, threadId?: number | null): Promise<void> {
   const notice = await getBotUpdateNotice();
   if (!notice) return;
-
-  await ctx.reply(
-    `🚀 Bot updated\n\nv${notice.previousVersion} → <b>v${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`,
-    { parse_mode: "HTML" },
-  );
-
-  if (notice.changelog) {
-    await ctx.reply(`📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`);
-  }
-
+  const options = { parse_mode: "HTML" as const, ...(threadId ? { message_thread_id: threadId } : {}) };
+  await ctx.api.sendMessage(ctx.chat!.id, `🚀 <b>Bot updated</b>\n\nv${notice.previousVersion} → <b>v${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`, options);
+  if (notice.changelog) await ctx.api.sendMessage(ctx.chat!.id, `📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`, threadId ? { message_thread_id: threadId } : {});
   await markBotVersionNotified(notice.currentVersion);
 }
 
@@ -36,7 +43,6 @@ export async function startCommand(ctx: Context): Promise<void> {
     if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
     keyboardManager.initialize(ctx.api, ctx.chat.id);
   }
-
   await abortCurrentOperation(ctx, { notifyUser: false });
   detachAttachedSession("start_command_reset");
   foregroundSessionState.clearAll("start_command_reset");
@@ -47,7 +53,6 @@ export async function startCommand(ctx: Context): Promise<void> {
   clearProject();
   keyboardManager.clearContext();
   await pinnedMessageManager.clear();
-
   if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
   const currentAgent = getStoredAgent();
   const currentModel = getStoredModel();
@@ -56,7 +61,6 @@ export async function startCommand(ctx: Context): Promise<void> {
   keyboardManager.updateAgent(currentAgent);
   keyboardManager.updateModel(currentModel);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-
   const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID, currentModel.name) : "Not configured";
   const openCodeVersion = await getOpenCodeVersion();
   const text = [
@@ -72,7 +76,13 @@ export async function startCommand(ctx: Context): Promise<void> {
     "",
     "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
   ].join("\n");
-
-  await sendBotUpdateNotice(ctx);
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false, false) });
+  const mainThreadId = await ensureMainTopic(ctx);
+  await sendBotUpdateNotice(ctx, mainThreadId);
+  if (ctx.chat) {
+    await ctx.api.sendMessage(ctx.chat.id, text, {
+      parse_mode: "HTML",
+      reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false, false),
+      ...(mainThreadId ? { message_thread_id: mainThreadId } : {}),
+    });
+  }
 }
