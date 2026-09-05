@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { getRuntimePaths } from "../../runtime/paths.js";
 
 export interface MainTopicBinding {
@@ -30,23 +31,24 @@ function normalizeBinding(value: unknown, chatId: number): MainTopicBinding | nu
   };
 }
 
+function parseStore(value: unknown): MainTopicStore {
+  if (!value || typeof value !== "object") return {};
+  const legacy = normalizeBinding(value, (value as Partial<MainTopicBinding>).chatId ?? 0);
+  if (legacy) return { [String(legacy.chatId)]: legacy };
+
+  const store: MainTopicStore = {};
+  for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+    const chatId = Number(key);
+    const binding = normalizeBinding(candidate, chatId);
+    if (binding) store[key] = binding;
+  }
+  return store;
+}
+
 async function readStore(): Promise<MainTopicStore> {
   const fs = await import("fs/promises");
   try {
-    const raw = await fs.readFile(getStorePath(), "utf8");
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== "object") return {};
-
-    const legacy = normalizeBinding(value, (value as Partial<MainTopicBinding>).chatId ?? 0);
-    if (legacy) return { [String(legacy.chatId)]: legacy };
-
-    const store: MainTopicStore = {};
-    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
-      const chatId = Number(key);
-      const binding = normalizeBinding(candidate, chatId);
-      if (binding) store[key] = binding;
-    }
-    return store;
+    return parseStore(JSON.parse(await fs.readFile(getStorePath(), "utf8")));
   } catch (error) {
     if (isFileNotFound(error)) return {};
     throw error;
@@ -54,22 +56,8 @@ async function readStore(): Promise<MainTopicStore> {
 }
 
 function readStoreSync(): MainTopicStore {
-  const fs = require("fs") as typeof import("fs");
   try {
-    const raw = fs.readFileSync(getStorePath(), "utf8");
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== "object") return {};
-
-    const legacy = normalizeBinding(value, (value as Partial<MainTopicBinding>).chatId ?? 0);
-    if (legacy) return { [String(legacy.chatId)]: legacy };
-
-    const store: MainTopicStore = {};
-    for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
-      const chatId = Number(key);
-      const binding = normalizeBinding(candidate, chatId);
-      if (binding) store[key] = binding;
-    }
-    return store;
+    return parseStore(JSON.parse(readFileSync(getStorePath(), "utf8")));
   } catch (error) {
     if (isFileNotFound(error)) return {};
     throw error;
@@ -77,13 +65,11 @@ function readStoreSync(): MainTopicStore {
 }
 
 export async function getMainTelegramTopic(chatId: number): Promise<MainTopicBinding | null> {
-  const store = await readStore();
-  return normalizeBinding(store[String(chatId)], chatId);
+  return normalizeBinding((await readStore())[String(chatId)], chatId);
 }
 
 export function getMainTelegramTopicSync(chatId: number): MainTopicBinding | null {
-  const store = readStoreSync();
-  return normalizeBinding(store[String(chatId)], chatId);
+  return normalizeBinding(readStoreSync()[String(chatId)], chatId);
 }
 
 export async function getMainTelegramThreadId(chatId: number): Promise<number | null> {
