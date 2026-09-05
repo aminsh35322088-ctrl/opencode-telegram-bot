@@ -9,7 +9,6 @@ import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
-import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
 import { logger } from "../../utils/logger.js";
 
@@ -22,9 +21,7 @@ class KeyboardManager {
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   /** Keyboard identity is explicit: omitted sessionId always means Main. */
-  private key(sessionId?: string): string {
-    return sessionId ?? MAIN_KEY;
-  }
+  private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
 
   public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
     this.api = api;
@@ -47,23 +44,11 @@ class KeyboardManager {
     }
     existing.chatId = chatId;
     if (threadId !== undefined) existing.threadId = threadId;
-    if (!sessionId && existing.threadId === undefined) {
-      existing.threadId = getMainTelegramThreadIdSync(chatId) ?? undefined;
-    }
+    if (!sessionId && existing.threadId === undefined) existing.threadId = getMainTelegramThreadIdSync(chatId) ?? undefined;
   }
 
-  public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void {
-    this.initialize(api, chatId, sessionId, threadId);
-  }
-
-  /** Never infer a route from ambient ALS; callers must pass a Topic sessionId. */
-  private activeSessionId(sessionId?: string): string | undefined {
-    return sessionId;
-  }
-
-  private state(sessionId?: string): KeyboardState | undefined {
-    return this.states.get(this.key(sessionId));
-  }
+  public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void { this.initialize(api, chatId, sessionId, threadId); }
+  private state(sessionId?: string): KeyboardState | undefined { return this.states.get(this.key(sessionId)); }
 
   public updateAgent(agent: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.currentAgent = agent; }
   public updateModel(model: ModelInfo, sessionId?: string): void { const state = this.state(sessionId); if (!state) return; state.currentModel = model; state.variantName = formatVariantForButton(model.variant || "default"); }
@@ -75,16 +60,10 @@ class KeyboardManager {
 
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
-    const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
-    if (isTopic) {
-      const topicState = state;
-      if (!topicState) return createMainKeyboard({ providerID: "", modelID: "" }, { running: false, isTopic: false });
-      const paused = topicState.sessionId ? isChatPaused(topicState.sessionId) : topicState.paused;
-      return createTopicKeyboard({ paused });
+    if (state?.sessionId && state.threadId !== undefined) {
+      return createTopicKeyboard({ paused: isChatPaused(state.sessionId) });
     }
-    if (!state) {
-      return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
-    }
+    if (!state) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
     return createMainKeyboard(state.currentModel, {
       queuedPromptLabels: getQueuedPromptButtonLabels(),
       paused: false,
@@ -108,9 +87,7 @@ class KeyboardManager {
       const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(sessionId) };
       if (state?.threadId !== undefined) options.message_thread_id = state.threadId;
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
-    } catch (err) {
-      logger.error("[KeyboardManager] Failed to send keyboard update:", err);
-    }
+    } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
   public getKeyboard(sessionId?: string) { return this.state(sessionId) ? this.buildKeyboard(sessionId) : undefined; }
