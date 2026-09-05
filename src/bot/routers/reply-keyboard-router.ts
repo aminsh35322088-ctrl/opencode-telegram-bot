@@ -27,7 +27,7 @@ import { isReplyKeyboardButtonText, AGENT_MODE_BUTTON_TEXT_PATTERN, CONTEXT_BUTT
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-import { getMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
+import { isMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -39,20 +39,20 @@ function currentModelButton(): string {
 }
 
 /**
- * Resolve the keyboard scope from durable Telegram routing data, not from a
- * stale/global runtime flag. A Main topic is a Telegram Topic too, but it is
- * intentionally NOT an AI Topic and therefore keeps Main controls.
+ * Main Topic identity is durable and authoritative. It must win over any
+ * transient AsyncLocalStorage context because the persisted thread_id is the
+ * canonical Main route for the chat across the entire application lifetime.
  */
 async function isTopicMessage(ctx: Context): Promise<boolean> {
-  const runtime = getTopicRuntimeContext();
-  if (runtime?.sessionId && runtime.threadId !== undefined && runtime.threadId !== 1) return true;
-
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
-  if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1) return false;
+  if (typeof chatId !== "number" || typeof threadId !== "number") return false;
+  if (threadId === 1) return false;
 
-  const main = await getMainTelegramTopic(chatId);
-  if (main?.threadId === threadId) return false;
+  if (await isMainTelegramTopic(chatId, threadId)) return false;
+
+  const runtime = getTopicRuntimeContext();
+  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) return true;
 
   return Boolean(await findTelegramTopicBindingByThread(chatId, threadId));
 }
@@ -100,7 +100,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     if (!looksLikeButton) return next();
 
     clearImageMode();
-    logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${getTopicRuntimeContext()?.threadId ?? ctx.message.message_thread_id ?? 0} text=${raw}`);
+    logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
 
     try {
       if (isExact(text, TOPIC_BUTTONS.imageAi) || (!topic && isExact(text, MAIN_BUTTONS.imageAi))) {
