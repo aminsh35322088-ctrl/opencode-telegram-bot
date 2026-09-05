@@ -20,8 +20,33 @@ import { logger } from "../../utils/logger.js";
 async function ensureMainTopic(ctx: Context): Promise<number | null> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return null;
+
   const existing = await getMainTelegramTopic(chatId);
   if (existing) return existing.threadId;
+
+  // In a private forum, Telegram can turn a command sent from the All view
+  // into a new topic before the bot receives the command. Reuse that topic
+  // instead of creating a second one. This is what prevents the unwanted
+  // "/start" topic: the topic Telegram created for /start becomes our
+  // dedicated Main topic and is renamed to General.
+  const incomingThreadId = ctx.message?.message_thread_id;
+  if (typeof incomingThreadId === "number" && incomingThreadId > 1) {
+    try {
+      await ctx.api.raw.editForumTopic({
+        chat_id: chatId,
+        message_thread_id: incomingThreadId,
+        name: "General",
+      });
+    } catch (error) {
+      // Renaming is best-effort. The important invariant is that the exact
+      // incoming topic is persisted as Main so no duplicate topic is created.
+      logger.warn(`[TelegramTopics] Could not rename incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`, error);
+    }
+    await saveMainTelegramTopic(chatId, incomingThreadId, "General");
+    logger.info(`[TelegramTopics] Reused incoming /start topic as dedicated Main topic: chat=${chatId}, thread=${incomingThreadId}, title="General"`);
+    return incomingThreadId;
+  }
+
   const result = await ctx.api.raw.createForumTopic({ chat_id: chatId, name: "General" });
   if (!result.message_thread_id) throw new Error("Telegram created the General topic without a message_thread_id");
   await saveMainTelegramTopic(chatId, result.message_thread_id, "General");
