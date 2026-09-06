@@ -58,7 +58,7 @@ async function resolveCallbackTopicSession(ctx: Context): Promise<string | null>
   return binding.sessionId;
 }
 
-async function handleMainNavigationCallback(ctx: Context, data: string, deps: CallbackRouterDeps): Promise<boolean> {
+async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot<Context>, deps: CallbackRouterDeps): Promise<boolean> {
   if (!data.startsWith("main:")) return false;
   const callbackMessage = ctx.callbackQuery?.message;
   const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
@@ -68,7 +68,7 @@ async function handleMainNavigationCallback(ctx: Context, data: string, deps: Ca
   }
   await ctx.answerCallbackQuery().catch(() => {});
   if (data === "main:history") { await sessionsCommand(ctx as never); return true; }
-  if (data === "main:new") { await newCommand(ctx as never, { bot: deps.bot ?? (ctx as never), ensureEventSubscription: deps.ensureEventSubscription }); return true; }
+  if (data === "main:new") { await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); return true; }
   if (data === "main:model") { await showModelCenterMenu(ctx); return true; }
   if (data === "main:settings") { await settingsCommand(ctx as never); return true; }
   await ctx.answerCallbackQuery({ text: t("callback.unknown_command") }).catch(() => {});
@@ -122,7 +122,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
     let errorScope: InteractionErrorScope = "interaction";
     try {
-      if (await handleMainNavigationCallback(ctx, data, deps)) return;
+      if (await handleMainNavigationCallback(ctx, data, bot, deps)) return;
       if (await handleImageAiCallback(ctx, data)) return;
       if (await handleTelegramTopicDeleteCallback(ctx)) return;
       if (await handleBackgroundSessionOpen(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })) return;
