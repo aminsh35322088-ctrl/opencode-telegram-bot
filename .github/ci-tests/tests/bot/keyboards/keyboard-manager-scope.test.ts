@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   formatVariantForButton: vi.fn(),
   getQueuedPromptButtonLabels: vi.fn(),
   isChatPaused: vi.fn(),
+  assistantRunState: { hasActiveRun: vi.fn() },
   getMainTelegramThreadIdSync: vi.fn(),
 }));
 
@@ -16,6 +17,7 @@ vi.mock("../../../src/app/services/model-selection-service.js", () => ({ getStor
 vi.mock("../../../src/app/services/variant-selection-service.js", () => ({ formatVariantForButton: mocks.formatVariantForButton }));
 vi.mock("../../../src/bot/keyboards/queued-prompt-button.js", () => ({ getQueuedPromptButtonLabels: mocks.getQueuedPromptButtonLabels }));
 vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({ isChatPaused: mocks.isChatPaused }));
+vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: mocks.assistantRunState }));
 vi.mock("../../../src/app/services/telegram-main-topic-store.js", () => ({ getMainTelegramThreadIdSync: mocks.getMainTelegramThreadIdSync }));
 vi.mock("../../../src/i18n/index.js", () => ({ t: (key: string) => key, normalizeLocale: vi.fn(() => "en") }));
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -40,6 +42,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     mocks.formatVariantForButton.mockReturnValue("Default");
     mocks.getQueuedPromptButtonLabels.mockReturnValue([]);
     mocks.isChatPaused.mockReturnValue(false);
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
     mocks.getMainTelegramThreadIdSync.mockReturnValue(null);
     mocks.getCompactOutputMode.mockReturnValue(false);
   });
@@ -58,6 +61,36 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const texts = keyboardTexts(keyboard);
     expect(texts).toContain("🧠 Model Center");
     expect(texts).not.toContain("💬 New Chat");
+    expect(texts).not.toContain("⏸️ Pause");
+    expect(texts).not.toContain("▶️ Resume");
+    expect(texts).not.toContain("🛑 Abort");
+  });
+
+  it("shows execution controls only while the Topic session is actively running", () => {
+    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
+    const runningKeyboard = keyboardManager.getKeyboard(SESSION_ID);
+    const runningTexts = keyboardTexts(runningKeyboard);
+    expect(runningTexts).toContain("⏸️ Pause");
+    expect(runningTexts).toContain("🛑 Abort");
+
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
+    const idleKeyboard = keyboardManager.getKeyboard(SESSION_ID);
+    const idleTexts = keyboardTexts(idleKeyboard);
+    expect(idleTexts).not.toContain("⏸️ Pause");
+    expect(idleTexts).not.toContain("▶️ Resume");
+    expect(idleTexts).not.toContain("🛑 Abort");
+  });
+
+  it("uses Resume and Abort for a paused Topic run", () => {
+    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
+    mocks.isChatPaused.mockReturnValue(true);
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
+    const keyboard = keyboardManager.getKeyboard(SESSION_ID);
+    const texts = keyboardTexts(keyboard);
+    expect(texts).toContain("▶️ Resume");
+    expect(texts).toContain("🛑 Abort");
+    expect(texts).not.toContain("⏸️ Pause");
   });
 
   it("sendKeyboardUpdate inside a topic runtime context sends the topic keyboard to the topic thread", async () => {
