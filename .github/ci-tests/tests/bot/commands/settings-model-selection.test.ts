@@ -54,7 +54,7 @@ describe("settings model selection route", () => {
     const ctx = {
       callbackQuery: { data: SETTINGS_MODEL_CALLBACK },
       answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
-    } as never;
+    } as unknown as import("grammy").Context;
 
     await handleSettingsCallback(ctx);
 

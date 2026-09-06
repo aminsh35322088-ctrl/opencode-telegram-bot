@@ -284,7 +284,7 @@ describe("bot permission menu/callbacks", () => {
 
     expect(handled).toBe(true);
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: t("permission.reply.always") });
-    expect((ctx.api as { deleteMessage: ReturnType<typeof vi.fn> }).deleteMessage).toHaveBeenCalledTimes(1);
+    expect((ctx.api as unknown as { deleteMessage: ReturnType<typeof vi.fn> }).deleteMessage).toHaveBeenCalledTimes(1);
 
     await flushMicrotasks();
 
