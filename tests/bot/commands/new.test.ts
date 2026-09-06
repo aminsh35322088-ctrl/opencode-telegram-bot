@@ -16,7 +16,8 @@ const mocked = vi.hoisted(() => ({
   openSessionInTelegramTopicMock: vi.fn(),
   ingestSessionInfoForCacheMock: vi.fn(),
   createTopicKeyboardMock: vi.fn(),
-  pinTopicCreatedInGeneralMock: vi.fn(),
+  pinNavigationInGeneralMock: vi.fn(),
+  installTopicNavigationMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -107,7 +108,8 @@ vi.mock("../../../src/app/services/telegram-topic-workspace-service.js", () => (
 
 vi.mock("../../../src/app/services/telegram-topic-session-service.js", () => ({
   openSessionInTelegramTopic: mocked.openSessionInTelegramTopicMock,
-  pinTopicCreatedInGeneral: mocked.pinTopicCreatedInGeneralMock,
+  pinNavigationInGeneral: mocked.pinNavigationInGeneralMock,
+  installTopicNavigation: mocked.installTopicNavigationMock,
 }));
 
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({
@@ -196,8 +198,10 @@ describe("bot/commands/new", () => {
     mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
     mocked.createTopicKeyboardMock.mockReset();
     mocked.createTopicKeyboardMock.mockReturnValue({ keyboard: true });
-    mocked.pinTopicCreatedInGeneralMock.mockReset();
-    mocked.pinTopicCreatedInGeneralMock.mockResolvedValue(undefined);
+    mocked.pinNavigationInGeneralMock.mockReset();
+    mocked.pinNavigationInGeneralMock.mockResolvedValue(undefined);
+    mocked.installTopicNavigationMock.mockReset();
+    mocked.installTopicNavigationMock.mockResolvedValue(undefined);
   });
 
   it("blocks new session creation while foreground session is busy", async () => {
