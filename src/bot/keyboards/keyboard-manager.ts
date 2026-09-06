@@ -66,9 +66,10 @@ class KeyboardManager {
   }
 
   public async enterTopicMode(chatId: number): Promise<void> {
+    // Topic Mode no longer replaces General/All's inline navigation. The AI Topic
+    // may have its own ReplyKeyboard, but General keeps the glass navigation.
     this.topicModeChats.add(chatId);
-    await this.hideMainInlineKeyboard(chatId);
-    logger.info(`[TopicMode] Entered Topic Mode: chat=${chatId}`);
+    logger.info(`[TopicMode] Entered Topic Mode without replacing General InlineKeyboard: chat=${chatId}`);
   }
 
   public async activateTopicMode(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<void> {
@@ -77,24 +78,46 @@ class KeyboardManager {
   }
 
   public async hideMainInlineKeyboard(chatId: number): Promise<void> {
+    // Kept as a compatibility method for callers. General/All navigation is now
+    // intentionally persistent and must not be hidden when an AI Topic is created.
+    logger.debug(`[TopicMode] Ignoring request to hide General InlineKeyboard: chat=${chatId}`);
+  }
+
+  public async clearMainInlineMessage(chatId: number): Promise<void> {
     if (!this.api) return;
     const messageId = this.mainInlineMessageIds.get(chatId);
     if (!messageId) return;
     try {
-      await this.api.editMessageReplyMarkup(chatId, messageId, { reply_markup: { inline_keyboard: [] } });
-      logger.info(`[TopicMode] General/All: hid Main InlineKeyboard chat=${chatId}, message=${messageId}`);
+      await this.api.deleteMessage(chatId, messageId);
+      logger.info(`[TelegramKeyboard] Removed previous Main InlineKeyboard message: chat=${chatId}, message=${messageId}`);
     } catch (err) {
-      logger.warn(`[TopicMode] Failed to hide Main InlineKeyboard chat=${chatId}, message=${messageId}`, err);
+      logger.debug(`[TelegramKeyboard] Previous Main InlineKeyboard message was already unavailable: chat=${chatId}, message=${messageId}`, err);
     }
     this.mainInlineMessageIds.delete(chatId);
   }
 
   public async sendTopicMainKeyboard(chatId: number, currentModel: ModelInfo = getStoredModel(), force = false): Promise<void> {
+    // General/All always uses the glass keyboard. ReplyKeyboard is reserved for AI Topics.
+    await this.sendMainInlineKeyboard(chatId, currentModel, force);
+  }
+
+  public async sendMainInlineKeyboard(chatId: number, currentModel: ModelInfo = getStoredModel(), force = false): Promise<void> {
     if (!this.api) return;
-    const keyboard = createTopicMainKeyboard(currentModel, getQueuedPromptButtonLabels());
-    await this.api.sendMessage(chatId, t("keyboard.updated"), { reply_markup: keyboard } as never);
-    this.lastUpdateTimes.set(MAIN_KEY, Date.now());
-    logger.info(`[TopicMode] General/All: sent Topic ReplyKeyboard chat=${chatId}, thread=General(native-default), force=${force}`);
+    const now = Date.now();
+    const previous = this.lastUpdateTimes.get(MAIN_KEY) ?? 0;
+    if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
+    this.lastUpdateTimes.set(MAIN_KEY, now);
+
+    await this.clearMainInlineMessage(chatId);
+    try {
+      const response = await this.api.sendMessage(chatId, t("keyboard.updated"), {
+        reply_markup: createMainInlineKeyboard(currentModel),
+      });
+      this.mainInlineMessageIds.set(chatId, response.message_id);
+      logger.info(`[TelegramKeyboard] Main InlineKeyboard anchored at bottom: chat=${chatId}, message=${response.message_id}`);
+    } catch (err) {
+      logger.error("[TelegramKeyboard] Failed to send anchored Main InlineKeyboard:", err);
+    }
   }
 
   private state(sessionId?: string): KeyboardState | undefined {
@@ -130,18 +153,20 @@ class KeyboardManager {
     const previous = this.lastUpdateTimes.get(key) ?? 0;
     if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
+
     try {
       const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
-      if (!isTopic && this.topicModeChats.has(targetChatId)) {
-        await this.sendTopicMainKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), force);
+      if (!isTopic) {
+        await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true);
         return;
       }
-      const keyboard = isTopic ? this.buildKeyboard(resolvedSessionId) : createMainInlineKeyboard(state?.currentModel ?? getStoredModel());
+
+      const keyboard = this.buildKeyboard(resolvedSessionId);
       const options: Record<string, unknown> = { reply_markup: keyboard };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
-      logger.info(`[KeyboardManager] Sent ${isTopic ? "AI Topic ReplyKeyboard" : "Main InlineKeyboard"}: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}`);
+      logger.info(`[KeyboardManager] Sent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
@@ -149,9 +174,7 @@ class KeyboardManager {
     const resolved = this.resolveSessionId(sessionId);
     if (this.state(resolved)) return this.buildKeyboard(resolved);
     if (!resolved && this.api) {
-      return this.topicModeChats.size > 0
-        ? createTopicMainKeyboard(getStoredModel(), getQueuedPromptButtonLabels())
-        : createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
+      return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
     }
     return undefined;
   }
