@@ -4,11 +4,20 @@ import type { CodeFileData } from "../formatters/summary-formatter.js";
 import { normalizePathForDisplay, prepareCodeFile } from "../formatters/summary-formatter.js";
 import type { Question } from "../types/question.js";
 import type { PermissionRequest } from "../types/permission.js";
-import type { FileChange } from "../types/summary.js";
+import { FileChange } from "../types/summary.js";
 import { logger } from "../../utils/logger.js";
 import { extractErrorMessage } from "../../utils/opencode-error.js";
 import { isRecord } from "../../utils/type-guards.js";
 import { getCurrentProject } from "../stores/settings-store.js";
+import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../services/topic-runtime-context.js";
+
+function withTopicContextPreserved<TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+  const context = getTopicRuntimeContext();
+  if (!context) return fn;
+  return (...args: TArgs) => runInTopicRuntimeContext(context, () => fn(...args));
+}
 
 export interface SummaryInfo {
   sessionId: string;
@@ -1420,8 +1429,9 @@ class SummaryAggregator {
             `[Aggregator] Question tool failed with error, clearing active poll. callID=${part.callID}`,
           );
           if (this.onQuestionErrorCallback) {
+            const callback = withTopicContextPreserved(this.onQuestionErrorCallback);
             setImmediate(() => {
-              this.onQuestionErrorCallback!();
+              callback();
             });
           }
           return;
@@ -1719,7 +1729,7 @@ class SummaryAggregator {
       return;
     }
 
-    const callback = this.onThinkingCallback;
+    const callback = withTopicContextPreserved(this.onThinkingCallback);
     setImmediate(() => {
       callback({ sessionId, messageId, sections, isFirstUpdate });
     });
@@ -1735,7 +1745,7 @@ class SummaryAggregator {
     }
 
     this.thinkingFinishedForMessages.add(messageId);
-    const callback = this.onThinkingFinishedCallback;
+    const callback = withTopicContextPreserved(this.onThinkingFinishedCallback);
     setImmediate(() => {
       callback(sessionId, messageId);
     });
@@ -1763,7 +1773,7 @@ class SummaryAggregator {
       return;
     }
 
-    const callback = this.onExternalUserInputCallback;
+    const callback = withTopicContextPreserved(this.onExternalUserInputCallback);
     setImmediate(() => {
       Promise.resolve(callback(sessionId, messageId, messageText)).catch((err) => {
         logger.error("[Aggregator] Error in external user input callback:", err);
@@ -2012,7 +2022,7 @@ class SummaryAggregator {
       return;
     }
 
-    const callback = this.onSessionRetryCallback;
+    const callback = withTopicContextPreserved(this.onSessionRetryCallback);
     const message = status.message?.trim() || "Unknown retry error";
 
     logger.warn(
@@ -2052,7 +2062,7 @@ class SummaryAggregator {
     this.stopTypingIndicator();
 
     if (this.onSessionIdleCallback) {
-      const callback = this.onSessionIdleCallback;
+      const callback = withTopicContextPreserved(this.onSessionIdleCallback);
       setImmediate(() => {
         callback(sessionID);
       });
@@ -2075,10 +2085,11 @@ class SummaryAggregator {
 
     // Reload context from history after compaction
     if (this.onSessionCompactedCallback) {
+      const callback = withTopicContextPreserved(this.onSessionCompactedCallback);
       setImmediate(() => {
         const project = getCurrentProject();
         if (project) {
-          this.onSessionCompactedCallback!(sessionID, project.worktree);
+          callback(sessionID, project.worktree);
         }
       });
     }
@@ -2110,7 +2121,7 @@ class SummaryAggregator {
     this.stopTypingIndicator();
 
     if (this.onSessionErrorCallback) {
-      const callback = this.onSessionErrorCallback;
+      const callback = withTopicContextPreserved(this.onSessionErrorCallback);
       setImmediate(() => {
         callback(sessionID, message);
       });
@@ -2134,7 +2145,7 @@ class SummaryAggregator {
     logger.info(`[Aggregator] Question asked: requestID=${id}, questions=${questions.length}`);
 
     if (this.onQuestionCallback) {
-      const callback = this.onQuestionCallback;
+      const callback = withTopicContextPreserved(this.onQuestionCallback);
       setImmediate(async () => {
         try {
           await callback(questions, id, sessionID);
@@ -2165,7 +2176,7 @@ class SummaryAggregator {
         deletions: d.deletions,
       }));
 
-      const callback = this.onSessionDiffCallback;
+      const callback = withTopicContextPreserved(this.onSessionDiffCallback);
       setImmediate(() => {
         callback(properties.sessionID, diffs);
       });
@@ -2194,7 +2205,7 @@ class SummaryAggregator {
     );
 
     if (this.onPermissionCallback) {
-      const callback = this.onPermissionCallback;
+      const callback = withTopicContextPreserved(this.onPermissionCallback);
       this.permissionQueue = this.permissionQueue
         .then(() => callback(request))
         .catch((err) => {
@@ -2222,7 +2233,7 @@ class SummaryAggregator {
     logger.info(`[Aggregator] Permission replied: requestID=${requestID}`);
 
     if (this.onPermissionRepliedCallback) {
-      const callback = this.onPermissionRepliedCallback;
+      const callback = withTopicContextPreserved(this.onPermissionRepliedCallback);
       setImmediate(async () => {
         try {
           await callback(sessionID, requestID);

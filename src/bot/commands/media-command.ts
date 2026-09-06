@@ -5,13 +5,30 @@ import { saveTopicImageAsset } from "../../app/services/telegram-topic-image-ass
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { beginImageAiOperation, endImageAiOperation } from "../../app/services/image-mode-service.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { opencodeClient } from "../../opencode/client.js";
+import { logger } from "../../utils/logger.js";
 export { downloadPhoto } from "../services/media-ai-service.js";
+
+async function abortCodingModelSilently(sessionId: string, directory: string): Promise<void> {
+  if (!assistantRunState.hasActiveRun(sessionId)) return;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    await opencodeClient.session.abort({ sessionID: sessionId, directory }, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    logger.info(`[ImageAI] Aborted coding model for session=${sessionId}`);
+  } catch (error) {
+    logger.warn(`[ImageAI] Failed to abort coding model for session=${sessionId}:`, error);
+  }
+}
 
 async function runImageAiOperation<T>(operation: () => Promise<T>): Promise<T> {
   const session = getCurrentSession();
   const sessionId = session?.id;
   const directory = session?.directory;
   if (sessionId && directory) {
+    await abortCodingModelSilently(sessionId, directory);
     foregroundSessionState.markBusy(sessionId, directory);
     beginImageAiOperation(sessionId);
   } else {

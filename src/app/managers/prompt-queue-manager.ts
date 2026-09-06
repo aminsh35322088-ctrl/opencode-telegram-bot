@@ -1,5 +1,6 @@
 import { logger } from "../../utils/logger.js";
 import { getCurrentSession } from "../services/session-service.js";
+import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 
 export const MAX_QUEUED_PROMPTS = 5;
 export interface QueuedPrompt { id: string; text: string; }
@@ -8,7 +9,12 @@ class PromptQueueManager {
   private readonly queues = new Map<string, QueuedPrompt[]>();
   private readonly nextIds = new Map<string, number>();
 
-  private key(sessionId?: string): string { return sessionId ?? getCurrentSession()?.id ?? "__main__"; }
+  private key(sessionId?: string): string {
+    if (sessionId) return sessionId;
+    const topic = getTopicRuntimeContext();
+    if (topic?.sessionId) return topic.sessionId;
+    return getCurrentSession()?.id ?? "__main__";
+  }
   private items(sessionId?: string): QueuedPrompt[] { const key = this.key(sessionId); let items = this.queues.get(key); if (!items) { items = []; this.queues.set(key, items); } return items; }
   private nextId(sessionId?: string): string { const key = this.key(sessionId); const next = (this.nextIds.get(key) ?? 1); this.nextIds.set(key, next + 1); return `queued-${next}`; }
 

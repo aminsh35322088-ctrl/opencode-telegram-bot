@@ -9,6 +9,8 @@ import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
 
 const BUSY_ALLOWED_COMMANDS = ["/abort", "/detach", "/status", "/help", "/opencode_stop"] as const;
 const BUSY_ALLOWED_COMMAND_SET = new Set<string>(BUSY_ALLOWED_COMMANDS);
@@ -17,6 +19,12 @@ const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && BUSY_ALLOWED_COMMAND_SET.has(command)); }
 function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
+function resolveCurrentSessionBusy(): boolean {
+  const topic = getTopicRuntimeContext();
+  const sessionId = topic?.sessionId ?? getCurrentSession()?.id;
+  if (!sessionId) return foregroundSessionState.isBusy();
+  return foregroundSessionState.isSessionBusy(sessionId) || attachManager.isBusy();
+}
 function isReplyKeyboardPress(ctx: Context): boolean {
   const text = ctx.message?.text;
   if (typeof text !== "string") return false;
@@ -52,8 +60,8 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   const state = rawState?.kind === "question" && !questionManager.isActiveForChat(ctx.chat?.id) ? null : rawState;
   const scopedState = state && isStateForChat(state, ctx.chat?.id) ? state : null;
   const { inputType, command } = classifyIncomingInput(ctx);
-  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, scopedState, command, foregroundSessionState.isBusy() || attachManager.isBusy());
-  const isBusy = foregroundSessionState.isBusy() || attachManager.isBusy();
+  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, scopedState, command, resolveCurrentSessionBusy());
+  const isBusy = resolveCurrentSessionBusy();
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
   if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, scopedState, command, true);
   if (inputType === "text" && scopedState?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);

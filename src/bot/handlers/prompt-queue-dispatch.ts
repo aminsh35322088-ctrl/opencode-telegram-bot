@@ -9,12 +9,18 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { sendBotText } from "../messages/telegram-text.js";
 import { isReplyKeyboardButtonText } from "../message-patterns.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 let promptDeps: ProcessPromptDeps | null = null;
 const queuedPromptContexts = new Map<string, Context>();
 const dispatchInFlight = new Set<string>();
 
-function queueKey(sessionId?: string): string { return sessionId ?? getCurrentSession()?.id ?? "__main__"; }
+function queueKey(sessionId?: string): string {
+  if (sessionId) return sessionId;
+  const topic = getTopicRuntimeContext();
+  if (topic?.sessionId) return topic.sessionId;
+  return getCurrentSession()?.id ?? "__main__";
+}
 function isQueueablePromptText(text: string): boolean { const normalizedText = text.trim(); return Boolean(normalizedText) && !normalizedText.startsWith("/") && !isReplyKeyboardButtonText(text); }
 export function initializePromptQueueDispatch(deps: ProcessPromptDeps): void { promptDeps = deps; }
 export function shouldSuggestPromptQueue(text: string): boolean { return !getPromptQueueEnabled() && isQueueablePromptText(text); }

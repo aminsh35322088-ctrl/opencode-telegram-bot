@@ -28,7 +28,7 @@ function describeReply(message: Record<string, unknown>): string {
   return content ? `Replying to ${label}:\n---\n${content}\n---` : `Replying to ${label}.`;
 }
 
-async function saveReplyPhoto(ctx: Context, message: Record<string, unknown>, workspace: string): Promise<string | null> {
+async function saveReplyPhoto(ctx: Context, message: Record<string, unknown>, workspace: string): Promise<{ relativePath: string; mimeType: string } | null> {
   const photos = Array.isArray(message.photo) ? message.photo : [];
   const photo = photos[photos.length - 1];
   const fileId = photo && typeof photo === "object" ? (photo as Record<string, unknown>).file_id : undefined;
@@ -40,11 +40,12 @@ async function saveReplyPhoto(ctx: Context, message: Record<string, unknown>, wo
   const fs = await import("fs/promises");
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, downloaded.buffer);
-  promptAttachment.set(absolutePath, workspace);
-  return relativePath;
+  const mimeType = downloaded.mimeType ?? "image/jpeg";
+  promptAttachment.set(absolutePath, workspace, undefined, mimeType);
+  return { relativePath, mimeType };
 }
 
-async function saveReplyDocument(ctx: Context, message: Record<string, unknown>, workspace: string): Promise<string | null> {
+async function saveReplyDocument(ctx: Context, message: Record<string, unknown>, workspace: string): Promise<{ relativePath: string; mimeType: string } | null> {
   const document = message.document;
   if (!document || typeof document !== "object") return null;
   const value = document as Record<string, unknown>;
@@ -62,8 +63,9 @@ async function saveReplyDocument(ctx: Context, message: Record<string, unknown>,
   const fs = await import("fs/promises");
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, downloaded.buffer);
-  promptAttachment.set(absolutePath, workspace);
-  return relativePath;
+  const mimeType = downloaded.mimeType ?? (typeof value.mime_type === "string" ? value.mime_type : "application/octet-stream");
+  promptAttachment.set(absolutePath, workspace, undefined, mimeType);
+  return { relativePath, mimeType };
 }
 
 export async function enrichTelegramReplyContext(ctx: Context, workspace: string): Promise<void> {
@@ -85,7 +87,7 @@ export async function enrichTelegramReplyContext(ctx: Context, workspace: string
     });
 
   const assetNote = replyPhotoPath || replyDocumentPath
-    ? `\nReferenced asset saved at: ${replyPhotoPath || replyDocumentPath}`
+    ? `\nReferenced asset saved at: ${replyPhotoPath?.relativePath ?? replyDocumentPath?.relativePath}`
     : "";
   const currentText = typeof message.text === "string" ? message.text.trim() : "";
   if (currentText) {

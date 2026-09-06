@@ -10,6 +10,8 @@ import { logger } from "../../utils/logger.js";
 import { isExpectedOpencodeUnavailableError } from "../../utils/opencode-error.js";
 import { t } from "../../i18n/index.js";
 import { sendBotText } from "../messages/telegram-text.js";
+import { getGitWorktreeContext } from "../../app/services/worktree-service.js";
+import { getCurrentProject } from "../../app/stores/settings-store.js";
 
 export async function statusCommand(ctx: CommandContext<Context>) {
   try {
@@ -42,6 +44,14 @@ export async function statusCommand(ctx: CommandContext<Context>) {
     } else {
       message += `\n${t("status.session_not_selected")}\n`;
       message += t("status.session_hint");
+    }
+
+    const currentProject = getCurrentProject();
+    const worktreeContext = await getGitWorktreeContext(currentProject.worktree);
+    if (worktreeContext && worktreeContext.isLinkedWorktree) {
+      const branchLabel = worktreeContext.branch ?? t("worktree.branch_detached");
+      message += `${t("status.project_selected", { project: `${worktreeContext.mainProjectPath}: ${branchLabel}` })}\n`;
+      message += `${t("status.worktree_selected", { worktree: worktreeContext.activeWorktreePath })}\n`;
     }
 
     if (ctx.chat) {

@@ -9,6 +9,7 @@ import { foregroundSessionState } from "../../app/managers/foreground-session-st
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { clearPromptResponseMode } from "../handlers/prompt.js";
 
 export async function detachCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
@@ -28,6 +29,7 @@ export async function detachCommand(ctx: CommandContext<Context>): Promise<void>
     foregroundSessionState.markIdle(currentSession.id);
     assistantRunState.clearRun(currentSession.id, "detach_command");
     clearAllInteractionState("detach_command");
+    clearPromptResponseMode(currentSession.id);
     clearSession();
 
     if (pinnedMessageManager.isInitialized()) {

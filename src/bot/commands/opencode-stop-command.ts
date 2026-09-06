@@ -12,6 +12,7 @@ import { isContainerRuntime } from "../../runtime/container.js";
 import { editBotText } from "../messages/telegram-text.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
+import { clearPromptResponseMode } from "../handlers/prompt.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { markAttachedSessionIdle } from "../../app/services/attach-service.js";
@@ -31,6 +32,12 @@ async function releaseLocalStateAfterServerStop(
   const attached = attachManager.getSnapshot();
   if (attached) {
     await markAttachedSessionIdle(attached.sessionId);
+    clearPromptResponseMode(attached.sessionId);
+  }
+
+  const busySessions = foregroundSessionState.getBusySessions();
+  for (const session of busySessions) {
+    clearPromptResponseMode(session.sessionId);
   }
 
   promptQueue.clear(STOP_REASON);

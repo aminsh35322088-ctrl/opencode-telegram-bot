@@ -67,7 +67,7 @@ export async function resolvePendingAttachment(worktree: string): Promise<FilePa
 
   return {
     type: "file",
-    mime: OPENCODE_TEXT_MIME,
+    mime: pending.mimeType ?? OPENCODE_TEXT_MIME,
     filename: toRelativePath(absolutePath, worktree),
     url: pathToFileURL(absolutePath).href,
   };

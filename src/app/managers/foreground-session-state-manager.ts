@@ -39,6 +39,10 @@ class ForegroundSessionState {
     return this.activeSessions.size > 0;
   }
 
+  isSessionBusy(sessionId: string): boolean {
+    return this.activeSessions.has(sessionId);
+  }
+
   clearAll(reason: string): void {
     if (this.activeSessions.size === 0) {
       return;

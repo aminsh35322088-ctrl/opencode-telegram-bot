@@ -59,16 +59,20 @@ function addControls(
   running: boolean,
   compact: boolean,
 ): void {
-  if (running || paused) {
-    keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
+  if (isTopic) {
+    if (running || paused) {
+      keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
+    } else {
+      keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
+    }
+
+    if (!running && !paused) {
+      keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compact)).row();
+    } else {
+      keyboard.text(MAIN_BUTTONS.imageAi).row();
+    }
   } else {
     keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
-  }
-
-  if (!running && !paused) {
-    keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compact)).row();
-  } else {
-    keyboard.text(MAIN_BUTTONS.imageAi).row();
   }
 
   keyboard.text(getModelButtonLabel(currentModel)).row();

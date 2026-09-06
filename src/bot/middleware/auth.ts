@@ -43,14 +43,13 @@ function isMainControlText(text: string): boolean {
   return isReplyKeyboardButtonText(text, new Set([getCurrentModelButtonText()]));
 }
 
-function hasConfigurationInteraction(sessionId?: string): boolean {
-  return (
-    interactionManager.getSnapshot() !== null ||
-    questionManager.isActive() ||
-    isProviderWizardActive() ||
-    isIntegrationWizardActive() ||
-    getImageMode(sessionId) !== null
-  );
+function hasConfigurationInteraction(chatId?: number, sessionId?: string): boolean {
+  const interaction = interactionManager.getSnapshot();
+  if (interaction !== null) return true;
+  if (questionManager.isActiveForChat(chatId)) return true;
+  if (isProviderWizardActive() || isIntegrationWizardActive()) return true;
+  if (getImageMode(sessionId) !== null) return true;
+  return false;
 }
 
 function bindingTitle(binding: Awaited<ReturnType<typeof findTelegramTopicBindingByThread>>): string {
@@ -164,7 +163,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   const message = ctx.message;
   if (message) {
     const text = "text" in message && typeof message.text === "string" ? message.text.trim() : "";
-    const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(getCurrentSession()?.id);
+    const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(message.chat?.id, getCurrentSession()?.id);
     if (!allowedMainInput) {
       await ctx.reply(MAIN_CHAT_ONLY_HELP).catch(() => {});
       return;

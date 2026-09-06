@@ -43,6 +43,8 @@ import { sessionsCommand } from "../commands/sessions-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
 import { clearImageMode, getImageMode } from "../../app/services/image-mode-service.js";
@@ -137,7 +139,9 @@ async function handleImageModeText(ctx: Context, text: string): Promise<boolean>
 }
 
 async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
-  if (assistantRunState.hasActiveRuns()) return true;
+  const topic = getTopicRuntimeContext();
+  const sessionId = topic?.sessionId ?? getCurrentSession()?.id;
+  if (sessionId ? assistantRunState.hasActiveRun(sessionId) : assistantRunState.hasActiveRuns()) return true;
 
   const activeInteraction = interactionManager.getSnapshot();
   if (!activeInteraction) return false;

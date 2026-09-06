@@ -106,13 +106,16 @@ function captionFor(filePath: string, size: number): string {
 }
 
 class AgentArtifactDeliveryService {
-  private readonly bot: Bot;
+  private botInstance: Bot | null = null;
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastDelivered = new Map<string, { signature: string; at: number }>();
   private chatId: number | null = null;
 
-  constructor() {
-    this.bot = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
+  private get bot(): Bot {
+    if (!this.botInstance) {
+      this.botInstance = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
+    }
+    return this.botInstance;
   }
 
   setChatId(chatId: number | null): void {

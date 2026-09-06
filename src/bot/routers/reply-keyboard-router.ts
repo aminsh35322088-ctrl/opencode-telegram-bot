@@ -25,6 +25,7 @@ import { isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand 
 import { clearImageMode } from "../../app/services/image-mode-service.js";
 import { isReplyKeyboardButtonText, AGENT_MODE_BUTTON_TEXT_PATTERN, CONTEXT_BUTTON_TEXT_PATTERN, QUEUED_PROMPT_BUTTON_TEXT_PATTERN, VARIANT_BUTTON_TEXT_PATTERN } from "../message-patterns.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { isMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
@@ -51,7 +52,9 @@ async function isTopicMessage(ctx: Context): Promise<boolean> {
 function isExact(text: string, candidate: string): boolean { return normalized(text) === normalized(candidate); }
 
 async function menuAllowed(ctx: Context): Promise<boolean> {
-  if (assistantRunState.hasActiveRuns()) return false;
+  const topic = getTopicRuntimeContext();
+  const sessionId = topic?.sessionId ?? getCurrentSession()?.id;
+  if (sessionId ? assistantRunState.hasActiveRun(sessionId) : assistantRunState.hasActiveRuns()) return false;
   const interaction = interactionManager.getSnapshot();
   if (!interaction) return true;
   if (interaction.kind === "inline") return true;
@@ -99,8 +102,6 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     const topicOnly = new Set([
       normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings),
       normalized(TOPIC_BUTTONS.modelCenter),
-    ]);
-    const shared = new Set([
       normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause),
       normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff,
     ]);
@@ -111,8 +112,8 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     );
 
     const allowedInRoute = topic
-      ? topicOnly.has(text) || shared.has(text)
-      : mainOnly.has(text) || shared.has(text) || isDynamicMain || text === modelButton;
+      ? topicOnly.has(text)
+      : mainOnly.has(text) || isDynamicMain || text === modelButton;
 
     if (!allowedInRoute) {
       logger.info(`[Bot] Consumed stale/wrong-scope Reply Keyboard button: scope=${topic ? "topic" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
@@ -120,12 +121,12 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     }
 
     try {
-      if (isExact(text, TOPIC_BUTTONS.imageAi) || (!topic && isExact(text, MAIN_BUTTONS.imageAi))) {
+      if (topic && isExact(text, TOPIC_BUTTONS.imageAi)) {
         await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") }); return;
       }
-      if (isExact(text, TOPIC_BUTTONS.pause) || (!topic && isExact(text, MAIN_BUTTONS.pause))) { await pauseCurrentChat(ctx); return; }
-      if (isExact(text, TOPIC_BUTTONS.resume) || (!topic && isExact(text, MAIN_BUTTONS.resume))) { await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription }); return; }
-      if (isExact(text, TOPIC_BUTTONS.abort) || (!topic && isExact(text, MAIN_BUTTONS.abort))) { await abortCurrentOperation(ctx); return; }
+      if (topic && isExact(text, TOPIC_BUTTONS.pause)) { await pauseCurrentChat(ctx); return; }
+      if (topic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription }); return; }
+      if (topic && isExact(text, TOPIC_BUTTONS.abort)) { await abortCurrentOperation(ctx); return; }
       if (isExact(text, "❌ Cancel")) {
         if (isProviderWizardActive()) { clearProviderWizard(); await providersCommand(ctx as never); return; }
         if (isIntegrationWizardActive()) { clearIntegrationWizard(); await integrationsCommand(ctx as never); return; }
