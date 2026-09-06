@@ -6,7 +6,7 @@ The Railway runtime includes [DeusData/codebase-memory-mcp](https://github.com/D
 
 Codebase Memory is a code-intelligence layer, not a replacement for the bot's existing persistent memory. The existing bot memory stores bounded user/project context separately; Codebase Memory maintains a structural code index for navigation and impact analysis.
 
-The existing memory implementation is independent: it stores up to 500 memory items in the runtime app home and injects only a bounded relevant subset into prompts. Codebase Memory does not read, replace, or migrate that store. fileciteturn40file0L2-L2
+The existing memory implementation is independent: it stores up to 500 memory items in the runtime app home and injects only a bounded relevant subset into prompts. Codebase Memory does not read, replace, or migrate that store.
 
 Typical questions that benefit from the MCP include:
 
@@ -29,7 +29,7 @@ Railway container
     └── .cache/codebase-memory-mcp/      # persistent graph/cache
 ```
 
-The bot creates isolated persistent workspaces for Telegram Topics under `/data/opencode/topic-workspaces`. The MCP configuration therefore intentionally does not hard-code `/data/workspace` as its working directory; OpenCode supplies the active session directory when spawning the local MCP process.
+The bot creates isolated persistent workspaces for Telegram Topics under `/data/opencode/topic-workspaces`. The MCP configuration therefore intentionally does not hard-code `/data/workspace` as its working directory; the OpenCode workspace remains the default working directory for the local MCP process.
 
 The MCP is started by OpenCode using the local stdio transport. It is not a second Railway service and it does not expose a public HTTP endpoint.
 
@@ -54,9 +54,9 @@ The MCP is started by OpenCode using the local stdio transport. It is not a seco
 }
 ```
 
-`CBM_ALLOWED_ROOT=/data` covers both the main persistent workspace and isolated Topic workspaces. The cache is also on the Railway volume so the graph survives container restarts and redeployments. The upstream documents `CBM_ALLOWED_ROOT` as the containment control for indexing requests. citeturn378900search0
+`CBM_ALLOWED_ROOT=/data` covers both the main persistent workspace and isolated Topic workspaces. The cache is also on the Railway volume so the graph survives container restarts and redeployments.
 
-At container startup, the entrypoint enables automatic indexing and sets an upper bound of 50,000 files for auto-indexing. The upstream documents both settings. citeturn378900search8
+At container startup, the entrypoint enables automatic indexing and sets an upper bound of 50,000 files for auto-indexing.
 
 ## Version pinning
 
@@ -68,7 +68,7 @@ When upgrading, update both `CODEBASE_MEMORY_VERSION` and `CODEBASE_MEMORY_SHA25
 
 Codebase Memory is intentionally configured without its optional graph UI in Railway. This keeps the deployment headless and avoids adding an unnecessary network surface.
 
-The upstream server can also register background watchers for indexed projects. This integration leaves the upstream watcher behavior unchanged; monitor CPU/IO after deployment, especially if many Telegram Topic sessions become active. citeturn378900search8turn378900search4
+The upstream server can register background watchers for indexed projects. This integration leaves the upstream watcher behavior unchanged; monitor CPU/IO after deployment, especially if many Telegram Topic sessions become active.
 
 Do not commit or continuously regenerate a graph database artifact into Git. Keep the live index in the Railway volume unless a separate, deliberate artifact workflow is introduced.
 
