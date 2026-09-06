@@ -1,7 +1,6 @@
 import type { Bot, Context } from "grammy";
 import { CommandContext } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { setCurrentSession } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
@@ -12,7 +11,6 @@ import { getTopicDefaults } from "../../app/stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
-import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
@@ -36,10 +34,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
   try {
     // New Chat is a Main-level action and must remain available even while
     // another Topic is executing. Each Topic owns an independent OpenCode
-    // session/workspace, so a foreground busy check here would incorrectly
-    // serialize multiple Topics.
-    clearPausedSession();
-
+    // session/workspace, so no global foreground/paused/session state is reset.
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
     const { data: session, error } = await opencodeClient.session.create({ directory });
     if (error || !session) throw error || new Error("No session received from OpenCode");
@@ -73,7 +68,9 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },
       async () => {
-        setCurrentSession(sessionInfo);
+        // Do not write this Topic into the global foreground session store.
+        // Topic requests resolve their session from topic-runtime-context,
+        // which is what makes multiple Topics truly isolated.
         keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding.threadId, session.id);
         keyboardManager.updateAgent(initialAgent, session.id);
         keyboardManager.updateModel(initialModel, session.id);
