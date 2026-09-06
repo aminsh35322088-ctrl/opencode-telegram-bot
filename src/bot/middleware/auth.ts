@@ -7,6 +7,8 @@ import { attachToSession } from "../../app/services/attach-service.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
 import { clearAllInteractionState, interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
+import { renameManager } from "../../app/managers/rename-manager.js";
+import { taskCreationManager } from "../../app/managers/scheduled-task-creation-manager.js";
 import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
 import { getImageMode } from "../../app/services/image-mode-service.js";
@@ -29,7 +31,7 @@ function getTopicMessage(ctx: Context): { chatId: number; threadId: number } | n
   const message = ctx.message as { chat?: { id?: number }; message_thread_id?: number; is_topic_message?: boolean } | undefined;
   const chatId = message?.chat?.id;
   const threadId = message?.message_thread_id;
-  if (typeof chatId !== "number" || typeof threadId !== "number" || !message?.is_topic_message) return null;
+  if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1 || !message?.is_topic_message) return null;
   return { chatId, threadId };
 }
 
@@ -49,6 +51,8 @@ function hasConfigurationInteraction(chatId?: number, sessionId?: string): boole
   if (questionManager.isActiveForChat(chatId)) return true;
   if (isProviderWizardActive() || isIntegrationWizardActive()) return true;
   if (getImageMode(sessionId) !== null) return true;
+  if (renameManager.isWaitingForName()) return true;
+  if (taskCreationManager.isActive()) return true;
   return false;
 }
 
@@ -152,7 +156,8 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
       return;
     }
     const text = ctx.message && "text" in ctx.message ? String(ctx.message.text ?? "").trim() : "";
-    if (!ctx.callbackQuery && !text.startsWith("/") && !isMainControlText(text)) {
+    const allowed = ctx.callbackQuery || text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(ctx.message?.chat?.id, getCurrentSession()?.id);
+    if (!allowed) {
       await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, { message_thread_id: topic.threadId }).catch(() => {});
       return;
     }
