@@ -1,4 +1,4 @@
-import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { config } from "../config.js";
@@ -56,8 +56,7 @@ function validateTelegramInitData(initData: string): number | null {
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secretKey = createHmac("sha256", "WebAppData").update(config.telegram.token).digest();
-  const expectedHash = hexHmac(secretKey, dataCheckString);
-  const expected = Buffer.from(expectedHash, "hex");
+  const expected = Buffer.from(hexHmac(secretKey, dataCheckString), "hex");
   const received = Buffer.from(receivedHash, "hex");
   if (expected.length !== received.length || !timingSafeEqual(expected, received)) return null;
   return userId;
@@ -235,16 +234,14 @@ function startUiProcess(): void {
   uiProcess.on("error", (error) => logger.error("[CodeGraph] Failed to start UI process", error));
 }
 
-export async function startCodeGraphWebServer(): Promise<() => void> {
-  if (webServer) return () => stopCodeGraphWebServer();
+export async function startCodeGraphWebServer(): Promise<void> {
+  if (webServer) return;
   const webAppUrl = getPublicWebAppUrl();
-  if (!webAppUrl) {
-    logger.warn("[CodeGraph] No public URL available; Mini App button will be hidden until CODE_GRAPH_WEB_APP_URL or RAILWAY_PUBLIC_DOMAIN is present.");
-  }
+  if (!webAppUrl) logger.warn("[CodeGraph] No public URL available; Mini App button will be hidden until CODE_GRAPH_WEB_APP_URL or RAILWAY_PUBLIC_DOMAIN is present.");
 
   startUiProcess();
   const port = Number(process.env.PORT ?? "8080");
-  webServer = createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     if (request.url === "/health" || request.url === "/healthz") {
       sendJson(response, 200, { ok: true, codeGraph: true, uiPort: UI_PORT });
       return;
@@ -276,12 +273,11 @@ export async function startCodeGraphWebServer(): Promise<() => void> {
   });
 
   await new Promise<void>((resolve, reject) => {
-    webServer?.once("error", reject);
-    webServer?.listen(port, "0.0.0.0", () => resolve());
+    server.once("error", reject);
+    server.listen(port, "0.0.0.0", () => resolve());
   });
+  webServer = server;
   logger.info(`[CodeGraph] Mini App web server listening on :${port}; public=${webAppUrl ?? "unconfigured"}; upstream=${UI_HOST}:${UI_PORT}`);
-
-  return () => stopCodeGraphWebServer();
 }
 
 export function stopCodeGraphWebServer(): void {
@@ -293,8 +289,4 @@ export function stopCodeGraphWebServer(): void {
     uiProcess.kill("SIGTERM");
     uiProcess = null;
   }
-}
-
-export function clearCodeGraphSessionHash(): string {
-  return createHash("sha256").update(config.telegram.token).digest("hex");
 }
