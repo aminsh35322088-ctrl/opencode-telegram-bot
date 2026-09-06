@@ -1,5 +1,5 @@
 import { Context } from "grammy";
-import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
@@ -16,30 +16,20 @@ import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion, markBotVersionNoti
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
 
-/**
- * /start is a Main/General command, never a Topic command.
- * Telegram may deliver /start with a message_thread_id when private threaded
- * mode is enabled. An unbound thread is Telegram UI state, not an OpenCode
- * session, so /start never mutates that Topic.
- */
 async function normalizeStartContext(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
   if (typeof chatId !== "number" || typeof threadId !== "number" || threadId <= 1) return;
-
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  if (binding) {
-    logger.info(`[TelegramTopics] /start received inside bound AI Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
-    return;
-  }
-  logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic; leaving Topic untouched: chat=${chatId}, thread=${threadId}`);
+  if (binding) logger.info(`[TelegramTopics] /start received inside bound AI Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
+  else logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic; leaving Topic untouched: chat=${chatId}, thread=${threadId}`);
 }
 
 async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   const notice = await getBotUpdateNotice();
   if (!notice) return;
   const chatId = ctx.chat!.id;
-  const opts: Record<string, unknown> = { parse_mode: "HTML" };
+  const opts: Record<string, unknown> = { parse_mode: "HTML", message_thread_id: 1 };
   await ctx.api.sendMessage(chatId, `🚀 <b>Bot updated</b>\n\nv${notice.previousVersion} → <b>${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`, opts);
   if (notice.changelog) await ctx.api.sendMessage(chatId, `📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`, opts);
   await markBotVersionNotified(notice.currentVersion);
@@ -54,9 +44,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
 
   await normalizeStartContext(ctx);
-  if (isInTopic) {
-    logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only: chat=${chatId}, thread=${inboundThreadId}`);
-  }
+  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only: chat=${chatId}, thread=${inboundThreadId}`);
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
   keyboardManager.initialize(ctx.api, chatId);
@@ -94,20 +82,12 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  const mainKeyboard = createMainKeyboard(currentModel, {
-    paused: false,
-    running: false,
-    isTopic: false,
-  });
-
-  // In Telegram's threaded/private-topic mode, explicitly target General
-  // (thread 1). This avoids relying on the client to infer the keyboard's
-  // topic scope from a message sent without message_thread_id.
+  const mainKeyboard = createMainInlineKeyboard(currentModel);
   const sendOptions: Record<string, unknown> = {
     parse_mode: "HTML",
     reply_markup: mainKeyboard,
-    ...(isInTopic ? {} : { message_thread_id: 1 }),
+    message_thread_id: 1,
   };
-  logger.info(`[TelegramKeyboard] /start sending Main reply keyboard: chat=${chatId}, thread=${isInTopic ? "inbound-topic" : 1}`);
+  logger.info(`[TelegramKeyboard] /start sending Main InlineKeyboard: chat=${chatId}, thread=1`);
   await ctx.api.sendMessage(chatId, text, sendOptions);
 }
