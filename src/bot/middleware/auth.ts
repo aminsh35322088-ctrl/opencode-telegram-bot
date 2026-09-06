@@ -161,7 +161,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   }
 
   const message = ctx.message;
-  if (message) {
+  if (message && !ctx.callbackQuery) {
     const text = "text" in message && typeof message.text === "string" ? message.text.trim() : "";
     const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(message.chat?.id, getCurrentSession()?.id);
     if (!allowedMainInput) {
