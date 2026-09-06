@@ -9,6 +9,7 @@ import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { logger } from "../../utils/logger.js";
@@ -68,7 +69,9 @@ class KeyboardManager {
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     if (state?.sessionId && state.threadId !== undefined) {
-      return createTopicKeyboard({ paused: isChatPaused(state.sessionId) });
+      const paused = isChatPaused(state.sessionId);
+      const running = assistantRunState.hasActiveRun(state.sessionId);
+      return createTopicKeyboard({ paused, running, compactOutputMode: getCompactOutputMode() });
     }
     if (!state) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
     return createMainKeyboard(state.currentModel, {
