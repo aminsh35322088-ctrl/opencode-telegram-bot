@@ -25,7 +25,8 @@ describe("bot/keyboards/main-reply-keyboard", () => {
       [{ text: "🕘 History" }, { text: "💬 New Chat" }],
       [{ text: "🎨 Image AI" }, { text: "📦 Compact: OFF" }],
       [{ text: "🧠 GPT 4o" }],
-      [{ text: "⚙️ Settings" }],
+      [{ text: "🧠 Code Graph", web_app: { url: "https://example.up.railway.app" } }],
+      [{ text: "⚙️ Main Settings" }],
     ]);
     expect(keyboard.resize_keyboard).toBe(true);
     expect(keyboard.is_persistent).toBe(true);
@@ -65,7 +66,8 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 3, 0)).toBe("🎨 Image AI");
     expect(buttonTextAt(keyboard, 3, 1)).toBe("📦 Compact: OFF");
     expect(buttonTextAt(keyboard, 4, 0)).toBe("🧠 GPT 4o");
-    expect(buttonTextAt(keyboard, 5, 0)).toBe("⚙️ Settings");
+    expect(buttonTextAt(keyboard, 5, 0)).toBe("🧠 Code Graph");
+    expect(buttonTextAt(keyboard, 6, 0)).toBe("⚙️ Main Settings");
   });
 
   it("keeps running controls isolated from idle controls", () => {
