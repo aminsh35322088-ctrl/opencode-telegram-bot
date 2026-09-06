@@ -35,6 +35,18 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   await markBotVersionNotified(notice.currentVersion);
 }
 
+async function detectForumMode(ctx: Context): Promise<{ isForumChat: boolean; hasPrivateForumTopics: boolean }> {
+  const isSupergroupForum = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
+  try {
+    const me = await ctx.api.getMe();
+    const hasPrivateForumTopics = Boolean((me as { has_topics_enabled?: boolean }).has_topics_enabled);
+    return { isForumChat: isSupergroupForum || hasPrivateForumTopics, hasPrivateForumTopics };
+  } catch (err) {
+    logger.warn("[TelegramKeyboard] Failed to detect private threaded bot forum via getMe(); falling back to chat metadata", err);
+    return { isForumChat: isSupergroupForum, hasPrivateForumTopics: false };
+  }
+}
+
 export async function startCommand(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return;
@@ -42,9 +54,11 @@ export async function startCommand(ctx: Context): Promise<void> {
   const inboundThreadId = ctx.message?.message_thread_id;
   const isInTopic = typeof inboundThreadId === "number" && inboundThreadId > 1;
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
-  const isForumChat = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
+  const forumMode = await detectForumMode(ctx);
+  const isForumChat = forumMode.isForumChat;
 
   await normalizeStartContext(ctx);
+  logger.info(`[TelegramKeyboard] /start mode detection: chat=${chatId}, isInTopic=${isInTopic}, isSupergroupForum=${Boolean((ctx.chat as { is_forum?: boolean }).is_forum)}, hasPrivateForumTopics=${forumMode.hasPrivateForumTopics}`);
   if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only; Main UI will be rendered in General: chat=${chatId}, thread=${inboundThreadId}`);
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
