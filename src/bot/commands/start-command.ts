@@ -18,23 +18,38 @@ import { findTelegramTopicBindingByThread } from "../../app/services/telegram-to
 import { logger } from "../../utils/logger.js";
 
 /**
- * Compute the target thread for /start responses.
- * - In a bound AI topic → respond in that topic
- * - In General or main chat → respond without thread id (routes to native General)
- * - In an unbound topic → respond in that topic (user should see feedback)
+ * /start is a Main/General command, never a Topic command.
+ *
+ * Telegram can deliver /start with a message_thread_id when the client has
+ * implicitly created a user Topic. That Topic is not an OpenCode session, so
+ * it must not become the bot's Main context or inherit global session state.
+ * We clean up an unbound accidental Topic and always answer in native General.
  */
-function getStartTargetThreadId(ctx: Context): number | undefined {
+async function normalizeStartContext(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
-  if (typeof threadId === "number" && threadId > 1) return threadId;
-  return undefined;
+  if (typeof chatId !== "number" || typeof threadId !== "number" || threadId <= 1) return;
+
+  const binding = await findTelegramTopicBindingByThread(chatId, threadId);
+  if (binding) {
+    logger.info(`[TelegramTopics] /start received inside bound AI Topic; keeping Topic intact and returning command to General: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
+    return;
+  }
+
+  logger.warn(`[TelegramTopics] /start arrived in unbound Topic; deleting accidental Topic and returning to General: chat=${chatId}, thread=${threadId}`);
+  try {
+    await ctx.api.deleteForumTopic(chatId, threadId);
+    logger.info(`[TelegramTopics] Deleted unbound /start Topic: chat=${chatId}, thread=${threadId}`);
+  } catch (error) {
+    logger.warn(`[TelegramTopics] Could not delete unbound /start Topic: chat=${chatId}, thread=${threadId}`, error);
+  }
 }
 
-async function sendBotUpdateNotice(ctx: Context, threadId?: number): Promise<void> {
+async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   const notice = await getBotUpdateNotice();
   if (!notice) return;
   const chatId = ctx.chat!.id;
   const opts: Record<string, unknown> = { parse_mode: "HTML" };
-  if (threadId) opts.message_thread_id = threadId;
   await ctx.api.sendMessage(chatId, `🚀 <b>Bot updated</b>\n\nv${notice.previousVersion} → <b>v${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`, opts);
   if (notice.changelog) await ctx.api.sendMessage(chatId, `📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`, opts);
   await markBotVersionNotified(notice.currentVersion);
@@ -44,33 +59,39 @@ export async function startCommand(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return;
 
-  const targetThreadId = getStartTargetThreadId(ctx);
   const inboundThreadId = ctx.message?.message_thread_id;
   const isInTopic = typeof inboundThreadId === "number" && inboundThreadId > 1;
+  const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
 
+  await normalizeStartContext(ctx);
+
+  // /start must never reset or abort an AI Topic. If Telegram delivered it
+  // from a bound Topic, leave that Topic's session/run untouched and render
+  // the Main UI in native General instead.
   if (isInTopic) {
-    const binding = await findTelegramTopicBindingByThread(chatId, inboundThreadId);
     if (binding) {
-      logger.info(`[TelegramTopics] /start inside bound topic: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`);
+      logger.info(`[TelegramTopics] /start from bound Topic is a navigation command only: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`);
     } else {
-      logger.info(`[TelegramTopics] /start in unbound topic: chat=${chatId}, thread=${inboundThreadId}`);
+      logger.info(`[TelegramTopics] /start from unbound Topic normalized back to native General: chat=${chatId}, thread=${inboundThreadId}`);
     }
   }
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
   keyboardManager.initialize(ctx.api, chatId);
 
-  await abortCurrentOperation(ctx, { notifyUser: false });
-  detachAttachedSession("start_command_reset");
-  foregroundSessionState.clearAll("start_command_reset");
-  assistantRunState.clearAll("start_command_reset");
-  clearPausedSession();
-  keyboardManager.setPaused(false);
-  clearSession();
-  clearProject();
-  keyboardManager.clearContext();
-  await pinnedMessageManager.clear();
-  if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
+  if (!isInTopic) {
+    await abortCurrentOperation(ctx, { notifyUser: false });
+    detachAttachedSession("start_command_reset");
+    foregroundSessionState.clearAll("start_command_reset");
+    assistantRunState.clearAll("start_command_reset");
+    clearPausedSession();
+    keyboardManager.setPaused(false);
+    clearSession();
+    clearProject();
+    keyboardManager.clearContext();
+    await pinnedMessageManager.clear();
+    if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
+  }
 
   const currentAgent = getStoredAgent();
   const currentModel = getStoredModel();
@@ -90,8 +111,8 @@ export async function startCommand(ctx: Context): Promise<void> {
     "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
   ].join("\n");
 
-  await sendBotUpdateNotice(ctx, targetThreadId);
+  await sendBotUpdateNotice(ctx);
   const sendOptions: Record<string, unknown> = { parse_mode: "HTML", reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false, false) };
-  if (targetThreadId) sendOptions.message_thread_id = targetThreadId;
+  // Intentionally omit message_thread_id: /start always belongs to native General.
   await ctx.api.sendMessage(chatId, text, sendOptions);
 }
