@@ -95,13 +95,28 @@ jobs:
         if: steps.determine.outputs.should_release == 'true'
         run: npm install
 
+      - name: Install CI test dependency
+        if: steps.determine.outputs.should_release == 'true'
+        run: npm install --no-save --package-lock=false vitest@3.2.4
+
+      - name: Materialize CI-only test suite
+        if: steps.determine.outputs.should_release == 'true'
+        run: |
+          cp -a .github/ci-tests/tests ./tests
+          cp .github/ci-tests/tsconfig.test.json ./tsconfig.test.json
+          cp .github/ci-tests/vitest.config.ts ./vitest.config.ts
+
       - name: Lint
         if: steps.determine.outputs.should_release == 'true'
-        run: npm run lint
+        run: |
+          npm run lint
+          npx eslint tests --max-warnings=0
 
       - name: Typecheck
         if: steps.determine.outputs.should_release == 'true'
-        run: npm run typecheck
+        run: |
+          npm run typecheck
+          npx tsc -p tsconfig.test.json --noEmit
 
       - name: Build
         if: steps.determine.outputs.should_release == 'true'
@@ -109,7 +124,13 @@ jobs:
 
       - name: Test
         if: steps.determine.outputs.should_release == 'true'
-        run: npm run test
+        run: npx vitest run
+
+      - name: Remove materialized test suite
+        if: always()
+        run: |
+          rm -rf tests tsconfig.test.json vitest.config.ts
+          rm -rf coverage
 
       - name: Generate release notes
         if: steps.determine.outputs.should_release == 'true'
