@@ -22,6 +22,7 @@ export const TOPIC_BUTTONS = {
   abort: MAIN_BUTTONS.abort,
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
+  imageAi: MAIN_BUTTONS.imageAi,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   modelCenter: "🧠 Model Center",
   deleteChat: MAIN_BUTTONS.deleteChat,
