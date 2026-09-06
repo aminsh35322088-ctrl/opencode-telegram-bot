@@ -25,8 +25,10 @@ function normalizeBinding(value: unknown, chatId: number): MainTopicBinding | nu
   if (binding.chatId !== chatId || typeof binding.threadId !== "number") return null;
   return {
     chatId,
-    threadId: binding.threadId,
-    title: typeof binding.title === "string" ? binding.title : "General",
+    // Telegram's General topic is native and always has id=1. Older builds
+    // could persist a custom thread id here; normalize it at the storage boundary.
+    threadId: 1,
+    title: "General",
     createdAt: typeof binding.createdAt === "string" ? binding.createdAt : new Date(0).toISOString(),
   };
 }
@@ -97,8 +99,9 @@ export async function saveMainTelegramTopic(chatId: number, threadId: number, ti
   const store = await readStore();
   store[String(chatId)] = {
     chatId,
-    threadId,
-    title,
+    // Keep native General canonical regardless of legacy caller data.
+    threadId: 1,
+    title: "General",
     createdAt: new Date().toISOString(),
   };
   await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf8");

@@ -16,6 +16,10 @@ import { logger } from "../../utils/logger.js";
 
 const MAIN_KEY = "__main__";
 
+function normalizeOutboundThreadId(threadId?: number): number | undefined {
+  return typeof threadId === "number" && threadId > 1 ? threadId : undefined;
+}
+
 class KeyboardManager {
   private readonly states = new Map<string, KeyboardState>();
   private api: Api | null = null;
@@ -41,7 +45,7 @@ class KeyboardManager {
       this.states.set(key, {
         sessionId,
         chatId,
-        threadId: threadId ?? (isMain ? getMainTelegramThreadIdSync(chatId) ?? undefined : undefined),
+        threadId: normalizeOutboundThreadId(threadId ?? (isMain ? getMainTelegramThreadIdSync(chatId) ?? undefined : undefined)),
         currentAgent: getStoredAgent(),
         currentModel,
         contextInfo: null,
@@ -51,8 +55,8 @@ class KeyboardManager {
       return;
     }
     existing.chatId = chatId;
-    if (threadId !== undefined) existing.threadId = threadId;
-    if (!sessionId && existing.threadId === undefined) existing.threadId = getMainTelegramThreadIdSync(chatId) ?? undefined;
+    if (threadId !== undefined) existing.threadId = normalizeOutboundThreadId(threadId);
+    if (!sessionId && existing.threadId === undefined) existing.threadId = normalizeOutboundThreadId(getMainTelegramThreadIdSync(chatId) ?? undefined);
   }
 
   public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void { this.initialize(api, chatId, sessionId, threadId); }
@@ -96,7 +100,8 @@ class KeyboardManager {
     this.lastUpdateTimes.set(key, now);
     try {
       const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(resolvedSessionId) };
-      if (state?.threadId !== undefined) options.message_thread_id = state.threadId;
+      const threadId = normalizeOutboundThreadId(state?.threadId);
+      if (threadId !== undefined) options.message_thread_id = threadId;
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
