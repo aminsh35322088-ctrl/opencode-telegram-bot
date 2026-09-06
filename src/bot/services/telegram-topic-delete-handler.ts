@@ -6,6 +6,7 @@ import { deleteTelegramTopicSession } from "../../app/services/telegram-topic-de
 import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { detachAttachedSession } from "../../app/services/attach-service.js";
+import { abortCurrentOperation } from "../commands/abort-command.js";
 import { logger } from "../../utils/logger.js";
 import { MAIN_BUTTONS } from "../keyboards/main-reply-keyboard.js";
 
@@ -47,16 +48,16 @@ export async function showTelegramTopicDeleteConfirmation(ctx: Context): Promise
     return;
   }
 
-  if (assistantRunState.hasActiveRun(binding.sessionId)) {
-    await ctx.reply("⏳ Please wait for the current task to finish before deleting this Chat.");
-    return;
-  }
+  const running = assistantRunState.hasActiveRun(binding.sessionId);
+  const warning = running
+    ? "\n\n⚠️ The model is currently working. Confirming will abort the run first and then delete this Topic."
+    : "";
 
   await ctx.reply(
     "⚠️ <b>Delete this Chat permanently?</b>\n\n" +
-      "This removes the OpenCode session, its conversation memory, and the entire isolated working directory for this Topic.\n\n" +
-      "The project/source directory outside this Topic will not be touched.\n\n" +
-      "This action cannot be undone.",
+      "This removes the OpenCode session, its conversation memory, the isolated working directory, and the entire Telegram Topic." +
+      warning +
+      "\n\nThis action cannot be undone.",
     {
       parse_mode: "HTML",
       message_thread_id: topic.threadId,
@@ -89,15 +90,26 @@ export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<b
     return true;
   }
 
-  if (assistantRunState.hasActiveRun(binding.sessionId)) {
-    await ctx.answerCallbackQuery({ text: "Finish the current task first", show_alert: true }).catch(() => {});
-    return true;
-  }
-
-  const wasCurrentSession = getCurrentSession()?.id === binding.sessionId;
-
   try {
     await ctx.answerCallbackQuery({ text: "Deleting…" }).catch(() => {});
+
+    // Delete is intentionally available while a model run is active. The
+    // remote OpenCode session must be stopped and confirmed idle before the
+    // destructive Telegram/local cleanup starts.
+    if (assistantRunState.hasActiveRun(binding.sessionId)) {
+      logger.info(`[TelegramTopics] Delete requested during active run; aborting first: session=${binding.sessionId}, thread=${binding.threadId}`);
+      const abortResult = await abortCurrentOperation(ctx, { notifyUser: false });
+      if (abortResult !== "confirmed" && abortResult !== "maybe-finished" && abortResult !== "no-session") {
+        await ctx.answerCallbackQuery({ text: "The running task could not be stopped safely. Topic was not deleted.", show_alert: true }).catch(() => {});
+        return true;
+      }
+      if (assistantRunState.hasActiveRun(binding.sessionId)) {
+        await ctx.answerCallbackQuery({ text: "The task is still running. Topic was not deleted.", show_alert: true }).catch(() => {});
+        return true;
+      }
+    }
+
+    const wasCurrentSession = getCurrentSession()?.id === binding.sessionId;
     await deleteTelegramTopicSession(ctx.api, binding);
 
     if (wasCurrentSession) {
