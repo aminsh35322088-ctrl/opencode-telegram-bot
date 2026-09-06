@@ -17,7 +17,7 @@ RUN OPENCODE_VERSION="$(tr -d '\r\n' < .opencode-version)" && test -n "${OPENCOD
 
 ARG CODEBASE_MEMORY_VERSION=0.10.8
 ARG CODEBASE_MEMORY_SHA256=6eef49652bc0c7820f43114125044d40bf7f4d97c11b2592f6b0f6a307702325
-aRUN curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}/codebase-memory-mcp-linux-amd64-portable.tar.gz" -o /tmp/codebase-memory-mcp.tar.gz \
+RUN curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}/codebase-memory-mcp-linux-amd64-portable.tar.gz" -o /tmp/codebase-memory-mcp.tar.gz \
  && echo "${CODEBASE_MEMORY_SHA256}  /tmp/codebase-memory-mcp.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/codebase-memory-mcp.tar.gz -C /tmp \
  && install -m 0755 /tmp/codebase-memory-mcp /usr/local/bin/codebase-memory-mcp \
