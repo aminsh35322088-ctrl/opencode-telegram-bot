@@ -9,12 +9,14 @@ async function createForumTopic(api: Api, chatId: number, title: string): Promis
 async function persistNewBinding(chatId: number, session: SessionInfo, threadId: number): Promise<TelegramTopicBinding> { const now = new Date().toISOString(); const binding: TelegramTopicBinding = { chatId, threadId, sessionId: session.id, directory: session.directory, createdAt: now, updatedAt: now, title: session.title }; await saveTelegramTopicBinding(binding); return binding; }
 
 /**
- * Build a Telegram deep link that opens a specific topic in a private group.
- * Format: https://t.me/c/<chatId_without_100>/?thread=<threadId>
+ * Build a Telegram deep link that opens a specific topic in a private supergroup.
+ * Format: https://t.me/c/<bareChatId>/<topicId>
+ * The bare chat ID is the supergroup ID with the -100 prefix stripped.
+ * For General topic, topicId = 1.
  */
-function buildTopicDeepLink(chatId: number, threadId: number): string {
-  const stripped = chatId.toString().replace(/^100/, "");
-  return `https://t.me/c/${stripped}/?thread=${threadId}`;
+function buildTopicDeepLink(chatId: number, topicId: number): string {
+  const bareId = Math.abs(chatId).toString().replace(/^100/, "");
+  return `https://t.me/c/${bareId}/${topicId}`;
 }
 
 /**
