@@ -36,6 +36,11 @@ settings.json.bak
 settings.json.tmp
 .tmp/
 
+# CI test suite (materialized at CI time from .github/ci-tests/)
+tests/
+vitest.config.ts
+tsconfig.test.json
+
 # Packaging artifacts
 *.tgz
 
