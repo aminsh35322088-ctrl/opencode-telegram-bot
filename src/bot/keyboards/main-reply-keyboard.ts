@@ -100,15 +100,21 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
 }
 
 /** Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session. */
-export function createTopicKeyboard(options: { paused?: boolean; compactOutputMode?: boolean } = {}): Keyboard {
+export function createTopicKeyboard(
+  options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean } = {},
+): Keyboard {
   const paused = options.paused ?? false;
+  const running = options.running ?? false;
   const compact = options.compactOutputMode ?? getCompactOutputMode();
-  const toggleButton = paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause;
+  const keyboard = new Keyboard();
 
-  return new Keyboard()
-    .text(toggleButton)
-    .text(TOPIC_BUTTONS.abort)
-    .row()
+  // Pause/Resume/Abort are execution controls. Do not render them while the
+  // session is idle; only an active or deliberately paused run gets them.
+  if (running || paused) {
+    keyboard.text(paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause).text(TOPIC_BUTTONS.abort).row();
+  }
+
+  keyboard
     .text(TOPIC_BUTTONS.imageAi)
     .text(TOPIC_BUTTONS.compact(compact))
     .row()
@@ -119,6 +125,7 @@ export function createTopicKeyboard(options: { paused?: boolean; compactOutputMo
     .row()
     .resized()
     .persistent();
+  return keyboard;
 }
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
