@@ -1,5 +1,5 @@
 import { Context } from "grammy";
-import { createMainInlineKeyboard, createTopicMainKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
@@ -43,14 +43,13 @@ export async function startCommand(ctx: Context): Promise<void> {
   const isInTopic = typeof inboundThreadId === "number" && inboundThreadId > 1;
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
   const isSupergroupForum = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
-  // Private threaded bots expose topic capabilities through Bot API metadata, but that
-  // capability alone must NOT switch an ordinary private chat into Topic Mode. Topic Mode
-  // is entered explicitly by New Chat/topic creation and is tracked by keyboardManager.
+  // `has_topics_enabled` is a capability flag, not the current UI mode. A normal
+  // private chat must keep the glass navigation until the user explicitly opens a Topic.
   const isTopicMode = isSupergroupForum || isInTopic || keyboardManager.isTopicMode(chatId);
 
   await normalizeStartContext(ctx);
   logger.info(`[TelegramKeyboard] /start mode detection: chat=${chatId}, isInTopic=${isInTopic}, isSupergroupForum=${isSupergroupForum}, topicMode=${keyboardManager.isTopicMode(chatId)}`);
-  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic; restoring Topic Mode keyboard in the current topic context: chat=${chatId}, thread=${inboundThreadId}`);
+  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic; restoring Topic Mode controls in the current topic context: chat=${chatId}, thread=${inboundThreadId}`);
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
   keyboardManager.initialize(ctx.api, chatId);
@@ -88,24 +87,13 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  if (isTopicMode) {
-    // In Topic Mode use the bottom Reply Keyboard. General/All is the native default
-    // context; never force message_thread_id=1 because Telegram can reject it as missing.
-    await keyboardManager.enterTopicMode(chatId);
-    await ctx.api.sendMessage(chatId, text, {
-      parse_mode: "HTML",
-      reply_markup: createTopicMainKeyboard(currentModel),
-    });
-    logger.info(`[TelegramKeyboard] /start rendered Topic Mode ReplyKeyboard: chat=${chatId}, thread=General/native-default`);
-    return;
-  }
-
-  // Normal private-chat mode keeps the original glass/inline keyboard untouched.
-  const mainKeyboard = createMainInlineKeyboard(currentModel);
+  // General/All always keeps the glass navigation. Even when `/start` is invoked
+  // from Topic Mode, never replace it with ReplyKeyboard and never force thread 1.
+  await keyboardManager.clearMainInlineMessage(chatId);
   const response = await ctx.api.sendMessage(chatId, text, {
     parse_mode: "HTML",
-    reply_markup: mainKeyboard,
+    reply_markup: createMainInlineKeyboard(currentModel),
   });
   keyboardManager.setMainInlineMessage(chatId, response.message_id);
-  logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, thread=General/native-default, message=${response.message_id}`);
+  logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default, message=${response.message_id}`);
 }
