@@ -91,13 +91,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       },
     );
 
-    // Send the success message directly inside the new topic.
-    // Telegram clients show topic messages with native topic header navigation.
-    await deps.bot.api.sendMessage(
-      ctx.chat.id,
-      `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
-      { message_thread_id: binding.threadId },
-    );
+    const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
+    await deps.bot.api.sendMessage(ctx.chat.id, successText, { message_thread_id: 1 });
 
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
