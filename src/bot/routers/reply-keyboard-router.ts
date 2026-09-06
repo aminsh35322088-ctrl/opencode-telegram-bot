@@ -16,7 +16,7 @@ import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
-import { MAIN_BUTTONS, TOPIC_BUTTONS } from "../keyboards/main-reply-keyboard.js";
+import { MAIN_BUTTONS, TOPIC_BUTTONS, removeKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
@@ -28,7 +28,6 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -82,10 +81,8 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     const topicModelButton = topicModelRaw ? normalized(topicModelRaw) : "";
     const compactOn = normalized(MAIN_BUTTONS.compact(true));
     const compactOff = normalized(MAIN_BUTTONS.compact(false));
+    const hideKeyboard = normalized(MAIN_BUTTONS.hideKeyboard);
 
-    // Use the actual rendered keyboard as the first line of defense. This keeps
-    // future topic buttons from ever leaking into prompt routing just because a
-    // new label was added without updating this router in the same commit.
     const renderedButtonTexts = keyboardButtonTexts(
       topic ? keyboardManager.getKeyboard(runtime?.sessionId) : keyboardManager.getKeyboard(),
     ).map(normalized);
@@ -96,7 +93,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.deleteChat),
       normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume),
       normalized(MAIN_BUTTONS.abort), normalized(TOPIC_BUTTONS.modelCenter),
-      normalized("❌ Cancel"), compactOn, compactOff, modelButton,
+      normalized("❌ Cancel"), compactOn, compactOff, hideKeyboard, modelButton,
       ...renderedButtonTexts,
     ]);
     if (topicModelButton) exactControls.add(topicModelButton);
@@ -113,13 +110,13 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
 
     const mainOnly = new Set([
       normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat),
-      normalized(MAIN_BUTTONS.mainSettings),
+      normalized(MAIN_BUTTONS.mainSettings), hideKeyboard,
     ]);
     const topicOnly = new Set([
       normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings),
-      normalized(TOPIC_BUTTONS.modelCenter),
-      normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause),
-      normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff,
+      normalized(TOPIC_BUTTONS.modelCenter), normalized(MAIN_BUTTONS.imageAi),
+      normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume),
+      normalized(MAIN_BUTTONS.abort), compactOn, compactOff, hideKeyboard,
     ]);
 
     const allowedInRoute = topic
@@ -132,6 +129,10 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     }
 
     try {
+      if (isExact(text, MAIN_BUTTONS.hideKeyboard)) {
+        await ctx.reply("⌨️ Keyboard hidden. Use /start to show it again.", { reply_markup: removeKeyboard() });
+        return;
+      }
       if (topic && isExact(text, TOPIC_BUTTONS.imageAi)) {
         await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") }); return;
       }
