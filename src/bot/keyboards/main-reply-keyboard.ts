@@ -78,7 +78,9 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   } else {
     addMainControls(keyboard, currentModel);
   }
-  return keyboard.resized();
+  // Persistent keeps the custom keyboard available on Telegram clients until
+  // the user explicitly presses the dedicated Hide Keyboard button.
+  return keyboard.resized().persistent();
 }
 
 /** Normal/private-chat navigation stays on the existing inline UI. */
@@ -117,7 +119,7 @@ export function createMainKeyboard(first: ModelInfo | string, second?: MainKeybo
 export function createAgentKeyboard(currentAgent: string): Keyboard {
   const keyboard = new Keyboard().text(getAgentButtonLabel(currentAgent)).row();
   addHideKeyboardControl(keyboard);
-  return keyboard.resized();
+  return keyboard.resized().persistent();
 }
 
 /** Telegram client-side custom keyboard removal. */
