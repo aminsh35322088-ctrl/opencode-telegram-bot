@@ -98,7 +98,8 @@ class KeyboardManager {
     if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
     try {
-      const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(resolvedSessionId) };
+      const keyboard = this.buildKeyboard(resolvedSessionId);
+      const options: Record<string, unknown> = { reply_markup: keyboard };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
       else if (resolvedSessionId) {
@@ -110,9 +111,14 @@ class KeyboardManager {
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
-  public getKeyboard(sessionId?: string) { const resolved = this.resolveSessionId(sessionId); return this.state(resolved) ? this.buildKeyboard(resolved) : undefined; }
+  public getKeyboard(sessionId?: string) {
+    const resolved = this.resolveSessionId(sessionId);
+    if (this.state(resolved)) return this.buildKeyboard(resolved);
+    if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
+    return undefined;
+  }
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
-  public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)); }
+  public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)) || (!sessionId && Boolean(this.api)); }
   public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
   public clearSession(sessionId: string): void { this.states.delete(this.key(sessionId)); this.lastUpdateTimes.delete(this.key(sessionId)); }
 }
