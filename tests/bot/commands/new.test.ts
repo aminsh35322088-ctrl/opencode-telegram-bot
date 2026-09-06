@@ -16,6 +16,8 @@ const mocked = vi.hoisted(() => ({
   openSessionInTelegramTopicMock: vi.fn(),
   ingestSessionInfoForCacheMock: vi.fn(),
   createTopicKeyboardMock: vi.fn(),
+  installNewTopicNavigationMock: vi.fn(),
+  resolveGeneralMessageIdMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -106,6 +108,8 @@ vi.mock("../../../src/app/services/telegram-topic-workspace-service.js", () => (
 
 vi.mock("../../../src/app/services/telegram-topic-session-service.js", () => ({
   openSessionInTelegramTopic: mocked.openSessionInTelegramTopicMock,
+  installNewTopicNavigation: mocked.installNewTopicNavigationMock,
+  resolveGeneralMessageId: mocked.resolveGeneralMessageIdMock,
 }));
 
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({
@@ -194,6 +198,10 @@ describe("bot/commands/new", () => {
     mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
     mocked.createTopicKeyboardMock.mockReset();
     mocked.createTopicKeyboardMock.mockReturnValue({ keyboard: true });
+    mocked.installNewTopicNavigationMock.mockReset();
+    mocked.installNewTopicNavigationMock.mockResolvedValue(undefined);
+    mocked.resolveGeneralMessageIdMock.mockReset();
+    mocked.resolveGeneralMessageIdMock.mockResolvedValue(42);
   });
 
   it("blocks new session creation while foreground session is busy", async () => {

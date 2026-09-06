@@ -14,7 +14,6 @@ export interface TelegramTopicBinding {
   navigationMessageId?: number;
 }
 function getStorePath(): string { return path.join(path.dirname(getRuntimePaths().settingsFilePath), "telegram-topic-bindings.json"); }
-function getNavigationCleanupMarkerPath(): string { return path.join(path.dirname(getStorePath()), "telegram-topic-navigation-cleanup-v1"); }
 function isFileNotFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
 async function readBindings(): Promise<TelegramTopicBinding[]> {
   const fs = await import("fs/promises");
@@ -33,5 +32,3 @@ export async function findTelegramTopicBindingsByDirectory(directory: string): P
 export async function saveTelegramTopicBinding(binding: TelegramTopicBinding): Promise<void> { const normalized = { ...binding, updatedAt: binding.updatedAt || new Date().toISOString() }; await mutateBindings((bindings) => { const index = bindings.findIndex((item) => (item.chatId === normalized.chatId && item.sessionId === normalized.sessionId) || (item.chatId === normalized.chatId && item.threadId === normalized.threadId)); if (index >= 0) bindings[index] = { ...bindings[index], ...normalized }; else bindings.push(normalized); return bindings; }); topicTelemetry("binding_saved", { chatId: normalized.chatId, threadId: normalized.threadId, sessionId: normalized.sessionId, directory: normalized.directory }); }
 export async function updateTelegramTopicBinding(chatId: number, threadId: number, patch: Partial<Pick<TelegramTopicBinding, "title" | "directory" | "sessionId" | "navigationMessageId">>): Promise<void> { await mutateBindings((bindings) => bindings.map((binding) => binding.chatId === chatId && binding.threadId === threadId ? { ...binding, ...patch, updatedAt: new Date().toISOString() } : binding)); topicTelemetry("binding_updated", { chatId, threadId, sessionId: patch.sessionId, directory: patch.directory }); }
 export async function removeTelegramTopicBinding(chatId: number, sessionId: string): Promise<void> { await mutateBindings((bindings) => bindings.filter((binding) => !(binding.chatId === chatId && binding.sessionId === sessionId))); topicTelemetry("binding_removed", { chatId, sessionId }); }
-export async function hasLegacyNavigationCleanupRun(): Promise<boolean> { const fs = await import("fs/promises"); try { await fs.access(getNavigationCleanupMarkerPath()); return true; } catch (error) { if (isFileNotFound(error)) return false; throw error; } }
-export async function markLegacyNavigationCleanupRun(): Promise<void> { const fs = await import("fs/promises"); const marker = getNavigationCleanupMarkerPath(); await fs.mkdir(path.dirname(marker), { recursive: true }); await fs.writeFile(marker, new Date().toISOString(), "utf8"); }
