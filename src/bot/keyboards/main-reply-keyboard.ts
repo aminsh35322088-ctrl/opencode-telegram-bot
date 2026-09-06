@@ -22,7 +22,6 @@ export const TOPIC_BUTTONS = {
   abort: MAIN_BUTTONS.abort,
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
-  imageAi: MAIN_BUTTONS.imageAi,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   modelCenter: "🧠 Model Center",
   deleteChat: MAIN_BUTTONS.deleteChat,
@@ -43,120 +42,49 @@ function getModelButtonLabel(currentModel: ModelInfo): string {
   return formatModelForButton(currentModel.providerID, currentModel.modelID, currentModel.name);
 }
 
-function getSettingsButton(isTopic: boolean): string {
-  return isTopic ? MAIN_BUTTONS.topicSettings : MAIN_BUTTONS.mainSettings;
-}
-
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
   for (const label of labels) keyboard.text(label).row();
 }
 
-function addControls(
-  keyboard: Keyboard,
-  currentModel: ModelInfo,
-  isTopic: boolean,
-  paused: boolean,
-  running: boolean,
-  compact: boolean,
-): void {
-  if (isTopic) {
-    if (running || paused) {
-      keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
-    } else {
-      keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
-    }
-
-    if (!running && !paused) {
-      keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compact)).row();
-    } else {
-      keyboard.text(MAIN_BUTTONS.imageAi).row();
-    }
-  } else {
-    keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
-  }
-
+function addMainControls(keyboard: Keyboard, currentModel: ModelInfo): void {
+  keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
-  keyboard.text(getSettingsButton(isTopic));
-  if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
-  keyboard.row();
+  keyboard.text(MAIN_BUTTONS.mainSettings).row();
+}
+
+function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, compact: boolean): void {
+  // Topic Settings, Compact Mode and Model Center are the stable Topic surface.
+  // Execution controls are visible only while the model is working or paused.
+  if (running || paused) {
+    keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
+    keyboard.text(MAIN_BUTTONS.deleteChat).row();
+  }
+  keyboard.text(MAIN_BUTTONS.topicSettings).text(MAIN_BUTTONS.compact(compact)).row();
+  keyboard.text(TOPIC_BUTTONS.modelCenter).row();
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
   const keyboard = new Keyboard();
-  // Scope is explicit. Never inspect runtime/global Topic state here: this
-  // builder is also used by Main messages that can be sent while a Topic is
-  // executing. Topic keyboards have their own dedicated builder.
   const isTopic = options.isTopic === true;
   addQueuedPromptButtons(keyboard, options.queuedPromptLabels ?? []);
-  addControls(
-    keyboard,
-    currentModel,
-    isTopic,
-    options.paused ?? false,
-    options.running ?? false,
-    options.compactOutputMode ?? getCompactOutputMode(),
-  );
+  if (isTopic) {
+    addTopicControls(keyboard, options.paused ?? false, options.running ?? false, options.compactOutputMode ?? getCompactOutputMode());
+  } else {
+    addMainControls(keyboard, currentModel);
+  }
   return keyboard.resized().persistent();
 }
 
 /** Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session. */
-export function createTopicKeyboard(
-  options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean } = {},
-): Keyboard {
-  const paused = options.paused ?? false;
-  const running = options.running ?? false;
-  const compact = options.compactOutputMode ?? getCompactOutputMode();
-  const keyboard = new Keyboard();
-
-  // Pause/Resume/Abort are execution controls. Do not render them while the
-  // session is idle; only an active or deliberately paused run gets them.
-  if (running || paused) {
-    keyboard.text(paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause).text(TOPIC_BUTTONS.abort).row();
-  }
-
-  keyboard
-    .text(TOPIC_BUTTONS.imageAi)
-    .text(TOPIC_BUTTONS.compact(compact))
-    .row()
-    .text(TOPIC_BUTTONS.modelCenter)
-    .row()
-    .text(TOPIC_BUTTONS.deleteChat)
-    .text(TOPIC_BUTTONS.topicSettings)
-    .row()
-    .resized()
-    .persistent();
-  return keyboard;
+export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean } = {}): Keyboard {
+  return buildMainKeyboard({ providerID: "", modelID: "" }, { ...options, isTopic: true });
 }
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
-export function createMainKeyboard(
-  _currentAgent: string,
-  currentModel: ModelInfo,
-  _contextInfo?: ContextInfo,
-  _variantName?: string,
-  queuedPromptLabels?: string[],
-  paused?: boolean,
-  running?: boolean,
-): Keyboard;
-export function createMainKeyboard(
-  first: ModelInfo | string,
-  second?: MainKeyboardOptions | ModelInfo,
-  _contextInfo?: ContextInfo,
-  _variantName?: string,
-  queuedPromptLabels: string[] = [],
-  paused = false,
-  running = false,
-): Keyboard {
-  if (typeof first !== "string") {
-    return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
-  }
-  // Legacy signature is Main-only by contract.
-  return buildMainKeyboard(second as ModelInfo, {
-    queuedPromptLabels,
-    paused,
-    running,
-    isTopic: false,
-  });
+export function createMainKeyboard(_currentAgent: string, currentModel: ModelInfo, _contextInfo?: ContextInfo, _variantName?: string, queuedPromptLabels?: string[], paused?: boolean, running?: boolean): Keyboard;
+export function createMainKeyboard(first: ModelInfo | string, second?: MainKeyboardOptions | ModelInfo, _contextInfo?: ContextInfo, _variantName?: string, queuedPromptLabels: string[] = [], paused = false, running = false): Keyboard {
+  if (typeof first !== "string") return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
+  return buildMainKeyboard(second as ModelInfo, { queuedPromptLabels, paused, running, isTopic: false });
 }
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
