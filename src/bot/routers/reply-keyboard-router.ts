@@ -46,7 +46,14 @@ function keyboardButtonTexts(keyboard: unknown): string[] {
 async function isTopicMessage(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
-  if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1) return false;
+  if (typeof chatId !== "number") return false;
+
+  // General/All has no usable message_thread_id in this private forum setup.
+  // Once Topic Mode is active, keyboardManager is the authoritative scope for
+  // Reply Keyboard messages coming from General.
+  if (keyboardManager.isTopicMode(chatId) && (typeof threadId !== "number" || threadId <= 1)) return true;
+  if (typeof threadId !== "number" || threadId <= 1) return false;
+
   const runtime = getTopicRuntimeContext();
   if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) return true;
   return Boolean(await findTelegramTopicBindingByThread(chatId, threadId));
