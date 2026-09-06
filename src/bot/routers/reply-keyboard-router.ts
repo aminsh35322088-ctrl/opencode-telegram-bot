@@ -54,7 +54,8 @@ async function getTopicScope(ctx: Context): Promise<{ topicMode: boolean; aiTopi
 
   const runtime = getTopicRuntimeContext();
   if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) return { topicMode: true, aiTopic: true };
-  return { topicMode: true, aiTopic: Boolean(await findTelegramTopicBindingByThread(chatId, threadId)) };
+  const binding = await findTelegramTopicBindingByThread(chatId, threadId);
+  return binding ? { topicMode: true, aiTopic: true } : { topicMode: false, aiTopic: false };
 }
 
 function isExact(text: string, candidate: string): boolean { return normalized(text) === normalized(candidate); }
@@ -136,6 +137,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     try {
       if (isExact(text, MAIN_BUTTONS.hideKeyboard)) {
         await ctx.reply("⌨️ Keyboard hidden. Use /start to show it again.", { reply_markup: removeKeyboard() });
+        logger.info(`[TelegramKeyboard] Client-side keyboard hidden: chat=${ctx.chat?.id ?? 0}, thread=${ctx.message.message_thread_id ?? 0}, scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"}`);
         return;
       }
       if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) {
@@ -161,8 +163,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         else await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});
         return;
       }
-      if (!scope.topicMode && isExact(text, modelButton)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
-      if (!scope.aiTopic && isExact(text, modelButton)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
+      if (isExact(text, modelButton)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
       if (isExact(text, compactOn) || isExact(text, compactOff)) {
         if (!await menuAllowed(ctx)) return;
         const enabled = !getCompactOutputMode(); setCompactOutputMode(enabled);
@@ -172,23 +173,19 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       }
       if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.topicSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
       if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.deleteChat)) { await showTelegramTopicDeleteConfirmation(ctx); return; }
-      if (!scope.topicMode && isExact(text, MAIN_BUTTONS.history)) { if (await menuAllowed(ctx)) await sessionsCommand(ctx as never); return; }
-      if (!scope.topicMode && isExact(text, MAIN_BUTTONS.newChat)) { if (await menuAllowed(ctx)) await newCommand(ctx as never, deps); return; }
-      if (!scope.topicMode && isExact(text, MAIN_BUTTONS.mainSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
-      if (!scope.topicMode && AGENT_MODE_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showAgentSelectionMenu(ctx); return; }
-      if (!scope.topicMode && CONTEXT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await handleContextButtonPress(ctx); return; }
-      if (!scope.topicMode && VARIANT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showVariantSelectionMenu(ctx); return; }
-      if (!scope.topicMode && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
+      if (isExact(text, MAIN_BUTTONS.history)) { if (await menuAllowed(ctx)) await sessionsCommand(ctx as never); return; }
+      if (isExact(text, MAIN_BUTTONS.newChat)) { if (await menuAllowed(ctx)) await newCommand(ctx as never, deps); return; }
+      if (isExact(text, MAIN_BUTTONS.mainSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
+      if (scope.aiTopic && AGENT_MODE_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showAgentSelectionMenu(ctx); return; }
+      if (scope.aiTopic && CONTEXT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await handleContextButtonPress(ctx); return; }
+      if (scope.aiTopic && VARIANT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showVariantSelectionMenu(ctx); return; }
+      if (scope.aiTopic && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
         if (!await menuAllowed(ctx)) return;
         const queued = findQueuedPromptByButtonLabel(raw); const keyboard = keyboardManager.getKeyboard();
         if (queued) { promptQueue.removeById(queued.id); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); }
         else await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});
         return;
       }
-      // General/All in Topic Mode uses the same Main actions as normal mode.
-      if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.history)) { if (await menuAllowed(ctx)) await sessionsCommand(ctx as never); return; }
-      if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.newChat)) { if (await menuAllowed(ctx)) await newCommand(ctx as never, deps); return; }
-      if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.mainSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
       return;
     } catch (error) {
       logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error);
