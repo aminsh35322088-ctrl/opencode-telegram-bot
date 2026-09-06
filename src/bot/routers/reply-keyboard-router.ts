@@ -39,6 +39,11 @@ function currentModelButton(): string {
   return model.providerID && model.modelID ? formatModelForButton(model.providerID, model.modelID, model.name) : "🧠 Model";
 }
 
+function keyboardButtonTexts(keyboard: unknown): string[] {
+  const rows = (keyboard as { keyboard?: Array<Array<{ text?: string }>> } | undefined)?.keyboard ?? [];
+  return rows.flat().map((button) => button.text ?? "").filter(Boolean);
+}
+
 async function isTopicMessage(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
@@ -79,8 +84,13 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     const compactOn = normalized(MAIN_BUTTONS.compact(true));
     const compactOff = normalized(MAIN_BUTTONS.compact(false));
 
-    // Complete fixed-control vocabulary. Wrong-scope controls are consumed,
-    // never allowed to fall through into generic prompt handling.
+    // Use the actual rendered keyboard as the first line of defense. This keeps
+    // future topic buttons from ever leaking into prompt routing just because a
+    // new label was added without updating this router in the same commit.
+    const renderedButtonTexts = keyboardButtonTexts(
+      topic ? keyboardManager.getKeyboard(runtime?.sessionId) : keyboardManager.getKeyboard(),
+    ).map(normalized);
+
     const exactControls = new Set<string>([
       normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat),
       normalized(MAIN_BUTTONS.mainSettings), normalized(MAIN_BUTTONS.topicSettings),
@@ -88,11 +98,10 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume),
       normalized(MAIN_BUTTONS.abort), normalized(TOPIC_BUTTONS.modelCenter),
       normalized("❌ Cancel"), compactOn, compactOff, modelButton,
+      ...renderedButtonTexts,
     ]);
     if (topicModelButton) exactControls.add(topicModelButton);
 
-    // Control vocabulary is scope-independent: every control-like text is
-    // consumed in BOTH scopes so none of them can ever reach prompt handling.
     const dynamicControl =
       isReplyKeyboardButtonText(text, new Set(topicModelRaw ? [currentModelButton(), topicModelRaw] : [currentModelButton()])) ||
       AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
