@@ -85,20 +85,19 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   if (isForumChat || isInTopic) {
     await keyboardManager.activateTopicMode(chatId, currentModel);
-    logger.info(`[TelegramKeyboard] /start rendered Topic Mode ReplyKeyboard: chat=${chatId}, thread=General(native-default)`);
-  } else {
-    const mainKeyboard = createMainInlineKeyboard(currentModel);
-    const response = await ctx.api.sendMessage(chatId, text, {
+    await ctx.api.sendMessage(chatId, text, {
       parse_mode: "HTML",
-      reply_markup: mainKeyboard,
+      reply_markup: createTopicMainKeyboard(currentModel),
     });
-    keyboardManager.setMainInlineMessage(chatId, response.message_id);
-    logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, thread=General(native-default), message=${response.message_id}`);
+    logger.info(`[TelegramKeyboard] /start rendered Topic Mode ReplyKeyboard: chat=${chatId}, thread=General(native-default)`);
     return;
   }
 
-  await ctx.api.sendMessage(chatId, text, {
+  const mainKeyboard = createMainInlineKeyboard(currentModel);
+  const response = await ctx.api.sendMessage(chatId, text, {
     parse_mode: "HTML",
-    reply_markup: createTopicMainKeyboard(currentModel),
+    reply_markup: mainKeyboard,
   });
+  keyboardManager.setMainInlineMessage(chatId, response.message_id);
+  logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, thread=General(native-default), message=${response.message_id}`);
 }
