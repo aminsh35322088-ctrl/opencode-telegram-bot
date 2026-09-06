@@ -1,5 +1,5 @@
 import type { Api } from "grammy";
-import { createMainInlineKeyboard, createMainKeyboard, createTopicKeyboard } from "./main-reply-keyboard.js";
+import { createMainInlineKeyboard, createMainKeyboard, createTopicKeyboard, createTopicMainKeyboard } from "./main-reply-keyboard.js";
 import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
@@ -23,24 +23,74 @@ class KeyboardManager {
   private readonly states = new Map<string, KeyboardState>();
   private api: Api | null = null;
   private readonly lastUpdateTimes = new Map<string, number>();
+  private readonly mainInlineMessageIds = new Map<number, number>();
+  private readonly topicModeChats = new Set<number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
-  private resolveSessionId(sessionId?: string): string | undefined { if (sessionId) return sessionId; return getTopicRuntimeContext()?.sessionId; }
+  private resolveSessionId(sessionId?: string): string | undefined { return sessionId ?? getTopicRuntimeContext()?.sessionId; }
+
   public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
     this.api = api;
     const key = this.key(sessionId);
     const existing = this.states.get(key);
     if (!existing) {
       const currentModel = getStoredModel();
-      this.states.set(key, { sessionId, chatId, threadId: normalizeOutboundThreadId(threadId ?? undefined), currentAgent: getStoredAgent(), currentModel, contextInfo: null, variantName: formatVariantForButton(currentModel.variant || "default"), paused: sessionId ? isChatPaused(sessionId) : isChatPaused() });
+      this.states.set(key, {
+        sessionId,
+        chatId,
+        threadId: normalizeOutboundThreadId(threadId ?? undefined),
+        currentAgent: getStoredAgent(),
+        currentModel,
+        contextInfo: null,
+        variantName: formatVariantForButton(currentModel.variant || "default"),
+        paused: sessionId ? isChatPaused(sessionId) : isChatPaused(),
+      });
       return;
     }
     existing.chatId = chatId;
     if (threadId !== undefined) existing.threadId = normalizeOutboundThreadId(threadId);
-    if (!sessionId && existing.threadId === undefined) existing.threadId = normalizeOutboundThreadId(undefined);
   }
-  public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void { this.initialize(api, chatId, sessionId, threadId); }
+
+  public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void {
+    this.topicModeChats.add(chatId);
+    this.initialize(api, chatId, sessionId, threadId);
+  }
+
+  public setMainInlineMessage(chatId: number, messageId: number): void {
+    this.mainInlineMessageIds.set(chatId, messageId);
+  }
+
+  public async activateTopicMode(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<void> {
+    this.topicModeChats.add(chatId);
+    await this.hideMainInlineKeyboard(chatId);
+    await this.sendTopicMainKeyboard(chatId, currentModel, true);
+  }
+
+  public async hideMainInlineKeyboard(chatId: number): Promise<void> {
+    if (!this.api) return;
+    const messageId = this.mainInlineMessageIds.get(chatId);
+    if (!messageId) return;
+    try {
+      await this.api.editMessageReplyMarkup(chatId, messageId, { reply_markup: { inline_keyboard: [] } });
+      logger.info(`[TopicMode] General/All: hid Main InlineKeyboard chat=${chatId}, message=${messageId}`);
+    } catch (err) {
+      logger.warn(`[TopicMode] Failed to hide Main InlineKeyboard chat=${chatId}, message=${messageId}`, err);
+    }
+    this.mainInlineMessageIds.delete(chatId);
+  }
+
+  public async sendTopicMainKeyboard(chatId: number, currentModel: ModelInfo = getStoredModel(), force = false): Promise<void> {
+    if (!this.api) return;
+    const mainState = this.states.get(MAIN_KEY);
+    const keyboard = createTopicMainKeyboard(currentModel, getQueuedPromptButtonLabels());
+    const options: Record<string, unknown> = { reply_markup: keyboard };
+    await this.api.sendMessage(chatId, t("keyboard.updated"), options as never);
+    this.lastUpdateTimes.set(MAIN_KEY, Date.now());
+    logger.info(`[TopicMode] General/All: sent Topic ReplyKeyboard chat=${chatId}, thread=General(native-default), force=${force}`);
+    void mainState;
+  }
+
   private state(sessionId?: string): KeyboardState | undefined { return this.states.get(this.key(this.resolveSessionId(sessionId))); }
   public updateAgent(agent: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.currentAgent = agent; }
   public updateModel(model: ModelInfo, sessionId?: string): void { const state = this.state(sessionId); if (!state) return; state.currentModel = model; state.variantName = formatVariantForButton(model.variant || "default"); }
@@ -74,26 +124,30 @@ class KeyboardManager {
     this.lastUpdateTimes.set(key, now);
     try {
       const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
+      if (!isTopic && this.topicModeChats.has(targetChatId)) {
+        await this.sendTopicMainKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), force);
+        return;
+      }
       const keyboard = isTopic ? this.buildKeyboard(resolvedSessionId) : createMainInlineKeyboard(state?.currentModel ?? getStoredModel());
       const options: Record<string, unknown> = { reply_markup: keyboard };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
-      else if (isTopic) {
-        const fallbackThreadId = this.getThreadIdForSession(resolvedSessionId);
-        const normalizedFallback = normalizeOutboundThreadId(fallbackThreadId);
-        if (normalizedFallback !== undefined) options.message_thread_id = normalizedFallback;
-      }
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
-      logger.info(`[KeyboardManager] Sent ${isTopic ? "AI Topic ReplyKeyboard" : "Main InlineKeyboard"}: chat=${targetChatId}, thread=${threadId ?? 1}`);
+      logger.info(`[KeyboardManager] Sent ${isTopic ? "AI Topic ReplyKeyboard" : "Main InlineKeyboard"}: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
   public getKeyboard(sessionId?: string) {
     const resolved = this.resolveSessionId(sessionId);
     if (this.state(resolved)) return this.buildKeyboard(resolved);
-    if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
+    if (!resolved && this.api) {
+      return this.topicModeChats.size > 0
+        ? createTopicMainKeyboard(getStoredModel(), getQueuedPromptButtonLabels())
+        : createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
+    }
     return undefined;
   }
+
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)) || (!sessionId && Boolean(this.api)); }
   public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
