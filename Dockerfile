@@ -14,8 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends dumb-init ca-ce
 RUN python3 -c 'import urllib.request; urllib.request.urlretrieve("https://cli.github.com/packages/githubcli-archive-keyring.gpg", "/usr/share/keyrings/github-cli-archive-keyring.gpg")' && chmod go+r /usr/share/keyrings/github-cli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/github-cli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 COPY .opencode-version ./
 RUN OPENCODE_VERSION="$(tr -d '\r\n' < .opencode-version)" && test -n "${OPENCODE_VERSION}" && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm install -g "@playwright/cli@0.1.18" && RAILWAY_VERSION="$(npm view @railway/cli version 2>/dev/null)" && curl -fsSL "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_VERSION}/railway-v${RAILWAY_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin/ railway && chmod +x /usr/local/bin/railway && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright playwright-cli install-browser chromium --with-deps && npm cache clean --force
+
+ARG CODEBASE_MEMORY_VERSION=0.10.8
+ARG CODEBASE_MEMORY_SHA256=6eef49652bc0c7820f43114125044d40bf7f4d97c11b2592f6b0f6a307702325
+aRUN curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}/codebase-memory-mcp-linux-amd64-portable.tar.gz" -o /tmp/codebase-memory-mcp.tar.gz \
+ && echo "${CODEBASE_MEMORY_SHA256}  /tmp/codebase-memory-mcp.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/codebase-memory-mcp.tar.gz -C /tmp \
+ && install -m 0755 /tmp/codebase-memory-mcp /usr/local/bin/codebase-memory-mcp \
+ && rm -rf /tmp/codebase-memory-mcp /tmp/codebase-memory-mcp.tar.gz
+
 ENV NODE_ENV=production OPENCODE_TELEGRAM_HOME=/data OPENCODE_HOME=/data/opencode HOME=/data XDG_CONFIG_HOME=/data/.config XDG_DATA_HOME=/data/.local/share XDG_CACHE_HOME=/data/.cache OPEN_BROWSER_ROOTS=/data/workspace PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright OPENCODE_EXPERIMENTAL_LSP_TOOL=true
-RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace && chown -R node:node /data /app
+RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace /data/.cache/codebase-memory-mcp && chown -R node:node /data /app
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
