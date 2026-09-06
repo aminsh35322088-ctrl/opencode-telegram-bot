@@ -1,4 +1,4 @@
-import { Keyboard } from "grammy";
+import { InlineKeyboard, Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
 import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
@@ -57,14 +57,9 @@ function addMainControls(keyboard: Keyboard, currentModel: ModelInfo): void {
 }
 
 function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, compact: boolean): void {
-  // Delete Chat is a permanent Topic control: it is always available, both
-  // while a run is active and while the Topic is idle. During an active run the
-  // delete handler aborts the run safely before deleting the Topic/workspace.
   if (running || paused) {
     keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   }
-
-  // Stable Topic controls are always rendered and never depend on run state.
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter).text(MAIN_BUTTONS.topicSettings).row();
   keyboard.text(TOPIC_BUTTONS.hideKeyboard).row();
@@ -79,14 +74,20 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   } else {
     addMainControls(keyboard, currentModel);
   }
-
-  // Do not use grammY's .persistent() here. Telegram's persistent keyboard
-  // explicitly asks clients to keep the custom keyboard visible when the
-  // regular keyboard is hidden, which conflicts with our Hide Keyboard control
-  // and with Telegram's native show/hide affordance. A regular resized custom
-  // keyboard can be minimized by the client and restored through its keyboard
-  // UI; our explicit Hide Keyboard action can remove it via ReplyKeyboardRemove.
   return keyboard.resized();
+}
+
+/**
+ * General/Main navigation uses inline buttons. AI Topics intentionally keep
+ * using ReplyKeyboard because Telegram's threaded UI is the only place where
+ * the persistent session controls are needed.
+ */
+export function createMainInlineKeyboard(currentModel: ModelInfo): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  keyboard.text(MAIN_BUTTONS.history, "main:history").text(MAIN_BUTTONS.newChat, "main:new").row();
+  keyboard.text(getModelButtonLabel(currentModel), "main:model").row();
+  keyboard.text(MAIN_BUTTONS.mainSettings, "main:settings").row();
+  return keyboard;
 }
 
 /** Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session. */
