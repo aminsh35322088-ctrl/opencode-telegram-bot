@@ -16,6 +16,7 @@ export const MAIN_BUTTONS = {
   pause: "⏸️ Pause",
   resume: "▶️ Resume",
   abort: "🛑 Abort",
+  hideKeyboard: "⌨️ Hide Keyboard",
 } as const;
 
 export const TOPIC_BUTTONS = {
@@ -27,6 +28,7 @@ export const TOPIC_BUTTONS = {
   modelCenter: "🧠 Model Center",
   deleteChat: MAIN_BUTTONS.deleteChat,
   topicSettings: MAIN_BUTTONS.topicSettings,
+  hideKeyboard: MAIN_BUTTONS.hideKeyboard,
 } as const;
 
 export const TOPIC_SETTINGS_BUTTON = MAIN_BUTTONS.topicSettings;
@@ -51,6 +53,7 @@ function addMainControls(keyboard: Keyboard, currentModel: ModelInfo): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.mainSettings).row();
+  keyboard.text(MAIN_BUTTONS.hideKeyboard).row();
 }
 
 function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, compact: boolean): void {
@@ -64,6 +67,7 @@ function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean,
   // Stable Topic controls are always rendered and never depend on run state.
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter).text(MAIN_BUTTONS.topicSettings).row();
+  keyboard.text(TOPIC_BUTTONS.hideKeyboard).row();
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
