@@ -10,6 +10,7 @@ import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getTopicDefaults } from "../../app/stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { createTopicMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
@@ -80,15 +81,14 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       },
     );
 
-    // The successful creation of an AI Topic is the transition into Topic Mode.
-    // General/All switches from the normal inline UI to its bottom Reply Keyboard.
-    await keyboardManager.activateTopicMode(ctx.chat.id, initialModel);
-
+    // Creating an AI Topic enters Topic Mode: General/All gets the Reply Keyboard.
+    await keyboardManager.enterTopicMode(ctx.chat.id);
     const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
-    // No message_thread_id: General/All is Telegram's native default topic.
-    await deps.bot.api.sendMessage(ctx.chat.id, successText);
+    await deps.bot.api.sendMessage(ctx.chat.id, successText, {
+      reply_markup: createTopicMainKeyboard(initialModel),
+    });
 
-    // The session-specific keyboard is sent into the newly created AI Topic.
+    // The AI Topic gets its own session-scoped Reply Keyboard, addressed to its real thread id.
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
