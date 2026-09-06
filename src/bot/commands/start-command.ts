@@ -21,33 +21,21 @@ import { logger } from "../../utils/logger.js";
 async function ensureMainTopic(ctx: Context): Promise<number | null> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return null;
-
   const incomingThreadId = ctx.message?.message_thread_id;
   if (typeof incomingThreadId === "number" && incomingThreadId > 1) {
     const incomingBinding = await findTelegramTopicBindingByThread(chatId, incomingThreadId);
-    if (!incomingBinding) {
-      try {
-        await ctx.api.raw.editForumTopic({ chat_id: chatId, message_thread_id: incomingThreadId, name: "General" });
-        logger.info(`[TelegramTopics] Renamed incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`);
-      } catch (error) {
-        logger.warn(`[TelegramTopics] Could not rename incoming /start topic to General: chat=${chatId}, thread=${incomingThreadId}`, error);
-      }
-      await saveMainTelegramTopic(chatId, incomingThreadId, "General");
-      logger.info(`[TelegramTopics] Adopted incoming /start topic as dedicated Main topic: chat=${chatId}, thread=${incomingThreadId}, title="General"`);
-      return incomingThreadId;
+    if (incomingBinding) {
+      logger.info(`[TelegramTopics] Ignoring /start inside bound AI topic: chat=${chatId}, thread=${incomingThreadId}, session=${incomingBinding.sessionId}`);
+      return null;
     }
-    logger.info(`[TelegramTopics] Ignoring /start inside bound AI topic: chat=${chatId}, thread=${incomingThreadId}, session=${incomingBinding.sessionId}`);
-    return null;
+    logger.warn(`[TelegramTopics] /start arrived in an unbound topic; keeping Telegram native General at thread=1: chat=${chatId}, incomingThread=${incomingThreadId}`);
+    return 1;
   }
-
   const existing = await getMainTelegramTopic(chatId);
   if (existing) return existing.threadId;
-
-  const result = await ctx.api.raw.createForumTopic({ chat_id: chatId, name: "General" });
-  if (!result.message_thread_id) throw new Error("Telegram created the General topic without a message_thread_id");
-  await saveMainTelegramTopic(chatId, result.message_thread_id, "General");
-  logger.info(`[TelegramTopics] Created dedicated Main topic: chat=${chatId}, thread=${result.message_thread_id}, title="General"`);
-  return result.message_thread_id;
+  await saveMainTelegramTopic(chatId, 1, "General");
+  logger.info(`[TelegramTopics] Registered Telegram native General topic: chat=${chatId}, thread=1`);
+  return 1;
 }
 
 async function sendBotUpdateNotice(ctx: Context, threadId?: number | null): Promise<void> {
@@ -60,16 +48,11 @@ async function sendBotUpdateNotice(ctx: Context, threadId?: number | null): Prom
 }
 
 export async function startCommand(ctx: Context): Promise<void> {
-  // Resolve the canonical Main thread before touching keyboard state. This
-  // prevents a /start received while another Topic runtime is active from
-  // initializing the Main keyboard under that Topic's transient context.
   const mainThreadId = await ensureMainTopic(ctx);
-
   if (ctx.chat) {
     if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
     keyboardManager.initialize(ctx.api, ctx.chat.id, undefined, mainThreadId ?? undefined);
   }
-
   await abortCurrentOperation(ctx, { notifyUser: false });
   detachAttachedSession("start_command_reset");
   foregroundSessionState.clearAll("start_command_reset");
@@ -81,7 +64,6 @@ export async function startCommand(ctx: Context): Promise<void> {
   keyboardManager.clearContext();
   await pinnedMessageManager.clear();
   if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
-
   const currentAgent = getStoredAgent();
   const currentModel = getStoredModel();
   const variantName = formatVariantForButton(currentModel.variant || "default");
@@ -92,17 +74,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID, currentModel.name) : "Not configured";
   const openCodeVersion = await getOpenCodeVersion();
   const text = [
-    "⚡ <b>OpenCode Telegram</b>",
-    "",
-    "🟢 <b>Ready</b>",
-    `🤖 Bot <b>v${BOT_VERSION}</b>`,
-    `🧠 OpenCode <b>v${openCodeVersion}</b>`,
-    `🤖 ${modelDisplay}`,
-    `🛠️ ${currentAgent}`,
-    "",
-    "Build, debug and control OpenCode directly from Telegram.",
-    "",
-    "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
+    "⚡ <b>OpenCode Telegram</b>", "", "🟢 <b>Ready</b>", `🤖 Bot <b>v${BOT_VERSION}</b>`, `🧠 OpenCode <b>v${openCodeVersion}</b>`, `🤖 ${modelDisplay}`, `🛠️ ${currentAgent}`, "", "Build, debug and control OpenCode directly from Telegram.", "", "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
   ].join("\n");
   await sendBotUpdateNotice(ctx, mainThreadId);
   if (ctx.chat) {
