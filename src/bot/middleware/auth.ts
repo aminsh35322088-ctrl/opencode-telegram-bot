@@ -5,16 +5,7 @@ import { getCurrentSession, setCurrentSession } from "../../app/services/session
 import { opencodeClient } from "../../opencode/client.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
-import { clearAllInteractionState, interactionManager } from "../../app/managers/interaction-manager.js";
-import { questionManager } from "../../app/managers/question-manager.js";
-import { renameManager } from "../../app/managers/rename-manager.js";
-import { taskCreationManager } from "../../app/managers/scheduled-task-creation-manager.js";
-import { isProviderWizardActive } from "../commands/providers-command.js";
-import { isIntegrationWizardActive } from "../commands/integrations-command.js";
-import { getImageMode } from "../../app/services/image-mode-service.js";
-import { formatModelForButton } from "../../app/types/model.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { isReplyKeyboardButtonText } from "../message-patterns.js";
+import { clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { openSessionInTelegramTopic, sendToTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -25,8 +16,6 @@ import { t } from "../../i18n/index.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 const SESSION_CONTINUE_CALLBACK_PREFIX = "session:continue:";
-const MAIN_CHAT_ONLY_HELP =
-  "💬 Chatting with the AI is available inside Topics only.\n\nUse 💬 New Chat or open a session from 🕘 History.";
 
 function getTopicMessage(ctx: Context): { chatId: number; threadId: number } | null {
   const message = ctx.message as { chat?: { id?: number }; message_thread_id?: number; is_topic_message?: boolean } | undefined;
@@ -34,27 +23,6 @@ function getTopicMessage(ctx: Context): { chatId: number; threadId: number } | n
   const threadId = message?.message_thread_id;
   if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1 || !message?.is_topic_message) return null;
   return { chatId, threadId };
-}
-
-function getCurrentModelButtonText(): string {
-  const model = getStoredModel();
-  if (!model.providerID || !model.modelID) return "🧠 Model";
-  return formatModelForButton(model.providerID, model.modelID, model.name);
-}
-
-function isMainControlText(text: string): boolean {
-  return isReplyKeyboardButtonText(text, new Set([getCurrentModelButtonText()]));
-}
-
-function hasConfigurationInteraction(chatId?: number, sessionId?: string): boolean {
-  const interaction = interactionManager.getSnapshot();
-  if (interaction !== null) return true;
-  if (questionManager.isActiveForChat(chatId)) return true;
-  if (isProviderWizardActive() || isIntegrationWizardActive()) return true;
-  if (getImageMode(sessionId) !== null) return true;
-  if (renameManager.isWaitingForName()) return true;
-  if (taskCreationManager.isActive()) return true;
-  return false;
 }
 
 function bindingTitle(binding: Awaited<ReturnType<typeof findTelegramTopicBindingByThread>>): string {
@@ -156,24 +124,9 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
       await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId, sessionId: binding.sessionId }, () => next());
       return;
     }
-    const text = ctx.message && "text" in ctx.message ? String(ctx.message.text ?? "").trim() : "";
-    const allowed = ctx.callbackQuery || text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(ctx.message?.chat?.id, getCurrentSession()?.id);
-    if (!allowed) {
-      await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, { message_thread_id: topic.threadId }).catch(() => {});
-      return;
-    }
     await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId }, () => next());
     return;
   }
 
-  const message = ctx.message;
-  if (message) {
-    const text = "text" in message && typeof message.text === "string" ? message.text.trim() : "";
-    const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(message.chat?.id, getCurrentSession()?.id);
-    if (!allowedMainInput) {
-      await ctx.reply(MAIN_CHAT_ONLY_HELP).catch(() => {});
-      return;
-    }
-  }
   await next();
 }

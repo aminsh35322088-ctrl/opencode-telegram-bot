@@ -98,7 +98,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
-      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; success message sent inside topic with native Telegram UI`,
+      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; success message sent to General (All)`,
     );
 
     logger.info(

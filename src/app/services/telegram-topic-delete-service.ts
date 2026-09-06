@@ -1,7 +1,7 @@
 import type { Api } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession } from "./session-service.js";
-import { removeTelegramTopicBinding, type TelegramTopicBinding } from "./telegram-topic-store.js";
+import { removeTelegramTopicBinding, listTelegramTopicBindings, type TelegramTopicBinding } from "./telegram-topic-store.js";
 import { deleteTelegramTopicWorkspace, isTelegramTopicWorkspace } from "./telegram-topic-workspace-service.js";
 import { removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
 import { promptQueue } from "../managers/prompt-queue-manager.js";
@@ -100,6 +100,15 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
   }
 
   if (getCurrentSession()?.id === binding.sessionId) clearSession();
+
+  const remainingBindings = (await listTelegramTopicBindings()).filter((b) => b.chatId === binding.chatId);
+  if (remainingBindings.length === 0) {
+    logger.info(`[TelegramTopics] No topics remaining for chat=${binding.chatId}; returning to normal mode`);
+    keyboardManager.initialize(api, binding.chatId);
+    await keyboardManager.sendKeyboardUpdate(binding.chatId, true).catch((err) => {
+      logger.warn("[TelegramTopics] Failed to send main keyboard after returning to normal mode:", err);
+    });
+  }
 
   if (cleanupErrors.length > 0) {
     topicTelemetry("delete_completed_with_cleanup_errors", context, { cleanupErrors: cleanupErrors.length });
