@@ -10,13 +10,13 @@ import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getTopicDefaults } from "../../app/stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
-import { createTopicMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -81,18 +81,21 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       },
     );
 
-    // Creating an AI Topic enters Topic Mode: General/All gets the Reply Keyboard.
+    // Creating an AI Topic does not replace General/All navigation. The main
+    // glass keyboard stays available there; the AI Topic gets its own ReplyKeyboard.
     await keyboardManager.enterTopicMode(ctx.chat.id);
+    await keyboardManager.clearMainInlineMessage(ctx.chat.id);
     const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
-    await deps.bot.api.sendMessage(ctx.chat.id, successText, {
-      reply_markup: createTopicMainKeyboard(initialModel),
+    const navigationMessage = await deps.bot.api.sendMessage(ctx.chat.id, successText, {
+      reply_markup: createMainInlineKeyboard(initialModel),
     });
+    keyboardManager.setMainInlineMessage(ctx.chat.id, navigationMessage.message_id);
 
     // The AI Topic gets its own session-scoped Reply Keyboard, addressed to its real thread id.
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
-      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; Topic Mode activated; General keyboard switched to ReplyKeyboard`,
+      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated`,
     );
     logger.info(
       `[TelegramTopics] New Chat opened: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`,
