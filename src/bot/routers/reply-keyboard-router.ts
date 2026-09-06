@@ -28,7 +28,7 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-import { isMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
+
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -48,7 +48,6 @@ async function isTopicMessage(ctx: Context): Promise<boolean> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
   if (typeof chatId !== "number" || typeof threadId !== "number" || threadId === 1) return false;
-  if (await isMainTelegramTopic(chatId, threadId)) return false;
   const runtime = getTopicRuntimeContext();
   if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) return true;
   return Boolean(await findTelegramTopicBindingByThread(chatId, threadId));

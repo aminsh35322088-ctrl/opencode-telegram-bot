@@ -10,7 +10,7 @@ import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
-import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
+
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { logger } from "../../utils/logger.js";
 
@@ -41,11 +41,10 @@ class KeyboardManager {
     const existing = this.states.get(key);
     if (!existing) {
       const currentModel = getStoredModel();
-      const isMain = !sessionId;
       this.states.set(key, {
         sessionId,
         chatId,
-        threadId: normalizeOutboundThreadId(threadId ?? (isMain ? getMainTelegramThreadIdSync(chatId) ?? undefined : undefined)),
+        threadId: normalizeOutboundThreadId(threadId ?? undefined),
         currentAgent: getStoredAgent(),
         currentModel,
         contextInfo: null,
@@ -56,7 +55,7 @@ class KeyboardManager {
     }
     existing.chatId = chatId;
     if (threadId !== undefined) existing.threadId = normalizeOutboundThreadId(threadId);
-    if (!sessionId && existing.threadId === undefined) existing.threadId = normalizeOutboundThreadId(getMainTelegramThreadIdSync(chatId) ?? undefined);
+    if (!sessionId && existing.threadId === undefined) existing.threadId = normalizeOutboundThreadId(undefined);
   }
 
   public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void { this.initialize(api, chatId, sessionId, threadId); }

@@ -15,7 +15,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import { openSessionInTelegramTopic, pinNavigationInGeneral, installTopicNavigation } from "../../app/services/telegram-topic-session-service.js";
+import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
@@ -90,9 +90,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         });
       },
     );
-
-    await pinNavigationInGeneral(deps.bot.api, ctx.chat.id, session.title, binding.threadId);
-    await installTopicNavigation(deps.bot.api, ctx.chat.id, binding.threadId);
 
     const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
     // No message_thread_id → Telegram routes to native General topic

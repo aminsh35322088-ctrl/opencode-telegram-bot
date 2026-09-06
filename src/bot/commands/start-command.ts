@@ -15,7 +15,6 @@ import { clearPausedSession } from "../../app/managers/paused-session-manager.js
 import { formatModelForDisplay } from "../../app/types/model.js";
 import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion, markBotVersionNotified } from "../../app/services/version-info-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-import { getMainTelegramTopic, saveMainTelegramTopic } from "../../app/services/telegram-main-topic-store.js";
 import { logger } from "../../utils/logger.js";
 
 /**
@@ -28,17 +27,6 @@ function getStartTargetThreadId(ctx: Context): number | undefined {
   const threadId = ctx.message?.message_thread_id;
   if (typeof threadId === "number" && threadId > 1) return threadId;
   return undefined;
-}
-
-/**
- * Ensure the native General topic metadata is registered.
- * General (thread 1) is Telegram-native; never create it via API.
- */
-async function ensureMainTopic(chatId: number): Promise<void> {
-  const existing = await getMainTelegramTopic(chatId);
-  if (existing) return;
-  await saveMainTelegramTopic(chatId, 1, "General");
-  logger.info(`[TelegramTopics] Registered Telegram native General topic metadata: chat=${chatId}, thread=1`);
 }
 
 async function sendBotUpdateNotice(ctx: Context, threadId?: number): Promise<void> {
@@ -63,19 +51,11 @@ export async function startCommand(ctx: Context): Promise<void> {
   if (isInTopic) {
     const binding = await findTelegramTopicBindingByThread(chatId, inboundThreadId);
     if (binding) {
-      logger.info(`[TelegramTopics] /start reset inside bound topic: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`);
+      logger.info(`[TelegramTopics] /start inside bound topic: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`);
     } else {
       logger.info(`[TelegramTopics] /start in unbound topic: chat=${chatId}, thread=${inboundThreadId}`);
-      try {
-        await ctx.api.editForumTopic(chatId, inboundThreadId, { name: "General" });
-        logger.info(`[TelegramTopics] Renamed unbound topic to General: chat=${chatId}, thread=${inboundThreadId}`);
-      } catch (error) {
-        logger.warn(`[TelegramTopics] Failed to rename topic to General: chat=${chatId}, thread=${inboundThreadId}`, error);
-      }
     }
   }
-
-  await ensureMainTopic(chatId);
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
   keyboardManager.initialize(ctx.api, chatId);

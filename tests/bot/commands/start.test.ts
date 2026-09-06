@@ -25,11 +25,7 @@ const mocked = vi.hoisted(() => ({
   keyboardUpdateModelMock: vi.fn(),
   keyboardUpdateContextMock: vi.fn(),
   keyboardClearContextMock: vi.fn(),
-  getMainTelegramTopicMock: vi.fn(),
-  saveMainTelegramTopicMock: vi.fn().mockResolvedValue(undefined),
   findTelegramTopicBindingByThreadMock: vi.fn(),
-  createForumTopicMock: vi.fn(),
-  editForumTopicMock: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("../../../src/bot/commands/abort-command.js", () => ({
@@ -60,11 +56,6 @@ vi.mock("../../../src/app/services/variant-selection-service.js", () => ({
   formatVariantForButton: mocked.formatVariantForButtonMock,
 }));
 
-vi.mock("../../../src/app/services/telegram-main-topic-store.js", () => ({
-  getMainTelegramTopic: mocked.getMainTelegramTopicMock,
-  saveMainTelegramTopic: mocked.saveMainTelegramTopicMock,
-}));
-
 vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
   findTelegramTopicBindingByThread: mocked.findTelegramTopicBindingByThreadMock,
 }));
@@ -92,14 +83,10 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
 }));
 
 function createStartContext(threadId?: number): Context {
-  const raw = {
-    createForumTopic: mocked.createForumTopicMock,
-    editForumTopic: mocked.editForumTopicMock,
-  };
   return {
     chat: { id: 100 },
     message: threadId ? { message_thread_id: threadId } : undefined,
-    api: { raw, sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }) },
+    api: { sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }) },
     reply: vi.fn().mockResolvedValue({ message_id: 1 }),
   } as unknown as Context;
 }
@@ -146,16 +133,8 @@ describe("bot/commands/start-command", () => {
     mocked.keyboardUpdateContextMock.mockReset();
     mocked.keyboardClearContextMock.mockReset();
 
-    mocked.getMainTelegramTopicMock.mockReset();
-    mocked.getMainTelegramTopicMock.mockResolvedValue(null);
-    mocked.saveMainTelegramTopicMock.mockReset();
-    mocked.saveMainTelegramTopicMock.mockResolvedValue(undefined);
     mocked.findTelegramTopicBindingByThreadMock.mockReset();
     mocked.findTelegramTopicBindingByThreadMock.mockResolvedValue(null);
-    mocked.createForumTopicMock.mockReset();
-    mocked.createForumTopicMock.mockResolvedValue({ message_thread_id: 999 });
-    mocked.editForumTopicMock.mockReset();
-    mocked.editForumTopicMock.mockResolvedValue(true);
   });
 
   it("stops active flow, resets project/session, and sends welcome message", async () => {
@@ -172,9 +151,8 @@ describe("bot/commands/start-command", () => {
     expect(mocked.keyboardInitializeMock).toHaveBeenCalledWith(ctx.api, 100);
     expect(mocked.pinnedRefreshContextLimitMock).toHaveBeenCalledTimes(1);
 
-    // General is Telegram-native; we only persist metadata, never create via API
-    expect(mocked.createForumTopicMock).not.toHaveBeenCalled();
-    expect(mocked.saveMainTelegramTopicMock).toHaveBeenCalledWith(100, 1, "General");
+    // No topic creation via API
+    expect(mocked.findTelegramTopicBindingByThreadMock).not.toHaveBeenCalled();
     // No thread id in sendMessage → routes to native General
     expect(ctx.api.sendMessage).toHaveBeenCalledWith(100, expect.anything(), expect.not.objectContaining({ message_thread_id: expect.anything() }));
   });
@@ -185,9 +163,6 @@ describe("bot/commands/start-command", () => {
     await startCommand(ctx);
 
     expect(mocked.findTelegramTopicBindingByThreadMock).toHaveBeenCalledWith(100, 731925);
-    // General metadata still ensured
-    expect(mocked.saveMainTelegramTopicMock).toHaveBeenCalledWith(100, 1, "General");
-    expect(mocked.createForumTopicMock).not.toHaveBeenCalled();
     // Response goes to the topic where /start was sent
     expect(ctx.api.sendMessage).toHaveBeenCalledWith(100, expect.anything(), expect.objectContaining({ message_thread_id: 731925 }));
   });
