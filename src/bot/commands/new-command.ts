@@ -32,9 +32,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
   let topicBindingCreated = false;
 
   try {
-    // New Chat is a Main-level action and must remain available even while
-    // another Topic is executing. Each Topic owns an independent OpenCode
-    // session/workspace, so no global foreground/paused/session state is reset.
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
     const { data: session, error } = await opencodeClient.session.create({ directory });
     if (error || !session) throw error || new Error("No session received from OpenCode");
@@ -68,9 +65,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },
       async () => {
-        // Do not write this Topic into the global foreground session store.
-        // Topic requests resolve their session from topic-runtime-context,
-        // which is what makes multiple Topics truly isolated.
         keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding.threadId, session.id);
         keyboardManager.updateAgent(initialAgent, session.id);
         keyboardManager.updateModel(initialModel, session.id);
@@ -86,19 +80,20 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       },
     );
 
+    // The successful creation of an AI Topic is the transition into Topic Mode.
+    // General/All switches from the normal inline UI to its bottom Reply Keyboard.
+    await keyboardManager.activateTopicMode(ctx.chat.id, initialModel);
+
     const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
-    // No message_thread_id → Telegram routes to native General topic.
+    // No message_thread_id: General/All is Telegram's native default topic.
     await deps.bot.api.sendMessage(ctx.chat.id, successText);
 
-    // The persistent keyboard belongs to the newly-created Topic. Telegram's
-    // forum client exposes the Topic itself; the bot does not fake a General
-    // topic or use a URL-based navigation mechanism.
+    // The session-specific keyboard is sent into the newly created AI Topic.
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
-      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; success message sent to General (All)`,
+      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; Topic Mode activated; General keyboard switched to ReplyKeyboard`,
     );
-
     logger.info(
       `[TelegramTopics] New Chat opened: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`,
     );
