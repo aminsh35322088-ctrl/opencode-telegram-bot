@@ -21,8 +21,8 @@ async function normalizeStartContext(ctx: Context): Promise<void> {
   const threadId = ctx.message?.message_thread_id;
   if (typeof chatId !== "number" || typeof threadId !== "number" || threadId <= 1) return;
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  if (binding) logger.info(`[TelegramTopics] /start received inside bound AI Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
-  else logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}`);
+  if (binding) logger.info(`[TelegramTopics] /start received inside bound AI Topic; treating it as Topic navigation: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
+  else logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic: chat=${chatId}, thread=${threadId}`);
 }
 
 async function sendBotUpdateNotice(ctx: Context): Promise<void> {
@@ -35,18 +35,6 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   await markBotVersionNotified(notice.currentVersion);
 }
 
-async function detectForumMode(ctx: Context): Promise<{ isForumChat: boolean; hasPrivateForumTopics: boolean }> {
-  const isSupergroupForum = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
-  try {
-    const me = await ctx.api.getMe();
-    const hasPrivateForumTopics = Boolean((me as { has_topics_enabled?: boolean }).has_topics_enabled);
-    return { isForumChat: isSupergroupForum || hasPrivateForumTopics, hasPrivateForumTopics };
-  } catch (err) {
-    logger.warn("[TelegramKeyboard] Failed to detect private threaded bot forum via getMe(); falling back to chat metadata", err);
-    return { isForumChat: isSupergroupForum, hasPrivateForumTopics: false };
-  }
-}
-
 export async function startCommand(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return;
@@ -54,17 +42,20 @@ export async function startCommand(ctx: Context): Promise<void> {
   const inboundThreadId = ctx.message?.message_thread_id;
   const isInTopic = typeof inboundThreadId === "number" && inboundThreadId > 1;
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
-  const forumMode = await detectForumMode(ctx);
-  const isForumChat = forumMode.isForumChat;
+  const isSupergroupForum = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
+  // Private threaded bots expose topic capabilities through Bot API metadata, but that
+  // capability alone must NOT switch an ordinary private chat into Topic Mode. Topic Mode
+  // is entered explicitly by New Chat/topic creation and is tracked by keyboardManager.
+  const isTopicMode = isSupergroupForum || isInTopic || keyboardManager.isTopicMode(chatId);
 
   await normalizeStartContext(ctx);
-  logger.info(`[TelegramKeyboard] /start mode detection: chat=${chatId}, isInTopic=${isInTopic}, isSupergroupForum=${Boolean((ctx.chat as { is_forum?: boolean }).is_forum)}, hasPrivateForumTopics=${forumMode.hasPrivateForumTopics}`);
-  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only; Main UI will be rendered in General: chat=${chatId}, thread=${inboundThreadId}`);
+  logger.info(`[TelegramKeyboard] /start mode detection: chat=${chatId}, isInTopic=${isInTopic}, isSupergroupForum=${isSupergroupForum}, topicMode=${keyboardManager.isTopicMode(chatId)}`);
+  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic; restoring Topic Mode keyboard in the current topic context: chat=${chatId}, thread=${inboundThreadId}`);
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
   keyboardManager.initialize(ctx.api, chatId);
 
-  if (!isInTopic) {
+  if (!isInTopic && !keyboardManager.isTopicMode(chatId)) {
     await abortCurrentOperation(ctx, { notifyUser: false });
     detachAttachedSession("start_command_reset");
     foregroundSessionState.clearAll("start_command_reset");
@@ -97,23 +88,24 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  if (isForumChat || isInTopic) {
-    // Enter Topic Mode and attach the General/All Reply Keyboard to this one message.
-    // General/All must never receive message_thread_id=1 in this private forum setup.
+  if (isTopicMode) {
+    // In Topic Mode use the bottom Reply Keyboard. General/All is the native default
+    // context; never force message_thread_id=1 because Telegram can reject it as missing.
     await keyboardManager.enterTopicMode(chatId);
     await ctx.api.sendMessage(chatId, text, {
       parse_mode: "HTML",
       reply_markup: createTopicMainKeyboard(currentModel),
     });
-    logger.info(`[TelegramKeyboard] /start rendered Topic Mode ReplyKeyboard: chat=${chatId}, thread=General(native-default)`);
+    logger.info(`[TelegramKeyboard] /start rendered Topic Mode ReplyKeyboard: chat=${chatId}, thread=General/native-default`);
     return;
   }
 
+  // Normal private-chat mode keeps the original glass/inline keyboard untouched.
   const mainKeyboard = createMainInlineKeyboard(currentModel);
   const response = await ctx.api.sendMessage(chatId, text, {
     parse_mode: "HTML",
     reply_markup: mainKeyboard,
   });
   keyboardManager.setMainInlineMessage(chatId, response.message_id);
-  logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, thread=General(native-default), message=${response.message_id}`);
+  logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, thread=General/native-default, message=${response.message_id}`);
 }
