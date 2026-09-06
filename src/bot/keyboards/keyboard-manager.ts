@@ -10,6 +10,7 @@ import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { logger } from "../../utils/logger.js";
 
 const MAIN_KEY = "__main__";
@@ -22,6 +23,12 @@ class KeyboardManager {
 
   /** Keyboard identity is explicit: omitted sessionId always means Main. */
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
+
+  /** When no sessionId is given, inherit the scope from the active Topic runtime context. */
+  private resolveSessionId(sessionId?: string): string | undefined {
+    if (sessionId) return sessionId;
+    return getTopicRuntimeContext()?.sessionId;
+  }
 
   public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
     this.api = api;
@@ -48,7 +55,7 @@ class KeyboardManager {
   }
 
   public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void { this.initialize(api, chatId, sessionId, threadId); }
-  private state(sessionId?: string): KeyboardState | undefined { return this.states.get(this.key(sessionId)); }
+  private state(sessionId?: string): KeyboardState | undefined { return this.states.get(this.key(this.resolveSessionId(sessionId))); }
 
   public updateAgent(agent: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.currentAgent = agent; }
   public updateModel(model: ModelInfo, sessionId?: string): void { const state = this.state(sessionId); if (!state) return; state.currentModel = model; state.variantName = formatVariantForButton(model.variant || "default"); }
@@ -75,22 +82,23 @@ class KeyboardManager {
 
   public async sendKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
     if (!this.api) return;
-    const state = this.state(sessionId);
+    const resolvedSessionId = this.resolveSessionId(sessionId);
+    const state = this.state(resolvedSessionId);
     const targetChatId = chatId ?? state?.chatId;
     if (!targetChatId) return;
-    const key = this.key(sessionId);
+    const key = this.key(resolvedSessionId);
     const now = Date.now();
     const previous = this.lastUpdateTimes.get(key) ?? 0;
     if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
     try {
-      const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(sessionId) };
+      const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(resolvedSessionId) };
       if (state?.threadId !== undefined) options.message_thread_id = state.threadId;
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
-  public getKeyboard(sessionId?: string) { return this.state(sessionId) ? this.buildKeyboard(sessionId) : undefined; }
+  public getKeyboard(sessionId?: string) { const resolved = this.resolveSessionId(sessionId); return this.state(resolved) ? this.buildKeyboard(resolved) : undefined; }
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)); }
   public clearSession(sessionId: string): void { this.states.delete(this.key(sessionId)); this.lastUpdateTimes.delete(this.key(sessionId)); }
