@@ -20,10 +20,15 @@ import { logger } from "../../utils/logger.js";
 /**
  * /start is a Main/General command, never a Topic command.
  *
- * Telegram can deliver /start with a message_thread_id when the client has
- * implicitly created a user Topic. That Topic is not an OpenCode session, so
- * it must not become the bot's Main context or inherit global session state.
- * We clean up an unbound accidental Topic and always answer in native General.
+ * Telegram may deliver /start with a message_thread_id when the bot's private
+ * threaded mode still allows users to create topics. An unbound thread in
+ * this case is Telegram-created UI state, not an OpenCode session.
+ *
+ * We must NOT delete that thread here: deleting the thread underneath the
+ * client can make the bot conversation disappear from the chat list. The
+ * server-side behavior is intentionally non-destructive: keep the incoming
+ * Topic untouched, do not attach an OpenCode session to it, and render the
+ * Main UI through a normal message to General.
  */
 async function normalizeStartContext(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
@@ -32,17 +37,15 @@ async function normalizeStartContext(ctx: Context): Promise<void> {
 
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
   if (binding) {
-    logger.info(`[TelegramTopics] /start received inside bound AI Topic; keeping Topic intact and returning command to General: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
+    logger.info(
+      `[TelegramTopics] /start received inside bound AI Topic; leaving Topic intact and treating /start as General navigation only: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`,
+    );
     return;
   }
 
-  logger.warn(`[TelegramTopics] /start arrived in unbound Topic; deleting accidental Topic and returning to General: chat=${chatId}, thread=${threadId}`);
-  try {
-    await ctx.api.deleteForumTopic(chatId, threadId);
-    logger.info(`[TelegramTopics] Deleted unbound /start Topic: chat=${chatId}, thread=${threadId}`);
-  } catch (error) {
-    logger.warn(`[TelegramTopics] Could not delete unbound /start Topic: chat=${chatId}, thread=${threadId}`, error);
-  }
+  logger.info(
+    `[TelegramTopics] /start arrived in an unbound Telegram Topic; leaving the Topic untouched and returning the Main UI to native General: chat=${chatId}, thread=${threadId}`,
+  );
 }
 
 async function sendBotUpdateNotice(ctx: Context): Promise<void> {
@@ -65,14 +68,15 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await normalizeStartContext(ctx);
 
-  // /start must never reset or abort an AI Topic. If Telegram delivered it
-  // from a bound Topic, leave that Topic's session/run untouched and render
-  // the Main UI in native General instead.
   if (isInTopic) {
     if (binding) {
-      logger.info(`[TelegramTopics] /start from bound Topic is a navigation command only: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`);
+      logger.info(
+        `[TelegramTopics] /start from bound AI Topic is navigation-only; no session/run state will be changed: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`,
+      );
     } else {
-      logger.info(`[TelegramTopics] /start from unbound Topic normalized back to native General: chat=${chatId}, thread=${inboundThreadId}`);
+      logger.info(
+        `[TelegramTopics] /start from unbound Telegram Topic is navigation-only; no Topic/session state will be created or deleted: chat=${chatId}, thread=${inboundThreadId}`,
+      );
     }
   }
 
