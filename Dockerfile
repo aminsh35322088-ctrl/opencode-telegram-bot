@@ -16,12 +16,15 @@ COPY .opencode-version ./
 RUN OPENCODE_VERSION="$(tr -d '\r\n' < .opencode-version)" && test -n "${OPENCODE_VERSION}" && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm install -g "@playwright/cli@0.1.18" && RAILWAY_VERSION="$(npm view @railway/cli version 2>/dev/null)" && curl -fsSL "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_VERSION}/railway-v${RAILWAY_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin/ railway && chmod +x /usr/local/bin/railway && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright playwright-cli install-browser chromium --with-deps && npm cache clean --force
 
 ARG CODEBASE_MEMORY_VERSION=0.10.8
-ARG CODEBASE_MEMORY_SHA256=6eef49652bc0c7820f43114125044d40bf7f4d97c11b2592f6b0f6a307702325
-RUN curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}/codebase-memory-mcp-linux-amd64-portable.tar.gz" -o /tmp/codebase-memory-mcp.tar.gz \
- && echo "${CODEBASE_MEMORY_SHA256}  /tmp/codebase-memory-mcp.tar.gz" | sha256sum -c - \
+ARG CODEBASE_MEMORY_ARCHIVE=codebase-memory-mcp-ui-linux-amd64-portable.tar.gz
+RUN curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}/${CODEBASE_MEMORY_ARCHIVE}" -o /tmp/codebase-memory-mcp.tar.gz \
+ && curl -fsSL "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CODEBASE_MEMORY_VERSION}/checksums.txt" -o /tmp/codebase-memory-checksums.txt \
+ && grep -E "[[:space:]]${CODEBASE_MEMORY_ARCHIVE}$" /tmp/codebase-memory-checksums.txt > /tmp/codebase-memory-checksum.txt \
+ && test -s /tmp/codebase-memory-checksum.txt \
+ && (cd /tmp && sha256sum -c codebase-memory-checksum.txt) \
  && tar -xzf /tmp/codebase-memory-mcp.tar.gz -C /tmp \
  && install -m 0755 /tmp/codebase-memory-mcp /usr/local/bin/codebase-memory-mcp \
- && rm -rf /tmp/codebase-memory-mcp /tmp/codebase-memory-mcp.tar.gz
+ && rm -rf /tmp/codebase-memory-mcp /tmp/codebase-memory-mcp.tar.gz /tmp/codebase-memory-checksums.txt /tmp/codebase-memory-checksum.txt
 
 ENV NODE_ENV=production OPENCODE_TELEGRAM_HOME=/data OPENCODE_HOME=/data/opencode HOME=/data XDG_CONFIG_HOME=/data/.config XDG_DATA_HOME=/data/.local/share XDG_CACHE_HOME=/data/.cache OPEN_BROWSER_ROOTS=/data/workspace PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright OPENCODE_EXPERIMENTAL_LSP_TOOL=true
 RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace /data/.cache/codebase-memory-mcp && chown -R node:node /data /app
