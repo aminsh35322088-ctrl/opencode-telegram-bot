@@ -35,6 +35,10 @@ import { activateImageMode } from "../../app/services/image-mode-service.js";
 import { getCurrentSession, setCurrentSession } from "../../app/services/session-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { handleTelegramTopicDeleteCallback, registerTelegramTopicDeleteHandlers } from "../services/telegram-topic-delete-handler.js";
+import { sessionsCommand } from "../commands/sessions-command.js";
+import { newCommand } from "../commands/new-command.js";
+import { settingsCommand } from "../commands/settings-command.js";
+import { showModelCenterMenu } from "../menus/model-center-menu.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -47,19 +51,28 @@ async function resolveCallbackTopicSession(ctx: Context): Promise<string | null>
   const threadId = "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
   const isTopicMessage = "is_topic_message" in callbackMessage ? callbackMessage.is_topic_message : false;
   if (typeof threadId !== "number" || !isTopicMessage) return null;
-
   const binding = await findTelegramTopicBindingByThread(callbackMessage.chat.id, threadId);
   if (!binding) return null;
-
   const current = getCurrentSession();
-  if (current?.id !== binding.sessionId || current.directory !== binding.directory) {
-    setCurrentSession({
-      id: binding.sessionId,
-      title: binding.title || `Session ${binding.sessionId.slice(0, 8)}`,
-      directory: binding.directory,
-    });
-  }
+  if (current?.id !== binding.sessionId || current.directory !== binding.directory) setCurrentSession({ id: binding.sessionId, title: binding.title || `Session ${binding.sessionId.slice(0, 8)}`, directory: binding.directory });
   return binding.sessionId;
+}
+
+async function handleMainNavigationCallback(ctx: Context, data: string, deps: CallbackRouterDeps): Promise<boolean> {
+  if (!data.startsWith("main:")) return false;
+  const callbackMessage = ctx.callbackQuery?.message;
+  const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
+  if (typeof threadId === "number" && threadId > 1) {
+    await ctx.answerCallbackQuery({ text: "Use General for main navigation." }).catch(() => {});
+    return true;
+  }
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (data === "main:history") { await sessionsCommand(ctx as never); return true; }
+  if (data === "main:new") { await newCommand(ctx as never, { bot: deps.bot ?? (ctx as never), ensureEventSubscription: deps.ensureEventSubscription }); return true; }
+  if (data === "main:model") { await showModelCenterMenu(ctx); return true; }
+  if (data === "main:settings") { await settingsCommand(ctx as never); return true; }
+  await ctx.answerCallbackQuery({ text: t("callback.unknown_command") }).catch(() => {});
+  return true;
 }
 
 async function handleSettingsChildNavigation(ctx: Context, data: string): Promise<boolean> {
@@ -109,6 +122,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
     let errorScope: InteractionErrorScope = "interaction";
     try {
+      if (await handleMainNavigationCallback(ctx, data, deps)) return;
       if (await handleImageAiCallback(ctx, data)) return;
       if (await handleTelegramTopicDeleteCallback(ctx)) return;
       if (await handleBackgroundSessionOpen(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })) return;
