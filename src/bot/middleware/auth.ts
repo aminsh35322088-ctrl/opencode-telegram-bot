@@ -152,7 +152,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
       return;
     }
     const text = ctx.message && "text" in ctx.message ? String(ctx.message.text ?? "").trim() : "";
-    if (!text.startsWith("/")) {
+    if (!text.startsWith("/") && !isMainControlText(text)) {
       await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, { message_thread_id: topic.threadId }).catch(() => {});
       return;
     }
@@ -161,7 +161,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   }
 
   const message = ctx.message;
-  if (message && !ctx.callbackQuery) {
+  if (message) {
     const text = "text" in message && typeof message.text === "string" ? message.text.trim() : "";
     const allowedMainInput = text.startsWith("/") || isMainControlText(text) || hasConfigurationInteraction(message.chat?.id, getCurrentSession()?.id);
     if (!allowedMainInput) {
