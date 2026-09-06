@@ -84,7 +84,9 @@ export async function startCommand(ctx: Context): Promise<void> {
   await sendBotUpdateNotice(ctx);
 
   if (isForumChat || isInTopic) {
-    await keyboardManager.activateTopicMode(chatId, currentModel);
+    // Enter Topic Mode and attach the General/All Reply Keyboard to this one message.
+    // General/All must never receive message_thread_id=1 in this private forum setup.
+    await keyboardManager.enterTopicMode(chatId);
     await ctx.api.sendMessage(chatId, text, {
       parse_mode: "HTML",
       reply_markup: createTopicMainKeyboard(currentModel),
