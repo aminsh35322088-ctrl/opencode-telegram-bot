@@ -18,16 +18,9 @@ import { logger } from "../../utils/logger.js";
 
 /**
  * /start is a Main/General command, never a Topic command.
- *
- * Telegram may deliver /start with a message_thread_id when the bot's private
- * threaded mode still allows users to create topics. An unbound thread in
- * this case is Telegram-created UI state, not an OpenCode session.
- *
- * We must NOT delete that thread here: deleting the thread underneath the
- * client can make the bot conversation disappear from the chat list. The
- * server-side behavior is intentionally non-destructive: keep the incoming
- * Topic untouched, do not attach an OpenCode session to it, and render the
- * Main UI through a normal message to General.
+ * Telegram may deliver /start with a message_thread_id when private threaded
+ * mode is enabled. An unbound thread is Telegram UI state, not an OpenCode
+ * session, so /start never mutates that Topic.
  */
 async function normalizeStartContext(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
@@ -36,15 +29,10 @@ async function normalizeStartContext(ctx: Context): Promise<void> {
 
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
   if (binding) {
-    logger.info(
-      `[TelegramTopics] /start received inside bound AI Topic; leaving Topic intact and treating /start as General navigation only: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`,
-    );
+    logger.info(`[TelegramTopics] /start received inside bound AI Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
     return;
   }
-
-  logger.info(
-    `[TelegramTopics] /start arrived in an unbound Telegram Topic; leaving the Topic untouched and returning the Main UI to native General: chat=${chatId}, thread=${threadId}`,
-  );
+  logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic; leaving Topic untouched: chat=${chatId}, thread=${threadId}`);
 }
 
 async function sendBotUpdateNotice(ctx: Context): Promise<void> {
@@ -52,7 +40,7 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   if (!notice) return;
   const chatId = ctx.chat!.id;
   const opts: Record<string, unknown> = { parse_mode: "HTML" };
-  await ctx.api.sendMessage(chatId, `🚀 <b>Bot updated</b>\n\nv${notice.previousVersion} → <b>v${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`, opts);
+  await ctx.api.sendMessage(chatId, `🚀 <b>Bot updated</b>\n\nv${notice.previousVersion} → <b>${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`, opts);
   if (notice.changelog) await ctx.api.sendMessage(chatId, `📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`, opts);
   await markBotVersionNotified(notice.currentVersion);
 }
@@ -66,17 +54,8 @@ export async function startCommand(ctx: Context): Promise<void> {
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
 
   await normalizeStartContext(ctx);
-
   if (isInTopic) {
-    if (binding) {
-      logger.info(
-        `[TelegramTopics] /start from bound AI Topic is navigation-only; no session/run state will be changed: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`,
-      );
-    } else {
-      logger.info(
-        `[TelegramTopics] /start from unbound Telegram Topic is navigation-only; no Topic/session state will be created or deleted: chat=${chatId}, thread=${inboundThreadId}`,
-      );
-    }
+    logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only: chat=${chatId}, thread=${inboundThreadId}`);
   }
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
@@ -115,14 +94,20 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  // Always send the Main reply keyboard explicitly from /start. This also
-  // restores it after the user previously hid the keyboard with the custom
-  // Hide Keyboard control. Never attach the message to a Telegram Topic.
   const mainKeyboard = createMainKeyboard(currentModel, {
     paused: false,
     running: false,
     isTopic: false,
   });
-  const sendOptions: Record<string, unknown> = { parse_mode: "HTML", reply_markup: mainKeyboard };
+
+  // In Telegram's threaded/private-topic mode, explicitly target General
+  // (thread 1). This avoids relying on the client to infer the keyboard's
+  // topic scope from a message sent without message_thread_id.
+  const sendOptions: Record<string, unknown> = {
+    parse_mode: "HTML",
+    reply_markup: mainKeyboard,
+    ...(isInTopic ? {} : { message_thread_id: 1 }),
+  };
+  logger.info(`[TelegramKeyboard] /start sending Main reply keyboard: chat=${chatId}, thread=${isInTopic ? "inbound-topic" : 1}`);
   await ctx.api.sendMessage(chatId, text, sendOptions);
 }
