@@ -10,6 +10,7 @@ import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
+import { cleanupLegacyTopicNavigationMessages } from "../services/telegram-topic-session-service.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearServiceStateFile } from "../../runtime/service/manager.js";
@@ -39,6 +40,7 @@ export async function startBotApp(): Promise<void> {
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot(); await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
+  await cleanupLegacyTopicNavigationMessages(bot.api);
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog(); runtimeObservabilityWatchdog.start();
   safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => { const monitorStarted = await opencodeAutoRestartService.start(); if (!monitorStarted) await notifyOpencodeReadyIfHealthy("startup"); } });
   let shutdownStarted = false; let shutdownTimeout: ReturnType<typeof setTimeout> | null = null;
