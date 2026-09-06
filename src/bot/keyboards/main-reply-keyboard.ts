@@ -54,14 +54,16 @@ function addMainControls(keyboard: Keyboard, currentModel: ModelInfo): void {
 }
 
 function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, compact: boolean): void {
-  // Topic Settings, Compact Mode and Model Center are the stable Topic surface.
-  // Execution controls are visible only while the model is working or paused.
+  // Delete Chat is a permanent Topic control: it is always available, both
+  // while a run is active and while the Topic is idle. During an active run the
+  // delete handler aborts the run safely before deleting the Topic/workspace.
   if (running || paused) {
     keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
-    keyboard.text(MAIN_BUTTONS.deleteChat).row();
   }
-  keyboard.text(MAIN_BUTTONS.topicSettings).text(MAIN_BUTTONS.compact(compact)).row();
-  keyboard.text(TOPIC_BUTTONS.modelCenter).row();
+
+  // Stable Topic controls are always rendered and never depend on run state.
+  keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();
+  keyboard.text(TOPIC_BUTTONS.modelCenter).text(MAIN_BUTTONS.topicSettings).row();
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
