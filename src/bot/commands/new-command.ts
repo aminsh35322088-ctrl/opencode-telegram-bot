@@ -15,7 +15,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
+import { buildTelegramTopicMessageLink, openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
@@ -25,12 +25,6 @@ import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-to
 export interface NewCommandDeps {
   bot: Bot<Context>;
   ensureEventSubscription: (directory: string) => Promise<void>;
-}
-
-function buildTelegramTopicLink(chatId: number, threadId: number): string {
-  const id = String(chatId);
-  const internalId = id.startsWith("-100") ? id.slice(4) : id.replace(/^-/, "");
-  return `https://t.me/c/${internalId}/${threadId}`;
 }
 
 export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
@@ -96,8 +90,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           ensureEventSubscription: deps.ensureEventSubscription,
         });
 
-        // New-session notifications belong to the General topic, not the new
-        // AI topic. The reply keyboard itself is installed separately below.
+        // New-session notifications belong to General; the actual navigation
+        // button targets the navigation message that already exists in the new topic.
         const generalThreadId = getMainTelegramThreadIdSync(ctx.chat.id);
         const generalOptions: Record<string, unknown> = {};
         if (generalThreadId !== null) generalOptions.message_thread_id = generalThreadId;
@@ -108,16 +102,18 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           generalOptions as never,
         );
 
-        const continueKeyboard = new InlineKeyboard()
-          .url("➡️ Continue Last Thread", buildTelegramTopicLink(ctx.chat.id, binding.threadId));
-        await deps.bot.api.sendMessage(
-          ctx.chat.id,
-          `✅ Topic created successfully.\n\nOpen it to start chatting:`,
-          { ...generalOptions, reply_markup: continueKeyboard } as never,
-        );
+        if (binding.navigationMessageId !== undefined) {
+          const continueKeyboard = new InlineKeyboard()
+            .url("➡️ Continue New Thread", buildTelegramTopicMessageLink(ctx.chat.id, binding.threadId, binding.navigationMessageId));
+          await deps.bot.api.sendMessage(
+            ctx.chat.id,
+            `✅ New thread created successfully.\n\nOpen it to start chatting:`,
+            { ...generalOptions, reply_markup: continueKeyboard } as never,
+          );
+        } else {
+          logger.warn(`[TelegramTopics] Navigation message unavailable for new thread=${binding.threadId}; skipping continuation button`);
+        }
 
-        // Keep all functional controls inside the AI Topic. The topic keyboard
-        // is derived from the current execution state and is scoped to the new session.
         await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
         logger.info(
