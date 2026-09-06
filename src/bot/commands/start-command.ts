@@ -22,14 +22,14 @@ async function normalizeStartContext(ctx: Context): Promise<void> {
   if (typeof chatId !== "number" || typeof threadId !== "number" || threadId <= 1) return;
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
   if (binding) logger.info(`[TelegramTopics] /start received inside bound AI Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}, session=${binding.sessionId}`);
-  else logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic; leaving Topic untouched: chat=${chatId}, thread=${threadId}`);
+  else logger.info(`[TelegramTopics] /start arrived in an unbound Telegram Topic; treating it as General navigation: chat=${chatId}, thread=${threadId}`);
 }
 
 async function sendBotUpdateNotice(ctx: Context): Promise<void> {
   const notice = await getBotUpdateNotice();
   if (!notice) return;
   const chatId = ctx.chat!.id;
-  const opts: Record<string, unknown> = { parse_mode: "HTML", message_thread_id: 1 };
+  const opts: Record<string, unknown> = { parse_mode: "HTML" };
   await ctx.api.sendMessage(chatId, `🚀 <b>Bot updated</b>\n\nv${notice.previousVersion} → <b>${notice.currentVersion}</b>\n\n🟢 The new Telegram Bot version is installed and ready to use.`, opts);
   if (notice.changelog) await ctx.api.sendMessage(chatId, `📋 Changelog v${notice.currentVersion}\n\n${notice.changelog}`, opts);
   await markBotVersionNotified(notice.currentVersion);
@@ -44,7 +44,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
 
   await normalizeStartContext(ctx);
-  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only: chat=${chatId}, thread=${inboundThreadId}`);
+  if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only; Main UI will be rendered in General: chat=${chatId}, thread=${inboundThreadId}`);
 
   if (!pinnedMessageManager.isInitialized()) pinnedMessageManager.initialize(ctx.api, chatId);
   keyboardManager.initialize(ctx.api, chatId);
@@ -86,8 +86,10 @@ export async function startCommand(ctx: Context): Promise<void> {
   const sendOptions: Record<string, unknown> = {
     parse_mode: "HTML",
     reply_markup: mainKeyboard,
-    message_thread_id: 1,
   };
-  logger.info(`[TelegramKeyboard] /start sending Main InlineKeyboard: chat=${chatId}, thread=1`);
+  // In Telegram's private forum UI, General is the native default thread.
+  // Sending message_thread_id=1 is rejected as "message thread not found";
+  // only AI Topics (thread > 1) need an explicit thread id.
+  logger.info(`[TelegramKeyboard] /start sending Main InlineKeyboard: chat=${chatId}, thread=General(native-default)`);
   await ctx.api.sendMessage(chatId, text, sendOptions);
 }
