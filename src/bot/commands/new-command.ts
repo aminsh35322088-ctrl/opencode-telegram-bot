@@ -15,12 +15,11 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import { installNewTopicNavigation, openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
+import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
-import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -90,26 +89,18 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           ensureEventSubscription: deps.ensureEventSubscription,
         });
 
-        // Telegram itself provides the native "View Topic" affordance on the
-        // forum-topic creation service message. Do not replace it with a URL button.
-        const generalThreadId = getMainTelegramThreadIdSync(ctx.chat.id);
-        const generalOptions: Record<string, unknown> = {};
-        if (generalThreadId !== null) generalOptions.message_thread_id = generalThreadId;
-
-        const generalMessage = await deps.bot.api.sendMessage(
+        // Keep the success message in the root/New Chat context. Telegram's
+        // client owns the native "Continue Last Thread" affordance and attaches
+        // it to this message once the bot has created and populated the topic.
+        await deps.bot.api.sendMessage(
           ctx.chat.id,
           `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
-          generalOptions as never,
         );
-
-        // The return-to-General control is a native Telegram reply target,
-        // not an inline URL. Tapping the reply header jumps to General.
-        await installNewTopicNavigation(deps.bot.api, binding, generalMessage.message_id);
 
         await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
         logger.info(
-          `[TelegramTopics] Topic keyboard installed: session=${session.id}, thread=${binding.threadId}, buttons=topic-only; nativeTopicNavigation=true; notificationsThread=${generalThreadId ?? "chat-main"}`,
+          `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; native Continue Last Thread left to Telegram client; no URL navigation buttons`,
         );
       },
     );
