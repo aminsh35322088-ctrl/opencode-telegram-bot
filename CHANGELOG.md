@@ -7,9 +7,14 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ### Added
 - Integrated DeusData Codebase Memory MCP into the Railway/OpenCode runtime as a local stdio MCP server.
 - Added persistent Codebase Memory indexing/cache on the Railway `/data` volume for structural code search, call/dependency tracing, and impact analysis.
-- Pinned the Codebase Memory runtime to v0.10.8 with SHA-256 verification and documented the deployment architecture.
+- Added the Codebase Memory UI variant and exposed its 3D knowledge graph through a Telegram Mini App.
+- Added signed Telegram Mini App `initData` validation and a short-lived HttpOnly session before proxying graph traffic.
+- Added the `🧠 Code Graph` Web App button to the main and Topic keyboards.
 
 ### Changed
+- Pinned the Codebase Memory runtime to v0.10.8 with release checksum verification, including the UI artifact.
+- The 3D graph remains bound to localhost:9749 and is reverse-proxied through the Railway service instead of exposing the UI port publicly.
+- Railway deployments automatically derive the Mini App URL from `RAILWAY_PUBLIC_DOMAIN`, with `CODE_GRAPH_WEB_APP_URL` available as an override.
 - Existing Telegram bot persistent Memory remains unchanged and operates independently from the Codebase Memory code-intelligence graph.
 
 ## [0.26.2] - 2026-09-04
