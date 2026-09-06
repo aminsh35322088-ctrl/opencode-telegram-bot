@@ -11,6 +11,7 @@ export const MAIN_BUTTONS = {
   topicSettings: "⚙️ Topic Settings",
   settings: "⚙️ Main Settings",
   imageAi: "🎨 Image AI",
+  codeGraph: "🧠 Code Graph",
   deleteChat: "🗑️ Delete Chat",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
   pause: "⏸️ Pause",
@@ -25,6 +26,7 @@ export const TOPIC_BUTTONS = {
   imageAi: MAIN_BUTTONS.imageAi,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   modelCenter: "🧠 Model Center",
+  codeGraph: MAIN_BUTTONS.codeGraph,
   deleteChat: MAIN_BUTTONS.deleteChat,
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
@@ -45,6 +47,18 @@ function getModelButtonLabel(currentModel: ModelInfo): string {
 
 function getSettingsButton(isTopic: boolean): string {
   return isTopic ? MAIN_BUTTONS.topicSettings : MAIN_BUTTONS.mainSettings;
+}
+
+function getCodeGraphWebAppUrl(): string | null {
+  const configured = process.env.CODE_GRAPH_WEB_APP_URL?.trim();
+  if (configured) return configured.replace(/\/$/, "");
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  return domain ? `https://${domain}` : null;
+}
+
+function addCodeGraphButton(keyboard: Keyboard): void {
+  const url = getCodeGraphWebAppUrl();
+  if (url) keyboard.webApp(MAIN_BUTTONS.codeGraph, url).row();
 }
 
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
@@ -76,6 +90,7 @@ function addControls(
   }
 
   keyboard.text(getModelButtonLabel(currentModel)).row();
+  addCodeGraphButton(keyboard);
   keyboard.text(getSettingsButton(isTopic));
   if (isTopic) keyboard.text(MAIN_BUTTONS.deleteChat);
   keyboard.row();
@@ -105,7 +120,7 @@ export function createTopicKeyboard(options: { paused?: boolean; compactOutputMo
   const compact = options.compactOutputMode ?? getCompactOutputMode();
   const toggleButton = paused ? TOPIC_BUTTONS.resume : TOPIC_BUTTONS.pause;
 
-  return new Keyboard()
+  const keyboard = new Keyboard()
     .text(toggleButton)
     .text(TOPIC_BUTTONS.abort)
     .row()
@@ -113,12 +128,10 @@ export function createTopicKeyboard(options: { paused?: boolean; compactOutputMo
     .text(TOPIC_BUTTONS.compact(compact))
     .row()
     .text(TOPIC_BUTTONS.modelCenter)
-    .row()
-    .text(TOPIC_BUTTONS.deleteChat)
-    .text(TOPIC_BUTTONS.topicSettings)
-    .row()
-    .resized()
-    .persistent();
+    .row();
+  addCodeGraphButton(keyboard);
+  keyboard.text(TOPIC_BUTTONS.deleteChat).text(TOPIC_BUTTONS.topicSettings).row();
+  return keyboard.resized().persistent();
 }
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;

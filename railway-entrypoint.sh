@@ -22,7 +22,8 @@ export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP
 
 GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
-mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR"
+CODEBASE_MEMORY_CACHE_DIR="/data/.cache/codebase-memory-mcp"
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$CODEBASE_MEMORY_CACHE_DIR"
 
 if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
@@ -69,6 +70,15 @@ if [ -f "$SETTINGS_FILE" ] && command -v jq >/dev/null 2>&1; then
 fi
 
 chown -R node:node /data
+
+# Keep Codebase Memory state on the Railway volume and opt into automatic
+# indexing without allowing the server to traverse outside the workspace.
+if su -s /bin/sh node -c "CBM_CACHE_DIR='$CODEBASE_MEMORY_CACHE_DIR' codebase-memory-mcp config set auto_index true >/dev/null 2>&1"; then
+  su -s /bin/sh node -c "CBM_CACHE_DIR='$CODEBASE_MEMORY_CACHE_DIR' codebase-memory-mcp config set auto_index_limit 50000 >/dev/null 2>&1" || printf '%s\n' "[railway] Warning: could not set Codebase Memory auto-index limit"
+  printf '%s\n' "[railway] Codebase Memory: auto-index enabled (cache=${CODEBASE_MEMORY_CACHE_DIR})"
+else
+  printf '%s\n' "[railway] Warning: could not configure Codebase Memory auto-index; MCP will remain available for manual indexing"
+fi
 
 GITHUB_TOKEN_FILE="/data/integrations/github.token"
 if [ -s "$GITHUB_TOKEN_FILE" ]; then
@@ -118,6 +128,7 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Codebase Memory: $(codebase-memory-mcp --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
 
 # Launch the bot from the persistent workspace. GitHub Actions is the sole
