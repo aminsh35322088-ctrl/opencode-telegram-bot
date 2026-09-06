@@ -79,7 +79,14 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   } else {
     addMainControls(keyboard, currentModel);
   }
-  return keyboard.resized().persistent();
+
+  // Do not use grammY's .persistent() here. Telegram's persistent keyboard
+  // explicitly asks clients to keep the custom keyboard visible when the
+  // regular keyboard is hidden, which conflicts with our Hide Keyboard control
+  // and with Telegram's native show/hide affordance. A regular resized custom
+  // keyboard can be minimized by the client and restored through its keyboard
+  // UI; our explicit Hide Keyboard action can remove it via ReplyKeyboardRemove.
+  return keyboard.resized();
 }
 
 /** Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session. */
@@ -95,7 +102,7 @@ export function createMainKeyboard(first: ModelInfo | string, second?: MainKeybo
 }
 
 export function createAgentKeyboard(currentAgent: string): Keyboard {
-  return new Keyboard().text(getAgentButtonLabel(currentAgent)).row().resized().persistent();
+  return new Keyboard().text(getAgentButtonLabel(currentAgent)).row().resized();
 }
 
 export function removeKeyboard(): { remove_keyboard: true } {
