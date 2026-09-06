@@ -4,12 +4,11 @@
     "codebase-memory": {
       "type": "local",
       "command": ["/usr/local/bin/codebase-memory-mcp"],
-      "cwd": "/data/workspace",
       "enabled": true,
       "timeout": 30000,
       "environment": {
         "CBM_CACHE_DIR": "/data/.cache/codebase-memory-mcp",
-        "CBM_ALLOWED_ROOT": "/data/workspace"
+        "CBM_ALLOWED_ROOT": "/data"
       }
     }
   },
