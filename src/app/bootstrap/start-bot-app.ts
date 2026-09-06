@@ -17,7 +17,6 @@ import { getServiceStateFilePathFromEnv, isServiceChildProcess } from "../../run
 import { flushLogger, getLogFilePath, initializeLogger, logger } from "../../utils/logger.js";
 import { RuntimeObservabilityWatchdog } from "../../utils/runtime-observability.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
-import { ensureTelegramTopicNavigationMessages } from "../services/telegram-topic-session-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -40,7 +39,6 @@ export async function startBotApp(): Promise<void> {
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot(); await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
-  safeBackgroundTask({ taskName: "telegram.topicNavigationMigration", task: async () => { await ensureTelegramTopicNavigationMessages(bot.api); } });
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog(); runtimeObservabilityWatchdog.start();
   safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => { const monitorStarted = await opencodeAutoRestartService.start(); if (!monitorStarted) await notifyOpencodeReadyIfHealthy("startup"); } });
   let shutdownStarted = false; let shutdownTimeout: ReturnType<typeof setTimeout> | null = null;
