@@ -7,7 +7,6 @@ export interface MainTopicBinding {
   threadId: number;
   title: string;
   createdAt: string;
-  generalMessageId?: number;
 }
 
 type MainTopicStore = Record<string, MainTopicBinding>;
@@ -26,12 +25,9 @@ function normalizeBinding(value: unknown, chatId: number): MainTopicBinding | nu
   if (binding.chatId !== chatId || typeof binding.threadId !== "number") return null;
   return {
     chatId,
-    // Telegram's General topic is native and always has id=1. Older builds
-    // could persist a custom thread id here; normalize it at the storage boundary.
     threadId: 1,
     title: "General",
     createdAt: typeof binding.createdAt === "string" ? binding.createdAt : new Date(0).toISOString(),
-    ...(typeof (binding as Record<string, unknown>).generalMessageId === "number" ? { generalMessageId: (binding as Record<string, unknown>).generalMessageId as number } : {}),
   };
 }
 
@@ -101,31 +97,9 @@ export async function saveMainTelegramTopic(chatId: number, _threadId: number, _
   const store = await readStore();
   store[String(chatId)] = {
     chatId,
-    // Keep native General canonical regardless of legacy caller data.
     threadId: 1,
     title: "General",
     createdAt: new Date().toISOString(),
-    ...store[String(chatId)], // preserve generalMessageId if present
   };
   await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf8");
-}
-
-export async function setGeneralMessageId(chatId: number, messageId: number): Promise<void> {
-  const fs = await import("fs/promises");
-  const storePath = getStorePath();
-  await fs.mkdir(path.dirname(storePath), { recursive: true });
-  const store = await readStore();
-  const existing = store[String(chatId)];
-  store[String(chatId)] = {
-    chatId,
-    threadId: 1,
-    title: "General",
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
-    generalMessageId: messageId,
-  };
-  await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf8");
-}
-
-export async function getGeneralMessageId(chatId: number): Promise<number | null> {
-  return (await getMainTelegramTopic(chatId))?.generalMessageId ?? null;
 }
