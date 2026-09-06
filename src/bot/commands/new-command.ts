@@ -9,7 +9,6 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getTopicDefaults } from "../../app/stores/settings-store.js";
-import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { isForegroundBusy } from "../../app/services/run-control-service.js";
 import { replyBusyBlocked } from "../messages/busy-blocked-renderer.js";
 import { logger } from "../../utils/logger.js";
@@ -21,6 +20,7 @@ import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../.
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { getMainTelegramThreadIdSync } from "../../app/services/telegram-main-topic-store.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -96,14 +96,16 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           ensureEventSubscription: deps.ensureEventSubscription,
         });
 
-        const keyboard = createTopicKeyboard({ paused: false });
+        // New-session notifications belong to the General topic, not the new
+        // AI topic. The reply keyboard itself is installed separately below.
+        const generalThreadId = getMainTelegramThreadIdSync(ctx.chat.id);
+        const generalOptions: Record<string, unknown> = {};
+        if (generalThreadId !== null) generalOptions.message_thread_id = generalThreadId;
+
         await deps.bot.api.sendMessage(
           ctx.chat.id,
           `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
-          {
-            message_thread_id: binding.threadId,
-            reply_markup: keyboard,
-          },
+          generalOptions as never,
         );
 
         const continueKeyboard = new InlineKeyboard()
@@ -111,11 +113,15 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         await deps.bot.api.sendMessage(
           ctx.chat.id,
           `✅ Topic created successfully.\n\nOpen it to start chatting:`,
-          { reply_markup: continueKeyboard },
+          { ...generalOptions, reply_markup: continueKeyboard } as never,
         );
 
+        // Keep all functional controls inside the AI Topic. The topic keyboard
+        // is derived from the current execution state and is scoped to the new session.
+        await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
+
         logger.info(
-          `[TelegramTopics] Topic keyboard installed: session=${session.id}, thread=${binding.threadId}, buttons=topic-only`,
+          `[TelegramTopics] Topic keyboard installed: session=${session.id}, thread=${binding.threadId}, buttons=topic-only; notificationsThread=${generalThreadId ?? "chat-main"}`,
         );
       },
     );
