@@ -1,5 +1,5 @@
 import type { Bot, Context } from "grammy";
-import { CommandContext, InlineKeyboard } from "grammy";
+import { CommandContext } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
@@ -15,7 +15,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import { buildTelegramTopicMessageLink, openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
+import { installNewTopicNavigation, openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
@@ -90,34 +90,26 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           ensureEventSubscription: deps.ensureEventSubscription,
         });
 
-        // New-session notifications belong to General; the actual navigation
-        // button targets the navigation message that already exists in the new topic.
+        // Telegram itself provides the native "View Topic" affordance on the
+        // forum-topic creation service message. Do not replace it with a URL button.
         const generalThreadId = getMainTelegramThreadIdSync(ctx.chat.id);
         const generalOptions: Record<string, unknown> = {};
         if (generalThreadId !== null) generalOptions.message_thread_id = generalThreadId;
 
-        await deps.bot.api.sendMessage(
+        const generalMessage = await deps.bot.api.sendMessage(
           ctx.chat.id,
           `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
           generalOptions as never,
         );
 
-        if (binding.navigationMessageId !== undefined) {
-          const continueKeyboard = new InlineKeyboard()
-            .url("➡️ Continue New Thread", buildTelegramTopicMessageLink(ctx.chat.id, binding.threadId, binding.navigationMessageId));
-          await deps.bot.api.sendMessage(
-            ctx.chat.id,
-            `✅ New thread created successfully.\n\nOpen it to start chatting:`,
-            { ...generalOptions, reply_markup: continueKeyboard } as never,
-          );
-        } else {
-          logger.warn(`[TelegramTopics] Navigation message unavailable for new thread=${binding.threadId}; skipping continuation button`);
-        }
+        // The return-to-General control is a native Telegram reply target,
+        // not an inline URL. Tapping the reply header jumps to General.
+        await installNewTopicNavigation(deps.bot.api, binding, generalMessage.message_id);
 
         await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
         logger.info(
-          `[TelegramTopics] Topic keyboard installed: session=${session.id}, thread=${binding.threadId}, buttons=topic-only; notificationsThread=${generalThreadId ?? "chat-main"}`,
+          `[TelegramTopics] Topic keyboard installed: session=${session.id}, thread=${binding.threadId}, buttons=topic-only; nativeTopicNavigation=true; notificationsThread=${generalThreadId ?? "chat-main"}`,
         );
       },
     );
