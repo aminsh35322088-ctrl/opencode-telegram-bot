@@ -6,7 +6,7 @@ import { findTelegramTopicBindingBySession, listTelegramTopicBindings, hasLegacy
 
 const OPEN_SESSION_LOCKS = new Map<string, Promise<TelegramTopicBinding>>();
 function normalizeTopicTitle(title: string): string { const normalized = title.replace(/\s+/gu, " ").trim(); const codePoints = Array.from(normalized).slice(0, 128).join("").trim(); return codePoints || "New Chat"; }
-function buildTelegramTopicLink(chatId: number, threadId: number): string { const id = String(chatId); const internalId = id.startsWith("-100") ? id.slice(4) : id.replace(/^-/, ""); return `https://t.me/c/${internalId}/${threadId}`; }
+function buildTelegramTopicLink(chatId: number, threadId: number, messageId?: number): string { const id = String(chatId); const internalId = id.startsWith("-100") ? id.slice(4) : id.replace(/^-/, ""); return messageId ? `https://t.me/c/${internalId}/${threadId}/${messageId}` : `https://t.me/c/${internalId}/${threadId}`; }
 function buildGeneralTopicLink(chatId: number): string { return buildTelegramTopicLink(chatId, 1); }
 async function createForumTopic(api: Api, chatId: number, title: string): Promise<number> { const result = await api.raw.createForumTopic({ chat_id: chatId, name: title }); if (!result.message_thread_id) throw new Error("Telegram created a topic without a message_thread_id"); return result.message_thread_id; }
 async function persistNewBinding(chatId: number, session: SessionInfo, threadId: number): Promise<TelegramTopicBinding> { const now = new Date().toISOString(); const binding: TelegramTopicBinding = { chatId, threadId, sessionId: session.id, directory: session.directory, createdAt: now, updatedAt: now, title: session.title }; await saveTelegramTopicBinding(binding); return binding; }
@@ -15,12 +15,15 @@ async function installNewTopicNavigation(api: Api, binding: TelegramTopicBinding
   try {
     const message = await api.sendMessage(binding.chatId, "📌 Navigation\n\nUse this button to return to the General topic.", { message_thread_id: binding.threadId, reply_markup: new InlineKeyboard().url("↩️ Back to General", buildGeneralTopicLink(binding.chatId)) });
     await api.pinChatMessage(binding.chatId, message.message_id, { disable_notification: true });
+    binding.navigationMessageId = message.message_id;
     await updateTelegramTopicBinding(binding.chatId, binding.threadId, { navigationMessageId: message.message_id });
     logger.info(`[TelegramTopics] Pinned General navigation for new AI topic: chat=${binding.chatId}, thread=${binding.threadId}, message=${message.message_id}`);
   } catch (error) {
     logger.warn(`[TelegramTopics] Failed to install General navigation in new thread=${binding.threadId}; topic remains usable`, error);
   }
 }
+
+export function buildTelegramTopicMessageLink(chatId: number, threadId: number, messageId: number): string { return buildTelegramTopicLink(chatId, threadId, messageId); }
 
 /** Removes navigation messages created by the previous global migration, once. */
 export async function cleanupLegacyTopicNavigationMessages(api: Api): Promise<void> {
