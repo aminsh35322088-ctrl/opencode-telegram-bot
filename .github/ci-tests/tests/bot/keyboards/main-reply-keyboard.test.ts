@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAgentKeyboard, createMainKeyboard, removeKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
 import { defined } from "../../helpers/defined.js";
 
@@ -16,6 +16,9 @@ function buttonTextAt(
 
 describe("bot/keyboards/main-reply-keyboard", () => {
   it("creates the idle main keyboard with a full-width model selector", () => {
+    vi.stubEnv("CODE_GRAPH_WEB_APP_URL", "");
+    vi.stubEnv("RAILWAY_PUBLIC_DOMAIN", "");
+
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: false },
@@ -25,14 +28,29 @@ describe("bot/keyboards/main-reply-keyboard", () => {
       [{ text: "🕘 History" }, { text: "💬 New Chat" }],
       [{ text: "🎨 Image AI" }, { text: "📦 Compact: OFF" }],
       [{ text: "🧠 GPT 4o" }],
-      [{ text: "🧠 Code Graph", web_app: { url: "https://example.up.railway.app" } }],
       [{ text: "⚙️ Main Settings" }],
     ]);
     expect(keyboard.resize_keyboard).toBe(true);
     expect(keyboard.is_persistent).toBe(true);
   });
 
+  it("adds Code Graph when a public Web App URL is configured", () => {
+    vi.stubEnv("CODE_GRAPH_WEB_APP_URL", "https://graph.example.test");
+    vi.stubEnv("RAILWAY_PUBLIC_DOMAIN", "");
+
+    const keyboard = createMainKeyboard({ providerID: "openrouter", modelID: "openai/gpt-4o" });
+
+    expect(buttonTextAt(keyboard, 3, 0)).toBe("🧠 Code Graph");
+    expect(keyboard.keyboard[3]?.[0]).toEqual({
+      text: "🧠 Code Graph",
+      web_app: { url: "https://graph.example.test" },
+    });
+  });
+
   it("prefers the advertised model name and keeps it single-line", () => {
+    vi.stubEnv("CODE_GRAPH_WEB_APP_URL", "");
+    vi.stubEnv("RAILWAY_PUBLIC_DOMAIN", "");
+
     const keyboard = createMainKeyboard({
       providerID: "very-long-provider-name-that-keeps-going-and-going",
       modelID: "vendor/very-long-model-name-that-keeps-going-and-going",
@@ -47,6 +65,9 @@ describe("bot/keyboards/main-reply-keyboard", () => {
   });
 
   it("reflects compact mode state", () => {
+    vi.stubEnv("CODE_GRAPH_WEB_APP_URL", "");
+    vi.stubEnv("RAILWAY_PUBLIC_DOMAIN", "");
+
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: true },
@@ -55,6 +76,9 @@ describe("bot/keyboards/main-reply-keyboard", () => {
   });
 
   it("keeps queued prompts above the fixed idle grid", () => {
+    vi.stubEnv("CODE_GRAPH_WEB_APP_URL", "");
+    vi.stubEnv("RAILWAY_PUBLIC_DOMAIN", "");
+
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { queuedPromptLabels: ["❌ 1. first", "❌ 2. second"] },
@@ -66,11 +90,13 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 3, 0)).toBe("🎨 Image AI");
     expect(buttonTextAt(keyboard, 3, 1)).toBe("📦 Compact: OFF");
     expect(buttonTextAt(keyboard, 4, 0)).toBe("🧠 GPT 4o");
-    expect(buttonTextAt(keyboard, 5, 0)).toBe("🧠 Code Graph");
-    expect(buttonTextAt(keyboard, 6, 0)).toBe("⚙️ Main Settings");
+    expect(buttonTextAt(keyboard, 5, 0)).toBe("⚙️ Main Settings");
   });
 
   it("keeps running controls isolated from idle controls", () => {
+    vi.stubEnv("CODE_GRAPH_WEB_APP_URL", "");
+    vi.stubEnv("RAILWAY_PUBLIC_DOMAIN", "");
+
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { running: true, paused: false, compactOutputMode: true },
