@@ -91,19 +91,18 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       },
     );
 
-    // This is deliberately outside the topic runtime context. The native
-    // Telegram "Continue Last Thread" affordance belongs to the root/New Chat
-    // message, while all subsequent assistant traffic remains scoped to the
-    // newly-created AI topic.
+    // Send the success message directly inside the new topic.
+    // Telegram clients show topic messages with native topic header navigation.
     await deps.bot.api.sendMessage(
       ctx.chat.id,
       `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`,
+      { message_thread_id: binding.threadId },
     );
 
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
-      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; native Continue Last Thread left to Telegram client; no URL navigation buttons`,
+      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; success message sent inside topic with native Telegram UI`,
     );
 
     logger.info(

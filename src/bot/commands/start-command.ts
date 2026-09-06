@@ -66,6 +66,12 @@ export async function startCommand(ctx: Context): Promise<void> {
       logger.info(`[TelegramTopics] /start reset inside bound topic: chat=${chatId}, thread=${inboundThreadId}, session=${binding.sessionId}`);
     } else {
       logger.info(`[TelegramTopics] /start in unbound topic: chat=${chatId}, thread=${inboundThreadId}`);
+      try {
+        await ctx.api.editForumTopic(chatId, inboundThreadId, { name: "General" });
+        logger.info(`[TelegramTopics] Renamed unbound topic to General: chat=${chatId}, thread=${inboundThreadId}`);
+      } catch (error) {
+        logger.warn(`[TelegramTopics] Failed to rename topic to General: chat=${chatId}, thread=${inboundThreadId}`, error);
+      }
     }
   }
 
