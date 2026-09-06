@@ -37,10 +37,17 @@ class AssistantRunState {
 
   hasActiveRuns(): boolean {
     const sessionId = this.getScopedSessionId();
-    return sessionId ? this.hasActiveRun(sessionId) : this.runs.size > 0;
+    return sessionId ? this.hasActiveRun(sessionId) : Array.from(this.runs.values()).some((run) => !run.hasCompletedResponse);
   }
 
-  hasActiveRun(sessionId: string): boolean { return Boolean(sessionId && this.runs.has(sessionId)); }
+  hasActiveRun(sessionId: string): boolean {
+    if (!sessionId) return false;
+    const run = this.runs.get(sessionId);
+    // OpenCode's completed response event marks the run terminal before the
+    // assistant response is rendered. Keep the record for diagnostics, but do
+    // not expose a completed response as an active execution to UI controls.
+    return Boolean(run && !run.hasCompletedResponse);
+  }
 
   getRun(sessionId: string): AssistantRunInfo | null { const run = this.runs.get(sessionId); return run ? { ...run } : null; }
 
@@ -51,6 +58,7 @@ class AssistantRunState {
     if (info?.agent) run.actualAgent = info.agent;
     if (info?.providerID) run.actualProviderID = info.providerID;
     if (info?.modelID) run.actualModelID = info.modelID;
+    logger.debug(`[AssistantRunState] Response completed: session=${sessionId}`);
   }
 
   finishRun(sessionId: string, reason: string): AssistantRunInfo | null {
