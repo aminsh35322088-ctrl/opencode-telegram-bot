@@ -116,7 +116,16 @@ export async function startCommand(ctx: Context): Promise<void> {
   ].join("\n");
 
   await sendBotUpdateNotice(ctx);
-  const sendOptions: Record<string, unknown> = { parse_mode: "HTML", reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName, [], false, false) };
-  // Intentionally omit message_thread_id: /start always belongs to native General.
+
+  // Always send the Main reply keyboard explicitly from /start. This also
+  // restores it after the user previously hid the keyboard with the custom
+  // Hide Keyboard control. Never attach the message to a Telegram Topic.
+  const mainKeyboard = createMainKeyboard(currentModel, {
+    paused: false,
+    running: false,
+    compactOutputMode: undefined,
+    isTopic: false,
+  });
+  const sendOptions: Record<string, unknown> = { parse_mode: "HTML", reply_markup: mainKeyboard };
   await ctx.api.sendMessage(chatId, text, sendOptions);
 }
