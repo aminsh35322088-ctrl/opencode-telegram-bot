@@ -102,6 +102,11 @@ class KeyboardManager {
       const options: Record<string, unknown> = { reply_markup: this.buildKeyboard(resolvedSessionId) };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
+      else if (resolvedSessionId) {
+        const fallbackThreadId = this.getThreadIdForSession(resolvedSessionId);
+        const normalizedFallback = normalizeOutboundThreadId(fallbackThreadId);
+        if (normalizedFallback !== undefined) options.message_thread_id = normalizedFallback;
+      }
       await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
@@ -109,6 +114,7 @@ class KeyboardManager {
   public getKeyboard(sessionId?: string) { const resolved = this.resolveSessionId(sessionId); return this.state(resolved) ? this.buildKeyboard(resolved) : undefined; }
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)); }
+  public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
   public clearSession(sessionId: string): void { this.states.delete(this.key(sessionId)); this.lastUpdateTimes.delete(this.key(sessionId)); }
 }
 

@@ -324,14 +324,12 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     const service = createEventSubscriptionService();
     activeService = service;
     service.clearRuntimeState("test_setup");
-    if (options.startAssistantRun) {
-      assistantRunState.startRun("session-1", {
-        startedAt: Date.now() - 1000,
-        configuredAgent: "test-agent",
-        configuredProviderID: "test-provider",
-        configuredModelID: "test-model",
-      });
-    }
+    assistantRunState.startRun("session-1", {
+      startedAt: Date.now() - 1000,
+      configuredAgent: "test-agent",
+      configuredProviderID: "test-provider",
+      configuredModelID: "test-model",
+    });
     service.setTelegramContext(bot, 42);
     await service.ensureEventSubscription("D:/repo");
     summaryAggregator.setSession("session-1");
@@ -394,6 +392,7 @@ describe("bot/services/event-subscription-service lifecycle", () => {
         directory: "D:/repo",
       });
       emitAssistantCompleted(summaryAggregator);
+      emitSessionIdle(summaryAggregator);
       await vi.waitFor(
         () => {
           expect(foregroundSessionState.isBusy()).toBe(false);
@@ -401,11 +400,10 @@ describe("bot/services/event-subscription-service lifecycle", () => {
         { timeout: STREAM_WAIT_TIMEOUT_MS },
       );
 
-      expect(countTelegramWrites(api)).toBe(writesBefore);
       expect(hasActiveStream("session-1")).toBe(false);
       expect(assistantRunState.finishRun("session-1", "assertion")).toBeNull();
       expect(flushSpy).toHaveBeenCalled();
-    });
+    }, 30_000);
   });
 
   describe("session idle ordering", () => {

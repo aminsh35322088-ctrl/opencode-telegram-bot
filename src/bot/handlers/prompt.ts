@@ -130,7 +130,7 @@ async function dispatchRecoveryPrompt(info: StalledSessionInfo): Promise<void> {
       attempt,
       onStalled: handleSessionStalled,
     });
-    if (chatId !== null) await keyboardManager.sendKeyboardUpdate(chatId);
+    if (chatId !== null) await keyboardManager.sendKeyboardUpdate(chatId, false, session.id);
     logger.warn(`[StallWatchdog] Dispatching auto-recovery prompt: session=${session.id}, attempt=${attempt}`);
     safeBackgroundTask({
       taskName: "session.promptAsync.stall_recovery",
@@ -143,7 +143,7 @@ async function dispatchRecoveryPrompt(info: StalledSessionInfo): Promise<void> {
         foregroundSessionState.markIdle(session.id);
         void markAttachedSessionIdle(session.id);
         assistantRunState.clearRun(session.id, "stall_recovery_prompt_api_error");
-        if (chatId !== null) void keyboardManager.sendKeyboardUpdate(chatId, true);
+        if (chatId !== null) void keyboardManager.sendKeyboardUpdate(chatId, true, session.id);
         logger.error(`[StallWatchdog] OpenCode API returned an error for the auto-recovery prompt: session=${session.id}, attempt=${attempt}`);
         logger.error("[StallWatchdog] Auto-recovery prompt error details:", formatErrorDetails(error, 6000));
         if (bot && chatId !== null) void bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
@@ -152,7 +152,7 @@ async function dispatchRecoveryPrompt(info: StalledSessionInfo): Promise<void> {
         foregroundSessionState.markIdle(session.id);
         void markAttachedSessionIdle(session.id);
         assistantRunState.clearRun(session.id, "stall_recovery_prompt_background_error");
-        if (chatId !== null) void keyboardManager.sendKeyboardUpdate(chatId, true);
+        if (chatId !== null) void keyboardManager.sendKeyboardUpdate(chatId, true, session.id);
         logger.error(`[StallWatchdog] Auto-recovery prompt background task failed: session=${session.id}, attempt=${attempt}`);
         logger.error("[StallWatchdog] Auto-recovery background failure details:", formatErrorDetails(error, 6000));
         if (bot && chatId !== null) void bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
@@ -242,12 +242,12 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
     startSessionStallWatchdog({ sessionId: currentSession.id, directory: currentSession.directory, model: storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default", agent: currentAgent, modelConfig: storedModel.providerID && storedModel.modelID ? { providerID: storedModel.providerID, modelID: storedModel.modelID } : undefined, variant: storedModel.variant, attempt: 1, onStalled: handleSessionStalled });
-    await keyboardManager.sendKeyboardUpdate(ctx.chat!.id);
+    await keyboardManager.sendKeyboardUpdate(ctx.chat!.id, false, currentSession.id);
     if (text.trim()) externalUserInputSuppressionManager.register(currentSession.id, text);
-    safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
+    safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
     return true;
   } catch (err) {
-    if (currentSession) { foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true); }
+    if (currentSession) { foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) clearAllInteractionState("message_handler_error");
     await ctx.reply(t("error.generic"));

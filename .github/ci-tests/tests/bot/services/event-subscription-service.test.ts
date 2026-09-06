@@ -395,14 +395,12 @@ describe("bot/services/event-subscription-service", () => {
     const service = createEventSubscriptionService();
     activeService = service;
     service.clearRuntimeState("test_setup");
-    if (options.startAssistantRun) {
-      assistantRunState.startRun("session-1", {
-        startedAt: Date.now() - 1000,
-        configuredAgent: "test-agent",
-        configuredProviderID: "test-provider",
-        configuredModelID: "test-model",
-      });
-    }
+    assistantRunState.startRun("session-1", {
+      startedAt: Date.now() - 1000,
+      configuredAgent: "test-agent",
+      configuredProviderID: "test-provider",
+      configuredModelID: "test-model",
+    });
     service.setTelegramContext(bot, 42);
     await service.ensureEventSubscription("D:/repo");
     summaryAggregator.setSession("session-1");
@@ -426,7 +424,6 @@ describe("bot/services/event-subscription-service", () => {
     const { api, summaryAggregator } = await setupService(false);
 
     emitWriteTool(summaryAggregator);
-    emitSessionIdle(summaryAggregator);
 
     await vi.waitFor(
       () => {

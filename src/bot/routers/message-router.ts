@@ -51,7 +51,7 @@ import { clearImageMode, getImageMode } from "../../app/services/image-mode-serv
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
-  setTelegramContext: (bot: Bot<Context>, chatId: number) => void;
+  setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void;
 }
 
 interface PendingImage {
@@ -167,7 +167,8 @@ async function handleCompactModeButton(ctx: Context): Promise<boolean> {
 
   const enabled = !getCompactOutputMode();
   setCompactOutputMode(enabled);
-  const keyboard = keyboardManager.getKeyboard();
+  const sessionId = getTopicRuntimeContext()?.sessionId;
+  const keyboard = keyboardManager.getKeyboard(sessionId);
   await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {});
   return true;
 }
@@ -238,7 +239,8 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
     const text = rawText.trim();
     if (!text) return;
 
-    deps.setTelegramContext(bot, ctx.chat.id);
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
 
     logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`);
@@ -286,7 +288,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message", async (ctx, next) => {
     if (ctx.chat?.id) {
       agentArtifactDeliveryService.setChatId(ctx.chat.id);
-      deps.setTelegramContext(bot, ctx.chat.id);
+      const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+      deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     }
     await next();
   });
@@ -335,7 +338,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
     const label = ctx.message?.text;
     const queuedPrompt = label ? findQueuedPromptByButtonLabel(label) : null;
-    const keyboard = keyboardManager.getKeyboard();
+    const sessionId = getTopicRuntimeContext()?.sessionId;
+    const keyboard = keyboardManager.getKeyboard(sessionId);
     if (queuedPrompt) {
       promptQueue.removeById(queuedPrompt.id);
       await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {});
@@ -395,13 +399,15 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
   bot.on("message:voice", async (ctx) => {
-    deps.setTelegramContext(bot, ctx.chat.id);
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
   bot.on("message:audio", async (ctx) => {
-    deps.setTelegramContext(bot, ctx.chat.id);
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
@@ -409,7 +415,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
 
   bot.on("message:photo", async (ctx) => {
-    deps.setTelegramContext(bot, ctx.chat.id);
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
 
     const caption = ctx.message.caption?.trim() ?? "";
@@ -441,7 +448,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   });
 
   bot.on("message:document", async (ctx) => {
-    deps.setTelegramContext(bot, ctx.chat.id);
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });

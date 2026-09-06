@@ -22,6 +22,7 @@ import { enrichTelegramReplyContext } from "../../app/services/telegram-reply-co
 import { createTopicAwareBot, getTelegramTopicRuntimeDependencies, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 const SESSION_CONTINUE_CALLBACK_PREFIX = "session:continue:";
 const MAIN_CHAT_ONLY_HELP =
@@ -152,7 +153,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
         return;
       }
       await enrichTelegramReplyContext(ctx, binding.directory);
-      await next();
+      await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId, sessionId: binding.sessionId }, () => next());
       return;
     }
     const text = ctx.message && "text" in ctx.message ? String(ctx.message.text ?? "").trim() : "";
@@ -161,7 +162,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
       await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, { message_thread_id: topic.threadId }).catch(() => {});
       return;
     }
-    await next();
+    await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId }, () => next());
     return;
   }
 

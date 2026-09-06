@@ -12,6 +12,7 @@ import { t } from "../../i18n/index.js";
 import { sendBotText } from "../messages/telegram-text.js";
 import { getGitWorktreeContext } from "../../app/services/worktree-service.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 export async function statusCommand(ctx: CommandContext<Context>) {
   try {
@@ -61,14 +62,16 @@ export async function statusCommand(ctx: CommandContext<Context>) {
       if (pinnedMessageManager.getContextLimit() === 0) {
         await pinnedMessageManager.refreshContextLimit();
       }
-      keyboardManager.initialize(ctx.api, ctx.chat.id);
+      const sessionId = getTopicRuntimeContext()?.sessionId;
+      keyboardManager.initialize(ctx.api, ctx.chat.id, sessionId);
     }
 
+    const sessionId = getTopicRuntimeContext()?.sessionId;
     const contextInfo = pinnedMessageManager.getContextInfo();
     if (contextInfo) {
-      keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
+      keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, sessionId);
     }
-    const keyboard = keyboardManager.getKeyboard();
+    const keyboard = keyboardManager.getKeyboard(sessionId);
     if (ctx.chat) {
       await sendBotText({
         api: ctx.api,

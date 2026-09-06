@@ -130,6 +130,7 @@ export function createEventSubscriptionService(): BotEventSubscriptionService {
 class EventSubscriptionService implements BotEventSubscriptionService {
   private botInstance: Bot<Context> | null = null;
   private chatIdInstance: number | null = null;
+  private readonly sessionChatIds = new Map<string, number>();
   private nextDraftId = 1;
   private readonly thinkingSections = new Map<string, ThinkingSection[]>();
   private readonly sessionCompletionTasks = new Map<string, Promise<void>>();
@@ -163,31 +164,35 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     this.toolMessageBatcher = new ToolMessageBatcher({
       sendText: async (sessionId, text) => {
-        if (!this.botInstance || !this.chatIdInstance) {
+        if (!this.botInstance) {
           return;
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           return;
         }
 
-        const keyboard = this.getCurrentReplyKeyboard();
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) return;
 
-        await this.botInstance.api.sendMessage(this.chatIdInstance, text, {
+        const keyboard = this.getCurrentReplyKeyboard(sessionId);
+
+        await this.botInstance.api.sendMessage(chatId, text, {
           disable_notification: true,
           ...(keyboard ? { reply_markup: keyboard } : {}),
         });
       },
       sendFile: async (sessionId, fileData) => {
-        if (!this.botInstance || !this.chatIdInstance) {
+        if (!this.botInstance) {
           return;
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           return;
         }
+
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) return;
 
         const tempFilePath = path.join(TEMP_DIR, fileData.filename);
 
@@ -199,10 +204,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           await fs.mkdir(TEMP_DIR, { recursive: true });
           await fs.writeFile(tempFilePath, fileData.buffer);
 
-          const keyboard = this.getCurrentReplyKeyboard();
+          const keyboard = this.getCurrentReplyKeyboard(sessionId);
 
           await this.botInstance.api.sendDocument(
-            this.chatIdInstance,
+            chatId,
             new InputFile(tempFilePath),
             {
               caption: fileData.caption,
@@ -227,33 +232,37 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.compactProgressStreamer = new CompactProgressStreamer({
       throttleMs: getSessionStreamThrottleMs,
       sendText: async (sessionId, text) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        if (!this.botInstance) {
           throw new Error("Bot context missing for compact progress send");
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           throw new Error(`Compact progress session mismatch for send: ${sessionId}`);
         }
 
-        const sentMessage = await this.botInstance.api.sendMessage(this.chatIdInstance, text, {
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
+        const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
           disable_notification: true,
         });
 
         return sentMessage.message_id;
       },
       editText: async (sessionId, messageId, text) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        if (!this.botInstance) {
           throw new Error("Bot context missing for compact progress edit");
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           throw new Error(`Compact progress session mismatch for edit: ${sessionId}`);
         }
 
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
         try {
-          await this.botInstance.api.editMessageText(this.chatIdInstance, messageId, text);
+          await this.botInstance.api.editMessageText(chatId, messageId, text);
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -269,33 +278,37 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.toolCallStreamer = new ToolCallStreamer({
       throttleMs: getSessionStreamThrottleMs,
       sendText: async (sessionId, text) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        if (!this.botInstance) {
           throw new Error("Bot context missing for tool stream send");
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           throw new Error(`Tool stream session mismatch for send: ${sessionId}`);
         }
 
-        const sentMessage = await this.botInstance.api.sendMessage(this.chatIdInstance, text, {
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
+        const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
           disable_notification: true,
         });
 
         return sentMessage.message_id;
       },
       editText: async (sessionId, messageId, text) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        if (!this.botInstance) {
           throw new Error("Bot context missing for tool stream edit");
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           throw new Error(`Tool stream session mismatch for edit: ${sessionId}`);
         }
 
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
         try {
-          await this.botInstance.api.editMessageText(this.chatIdInstance, messageId, text);
+          await this.botInstance.api.editMessageText(chatId, messageId, text);
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -307,16 +320,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         }
       },
       deleteText: async (sessionId, messageId) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        if (!this.botInstance) {
           throw new Error("Bot context missing for tool stream delete");
         }
 
-        const currentSession = getCurrentSession();
-        if (!currentSession || currentSession.id !== sessionId) {
+        if (!assistantRunState.hasActiveRun(sessionId)) {
           throw new Error(`Tool stream session mismatch for delete: ${sessionId}`);
         }
 
-        await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch((error) => {
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
+        await this.botInstance.api.deleteMessage(chatId, messageId).catch((error) => {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
           if (
@@ -332,9 +347,19 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
   }
 
-  setTelegramContext(bot: Bot<Context> | null, chatId: number | null): void {
+  setTelegramContext(bot: Bot<Context> | null, chatId: number | null, sessionId?: string): void {
     this.botInstance = bot;
     this.chatIdInstance = chatId;
+    if (sessionId && chatId) this.sessionChatIds.set(sessionId, chatId);
+  }
+
+  private getChatIdForSession(sessionId: string): number | null {
+    return this.sessionChatIds.get(sessionId) ?? this.chatIdInstance;
+  }
+
+  private getKeyboardForSession(sessionId: string) {
+    if (!keyboardManager.isInitialized()) return undefined;
+    return keyboardManager.getKeyboard(sessionId);
   }
 
   private getLiveToolPrefix(callId: string): string {
@@ -342,8 +367,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   }
 
   private handleRunningToolTick(tick: RunningToolTick): void {
-    const currentSession = getCurrentSession();
-    if (!currentSession || currentSession.id !== tick.sessionId) {
+    if (!assistantRunState.hasActiveRun(tick.sessionId)) {
       return;
     }
 
@@ -493,6 +517,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.compactProgressFinalizationTasks.clear();
     this.thinkingSections.clear();
     this.sessionCompletionTasks.clear();
+    this.sessionChatIds.clear();
     this.clearToolElapsedState(null, reason);
     assistantRunState.clearAll(reason);
   };
@@ -535,20 +560,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      if (!this.botInstance || !this.chatIdInstance) {
+      if (!this.botInstance) {
         return;
       }
 
-      const currentSession = getCurrentSession();
-      if (!currentSession || currentSession.id !== sessionId) {
+      if (!assistantRunState.hasActiveRun(sessionId)) {
         return;
       }
 
       if (isCompactProgressMode()) {
         void this.finalizeCompactProgress(sessionId)
           .then(() => {
-            const activeSession = getCurrentSession();
-            if (!activeSession || activeSession.id !== sessionId) {
+            if (!assistantRunState.hasActiveRun(sessionId)) {
               return;
             }
 
@@ -581,8 +604,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnComplete((sessionId, messageId, messageText, completionInfo) => {
       void this.enqueueSessionCompletionTask(sessionId, async () => {
-        if (!this.botInstance || !this.chatIdInstance) {
-          logger.error("Bot or chat ID not available for sending message");
+        if (!this.botInstance) {
+          logger.error("Bot not available for sending message");
           clearPromptResponseMode(sessionId);
           this.clearAssistantResponseStream(sessionId, messageId, "bot_context_missing");
           this.clearThinkingStream(sessionId, messageId, "bot_context_missing");
@@ -594,8 +617,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           return;
         }
 
-        const currentSession = getCurrentSession();
-        if (currentSession?.id !== sessionId) {
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) {
           clearPromptResponseMode(sessionId);
           this.clearAssistantResponseStream(sessionId, messageId, "session_mismatch");
           this.clearThinkingStream(sessionId, messageId, "session_mismatch");
@@ -609,7 +632,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         }
 
         const botApi = this.botInstance.api;
-        const chatId = this.chatIdInstance;
 
         try {
           assistantRunState.markResponseCompleted(sessionId, {
@@ -1575,12 +1597,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
   }
 
-  private getCurrentReplyKeyboard = () => {
+  private getCurrentReplyKeyboard = (sessionId?: string) => {
     if (!keyboardManager.isInitialized()) {
       return undefined;
     }
-
-    return keyboardManager.getKeyboard();
+    return sessionId ? this.getKeyboardForSession(sessionId) : keyboardManager.getKeyboard();
   };
 
   private prepareDocumentCaption(caption: string): string {

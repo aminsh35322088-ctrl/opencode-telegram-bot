@@ -38,7 +38,7 @@ import { handleTelegramTopicDeleteCallback, registerTelegramTopicDeleteHandlers 
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
-interface CallbackRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number) => void; }
+interface CallbackRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void; }
 function parseCallbackPrefix(data: string): string | null { const separatorIndex = data.indexOf(":"); return separatorIndex <= 0 ? null : data.slice(0, separatorIndex); }
 
 async function resolveCallbackTopicSession(ctx: Context): Promise<string | null> {
@@ -104,7 +104,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
   ]);
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
-    if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id);
+    if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id, getCurrentSession()?.id);
     if (data === "provider:gemini:configure") markGeminiWizard();
     if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
     let errorScope: InteractionErrorScope = "interaction";
