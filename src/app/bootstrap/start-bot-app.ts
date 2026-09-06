@@ -39,7 +39,13 @@ export async function startBotApp(): Promise<void> {
   try { process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig(); } catch (error) { logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error); }
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
-  const bot = createBot(); await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
+  const bot = createBot();
+  const botInfo = await bot.api.getMe();
+  logger.info(`[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`);
+  if (!botInfo.has_topics_enabled) {
+    logger.warn("[TelegramTopics] Private Topics/Threaded Mode is disabled for this bot. Enable Threaded Mode in @BotFather; code cannot create the native General topic UI while this capability is disabled.");
+  }
+  await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
   await cleanupLegacyTopicNavigationMessages(bot.api);
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog(); runtimeObservabilityWatchdog.start();
   safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => { const monitorStarted = await opencodeAutoRestartService.start(); if (!monitorStarted) await notifyOpencodeReadyIfHealthy("startup"); } });
