@@ -39,7 +39,7 @@ class KeyboardManager {
       this.states.set(key, {
         sessionId,
         chatId,
-        threadId: normalizeOutboundThreadId(threadId ?? undefined),
+        threadId: normalizeOutboundThreadId(threadId),
         currentAgent: getStoredAgent(),
         currentModel,
         contextInfo: null,
@@ -61,9 +61,18 @@ class KeyboardManager {
     this.mainInlineMessageIds.set(chatId, messageId);
   }
 
-  public async activateTopicMode(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<void> {
+  public isTopicMode(chatId: number): boolean {
+    return this.topicModeChats.has(chatId);
+  }
+
+  public async enterTopicMode(chatId: number): Promise<void> {
     this.topicModeChats.add(chatId);
     await this.hideMainInlineKeyboard(chatId);
+    logger.info(`[TopicMode] Entered Topic Mode: chat=${chatId}`);
+  }
+
+  public async activateTopicMode(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<void> {
+    await this.enterTopicMode(chatId);
     await this.sendTopicMainKeyboard(chatId, currentModel, true);
   }
 
@@ -82,16 +91,15 @@ class KeyboardManager {
 
   public async sendTopicMainKeyboard(chatId: number, currentModel: ModelInfo = getStoredModel(), force = false): Promise<void> {
     if (!this.api) return;
-    const mainState = this.states.get(MAIN_KEY);
     const keyboard = createTopicMainKeyboard(currentModel, getQueuedPromptButtonLabels());
-    const options: Record<string, unknown> = { reply_markup: keyboard };
-    await this.api.sendMessage(chatId, t("keyboard.updated"), options as never);
+    await this.api.sendMessage(chatId, t("keyboard.updated"), { reply_markup: keyboard } as never);
     this.lastUpdateTimes.set(MAIN_KEY, Date.now());
     logger.info(`[TopicMode] General/All: sent Topic ReplyKeyboard chat=${chatId}, thread=General(native-default), force=${force}`);
-    void mainState;
   }
 
-  private state(sessionId?: string): KeyboardState | undefined { return this.states.get(this.key(this.resolveSessionId(sessionId))); }
+  private state(sessionId?: string): KeyboardState | undefined {
+    return this.states.get(this.key(this.resolveSessionId(sessionId)));
+  }
   public updateAgent(agent: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.currentAgent = agent; }
   public updateModel(model: ModelInfo, sessionId?: string): void { const state = this.state(sessionId); if (!state) return; state.currentModel = model; state.variantName = formatVariantForButton(model.variant || "default"); }
   public updateVariant(variantId: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.variantName = formatVariantForButton(variantId); }
