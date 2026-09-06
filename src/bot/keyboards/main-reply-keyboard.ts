@@ -49,11 +49,15 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
   for (const label of labels) keyboard.text(label).row();
 }
 
+function addHideKeyboardControl(keyboard: Keyboard): void {
+  keyboard.text(MAIN_BUTTONS.hideKeyboard).row();
+}
+
 function addMainControls(keyboard: Keyboard, currentModel: ModelInfo): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.mainSettings).row();
-  keyboard.text(MAIN_BUTTONS.hideKeyboard).row();
+  addHideKeyboardControl(keyboard);
 }
 
 function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, compact: boolean): void {
@@ -62,7 +66,7 @@ function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean,
   }
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter).text(MAIN_BUTTONS.topicSettings).row();
-  keyboard.text(TOPIC_BUTTONS.hideKeyboard).row();
+  addHideKeyboardControl(keyboard);
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {
@@ -77,11 +81,7 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   return keyboard.resized();
 }
 
-/**
- * General/Main navigation uses inline buttons. AI Topics intentionally keep
- * using ReplyKeyboard because Telegram's threaded UI is the only place where
- * the persistent session controls are needed.
- */
+/** Normal/private-chat navigation stays on the existing inline UI. */
 export function createMainInlineKeyboard(currentModel: ModelInfo): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   keyboard.text(MAIN_BUTTONS.history, "main:history").text(MAIN_BUTTONS.newChat, "main:new").row();
@@ -90,7 +90,18 @@ export function createMainInlineKeyboard(currentModel: ModelInfo): InlineKeyboar
   return keyboard;
 }
 
-/** Keyboard used exclusively inside a Telegram Topic backed by an OpenCode session. */
+/** Reply Keyboard used by General/All after Topic Mode is active. */
+export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLabels: string[] = []): Keyboard {
+  return buildMainKeyboard(currentModel, {
+    queuedPromptLabels,
+    paused: false,
+    running: false,
+    compactOutputMode: getCompactOutputMode(),
+    isTopic: false,
+  });
+}
+
+/** Keyboard used exclusively inside an AI Topic backed by an OpenCode session. */
 export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean } = {}): Keyboard {
   return buildMainKeyboard({ providerID: "", modelID: "" }, { ...options, isTopic: true });
 }
@@ -102,10 +113,14 @@ export function createMainKeyboard(first: ModelInfo | string, second?: MainKeybo
   return buildMainKeyboard(second as ModelInfo, { queuedPromptLabels, paused, running, isTopic: false });
 }
 
+/** Agent selection keyboard is also a Reply Keyboard, so it gets the same client-side hide control. */
 export function createAgentKeyboard(currentAgent: string): Keyboard {
-  return new Keyboard().text(getAgentButtonLabel(currentAgent)).row().resized();
+  const keyboard = new Keyboard().text(getAgentButtonLabel(currentAgent)).row();
+  addHideKeyboardControl(keyboard);
+  return keyboard.resized();
 }
 
+/** Telegram client-side custom keyboard removal. */
 export function removeKeyboard(): { remove_keyboard: true } {
   return { remove_keyboard: true };
 }
