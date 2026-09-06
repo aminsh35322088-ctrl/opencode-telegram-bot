@@ -92,7 +92,7 @@ export function isMainTelegramTopicSync(chatId: number, threadId: number | undef
   return getMainTelegramThreadIdSync(chatId) === threadId;
 }
 
-export async function saveMainTelegramTopic(chatId: number, threadId: number, title = "General"): Promise<void> {
+export async function saveMainTelegramTopic(chatId: number, _threadId: number, _title = "General"): Promise<void> {
   const fs = await import("fs/promises");
   const storePath = getStorePath();
   await fs.mkdir(path.dirname(storePath), { recursive: true });
