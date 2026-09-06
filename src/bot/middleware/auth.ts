@@ -152,7 +152,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
       return;
     }
     const text = ctx.message && "text" in ctx.message ? String(ctx.message.text ?? "").trim() : "";
-    if (!text.startsWith("/") && !isMainControlText(text)) {
+    if (!ctx.callbackQuery && !text.startsWith("/") && !isMainControlText(text)) {
       await ctx.api.sendMessage(topic.chatId, MAIN_CHAT_ONLY_HELP, { message_thread_id: topic.threadId }).catch(() => {});
       return;
     }
