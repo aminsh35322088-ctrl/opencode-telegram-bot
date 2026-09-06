@@ -1,5 +1,5 @@
 import { Context } from "grammy";
-import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { createMainInlineKeyboard, createTopicMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
@@ -42,6 +42,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   const inboundThreadId = ctx.message?.message_thread_id;
   const isInTopic = typeof inboundThreadId === "number" && inboundThreadId > 1;
   const binding = isInTopic ? await findTelegramTopicBindingByThread(chatId, inboundThreadId) : null;
+  const isForumChat = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
 
   await normalizeStartContext(ctx);
   if (isInTopic) logger.info(`[TelegramTopics] /start from ${binding ? "bound" : "unbound"} Topic is navigation-only; Main UI will be rendered in General: chat=${chatId}, thread=${inboundThreadId}`);
@@ -82,14 +83,22 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  const mainKeyboard = createMainInlineKeyboard(currentModel);
-  const sendOptions: Record<string, unknown> = {
+  if (isForumChat || isInTopic) {
+    await keyboardManager.activateTopicMode(chatId, currentModel);
+    logger.info(`[TelegramKeyboard] /start rendered Topic Mode ReplyKeyboard: chat=${chatId}, thread=General(native-default)`);
+  } else {
+    const mainKeyboard = createMainInlineKeyboard(currentModel);
+    const response = await ctx.api.sendMessage(chatId, text, {
+      parse_mode: "HTML",
+      reply_markup: mainKeyboard,
+    });
+    keyboardManager.setMainInlineMessage(chatId, response.message_id);
+    logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, thread=General(native-default), message=${response.message_id}`);
+    return;
+  }
+
+  await ctx.api.sendMessage(chatId, text, {
     parse_mode: "HTML",
-    reply_markup: mainKeyboard,
-  };
-  // In Telegram's private forum UI, General is the native default thread.
-  // Sending message_thread_id=1 is rejected as "message thread not found";
-  // only AI Topics (thread > 1) need an explicit thread id.
-  logger.info(`[TelegramKeyboard] /start sending Main InlineKeyboard: chat=${chatId}, thread=General(native-default)`);
-  await ctx.api.sendMessage(chatId, text, sendOptions);
+    reply_markup: createTopicMainKeyboard(currentModel),
+  });
 }
