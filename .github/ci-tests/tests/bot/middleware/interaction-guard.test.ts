@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, NextFunction } from "grammy";
 import { interactionGuardMiddleware } from "../../../src/bot/middleware/interaction-guard.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
-import { questionManager } from "../../../src/app/managers/question-manager.js";
 import { foregroundSessionState } from "../../../src/app/managers/foreground-session-state-manager.js";
 import { t } from "../../../src/i18n/index.js";
 

@@ -209,7 +209,6 @@ describe("opencode/events", () => {
   });
 
   it("stopTopicEventSubscription removes only the matching session subscription", async () => {
-    const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     subscribeMock.mockImplementation(async (params: { directory?: string; signal?: AbortSignal }) => ({
       stream: createAbortableStream(params?.signal ?? new AbortController().signal),
     }));
