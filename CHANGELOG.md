@@ -2,6 +2,16 @@
 
 All notable Telegram-bot changes are documented here. OpenCode has its own independent release/version lifecycle.
 
+## [Unreleased]
+
+### Added
+- Integrated DeusData Codebase Memory MCP into the Railway/OpenCode runtime as a local stdio MCP server.
+- Added persistent Codebase Memory indexing/cache on the Railway `/data` volume for structural code search, call/dependency tracing, and impact analysis.
+- Pinned the Codebase Memory runtime to v0.10.8 with SHA-256 verification and documented the deployment architecture.
+
+### Changed
+- Existing Telegram bot persistent Memory remains unchanged and operates independently from the Codebase Memory code-intelligence graph.
+
 ## [0.26.2] - 2026-09-04
 
 ### Fixed
@@ -71,7 +81,6 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ### Added
 - Reworked Model Center into the single canonical model UI with Favorites, Recent Models, provider browsing, model search, and per-model favorite controls.
 - Added persistent favorite and recent model state with bounded recent history.
-- Added automatic custom-provider model catalog refresh every 5 minutes, plus an immediate refresh when Model Center opens.
 
 ### Changed
 - All Model Center callbacks now use the dedicated `mc:*` namespace.
@@ -93,7 +102,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - `/start` detects the bot-version migration and sends the previous → current version notice plus `docs/release-notes/v0.25.2.md` once per installed version.
 - `/start` continues to show both the Telegram Bot and bundled OpenCode versions.
 
-## [0.25.1] - 2026-09-03
+## [0.25.1]
 
 ### Fixed
 - Normalized the persistent model selector label into a single clean line.
