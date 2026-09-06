@@ -1,5 +1,5 @@
 import type { Bot, Context } from "grammy";
-import { CommandContext } from "grammy";
+import { CommandContext, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession } from "../../app/services/session-service.js";
 import type { SessionInfo } from "../../app/types/session.js";
@@ -25,6 +25,12 @@ import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-conte
 export interface NewCommandDeps {
   bot: Bot<Context>;
   ensureEventSubscription: (directory: string) => Promise<void>;
+}
+
+function buildTelegramTopicLink(chatId: number, threadId: number): string {
+  const id = String(chatId);
+  const internalId = id.startsWith("-100") ? id.slice(4) : id.replace(/^-/, "");
+  return `https://t.me/c/${internalId}/${threadId}`;
 }
 
 export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
@@ -98,6 +104,14 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
             message_thread_id: binding.threadId,
             reply_markup: keyboard,
           },
+        );
+
+        const continueKeyboard = new InlineKeyboard()
+          .url("➡️ Continue Last Thread", buildTelegramTopicLink(ctx.chat.id, binding.threadId));
+        await deps.bot.api.sendMessage(
+          ctx.chat.id,
+          `✅ Topic created successfully.\n\nOpen it to start chatting:`,
+          { reply_markup: continueKeyboard },
         );
 
         logger.info(

@@ -69,13 +69,19 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     if (!text) return next();
 
     const topic = await isTopicMessage(ctx);
+    const runtime = getTopicRuntimeContext();
+    const topicState = topic && runtime ? keyboardManager.getState(runtime.sessionId) : undefined;
+    const topicModelRaw = topic && topicState?.currentModel?.providerID && topicState.currentModel.modelID
+      ? formatModelForButton(topicState.currentModel.providerID, topicState.currentModel.modelID, topicState.currentModel.name)
+      : "";
     const modelButton = normalized(currentModelButton());
+    const topicModelButton = topicModelRaw ? normalized(topicModelRaw) : "";
     const compactOn = normalized(MAIN_BUTTONS.compact(true));
     const compactOff = normalized(MAIN_BUTTONS.compact(false));
 
     // Complete fixed-control vocabulary. Wrong-scope controls are consumed,
     // never allowed to fall through into generic prompt handling.
-    const exactControls = new Set([
+    const exactControls = new Set<string>([
       normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat),
       normalized(MAIN_BUTTONS.mainSettings), normalized(MAIN_BUTTONS.topicSettings),
       normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.deleteChat),
@@ -83,14 +89,16 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       normalized(MAIN_BUTTONS.abort), normalized(TOPIC_BUTTONS.modelCenter),
       normalized("❌ Cancel"), compactOn, compactOff, modelButton,
     ]);
+    if (topicModelButton) exactControls.add(topicModelButton);
 
-    const dynamicMainControl = !topic && (
-      isReplyKeyboardButtonText(text, new Set([currentModelButton()])) ||
+    // Control vocabulary is scope-independent: every control-like text is
+    // consumed in BOTH scopes so none of them can ever reach prompt handling.
+    const dynamicControl =
+      isReplyKeyboardButtonText(text, new Set(topicModelRaw ? [currentModelButton(), topicModelRaw] : [currentModelButton()])) ||
       AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
-      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text)
-    );
+      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text);
 
-    if (!exactControls.has(text) && !dynamicMainControl) return next();
+    if (!exactControls.has(text) && !dynamicControl) return next();
 
     clearImageMode();
     logger.info(`[Bot] Consuming Reply Keyboard control: scope=${topic ? "topic" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
@@ -105,15 +113,10 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause),
       normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff,
     ]);
-    const isDynamicMain = !topic && (
-      AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
-      QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text) ||
-      isReplyKeyboardButtonText(text, new Set([currentModelButton()]))
-    );
 
     const allowedInRoute = topic
-      ? topicOnly.has(text)
-      : mainOnly.has(text) || isDynamicMain || text === modelButton;
+      ? topicOnly.has(text) || dynamicControl
+      : mainOnly.has(text) || dynamicControl || text === modelButton;
 
     if (!allowedInRoute) {
       logger.info(`[Bot] Consumed stale/wrong-scope Reply Keyboard button: scope=${topic ? "topic" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
@@ -132,7 +135,18 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         if (isIntegrationWizardActive()) { clearIntegrationWizard(); await integrationsCommand(ctx as never); return; }
         return;
       }
+      if (topic && topicModelButton && isExact(text, topicModelButton)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
       if (topic && isExact(text, TOPIC_BUTTONS.modelCenter)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
+      if (topic && AGENT_MODE_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showAgentSelectionMenu(ctx); return; }
+      if (topic && VARIANT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showVariantSelectionMenu(ctx); return; }
+      if (topic && CONTEXT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await handleContextButtonPress(ctx); return; }
+      if (topic && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
+        if (!await menuAllowed(ctx)) return;
+        const queued = findQueuedPromptByButtonLabel(raw); const keyboard = keyboardManager.getKeyboard(runtime?.sessionId);
+        if (queued) { promptQueue.removeById(queued.id); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); }
+        else await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});
+        return;
+      }
       if (!topic && isExact(text, modelButton)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
       if (isExact(text, compactOn) || isExact(text, compactOff)) {
         if (!await menuAllowed(ctx)) return;
