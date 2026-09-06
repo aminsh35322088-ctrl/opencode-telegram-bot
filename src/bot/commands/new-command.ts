@@ -9,8 +9,6 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getTopicDefaults } from "../../app/stores/settings-store.js";
-import { isForegroundBusy } from "../../app/services/run-control-service.js";
-import { replyBusyBlocked } from "../messages/busy-blocked-renderer.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
@@ -36,11 +34,11 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
   let topicBindingCreated = false;
 
   try {
+    // New Chat is a Main-level action and must remain available even while
+    // another Topic is executing. Each Topic owns an independent OpenCode
+    // session/workspace, so a foreground busy check here would incorrectly
+    // serialize multiple Topics.
     clearPausedSession();
-    if (isForegroundBusy()) {
-      await replyBusyBlocked(ctx);
-      return;
-    }
 
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
     const { data: session, error } = await opencodeClient.session.create({ directory });
@@ -92,9 +90,12 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     );
 
     const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
-    // No message_thread_id → Telegram routes to native General topic
+    // No message_thread_id → Telegram routes to native General topic.
     await deps.bot.api.sendMessage(ctx.chat.id, successText);
 
+    // The persistent keyboard belongs to the newly-created Topic. Telegram's
+    // forum client exposes the Topic itself; the bot does not fake a General
+    // topic or use a URL-based navigation mechanism.
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
