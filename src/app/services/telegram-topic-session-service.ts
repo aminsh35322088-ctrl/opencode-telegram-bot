@@ -1,29 +1,29 @@
 import type { Api } from "grammy";
-import { InlineKeyboard } from "grammy";
 import { logger } from "../../utils/logger.js";
 import type { SessionInfo } from "../types/session.js";
 import { findTelegramTopicBindingBySession, listTelegramTopicBindings, hasLegacyNavigationCleanupRun, markLegacyNavigationCleanupRun, saveTelegramTopicBinding, updateTelegramTopicBinding, type TelegramTopicBinding } from "./telegram-topic-store.js";
 
 const OPEN_SESSION_LOCKS = new Map<string, Promise<TelegramTopicBinding>>();
 function normalizeTopicTitle(title: string): string { const normalized = title.replace(/\s+/gu, " ").trim(); const codePoints = Array.from(normalized).slice(0, 128).join("").trim(); return codePoints || "New Chat"; }
-function buildTelegramTopicLink(chatId: number, threadId: number, messageId?: number): string { const id = String(chatId); const internalId = id.startsWith("-100") ? id.slice(4) : id.replace(/^-/, ""); return messageId ? `https://t.me/c/${internalId}/${threadId}/${messageId}` : `https://t.me/c/${internalId}/${threadId}`; }
-function buildGeneralTopicLink(chatId: number): string { return buildTelegramTopicLink(chatId, 1); }
 async function createForumTopic(api: Api, chatId: number, title: string): Promise<number> { const result = await api.raw.createForumTopic({ chat_id: chatId, name: title }); if (!result.message_thread_id) throw new Error("Telegram created a topic without a message_thread_id"); return result.message_thread_id; }
 async function persistNewBinding(chatId: number, session: SessionInfo, threadId: number): Promise<TelegramTopicBinding> { const now = new Date().toISOString(); const binding: TelegramTopicBinding = { chatId, threadId, sessionId: session.id, directory: session.directory, createdAt: now, updatedAt: now, title: session.title }; await saveTelegramTopicBinding(binding); return binding; }
 
-async function installNewTopicNavigation(api: Api, binding: TelegramTopicBinding): Promise<void> {
+/** Installs a pinned native Telegram reply back to the General message. */
+export async function installNewTopicNavigation(api: Api, binding: TelegramTopicBinding, generalMessageId: number): Promise<void> {
   try {
-    const message = await api.sendMessage(binding.chatId, "📌 Navigation\n\nUse this button to return to the General topic.", { message_thread_id: binding.threadId, reply_markup: new InlineKeyboard().url("↩️ Back to General", buildGeneralTopicLink(binding.chatId)) });
+    const message = await api.sendMessage(
+      binding.chatId,
+      "📌 Navigation\n\n↩️ Return to General",
+      { message_thread_id: binding.threadId, reply_parameters: { message_id: generalMessageId, allow_sending_without_reply: true } },
+    );
     await api.pinChatMessage(binding.chatId, message.message_id, { disable_notification: true });
     binding.navigationMessageId = message.message_id;
     await updateTelegramTopicBinding(binding.chatId, binding.threadId, { navigationMessageId: message.message_id });
-    logger.info(`[TelegramTopics] Pinned General navigation for new AI topic: chat=${binding.chatId}, thread=${binding.threadId}, message=${message.message_id}`);
+    logger.info(`[TelegramTopics] Pinned native General reply navigation: chat=${binding.chatId}, thread=${binding.threadId}, message=${message.message_id}, generalMessage=${generalMessageId}`);
   } catch (error) {
-    logger.warn(`[TelegramTopics] Failed to install General navigation in new thread=${binding.threadId}; topic remains usable`, error);
+    logger.warn(`[TelegramTopics] Failed to install native General navigation in thread=${binding.threadId}; topic remains usable`, error);
   }
 }
-
-export function buildTelegramTopicMessageLink(chatId: number, threadId: number, messageId: number): string { return buildTelegramTopicLink(chatId, threadId, messageId); }
 
 /** Removes navigation messages created by the previous global migration, once. */
 export async function cleanupLegacyTopicNavigationMessages(api: Api): Promise<void> {
@@ -51,7 +51,6 @@ async function openSessionInTopicInternal(api: Api, chatId: number, session: Ses
   const title = normalizeTopicTitle(session.title);
   const threadId = await createForumTopic(api, chatId, title);
   const binding = await persistNewBinding(chatId, session, threadId);
-  await installNewTopicNavigation(api, binding);
   logger.info(`[TelegramTopics] Created topic binding: session=${session.id}, chat=${chatId}, thread=${threadId}, title="${title}", directory=${session.directory}`);
   return binding;
 }
