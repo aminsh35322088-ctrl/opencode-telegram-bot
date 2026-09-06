@@ -230,9 +230,6 @@ describe("bot/commands/new", () => {
     expect(deps.sendMessageMock).toHaveBeenCalledWith(
       123,
       expect.stringContaining("Session Two"),
-      expect.objectContaining({
-        message_thread_id: 1,
-      }),
     );
   });
 

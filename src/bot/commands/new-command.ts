@@ -92,7 +92,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     );
 
     const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
-    await deps.bot.api.sendMessage(ctx.chat.id, successText, { message_thread_id: 1 });
+    // No message_thread_id → Telegram routes to native General topic
+    await deps.bot.api.sendMessage(ctx.chat.id, successText);
 
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
