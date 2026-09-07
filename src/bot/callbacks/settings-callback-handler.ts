@@ -10,11 +10,14 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
-import { buildAdvancedSettingsView, buildAppearanceSettingsView, buildContextSettingsView, buildNotificationsSettingsView, buildSettingsMenuView, buildTopicDefaultsSettingsView, SETTINGS_AGENT_CALLBACK, SETTINGS_ADVANCED_CALLBACK, SETTINGS_APPEARANCE_CALLBACK, SETTINGS_ASSISTANT_FOOTER_CALLBACK, SETTINGS_BACK_CALLBACK, SETTINGS_COMMANDS_CALLBACK, SETTINGS_COMPACT_OUTPUT_CALLBACK, SETTINGS_CONTEXT_CALLBACK, SETTINGS_DEFAULT_COMPACT_CALLBACK, SETTINGS_DEFAULT_DIFF_CALLBACK, SETTINGS_DEFAULT_FOOTER_CALLBACK, SETTINGS_DEFAULT_FORMAT_CALLBACK, SETTINGS_DEFAULT_QUEUE_CALLBACK, SETTINGS_DEFAULT_STREAMING_CALLBACK, SETTINGS_DEFAULT_THINKING_CALLBACK, SETTINGS_DIFF_FILES_CALLBACK, SETTINGS_MESSAGE_FORMAT_CALLBACK, SETTINGS_MCP_CALLBACK, SETTINGS_MODEL_CALLBACK, SETTINGS_NOTIFICATIONS_CALLBACK, SETTINGS_PROMPT_QUEUE_CALLBACK, SETTINGS_RESPONSE_STREAMING_CALLBACK, SETTINGS_SKILLS_CALLBACK, SETTINGS_THINKING_CONTENT_CALLBACK, SETTINGS_TOPIC_DEFAULTS_CALLBACK, SETTINGS_VARIANT_CALLBACK, SETTINGS_CALLBACK_PREFIX } from "../menus/settings-menu.js";
+import { buildAdvancedSettingsView, buildAppearanceSettingsView, buildContextSettingsView, buildFactoryResetConfirmationView, buildFactoryResetFinalView, buildNotificationsSettingsView, buildResetHistoryConfirmationView, buildSettingsMenuView, buildTopicDefaultsSettingsView, SETTINGS_AGENT_CALLBACK, SETTINGS_ADVANCED_CALLBACK, SETTINGS_APPEARANCE_CALLBACK, SETTINGS_ASSISTANT_FOOTER_CALLBACK, SETTINGS_BACK_CALLBACK, SETTINGS_COMMANDS_CALLBACK, SETTINGS_COMPACT_OUTPUT_CALLBACK, SETTINGS_CONTEXT_CALLBACK, SETTINGS_DEFAULT_COMPACT_CALLBACK, SETTINGS_DEFAULT_DIFF_CALLBACK, SETTINGS_DEFAULT_FOOTER_CALLBACK, SETTINGS_DEFAULT_FORMAT_CALLBACK, SETTINGS_DEFAULT_QUEUE_CALLBACK, SETTINGS_DEFAULT_STREAMING_CALLBACK, SETTINGS_DEFAULT_THINKING_CALLBACK, SETTINGS_DIFF_FILES_CALLBACK, SETTINGS_FACTORY_RESET_CALLBACK, SETTINGS_FACTORY_RESET_CANCEL_CALLBACK, SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK, SETTINGS_FACTORY_RESET_FINAL_CALLBACK, SETTINGS_MESSAGE_FORMAT_CALLBACK, SETTINGS_MCP_CALLBACK, SETTINGS_MODEL_CALLBACK, SETTINGS_NOTIFICATIONS_CALLBACK, SETTINGS_PROMPT_QUEUE_CALLBACK, SETTINGS_RESET_HISTORY_CALLBACK, SETTINGS_RESET_HISTORY_CANCEL_CALLBACK, SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK, SETTINGS_RESPONSE_STREAMING_CALLBACK, SETTINGS_SKILLS_CALLBACK, SETTINGS_THINKING_CONTENT_CALLBACK, SETTINGS_TOPIC_DEFAULTS_CALLBACK, SETTINGS_VARIANT_CALLBACK, SETTINGS_CALLBACK_PREFIX } from "../menus/settings-menu.js";
+import { factoryReset, resetHistory } from "../../app/services/telegram-reset-service.js";
+import { keyboardManager } from "../keyboards/keyboard-manager.js";
 
 function nextResponseStreamingMode(mode: ResponseStreamingMode): ResponseStreamingMode { return mode === "edit" ? "draft" : "edit"; }
 function nextMessageFormatMode(mode: MessageFormatMode): MessageFormatMode { return mode === "markdown" ? "raw" : "markdown"; }
 async function renderSettingsView(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<void> { await ctx.editMessageText(view.text, { reply_markup: appendInlineMenuCancelButton(view.keyboard, "settings") }); }
+function getCallbackChatId(ctx: Context): number | null { const id = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; return typeof id === "number" ? id : null; }
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
@@ -34,6 +37,35 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_SKILLS_CALLBACK: await ctx.answerCallbackQuery(); await skillsCommand(ctx as never); return true;
       case SETTINGS_COMMANDS_CALLBACK: await ctx.answerCallbackQuery(); await commandsCommand(ctx as never); return true;
       case SETTINGS_BACK_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildSettingsMenuView()); return true;
+      case SETTINGS_RESET_HISTORY_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildResetHistoryConfirmationView()); return true;
+      case SETTINGS_RESET_HISTORY_CANCEL_CALLBACK: await ctx.answerCallbackQuery({ text: "History reset cancelled" }); await renderSettingsView(ctx, buildAdvancedSettingsView()); return true;
+      case SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK: {
+        const chatId = getCallbackChatId(ctx);
+        if (chatId === null) { await ctx.answerCallbackQuery({ text: "Chat context not found", show_alert: true }); return true; }
+        await ctx.answerCallbackQuery({ text: "Resetting history…" });
+        const result = await resetHistory(ctx.api, chatId);
+        if (result.failed > 0) {
+          await ctx.editMessageText(`⚠️ <b>History reset completed with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nCheck the bot logs before retrying.`, { parse_mode: "HTML" });
+          return true;
+        }
+        await renderSettingsView(ctx, buildAdvancedSettingsView());
+        return true;
+      }
+      case SETTINGS_FACTORY_RESET_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildFactoryResetConfirmationView()); return true;
+      case SETTINGS_FACTORY_RESET_CANCEL_CALLBACK: await ctx.answerCallbackQuery({ text: "Factory reset cancelled" }); await renderSettingsView(ctx, buildAdvancedSettingsView()); return true;
+      case SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildFactoryResetFinalView()); return true;
+      case SETTINGS_FACTORY_RESET_FINAL_CALLBACK: {
+        const chatId = getCallbackChatId(ctx);
+        if (chatId === null) { await ctx.answerCallbackQuery({ text: "Chat context not found", show_alert: true }); return true; }
+        await ctx.answerCallbackQuery({ text: "Factory resetting…" });
+        const result = await factoryReset(ctx.api, chatId);
+        if (result.failed > 0) {
+          await ctx.editMessageText(`⚠️ <b>Factory reset stopped with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nSaved settings were not reset because cleanup was incomplete. Check the bot logs.`, { parse_mode: "HTML" });
+          return true;
+        }
+        await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
+        return true;
+      }
     }
 
     switch (callbackData) {
