@@ -13,6 +13,8 @@ import { t } from "../../i18n/index.js";
 import { attachToSession } from "../../app/services/attach-service.js";
 import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-session-service.js";
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
+import { deleteTelegramTopicSession } from "../../app/services/telegram-topic-delete-service.js";
+import type { TelegramTopicBinding } from "../../app/services/telegram-topic-store.js";
 import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -30,7 +32,7 @@ export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandD
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
   let directory: string | null = null;
   let sessionId: string | null = null;
-  let topicBindingCreated = false;
+  let binding: TelegramTopicBinding | null = null;
 
   try {
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
@@ -44,8 +46,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const initialAgent = defaults.agent ?? await resolveProjectAgent(getStoredAgent());
     const initialModel = defaults.model ?? getStoredModel();
     const initialCompact = defaults.compactOutputMode;
-    const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
-    topicBindingCreated = true;
+    binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
     const chatTitle = binding.title ?? `Chat #${binding.threadId}`;
     sessionInfo.title = chatTitle;
 
@@ -68,14 +69,14 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },
       async () => {
-        keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding.threadId, session.id);
+        keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding!.threadId, session.id);
         keyboardManager.updateAgent(initialAgent, session.id);
         keyboardManager.updateModel(initialModel, session.id);
         clearAllInteractionState("session_created");
 
         await ingestSessionInfoForCache(session);
         await attachToSession({
-          bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding.threadId }),
+          bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding!.threadId }),
           chatId: ctx.chat.id,
           session: sessionInfo,
           ensureEventSubscription: deps.ensureEventSubscription,
@@ -101,7 +102,14 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     );
   } catch (error) {
     logger.error("[Bot] Error creating session:", error);
-    if (directory && !topicBindingCreated) {
+
+    if (binding) {
+      try {
+        await deleteTelegramTopicSession(deps.bot.api, binding);
+      } catch (cleanupError) {
+        logger.warn(`[TelegramTopics] Failed to fully clean partially created Topic: chat=${binding.chatId}, thread=${binding.threadId}, session=${binding.sessionId}`, cleanupError);
+      }
+    } else if (directory) {
       if (sessionId) {
         try {
           await opencodeClient.session.delete({ sessionID: sessionId, directory });
@@ -115,6 +123,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         logger.warn(`[TelegramTopics] Failed to clean workspace ${directory}`, cleanupError);
       }
     }
+
     await ctx.reply(t("new.create_error"));
   }
 }
