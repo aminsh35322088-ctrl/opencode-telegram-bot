@@ -75,9 +75,11 @@ class KeyboardManager {
     this.initialize(api, chatId, sessionId, threadId);
   }
 
-  public setMainInlineMessage(chatId: number, messageId: number): void {
+  public async setMainInlineMessage(chatId: number, messageId: number): Promise<void> {
+    const previousMessageId = this.getPersistedMainInlineMessageId(chatId);
+    if (previousMessageId && previousMessageId !== messageId) await this.clearMainAnchor(chatId, previousMessageId);
     this.mainInlineMessageIds.set(chatId, messageId);
-    void setMainNavigationMessageId(chatId, messageId);
+    await setMainNavigationMessageId(chatId, messageId);
   }
 
   private getPersistedMainInlineMessageId(chatId: number): number | undefined {
@@ -169,8 +171,7 @@ class KeyboardManager {
         parse_mode: "HTML",
         reply_markup: replyMarkup,
       });
-      this.mainInlineMessageIds.set(chatId, response.message_id);
-      await setMainNavigationMessageId(chatId, response.message_id);
+      await this.setMainInlineMessage(chatId, response.message_id);
       await this.pinMainInlineMessage(chatId, response.message_id);
       logger.info(`[TelegramKeyboard] Main status + InlineKeyboard anchored and pinned: chat=${chatId}, message=${response.message_id}`);
     } catch (err) {
