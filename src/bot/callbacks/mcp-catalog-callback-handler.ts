@@ -1,120 +1,78 @@
 import type { Context } from "grammy";
 import type { McpCatalogServerItem } from "../../app/services/mcp-catalog-service.js";
-import {
-  loadMcpCatalog,
-  parseMcpCatalogServers,
-  toggleMcpCatalogServer,
-} from "../../app/services/mcp-catalog-service.js";
+import { loadMcpCatalog, parseMcpCatalogServers, toggleMcpCatalogServer } from "../../app/services/mcp-catalog-service.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
-import {
-  buildMcpsDetailKeyboard,
-  buildMcpsDetailText,
-  buildMcpsListKeyboard,
-  MCPS_CALLBACK_BACK,
-  MCPS_CALLBACK_CANCEL,
-  MCPS_CALLBACK_PREFIX,
-  MCPS_CALLBACK_SELECT_PREFIX,
-  MCPS_CALLBACK_TOGGLE,
-  parseMcpSelectCallback,
-} from "../menus/mcp-catalog-menu.js";
+import { buildMcpsDetailKeyboard, buildMcpsDetailText, buildMcpsListKeyboard, MCPS_CALLBACK_ADD, MCPS_CALLBACK_ADD_LOCAL, MCPS_CALLBACK_ADD_REMOTE, MCPS_CALLBACK_BACK, MCPS_CALLBACK_CANCEL, MCPS_CALLBACK_PREFIX, MCPS_CALLBACK_SELECT_PREFIX, MCPS_CALLBACK_TOGGLE, parseMcpSelectCallback } from "../menus/mcp-catalog-menu.js";
+import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
+import { startMcpAddWizard, selectMcpAddType, clearMcpAddWizard } from "../commands/mcp-catalog-command.js";
+import { replyWithInlineMenu } from "../menus/inline-menu.js";
 
-interface McpsListMetadata {
-  flow: "mcps";
-  stage: "list";
-  messageId: number;
-  projectDirectory: string;
-  servers: McpCatalogServerItem[];
-}
-
-interface McpsDetailMetadata {
-  flow: "mcps";
-  stage: "detail";
-  messageId: number;
-  projectDirectory: string;
-  serverName: string;
-  servers: McpCatalogServerItem[];
-}
-
+interface McpsListMetadata { flow: "mcps"; stage: "list"; messageId: number; projectDirectory: string; servers: McpCatalogServerItem[]; }
+interface McpsDetailMetadata { flow: "mcps"; stage: "detail"; messageId: number; projectDirectory: string; serverName: string; servers: McpCatalogServerItem[]; }
 type McpsMetadata = McpsListMetadata | McpsDetailMetadata;
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) {
-    return null;
-  }
-
+  if (!message || !("message_id" in message)) return null;
   const messageId = (message as { message_id?: number }).message_id;
   return typeof messageId === "number" ? messageId : null;
 }
 
 function parseMcpsMetadata(state: InteractionState | null): McpsMetadata | null {
-  if (!state || state.kind !== "custom") {
-    return null;
-  }
-
+  if (!state || state.kind !== "custom") return null;
   const flow = state.metadata.flow;
   const stage = state.metadata.stage;
   const messageId = state.metadata.messageId;
   const projectDirectory = state.metadata.projectDirectory;
-
-  if (flow !== "mcps" || typeof messageId !== "number" || typeof projectDirectory !== "string") {
-    return null;
-  }
-
+  if (flow !== "mcps" || typeof messageId !== "number" || typeof projectDirectory !== "string") return null;
   const servers = parseMcpCatalogServers(state.metadata.servers);
-  if (!servers) {
-    return null;
-  }
-
-  if (stage === "list") {
-    return {
-      flow,
-      stage,
-      messageId,
-      projectDirectory,
-      servers,
-    };
-  }
-
+  if (!servers) return null;
+  if (stage === "list") return { flow, stage, messageId, projectDirectory, servers };
   if (stage === "detail") {
     const serverName = state.metadata.serverName;
-    if (typeof serverName !== "string" || !serverName.trim()) {
-      return null;
-    }
-
-    return {
-      flow,
-      stage,
-      messageId,
-      projectDirectory,
-      serverName,
-      servers,
-    };
+    if (typeof serverName !== "string" || !serverName.trim()) return null;
+    return { flow, stage, messageId, projectDirectory, serverName, servers };
   }
-
   return null;
 }
 
 function clearMcpsInteraction(reason: string): void {
-  const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
-  if (metadata) {
-    interactionManager.clear(reason);
-  }
+  if (parseMcpsMetadata(interactionManager.getSnapshot())) interactionManager.clear(reason);
 }
 
 export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
-  if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) {
-    return false;
+  if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) return false;
+
+  if (data === MCPS_CALLBACK_ADD || data === MCPS_CALLBACK_ADD_LOCAL || data === MCPS_CALLBACK_ADD_REMOTE) {
+    if (data === MCPS_CALLBACK_ADD) {
+      const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
+      const callbackMessageId = getCallbackMessageId(ctx);
+      if (!metadata || metadata.stage !== "list" || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
+        return true;
+      }
+      await startMcpAddWizard(ctx);
+      return true;
+    }
+    await selectMcpAddType(ctx, data === MCPS_CALLBACK_ADD_LOCAL ? "local" : "remote");
+    return true;
+  }
+
+  if (data === "mcps:parent_back") {
+    clearMcpAddWizard();
+    await ctx.answerCallbackQuery().catch(() => {});
+    const view = buildAdvancedSettingsView();
+    await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard });
+    return true;
   }
 
   const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
-
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
     await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
     return true;
@@ -123,6 +81,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   try {
     if (data === MCPS_CALLBACK_CANCEL) {
       clearMcpsInteraction("mcps_cancelled");
+      clearMcpAddWizard();
       await cancelMenu(ctx);
       return true;
     }
@@ -132,23 +91,10 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-
       const servers = await loadMcpCatalog(metadata.projectDirectory);
-      const keyboard = buildMcpsListKeyboard(servers);
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(t("mcps.select"), { reply_markup: keyboard });
-
-      interactionManager.transition({
-        expectedInput: "callback",
-        metadata: {
-          flow: "mcps",
-          stage: "list",
-          messageId: metadata.messageId,
-          projectDirectory: metadata.projectDirectory,
-          servers,
-        },
-      });
-
+      await ctx.editMessageText(t("mcps.select"), { reply_markup: buildMcpsListKeyboard(servers) });
+      interactionManager.transition({ expectedInput: "callback", metadata: { flow: "mcps", stage: "list", messageId: metadata.messageId, projectDirectory: metadata.projectDirectory, servers } });
       return true;
     }
 
@@ -157,54 +103,23 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-
-      const serverName = metadata.serverName;
-      const server = metadata.servers.find((s) => s.name === serverName);
+      const server = metadata.servers.find((item) => item.name === metadata.serverName);
       if (!server) {
         await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
         return true;
       }
-
       const enable = server.status.status !== "connected";
       await ctx.answerCallbackQuery({ text: enable ? t("mcps.enabling") : t("mcps.disabling") });
-
-      await toggleMcpCatalogServer(metadata.projectDirectory, serverName, enable);
-
+      await toggleMcpCatalogServer(metadata.projectDirectory, metadata.serverName, enable);
       const updatedServers = await loadMcpCatalog(metadata.projectDirectory);
-      const updatedServer = updatedServers.find((s) => s.name === serverName);
+      const updatedServer = updatedServers.find((item) => item.name === metadata.serverName);
       if (!updatedServer) {
-        await ctx.editMessageText(t("mcps.select"), {
-          reply_markup: buildMcpsListKeyboard(updatedServers),
-        });
-        interactionManager.transition({
-          expectedInput: "callback",
-          metadata: {
-            flow: "mcps",
-            stage: "list",
-            messageId: metadata.messageId,
-            projectDirectory: metadata.projectDirectory,
-            servers: updatedServers,
-          },
-        });
+        await ctx.editMessageText(t("mcps.select"), { reply_markup: buildMcpsListKeyboard(updatedServers) });
+        interactionManager.transition({ expectedInput: "callback", metadata: { flow: "mcps", stage: "list", messageId: metadata.messageId, projectDirectory: metadata.projectDirectory, servers: updatedServers } });
         return true;
       }
-
-      await ctx.editMessageText(buildMcpsDetailText(updatedServer), {
-        reply_markup: buildMcpsDetailKeyboard(updatedServer),
-      });
-
-      interactionManager.transition({
-        expectedInput: "callback",
-        metadata: {
-          flow: "mcps",
-          stage: "detail",
-          messageId: metadata.messageId,
-          projectDirectory: metadata.projectDirectory,
-          serverName: updatedServer.name,
-          servers: updatedServers,
-        },
-      });
-
+      await ctx.editMessageText(buildMcpsDetailText(updatedServer), { reply_markup: buildMcpsDetailKeyboard(updatedServer) });
+      interactionManager.transition({ expectedInput: "callback", metadata: { flow: "mcps", stage: "detail", messageId: metadata.messageId, projectDirectory: metadata.projectDirectory, serverName: updatedServer.name, servers: updatedServers } });
       return true;
     }
 
@@ -213,31 +128,15 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-
       const serverIndex = parseMcpSelectCallback(data);
       const server = serverIndex === null ? undefined : metadata.servers[serverIndex];
       if (!server) {
         await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
         return true;
       }
-
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(buildMcpsDetailText(server), {
-        reply_markup: buildMcpsDetailKeyboard(server),
-      });
-
-      interactionManager.transition({
-        expectedInput: "callback",
-        metadata: {
-          flow: "mcps",
-          stage: "detail",
-          messageId: metadata.messageId,
-          projectDirectory: metadata.projectDirectory,
-          serverName: server.name,
-          servers: metadata.servers,
-        },
-      });
-
+      await ctx.editMessageText(buildMcpsDetailText(server), { reply_markup: buildMcpsDetailKeyboard(server) });
+      interactionManager.transition({ expectedInput: "callback", metadata: { flow: "mcps", stage: "detail", messageId: metadata.messageId, projectDirectory: metadata.projectDirectory, serverName: server.name, servers: metadata.servers } });
       return true;
     }
 
@@ -246,6 +145,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   } catch (error) {
     logger.error("[Mcps] Error handling MCP callback:", error);
     clearMcpsInteraction("mcps_callback_error");
+    clearMcpAddWizard();
     await ctx.answerCallbackQuery({ text: t("mcps.toggle_error") }).catch(() => {});
     return true;
   }
