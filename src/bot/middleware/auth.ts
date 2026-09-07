@@ -120,7 +120,11 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
         await sendToTelegramTopic(ctx.api, binding, "❌ Could not restore this Topic session. Please reopen it from History.").catch(() => {});
         return;
       }
+      const rawMessageText = typeof ctx.message?.text === "string" ? ctx.message.text : undefined;
       await enrichTelegramReplyContext(ctx, binding.directory);
+      if (rawMessageText !== undefined) {
+        (ctx.state as Record<string, unknown>).rawReplyKeyboardText = rawMessageText;
+      }
       await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId, sessionId: binding.sessionId }, () => next());
       return;
     }

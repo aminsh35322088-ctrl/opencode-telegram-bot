@@ -129,7 +129,7 @@ function isDynamicAiTopicControl(text: string): string | undefined {
  * and may outlive the in-memory keyboard registry after a restart.
  */
 export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<ReplyKeyboardInteraction> {
-  const raw = ctx.message?.text;
+  const raw = (ctx.state as Record<string, unknown> | undefined)?.rawReplyKeyboardText ?? ctx.message?.text;
   const text = typeof raw === "string" ? normalize(raw) : "";
   const context = await resolveReplyKeyboardContext(ctx);
   if (!text) return { isControl: false, scope: context.scope, text };
