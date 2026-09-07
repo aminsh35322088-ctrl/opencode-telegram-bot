@@ -6,6 +6,8 @@ import { t } from "../../i18n/index.js";
 
 export const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 export const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
+export const INLINE_MENU_HOME_CALLBACK = "main:home";
+export const INLINE_MENU_HOME_LABEL = "🏠 Home";
 
 const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
@@ -31,10 +33,12 @@ function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInli
 }
 function getInlineCancelCallbackData(menuKind: InlineMenuKind): string { return `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`; }
 
-export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind): InlineKeyboard {
+export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, _menuKind: InlineMenuKind): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) { const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1]; if (!lastRow || lastRow.length > 0) break; keyboard.inline_keyboard.pop(); }
   if (keyboard.inline_keyboard.length > 0) keyboard.row();
-  keyboard.text(menuKind === "settings" ? t("inline.button.close") : t("inline.button.cancel"), getInlineCancelCallbackData(menuKind));
+  // Menus are navigational surfaces, not dismissible dialogs. Keep a permanent
+  // path back to the root navigation instead of exposing Close/Cancel controls.
+  keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
   return keyboard;
 }
 
