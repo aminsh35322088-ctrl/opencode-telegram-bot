@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FavoriteModel } from "../types/model.js";
-import { getRuntimePaths } from "../../runtime/paths.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
 const MAX_RECENT_MODELS = 10;
