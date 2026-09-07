@@ -132,6 +132,15 @@ export async function removeMemory(id: string): Promise<boolean> {
   return true;
 }
 
+export async function clearAllMemories(): Promise<number> {
+  const store = await readStore();
+  const removed = store.memories.length;
+  if (removed === 0) return 0;
+  await writeStore({ version: 1, memories: [] });
+  logger.info(`[Memory] Cleared ${removed} persistent memories`);
+  return removed;
+}
+
 export async function searchRelevantMemories(input: {
   query: string;
   projectId?: string | undefined;
