@@ -10,8 +10,8 @@ export const PERSISTENT_STATE = {
     "app-state.json.tmp",
     "telegram-topic-bindings.json",
     "telegram-topic-bindings.json.bak",
-    "telegram-topic-runtime.json",
-    "telegram-topic-runtime.json.tmp",
+    path.join("runtime", "topics", "telegram-topic-runtime.json"),
+    path.join("runtime", "topics", "telegram-topic-runtime.json.tmp"),
     "memory.json",
     "memory.json.tmp",
     path.join(".config", "opencode-telegram"),
@@ -33,6 +33,8 @@ const LEGACY_APPLICATION_PATHS = [
   "providers",
   "integrations",
   "ai-role-selection.json",
+  "telegram-topic-runtime.json",
+  "telegram-topic-runtime.json.tmp",
 ];
 const LEGACY_MODEL_PREFERENCE_PATH = path.join("model-preferences", "model-preferences.json");
 
