@@ -46,6 +46,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const initialCompact = defaults.compactOutputMode;
     const binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
     topicBindingCreated = true;
+    const chatTitle = binding.title ?? `Chat #${binding.threadId}`;
+    sessionInfo.title = chatTitle;
 
     await initializeTopicRuntimeState(binding.chatId, binding.threadId, {
       ...defaults,
@@ -81,21 +83,18 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       },
     );
 
-    // Creating an AI Topic does not replace General/All navigation. The main
-    // glass keyboard stays available there; the AI Topic gets its own ReplyKeyboard.
     await keyboardManager.enterTopicMode(ctx.chat.id);
     await keyboardManager.clearMainInlineMessage(ctx.chat.id);
-    const successText = `${t("new.created", { title: session.title })}\n\nUse this Topic for the conversation.`;
+    const successText = `${t("new.created", { title: chatTitle })}\n\nUse this Topic for the conversation.`;
     const navigationMessage = await deps.bot.api.sendMessage(ctx.chat.id, successText, {
       reply_markup: createMainInlineKeyboard(initialModel),
     });
-    keyboardManager.setMainInlineMessage(ctx.chat.id, navigationMessage.message_id);
+    await keyboardManager.setMainInlineMessage(ctx.chat.id, navigationMessage.message_id);
 
-    // The AI Topic gets its own session-scoped Reply Keyboard, addressed to its real thread id.
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
-      `[TelegramTopics] New Chat created: session=${session.id}, thread=${binding.threadId}; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated`,
+      `[TelegramTopics] New Chat created: session=${session.id}, title=${chatTitle}, thread=${binding.threadId}; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated`,
     );
     logger.info(
       `[TelegramTopics] New Chat opened: session=${session.id}, chat=${ctx.chat.id}, thread=${binding.threadId}, directory=${directory}`,
