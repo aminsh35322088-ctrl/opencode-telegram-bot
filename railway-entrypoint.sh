@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Runtime configuration is intentionally fixed in the image. Railway only
-# supplies the two Telegram credentials used by the application.
+# Runtime configuration is intentionally fixed in the image. Railway supplies
+# application credentials plus an optional GitHub token for headless GitHub CLI
+# / Git authentication.
 OPENCODE_API_URL="http://127.0.0.1:4096"
 OPENCODE_AUTO_RESTART_ENABLED="true"
 OPENCODE_AUTO_START_IN_CONTAINER="true"
@@ -16,9 +17,17 @@ OPENCODE_EXPERIMENTAL_LSP_TOOL="true"
 OPENCODE_ENABLE_EXA="1"
 PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
 
+# GitHub CLI supports both names; prefer GH_TOKEN and fall back to GITHUB_TOKEN.
+# Do not persist the credential: child processes inherit it directly from the
+# Railway environment and git uses the helper below without writing a token file.
+GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+GH_HOST="${GH_HOST:-github.com}"
+GH_PROMPT_DISABLED="1"
+
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
+export GH_TOKEN GH_HOST GH_PROMPT_DISABLED
 
 GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
@@ -58,12 +67,11 @@ cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
 set -eu
 
-# GitHub authentication is injected from the centralized application state
-# by the Node.js runtime. This helper exists only to let child git processes
-# reuse that runtime environment without persisting a second token file.
-if [ -n "${GITHUB_TOKEN:-}" ]; then
+# Reuse the runtime GitHub token for git over HTTPS without persisting it.
+token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+if [ -n "$token" ]; then
   printf '%s\n' 'username=x-access-token'
-  printf 'password=%s\n' "$GITHUB_TOKEN"
+  printf 'password=%s\n' "$token"
 fi
 EOF
 chmod 700 /data/run/github-credential-helper.sh
@@ -83,7 +91,17 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(gh --version 2>/dev/null | head -1 || echo unavailable), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
+
+if [ -n "$GH_TOKEN" ]; then
+  if su -s /bin/sh node -c 'gh auth status --active --hostname "$GH_HOST" >/dev/null 2>&1'; then
+    printf '%s\n' "[railway] GitHub CLI: authenticated (${GH_HOST})"
+  else
+    printf '%s\n' "[railway] GitHub CLI: token configured but authentication check failed (${GH_HOST})"
+  fi
+else
+  printf '%s\n' "[railway] GitHub CLI: not authenticated — set GH_TOKEN or GITHUB_TOKEN in Railway"
+fi
 
 # Launch the bot from the persistent workspace. GitHub Actions is the sole
 # validation authority; the production process does not run CI or test suites.
