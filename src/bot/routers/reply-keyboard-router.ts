@@ -85,8 +85,6 @@ async function consumeReplyKeyboardMessage(ctx: Context): Promise<void> {
   try {
     await ctx.api.deleteMessage(chatId, messageId);
   } catch (error) {
-    // The control must still be dispatched even when Telegram refuses deletion
-    // (for example because the bot lacks message-delete permission in a group).
     logger.debug?.(`[Bot] Could not delete Reply Keyboard control message: chat=${chatId} message=${messageId}`, error);
   }
 }
@@ -147,8 +145,9 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       : mainOnly.has(text);
 
     if (!allowedInRoute) {
-      logger.info(`[Bot] Ignoring stale/wrong-scope Reply Keyboard control: scope=${scope.topicMode ? "topic" : "main"}${scope.topicMode && !scope.aiTopic ? "/general" : ""} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
-      return next();
+      logger.info(`[Bot] Consuming stale/wrong-scope Reply Keyboard control instead of falling through to prompt: scope=${scope.topicMode ? "topic" : "main"}${scope.topicMode && !scope.aiTopic ? "/general" : ""} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
+      await consumeReplyKeyboardMessage(ctx);
+      return;
     }
 
     logger.info(`[Bot] Consuming Reply Keyboard control: scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
@@ -202,13 +201,13 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
         await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {});
         return;
       }
-      if (!scope.aiTopic && (isExact(text, compactOn) || isExact(text, compactOff))) return next();
+      if (!scope.aiTopic && (isExact(text, compactOn) || isExact(text, compactOff))) return;
       if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.topicSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
       if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.deleteChat)) { await showTelegramTopicDeleteConfirmation(ctx); return; }
       if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.history)) { if (await menuAllowed(ctx)) await sessionsCommand(ctx as never); return; }
       if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.newChat)) { if (await menuAllowed(ctx)) await newCommand(ctx as never, deps); return; }
       if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.mainSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
-      return next();
+      return;
     } catch (error) {
       logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error);
       return;
