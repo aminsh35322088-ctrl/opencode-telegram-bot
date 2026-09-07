@@ -1,5 +1,5 @@
-import fs from "node:fs/promises";
-import { readFile } from "node:fs/promises";
+import fs from "fs/promises";
+import { readFile } from "fs/promises";
 import { cleanupBotRuntime, createBot } from "../../bot/index.js";
 import { createScheduledTaskDeliverySender } from "../../bot/messages/scheduled-task-delivery.js";
 import { config } from "../../config.js";
@@ -9,7 +9,7 @@ import { flushSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
-import { initializeGithubTokenFromEnvironment } from "../services/github-integration-service.js";
+import { initializeGithubIntegration } from "../services/github-integration-service.js";
 import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
 import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
@@ -37,8 +37,8 @@ export async function startBotApp(): Promise<void> {
   const unhandledRejectionHandler = (reason: unknown): void => { logger.error("[App] Unhandled promise rejection", reason); }; const uncaughtExceptionHandler = (error: Error): void => { logger.error("[App] Uncaught exception", error); void clearManagedServiceState().catch(() => {}).then(() => flushSettingsWithTimeout()).then(() => flushLoggerWithTimeout()).finally(() => process.exit(1)); };
   process.on("unhandledRejection", unhandledRejectionHandler); process.on("uncaughtException", uncaughtExceptionHandler);
   await loadSettings();
-  const githubConfigured = await initializeGithubTokenFromEnvironment().catch((error) => { logger.warn("[GithubIntegration] Could not initialize GitHub token; continuing without GitHub integration", error); return false; }); logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
-  const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => { logger.warn("[RailwayIntegration] Could not initialize Railway token from environment; continuing without Railway integration", error); return false; }); logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
+  const githubConfigured = await initializeGithubIntegration().catch((error) => { logger.warn("[GithubIntegration] Could not initialize stored GitHub integration; continuing without GitHub integration", error); return false; }); logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
+  const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => { logger.warn("[RailwayIntegration] Could not initialize stored Railway integration; continuing without Railway integration", error); return false; }); logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
   try { process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig(); } catch (error) { logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error); }
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
