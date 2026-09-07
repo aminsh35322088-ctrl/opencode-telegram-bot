@@ -37,7 +37,7 @@ async function renderImage(ctx: Context, id?: number, notice?: string) {
   k.row().text(custom ? "🔌 Custom API · Active ✅" : "🔌 Custom API", "provider:image:custom:configure");
   if (cloudflare && cloudflareValidation.valid) k.row().text("🗑️ Remove Cloudflare", "provider:image:cloudflare:remove");
   if (custom) k.row().text("🗑️ Remove Custom API", "provider:image:custom:remove");
-  k.row().text("← Custom Provider API", "provider:menu").text("✖ Close", "provider:close");
+  k.row().text("← Custom Provider API", "provider:menu").text("🏠 Home", "main:home");
   const status = cloudflare ? (cloudflareValidation.valid ? "✅ Verified" : "⚠️ Needs verification") : "⚪ Not configured";
   const lines = [`☁️ Cloudflare Workers AI: ${status}`, cloudflare ? `Model: ${cloudflare.model}` : "", `🔌 Custom API: ${custom ? `✅ ${custom.model}${custom.editModel ? ` / edit: ${custom.editModel}` : ""}` : "⚪ Not configured"}`].filter(Boolean);
   const text = `${notice ? `${notice}\n\n` : ""}🎨 Image AI\n\n${lines.join("\n")}\n\nChoose one provider. Cloudflare supports generation + editing with FLUX.2 Klein 4B.`;
@@ -48,19 +48,18 @@ async function renderSlot(ctx: Context, c: AiCapability, id?: number, notice?: s
   const ps = await listCustomProviders(); const list = ps.filter((p) => p.capability === c); const k = new InlineKeyboard();
   for (const p of list) k.row().text(`🧠 ${p.name} · Active ✅`, `provider:view:${p.id}`).text("🗑️", `provider:delete:${p.id}`);
   k.row().text("➕ Add provider", `provider:add:${c}`); if (c === "stt") k.row().text(await isGroqSttConfigured() ? "🎤 Groq · Active ✅" : "🎤 Groq Voice STT", "provider:stt:groq:add");
-  k.row().text("← Providers", "provider:menu").text("✖ Close", "provider:close"); const body = list.length ? list.map((p) => `✅ ${p.name}\n${p.models.length} verified model${p.models.length === 1 ? "" : "s"}`).join("\n\n") : "⚪ No verified custom provider in this slot."; const text = `${notice ? `${notice}\n\n` : ""}${LABEL[c]}\n\n${body}`;
+  k.row().text("← Providers", "provider:menu").text("🏠 Home", "main:home"); const body = list.length ? list.map((p) => `✅ ${p.name}\n${p.models.length} verified model${p.models.length === 1 ? "" : "s"}`).join("\n\n") : "⚪ No verified custom provider in this slot."; const text = `${notice ? `${notice}\n\n` : ""}${LABEL[c]}\n\n${body}`;
   if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
 }
 async function renderProviders(ctx: Context, id?: number, notice?: string) {
-  const ps = await listCustomProviders(); const k = new InlineKeyboard(); for (const c of CAPABILITIES) k.row().text(LABEL[c], `provider:slot:${c}`); k.row().text("← Advanced", "provider:advanced").text("✖ Close", "provider:close");
+  const ps = await listCustomProviders(); const k = new InlineKeyboard(); for (const c of CAPABILITIES) k.row().text(LABEL[c], `provider:slot:${c}`); k.row().text("← Advanced", "provider:advanced").text("🏠 Home", "main:home");
   const text = `${notice ? `${notice}\n\n` : ""}🔌 Custom Provider API\n\n${CAPABILITIES.map((c) => `${LABEL[c]}: ${ps.filter((p) => p.capability === c).map((p) => p.name).join(", ") || "Not configured"}`).join("\n")}\n\nImage AI has only two provider types: Cloudflare Workers AI and Custom API.`;
   if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
 }
 export async function providersCommand(ctx: CommandContext<Context>) { clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx as Context); }
-
 export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   const d = ctx.callbackQuery?.data ?? ""; if (!d.startsWith("provider:")) return false; const chat = ctx.chat?.id; if (!chat) return true;
-  if (d === "provider:close") { clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
+  if (d === "provider:close") { clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Deprecated: use Home" }).catch(() => {}); await replyWithInlineMenu(ctx, { menuKind: "settings", text: "⚙️ Settings\n\nManage your model, Topic defaults, providers, integrations, and advanced OpenCode controls.", keyboard: new InlineKeyboard().text("🏠 Home", "main:home") }); return true; }
   if (d === "provider:advanced") { await ctx.answerCallbackQuery().catch(() => {}); const v = buildAdvancedSettingsView(); const id = messageId(ctx); if (id !== null) await ctx.api.editMessageText(chat, id, v.text, { reply_markup: v.keyboard }); else await replyWithInlineMenu(ctx, { menuKind: "settings", text: v.text, keyboard: v.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
   if (d === "provider:cancel") { clearProviderWizard(); const id = messageId(ctx); await renderProviders(ctx, id ?? undefined, "❌ Setup cancelled."); return true; }
@@ -75,11 +74,10 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (d === "provider:stt:groq:add") { const id = messageId(ctx); if (id !== null) { pending = { step: "groq-stt-key", messageId: id }; await editWizard(ctx, id, "🎤 Configure Groq Voice STT\n\nSend API key to verify."); } return true; }
   if (d === "provider:stt:groq:remove") { await removeGroqStt(); const id = messageId(ctx); await renderSlot(ctx, "stt", id ?? undefined, "🎤 Groq Voice STT disabled."); return true; }
   if (d.startsWith("provider:delete:")) { const deleted = await deleteCustomProvider(d.slice("provider:delete:".length)); if (deleted) { await restartOpenCodeAfterProviderChange(); const id = messageId(ctx); await renderProviders(ctx, id ?? undefined); } return true; }
-  if (d.startsWith("provider:view:")) { const p = (await listCustomProviders()).find((x) => x.id === d.slice("provider:view:".length)); if (p) { const id = messageId(ctx); if (id !== null) await ctx.api.editMessageText(chat, id, `🔌 ${p.name}\n\nSlot: ${LABEL[p.capability]}\nBase URL: ${p.baseURL}\nModels:\n${p.models.map((m) => `• ${m.name} (${m.id})`).join("\n")}\n\n🔐 API key is never displayed.`, { reply_markup: new InlineKeyboard().text("← Slot", `provider:slot:${p.capability}`).text("✖ Close", "provider:close") }); } return true; }
+  if (d.startsWith("provider:view:")) { const p = (await listCustomProviders()).find((x) => x.id === d.slice("provider:view:".length)); if (p) { const id = messageId(ctx); if (id !== null) await ctx.api.editMessageText(chat, id, `🔌 ${p.name}\n\nSlot: ${LABEL[p.capability]}\nBase URL: ${p.baseURL}\nModels:\n${p.models.map((m) => `• ${m.name} (${m.id})`).join("\n")}\n\n🔐 API key is never displayed.`, { reply_markup: new InlineKeyboard().text("← Slot", `provider:slot:${p.capability}`).text("🏠 Home", "main:home") }); } return true; }
   if (d === "provider:menu") { const id = messageId(ctx); await renderProviders(ctx, id ?? undefined); return true; }
   return true;
 }
-
 export async function handleProviderWizardMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text?.trim(); const s = pending; if (!ctx.chat?.id || !text || !s) return false;
   try {
