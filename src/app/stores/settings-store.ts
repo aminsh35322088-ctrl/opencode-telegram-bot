@@ -79,6 +79,9 @@ export function getScheduledTasks(): ScheduledTask[] { return cloneScheduledTask
 export function setScheduledTasks(tasks: ScheduledTask[]): Promise<void> { currentSettings.scheduledTasks = cloneScheduledTasks(tasks); return writeSettingsFile(currentSettings); }
 export function getScheduledTaskSessionIgnores(): ScheduledTaskSessionIgnoreInfo[] { return cloneScheduledTaskSessionIgnores(currentSettings.scheduledTaskSessionIgnores) ?? []; }
 export function setScheduledTaskSessionIgnores(ignores: ScheduledTaskSessionIgnoreInfo[]): Promise<void> { currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(ignores); return writeSettingsFile(currentSettings); }
+
+/** Complete persisted application-state reset. Runtime code/config is intentionally untouched. */
+export function resetGlobalSettingsForFactory(): void { currentSettings = {}; skipNextBackupRotation = false; void writeSettingsFile(currentSettings); }
 export function __resetSettingsForTests(): void { currentSettings = {}; settingsWriteQueue = Promise.resolve(); skipNextBackupRotation = false; }
 const VALID_STREAMING_MODES: readonly ResponseStreamingMode[] = ["edit", "draft"];
 const VALID_MESSAGE_FORMAT_MODES: readonly MessageFormatMode[] = ["raw", "markdown"];
