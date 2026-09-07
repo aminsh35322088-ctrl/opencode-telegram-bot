@@ -35,6 +35,12 @@ function resolveAppHome(mode: RuntimeMode): string {
   }
 
   if (mode === "sources") {
+    // Source-mode deployments may change process.cwd() while routing a topic.
+    // Keep persistent application state anchored to the configured workspace.
+    const persistentWorkspace = process.env.OPENCODE_TELEGRAM_WORKSPACE;
+    if (persistentWorkspace && persistentWorkspace.trim().length > 0) {
+      return path.resolve(persistentWorkspace);
+    }
     return process.cwd();
   }
 
