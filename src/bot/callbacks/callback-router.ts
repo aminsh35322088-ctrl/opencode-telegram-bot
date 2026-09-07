@@ -28,7 +28,7 @@ import { handleVariantSelect } from "./variant-selection-callback-handler.js";
 import { handleWorktreeCallback } from "./worktree-callback-handler.js";
 import { clearLsPathIndex, clearOpenPathIndex } from "../menus/file-browser-menu.js";
 import { buildAdvancedSettingsView, buildSettingsMenuView } from "../menus/settings-menu.js";
-import { replyWithInlineMenu } from "../menus/inline-menu.js";
+import { closeActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { MODEL_CENTER_SETTINGS_BACK } from "../menus/model-center-menu.js";
 import { markGeminiWizard, clearGeminiWizard } from "../services/gemini-wizard-state.js";
 import { activateImageMode } from "../../app/services/image-mode-service.js";
@@ -39,6 +39,8 @@ import { sessionsCommand } from "../commands/sessions-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
+import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { getStoredModel } from "../../app/services/model-selection-service.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -62,6 +64,19 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
   if (!data.startsWith("main:")) return false;
   const callbackMessage = ctx.callbackQuery?.message;
   const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
+
+  // Home is the escape hatch from every inline menu, including menus opened
+  // inside an AI Topic. It always restores the canonical General navigation.
+  if (data === "main:home") {
+    const chatId = ctx.chat?.id ?? callbackMessage?.chat.id;
+    if (typeof chatId !== "number") return true;
+    await ctx.answerCallbackQuery().catch(() => {});
+    await closeActiveInlineMenu(ctx, "inline_menu_home");
+    await keyboardManager.sendMainInlineKeyboard(chatId, getStoredModel(), true);
+    logger.info(`[Navigation] Restored Main InlineKeyboard from Home: chat=${chatId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+    return true;
+  }
+
   if (typeof threadId === "number" && threadId > 1) {
     await ctx.answerCallbackQuery({ text: "Use General for main navigation." }).catch(() => {});
     return true;
