@@ -6,7 +6,6 @@ import { cloneScheduledTask, type ScheduledTask } from "../types/scheduled-task.
 import type { MessageFormatMode, ResponseStreamingMode, ScheduledTaskSessionIgnoreInfo, Settings } from "../types/settings.js";
 import type { TopicDefaults, TopicSettings } from "../types/topic-settings.js";
 import { config } from "../../config.js";
-import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { flushAppState, readAppState, updateAppState } from "./app-state-store.js";
 import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
@@ -14,47 +13,18 @@ import { getTopicRuntimeStateSync, updateTopicRuntimeStateSync } from "./topic-r
 
 function cloneScheduledTasks(tasks: ScheduledTask[] | undefined): ScheduledTask[] | undefined { return tasks?.map((task) => cloneScheduledTask(task)); }
 function cloneScheduledTaskSessionIgnores(ignores: ScheduledTaskSessionIgnoreInfo[] | undefined): ScheduledTaskSessionIgnoreInfo[] | undefined { return ignores?.map((ignore) => ({ ...ignore })); }
-function getLegacySettingsFilePath(): string { return path.join(getRuntimePaths().appHome, "settings.json"); }
-function getLegacySettingsBackupFilePath(): string { return `${getLegacySettingsFilePath()}.bak`; }
-let skipNextLegacyBackupRotation = false;
 let settingsWriteQueue: Promise<void> = Promise.resolve();
-function isFileNotFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
-async function readLegacySettingsFileAt(filePath: string): Promise<Settings> { const fs = await import("fs/promises"); return JSON.parse(await fs.readFile(filePath, "utf-8")) as Settings; }
-async function migrateLegacySettingsIfNeeded(): Promise<Settings> {
+
+async function readSettingsFile(): Promise<Settings> {
   const state = await readAppState();
-  const centralized = state.settings;
-  if (centralized && typeof centralized === "object" && !Array.isArray(centralized)) return centralized as Settings;
-  const legacyPath = getLegacySettingsFilePath();
-  try {
-    const legacy = await readLegacySettingsFileAt(legacyPath);
-    await updateAppState({ settings: legacy });
-    logger.info(`[SettingsManager] Migrated legacy settings into centralized app state: ${legacyPath}`);
-    return legacy;
-  } catch (primaryError) {
-    if (!isFileNotFound(primaryError)) logger.warn(`[SettingsManager] Cannot read legacy settings file ${legacyPath}:`, primaryError);
-    try {
-      skipNextLegacyBackupRotation = true;
-      const legacyBackup = await readLegacySettingsFileAt(getLegacySettingsBackupFilePath());
-      await updateAppState({ settings: legacyBackup });
-      logger.info(`[SettingsManager] Migrated legacy settings backup into centralized app state.`);
-      return legacyBackup;
-    } catch (backupError) {
-      if (isFileNotFound(primaryError) && isFileNotFound(backupError)) return {};
-      logger.error(`[SettingsManager] Legacy settings and backup are unusable: ${legacyPath}`, { primaryError, backupError });
-      throw new Error(`Cannot read settings: ${legacyPath} and ${getLegacySettingsBackupFilePath()} are both unusable.`);
-    }
-  }
+  const settings = state.settings;
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return {};
+  return settings as Settings;
 }
-async function readSettingsFile(): Promise<Settings> { return migrateLegacySettingsIfNeeded(); }
-async function writeSettingsFileAtomically(settings: Settings): Promise<void> {
-  await updateAppState({ settings: { ...settings } });
-  if (skipNextLegacyBackupRotation) {
-    skipNextLegacyBackupRotation = false;
-  }
-}
+
 function writeSettingsFile(settings: Settings): Promise<void> {
   settingsWriteQueue = settingsWriteQueue.catch(() => {}).then(async () => {
-    try { await writeSettingsFileAtomically(settings); }
+    try { await updateAppState({ settings: { ...settings } }); }
     catch (error) { logger.error("[SettingsManager] Error writing centralized app state:", error); throw error; }
   });
   return settingsWriteQueue;
@@ -118,14 +88,14 @@ export function setScheduledTaskSessionIgnores(ignores: ScheduledTaskSessionIgno
 
 /** Complete persisted application-state reset. Runtime code/config is intentionally untouched. */
 export function resetGlobalSettingsForFactory(): void { currentSettings = {}; void writeSettingsFile(currentSettings); }
-export function __resetSettingsForTests(): void { currentSettings = {}; settingsWriteQueue = Promise.resolve(); skipNextLegacyBackupRotation = false; }
+export function __resetSettingsForTests(): void { currentSettings = {}; settingsWriteQueue = Promise.resolve(); }
 const VALID_STREAMING_MODES: readonly ResponseStreamingMode[] = ["edit", "draft"];
 const VALID_MESSAGE_FORMAT_MODES: readonly MessageFormatMode[] = ["raw", "markdown"];
 function applyInitialSettingsPreset(preset: Record<string, unknown>): void { const knownKeys = new Set(["compactOutputMode", "showThinkingContent", "showAssistantRunFooter", "responseStreamingMode", "messageFormatMode", "sendDiffFileAttachments", "promptQueueEnabled"]); for (const [key, value] of Object.entries(preset)) { if (!knownKeys.has(key)) throw new Error(`INITIAL_SETTINGS_PRESET: unknown key \"${key}\".`); if (key === "responseStreamingMode") { if (typeof value !== "string" || !VALID_STREAMING_MODES.includes(value as ResponseStreamingMode)) throw new Error(`INITIAL_SETTINGS_PRESET: invalid responseStreamingMode.`); if (currentSettings.responseStreamingMode === undefined) currentSettings.responseStreamingMode = value as ResponseStreamingMode; } else if (key === "messageFormatMode") { if (typeof value !== "string" || !VALID_MESSAGE_FORMAT_MODES.includes(value as MessageFormatMode)) throw new Error(`INITIAL_SETTINGS_PRESET: invalid messageFormatMode.`); if (currentSettings.messageFormatMode === undefined) currentSettings.messageFormatMode = value as MessageFormatMode; } else { if (typeof value !== "boolean") throw new Error(`INITIAL_SETTINGS_PRESET: \"${key}\" must be a boolean.`); if (key === "compactOutputMode" && currentSettings.compactOutputMode === undefined) currentSettings.compactOutputMode = value; if (key === "showThinkingContent" && currentSettings.showThinkingContent === undefined) currentSettings.showThinkingContent = value; if (key === "showAssistantRunFooter" && currentSettings.showAssistantRunFooter === undefined) currentSettings.showAssistantRunFooter = value; if (key === "sendDiffFileAttachments" && currentSettings.sendDiffFileAttachments === undefined) currentSettings.sendDiffFileAttachments = value; if (key === "promptQueueEnabled" && currentSettings.promptQueueEnabled === undefined) currentSettings.promptQueueEnabled = value; } } }
 export async function loadSettings(): Promise<void> {
   const loadedSettings = (await readSettingsFile()) as Settings & { serverProcess?: unknown; toolMessagesIntervalSec?: unknown; ttsEnabled?: unknown; ttsMode?: unknown };
   for (const key of ["toolMessagesIntervalSec", "serverProcess", "ttsEnabled", "ttsMode"] as const) delete (loadedSettings as Record<string, unknown>)[key];
-  const legacyDefaults = loadedSettings.topicDefaults;
+  const storedTopicDefaults = loadedSettings.topicDefaults;
   currentSettings = loadedSettings;
   currentSettings.scheduledTasks = cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [];
   currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(loadedSettings.scheduledTaskSessionIgnores) ?? [];
@@ -134,8 +104,8 @@ export async function loadSettings(): Promise<void> {
   if (!Object.keys(currentSettings.mainNavigationMessageIds).length) currentSettings.mainNavigationMessageIds = undefined;
   currentSettings.topicDefaults = {
     ...DEFAULT_TOPIC_DEFAULTS,
-    ...(legacyDefaults ?? {}),
-    ...(legacyDefaults ? {} : {
+    ...(storedTopicDefaults ?? {}),
+    ...(storedTopicDefaults ? {} : {
       model: loadedSettings.currentModel,
       agent: loadedSettings.currentAgent,
       compactOutputMode: loadedSettings.compactOutputMode,
@@ -148,5 +118,5 @@ export async function loadSettings(): Promise<void> {
     }),
   };
   applyInitialSettingsPreset(config.bot.initialSettingsPreset);
-  if (!legacyDefaults) void writeSettingsFile(currentSettings);
+  if (!storedTopicDefaults) void writeSettingsFile(currentSettings);
 }
