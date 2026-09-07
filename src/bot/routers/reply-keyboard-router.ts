@@ -26,7 +26,6 @@ import { clearImageMode } from "../../app/services/image-mode-service.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
-  MODEL_BUTTON_TEXT_PATTERN,
   QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
   VARIANT_BUTTON_TEXT_PATTERN,
   isReplyKeyboardButtonText,
@@ -87,9 +86,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     const scope = await getTopicScope(ctx);
     const runtime = getTopicRuntimeContext();
     const topicState = scope.aiTopic && runtime ? keyboardManager.getState(runtime.sessionId) : undefined;
-    const topicModelButton = topicState?.currentModel?.providerID && topicState.currentModel.modelID
-      ? normalized(TOPIC_BUTTONS.modelCenter(topicState.currentModel))
-      : normalized(TOPIC_BUTTONS.modelCenter());
+    const topicModelButton = normalized(TOPIC_BUTTONS.modelCenter(topicState?.currentModel));
     const mainModelButton = normalized(currentModelButton());
     const compactOn = normalized(MAIN_BUTTONS.compact(true));
     const compactOff = normalized(MAIN_BUTTONS.compact(false));
@@ -114,10 +111,9 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
       QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) ||
       VARIANT_BUTTON_TEXT_PATTERN.test(text);
-    const dynamicModelControl = MODEL_BUTTON_TEXT_PATTERN.test(text);
     const knownReplyKeyboardControl = isReplyKeyboardButtonText(text, new Set([mainModelButton, topicModelButton]));
 
-    if (!exactControls.has(text) && !knownReplyKeyboardControl && !dynamicTopicControl && !dynamicModelControl) return next();
+    if (!exactControls.has(text) && !knownReplyKeyboardControl && !dynamicTopicControl) return next();
 
     clearImageMode();
 
@@ -132,9 +128,8 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
       compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton,
     ]);
 
-    const isTopicDynamicControl = dynamicTopicControl || dynamicModelControl;
     const allowedInRoute = scope.aiTopic
-      ? topicOnly.has(text) || isTopicDynamicControl
+      ? topicOnly.has(text) || dynamicTopicControl
       : mainOnly.has(text);
 
     if (!allowedInRoute) {
