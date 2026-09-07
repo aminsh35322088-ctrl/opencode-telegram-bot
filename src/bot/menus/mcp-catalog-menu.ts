@@ -6,6 +6,9 @@ import { t } from "../../i18n/index.js";
 export const MCPS_CALLBACK_PREFIX = "mcps:";
 export const MCPS_CALLBACK_SELECT_PREFIX = `${MCPS_CALLBACK_PREFIX}select:`;
 export const MCPS_CALLBACK_TOGGLE = `${MCPS_CALLBACK_PREFIX}toggle`;
+export const MCPS_CALLBACK_ADD = `${MCPS_CALLBACK_PREFIX}add`;
+export const MCPS_CALLBACK_ADD_LOCAL = `${MCPS_CALLBACK_PREFIX}add:local`;
+export const MCPS_CALLBACK_ADD_REMOTE = `${MCPS_CALLBACK_PREFIX}add:remote`;
 export const MCPS_CALLBACK_BACK = `${MCPS_CALLBACK_PREFIX}back`;
 export const MCPS_CALLBACK_PARENT_BACK = `${MCPS_CALLBACK_PREFIX}parent_back`;
 export const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
@@ -76,8 +79,22 @@ export function buildMcpsListKeyboard(servers: McpCatalogServerItem[]): InlineKe
     keyboard.text(formatMcpButtonLabel(server), `${MCPS_CALLBACK_SELECT_PREFIX}${index}`).row();
   });
 
+  keyboard.text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row();
   keyboard.text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
   return keyboard;
+}
+
+export function buildMcpsEmptyKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row()
+    .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
+}
+
+export function buildMcpsAddTypeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🖥 Local", MCPS_CALLBACK_ADD_LOCAL)
+    .text("🌐 Remote", MCPS_CALLBACK_ADD_REMOTE).row()
+    .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Cancel", MCPS_CALLBACK_CANCEL);
 }
 
 export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKeyboard {
