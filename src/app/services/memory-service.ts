@@ -28,7 +28,7 @@ const MAX_INJECTED_MEMORIES = 5;
 const MAX_INJECTED_CHARS = 2000;
 
 function getStorePath(): string {
-  return path.join(getRuntimePaths().appHome, STORE_FILENAME);
+  return path.join(getRuntimePaths().appHome, "runtime", "memory", STORE_FILENAME);
 }
 
 async function readStore(): Promise<MemoryStore> {
@@ -51,8 +51,14 @@ async function writeStore(store: MemoryStore): Promise<void> {
   const storePath = getStorePath();
   await fs.mkdir(path.dirname(storePath), { recursive: true });
   const tempPath = `${storePath}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(store, null, 2), { mode: 0o600 });
-  await fs.rename(tempPath, storePath);
+  try {
+    await fs.writeFile(tempPath, JSON.stringify(store, null, 2), { mode: 0o600 });
+    await fs.chmod(tempPath, 0o600).catch(() => {});
+    await fs.rename(tempPath, storePath);
+    await fs.chmod(storePath, 0o600).catch(() => {});
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+  }
 }
 
 function normalizeContent(content: string): string {
