@@ -11,12 +11,30 @@ import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { BOT_VERSION, getOpenCodeVersion } from "../../app/services/version-info-service.js";
+import { formatModelForDisplay } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
 
 const MAIN_KEY = "__main__";
 
 function normalizeOutboundThreadId(threadId?: number): number | undefined {
   return typeof threadId === "number" && threadId > 1 ? threadId : undefined;
+}
+
+export async function buildMainStatusText(currentModel: ModelInfo = getStoredModel()): Promise<string> {
+  const currentAgent = getStoredAgent();
+  const modelDisplay = currentModel.providerID && currentModel.modelID
+    ? formatModelForDisplay(currentModel.providerID, currentModel.modelID, currentModel.name)
+    : "Not configured";
+  const openCodeVersion = await getOpenCodeVersion();
+
+  return [
+    "⚡ <b>OpenCode Telegram</b>", "", "🟢 <b>Ready</b>",
+    `🤖 Bot <b>v${BOT_VERSION}</b>`, `🧠 OpenCode <b>v${openCodeVersion}</b>`,
+    `🤖 ${modelDisplay}`, `🛠️ ${currentAgent}`, "",
+    "Build, debug and control OpenCode directly from Telegram.", "",
+    "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
+  ].join("\n");
 }
 
 class KeyboardManager {
@@ -110,11 +128,13 @@ class KeyboardManager {
 
     await this.clearMainInlineMessage(chatId);
     try {
-      const response = await this.api.sendMessage(chatId, t("keyboard.updated"), {
+      const text = await buildMainStatusText(currentModel);
+      const response = await this.api.sendMessage(chatId, text, {
+        parse_mode: "HTML",
         reply_markup: createMainInlineKeyboard(currentModel),
       });
       this.mainInlineMessageIds.set(chatId, response.message_id);
-      logger.info(`[TelegramKeyboard] Main InlineKeyboard anchored at bottom: chat=${chatId}, message=${response.message_id}`);
+      logger.info(`[TelegramKeyboard] Main status + InlineKeyboard anchored at bottom: chat=${chatId}, message=${response.message_id}`);
     } catch (err) {
       logger.error("[TelegramKeyboard] Failed to send anchored Main InlineKeyboard:", err);
     }
