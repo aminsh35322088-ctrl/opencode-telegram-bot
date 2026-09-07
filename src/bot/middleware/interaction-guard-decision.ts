@@ -59,12 +59,12 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   const state = rawState?.kind === "question" && !questionManager.isActiveForChat(ctx.chat?.id) ? null : rawState;
   const scopedState = state && isStateForChat(state, ctx.chat?.id) ? state : null;
   const { inputType, command } = classifyIncomingInput(ctx);
-  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, scopedState, command, resolveCurrentSessionBusy());
-  if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, scopedState, command, resolveCurrentSessionBusy());
-  if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, scopedState, command, true);
-  if (inputType === "text" && scopedState?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, scopedState, command, resolveCurrentSessionBusy());
-  if (scopedState && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, scopedState, "expired", command, resolveCurrentSessionBusy()); }
   const isBusy = resolveCurrentSessionBusy();
+  if (inputType === "text" && isReplyKeyboardPress(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
+  if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
+  if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, scopedState, command, true);
+  if (inputType === "text" && scopedState?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
+  if (scopedState && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, scopedState, "expired", command, isBusy); }
   if (isBusy) {
     if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "command_not_allowed", command); }
     if (scopedState && allowsBusyInteraction(scopedState.kind)) {
