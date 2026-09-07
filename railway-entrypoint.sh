@@ -74,22 +74,18 @@ if [ -f "$STATE_FILE" ]; then
   ACCOUNT_ID="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].id // "github"' "$STATE_FILE" 2>/dev/null || echo github)"
 fi
 
-# Each stored account gets its own gh config directory. This makes the
-# persistent Integrations selector equivalent to `gh auth switch`, while
-# still allowing the bot to switch accounts without overwriting credentials.
+# Keep the bot's persistent account selection authoritative for every gh call.
+# GH_TOKEN is the documented headless authentication mechanism and takes
+# precedence over any stale credentials in a gh config directory.
 GH_CONFIG_DIR="/data/.config/gh/accounts/$ACCOUNT_ID"
 mkdir -p "$GH_CONFIG_DIR"
 chmod 700 "$GH_CONFIG_DIR"
 export GH_CONFIG_DIR
 
 if [ -n "$TOKEN" ]; then
-  STORED_TOKEN="$(GH_HOST="$GH_HOST" GH_PROMPT_DISABLED=1 /usr/bin/gh auth token --hostname "$GH_HOST" 2>/dev/null || true)"
-  if [ "$STORED_TOKEN" != "$TOKEN" ]; then
-    # gh's documented headless login path. --insecure-storage is intentional:
-    # Railway containers may not provide a usable OS credential helper.
-    printf '%s\n' "$TOKEN" | GH_HOST="$GH_HOST" GH_PROMPT_DISABLED=1 /usr/bin/gh auth login --hostname "$GH_HOST" --with-token --insecure-storage >/dev/null 2>&1 || true
-  fi
-  unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
+  GH_TOKEN="$TOKEN"
+  GITHUB_TOKEN="$TOKEN"
+  export GH_TOKEN GITHUB_TOKEN
 else
   unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
 fi
