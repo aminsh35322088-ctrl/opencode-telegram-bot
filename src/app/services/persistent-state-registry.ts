@@ -4,12 +4,15 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 /**
  * Single source of truth for Bot-owned persistent state.
  *
- * OpenCode-owned state and Railway/runtime configuration are intentionally not
- * included here. Secrets are represented by their owning state domain, but
- * their values are never exposed by this registry.
+ * app-state.json is the canonical container for user configuration. Legacy
+ * files remain registered temporarily so Factory Reset can also clean up data
+ * from pre-migration releases. Secrets remain in their existing 0600 files.
  */
 export const PERSISTENT_STATE = {
   application: [
+    "app-state.json",
+    "app-state.json.bak",
+    "app-state.json.tmp",
     "settings.json",
     "settings.json.bak",
     "settings.json.tmp",
