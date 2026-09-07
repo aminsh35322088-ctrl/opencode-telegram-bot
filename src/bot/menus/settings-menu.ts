@@ -133,7 +133,7 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
 
 export function buildResetHistoryConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "⚠️ <b>Clear All Conversation History?</b>\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nYour providers, API keys, model/agent settings, Topic defaults, and other global configuration stay intact.\n\n<b>This action cannot be undone.</b>",
+    text: "⚠️ Clear All Conversation History?\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nYour providers, API keys, model/agent settings, Topic defaults, and other global configuration stay intact.\n\nThis action cannot be undone.",
     keyboard: new InlineKeyboard()
       .text("✅ Clear All History", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
       .text("Cancel", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
@@ -142,7 +142,7 @@ export function buildResetHistoryConfirmationView(): { text: string; keyboard: I
 
 export function buildFactoryResetConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "☢️ <b>Reset Bot to Defaults?</b>\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, Topic workspaces/files, and saved bot configuration — including providers, API keys, model/agent selection, Topic defaults, permissions, scheduled-task state, integrations, and other persisted application data.\n\nYour source code and deployment/runtime configuration stay intact.\n\n<b>This action cannot be undone.</b>",
+    text: "☢️ Reset Bot to Defaults?\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, Topic workspaces/files, and saved bot configuration — including providers, API keys, model/agent selection, Topic defaults, permissions, scheduled-task state, integrations, and other persisted application data.\n\nYour source code and deployment/runtime configuration stay intact.\n\nThis action cannot be undone.",
     keyboard: new InlineKeyboard()
       .text("✅ Continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
       .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
@@ -151,7 +151,7 @@ export function buildFactoryResetConfirmationView(): { text: string; keyboard: I
 
 export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🔴 <b>Final Factory Reset</b>\n\nYou are about to return the bot to a fresh application state. Managed Topics, their OpenCode sessions, persistent memory, and bot-created files will be deleted, and saved configuration will be reset.\n\nSource code and deployment/runtime configuration stay intact.\n\nProceed only if you are sure.",
+    text: "🔴 Final Factory Reset\n\nYou are about to return the bot to a fresh application state. Managed Topics, their OpenCode sessions, persistent memory, and bot-created files will be deleted, and saved configuration will be reset.\n\nSource code and deployment/runtime configuration stay intact.\n\nProceed only if you are sure.",
     keyboard: new InlineKeyboard()
       .text("🔴 Confirm Factory Reset", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
       .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
