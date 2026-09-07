@@ -24,6 +24,7 @@ export interface AlwaysAllowedPermissionInfo {
  */
 export interface GlobalSettings {
   pinnedMessageId?: number;
+  mainNavigationMessageIds?: Record<string, number>;
   sessionDirectoryCache?: SessionDirectoryCacheInfo;
   scheduledTasks?: ScheduledTask[];
   scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[];
