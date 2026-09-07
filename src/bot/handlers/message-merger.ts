@@ -2,9 +2,7 @@ import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { resumePausedChatWithPrompt } from "../commands/pause-command.js";
 import type { Context } from "grammy";
 import { logger } from "../../utils/logger.js";
-import { isReplyKeyboardButtonText } from "../message-patterns.js";
-import { formatModelForButton } from "../../app/types/model.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { classifyReplyKeyboardInteraction } from "../interaction-classifier.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getTopicRuntimeContext, runInTopicRuntimeContext, type TopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -29,13 +27,6 @@ const pendingByRoute = new Map<PromptRouteKey, PendingPrompt>();
 function getPromptRouteKey(chatId: number, topicContext: TopicRuntimeContext | null): PromptRouteKey {
   if (!topicContext) return `${chatId}:main`;
   return `${chatId}:topic:${topicContext.threadId}:session:${topicContext.sessionId ?? "unbound"}`;
-}
-
-function isReservedReplyKeyboardText(text: string): boolean {
-  const model = getStoredModel();
-  const known = new Set<string>();
-  if (model.providerID && model.modelID) known.add(formatModelForButton(model.providerID, model.modelID, model.name));
-  return isReplyKeyboardButtonText(text, known);
 }
 
 function runWithCapturedTopicContext<T>(topicContext: TopicRuntimeContext | null, callback: () => T): T {
@@ -76,24 +67,31 @@ function flushPending(routeKey: PromptRouteKey): void {
  * into a single OpenCode prompt. Short messages are processed immediately
  * unless they follow a buffered chunk. Each new chunk restarts the wait window.
  *
+ * Reply Keyboard classification is deliberately performed at the final
+ * prompt-ingress boundary as well as in the Telegram router. Telegram sends a
+ * KeyboardButton press as an ordinary text message, so a control must never
+ * reach processUserPrompt merely because an earlier middleware did not match
+ * it. The classifier uses the exact keyboard rendered for the bound Topic
+ * session; it does not use broad emoji/prefix heuristics here.
+ *
  * Pass `mergeWindowMs <= 0` to disable merging and process the message
  * immediately.
  */
-export function queuePromptForMerging(
+export async function queuePromptForMerging(
   ctx: Context,
   text: string,
   deps: ProcessPromptDeps,
   mergeWindowMs: number,
-): void {
+): Promise<void> {
   const chatId = ctx.chat!.id;
   const topicContext = getTopicRuntimeContext();
   const routeKey = getPromptRouteKey(chatId, topicContext);
 
-  // Reply-keyboard controls are reserved protocol messages, never Coding AI
-  // input. This is a final safety net even if a Telegram/grammY matcher does
-  // not consume a control before the prompt router.
-  if (isReservedReplyKeyboardText(text)) {
-    logger.debug(`[Bot] Ignoring reply-keyboard control in prompt merger: ${routeKey}, text=${JSON.stringify(text)}`);
+  const classified = await classifyReplyKeyboardInteraction(ctx);
+  if (classified.isControl) {
+    logger.info(
+      `[Bot] Final prompt-ingress guard consumed Reply Keyboard control: scope=${classified.scope}, thread=${ctx.message?.message_thread_id ?? 0}, text=${JSON.stringify(text)}`,
+    );
     return;
   }
 
