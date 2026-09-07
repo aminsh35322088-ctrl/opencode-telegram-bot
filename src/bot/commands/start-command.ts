@@ -64,9 +64,11 @@ export async function startCommand(ctx: Context): Promise<void> {
     if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
   }
 
-  // The root navigation message owns both the dynamic status card and its
-  // glass keyboard. Avoid a second status-only message and avoid `Keyboard updated` text.
+  // Main navigation owns the chat's persistent pin. Telegram allows multiple
+  // pinned messages, so `/start` explicitly resets stale/legacy pins before
+  // restoring the canonical status + glass keyboard anchor.
   await sendBotUpdateNotice(ctx);
+  if (!isInTopic && !keyboardManager.isTopicMode(chatId)) await keyboardManager.clearAllMainNavigationPins(chatId);
   await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
   logger.info(`[TelegramKeyboard] /start rendered persistent Main status + InlineKeyboard navigation in one message: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default`);
 }
