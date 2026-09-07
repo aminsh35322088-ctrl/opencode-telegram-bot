@@ -14,7 +14,7 @@ import { topicTelemetry } from "../../utils/topic-observability.js";
 
 function isAlreadyDeletedTopicError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /TOPIC_NOT_FOUND|topic.*not found|message thread.*not found/i.test(message);
+  return /TOPIC_NOT_FOUND|TOPIC_ID_INVALID|topic.*not found|message thread.*not found|invalid topic id/i.test(message);
 }
 
 function asError(error: unknown): Error {
@@ -29,9 +29,10 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
     throw new Error(`Refusing to delete topic session with unmanaged directory: ${binding.directory}`);
   }
 
-  // Telegram deletion is the destructive boundary for the user-visible Topic.
-  // Do it first so a Telegram API failure cannot leave an internally deleted
-  // session/workspace that still appears to exist in Telegram.
+  // Telegram Topic deletion is intentionally idempotent. A stale binding can
+  // point at a Topic that was already deleted manually, in which case the
+  // Telegram API returns TOPIC_ID_INVALID/TOPIC_NOT_FOUND. We must still purge
+  // the OpenCode session, workspace, runtime state and binding.
   try {
     await api.deleteForumTopic(binding.chatId, binding.threadId);
   } catch (error) {
@@ -39,7 +40,7 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
       topicTelemetry("telegram_topic_delete_failed", context);
       throw error;
     }
-    logger.info(`[TelegramTopics] Telegram Topic already deleted: chat=${binding.chatId}, thread=${binding.threadId}`);
+    logger.info(`[TelegramTopics] Telegram Topic already absent: chat=${binding.chatId}, thread=${binding.threadId}`);
   }
   topicTelemetry("telegram_topic_deleted", context);
 
