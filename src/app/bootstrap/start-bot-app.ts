@@ -10,7 +10,7 @@ import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
-
+import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearServiceStateFile } from "../../runtime/service/manager.js";
@@ -29,6 +29,7 @@ export async function startBotApp(): Promise<void> {
   await initializeLogger();
   const mode = getRuntimeMode(); const runtimePaths = getRuntimePaths(); const version = await getBotVersion(); const logFilePath = getLogFilePath();
   logger.info(`Starting OpenCode Telegram Bot v${version}...`); logger.info(`Node.js ${process.version} on ${process.platform} ${process.arch}`); logger.info(`Config loaded from ${runtimePaths.envFilePath}`); if (logFilePath) logger.info(`Logs are written to ${logFilePath}`); logger.info(`Allowed User ID: ${config.telegram.allowedUserId}`); logger.debug(`[Runtime] Application start mode: ${mode}`);
+  await cleanupLegacyUserConfiguration();
   let serviceStateCleared = false;
   const clearManagedServiceState = async (): Promise<void> => { if (!isServiceChildProcess() || serviceStateCleared) return; const stateFilePath = getServiceStateFilePathFromEnv(); if (!stateFilePath) return; try { await fs.access(stateFilePath); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { serviceStateCleared = true; return; } throw error; } await clearServiceStateFile(stateFilePath); serviceStateCleared = true; };
   const flushSettingsWithTimeout = (): Promise<void> => Promise.race([flushSettings(), new Promise<void>((resolve) => setTimeout(resolve, SETTINGS_FLUSH_TIMEOUT_MS))]); const flushLoggerWithTimeout = (): Promise<void> => Promise.race([flushLogger(), new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_TIMEOUT_MS))]);
@@ -42,9 +43,7 @@ export async function startBotApp(): Promise<void> {
   const bot = createBot();
   const botInfo = await bot.api.getMe();
   logger.info(`[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`);
-  if (!botInfo.has_topics_enabled) {
-    logger.warn("[TelegramTopics] Private Topics/Threaded Mode is disabled for this bot. Enable Threaded Mode in @BotFather; code cannot create the native General topic UI while this capability is disabled.");
-  }
+  if (!botInfo.has_topics_enabled) logger.warn("[TelegramTopics] Private Topics/Threaded Mode is disabled for this bot. Enable Threaded Mode in @BotFather; code cannot create the native General topic UI while this capability is disabled.");
   await scheduledTaskRuntime.initialize(bot, createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId));
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog(); runtimeObservabilityWatchdog.start();
   safeBackgroundTask({ taskName: "app.opencodeStartup", task: async () => { const monitorStarted = await opencodeAutoRestartService.start(); if (!monitorStarted) await notifyOpencodeReadyIfHealthy("startup"); } });
