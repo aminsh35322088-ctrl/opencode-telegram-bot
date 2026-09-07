@@ -32,7 +32,8 @@ GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
 INTEGRATION_STATE_FILE="/data/workspace/app-state.json"
 INTEGRATION_BIN_DIR="/data/run/integration-bin"
-mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR"
+GH_ACCOUNTS_DIR="/data/.config/gh/accounts"
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR" "$GH_ACCOUNTS_DIR"
 
 if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
@@ -67,16 +68,32 @@ cat > "$INTEGRATION_BIN_DIR/gh" <<'EOF'
 set -eu
 STATE_FILE="/data/workspace/app-state.json"
 TOKEN=""
+ACCOUNT_ID="github"
 if [ -f "$STATE_FILE" ]; then
   TOKEN="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
+  ACCOUNT_ID="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].id // "github"' "$STATE_FILE" 2>/dev/null || echo github)"
 fi
+
+# Each stored account gets its own gh config directory. This makes the
+# persistent Integrations selector equivalent to `gh auth switch`, while
+# still allowing the bot to switch accounts without overwriting credentials.
+GH_CONFIG_DIR="/data/.config/gh/accounts/$ACCOUNT_ID"
+mkdir -p "$GH_CONFIG_DIR"
+chmod 700 "$GH_CONFIG_DIR"
+export GH_CONFIG_DIR
+
 if [ -n "$TOKEN" ]; then
-  GH_TOKEN="$TOKEN"
-  GITHUB_TOKEN="$TOKEN"
-  export GH_TOKEN GITHUB_TOKEN
+  STORED_TOKEN="$(GH_HOST="$GH_HOST" GH_PROMPT_DISABLED=1 /usr/bin/gh auth token --hostname "$GH_HOST" 2>/dev/null || true)"
+  if [ "$STORED_TOKEN" != "$TOKEN" ]; then
+    # gh's documented headless login path. --insecure-storage is intentional:
+    # Railway containers may not provide a usable OS credential helper.
+    printf '%s\n' "$TOKEN" | GH_HOST="$GH_HOST" GH_PROMPT_DISABLED=1 /usr/bin/gh auth login --hostname "$GH_HOST" --with-token --insecure-storage >/dev/null 2>&1 || true
+  fi
+  unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
 else
   unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
 fi
+
 exec /usr/bin/gh "$@"
 EOF
 
