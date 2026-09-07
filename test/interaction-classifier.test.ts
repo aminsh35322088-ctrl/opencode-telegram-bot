@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Context } from "grammy";
 import { classifyReplyKeyboardInteraction } from "../src/bot/interaction-classifier.js";
+import { MAIN_BUTTONS } from "../src/bot/keyboards/main-reply-keyboard.js";
 
 function context(messageText: string, rawReplyKeyboardText?: string): Context {
   return {
@@ -9,6 +10,32 @@ function context(messageText: string, rawReplyKeyboardText?: string): Context {
     state: rawReplyKeyboardText === undefined ? {} : { rawReplyKeyboardText },
   } as unknown as Context;
 }
+
+const allStaticReplyKeyboardLabels = [
+  MAIN_BUTTONS.history,
+  MAIN_BUTTONS.newChat,
+  MAIN_BUTTONS.mainSettings,
+  MAIN_BUTTONS.topicSettings,
+  MAIN_BUTTONS.imageAi,
+  MAIN_BUTTONS.deleteChat,
+  MAIN_BUTTONS.pause,
+  MAIN_BUTTONS.resume,
+  MAIN_BUTTONS.abort,
+  MAIN_BUTTONS.compact(true),
+  MAIN_BUTTONS.compact(false),
+  "🧠 Model Center",
+  "❌ Cancel",
+];
+
+test("classifies every static Reply Keyboard label from the raw Telegram text", async () => {
+  for (const label of allStaticReplyKeyboardLabels) {
+    const result = await classifyReplyKeyboardInteraction(
+      context(`Replying to @Chat Bot.\n\n${label}`, label),
+    );
+    assert.equal(result.isControl, true, `expected control: ${label}`);
+    assert.equal(result.text, label, `expected raw label to be preserved: ${label}`);
+  }
+});
 
 test("classifies the raw Reply Keyboard label even after reply-context enrichment", async () => {
   const result = await classifyReplyKeyboardInteraction(
