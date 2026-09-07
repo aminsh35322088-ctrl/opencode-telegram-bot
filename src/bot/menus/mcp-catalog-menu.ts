@@ -6,101 +6,67 @@ import { t } from "../../i18n/index.js";
 export const MCPS_CALLBACK_PREFIX = "mcps:";
 export const MCPS_CALLBACK_SELECT_PREFIX = `${MCPS_CALLBACK_PREFIX}select:`;
 export const MCPS_CALLBACK_TOGGLE = `${MCPS_CALLBACK_PREFIX}toggle`;
-export const MCPS_CALLBACK_ADD = `${MCPS_CALLBACK_PREFIX}add`;
-export const MCPS_CALLBACK_ADD_LOCAL = `${MCPS_CALLBACK_PREFIX}add:local`;
-export const MCPS_CALLBACK_ADD_REMOTE = `${MCPS_CALLBACK_PREFIX}add:remote`;
 export const MCPS_CALLBACK_BACK = `${MCPS_CALLBACK_PREFIX}back`;
 export const MCPS_CALLBACK_PARENT_BACK = `${MCPS_CALLBACK_PREFIX}parent_back`;
 export const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
+export const MCPS_CALLBACK_ADD = `${MCPS_CALLBACK_PREFIX}add`;
+export const MCPS_CALLBACK_ADD_LOCAL = `${MCPS_CALLBACK_PREFIX}add:local`;
+export const MCPS_CALLBACK_ADD_REMOTE = `${MCPS_CALLBACK_PREFIX}add:remote`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
 function getStatusLabel(status: McpStatus): string {
   switch (status.status) {
-    case "connected":
-      return t("mcps.status.connected");
-    case "disabled":
-      return t("mcps.status.disabled");
-    case "failed":
-      return t("mcps.status.failed");
-    case "needs_auth":
-      return t("mcps.status.needs_auth");
-    case "needs_client_registration":
-      return t("mcps.status.needs_client_registration");
-    default:
-      return t("common.unknown");
+    case "connected": return t("mcps.status.connected");
+    case "disabled": return t("mcps.status.disabled");
+    case "failed": return t("mcps.status.failed");
+    case "needs_auth": return t("mcps.status.needs_auth");
+    case "needs_client_registration": return t("mcps.status.needs_client_registration");
+    default: return t("common.unknown");
   }
 }
-
 function getStatusEmoji(status: McpStatus): string {
   switch (status.status) {
-    case "connected":
-      return "🟢";
-    case "disabled":
-      return "🔴";
-    case "failed":
-      return "⚠️";
-    case "needs_auth":
-      return "🔒";
-    case "needs_client_registration":
-      return "🔒";
-    default:
-      return "❓";
+    case "connected": return "🟢";
+    case "disabled": return "🔴";
+    case "failed": return "⚠️";
+    case "needs_auth": return "🔒";
+    case "needs_client_registration": return "🔒";
+    default: return "❓";
   }
 }
-
 function formatMcpButtonLabel(server: McpCatalogServerItem): string {
   const rawLabel = `${getStatusEmoji(server.status)} ${server.name}`;
-
-  if (rawLabel.length <= MAX_INLINE_BUTTON_LABEL_LENGTH) {
-    return rawLabel;
-  }
-
+  if (rawLabel.length <= MAX_INLINE_BUTTON_LABEL_LENGTH) return rawLabel;
   return `${rawLabel.slice(0, MAX_INLINE_BUTTON_LABEL_LENGTH - 3)}...`;
 }
-
 export function parseMcpSelectCallback(data: string): number | null {
-  if (!data.startsWith(MCPS_CALLBACK_SELECT_PREFIX)) {
-    return null;
-  }
-
+  if (!data.startsWith(MCPS_CALLBACK_SELECT_PREFIX)) return null;
   const index = Number(data.slice(MCPS_CALLBACK_SELECT_PREFIX.length));
-  if (!Number.isInteger(index) || index < 0) {
-    return null;
-  }
-
+  if (!Number.isInteger(index) || index < 0) return null;
   return index;
 }
-
 export function buildMcpsListKeyboard(servers: McpCatalogServerItem[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-
-  servers.forEach((server, index) => {
-    keyboard.text(formatMcpButtonLabel(server), `${MCPS_CALLBACK_SELECT_PREFIX}${index}`).row();
-  });
-
+  servers.forEach((server, index) => { keyboard.text(formatMcpButtonLabel(server), `${MCPS_CALLBACK_SELECT_PREFIX}${index}`).row(); });
   keyboard.text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row();
-  keyboard.text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
+  keyboard.text("← Back", MCPS_CALLBACK_PARENT_BACK).text("🏠 Home", "main:home");
   return keyboard;
 }
-
 export function buildMcpsEmptyKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row()
-    .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
+    .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("🏠 Home", "main:home");
 }
-
 export function buildMcpsAddTypeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🖥 Local", MCPS_CALLBACK_ADD_LOCAL)
+    .text("💻 Local", MCPS_CALLBACK_ADD_LOCAL)
     .text("🌐 Remote", MCPS_CALLBACK_ADD_REMOTE).row()
-    .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("✖ Cancel", MCPS_CALLBACK_CANCEL);
+    .text("✖ Cancel", MCPS_CALLBACK_CANCEL);
 }
-
 export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   let hasToggleButton = false;
-
   if (server.status.status === "connected") {
     keyboard.text(t("mcps.button.disable"), MCPS_CALLBACK_TOGGLE);
     hasToggleButton = true;
@@ -108,29 +74,16 @@ export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKey
     keyboard.text(t("mcps.button.enable"), MCPS_CALLBACK_TOGGLE);
     hasToggleButton = true;
   }
-
-  if (hasToggleButton) {
-    keyboard.row();
-  }
-
-  keyboard.text(t("mcps.button.back"), MCPS_CALLBACK_BACK).text("✖ Close", MCPS_CALLBACK_CANCEL);
+  if (hasToggleButton) keyboard.row();
+  keyboard.text(t("mcps.button.back"), MCPS_CALLBACK_BACK).text("🏠 Home", "main:home");
   return keyboard;
 }
-
 export function buildMcpsDetailText(server: McpCatalogServerItem): string {
   const lines: string[] = [];
   lines.push(t("mcps.detail.title", { name: server.name }));
   lines.push("");
   lines.push(t("mcps.detail.status", { status: getStatusLabel(server.status) }));
-
-  if (server.status.status === "failed" || server.status.status === "needs_client_registration") {
-    lines.push(t("mcps.detail.error", { error: server.status.error }));
-  }
-
-  if (server.status.status === "needs_auth" || server.status.status === "needs_client_registration") {
-    lines.push("");
-    lines.push(t("mcps.auth_required"));
-  }
-
+  if (server.status.status === "failed" || server.status.status === "needs_client_registration") lines.push(t("mcps.detail.error", { error: server.status.error }));
+  if (server.status.status === "needs_auth" || server.status.status === "needs_client_registration") { lines.push(""); lines.push(t("mcps.auth_required")); }
   return lines.join("\n");
 }
