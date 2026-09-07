@@ -34,8 +34,7 @@ export async function openSessionInTelegramTopic(api: Api, chatId: number, sessi
   const existing = OPEN_SESSION_LOCKS.get(lockKey);
   if (existing) return existing;
   const previousChatOperation = CHAT_TOPIC_CREATION_LOCKS.get(chatId) ?? Promise.resolve();
-  let chatOperation!: Promise<void>;
-  chatOperation = previousChatOperation
+  const chatOperation = previousChatOperation
     .catch(() => {})
     .then(() => openSessionInTopicInternal(api, chatId, session).then(() => undefined))
     .finally(() => {
