@@ -8,7 +8,7 @@ import { abortCurrentOperation } from "./abort-command.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import { BOT_VERSION, getBotUpdateNotice, markBotVersionNotified } from "../../app/services/version-info-service.js";
+import { getBotUpdateNotice, markBotVersionNotified } from "../../app/services/version-info-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
 
@@ -64,14 +64,8 @@ export async function startCommand(ctx: Context): Promise<void> {
     if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
   }
 
-  const currentAgent = undefined;
-  const currentModel = undefined;
-  // Keep the root navigation message responsible for its own persistent status
-  // text + glass keyboard. Navigation handlers can replace the controls without
-  // creating a separate `⌨️ Keyboard updated` message.
-  void currentAgent;
-  void currentModel;
-
+  // The root navigation message owns both the dynamic status card and its
+  // glass keyboard. Avoid a second status-only message and avoid `Keyboard updated` text.
   await sendBotUpdateNotice(ctx);
   await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
   logger.info(`[TelegramKeyboard] /start rendered persistent Main status + InlineKeyboard navigation in one message: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default`);
