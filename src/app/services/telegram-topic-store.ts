@@ -13,7 +13,7 @@ export interface TelegramTopicBinding {
   title?: string;
   navigationMessageId?: number;
 }
-function getStorePath(): string { return path.join(path.dirname(getRuntimePaths().settingsFilePath), "telegram-topic-bindings.json"); }
+function getStorePath(): string { return path.join(getRuntimePaths().appHome, "runtime", "topics", "telegram-topic-bindings.json"); }
 function isFileNotFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
 async function readBindings(): Promise<TelegramTopicBinding[]> {
   const fs = await import("fs/promises");
@@ -21,7 +21,7 @@ async function readBindings(): Promise<TelegramTopicBinding[]> {
   catch (error) { if (isFileNotFound(error)) return []; logger.error("[TelegramTopics] Failed to read topic binding store:", error); throw error; }
 }
 let writeQueue: Promise<void> = Promise.resolve();
-async function writeBindings(bindings: TelegramTopicBinding[]): Promise<void> { const fs = await import("fs/promises"); const storePath = getStorePath(); const tempPath = `${storePath}.tmp`; await fs.mkdir(path.dirname(storePath), { recursive: true }); try { await fs.writeFile(tempPath, JSON.stringify(bindings, null, 2), "utf8"); await fs.rename(tempPath, storePath); } finally { await fs.rm(tempPath, { force: true }).catch(() => {}); } }
+async function writeBindings(bindings: TelegramTopicBinding[]): Promise<void> { const fs = await import("fs/promises"); const storePath = getStorePath(); const tempPath = `${storePath}.tmp`; await fs.mkdir(path.dirname(storePath), { recursive: true }); try { await fs.writeFile(tempPath, JSON.stringify(bindings, null, 2), { encoding: "utf8", mode: 0o600 }); await fs.chmod(tempPath, 0o600).catch(() => {}); await fs.rename(tempPath, storePath); await fs.chmod(storePath, 0o600).catch(() => {}); } finally { await fs.rm(tempPath, { force: true }).catch(() => {}); } }
 async function mutateBindings(mutator: (bindings: TelegramTopicBinding[]) => TelegramTopicBinding[]): Promise<void> { const operation = writeQueue.catch(() => {}).then(async () => { const bindings = await readBindings(); await writeBindings(mutator(bindings)); }); writeQueue = operation; await operation; }
 export async function listTelegramTopicBindings(): Promise<TelegramTopicBinding[]> { return readBindings(); }
 export async function findTelegramTopicBindingBySession(chatId: number, sessionId: string): Promise<TelegramTopicBinding | null> { return (await readBindings()).find((binding) => binding.chatId === chatId && binding.sessionId === sessionId) ?? null; }
