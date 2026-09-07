@@ -20,7 +20,7 @@ let skipNextBackupRotation = false;
 let settingsWriteQueue: Promise<void> = Promise.resolve();
 function isFileNotFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
 async function readSettingsFileAt(filePath: string): Promise<Settings> { const fs = await import("fs/promises"); return JSON.parse(await fs.readFile(filePath, "utf-8")) as Settings; }
-async function readSettingsFile(): Promise<Settings> { const settingsFilePath = getSettingsFilePath(); try { return await readSettingsFileAt(settingsFilePath); } catch (primaryError) { if (!isFileNotFound(primaryError)) logger.warn(`[SettingsManager] Cannot read settings file ${settingsFilePath}:`, primaryError); try { skipNextBackupRotation = true; return await readSettingsFileAt(getSettingsBackupFilePath()); } catch (backupError) { if (isFileNotFound(primaryError) && isFileNotFound(backupError)) return {}; logger.error(`[SettingsManager] Settings file and backup are unusable: ${settingsFilePath}`, { primaryError, backupError }); throw new Error(`Cannot read settings: ${settingsFilePath} and backup are both unusable.`); } } }
+async function readSettingsFile(): Promise<Settings> { const settingsFilePath = getSettingsFilePath(); try { return await readSettingsFileAt(settingsFilePath); } catch (primaryError) { if (!isFileNotFound(primaryError)) logger.warn(`[SettingsManager] Cannot read settings file ${settingsFilePath}:`, primaryError); try { skipNextBackupRotation = true; return await readSettingsFileAt(getSettingsBackupFilePath()); } catch (backupError) { if (isFileNotFound(primaryError) && isFileNotFound(backupError)) return {}; logger.error(`[SettingsManager] Settings file and backup are unusable: ${settingsFilePath}`, { primaryError, backupError }); throw new Error(`Cannot read settings: ${settingsFilePath} and ${getSettingsBackupFilePath()} are both unusable.`); } } }
 async function writeSettingsFileAtomically(settings: Settings): Promise<void> { const fs = await import("fs/promises"); const settingsFilePath = getSettingsFilePath(); const tempFilePath = getSettingsTempFilePath(); await fs.mkdir(path.dirname(settingsFilePath), { recursive: true }); try { await fs.writeFile(tempFilePath, JSON.stringify(settings, null, 2)); if (!skipNextBackupRotation) { try { await fs.rename(settingsFilePath, getSettingsBackupFilePath()); } catch (error) { if (!isFileNotFound(error)) throw error; } } await fs.rename(tempFilePath, settingsFilePath); skipNextBackupRotation = false; } catch (error) { await fs.rm(tempFilePath, { force: true }).catch(() => {}); throw error; } }
 function writeSettingsFile(settings: Settings): Promise<void> { settingsWriteQueue = settingsWriteQueue.catch(() => {}).then(async () => { try { await writeSettingsFileAtomically(settings); } catch (error) { logger.error("[SettingsManager] Error writing settings file:", error); } }); return settingsWriteQueue; }
 export function flushSettings(): Promise<void> { return settingsWriteQueue; }
@@ -52,7 +52,7 @@ export function setShowThinkingContent(enabled: boolean): void { if (getTopicRun
 export type { MessageFormatMode, ResponseStreamingMode };
 export function getResponseStreamingMode(): ResponseStreamingMode { return currentTopicState()?.settings.responseStreamingMode ?? currentSettings.responseStreamingMode ?? getTopicDefaults().responseStreamingMode; }
 export function setResponseStreamingMode(mode: ResponseStreamingMode): void { if (getTopicRuntimeContext()) { updateTopic({ responseStreamingMode: mode }); return; } currentSettings.responseStreamingMode = mode; void writeSettingsFile(currentSettings); }
-export function getMessageFormatMode(): MessageFormatMode { return currentTopicState()?.settings.messageFormatMode ?? currentSettings.messageFormatMode ?? getTopicRuntimeContext()?.settings.messageFormatMode ?? config.bot.messageFormatMode; }
+export function getMessageFormatMode(): MessageFormatMode { return currentTopicState()?.settings.messageFormatMode ?? currentSettings.messageFormatMode ?? getTopicDefaults().messageFormatMode ?? config.bot.messageFormatMode; }
 export function setMessageFormatMode(mode: MessageFormatMode): void { if (getTopicRuntimeContext()) { updateTopic({ messageFormatMode: mode }); return; } currentSettings.messageFormatMode = mode; void writeSettingsFile(currentSettings); }
 export function getShowAssistantRunFooter(): boolean { return currentTopicState()?.settings.showAssistantRunFooter ?? currentSettings.showAssistantRunFooter ?? getTopicDefaults().showAssistantRunFooter; }
 export function setShowAssistantRunFooter(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ showAssistantRunFooter: enabled }); return; } currentSettings.showAssistantRunFooter = enabled; void writeSettingsFile(currentSettings); }
@@ -70,17 +70,8 @@ export function getPinnedMessageId(): number | undefined { return currentSetting
 export function setPinnedMessageId(messageId: number): void { currentSettings.pinnedMessageId = messageId; void writeSettingsFile(currentSettings); }
 export function clearPinnedMessageId(): void { currentSettings.pinnedMessageId = undefined; void writeSettingsFile(currentSettings); }
 export function getMainNavigationMessageId(chatId: number): number | undefined { return currentSettings.mainNavigationMessageIds?.[String(chatId)]; }
-export function setMainNavigationMessageId(chatId: number, messageId: number): Promise<void> {
-  currentSettings.mainNavigationMessageIds = { ...(currentSettings.mainNavigationMessageIds ?? {}), [String(chatId)]: messageId };
-  return writeSettingsFile(currentSettings);
-}
-export function clearMainNavigationMessageId(chatId: number): Promise<void> {
-  if (!currentSettings.mainNavigationMessageIds) return Promise.resolve();
-  const next = { ...currentSettings.mainNavigationMessageIds };
-  delete next[String(chatId)];
-  currentSettings.mainNavigationMessageIds = Object.keys(next).length ? next : undefined;
-  return writeSettingsFile(currentSettings);
-}
+export function setMainNavigationMessageId(chatId: number, messageId: number): Promise<void> { currentSettings.mainNavigationMessageIds = { ...(currentSettings.mainNavigationMessageIds ?? {}), [String(chatId)]: messageId }; return writeSettingsFile(currentSettings); }
+export function clearMainNavigationMessageId(chatId: number): Promise<void> { if (!currentSettings.mainNavigationMessageIds) return Promise.resolve(); const next = { ...currentSettings.mainNavigationMessageIds }; delete next[String(chatId)]; currentSettings.mainNavigationMessageIds = Object.keys(next).length ? next : undefined; return writeSettingsFile(currentSettings); }
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined { return currentSettings.sessionDirectoryCache; }
 export function setSessionDirectoryCache(cache: SessionDirectoryCacheInfo): Promise<void> { currentSettings.sessionDirectoryCache = cache; return writeSettingsFile(currentSettings); }
 export function clearSessionDirectoryCache(): void { currentSettings.sessionDirectoryCache = undefined; void writeSettingsFile(currentSettings); }
