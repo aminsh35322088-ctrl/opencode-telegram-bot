@@ -40,7 +40,7 @@ import { newCommand } from "../commands/new-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
-import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { buildMainStatusText, keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
@@ -75,15 +75,17 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
 
     await ctx.answerCallbackQuery().catch(() => {});
     try {
-      await ctx.api.editMessageText(chatId, messageId, t("keyboard.updated"), {
+      const text = await buildMainStatusText(getStoredModel());
+      await ctx.api.editMessageText(chatId, messageId, text, {
+        parse_mode: "HTML",
         reply_markup: createMainInlineKeyboard(getStoredModel()),
       });
       keyboardManager.setMainInlineMessage(chatId, messageId);
       clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
-      logger.info(`[Navigation] Restored Main InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+      logger.info(`[Navigation] Restored Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
     } catch (error) {
       // Never fall back to delete+send: Home is explicitly an in-place action.
-      logger.warn(`[Navigation] Failed to restore Main InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}`, error);
+      logger.warn(`[Navigation] Failed to restore Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}`, error);
     }
     return true;
   }
