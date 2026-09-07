@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { getRuntimePaths } from "../../runtime/paths.js";
 import { getAiRoleSelection } from "./ai-role-selection-service.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { logger } from "../../utils/logger.js";
