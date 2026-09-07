@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
+import { configureGroqStt, deleteCustomProvider, discoverModels, getGroqSttConfig, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
 import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider, validateConfiguredCloudflareCredentials } from "../../app/services/image-ai-provider-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { config } from "../../config.js";
@@ -26,6 +26,34 @@ export function clearProviderWizard(): void { pending = null; }
 async function deleteInput(ctx: Context) { const id = ctx.message?.message_id; if (ctx.chat?.id && id) await ctx.api.deleteMessage(ctx.chat.id, id).catch(() => {}); }
 async function editWizard(ctx: Context, id: number, text: string, back = "provider:menu") { if (ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: wizardKeyboard(back) }); }
 async function restartOpenCodeAfterProviderChange() { const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath; const target = resolveLocalOpencodeTarget(config.opencode.apiUrl); if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((r) => setTimeout(r, 500)); startLocalOpencodeServer(target).unref(); } await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch((e) => logger.warn("[Providers] Model refresh failed:", e)); }
+function displayProviderModels(models: Array<{ id: string; name: string }>): string { return models.map((model) => model.name || model.id).filter(Boolean).join(", "); }
+async function getProviderCapabilitySummary(customProviders: Awaited<ReturnType<typeof listCustomProviders>>) {
+  const [imageProviders, groq] = await Promise.all([listImageAiProviders(), getGroqSttConfig()]);
+  const lines: string[] = [];
+  for (const capability of CAPABILITIES) {
+    if (capability === "image") {
+      const configuredImage: string[] = [];
+      const cloudflare = imageProviders.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
+      if (cloudflare && (await validateConfiguredCloudflareCredentials()).valid) configuredImage.push(`Cloudflare Workers AI — ${cloudflare.model}`);
+      const custom = imageProviders.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID && provider.active);
+      if (custom) configuredImage.push(`Custom API — ${custom.model}`);
+      lines.push(`${LABEL[capability]}: ${configuredImage.length ? `✅ ${configuredImage.join(" · ")}` : "⚪ Not configured"}`);
+      continue;
+    }
+    if (capability === "stt" && groq) {
+      const custom = customProviders.filter((provider) => provider.capability === capability).map((provider) => `${provider.name} — ${displayProviderModels(provider.models)}`).filter(Boolean);
+      const configured = [`Groq — ${groq.model}`, ...custom];
+      lines.push(`${LABEL[capability]}: ✅ ${configured.join(" · ")}`);
+      continue;
+    }
+    const configured = customProviders
+      .filter((provider) => provider.capability === capability)
+      .map((provider) => `${provider.name} — ${displayProviderModels(provider.models)}`)
+      .filter(Boolean);
+    lines.push(`${LABEL[capability]}: ${configured.length ? `✅ ${configured.join(" · ")}` : "⚪ Not configured"}`);
+  }
+  return lines;
+}
 
 async function renderImage(ctx: Context, id?: number, notice?: string) {
   const providers = await listImageAiProviders();
@@ -52,8 +80,12 @@ async function renderSlot(ctx: Context, c: AiCapability, id?: number, notice?: s
   if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
 }
 async function renderProviders(ctx: Context, id?: number, notice?: string) {
-  const ps = await listCustomProviders(); const k = new InlineKeyboard(); for (const c of CAPABILITIES) k.row().text(LABEL[c], `provider:slot:${c}`); k.row().text("← Advanced", "provider:advanced").text("🏠 Home", "main:home");
-  const text = `${notice ? `${notice}\n\n` : ""}🔌 Custom Provider API\n\n${CAPABILITIES.map((c) => `${LABEL[c]}: ${ps.filter((p) => p.capability === c).map((p) => p.name).join(", ") || "Not configured"}`).join("\n")}\n\nImage AI has only two provider types: Cloudflare Workers AI and Custom API.`;
+  const ps = await listCustomProviders();
+  const lines = await getProviderCapabilitySummary(ps);
+  const k = new InlineKeyboard();
+  for (const c of CAPABILITIES) k.row().text(LABEL[c], `provider:slot:${c}`);
+  k.row().text("← Advanced", "provider:advanced").text("🏠 Home", "main:home");
+  const text = `${notice ? `${notice}\n\n` : ""}🔌 Custom Provider API\n\n${lines.join("\n")}\n\nImage AI has only two provider types: Cloudflare Workers AI and Custom API.`;
   if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
 }
 export async function providersCommand(ctx: CommandContext<Context>) { clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx as Context); }
