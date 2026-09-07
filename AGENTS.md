@@ -26,12 +26,11 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 
 ## Runtime environment
 
-The Railway production image is a runtime environment, not a CI runner.
-It intentionally does not ship the repository's CI-only test suite or a validation toolchain.
-Do not install testing, linting, typechecking, or build-validation tools into the production runtime.
+The Railway production image is both the bot runtime and the project's controlled self-validation environment.
+The image ships a read-only validation toolchain in image layers so test execution never installs packages into `/data`.
+Dependency installation belongs to the image build; agents must not mutate the workspace dependency tree.
 
-The production application uses only the runtime capabilities and custom OpenCode tools explicitly shipped with the image.
-Dependency changes belong to source control and the GitHub Actions build/deploy path, not to the running bot or its workspace.
+The repository's CI-only test suite remains source-controlled under `.github/ci-tests/` and is materialized into a workspace only when validation is requested.
 
 When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
 
@@ -93,11 +92,65 @@ Touch only what is necessary. Do not refactor unrelated code or delete unrelated
 
 ### Goal-Driven Execution
 
-Define success criteria and verify them. For bugs, reproduce the failure, fix the underlying issue, and validate through the repository's GitHub Actions CI instead of running local validation in the production runtime.
+Define success criteria and verify them. For bugs, reproduce the failure, fix the underlying issue, and validate through both the bot's self-validation environment and GitHub Actions when available.
 
 ### Git
 
 - **Commits:** Never create commits automatically. Commit only when the user explicitly asks.
+
+## Validation policy: bot self-validation + GitHub Actions
+
+The bot has a preinstalled validation toolchain in the Docker image. It is safe to use because validation dependencies live in image layers, while `/data` receives only source/test files and symlinks.
+GitHub Actions remains the final CI authority and must still be inspected for repository validation.
+
+### Mandatory rules
+
+- **NEVER run `npm install`, `npm ci`, `npm i`, `npm add`, or equivalent dependency installation inside `/data` or a project workspace.**
+- **NEVER install test runners, linters, typecheckers, or validation-only packages into a workspace.**
+- Before any potentially disk-heavy validation operation, run `df -h /data`. If free space is below **100 MB**, abort the operation and clean up first.
+- Always use the image-provided dependency tree through the workspace `node_modules` symlink. Never replace it with a real installation.
+- The shared dependency tree is read-only by policy. Do not modify, prune, update, or uninstall packages from it.
+- CI-only tests are materialized only for the duration of validation and must be removed afterwards.
+- After heavy work, clean temporary files and obsolete validation output from `/tmp` and the workspace.
+- Do not keep generated coverage, caches, downloads, archives, or other disposable data in `/data` unless the user explicitly asks to retain them.
+- Periodically remove stale `topic-workspaces` older than the project's configured retention window; do not delete active sessions.
+
+### Allowed self-validation commands
+
+Use the preinstalled toolchain directly. Preferred commands are:
+
+- `vitest run`
+- `tsc --noEmit`
+- `tsc -p tsconfig.test.json --noEmit`
+- `eslint ...`
+- `prettier --check ...`
+- `node_modules/.bin/*`
+
+Do not use `npm test`, `npm run test`, `npm exec`, `npx`, or package-installing commands as substitutes.
+
+### Self-validation workflow
+
+1. Check disk space with `df -h /data` and abort below 100 MB free.
+2. Ensure the workspace uses the image-provided `node_modules` symlink.
+3. Materialize `.github/ci-tests/tests`, `.github/ci-tests/tsconfig.test.json`, and `.github/ci-tests/vitest.config.ts` only when the CI-equivalent suite is needed.
+4. Run the smallest relevant validation first, then the full suite when the change is broad or user-facing.
+5. Remove materialized tests, coverage, temporary files, and disposable logs after validation.
+6. Inspect GitHub Actions results for the same revision and fix any CI-specific failures.
+
+### GitHub Actions workflow
+
+When GitHub validation is required:
+
+1. Make the smallest source/configuration change needed.
+2. Push or commit the authorized change so `.github/workflows/ci.yml` runs on GitHub.
+3. Inspect the GitHub Actions result/logs.
+4. Fix failures from the CI evidence and validate the next revision.
+
+Do not treat a green local self-test as a substitute for GitHub Actions.
+
+### Runtime diagnostics
+
+Runtime diagnostics and session recovery are operational tools, not substitutes for validation. For a stuck coding session, use `full-diagnostics` and `session-recovery` to inspect and recover the runtime session.
 
 ## Coding rules
 
@@ -106,33 +159,3 @@ Define success criteria and verify them. For bugs, reproduce the failure, fix th
 - Use TypeScript strict mode and existing project style.
 - Use `async/await` for asynchronous control flow.
 - Log errors with context and never expose stack traces to users.
-
-## Validation policy: GitHub Actions only
-
-GitHub Actions is the sole validation authority for this repository.
-The CI workflow is defined in `.github/workflows/ci.yml` and owns linting, typechecking, building, and the test suite.
-The test source/configuration lives under `.github/ci-tests/` and is materialized only inside the GitHub Actions runner.
-
-### Mandatory rules
-
-- **NEVER run tests locally** in the Railway container, OpenCode session, project workspace, or a review worktree.
-- **NEVER run local lint, typecheck, build, or equivalent validation** as a substitute for GitHub Actions.
-- **NEVER invoke** `vitest`, `jest`, `mocha`, `pytest`, Playwright test runners, or any other test runner locally.
-- **NEVER install** test runners, linters, typecheckers, or validation-only packages to make local validation possible.
-- **NEVER recreate** the CI-only `tests/`, `e2e/`, `vitest.config.ts`, or `tsconfig.test.json` files in the production workspace.
-- Do not bypass the CI policy with equivalent commands through `bash`, `node`, `npx`, `npm exec`, `pnpm`, `yarn`, `bun`, or direct binaries.
-
-### GitHub Actions workflow
-
-When validation is required:
-
-1. Make the smallest source/configuration change needed.
-2. Push or commit the authorized change so `.github/workflows/ci.yml` runs on GitHub.
-3. Inspect the GitHub Actions result/logs.
-4. Fix failures from the CI evidence and let GitHub Actions validate the next revision.
-
-Do not attempt to reproduce CI validation locally in the production bot. A CI failure is a GitHub Actions signal to fix the source, not a reason to install a local validation stack.
-
-### Runtime diagnostics
-
-Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session, use `full-diagnostics` and `session-recovery` to inspect and recover the runtime session; never switch to local CI/test execution.
