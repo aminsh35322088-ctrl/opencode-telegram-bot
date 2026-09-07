@@ -367,7 +367,7 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     });
 
     it("drops the response when the session changed while the agent was answering", async () => {
-      const { api, summaryAggregator } = await setupService({ startAssistantRun: true });
+      const { summaryAggregator } = await setupService({ startAssistantRun: true });
       const [
         sessionService,
         { foregroundSessionState },
