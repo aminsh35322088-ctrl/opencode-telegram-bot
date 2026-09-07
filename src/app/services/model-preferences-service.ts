@@ -66,15 +66,7 @@ export async function recordRecentModel(model: FavoriteModel): Promise<void> {
 }
 
 export async function clearAllModelPreferences(): Promise<void> {
-  const statePath = getModelStatePath();
-  await fs.rm(statePath, { force: true });
-  loggerSafeReset(statePath);
-}
-
-function loggerSafeReset(statePath: string): void {
-  // Kept intentionally dependency-free so this storage layer can be reused by
-  // lifecycle reset code without coupling it to the application logger.
-  void statePath;
+  await fs.rm(getModelStatePath(), { force: true });
 }
 
 // Keep persisted records aligned with the FavoriteModel type.
