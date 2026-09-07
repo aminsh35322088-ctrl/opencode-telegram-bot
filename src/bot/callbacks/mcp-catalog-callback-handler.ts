@@ -48,6 +48,14 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) return false;
 
+  if (data === MCPS_CALLBACK_CANCEL) {
+    clearMcpAddWizard();
+    interactionManager.clear("mcps_cancelled");
+    await ctx.answerCallbackQuery().catch(() => {});
+    await cancelMenu(ctx);
+    return true;
+  }
+
   if (data === MCPS_CALLBACK_ADD || data === MCPS_CALLBACK_ADD_LOCAL || data === MCPS_CALLBACK_ADD_REMOTE) {
     if (data === MCPS_CALLBACK_ADD) {
       const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
@@ -79,13 +87,6 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   }
 
   try {
-    if (data === MCPS_CALLBACK_CANCEL) {
-      clearMcpsInteraction("mcps_cancelled");
-      clearMcpAddWizard();
-      await cancelMenu(ctx);
-      return true;
-    }
-
     if (data === MCPS_CALLBACK_BACK) {
       if (metadata.stage !== "detail") {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
