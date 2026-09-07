@@ -74,6 +74,10 @@ function flushPending(routeKey: PromptRouteKey): void {
  * it. The classifier uses the exact keyboard rendered for the bound Topic
  * session; it does not use broad emoji/prefix heuristics here.
  *
+ * If classification itself fails, this boundary fails closed and does not send
+ * the message to OpenCode. A transient keyboard-state lookup failure must
+ * never turn a UI control into billable AI input.
+ *
  * Pass `mergeWindowMs <= 0` to disable merging and process the message
  * immediately.
  */
@@ -87,7 +91,17 @@ export async function queuePromptForMerging(
   const topicContext = getTopicRuntimeContext();
   const routeKey = getPromptRouteKey(chatId, topicContext);
 
-  const classified = await classifyReplyKeyboardInteraction(ctx);
+  let classified: Awaited<ReturnType<typeof classifyReplyKeyboardInteraction>>;
+  try {
+    classified = await classifyReplyKeyboardInteraction(ctx);
+  } catch (error) {
+    logger.error(
+      `[Bot] Reply Keyboard classification failed; refusing to route text to OpenCode: route=${routeKey}, text=${JSON.stringify(text)}`,
+      error,
+    );
+    return;
+  }
+
   if (classified.isControl) {
     logger.info(
       `[Bot] Final prompt-ingress guard consumed Reply Keyboard control: scope=${classified.scope}, thread=${ctx.message?.message_thread_id ?? 0}, text=${JSON.stringify(text)}`,
