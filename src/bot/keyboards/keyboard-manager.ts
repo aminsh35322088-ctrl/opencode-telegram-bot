@@ -4,7 +4,7 @@ import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
-import { getCompactOutputMode } from "../../app/stores/settings-store.js";
+import { getCompactOutputMode, getMainNavigationMessageId, setMainNavigationMessageId, clearMainNavigationMessageId } from "../../app/stores/settings-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
@@ -77,11 +77,30 @@ class KeyboardManager {
 
   public setMainInlineMessage(chatId: number, messageId: number): void {
     this.mainInlineMessageIds.set(chatId, messageId);
+    void setMainNavigationMessageId(chatId, messageId);
+  }
+
+  private getPersistedMainInlineMessageId(chatId: number): number | undefined {
+    const inMemory = this.mainInlineMessageIds.get(chatId);
+    if (inMemory) return inMemory;
+    const persisted = getMainNavigationMessageId(chatId);
+    if (persisted) this.mainInlineMessageIds.set(chatId, persisted);
+    return persisted;
+  }
+
+  private async clearMainAnchor(chatId: number, messageId: number): Promise<void> {
+    if (!this.api) return;
+    try {
+      await this.api.unpinChatMessage(chatId, messageId);
+      logger.info(`[TelegramKeyboard] Previous Main anchor unpinned: chat=${chatId}, message=${messageId}`);
+    } catch (err) {
+      logger.debug(`[TelegramKeyboard] Previous Main anchor was not unpinned (may already be unpinned): chat=${chatId}, message=${messageId}`, err);
+    }
   }
 
   public async pinMainInlineMessage(chatId: number, messageId?: number): Promise<void> {
     if (!this.api) return;
-    const targetMessageId = messageId ?? this.mainInlineMessageIds.get(chatId);
+    const targetMessageId = messageId ?? this.getPersistedMainInlineMessageId(chatId);
     if (!targetMessageId) return;
     try {
       await this.api.pinChatMessage(chatId, targetMessageId, { disable_notification: true });
@@ -96,8 +115,6 @@ class KeyboardManager {
   }
 
   public async enterTopicMode(chatId: number): Promise<void> {
-    // Topic Mode no longer replaces General/All's inline navigation. The AI Topic
-    // may have its own ReplyKeyboard, but General keeps the glass navigation.
     this.topicModeChats.add(chatId);
     logger.info(`[TopicMode] Entered Topic Mode without replacing General InlineKeyboard: chat=${chatId}`);
   }
@@ -108,19 +125,14 @@ class KeyboardManager {
   }
 
   public async hideMainInlineKeyboard(chatId: number): Promise<void> {
-    // Kept as a compatibility method for callers. General/All navigation is now
-    // intentionally persistent and must not be hidden when an AI Topic is created.
     logger.debug(`[TopicMode] Ignoring request to hide General InlineKeyboard: chat=${chatId}`);
   }
 
   public async clearMainInlineMessage(chatId: number): Promise<void> {
-    // The main navigation is intentionally persistent. Do not delete it because
-    // deleting it would also destroy the pinned anchor used by the General UI.
     logger.debug(`[TelegramKeyboard] Keeping persistent Main status + InlineKeyboard message: chat=${chatId}`);
   }
 
   public async sendTopicMainKeyboard(chatId: number, currentModel: ModelInfo = getStoredModel(), force = false): Promise<void> {
-    // General/All always uses the glass keyboard. ReplyKeyboard is reserved for AI Topics.
     await this.sendMainInlineKeyboard(chatId, currentModel, force);
   }
 
@@ -133,7 +145,7 @@ class KeyboardManager {
 
     const text = await buildMainStatusText(currentModel);
     const replyMarkup = createMainInlineKeyboard(currentModel);
-    const existingMessageId = this.mainInlineMessageIds.get(chatId);
+    const existingMessageId = this.getPersistedMainInlineMessageId(chatId);
 
     if (existingMessageId) {
       try {
@@ -142,11 +154,13 @@ class KeyboardManager {
           reply_markup: replyMarkup,
         });
         await this.pinMainInlineMessage(chatId, existingMessageId);
-        logger.info(`[TelegramKeyboard] Updated persistent Main status + InlineKeyboard in-place: chat=${chatId}, message=${existingMessageId}`);
+        logger.info(`[TelegramKeyboard] Restored persistent Main status + InlineKeyboard in-place: chat=${chatId}, message=${existingMessageId}`);
         return;
       } catch (err) {
         logger.debug(`[TelegramKeyboard] Existing Main status message unavailable; creating replacement: chat=${chatId}, message=${existingMessageId}`, err);
+        await this.clearMainAnchor(chatId, existingMessageId);
         this.mainInlineMessageIds.delete(chatId);
+        await clearMainNavigationMessageId(chatId);
       }
     }
 
@@ -156,6 +170,7 @@ class KeyboardManager {
         reply_markup: replyMarkup,
       });
       this.mainInlineMessageIds.set(chatId, response.message_id);
+      await setMainNavigationMessageId(chatId, response.message_id);
       await this.pinMainInlineMessage(chatId, response.message_id);
       logger.info(`[TelegramKeyboard] Main status + InlineKeyboard anchored and pinned: chat=${chatId}, message=${response.message_id}`);
     } catch (err) {
