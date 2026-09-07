@@ -15,6 +15,11 @@ export type ReplyKeyboardInteraction = {
   controlId?: string;
 };
 
+export type ReplyKeyboardContext = {
+  scope: ReplyKeyboardScope;
+  sessionId?: string;
+};
+
 function normalize(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
 }
@@ -60,24 +65,32 @@ function staticControlMap(): ReadonlyMap<string, string> {
   return controls;
 }
 
-async function resolveScope(ctx: Context): Promise<ReplyKeyboardScope> {
+export async function resolveReplyKeyboardContext(ctx: Context): Promise<ReplyKeyboardContext> {
   const chatId = ctx.chat?.id;
   const threadId = ctx.message?.message_thread_id;
-  if (typeof chatId !== "number") return "main";
+  if (typeof chatId !== "number") return { scope: "main" };
+
   if (typeof threadId !== "number" || threadId <= 1) {
-    return keyboardManager.isTopicMode(chatId) ? "general" : "main";
+    return keyboardManager.isTopicMode(chatId)
+      ? { scope: "general" }
+      : { scope: "main" };
   }
 
   const runtime = getTopicRuntimeContext();
-  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) return "ai-topic";
+  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) {
+    return { scope: "ai-topic", sessionId: runtime.sessionId };
+  }
+
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  return binding ? "ai-topic" : "main";
+  if (binding) return { scope: "ai-topic", sessionId: binding.sessionId };
+
+  return { scope: "main" };
 }
 
-function getRenderedLabels(scope: ReplyKeyboardScope, sessionId?: string): Set<string> {
-  const keyboard = scope === "ai-topic"
-    ? keyboardManager.getKeyboard(sessionId)
-    : scope === "general"
+function getRenderedLabels(context: ReplyKeyboardContext): Set<string> {
+  const keyboard = context.scope === "ai-topic"
+    ? keyboardManager.getKeyboard(context.sessionId)
+    : context.scope === "general"
       ? keyboardManager.getKeyboard()
       : null;
   const built = keyboard && typeof (keyboard as { build?: () => unknown }).build === "function"
@@ -87,30 +100,32 @@ function getRenderedLabels(scope: ReplyKeyboardScope, sessionId?: string): Set<s
 }
 
 /**
- * Authoritative boundary between Reply Keyboard controls and user prompts.
- * Controls are recognized only by exact labels rendered for the current scope,
- * plus stable labels that can legitimately arrive from a stale Telegram client.
- * No broad emoji/regex heuristic is used here.
+ * Authoritative boundary between Telegram Reply Keyboard controls and prompts.
+ *
+ * Dynamic labels are resolved against the exact inbound topic/session rather
+ * than the ambient runtime context. This prevents a valid AI-topic keyboard
+ * from being mistaken for ordinary text when runtime context is unavailable.
+ * No broad emoji/prefix/regex heuristic is used for model labels.
  */
 export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<ReplyKeyboardInteraction> {
   const raw = ctx.message?.text;
   const text = typeof raw === "string" ? normalize(raw) : "";
-  const scope = await resolveScope(ctx);
-  if (!text) return { isControl: false, scope, text };
+  const context = await resolveReplyKeyboardContext(ctx);
+  if (!text) return { isControl: false, scope: context.scope, text };
 
-  const runtime = getTopicRuntimeContext();
-  const sessionId = scope === "ai-topic" ? runtime?.sessionId : undefined;
-  const rendered = getRenderedLabels(scope, sessionId);
-  const controlId = staticControlMap().get(text);
+  const staticControl = staticControlMap().get(text);
+  if (staticControl) return { isControl: true, scope: context.scope, text, controlId: staticControl };
 
-  if (controlId) return { isControl: true, scope, text, controlId };
-  if (rendered.has(text)) return { isControl: true, scope, text, controlId: "keyboard-control" };
-
-  if (text === normalize(currentGlobalModelButton())) {
-    return { isControl: true, scope, text, controlId: "model" };
+  const rendered = getRenderedLabels(context);
+  if (rendered.has(text)) {
+    return { isControl: true, scope: context.scope, text, controlId: "keyboard-control" };
   }
 
-  return { isControl: false, scope, text };
+  if (text === normalize(currentGlobalModelButton())) {
+    return { isControl: true, scope: context.scope, text, controlId: "model" };
+  }
+
+  return { isControl: false, scope: context.scope, text };
 }
 
 export async function isReplyKeyboardControl(ctx: Context): Promise<boolean> {
