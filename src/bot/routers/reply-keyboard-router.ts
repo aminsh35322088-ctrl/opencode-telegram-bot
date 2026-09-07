@@ -77,6 +77,20 @@ async function menuAllowed(ctx: Context): Promise<boolean> {
   return false;
 }
 
+async function consumeReplyKeyboardMessage(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  const messageId = ctx.message?.message_id;
+  if (typeof chatId !== "number" || typeof messageId !== "number") return;
+
+  try {
+    await ctx.api.deleteMessage(chatId, messageId);
+  } catch (error) {
+    // The control must still be dispatched even when Telegram refuses deletion
+    // (for example because the bot lacks message-delete permission in a group).
+    logger.debug?.(`[Bot] Could not delete Reply Keyboard control message: chat=${chatId} message=${messageId}`, error);
+  }
+}
+
 export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void> }): void {
   bot.on("message:text", async (ctx, next) => {
     const raw = ctx.message.text;
@@ -138,6 +152,7 @@ export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<
     }
 
     logger.info(`[Bot] Consuming Reply Keyboard control: scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"} thread=${ctx.message.message_thread_id ?? 0} text=${raw}`);
+    await consumeReplyKeyboardMessage(ctx);
 
     try {
       if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) {
