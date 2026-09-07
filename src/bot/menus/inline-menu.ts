@@ -31,7 +31,6 @@ function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInli
   if (typeof menuKind !== "string" || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
   return { menuKind, messageId, ...(typeof threadId === "number" ? { threadId } : {}) };
 }
-function getInlineCancelCallbackData(menuKind: InlineMenuKind): string { return `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`; }
 
 export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, _menuKind: InlineMenuKind): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) { const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1]; if (!lastRow || lastRow.length > 0) break; keyboard.inline_keyboard.pop(); }
