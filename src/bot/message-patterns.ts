@@ -1,13 +1,15 @@
 export const MAIN_SETTINGS_BUTTON_TEXT = "⚙️ Main Settings";
 export const TOPIC_SETTINGS_BUTTON_TEXT = "⚙️ Topic Settings";
 export const LEGACY_SETTINGS_BUTTON_TEXT = "⚙️ Settings";
+export const MODEL_CENTER_BUTTON_TEXT = "🧠 Model Center";
+export const HIDE_KEYBOARD_BUTTON_TEXT = "⌨️ Hide Keyboard";
 
 export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^(📋|🛠|💬|🔍|📝|📄|📦|🤖)\s.+\s(?:Mode|Agent)$/;
 export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s.+$/u;
 export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/;
 export const CONTEXT_BUTTON_TEXT_PATTERN = /^📊(?:\s|$)/;
 export const QUEUED_PROMPT_BUTTON_TEXT_PATTERN = /^❌\s\d+\.\s/;
-export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙️ Main Settings|⚙️ Topic Settings|⚙️ Settings|🎨 Image AI|🗑️ Delete Chat|📦 Compact: (?:ON|OFF)|⏸️ Pause|▶️ Resume|🛑 Abort)$/u;
+export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙️ Main Settings|⚙️ Topic Settings|⚙️ Settings|🎨 Image AI|🗑️ Delete Chat|📦 Compact: (?:ON|OFF)|⏸️ Pause|▶️ Resume|🛑 Abort|🧠 Model Center|⌨️ Hide Keyboard)$/u;
 
 const REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS = [
   AGENT_MODE_BUTTON_TEXT_PATTERN,
@@ -26,6 +28,8 @@ const STATIC_REPLY_KEYBOARD_LABELS = new Set<string>([
   MAIN_SETTINGS_BUTTON_TEXT,
   TOPIC_SETTINGS_BUTTON_TEXT,
   LEGACY_SETTINGS_BUTTON_TEXT,
+  MODEL_CENTER_BUTTON_TEXT,
+  HIDE_KEYBOARD_BUTTON_TEXT,
   "🕘 History",
   "💬 New Chat",
   "🎨 Image AI",
