@@ -10,7 +10,6 @@ import { isReplyKeyboardButtonText } from "../message-patterns.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import { handleMcpsMessage, isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
-import { isCurrentReplyKeyboardLabel } from "../keyboards/reply-keyboard-labels.js";
 
 function getInteractionBlockedMessage(reason: BlockReason | undefined, interactionKind: InteractionKind | undefined): string {
   if (interactionKind === "permission") {
@@ -78,15 +77,6 @@ function isImageOperationControl(ctx: Context): boolean {
 }
 
 export async function interactionGuardMiddleware(ctx: Context, next: NextFunction): Promise<void> {
-  // Reply Keyboard presses are delivered by Telegram as ordinary text messages.
-  // They must bypass ALL busy/queue guards so they can reach the dedicated
-  // Reply Keyboard router and can never be interpreted as a user prompt.
-  if (ctx.message?.text && isCurrentReplyKeyboardLabel(ctx.message.text)) {
-    logger.debug(`[InteractionGuard] Passing Reply Keyboard control through to terminal keyboard router: ${ctx.message.text}`);
-    await next();
-    return;
-  }
-
   if (ctx.message?.text && isMcpAddWizardActive()) {
     if (await handleMcpsMessage(ctx)) return;
   }
