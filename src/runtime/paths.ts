@@ -6,6 +6,8 @@ export interface RuntimePaths {
   mode: RuntimeMode;
   appHome: string;
   envFilePath: string;
+  /** @deprecated Compatibility alias for the bootstrap wizard; points to app-state.json. */
+  settingsFilePath: string;
   logsDirPath: string;
   runDirPath: string;
 }
@@ -47,6 +49,7 @@ export function getRuntimePaths(): RuntimePaths {
     mode,
     appHome,
     envFilePath: path.join(appHome, ".env"),
+    settingsFilePath: path.join(appHome, "app-state.json"),
     logsDirPath: path.join(appHome, "logs"),
     runDirPath: path.join(appHome, "run"),
   };
