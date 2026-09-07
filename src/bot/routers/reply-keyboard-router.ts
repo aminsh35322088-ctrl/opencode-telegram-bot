@@ -45,8 +45,18 @@ function currentModelButton(): string {
 }
 
 function keyboardButtonTexts(keyboard: unknown): string[] {
-  const rows = (keyboard as { keyboard?: Array<Array<{ text?: string }>> } | undefined)?.keyboard ?? [];
-  return rows.flat().map((button) => button.text ?? "").filter(Boolean);
+  if (!Array.isArray(keyboard)) return [];
+  return keyboard.flatMap((row) => {
+    if (!Array.isArray(row)) return [];
+    return row.flatMap((button) => {
+      if (typeof button === "string") return [button];
+      if (typeof button === "object" && button !== null && "text" in button) {
+        const text = Reflect.get(button, "text");
+        return typeof text === "string" ? [text] : [];
+      }
+      return [];
+    });
+  }).filter(Boolean);
 }
 
 async function getTopicScope(ctx: Context): Promise<{ topicMode: boolean; aiTopic: boolean }> {
@@ -116,7 +126,12 @@ async function handleReplyKeyboardInput(
     normalized("🧠 Model Center"), normalized("❌ Cancel"), compactOn, compactOff, mainModelButton, topicModelButton,
   ]);
 
-  const dynamicTopicControl = AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) || CONTEXT_BUTTON_TEXT_PATTERN.test(text) || QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) || VARIANT_BUTTON_TEXT_PATTERN.test(text);
+  const dynamicTopicControl = scope.aiTopic && (
+    AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) ||
+    CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
+    QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) ||
+    VARIANT_BUTTON_TEXT_PATTERN.test(text)
+  );
   const knownReplyKeyboardControl = isReplyKeyboardButtonText(text, new Set([mainModelButton, topicModelButton]));
   if (!exactControls.has(text) && !knownReplyKeyboardControl && !dynamicTopicControl) { await next(); return; }
 
