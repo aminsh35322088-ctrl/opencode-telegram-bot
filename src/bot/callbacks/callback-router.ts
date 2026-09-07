@@ -14,7 +14,7 @@ import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
-import { handleRenameCancel } from "./rename-callback-handler.js";
+import { handleRenameCancel } from "./rename-cancel-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
@@ -28,7 +28,7 @@ import { handleVariantSelect } from "./variant-selection-callback-handler.js";
 import { handleWorktreeCallback } from "./worktree-callback-handler.js";
 import { clearLsPathIndex, clearOpenPathIndex } from "../menus/file-browser-menu.js";
 import { buildAdvancedSettingsView, buildSettingsMenuView } from "../menus/settings-menu.js";
-import { closeActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu.js";
+import { clearActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { MODEL_CENTER_SETTINGS_BACK } from "../menus/model-center-menu.js";
 import { markGeminiWizard, clearGeminiWizard } from "../services/gemini-wizard-state.js";
 import { activateImageMode } from "../../app/services/image-mode-service.js";
@@ -39,6 +39,7 @@ import { sessionsCommand } from "../commands/sessions-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
+import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 
@@ -65,15 +66,28 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
   const callbackMessage = ctx.callbackQuery?.message;
   const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
 
-  // Home is the escape hatch from every inline menu, including menus opened
-  // inside an AI Topic. It always restores the canonical General navigation.
+  // Home is an in-place navigation operation. It restores the canonical main
+  // inline layout on the callback message itself; it must never delete that
+  // message or send a replacement message.
   if (data === "main:home") {
     const chatId = ctx.chat?.id ?? callbackMessage?.chat.id;
-    if (typeof chatId !== "number") return true;
+    const messageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : undefined;
+    if (typeof chatId !== "number" || typeof messageId !== "number") return true;
+
     await ctx.answerCallbackQuery().catch(() => {});
-    await closeActiveInlineMenu(ctx, "inline_menu_home");
-    await keyboardManager.sendMainInlineKeyboard(chatId, getStoredModel(), true);
-    logger.info(`[Navigation] Restored Main InlineKeyboard from Home: chat=${chatId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+    try {
+      await ctx.api.editMessageText(chatId, messageId, t("keyboard.updated"), {
+        reply_markup: createMainInlineKeyboard(getStoredModel()),
+      });
+      keyboardManager.setMainInlineMessage(chatId, messageId);
+      clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
+      logger.info(`[Navigation] Restored Main InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+    } catch (error) {
+      // Do not fall back to delete+send: Home is explicitly an in-place
+      // navigation control, so preserving the current message is safer than
+      // creating a duplicate main-navigation message.
+      logger.warn(`[Navigation] Failed to restore Main InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}`, error);
+    }
     return true;
   }
 
