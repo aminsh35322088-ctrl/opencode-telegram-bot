@@ -42,6 +42,7 @@ import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { buildMainStatusText, keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -73,18 +74,25 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
 
     await ctx.answerCallbackQuery().catch(() => {});
     try {
-      const currentModel = getStoredModel();
-      const text = await buildMainStatusText(currentModel);
-      await ctx.api.editMessageText(chatId, messageId, text, {
-        parse_mode: "HTML",
-        reply_markup: createMainInlineKeyboard(currentModel),
-      });
-      await keyboardManager.setMainInlineMessage(chatId, messageId);
-      await keyboardManager.pinMainInlineMessage(chatId, messageId);
-      clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
-      logger.info(`[Navigation] Restored persistent pinned Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+      const canonicalMessageId = getMainNavigationMessageId(chatId);
+      if (canonicalMessageId === messageId) {
+        const currentModel = getStoredModel();
+        const text = await buildMainStatusText(currentModel);
+        await ctx.api.editMessageText(chatId, canonicalMessageId, text, {
+          parse_mode: "HTML",
+          reply_markup: createMainInlineKeyboard(currentModel),
+        });
+        await keyboardManager.pinMainInlineMessage(chatId, canonicalMessageId);
+        clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
+        logger.info(`[Navigation] Restored canonical Main anchor in-place from Home: chat=${chatId}, message=${canonicalMessageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+      } else {
+        await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
+        if (messageId !== canonicalMessageId) await ctx.api.deleteMessage(chatId, messageId).catch(() => {});
+        clearActiveInlineMenu("inline_menu_home_restore", chatId, typeof threadId === "number" ? threadId : undefined);
+        logger.info(`[Navigation] Restored canonical Main anchor from Home: chat=${chatId}, childMessage=${messageId}, previousCanonical=${canonicalMessageId ?? "none"}`);
+      }
     } catch (error) {
-      logger.warn(`[Navigation] Failed to restore persistent Main status in-place from Home: chat=${chatId}, message=${messageId}`, error);
+      logger.warn(`[Navigation] Failed to restore canonical Main from Home: chat=${chatId}, message=${messageId}`, error);
     }
     return true;
   }
