@@ -42,11 +42,11 @@ class AssistantRunState {
 
   hasActiveRun(sessionId: string): boolean {
     if (!sessionId) return false;
-    const run = this.runs.get(sessionId);
-    // OpenCode's completed response event marks the run terminal before the
-    // assistant response is rendered. Keep the record for diagnostics, but do
-    // not expose a completed response as an active execution to UI controls.
-    return Boolean(run && !run.hasCompletedResponse);
+    // A run remains active until OpenCode emits session.idle (or an explicit
+    // error/abort clears it). The assistant response can become terminal before
+    // the final Telegram/tool streams are flushed, so completion alone must not
+    // invalidate the run guards used by those finalization paths.
+    return this.runs.has(sessionId);
   }
 
   getRun(sessionId: string): AssistantRunInfo | null { const run = this.runs.get(sessionId); return run ? { ...run } : null; }
