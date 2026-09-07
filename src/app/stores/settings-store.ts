@@ -52,7 +52,7 @@ export function setShowThinkingContent(enabled: boolean): void { if (getTopicRun
 export type { MessageFormatMode, ResponseStreamingMode };
 export function getResponseStreamingMode(): ResponseStreamingMode { return currentTopicState()?.settings.responseStreamingMode ?? currentSettings.responseStreamingMode ?? getTopicDefaults().responseStreamingMode; }
 export function setResponseStreamingMode(mode: ResponseStreamingMode): void { if (getTopicRuntimeContext()) { updateTopic({ responseStreamingMode: mode }); return; } currentSettings.responseStreamingMode = mode; void writeSettingsFile(currentSettings); }
-export function getMessageFormatMode(): MessageFormatMode { return currentTopicState()?.settings.messageFormatMode ?? currentSettings.messageFormatMode ?? getTopicDefaults().messageFormatMode ?? config.bot.messageFormatMode; }
+export function getMessageFormatMode(): MessageFormatMode { return currentTopicState()?.settings.messageFormatMode ?? currentSettings.messageFormatMode ?? getTopicRuntimeContext()?.settings.messageFormatMode ?? config.bot.messageFormatMode; }
 export function setMessageFormatMode(mode: MessageFormatMode): void { if (getTopicRuntimeContext()) { updateTopic({ messageFormatMode: mode }); return; } currentSettings.messageFormatMode = mode; void writeSettingsFile(currentSettings); }
 export function getShowAssistantRunFooter(): boolean { return currentTopicState()?.settings.showAssistantRunFooter ?? currentSettings.showAssistantRunFooter ?? getTopicDefaults().showAssistantRunFooter; }
 export function setShowAssistantRunFooter(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ showAssistantRunFooter: enabled }); return; } currentSettings.showAssistantRunFooter = enabled; void writeSettingsFile(currentSettings); }
@@ -69,6 +69,18 @@ export function clearCurrentModel(): void { if (getTopicRuntimeContext()) { upda
 export function getPinnedMessageId(): number | undefined { return currentSettings.pinnedMessageId; }
 export function setPinnedMessageId(messageId: number): void { currentSettings.pinnedMessageId = messageId; void writeSettingsFile(currentSettings); }
 export function clearPinnedMessageId(): void { currentSettings.pinnedMessageId = undefined; void writeSettingsFile(currentSettings); }
+export function getMainNavigationMessageId(chatId: number): number | undefined { return currentSettings.mainNavigationMessageIds?.[String(chatId)]; }
+export function setMainNavigationMessageId(chatId: number, messageId: number): Promise<void> {
+  currentSettings.mainNavigationMessageIds = { ...(currentSettings.mainNavigationMessageIds ?? {}), [String(chatId)]: messageId };
+  return writeSettingsFile(currentSettings);
+}
+export function clearMainNavigationMessageId(chatId: number): Promise<void> {
+  if (!currentSettings.mainNavigationMessageIds) return Promise.resolve();
+  const next = { ...currentSettings.mainNavigationMessageIds };
+  delete next[String(chatId)];
+  currentSettings.mainNavigationMessageIds = Object.keys(next).length ? next : undefined;
+  return writeSettingsFile(currentSettings);
+}
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined { return currentSettings.sessionDirectoryCache; }
 export function setSessionDirectoryCache(cache: SessionDirectoryCacheInfo): Promise<void> { currentSettings.sessionDirectoryCache = cache; return writeSettingsFile(currentSettings); }
 export function clearSessionDirectoryCache(): void { currentSettings.sessionDirectoryCache = undefined; void writeSettingsFile(currentSettings); }
@@ -88,6 +100,8 @@ export async function loadSettings(): Promise<void> {
   currentSettings.scheduledTasks = cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [];
   currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(loadedSettings.scheduledTaskSessionIgnores) ?? [];
   currentSettings.alwaysAllowedPermissions = Array.isArray(loadedSettings.alwaysAllowedPermissions) ? loadedSettings.alwaysAllowedPermissions.filter((rule) => rule && typeof rule.chatId === "number" && typeof rule.permission === "string" && typeof rule.createdAt === "string") : [];
+  currentSettings.mainNavigationMessageIds = Object.fromEntries(Object.entries(loadedSettings.mainNavigationMessageIds ?? {}).filter(([chatId, messageId]) => /^-?\d+$/.test(chatId) && typeof messageId === "number" && Number.isInteger(messageId) && messageId > 0));
+  if (!Object.keys(currentSettings.mainNavigationMessageIds).length) currentSettings.mainNavigationMessageIds = undefined;
   currentSettings.topicDefaults = {
     ...DEFAULT_TOPIC_DEFAULTS,
     ...(legacyDefaults ?? {}),
