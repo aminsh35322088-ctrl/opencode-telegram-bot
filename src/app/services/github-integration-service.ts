@@ -72,7 +72,7 @@ export async function hasGithubToken(): Promise<boolean> { return Boolean(await 
 export async function saveGithubToken(value: string): Promise<void> { const token = normalizeToken(value); const validation = await validateGithubToken(token); if (!validation.valid) throw new Error("GitHub token verification failed. The token was not saved."); const index = await readIndex(); const active = getActiveAccount(index); if (active) { active.token = token; active.username = validation.username ?? active.username; await writeIndex(index); applyActiveToken(index); return; } await addGithubAccount("GitHub", token, validation.username); }
 export async function clearGithubToken(): Promise<void> { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), github: { accounts: [], activeId: undefined } } }); delete process.env.GITHUB_TOKEN; delete process.env.GH_TOKEN; }
 
-export async function initializeGithubTokenFromEnvironment(): Promise<boolean> {
+export async function initializeGithubIntegration(): Promise<boolean> {
   // GitHub credentials are owned by the bot's persistent Integrations store.
   // Railway environment variables are intentionally not a credential source.
   const index = await readIndex();
