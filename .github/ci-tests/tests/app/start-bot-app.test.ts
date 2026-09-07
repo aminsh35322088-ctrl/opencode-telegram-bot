@@ -77,7 +77,10 @@ vi.mock("../../src/runtime/mode.js", () => ({
 }));
 
 vi.mock("../../src/runtime/paths.js", () => ({
-  getRuntimePaths: () => ({ envFilePath: ".env" }),
+  getRuntimePaths: () => ({
+    appHome: path.join(os.tmpdir(), "opencode-telegram-bot-ci"),
+    envFilePath: ".env",
+  }),
 }));
 
 vi.mock("../../src/runtime/service/manager.js", () => ({
