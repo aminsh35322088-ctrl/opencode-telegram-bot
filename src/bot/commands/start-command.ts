@@ -1,5 +1,4 @@
 import { Context } from "grammy";
-import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
@@ -87,13 +86,9 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  // General/All always keeps the glass navigation. Even when `/start` is invoked
-  // from Topic Mode, never replace it with ReplyKeyboard and never force thread 1.
-  await keyboardManager.clearMainInlineMessage(chatId);
-  const response = await ctx.api.sendMessage(chatId, text, {
-    parse_mode: "HTML",
-    reply_markup: createMainInlineKeyboard(currentModel),
-  });
-  keyboardManager.setMainInlineMessage(chatId, response.message_id);
-  logger.info(`[TelegramKeyboard] /start rendered Main InlineKeyboard: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default, message=${response.message_id}`);
+  // Keep the status/info card independent from the navigation surface. Navigation
+  // handlers may edit their own message in-place, but this card must remain visible.
+  await ctx.api.sendMessage(chatId, text, { parse_mode: "HTML" });
+  await keyboardManager.sendMainInlineKeyboard(chatId, currentModel, true);
+  logger.info(`[TelegramKeyboard] /start rendered persistent Main status card + InlineKeyboard navigation: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default`);
 }
