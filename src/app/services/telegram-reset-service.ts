@@ -72,21 +72,6 @@ async function verifyManagedSessionsDeleted(bindings: TelegramTopicBinding[]): P
   return remaining;
 }
 
-async function verifyLocalHistoryState(): Promise<{ bindings: number; runtimeStates: number; memories: number; workspaces: number }> {
-  const [bindings, runtimeStates, memories] = await Promise.all([
-    listTelegramTopicBindings(),
-    listTopicRuntimeStates(),
-    listMemories(),
-  ]);
-  const workspaces = await countManagedTopicWorkspaces();
-  return {
-    bindings: bindings.length,
-    runtimeStates: runtimeStates.length,
-    memories: memories.length,
-    workspaces,
-  };
-}
-
 async function countManagedTopicWorkspaces(): Promise<number> {
   const fs = await import("fs/promises");
   const root = getTelegramTopicWorkspaceRoot();
@@ -97,6 +82,16 @@ async function countManagedTopicWorkspaces(): Promise<number> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw error;
   }
+}
+
+async function verifyLocalHistoryState(): Promise<{ bindings: number; runtimeStates: number; memories: number; workspaces: number }> {
+  const [bindings, runtimeStates, memories] = await Promise.all([
+    listTelegramTopicBindings(),
+    listTopicRuntimeStates(),
+    listMemories(),
+  ]);
+  const workspaces = await countManagedTopicWorkspaces();
+  return { bindings: bindings.length, runtimeStates: runtimeStates.length, memories: memories.length, workspaces };
 }
 
 function clearTransientState(reason: string): void {
@@ -168,6 +163,7 @@ export async function factoryReset(api: Api, chatId: number): Promise<{ deleted:
     return { deleted: result.deleted, failed: 1, orphanedWorkspaces: 0, memoriesCleared: 0 };
   }
 
+  const memoriesCleared = (await listMemories()).length;
   const orphanedWorkspaces = await removeOrphanedTopicWorkspaces();
   await clearAllTopicRuntimeStates();
   clearTransientState("factory_reset");
@@ -178,11 +174,9 @@ export async function factoryReset(api: Api, chatId: number): Promise<{ deleted:
   const state = await verifyLocalHistoryState();
   if (state.bindings > 0 || state.runtimeStates > 0 || state.memories > 0 || state.workspaces > 0) {
     logger.error(`[TelegramReset] Factory reset verification FAILED: bindings=${state.bindings}, runtimeStates=${state.runtimeStates}, memories=${state.memories}, workspaces=${state.workspaces}`);
-    return { deleted: result.deleted, failed: 1, orphanedWorkspaces, memoriesCleared: 0 };
+    return { deleted: result.deleted, failed: 1, orphanedWorkspaces, memoriesCleared };
   }
 
-  // The requested chat is retained only as the target for restoring the bot's
-  // post-reset Main UI. No per-chat history survives the reset.
-  logger.warn(`[TelegramReset] Factory reset VERIFIED globally: requestedChat=${chatId}, deleted=${result.deleted}, bindings=0, runtimeStates=0, memories=0, workspaces=0, settings=fresh`);
-  return { ...result, orphanedWorkspaces, memoriesCleared: 0 };
+  logger.warn(`[TelegramReset] Factory reset VERIFIED globally: requestedChat=${chatId}, deleted=${result.deleted}, bindings=0, runtimeStates=0, memories=0, workspaces=0 (${orphanedWorkspaces} root(s) removed), memoriesCleared=${memoriesCleared}, settings=fresh`);
+  return { ...result, orphanedWorkspaces, memoriesCleared };
 }
