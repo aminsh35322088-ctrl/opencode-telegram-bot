@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Runtime configuration is intentionally fixed in the image. Railway supplies
-# application credentials plus an optional GitHub token for headless GitHub CLI
-# / Git authentication.
+# Runtime configuration is fixed in the image. Only the two Telegram
+# credentials are expected as Railway environment variables. GitHub/Railway
+# integrations are loaded from the bot's persistent Integrations store.
 OPENCODE_API_URL="http://127.0.0.1:4096"
 OPENCODE_AUTO_RESTART_ENABLED="true"
 OPENCODE_AUTO_START_IN_CONTAINER="true"
@@ -17,21 +17,22 @@ OPENCODE_EXPERIMENTAL_LSP_TOOL="true"
 OPENCODE_ENABLE_EXA="1"
 PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
 
-# GitHub CLI supports both names; prefer GH_TOKEN and fall back to GITHUB_TOKEN.
-# Do not persist the credential: child processes inherit it directly from the
-# Railway environment and git uses the helper below without writing a token file.
-GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+# Never rely on or persist integration credentials through Railway variables.
+# These are only compatibility guardrails for the process environment; the
+# bot loads active credentials from /data/workspace/app-state.json.
+unset GH_TOKEN GITHUB_TOKEN RAILWAY_TOKEN RAILWAY_API_TOKEN 2>/dev/null || true
 GH_HOST="${GH_HOST:-github.com}"
 GH_PROMPT_DISABLED="1"
-
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
-export GH_TOKEN GH_HOST GH_PROMPT_DISABLED
+export GH_HOST GH_PROMPT_DISABLED
 
 GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
-mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR"
+INTEGRATION_STATE_FILE="/data/workspace/app-state.json"
+INTEGRATION_BIN_DIR="/data/run/integration-bin"
+mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR"
 
 if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
@@ -61,21 +62,69 @@ if [ -f /app/opencode.json ]; then
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
-chown -R node:node /data
+cat > "$INTEGRATION_BIN_DIR/gh" <<'EOF'
+#!/bin/sh
+set -eu
+STATE_FILE="/data/workspace/app-state.json"
+TOKEN=""
+if [ -f "$STATE_FILE" ]; then
+  TOKEN="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
+fi
+if [ -n "$TOKEN" ]; then
+  GH_TOKEN="$TOKEN"
+  GITHUB_TOKEN="$TOKEN"
+  export GH_TOKEN GITHUB_TOKEN
+else
+  unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
+fi
+exec /usr/bin/gh "$@"
+EOF
+
+cat > "$INTEGRATION_BIN_DIR/railway" <<'EOF'
+#!/bin/sh
+set -eu
+STATE_FILE="/data/workspace/app-state.json"
+TOKEN=""
+TOKEN_TYPE=""
+if [ -f "$STATE_FILE" ]; then
+  TOKEN_TYPE="$(jq -r '(.integrations.railway // {}) as $r | (($r.accounts // []) | map(select(.id == $r.activeId)) + ($r.accounts // [])) | .[0].tokenType // empty' "$STATE_FILE" 2>/dev/null || true)"
+  TOKEN="$(jq -r '(.integrations.railway // {}) as $r | (($r.accounts // []) | map(select(.id == $r.activeId)) + ($r.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
+fi
+if [ -n "$TOKEN" ]; then
+  if [ "$TOKEN_TYPE" = "project" ]; then
+    RAILWAY_TOKEN="$TOKEN"
+    unset RAILWAY_API_TOKEN 2>/dev/null || true
+    export RAILWAY_TOKEN
+  else
+    RAILWAY_API_TOKEN="$TOKEN"
+    unset RAILWAY_TOKEN 2>/dev/null || true
+    export RAILWAY_API_TOKEN
+  fi
+else
+  unset RAILWAY_TOKEN RAILWAY_API_TOKEN 2>/dev/null || true
+fi
+exec /usr/local/bin/railway "$@"
+EOF
+chmod 700 "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
+chown node:node "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
 
 cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
 set -eu
-
-# Reuse the runtime GitHub token for git over HTTPS without persisting it.
-token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-if [ -n "$token" ]; then
+STATE_FILE="/data/workspace/app-state.json"
+TOKEN=""
+if [ -f "$STATE_FILE" ]; then
+  TOKEN="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
+fi
+if [ -n "$TOKEN" ]; then
   printf '%s\n' 'username=x-access-token'
-  printf 'password=%s\n' "$token"
+  printf 'password=%s\n' "$TOKEN"
 fi
 EOF
 chmod 700 /data/run/github-credential-helper.sh
 chown node:node /data/run/github-credential-helper.sh
+
+chown -R node:node /data
 
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
@@ -91,19 +140,10 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(gh --version 2>/dev/null | head -1 || echo unavailable), zip=$(zip -v 2>/dev/null | head -1 || echo unavailable), sqlite=$(sqlite3 --version 2>/dev/null | head -1 || echo unavailable), rg=$(rg --version 2>/dev/null | head -1 || echo unavailable), railway=$(railway --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
 
-if [ -n "$GH_TOKEN" ]; then
-  if su -s /bin/sh node -c 'gh auth status --active --hostname "$GH_HOST" >/dev/null 2>&1'; then
-    printf '%s\n' "[railway] GitHub CLI: authenticated (${GH_HOST})"
-  else
-    printf '%s\n' "[railway] GitHub CLI: token configured but authentication check failed (${GH_HOST})"
-  fi
-else
-  printf '%s\n' "[railway] GitHub CLI: not authenticated — set GH_TOKEN or GITHUB_TOKEN in Railway"
-fi
+export PATH="$INTEGRATION_BIN_DIR:$PATH"
 
-# Launch the bot from the persistent workspace. GitHub Actions is the sole
-# validation authority; the production process does not run CI or test suites.
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
-exec su -s /bin/sh node -c 'cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
+exec su -s /bin/sh node -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
