@@ -2,6 +2,15 @@
 
 Instructions for AI agents working on this project.
 
+## Session bootstrap
+
+Treat this file as the baseline project contract for every OpenCode session.
+Read and internalize these instructions before taking implementation, debugging, or review actions.
+
+OpenCode loads the global copy at `$XDG_CONFIG_HOME/opencode/AGENTS.md` for every session. The Railway runtime installs this file there so fresh Topic workspaces, including otherwise empty workspaces outside the repository tree, still receive the project rules before model work begins.
+
+Do not assume that a workspace being empty means that project instructions are unavailable.
+
 ## About the project
 
 **opencode-telegram-bot** is a Telegram bot client for OpenCode.
