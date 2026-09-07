@@ -1,6 +1,4 @@
 import { Context } from "grammy";
-import { getStoredAgent } from "../../app/services/agent-selection-service.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { clearSession } from "../../app/services/session-service.js";
@@ -10,8 +8,7 @@ import { abortCurrentOperation } from "./abort-command.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { detachAttachedSession } from "../../app/services/attach-service.js";
 import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
-import { formatModelForDisplay } from "../../app/types/model.js";
-import { BOT_VERSION, getBotUpdateNotice, getOpenCodeVersion, markBotVersionNotified } from "../../app/services/version-info-service.js";
+import { BOT_VERSION, getBotUpdateNotice, markBotVersionNotified } from "../../app/services/version-info-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
 
@@ -67,28 +64,15 @@ export async function startCommand(ctx: Context): Promise<void> {
     if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
   }
 
-  const currentAgent = getStoredAgent();
-  const currentModel = getStoredModel();
-  const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
-  keyboardManager.updateAgent(currentAgent);
-  keyboardManager.updateModel(currentModel);
-  if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-
-  const modelDisplay = currentModel.providerID && currentModel.modelID ? formatModelForDisplay(currentModel.providerID, currentModel.modelID, currentModel.name) : "Not configured";
-  const openCodeVersion = await getOpenCodeVersion();
-  const text = [
-    "⚡ <b>OpenCode Telegram</b>", "", "🟢 <b>Ready</b>",
-    `🤖 Bot <b>v${BOT_VERSION}</b>`, `🧠 OpenCode <b>v${openCodeVersion}</b>`,
-    `🤖 ${modelDisplay}`, `🛠️ ${currentAgent}`, "",
-    "Build, debug and control OpenCode directly from Telegram.", "",
-    "💬 Use New Chat to start a fresh coding Topic, or open an existing Topic to continue its session.",
-  ].join("\n");
+  const currentAgent = undefined;
+  const currentModel = undefined;
+  // Keep the root navigation message responsible for its own persistent status
+  // text + glass keyboard. Navigation handlers can replace the controls without
+  // creating a separate `⌨️ Keyboard updated` message.
+  void currentAgent;
+  void currentModel;
 
   await sendBotUpdateNotice(ctx);
-
-  // Keep the status/info card independent from the navigation surface. Navigation
-  // handlers may edit their own message in-place, but this card must remain visible.
-  await ctx.api.sendMessage(chatId, text, { parse_mode: "HTML" });
-  await keyboardManager.sendMainInlineKeyboard(chatId, currentModel, true);
-  logger.info(`[TelegramKeyboard] /start rendered persistent Main status card + InlineKeyboard navigation: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default`);
+  await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
+  logger.info(`[TelegramKeyboard] /start rendered persistent Main status + InlineKeyboard navigation in one message: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default`);
 }
