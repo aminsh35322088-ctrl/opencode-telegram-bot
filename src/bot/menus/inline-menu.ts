@@ -9,6 +9,7 @@ export const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 export const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
 export const INLINE_MENU_HOME_CALLBACK = "main:home";
 export const INLINE_MENU_HOME_LABEL = "🏠 Home";
+const INLINE_MENU_CLOSE_LABEL = "✖ Close";
 
 const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
@@ -35,10 +36,26 @@ function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInli
 
 export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, _menuKind: InlineMenuKind): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) { const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1]; if (!lastRow || lastRow.length > 0) break; keyboard.inline_keyboard.pop(); }
-  if (keyboard.inline_keyboard.length > 0) keyboard.row();
-  // Menus are navigational surfaces, not dismissible dialogs. Keep a permanent
-  // path back to the root navigation instead of exposing Close/Cancel controls.
-  keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
+
+  let hasHome = false;
+  for (const row of keyboard.inline_keyboard) {
+    for (const button of row) {
+      if (button.text === INLINE_MENU_HOME_LABEL && "callback_data" in button && button.callback_data === INLINE_MENU_HOME_CALLBACK) {
+        hasHome = true;
+        continue;
+      }
+      if (button.text === INLINE_MENU_CLOSE_LABEL) {
+        button.text = INLINE_MENU_HOME_LABEL;
+        if ("callback_data" in button) button.callback_data = INLINE_MENU_HOME_CALLBACK;
+        hasHome = true;
+      }
+    }
+  }
+
+  if (!hasHome) {
+    keyboard.row();
+    keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
+  }
   return keyboard;
 }
 
