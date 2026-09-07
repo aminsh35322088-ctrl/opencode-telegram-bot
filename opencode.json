@@ -72,21 +72,11 @@
       "*bun run*lint*": "deny",
       "*bun run*build*": "deny",
       "*bun run*dev*": "deny",
-      "*tsc *": "deny",
-      "*vitest *": "deny",
-      "*jest *": "deny",
-      "*mocha *": "deny",
-      "*pytest *": "deny",
-      "*playwright test*": "deny",
-      "*eslint *": "deny",
-      "*prettier *": "deny",
-      "*node_modules/.bin/tsc*": "deny",
-      "*node_modules/.bin/vitest*": "deny",
-      "*node_modules/.bin/jest*": "deny",
-      "*node_modules/.bin/mocha*": "deny",
-      "*node_modules/.bin/pytest*": "deny",
-      "*node_modules/.bin/eslint*": "deny",
-      "*node_modules/.bin/prettier*": "deny"
+      "*node_modules/.bin/*": "allow",
+      "*vitest run*": "allow",
+      "*tsc --noEmit*": "allow",
+      "*eslint *": "allow",
+      "*prettier *": "allow"
     },
     "external_directory": {
       "/data/logs/**": "allow"
