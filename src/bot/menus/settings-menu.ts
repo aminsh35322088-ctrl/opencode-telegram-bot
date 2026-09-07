@@ -46,7 +46,7 @@ function formatTopicModel(): string { const model = getCurrentTopicSettings()?.m
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
   if (getCurrentTopicSettings()) return {
-    text: "🧵 Topic Settings\n\nEverything here belongs only to the current Topic. Other Topics keep their own settings.",
+    text: "🧵 Topic Settings\n\nThese controls affect only this Topic. Other Topics keep their own settings.",
     keyboard: new InlineKeyboard()
       .text(`🤖 Model: ${formatTopicModel()}`, SETTINGS_MODEL_CALLBACK).row()
       .text("🧑‍💻 Agent", SETTINGS_AGENT_CALLBACK).text("🎛 Variant", SETTINGS_VARIANT_CALLBACK).row()
@@ -56,7 +56,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
   };
 
   return {
-    text: "⚙️ Main Settings\n\nGlobal configuration and the defaults copied into newly created Topics.",
+    text: "⚙️ Settings\n\nManage your model, Topic defaults, providers, integrations, and advanced OpenCode controls.",
     keyboard: new InlineKeyboard()
       .text("🤖 Default Model", SETTINGS_MODEL_CALLBACK).row()
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
@@ -77,7 +77,7 @@ export function buildTopicDefaultsSettingsView(): { text: string; keyboard: Inli
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(defaults.sendDiffFileAttachments)), SETTINGS_DEFAULT_DIFF_CALLBACK).row()
     .text(settingButton("📥 Prompt queue", formatBooleanSettingValue(defaults.promptQueueEnabled)), SETTINGS_DEFAULT_QUEUE_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: ["🧩 Topic Defaults", "", "Copied once when a new Topic is created. Existing Topics are never mutated by changes here.", "", `📦 Compact — ${defaults.compactOutputMode ? "ON" : "OFF"}`, `🧠 Thinking — ${defaults.showThinkingContent ? "ON" : "OFF"}`, `✍️ Streaming — ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, `📝 Format — ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, `📊 Run footer — ${defaults.showAssistantRunFooter ? "ON" : "OFF"}`, `📎 Diff files — ${defaults.sendDiffFileAttachments ? "ON" : "OFF"}`, `📥 Prompt queue — ${defaults.promptQueueEnabled ? "ON" : "OFF"}`].join("\n"), keyboard };
+  return { text: ["🧩 Topic Defaults", "", "These values are copied when a new Topic is created. Changes here do not modify existing Topics.", "", `📦 Compact — ${defaults.compactOutputMode ? "ON" : "OFF"}`, `🧠 Thinking — ${defaults.showThinkingContent ? "ON" : "OFF"}`, `✍️ Streaming — ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, `📝 Format — ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, `📊 Run footer — ${defaults.showAssistantRunFooter ? "ON" : "OFF"}`, `📎 Diff files — ${defaults.sendDiffFileAttachments ? "ON" : "OFF"}`, `📥 Prompt queue — ${defaults.promptQueueEnabled ? "ON" : "OFF"}`].join("\n"), keyboard };
 }
 
 export function buildAppearanceSettingsView(): { text: string; keyboard: InlineKeyboard } {
@@ -95,14 +95,14 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
     .text(settingButton("📊 Run footer", formatBooleanSettingValue(footer)), SETTINGS_ASSISTANT_FOOTER_CALLBACK).row()
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(diff)), SETTINGS_DIFF_FILES_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: ["🎨 Reply & Output", "", "These settings apply only to the current Topic.", "", `📦 Compact output — ${compact ? "ON" : "OFF"}`, `🧠 Thinking details — ${thinking ? "ON" : "OFF"}`, `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)}`, `📝 Message format — ${formatMessageFormatModeValue(format)}`, `📊 Run footer — ${footer ? "ON" : "OFF"}`, `📎 Diff files — ${diff ? "ON" : "OFF"}`].join("\n"), keyboard };
+  return { text: ["🎨 Reply & Output", "", "Control how OpenCode responses are presented in this Topic.", "", `📦 Compact output — ${compact ? "ON" : "OFF"}`, `🧠 Thinking details — ${thinking ? "ON" : "OFF"}`, `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)}`, `📝 Message format — ${formatMessageFormatModeValue(format)}`, `📊 Run footer — ${footer ? "ON" : "OFF"}`, `📎 Diff files — ${diff ? "ON" : "OFF"}`].join("\n"), keyboard };
 }
 
 export function buildNotificationsSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const queue = getPromptQueueEnabled();
   const keyboard = new InlineKeyboard().text(settingButton("📥 Prompt queue", formatBooleanSettingValue(queue)), SETTINGS_PROMPT_QUEUE_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "📥 Prompt Queue\n\nThe queue belongs only to the current Topic.", keyboard };
+  return { text: "📥 Prompt Queue\n\nChoose whether new prompts wait in a queue while the current run is busy.", keyboard };
 }
 
 function contextGauge(tokensUsed: number, tokensLimit: number): string {
@@ -114,10 +114,10 @@ function contextGauge(tokensUsed: number, tokensLimit: number): string {
 
 export function buildContextSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const info = keyboardManager.getContextInfo();
-  if (!info || info.tokensLimit <= 0) return { text: "🧠 Context\n\nNo observed context usage is available yet.", keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
+  if (!info || info.tokensLimit <= 0) return { text: "🧠 Context\n\nView the latest observed context usage for the current Topic.\n\nNo usage has been observed yet.", keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
   const percent = Math.round((info.tokensUsed / info.tokensLimit) * 100);
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
-  return { text: ["🧠 Context", "", health, "", contextGauge(info.tokensUsed, info.tokensLimit), `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`, "", "📌 Latest observed input context.", "📐 Model window from provider metadata when available."].join("\n"), keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
+  return { text: ["🧠 Context", "", "View the latest observed context usage for the current Topic.", "", health, "", contextGauge(info.tokensUsed, info.tokensLimit), `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`, "", "📌 Latest observed input context.", "📐 Model window from provider metadata when available."].join("\n"), keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
 }
 
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
@@ -125,35 +125,35 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
     .text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row()
     .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK).row()
-    .text("🧹 Reset History", SETTINGS_RESET_HISTORY_CALLBACK).row()
+    .text("🧹 Clear Conversation History", SETTINGS_RESET_HISTORY_CALLBACK).row()
     .text("☢️ Factory Reset", SETTINGS_FACTORY_RESET_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "🛠 Advanced\n\nOpenCode-specific tools, customization and data-management controls.", keyboard };
+  return { text: "🛠 Advanced Settings\n\nOpenCode tools, customization, and data-management controls.", keyboard };
 }
 
 export function buildResetHistoryConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "⚠️ <b>Clear Conversation History?</b>\n\nThis permanently deletes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nYour providers, API keys, model/agent settings, Topic defaults, and other global configuration will remain unchanged.",
+    text: "⚠️ <b>Clear All Conversation History?</b>\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nYour providers, API keys, model/agent settings, Topic defaults, and other global configuration stay intact.\n\n<b>This action cannot be undone.</b>",
     keyboard: new InlineKeyboard()
-      .text("✅ Yes, clear all history", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
+      .text("✅ Clear All History", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
       .text("Cancel", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
   };
 }
 
 export function buildFactoryResetConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "☢️ <b>Factory Reset — Confirmation</b>\n\nThis permanently deletes all managed AI Topics, OpenCode sessions, conversation memory, Topic runtime state, Topic workspaces/files, and saved bot configuration — including providers, API keys, model/agent selection, Topic defaults, permissions, scheduled tasks, integrations, and other persisted application data.\n\nYour source code and deployment/runtime configuration are not deleted.\n\n<b>This action cannot be undone.</b>",
+    text: "☢️ <b>Reset Bot to Defaults?</b>\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, Topic workspaces/files, and saved bot configuration — including providers, API keys, model/agent selection, Topic defaults, permissions, scheduled-task state, integrations, and other persisted application data.\n\nYour source code and deployment/runtime configuration stay intact.\n\n<b>This action cannot be undone.</b>",
     keyboard: new InlineKeyboard()
-      .text("✅ I understand, continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
+      .text("✅ Continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
       .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
   };
 }
 
 export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🔴 <b>Final Factory Reset Confirmation</b>\n\nEverything stored by the bot will be reset to a fresh application state. All managed Topics, their OpenCode sessions, persistent memory, and their files will be deleted.\n\nRuntime code and deployment configuration remain intact.\n\nProceed only if you are sure.",
+    text: "🔴 <b>Final Factory Reset</b>\n\nYou are about to return the bot to a fresh application state. Managed Topics, their OpenCode sessions, persistent memory, and bot-created files will be deleted, and saved configuration will be reset.\n\nSource code and deployment/runtime configuration stay intact.\n\nProceed only if you are sure.",
     keyboard: new InlineKeyboard()
-      .text("🔴 CONFIRM FACTORY RESET", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
+      .text("🔴 Confirm Factory Reset", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
       .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
   };
 }
