@@ -2,6 +2,12 @@
 
 All notable Telegram-bot changes are documented here. OpenCode has its own independent release/version lifecycle.
 
+## [Unreleased]
+
+### Changed
+- Made the global `AGENTS.md` instruction file a required runtime contract so every OpenCode session, including fresh Topic workspaces, receives the project instructions before model work begins.
+- Added startup validation and a Railway log entry confirming that the global `AGENTS.md` was installed into the OpenCode config directory.
+
 ## [0.26.2] - 2026-09-04
 
 ### Fixed
