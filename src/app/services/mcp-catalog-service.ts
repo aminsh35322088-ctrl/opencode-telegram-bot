@@ -1,7 +1,11 @@
+import { promisify } from "node:util";
+import { execFile } from "node:child_process";
 import type { McpStatus } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
 import { isRecord } from "../../utils/type-guards.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface McpCatalogServerItem { name: string; status: McpStatus; }
 function normalizeDirectoryForMcpApi(directory: string): string { return directory.replace(/\\/g, "/"); }
@@ -37,6 +41,30 @@ export async function verifyMcpServerConnection(projectDirectory: string, server
   if (!server) throw new Error(`MCP server "${serverName}" was not found after connection`);
   if (server.status.status !== "connected") { const detail = "error" in server.status && server.status.error ? `: ${server.status.error}` : ""; throw new Error(`MCP server "${serverName}" did not verify as connected (status=${server.status.status})${detail}`); }
   return server;
+}
+export async function addMcpCatalogServer(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<void> {
+  const name = options.name.trim();
+  const value = options.value.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  if (!value) throw new Error(options.type === "remote" ? "MCP server URL is required." : "MCP server command is required.");
+
+  const args = options.type === "remote"
+    ? ["mcp", "add", name, "--url", value]
+    : ["mcp", "add", name, "--", ...value.split(/\s+/u)];
+
+  try {
+    const { stdout, stderr } = await execFileAsync("opencode", args, {
+      cwd: options.projectDirectory,
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    });
+    const output = `${stdout ?? ""}${stderr ?? ""}`.trim();
+    logger.info(`[McpCatalog] Added ${options.type} MCP server "${name}"${output ? `: ${output.slice(-500)}` : ""}`);
+  } catch (error) {
+    logger.error(`[McpCatalog] Failed to add ${options.type} MCP server "${name}":`, error);
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
 }
 export async function toggleMcpCatalogServer(projectDirectory: string, serverName: string, enable: boolean): Promise<void> {
   const params = { name: serverName, directory: normalizeDirectoryForMcpApi(projectDirectory) };
