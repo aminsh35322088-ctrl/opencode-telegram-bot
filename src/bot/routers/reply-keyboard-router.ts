@@ -28,12 +28,12 @@ import {
   CONTEXT_BUTTON_TEXT_PATTERN,
   QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
   VARIANT_BUTTON_TEXT_PATTERN,
-  isReplyKeyboardButtonText,
 } from "../message-patterns.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { classifyReplyKeyboardInteraction } from "../interaction-classifier.js";
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -109,6 +109,11 @@ async function handleReplyKeyboardInput(
   const text = normalized(raw);
   if (!text) { await next(); return; }
 
+  // The classifier is the authoritative prompt/UI boundary. Nothing below is
+  // allowed to turn arbitrary text into a Reply Keyboard control.
+  const classified = await classifyReplyKeyboardInteraction(ctx);
+  if (!classified.isControl) { await next(); return; }
+
   const scope = await getTopicScope(ctx);
   const runtime = getTopicRuntimeContext();
   const renderedButtonTexts = getRenderedReplyKeyboardTexts(scope, runtime);
@@ -132,8 +137,13 @@ async function handleReplyKeyboardInput(
     QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) ||
     VARIANT_BUTTON_TEXT_PATTERN.test(text)
   );
-  const knownReplyKeyboardControl = isReplyKeyboardButtonText(text, new Set([mainModelButton, topicModelButton]));
-  if (!exactControls.has(text) && !knownReplyKeyboardControl && !dynamicTopicControl) { await next(); return; }
+
+  if (!exactControls.has(text) && !dynamicTopicControl) {
+    // A future Reply Keyboard label is still consumed safely; it is not a prompt.
+    logger.info(`[Bot] Consuming classified Reply Keyboard control without legacy route: thread=${ctx.message?.message_thread_id ?? 0} text=${raw} control=${classified.controlId ?? "unknown"}`);
+    await consumeReplyKeyboardMessage(ctx);
+    return;
+  }
 
   clearImageMode();
   const mainOnly = new Set([normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings), mainModelButton]);
