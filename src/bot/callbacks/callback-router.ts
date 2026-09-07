@@ -79,7 +79,7 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
         parse_mode: "HTML",
         reply_markup: createMainInlineKeyboard(currentModel),
       });
-      keyboardManager.setMainInlineMessage(chatId, messageId);
+      await keyboardManager.setMainInlineMessage(chatId, messageId);
       await keyboardManager.pinMainInlineMessage(chatId, messageId);
       clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
       logger.info(`[Navigation] Restored persistent pinned Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
