@@ -6,9 +6,7 @@ import { shouldSuggestPromptQueue, tryEnqueuePrompt } from "../handlers/prompt-q
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { isImageAiOperationActive } from "../../app/services/image-mode-service.js";
-import { isReplyKeyboardButtonText } from "../message-patterns.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { formatModelForButton } from "../../app/types/model.js";
+import { isReplyKeyboardControl } from "../interaction-classifier.js";
 import { handleMcpsMessage, isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
 
 function getInteractionBlockedMessage(reason: BlockReason | undefined, interactionKind: InteractionKind | undefined): string {
@@ -67,20 +65,19 @@ function getInteractionBlockedMessage(reason: BlockReason | undefined, interacti
   }
 }
 
-function isImageOperationControl(ctx: Context): boolean {
-  const text = ctx.message?.text;
-  if (typeof text !== "string") return false;
-  const model = getStoredModel();
-  const knownButtonTexts = new Set<string>();
-  if (model.providerID && model.modelID) knownButtonTexts.add(formatModelForButton(model.providerID, model.modelID, model.name));
-  return isReplyKeyboardButtonText(text, knownButtonTexts);
-}
-
 export async function interactionGuardMiddleware(ctx: Context, next: NextFunction): Promise<void> {
   if (ctx.message?.text && isMcpAddWizardActive()) {
     if (await handleMcpsMessage(ctx)) return;
   }
-  if (ctx.message?.text && isImageAiOperationActive() && !isImageOperationControl(ctx)) {
+
+  // Reply Keyboard controls are UI interactions, never user prompts. Classify
+  // them before busy/queue handling so a button can never be enqueued as text.
+  if (ctx.message?.text && await isReplyKeyboardControl(ctx)) {
+    await next();
+    return;
+  }
+
+  if (ctx.message?.text && isImageAiOperationActive()) {
     await ctx.reply("⏳ Image AI is still working on the current request. Please wait for the image to be delivered.").catch(() => {});
     return;
   }
