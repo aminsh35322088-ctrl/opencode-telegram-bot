@@ -100,6 +100,21 @@ class KeyboardManager {
     }
   }
 
+  /**
+   * `/start` establishes the Main navigation message as the sole pinned anchor.
+   * Telegram permits multiple pinned messages and pinChatMessage does not replace
+   * existing pins, so the legacy/previous Main pins must be cleared explicitly.
+   */
+  public async clearAllMainNavigationPins(chatId: number): Promise<void> {
+    if (!this.api) return;
+    try {
+      await this.api.unpinAllChatMessages(chatId);
+      logger.info(`[TelegramKeyboard] Cleared all existing pinned messages before Main /start anchor: chat=${chatId}`);
+    } catch (err) {
+      logger.warn(`[TelegramKeyboard] Failed to clear existing pinned messages before Main /start anchor: chat=${chatId}`, err);
+    }
+  }
+
   public async pinMainInlineMessage(chatId: number, messageId?: number): Promise<void> {
     if (!this.api) return;
     const targetMessageId = messageId ?? this.getPersistedMainInlineMessageId(chatId);
