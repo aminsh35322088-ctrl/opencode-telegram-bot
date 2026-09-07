@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import type { ModelInfo } from "../types/model.js";
@@ -10,13 +11,13 @@ export interface TopicRuntimeState {
   chatId: number;
   threadId: number;
   settings: TopicSettings;
-  /** @deprecated Read/write through settings in new code. Kept for migration. */
+  /** @deprecated Read/write through settings in new code. Kept for runtime compatibility. */
   session?: SessionInfo;
-  /** @deprecated Read/write through settings in new code. Kept for migration. */
+  /** @deprecated Read/write through settings in new code. Kept for runtime compatibility. */
   model?: ModelInfo;
-  /** @deprecated Read/write through settings in new code. Kept for migration. */
+  /** @deprecated Read/write through settings in new code. Kept for runtime compatibility. */
   agent?: string;
-  /** @deprecated Read/write through settings in new code. Kept for migration. */
+  /** @deprecated Read/write through settings in new code. Kept for runtime compatibility. */
   compactOutputMode?: boolean;
   updatedAt: string;
 }
@@ -27,13 +28,13 @@ let loaded = false;
 let loadPromise: Promise<void> | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
 function key(chatId: number, threadId: number): string { return `${chatId}:${threadId}`; }
-function storePath(): string { return path.join(path.dirname(getRuntimePaths().settingsFilePath), "telegram-topic-runtime.json"); }
+function storePath(): string { return path.join(getRuntimePaths().appHome, "runtime", "topics", "telegram-topic-runtime.json"); }
 function topicContext(chatId: number, threadId: number, state?: TopicRuntimeState) { return { chatId, threadId, sessionId: state?.settings.session?.id, directory: state?.settings.workspaceDirectory }; }
 function cloneSettings(settings: TopicSettings): TopicSettings { return { ...settings, session: settings.session ? { ...settings.session } : undefined, model: settings.model ? { ...settings.model } : undefined }; }
 function clone(state: TopicRuntimeState): TopicRuntimeState { return { ...state, settings: cloneSettings(state.settings), session: state.session ? { ...state.session } : undefined, model: state.model ? { ...state.model } : undefined }; }
 function migrateLegacyState(value: Partial<TopicRuntimeState>): TopicSettings { const legacy = value.settings; const settings = legacy && typeof legacy === "object" ? cloneSettings(legacy) : { ...DEFAULT_TOPIC_DEFAULTS, session: value.session, model: value.model, agent: value.agent, compactOutputMode: value.compactOutputMode ?? DEFAULT_TOPIC_DEFAULTS.compactOutputMode, runState: "idle" as TopicRunState, updatedAt: value.updatedAt ?? new Date().toISOString() }; return { ...DEFAULT_TOPIC_DEFAULTS, ...settings, compactOutputMode: settings.compactOutputMode ?? DEFAULT_TOPIC_DEFAULTS.compactOutputMode, showThinkingContent: settings.showThinkingContent ?? DEFAULT_TOPIC_DEFAULTS.showThinkingContent, responseStreamingMode: settings.responseStreamingMode ?? DEFAULT_TOPIC_DEFAULTS.responseStreamingMode, messageFormatMode: settings.messageFormatMode ?? DEFAULT_TOPIC_DEFAULTS.messageFormatMode, showAssistantRunFooter: settings.showAssistantRunFooter ?? DEFAULT_TOPIC_DEFAULTS.showAssistantRunFooter, sendDiffFileAttachments: settings.sendDiffFileAttachments ?? DEFAULT_TOPIC_DEFAULTS.sendDiffFileAttachments, promptQueueEnabled: settings.promptQueueEnabled ?? DEFAULT_TOPIC_DEFAULTS.promptQueueEnabled, runState: settings.runState ?? "idle", updatedAt: settings.updatedAt ?? value.updatedAt ?? new Date().toISOString() }; }
-async function persist(): Promise<void> { const fs = await import("fs/promises"); const target = storePath(); const temp = `${target}.tmp`; await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(temp, JSON.stringify([...states.values()], null, 2), "utf8"); await fs.rename(temp, target); topicTelemetry("runtime_state_persisted", {}, { states: states.size }); }
-export async function loadTopicRuntimeStates(): Promise<void> { if (loaded) return; if (loadPromise) return loadPromise; loadPromise = (async () => { const fs = await import("fs/promises"); try { const raw = await fs.readFile(storePath(), "utf8"); const parsed: unknown = JSON.parse(raw); if (Array.isArray(parsed)) for (const value of parsed) { if (!value || typeof value !== "object") continue; const candidate = value as Partial<TopicRuntimeState>; if (typeof candidate.chatId !== "number" || typeof candidate.threadId !== "number") continue; const settings = migrateLegacyState(candidate); states.set(key(candidate.chatId, candidate.threadId), { chatId: candidate.chatId, threadId: candidate.threadId, settings, session: settings.session, model: settings.model, agent: settings.agent, compactOutputMode: settings.compactOutputMode, updatedAt: settings.updatedAt }); } topicTelemetry("runtime_state_loaded", {}, { states: states.size }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") { topicTelemetry("runtime_state_load_failed"); throw error; } topicTelemetry("runtime_state_store_missing", {}, { path: storePath() }); } finally { loaded = true; loadPromise = null; } })(); return loadPromise; }
+async function persist(): Promise<void> { const target = storePath(); const temp = `${target}.tmp`; await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(temp, JSON.stringify([...states.values()], null, 2), { encoding: "utf8", mode: 0o600 }); await fs.rename(temp, target); await fs.chmod(target, 0o600).catch(() => {}); topicTelemetry("runtime_state_persisted", {}, { states: states.size }); }
+export async function loadTopicRuntimeStates(): Promise<void> { if (loaded) return; if (loadPromise) return loadPromise; loadPromise = (async () => { try { const raw = await fs.readFile(storePath(), "utf8"); const parsed: unknown = JSON.parse(raw); if (Array.isArray(parsed)) for (const value of parsed) { if (!value || typeof value !== "object") continue; const candidate = value as Partial<TopicRuntimeState>; if (typeof candidate.chatId !== "number" || typeof candidate.threadId !== "number") continue; const settings = migrateLegacyState(candidate); states.set(key(candidate.chatId, candidate.threadId), { chatId: candidate.chatId, threadId: candidate.threadId, settings, session: settings.session, model: settings.model, agent: settings.agent, compactOutputMode: settings.compactOutputMode, updatedAt: settings.updatedAt }); } topicTelemetry("runtime_state_loaded", {}, { states: states.size }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") { topicTelemetry("runtime_state_load_failed"); throw error; } topicTelemetry("runtime_state_store_missing", {}, { path: storePath() }); } finally { loaded = true; loadPromise = null; } })(); return loadPromise; }
 function queuePersist(): void { writeQueue = writeQueue.catch(() => {}).then(() => persist()).catch((error) => topicTelemetry("runtime_state_persist_failed", {}, { message: error instanceof Error ? error.message : String(error) })); }
 type TopicSettingsSeed = Partial<TopicDefaults> & Partial<Pick<TopicSettings, "session" | "workspaceDirectory">>;
 export function createTopicSettings(seed: TopicSettingsSeed = {}): TopicSettings { const now = new Date().toISOString(); return { ...DEFAULT_TOPIC_DEFAULTS, ...seed, session: seed.session ? { ...seed.session } : undefined, workspaceDirectory: seed.workspaceDirectory, runState: "idle", updatedAt: now }; }
