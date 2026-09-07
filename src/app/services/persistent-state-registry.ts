@@ -18,6 +18,11 @@ export const PERSISTENT_STATE = {
   ],
 } as const;
 
+/**
+ * Bot-owned configuration stores removed by the centralized app-state refactor.
+ * OpenCode-owned state is deliberately excluded: model.json, auth, cache, and
+ * OpenCode config/state must remain under OpenCode's own lifecycle.
+ */
 const LEGACY_APPLICATION_PATHS = [
   "settings.json",
   "settings.json.bak",
@@ -29,10 +34,7 @@ const LEGACY_APPLICATION_PATHS = [
   "integrations",
   "ai-role-selection.json",
 ];
-const LEGACY_HOME_PATHS = [
-  path.join("model-preferences", "model-preferences.json"),
-  path.join(".local", "state", "opencode", "model.json"),
-];
+const LEGACY_MODEL_PREFERENCE_PATH = path.join("model-preferences", "model-preferences.json");
 
 export function getPersistentStatePaths(): string[] {
   const appHome = getRuntimePaths().appHome;
@@ -45,9 +47,18 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
   const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || "/data";
   const paths = [
     ...LEGACY_APPLICATION_PATHS.map((relativePath) => path.join(appHome, relativePath)),
-    ...LEGACY_HOME_PATHS.map((relativePath) => path.join(home, relativePath)),
+    path.join(home, LEGACY_MODEL_PREFERENCE_PATH),
   ];
-  await Promise.all(paths.map((target) => fs.rm(target, { recursive: true, force: true }).catch(() => {})));
+  const results = await Promise.all(paths.map(async (target) => {
+    try {
+      await fs.rm(target, { recursive: true, force: true });
+      return { target, ok: true };
+    } catch {
+      return { target, ok: false };
+    }
+  }));
+  const failures = results.filter((item) => !item.ok).map((item) => item.target);
+  if (failures.length) throw new Error(`Could not remove obsolete bot configuration: ${failures.join(", ")}`);
 }
 
 export function getPersistentStateManifest(): Record<string, readonly string[]> {
