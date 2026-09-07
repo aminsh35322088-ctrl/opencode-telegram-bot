@@ -112,6 +112,7 @@ function createBot() {
     api: {
       deleteWebhook: vi.fn().mockResolvedValue(undefined),
       getWebhookInfo: vi.fn().mockResolvedValue({ url: "" }),
+      getMe: vi.fn().mockResolvedValue({ has_topics_enabled: true }),
     },
     start: vi.fn().mockImplementation(async ({ onStart }) => {
       onStart?.({ username: "test_bot" });
@@ -129,6 +130,7 @@ function createPendingBot() {
     api: {
       deleteWebhook: vi.fn().mockResolvedValue(undefined),
       getWebhookInfo: vi.fn().mockResolvedValue({ url: "" }),
+      getMe: vi.fn().mockResolvedValue({ has_topics_enabled: true }),
     },
     start: vi.fn().mockImplementation(async ({ onStart }) => {
       onStart?.({ username: "test_bot" });
