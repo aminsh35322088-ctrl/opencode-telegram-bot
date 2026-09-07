@@ -42,6 +42,7 @@ class KeyboardManager {
   private api: Api | null = null;
   private readonly lastUpdateTimes = new Map<string, number>();
   private readonly mainInlineMessageIds = new Map<number, number>();
+  private readonly mainPinnedMessageIds = new Map<number, number>();
   private readonly mainAnchorLocks = new Map<number, Promise<void>>();
   private readonly topicModeChats = new Set<number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
@@ -93,10 +94,37 @@ class KeyboardManager {
 
   public async setMainInlineMessage(chatId: number, messageId: number): Promise<void> {
     await this.withMainAnchorLock(chatId, async () => {
+      if (!this.api || !messageId) return;
+
       const previousMessageId = this.getPersistedMainInlineMessageId(chatId);
-      if (previousMessageId && previousMessageId !== messageId) await this.clearMainAnchor(chatId, previousMessageId);
+      if (previousMessageId === messageId) {
+        await this.ensureMainAnchorPinnedLocked(chatId, messageId, true);
+        return;
+      }
+
+      // Transactional replacement: pin the new anchor first. The previous
+      // canonical anchor remains available if Telegram rejects the new pin.
+      const pinned = await this.ensureMainAnchorPinnedLocked(chatId, messageId, true);
+      if (!pinned) {
+        logger.warn(`[TelegramKeyboard] Main anchor replacement aborted because the new message could not be pinned: chat=${chatId}, message=${messageId}`);
+        return;
+      }
+
       this.mainInlineMessageIds.set(chatId, messageId);
-      await setMainNavigationMessageId(chatId, messageId);
+      try {
+        await setMainNavigationMessageId(chatId, messageId);
+      } catch (error) {
+        logger.error(`[TelegramKeyboard] Failed to persist new Main anchor; keeping Telegram state safe: chat=${chatId}, message=${messageId}`, error);
+        await this.clearMainAnchor(chatId, messageId);
+        this.mainInlineMessageIds.delete(chatId);
+        return;
+      }
+
+      if (previousMessageId && previousMessageId !== messageId) {
+        await this.clearMainAnchor(chatId, previousMessageId);
+      }
+
+      logger.info(`[TelegramKeyboard] Main anchor committed after successful pin: chat=${chatId}, message=${messageId}`);
     });
   }
 
@@ -116,52 +144,34 @@ class KeyboardManager {
     } catch (err) {
       logger.debug(`[TelegramKeyboard] Previous Main anchor was not unpinned (may already be unpinned): chat=${chatId}, message=${messageId}`, err);
     }
+    if (this.mainPinnedMessageIds.get(chatId) === messageId) this.mainPinnedMessageIds.delete(chatId);
   }
 
-  /**
-   * Telegram keeps multiple pins unless they are explicitly removed. This method
-   * is used only as a pre-render cleanup; the render operation itself also runs
-   * under the per-chat Main anchor lock and clears all pins immediately before
-   * pinning the canonical bot navigation message.
-   */
-  public async clearAllMainNavigationPins(chatId: number): Promise<void> {
-    await this.withMainAnchorLock(chatId, async () => {
-      await this.clearAllMainNavigationPinsLocked(chatId);
-    });
-  }
-
-  private async clearAllMainNavigationPinsLocked(chatId: number): Promise<void> {
-    if (!this.api) return;
-    try {
-      await this.api.unpinAllChatMessages(chatId);
-      logger.info(`[TelegramKeyboard] Cleared all existing pinned messages before Main anchor: chat=${chatId}`);
-    } catch (err) {
-      logger.warn(`[TelegramKeyboard] Failed to clear existing pinned messages before Main anchor: chat=${chatId}`, err);
-    }
-  }
-
-  private async pinMainInlineMessageLocked(chatId: number, messageId: number): Promise<boolean> {
+  private async ensureMainAnchorPinnedLocked(chatId: number, messageId: number, forceVerify = false): Promise<boolean> {
     if (!this.api || !messageId) return false;
+
+    if (!forceVerify && this.mainPinnedMessageIds.get(chatId) === messageId) return true;
+
     try {
-      // Enforce the invariant: exactly one pinned bot anchor after every render.
-      await this.clearAllMainNavigationPinsLocked(chatId);
-      await this.api.pinChatMessage(chatId, messageId, { disable_notification: true });
-
-      // Verify Telegram accepted the exact message as the current pin. This turns
-      // a silent API-success/UI-mismatch into an observable failure in logs.
       const chat = await this.api.getChat(chatId);
-      const pinnedMessageId = "pinned_message" in chat && chat.pinned_message && "message_id" in chat.pinned_message
-        ? chat.pinned_message.message_id
-        : undefined;
-      if (pinnedMessageId !== messageId) {
-        logger.warn(`[TelegramKeyboard] Pin verification mismatch: chat=${chatId}, expected=${messageId}, actual=${pinnedMessageId ?? "none"}`);
-        return false;
+      const pinnedMessage = "pinned_message" in chat ? chat.pinned_message : undefined;
+      const latestPinnedMessageId = pinnedMessage && "message_id" in pinnedMessage ? pinnedMessage.message_id : undefined;
+      if (latestPinnedMessageId === messageId) {
+        this.mainPinnedMessageIds.set(chatId, messageId);
+        logger.debug(`[TelegramKeyboard] Main anchor already pinned; no pin mutation needed: chat=${chatId}, message=${messageId}`);
+        return true;
       }
+    } catch (error) {
+      logger.debug(`[TelegramKeyboard] Could not inspect current pin state; attempting direct pin: chat=${chatId}, message=${messageId}`, error);
+    }
 
-      logger.info(`[TelegramKeyboard] Main status + InlineKeyboard pinned and verified: chat=${chatId}, message=${messageId}`);
+    try {
+      await this.api.pinChatMessage(chatId, messageId, { disable_notification: true });
+      this.mainPinnedMessageIds.set(chatId, messageId);
+      logger.info(`[TelegramKeyboard] Main status + InlineKeyboard pinned: chat=${chatId}, message=${messageId}`);
       return true;
-    } catch (err) {
-      logger.warn(`[TelegramKeyboard] Failed to pin/verify Main status + InlineKeyboard: chat=${chatId}, message=${messageId}`, err);
+    } catch (error) {
+      logger.warn(`[TelegramKeyboard] Failed to pin Main status + InlineKeyboard: chat=${chatId}, message=${messageId}`, error);
       return false;
     }
   }
@@ -170,7 +180,7 @@ class KeyboardManager {
     await this.withMainAnchorLock(chatId, async () => {
       const targetMessageId = messageId ?? this.getPersistedMainInlineMessageId(chatId);
       if (!targetMessageId) return;
-      await this.pinMainInlineMessageLocked(chatId, targetMessageId);
+      await this.ensureMainAnchorPinnedLocked(chatId, targetMessageId, true);
     });
   }
 
@@ -192,6 +202,10 @@ class KeyboardManager {
     logger.debug(`[TopicMode] Ignoring request to hide General InlineKeyboard: chat=${chatId}`);
   }
 
+  public async clearMainInlineKeyboard(chatId: number): Promise<void> {
+    logger.debug(`[TelegramKeyboard] Keeping persistent Main status + InlineKeyboard message: chat=${chatId}`);
+  }
+
   public async clearMainInlineMessage(chatId: number): Promise<void> {
     logger.debug(`[TelegramKeyboard] Keeping persistent Main status + InlineKeyboard message: chat=${chatId}`);
   }
@@ -204,9 +218,10 @@ class KeyboardManager {
     await this.withMainAnchorLock(chatId, async () => {
       if (!this.api) return;
       const now = Date.now();
-      const previous = this.lastUpdateTimes.get(MAIN_KEY) ?? 0;
+      const updateKey = `${MAIN_KEY}:${chatId}`;
+      const previous = this.lastUpdateTimes.get(updateKey) ?? 0;
       if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
-      this.lastUpdateTimes.set(MAIN_KEY, now);
+      this.lastUpdateTimes.set(updateKey, now);
 
       const text = await buildMainStatusText(currentModel);
       const replyMarkup = createMainInlineKeyboard(currentModel);
@@ -218,11 +233,17 @@ class KeyboardManager {
             parse_mode: "HTML",
             reply_markup: replyMarkup,
           });
-          const verified = await this.pinMainInlineMessageLocked(chatId, existingMessageId);
-          if (verified) {
-            logger.info(`[TelegramKeyboard] Restored persistent Main status + InlineKeyboard in-place and verified anchor: chat=${chatId}, message=${existingMessageId}`);
+          const pinned = await this.ensureMainAnchorPinnedLocked(chatId, existingMessageId, force);
+          if (pinned) {
+            logger.info(`[TelegramKeyboard] Restored persistent Main status + InlineKeyboard in-place: chat=${chatId}, message=${existingMessageId}`);
             return;
           }
+
+          // The message itself is still valid; do not create another message just
+          // because a transient pin operation failed. The next forced render can
+          // retry the pin without duplicating the navigation anchor.
+          logger.warn(`[TelegramKeyboard] Main anchor edited successfully but pin could not be ensured; retaining canonical message: chat=${chatId}, message=${existingMessageId}`);
+          return;
         } catch (err) {
           logger.debug(`[TelegramKeyboard] Existing Main status message unavailable; creating replacement: chat=${chatId}, message=${existingMessageId}`, err);
         }
@@ -237,14 +258,20 @@ class KeyboardManager {
           parse_mode: "HTML",
           reply_markup: replyMarkup,
         });
+        const pinned = await this.ensureMainAnchorPinnedLocked(chatId, response.message_id, true);
+        if (!pinned) {
+          logger.warn(`[TelegramKeyboard] New Main anchor was sent but could not be pinned; canonical state was not changed: chat=${chatId}, message=${response.message_id}`);
+          try {
+            await this.api.deleteMessage(chatId, response.message_id);
+          } catch (cleanupError) {
+            logger.debug(`[TelegramKeyboard] Failed to remove unpinned Main anchor candidate: chat=${chatId}, message=${response.message_id}`, cleanupError);
+          }
+          return;
+        }
+
         this.mainInlineMessageIds.set(chatId, response.message_id);
         await setMainNavigationMessageId(chatId, response.message_id);
-        const verified = await this.pinMainInlineMessageLocked(chatId, response.message_id);
-        if (!verified) {
-          logger.warn(`[TelegramKeyboard] New Main anchor was sent but pin verification failed: chat=${chatId}, message=${response.message_id}`);
-        } else {
-          logger.info(`[TelegramKeyboard] Main status + InlineKeyboard anchored, pinned and verified: chat=${chatId}, message=${response.message_id}`);
-        }
+        logger.info(`[TelegramKeyboard] Main status + InlineKeyboard anchored and pinned: chat=${chatId}, message=${response.message_id}`);
       } catch (err) {
         logger.error("[TelegramKeyboard] Failed to send anchored Main InlineKeyboard:", err);
       }
