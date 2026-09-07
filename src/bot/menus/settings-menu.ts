@@ -29,6 +29,13 @@ export const SETTINGS_MCP_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}mcp`;
 export const SETTINGS_SKILLS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}skills`;
 export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
 export const SETTINGS_BACK_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}back`;
+export const SETTINGS_RESET_HISTORY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}reset_history`;
+export const SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK = `${SETTINGS_RESET_HISTORY_CALLBACK}:confirm`;
+export const SETTINGS_RESET_HISTORY_CANCEL_CALLBACK = `${SETTINGS_RESET_HISTORY_CALLBACK}:cancel`;
+export const SETTINGS_FACTORY_RESET_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}factory_reset`;
+export const SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK = `${SETTINGS_FACTORY_RESET_CALLBACK}:confirm`;
+export const SETTINGS_FACTORY_RESET_CANCEL_CALLBACK = `${SETTINGS_FACTORY_RESET_CALLBACK}:cancel`;
+export const SETTINGS_FACTORY_RESET_FINAL_CALLBACK = `${SETTINGS_FACTORY_RESET_CALLBACK}:final`;
 
 export function formatBooleanSettingValue(enabled: boolean): string { return enabled ? "ON" : "OFF"; }
 export function formatResponseStreamingModeValue(mode: ResponseStreamingMode): string { return mode === "draft" ? "Live draft" : "Live edit"; }
@@ -70,10 +77,7 @@ export function buildTopicDefaultsSettingsView(): { text: string; keyboard: Inli
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(defaults.sendDiffFileAttachments)), SETTINGS_DEFAULT_DIFF_CALLBACK).row()
     .text(settingButton("📥 Prompt queue", formatBooleanSettingValue(defaults.promptQueueEnabled)), SETTINGS_DEFAULT_QUEUE_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return {
-    text: ["🧩 Topic Defaults", "", "Copied once when a new Topic is created. Existing Topics are never mutated by changes here.", "", `📦 Compact — ${defaults.compactOutputMode ? "ON" : "OFF"}`, `🧠 Thinking — ${defaults.showThinkingContent ? "ON" : "OFF"}`, `✍️ Streaming — ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, `📝 Format — ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, `📊 Run footer — ${defaults.showAssistantRunFooter ? "ON" : "OFF"}`, `📎 Diff files — ${defaults.sendDiffFileAttachments ? "ON" : "OFF"}`, `📥 Prompt queue — ${defaults.promptQueueEnabled ? "ON" : "OFF"}`].join("\n"),
-    keyboard,
-  };
+  return { text: ["🧩 Topic Defaults", "", "Copied once when a new Topic is created. Existing Topics are never mutated by changes here.", "", `📦 Compact — ${defaults.compactOutputMode ? "ON" : "OFF"}`, `🧠 Thinking — ${defaults.showThinkingContent ? "ON" : "OFF"}`, `✍️ Streaming — ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, `📝 Format — ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, `📊 Run footer — ${defaults.showAssistantRunFooter ? "ON" : "OFF"}`, `📎 Diff files — ${defaults.sendDiffFileAttachments ? "ON" : "OFF"}`, `📥 Prompt queue — ${defaults.promptQueueEnabled ? "ON" : "OFF"}`].join("\n"), keyboard };
 }
 
 export function buildAppearanceSettingsView(): { text: string; keyboard: InlineKeyboard } {
@@ -117,7 +121,41 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
 }
 
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
-  const keyboard = new InlineKeyboard().text("🔌 API Providers", "provider:menu").row().text("🔗 Integrations", "integration:menu").row().text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row().text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row().text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK);
+  const keyboard = new InlineKeyboard()
+    .text("🔌 API Providers", "provider:menu").row()
+    .text("🔗 Integrations", "integration:menu").row()
+    .text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row()
+    .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
+    .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK).row()
+    .text("🧹 Reset History", SETTINGS_RESET_HISTORY_CALLBACK).row()
+    .text("☢️ Factory Reset", SETTINGS_FACTORY_RESET_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "🛠 Advanced\n\nGlobal integrations and OpenCode configuration.", keyboard };
+  return { text: "🛠 Advanced\n\nGlobal integrations, OpenCode configuration and destructive data-management controls.", keyboard };
+}
+
+export function buildResetHistoryConfirmationView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: "⚠️ <b>Reset History?</b>\n\nThis will permanently delete all managed AI Topics, OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files. Your saved providers, API keys, model settings and other global configuration will remain.",
+    keyboard: new InlineKeyboard()
+      .text("✅ I understand, continue", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
+      .text("Cancel", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
+  };
+}
+
+export function buildFactoryResetConfirmationView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: "☢️ <b>Factory Reset — First Confirmation</b>\n\nThis will reset all managed history plus saved bot settings, model/agent selection, Topic defaults, permissions, scheduled-task state and other persisted application data. Runtime code and deployment configuration are not deleted.\n\nThis cannot be undone.",
+    keyboard: new InlineKeyboard()
+      .text("✅ I understand, continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
+      .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
+  };
+}
+
+export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: "🔴 <b>Final Factory Reset Confirmation</b>\n\nEverything stored by the bot will be reset to a fresh application state. All managed Topics and their files will be deleted.\n\nProceed only if you are sure.",
+    keyboard: new InlineKeyboard()
+      .text("🔴 CONFIRM FACTORY RESET", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
+      .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
+  };
 }
