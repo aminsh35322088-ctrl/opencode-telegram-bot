@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentKeyboard, createMainKeyboard, removeKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
+import { createAgentKeyboard, createMainKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
 import { defined } from "../../helpers/defined.js";
 
 function getButtonText(button: string | { text: string }): string {
@@ -78,11 +78,10 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     ]);
   });
 
-  it("creates custom agent keyboard and remove payload", () => {
+  it("creates custom agent keyboard", () => {
     const keyboard = createAgentKeyboard("custom");
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([[{ text: "🤖 Custom Agent" }]]);
     expect(keyboard.resize_keyboard).toBe(true);
     expect(keyboard.is_persistent).toBe(true);
-    expect(removeKeyboard()).toEqual({ remove_keyboard: true });
   });
 });
