@@ -19,7 +19,7 @@ PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
 
 # Never rely on or persist integration credentials through Railway variables.
 # These are only compatibility guardrails for the process environment; the
-# bot loads active credentials from /data/workspace/app-state.json.
+# bot loads active credentials from the persistent application state file.
 unset GH_TOKEN GITHUB_TOKEN RAILWAY_TOKEN RAILWAY_API_TOKEN 2>/dev/null || true
 GH_HOST="${GH_HOST:-github.com}"
 GH_PROMPT_DISABLED="1"
@@ -30,7 +30,7 @@ export GH_HOST GH_PROMPT_DISABLED
 
 GLOBAL_OPENCODE_DIR="/data/.config/opencode"
 GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
-INTEGRATION_STATE_FILE="/data/workspace/app-state.json"
+INTEGRATION_STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 INTEGRATION_BIN_DIR="/data/run/integration-bin"
 GH_ACCOUNTS_DIR="/data/.config/gh/accounts"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR" "$GH_ACCOUNTS_DIR"
@@ -66,7 +66,7 @@ fi
 cat > "$INTEGRATION_BIN_DIR/gh" <<'EOF'
 #!/bin/sh
 set -eu
-STATE_FILE="/data/workspace/app-state.json"
+STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 TOKEN=""
 ACCOUNT_ID="github"
 if [ -f "$STATE_FILE" ]; then
@@ -96,7 +96,7 @@ EOF
 cat > "$INTEGRATION_BIN_DIR/railway" <<'EOF'
 #!/bin/sh
 set -eu
-STATE_FILE="/data/workspace/app-state.json"
+STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 TOKEN=""
 TOKEN_TYPE=""
 if [ -f "$STATE_FILE" ]; then
@@ -124,7 +124,7 @@ chown node:node "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
 cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
 set -eu
-STATE_FILE="/data/workspace/app-state.json"
+STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 TOKEN=""
 if [ -f "$STATE_FILE" ]; then
   TOKEN="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
