@@ -52,45 +52,18 @@ if [ -f /app/opencode.json ]; then
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
-SETTINGS_FILE="/data/settings.json"
-if [ -f "$SETTINGS_FILE" ] && command -v jq >/dev/null 2>&1; then
-  SETTINGS_TMP="${SETTINGS_FILE}.$$"
-  if jq 'if (.currentSession.directory? == "/app" or .currentSession.directory? == "/app/workspace" or .currentSession.directory? == "/tmp/site") then .currentSession.directory = "/data/workspace" else . end' "$SETTINGS_FILE" > "$SETTINGS_TMP" 2>/dev/null; then
-    if ! cmp -s "$SETTINGS_FILE" "$SETTINGS_TMP"; then
-      mv "$SETTINGS_TMP" "$SETTINGS_FILE"
-      printf '%s\n' "[railway] Preserved current session and normalized legacy directory -> /data/workspace"
-    else
-      rm -f "$SETTINGS_TMP"
-    fi
-  else
-    rm -f "$SETTINGS_TMP"
-    printf '%s\n' "[railway] Warning: could not inspect persisted settings for legacy session path"
-  fi
-fi
-
 chown -R node:node /data
-
-GITHUB_TOKEN_FILE="/data/integrations/github.token"
-if [ -s "$GITHUB_TOKEN_FILE" ]; then
-  GITHUB_TOKEN="$(cat "$GITHUB_TOKEN_FILE")"
-  export GITHUB_TOKEN
-fi
 
 cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
 set -eu
 
-host=""
-while IFS= read -r line; do
-  case "$line" in
-    host=*) host=${line#host=} ;;
-  esac
-done
-
-TOKEN_FILE="/data/integrations/github.token"
-if [ "$host" = "github.com" ] && [ -s "$TOKEN_FILE" ]; then
+# GitHub authentication is injected from the centralized application state
+# by the Node.js runtime. This helper exists only to let child git processes
+# reuse that runtime environment without persisting a second token file.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
   printf '%s\n' 'username=x-access-token'
-  printf 'password=%s\n' "$(cat "$TOKEN_FILE")"
+  printf 'password=%s\n' "$GITHUB_TOKEN"
 fi
 EOF
 chmod 700 /data/run/github-credential-helper.sh
@@ -98,12 +71,6 @@ chown node:node /data/run/github-credential-helper.sh
 
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
-
-if [ -s "$GITHUB_TOKEN_FILE" ]; then
-  printf '%s\n' "[railway] GitHub integration: configured"
-else
-  printf '%s\n' "[railway] GitHub integration: not configured"
-fi
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
 printf '%s\n' "[railway] OpenCode CLI: $(opencode --version 2>/dev/null || echo unknown)"
