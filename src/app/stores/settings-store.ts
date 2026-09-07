@@ -8,22 +8,58 @@ import type { TopicDefaults, TopicSettings } from "../types/topic-settings.js";
 import { config } from "../../config.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
+import { flushAppState, readAppState, updateAppState } from "./app-state-store.js";
 import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 import { getTopicRuntimeStateSync, updateTopicRuntimeStateSync } from "./topic-runtime-state-store.js";
 
 function cloneScheduledTasks(tasks: ScheduledTask[] | undefined): ScheduledTask[] | undefined { return tasks?.map((task) => cloneScheduledTask(task)); }
 function cloneScheduledTaskSessionIgnores(ignores: ScheduledTaskSessionIgnoreInfo[] | undefined): ScheduledTaskSessionIgnoreInfo[] | undefined { return ignores?.map((ignore) => ({ ...ignore })); }
-function getSettingsFilePath(): string { return getRuntimePaths().settingsFilePath; }
-function getSettingsBackupFilePath(): string { return `${getSettingsFilePath()}.bak`; }
-function getSettingsTempFilePath(): string { return `${getSettingsFilePath()}.tmp`; }
-let skipNextBackupRotation = false;
+function getLegacySettingsFilePath(): string { return path.join(getRuntimePaths().appHome, "settings.json"); }
+function getLegacySettingsBackupFilePath(): string { return `${getLegacySettingsFilePath()}.bak`; }
+let skipNextLegacyBackupRotation = false;
 let settingsWriteQueue: Promise<void> = Promise.resolve();
 function isFileNotFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
-async function readSettingsFileAt(filePath: string): Promise<Settings> { const fs = await import("fs/promises"); return JSON.parse(await fs.readFile(filePath, "utf-8")) as Settings; }
-async function readSettingsFile(): Promise<Settings> { const settingsFilePath = getSettingsFilePath(); try { return await readSettingsFileAt(settingsFilePath); } catch (primaryError) { if (!isFileNotFound(primaryError)) logger.warn(`[SettingsManager] Cannot read settings file ${settingsFilePath}:`, primaryError); try { skipNextBackupRotation = true; return await readSettingsFileAt(getSettingsBackupFilePath()); } catch (backupError) { if (isFileNotFound(primaryError) && isFileNotFound(backupError)) return {}; logger.error(`[SettingsManager] Settings file and backup are unusable: ${settingsFilePath}`, { primaryError, backupError }); throw new Error(`Cannot read settings: ${settingsFilePath} and ${getSettingsBackupFilePath()} are both unusable.`); } } }
-async function writeSettingsFileAtomically(settings: Settings): Promise<void> { const fs = await import("fs/promises"); const settingsFilePath = getSettingsFilePath(); const tempFilePath = getSettingsTempFilePath(); await fs.mkdir(path.dirname(settingsFilePath), { recursive: true }); try { await fs.writeFile(tempFilePath, JSON.stringify(settings, null, 2)); if (!skipNextBackupRotation) { try { await fs.rename(settingsFilePath, getSettingsBackupFilePath()); } catch (error) { if (!isFileNotFound(error)) throw error; } } await fs.rename(tempFilePath, settingsFilePath); skipNextBackupRotation = false; } catch (error) { await fs.rm(tempFilePath, { force: true }).catch(() => {}); throw error; } }
-function writeSettingsFile(settings: Settings): Promise<void> { settingsWriteQueue = settingsWriteQueue.catch(() => {}).then(async () => { try { await writeSettingsFileAtomically(settings); } catch (error) { logger.error("[SettingsManager] Error writing settings file:", error); } }); return settingsWriteQueue; }
-export function flushSettings(): Promise<void> { return settingsWriteQueue; }
+async function readLegacySettingsFileAt(filePath: string): Promise<Settings> { const fs = await import("fs/promises"); return JSON.parse(await fs.readFile(filePath, "utf-8")) as Settings; }
+async function migrateLegacySettingsIfNeeded(): Promise<Settings> {
+  const state = await readAppState();
+  const centralized = state.settings;
+  if (centralized && typeof centralized === "object" && !Array.isArray(centralized)) return centralized as Settings;
+  const legacyPath = getLegacySettingsFilePath();
+  try {
+    const legacy = await readLegacySettingsFileAt(legacyPath);
+    await updateAppState({ settings: legacy });
+    logger.info(`[SettingsManager] Migrated legacy settings into centralized app state: ${legacyPath}`);
+    return legacy;
+  } catch (primaryError) {
+    if (!isFileNotFound(primaryError)) logger.warn(`[SettingsManager] Cannot read legacy settings file ${legacyPath}:`, primaryError);
+    try {
+      skipNextLegacyBackupRotation = true;
+      const legacyBackup = await readLegacySettingsFileAt(getLegacySettingsBackupFilePath());
+      await updateAppState({ settings: legacyBackup });
+      logger.info(`[SettingsManager] Migrated legacy settings backup into centralized app state.`);
+      return legacyBackup;
+    } catch (backupError) {
+      if (isFileNotFound(primaryError) && isFileNotFound(backupError)) return {};
+      logger.error(`[SettingsManager] Legacy settings and backup are unusable: ${legacyPath}`, { primaryError, backupError });
+      throw new Error(`Cannot read settings: ${legacyPath} and ${getLegacySettingsBackupFilePath()} are both unusable.`);
+    }
+  }
+}
+async function readSettingsFile(): Promise<Settings> { return migrateLegacySettingsIfNeeded(); }
+async function writeSettingsFileAtomically(settings: Settings): Promise<void> {
+  await updateAppState({ settings: { ...settings } });
+  if (skipNextLegacyBackupRotation) {
+    skipNextLegacyBackupRotation = false;
+  }
+}
+function writeSettingsFile(settings: Settings): Promise<void> {
+  settingsWriteQueue = settingsWriteQueue.catch(() => {}).then(async () => {
+    try { await writeSettingsFileAtomically(settings); }
+    catch (error) { logger.error("[SettingsManager] Error writing centralized app state:", error); throw error; }
+  });
+  return settingsWriteQueue;
+}
+export async function flushSettings(): Promise<void> { await settingsWriteQueue; await flushAppState(); }
 
 const DEFAULT_TOPIC_DEFAULTS: TopicDefaults = { compactOutputMode: false, showThinkingContent: true, responseStreamingMode: "edit", messageFormatMode: "markdown", showAssistantRunFooter: true, sendDiffFileAttachments: true, promptQueueEnabled: false, variant: undefined };
 let currentSettings: Settings = {};
@@ -81,8 +117,8 @@ export function getScheduledTaskSessionIgnores(): ScheduledTaskSessionIgnoreInfo
 export function setScheduledTaskSessionIgnores(ignores: ScheduledTaskSessionIgnoreInfo[]): Promise<void> { currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(ignores); return writeSettingsFile(currentSettings); }
 
 /** Complete persisted application-state reset. Runtime code/config is intentionally untouched. */
-export function resetGlobalSettingsForFactory(): void { currentSettings = {}; skipNextBackupRotation = false; void writeSettingsFile(currentSettings); }
-export function __resetSettingsForTests(): void { currentSettings = {}; settingsWriteQueue = Promise.resolve(); skipNextBackupRotation = false; }
+export function resetGlobalSettingsForFactory(): void { currentSettings = {}; void writeSettingsFile(currentSettings); }
+export function __resetSettingsForTests(): void { currentSettings = {}; settingsWriteQueue = Promise.resolve(); skipNextLegacyBackupRotation = false; }
 const VALID_STREAMING_MODES: readonly ResponseStreamingMode[] = ["edit", "draft"];
 const VALID_MESSAGE_FORMAT_MODES: readonly MessageFormatMode[] = ["raw", "markdown"];
 function applyInitialSettingsPreset(preset: Record<string, unknown>): void { const knownKeys = new Set(["compactOutputMode", "showThinkingContent", "showAssistantRunFooter", "responseStreamingMode", "messageFormatMode", "sendDiffFileAttachments", "promptQueueEnabled"]); for (const [key, value] of Object.entries(preset)) { if (!knownKeys.has(key)) throw new Error(`INITIAL_SETTINGS_PRESET: unknown key \"${key}\".`); if (key === "responseStreamingMode") { if (typeof value !== "string" || !VALID_STREAMING_MODES.includes(value as ResponseStreamingMode)) throw new Error(`INITIAL_SETTINGS_PRESET: invalid responseStreamingMode.`); if (currentSettings.responseStreamingMode === undefined) currentSettings.responseStreamingMode = value as ResponseStreamingMode; } else if (key === "messageFormatMode") { if (typeof value !== "string" || !VALID_MESSAGE_FORMAT_MODES.includes(value as MessageFormatMode)) throw new Error(`INITIAL_SETTINGS_PRESET: invalid messageFormatMode.`); if (currentSettings.messageFormatMode === undefined) currentSettings.messageFormatMode = value as MessageFormatMode; } else { if (typeof value !== "boolean") throw new Error(`INITIAL_SETTINGS_PRESET: \"${key}\" must be a boolean.`); if (key === "compactOutputMode" && currentSettings.compactOutputMode === undefined) currentSettings.compactOutputMode = value; if (key === "showThinkingContent" && currentSettings.showThinkingContent === undefined) currentSettings.showThinkingContent = value; if (key === "showAssistantRunFooter" && currentSettings.showAssistantRunFooter === undefined) currentSettings.showAssistantRunFooter = value; if (key === "sendDiffFileAttachments" && currentSettings.sendDiffFileAttachments === undefined) currentSettings.sendDiffFileAttachments = value; if (key === "promptQueueEnabled" && currentSettings.promptQueueEnabled === undefined) currentSettings.promptQueueEnabled = value; } } }
