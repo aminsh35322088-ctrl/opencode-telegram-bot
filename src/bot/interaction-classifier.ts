@@ -42,21 +42,22 @@ function currentGlobalModelButton(): string {
 }
 
 function staticControlMap(): ReadonlyMap<string, string> {
-  return new Map<string, string>([
-    [MAIN_BUTTONS.history, "history"],
-    [MAIN_BUTTONS.newChat, "new-chat"],
-    [MAIN_BUTTONS.mainSettings, "main-settings"],
-    [MAIN_BUTTONS.topicSettings, "topic-settings"],
-    [MAIN_BUTTONS.imageAi, "image-ai"],
-    [MAIN_BUTTONS.deleteChat, "delete-chat"],
-    [MAIN_BUTTONS.pause, "pause"],
-    [MAIN_BUTTONS.resume, "resume"],
-    [MAIN_BUTTONS.abort, "abort"],
-    ["🧠 Model Center", "model-center"],
-    ["❌ Cancel", "cancel"],
-    [MAIN_BUTTONS.compact(true), "compact"],
-    [MAIN_BUTTONS.compact(false), "compact"],
-  ].map(([text, id]) => [normalize(text), id] as [string, string]));
+  const controls = new Map<string, string>();
+  const add = (text: string, id: string): void => controls.set(normalize(text), id);
+  add(MAIN_BUTTONS.history, "history");
+  add(MAIN_BUTTONS.newChat, "new-chat");
+  add(MAIN_BUTTONS.mainSettings, "main-settings");
+  add(MAIN_BUTTONS.topicSettings, "topic-settings");
+  add(MAIN_BUTTONS.imageAi, "image-ai");
+  add(MAIN_BUTTONS.deleteChat, "delete-chat");
+  add(MAIN_BUTTONS.pause, "pause");
+  add(MAIN_BUTTONS.resume, "resume");
+  add(MAIN_BUTTONS.abort, "abort");
+  add("🧠 Model Center", "model-center");
+  add("❌ Cancel", "cancel");
+  add(MAIN_BUTTONS.compact(true), "compact");
+  add(MAIN_BUTTONS.compact(false), "compact");
+  return controls;
 }
 
 async function resolveScope(ctx: Context): Promise<ReplyKeyboardScope> {
