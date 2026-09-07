@@ -35,6 +35,20 @@ INTEGRATION_BIN_DIR="/data/run/integration-bin"
 GH_ACCOUNTS_DIR="/data/.config/gh/accounts"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR" "$GH_ACCOUNTS_DIR"
 
+# Self-validation dependencies live in the immutable image layer. Expose them
+# to every repository/workspace through one symlink; never install into /data.
+if [ ! -e /data/workspace/node_modules ]; then
+  ln -s /opt/test-deps/node_modules /data/workspace/node_modules
+elif [ -L /data/workspace/node_modules ]; then
+  TARGET="$(readlink /data/workspace/node_modules)"
+  if [ "$TARGET" != "/opt/test-deps/node_modules" ]; then
+    rm -f /data/workspace/node_modules
+    ln -s /opt/test-deps/node_modules /data/workspace/node_modules
+  fi
+else
+  printf '%s\n' "[railway] Existing workspace node_modules detected; leaving it untouched to avoid data loss"
+fi
+
 if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     printf '%s\n' "[railway] Migrating image-local workspace contents to persistent volume"
@@ -74,9 +88,6 @@ if [ -f "$STATE_FILE" ]; then
   ACCOUNT_ID="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].id // "github"' "$STATE_FILE" 2>/dev/null || echo github)"
 fi
 
-# Keep the bot's persistent account selection authoritative for every gh call.
-# GH_TOKEN is the documented headless authentication mechanism and takes
-# precedence over any stale credentials in a gh config directory.
 GH_CONFIG_DIR="/data/.config/gh/accounts/$ACCOUNT_ID"
 mkdir -p "$GH_CONFIG_DIR"
 chmod 700 "$GH_CONFIG_DIR"
@@ -137,6 +148,11 @@ EOF
 chmod 700 /data/run/github-credential-helper.sh
 chown node:node /data/run/github-credential-helper.sh
 
+# Keep the persistent volume lean: disposable temp/cache output must stay out
+# of /data and stale temporary data from older images is cleaned on startup.
+find /tmp -mindepth 1 -maxdepth 1 -user node -exec rm -rf {} + 2>/dev/null || true
+rm -rf /data/.cache/npm /data/.npm 2>/dev/null || true
+
 chown -R node:node /data
 
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
@@ -153,7 +169,8 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Self-validation: node=$(node --version), tsc=$(tsc --version 2>/dev/null || echo unavailable), vitest=$(vitest --version 2>/dev/null | head -1 || echo unavailable), eslint=$(eslint --version 2>/dev/null || echo unavailable), prettier=$(prettier --version 2>/dev/null || echo unavailable), tsx=$(tsx --version 2>/dev/null | head -1 || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
