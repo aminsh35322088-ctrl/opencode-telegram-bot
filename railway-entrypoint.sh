@@ -63,6 +63,14 @@ if [ -f /app/opencode.json ]; then
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
+# Ship AGENTS.md to the global OpenCode config dir so every agent session
+# (including fresh topic workspaces) receives the project instructions.
+# OpenCode auto-loads $XDG_CONFIG_HOME/opencode/AGENTS.md as a global rule.
+if [ -f /app/AGENTS.md ]; then
+  cp /app/AGENTS.md "$GLOBAL_OPENCODE_DIR/AGENTS.md"
+  chown node:node "$GLOBAL_OPENCODE_DIR/AGENTS.md"
+fi
+
 cat > "$INTEGRATION_BIN_DIR/gh" <<'EOF'
 #!/bin/sh
 set -eu
