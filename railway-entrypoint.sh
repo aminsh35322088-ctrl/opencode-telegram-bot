@@ -63,13 +63,13 @@ if [ -f /app/opencode.json ]; then
   chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
 fi
 
-# Ship AGENTS.md to the global OpenCode config dir so every agent session
-# (including fresh topic workspaces) receives the project instructions.
-# OpenCode auto-loads $XDG_CONFIG_HOME/opencode/AGENTS.md as a global rule.
-if [ -f /app/AGENTS.md ]; then
-  cp /app/AGENTS.md "$GLOBAL_OPENCODE_DIR/AGENTS.md"
-  chown node:node "$GLOBAL_OPENCODE_DIR/AGENTS.md"
-fi
+# AGENTS.md is part of the runtime contract: every OpenCode session must have
+# the project instructions available globally, including sessions whose cwd is
+# a fresh/empty Topic workspace outside the repository tree.
+test -s /app/AGENTS.md
+cp /app/AGENTS.md "$GLOBAL_OPENCODE_DIR/AGENTS.md"
+chown node:node "$GLOBAL_OPENCODE_DIR/AGENTS.md"
+test -s "$GLOBAL_OPENCODE_DIR/AGENTS.md"
 
 cat > "$INTEGRATION_BIN_DIR/gh" <<'EOF'
 #!/bin/sh
@@ -160,6 +160,7 @@ printf '%s\n' "[railway] OpenCode default cwd: ${OPENCODE_TELEGRAM_WORKSPACE}"
 printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
+printf '%s\n' "[railway] Global AGENTS.md: $(wc -l < "$GLOBAL_OPENCODE_DIR/AGENTS.md") lines loaded"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
