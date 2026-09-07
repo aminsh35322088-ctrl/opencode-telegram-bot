@@ -27,6 +27,12 @@ export type ReplyKeyboardContext = {
   sessionId?: string;
 };
 
+const rawReplyKeyboardTextByContext = new WeakMap<object, string>();
+
+export function stashRawReplyKeyboardText(ctx: object, text: string): void {
+  rawReplyKeyboardTextByContext.set(ctx, text);
+}
+
 function normalize(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
 }
@@ -129,7 +135,7 @@ function isDynamicAiTopicControl(text: string): string | undefined {
  * and may outlive the in-memory keyboard registry after a restart.
  */
 export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<ReplyKeyboardInteraction> {
-  const raw = (ctx.state as Record<string, unknown> | undefined)?.rawReplyKeyboardText ?? ctx.message?.text;
+  const raw = rawReplyKeyboardTextByContext.get(ctx) ?? ctx.message?.text;
   const text = typeof raw === "string" ? normalize(raw) : "";
   const context = await resolveReplyKeyboardContext(ctx);
   if (!text) return { isControl: false, scope: context.scope, text };

@@ -13,14 +13,15 @@ vi.mock("../../src/app/services/topic-runtime-context.js", () => ({ getTopicRunt
 vi.mock("../../src/app/services/telegram-topic-store.js", () => ({ findTelegramTopicBindingByThread: mocks.findTelegramTopicBindingByThread }));
 
 import type { Context } from "grammy";
-import { classifyReplyKeyboardInteraction } from "../../src/bot/interaction-classifier.js";
+import { classifyReplyKeyboardInteraction, stashRawReplyKeyboardText } from "../../src/bot/interaction-classifier.js";
 import { MAIN_BUTTONS } from "../../src/bot/keyboards/main-reply-keyboard.js";
 
 function context(messageText: string, rawReplyKeyboardText?: string): Context {
-  return {
-    message: { text: messageText },
-    state: rawReplyKeyboardText === undefined ? {} : { rawReplyKeyboardText },
-  } as unknown as Context;
+  const ctx = { message: { text: messageText } } as unknown as Context;
+  if (rawReplyKeyboardText !== undefined) {
+    stashRawReplyKeyboardText(ctx, rawReplyKeyboardText);
+  }
+  return ctx;
 }
 
 const staticLabels: Array<[label: string, controlId: string]> = [

@@ -10,6 +10,7 @@ import { openSessionInTelegramTopic, sendToTelegramTopic } from "../../app/servi
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { enrichTelegramReplyContext } from "../../app/services/telegram-reply-context-service.js";
+import { stashRawReplyKeyboardText } from "../interaction-classifier.js";
 import { createTopicAwareBot, getTelegramTopicRuntimeDependencies, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -115,7 +116,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   // snapshot for all Reply Keyboard controls, not just Topic Settings.
   const rawMessageText = typeof ctx.message?.text === "string" ? ctx.message.text : undefined;
   if (rawMessageText !== undefined) {
-    (ctx.state as Record<string, unknown>).rawReplyKeyboardText = rawMessageText;
+    stashRawReplyKeyboardText(ctx, rawMessageText);
   }
 
   if (await handleSessionContinueCallback(ctx)) return;
