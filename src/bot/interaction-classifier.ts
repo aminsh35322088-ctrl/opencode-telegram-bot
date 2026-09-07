@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { keyboardManager } from "./keyboards/keyboard-manager.js";
-import { MAIN_BUTTONS } from "./keyboards/main-reply-keyboard.js";
+import { MAIN_BUTTONS, TOPIC_BUTTONS } from "./keyboards/main-reply-keyboard.js";
 import { getStoredModel } from "../app/services/model-selection-service.js";
 import { formatModelForButton } from "../app/types/model.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
@@ -8,6 +8,7 @@ import { findTelegramTopicBindingByThread } from "../app/services/telegram-topic
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
+  MODEL_BUTTON_TEXT_PATTERN,
   QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
   VARIANT_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
@@ -114,6 +115,7 @@ function isDynamicAiTopicControl(text: string): string | undefined {
   if (VARIANT_BUTTON_TEXT_PATTERN.test(text)) return "variant";
   if (CONTEXT_BUTTON_TEXT_PATTERN.test(text)) return "context";
   if (QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) return "queued-prompt";
+  if (MODEL_BUTTON_TEXT_PATTERN.test(text)) return "model";
   return undefined;
 }
 
@@ -144,6 +146,15 @@ export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<Re
     const dynamicControl = isDynamicAiTopicControl(text);
     if (dynamicControl) {
       return { isControl: true, scope: context.scope, text, controlId: dynamicControl };
+    }
+
+    // TOPIC_BUTTONS.modelCenter() is the canonical source for the Topic model
+    // label. The rendered-keyboard check above normally catches it. This
+    // explicit check documents and preserves the Topic-specific model contract
+    // when a Topic keyboard is reconstructed during state recovery.
+    const topicModelFallback = TOPIC_BUTTONS.modelCenter();
+    if (text === normalize(topicModelFallback)) {
+      return { isControl: true, scope: context.scope, text, controlId: "model" };
     }
   }
 
