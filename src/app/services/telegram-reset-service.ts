@@ -83,6 +83,7 @@ async function clearFactoryPersistentState(): Promise<void> {
     path.join(".config", "opencode-telegram"),
   ];
   for (const relativePath of knownPaths) await fs.rm(path.join(appHome, relativePath), { recursive: true, force: true });
+  delete process.env.GITHUB_TOKEN;
   logger.info(`[TelegramReset] Cleared known persisted application state under ${appHome}`);
 }
 
