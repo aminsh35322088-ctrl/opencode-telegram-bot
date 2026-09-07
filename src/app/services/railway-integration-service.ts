@@ -53,7 +53,7 @@ export async function getActiveRailwayTokenType(): Promise<RailwayTokenType | nu
 export async function hasRailwayToken(): Promise<boolean> { try { return Boolean(await getRailwayToken()); } catch { return false; } }
 export async function clearRailwayToken(): Promise<void> { await withStoreLock(async () => { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), railway: { accounts: [], activeId: undefined } } }); delete process.env.RAILWAY_TOKEN; delete process.env.RAILWAY_API_TOKEN; }); }
 
-export async function initializeRailwayTokenFromEnvironment(): Promise<boolean> {
+export async function initializeRailwayIntegration(): Promise<boolean> {
   // Railway credentials are owned by the bot's persistent Integrations store.
   // Railway environment variables are intentionally not a credential source.
   const index = await readIndex();
