@@ -43,7 +43,7 @@ function currentGlobalModelButton(): string {
 
 function staticControlMap(): ReadonlyMap<string, string> {
   const controls = new Map<string, string>();
-  const add = (text: string, id: string): void => controls.set(normalize(text), id);
+  const add = (text: string, id: string): void => { controls.set(normalize(text), id); };
   add(MAIN_BUTTONS.history, "history");
   add(MAIN_BUTTONS.newChat, "new-chat");
   add(MAIN_BUTTONS.mainSettings, "main-settings");
@@ -87,10 +87,10 @@ function getRenderedLabels(scope: ReplyKeyboardScope, sessionId?: string): Set<s
 }
 
 /**
- * Single gate for Reply Keyboard text. A text is a control only when it is an
- * exact label rendered by the current keyboard or an exact stable control label.
- * Deliberately avoids broad emoji/regex matching so normal user prose cannot be
- * promoted to a control by its wording.
+ * Authoritative boundary between Reply Keyboard controls and user prompts.
+ * Controls are recognized only by exact labels rendered for the current scope,
+ * plus stable labels that can legitimately arrive from a stale Telegram client.
+ * No broad emoji/regex heuristic is used here.
  */
 export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<ReplyKeyboardInteraction> {
   const raw = ctx.message?.text;
@@ -106,8 +106,9 @@ export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<Re
   if (controlId) return { isControl: true, scope, text, controlId };
   if (rendered.has(text)) return { isControl: true, scope, text, controlId: "keyboard-control" };
 
-  const globalModel = normalize(currentGlobalModelButton());
-  if (text === globalModel) return { isControl: true, scope, text, controlId: "model" };
+  if (text === normalize(currentGlobalModelButton())) {
+    return { isControl: true, scope, text, controlId: "model" };
+  }
 
   return { isControl: false, scope, text };
 }
