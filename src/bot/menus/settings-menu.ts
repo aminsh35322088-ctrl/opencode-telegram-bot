@@ -46,7 +46,18 @@ function formatTopicModel(): string { const model = getCurrentTopicSettings()?.m
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
   if (getCurrentTopicSettings()) return {
-    text: "🧵 Topic Settings\n\nThese controls affect only this Topic. Other Topics keep their own settings.",
+    text: [
+      "🧵 Topic Settings",
+      "",
+      "These controls affect only the current Topic.",
+      "",
+      "🤖 Model — Select the model used by this Topic.",
+      "🧑‍💻 Agent — Choose the agent behavior for this Topic.",
+      "🎛 Variant — Adjust model-specific behavior when available.",
+      "🎨 Reply & Output — Control response formatting and streaming.",
+      "📥 Prompt Queue — Control queued prompts while a run is busy.",
+      "🧠 Context — View the latest observed context usage.",
+    ].join("\n"),
     keyboard: new InlineKeyboard()
       .text(`🤖 Model: ${formatTopicModel()}`, SETTINGS_MODEL_CALLBACK).row()
       .text("🧑‍💻 Agent", SETTINGS_AGENT_CALLBACK).text("🎛 Variant", SETTINGS_VARIANT_CALLBACK).row()
@@ -56,7 +67,17 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
   };
 
   return {
-    text: "⚙️ Settings\n\nManage your model, Topic defaults, providers, integrations, and advanced OpenCode controls.",
+    text: [
+      "⚙️ Settings",
+      "",
+      "Manage how OpenCode behaves and how the bot connects to it.",
+      "",
+      "🤖 Default Model — Choose the model used by new Topics.",
+      "🧩 Topic Defaults — Set defaults copied into new Topics.",
+      "🔌 Providers & Models — Add providers and discover their models.",
+      "🔗 Integrations — Manage GitHub and Railway connections.",
+      "🧰 Advanced — OpenCode tools, MCP, commands, skills, and resets.",
+    ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("🤖 Default Model", SETTINGS_MODEL_CALLBACK).row()
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
