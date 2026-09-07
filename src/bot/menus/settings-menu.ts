@@ -122,29 +122,27 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
 
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const keyboard = new InlineKeyboard()
-    .text("🔌 API Providers", "provider:menu").row()
-    .text("🔗 Integrations", "integration:menu").row()
     .text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row()
     .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK).row()
     .text("🧹 Reset History", SETTINGS_RESET_HISTORY_CALLBACK).row()
     .text("☢️ Factory Reset", SETTINGS_FACTORY_RESET_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "🛠 Advanced\n\nGlobal integrations, OpenCode configuration and destructive data-management controls.", keyboard };
+  return { text: "🛠 Advanced\n\nOpenCode-specific tools, customization and data-management controls.", keyboard };
 }
 
 export function buildResetHistoryConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "⚠️ <b>Reset History</b>\n\nThis permanently deletes all managed AI Topics, their OpenCode sessions, persistent conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nSaved providers, API keys, model/agent settings, Topic defaults, and other global configuration remain unchanged.",
+    text: "⚠️ <b>Clear Conversation History?</b>\n\nThis permanently deletes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nYour providers, API keys, model/agent settings, Topic defaults, and other global configuration will remain unchanged.",
     keyboard: new InlineKeyboard()
-      .text("✅ Yes, reset all history", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
+      .text("✅ Yes, clear all history", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
       .text("Cancel", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
   };
 }
 
 export function buildFactoryResetConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "☢️ <b>Factory Reset — First Confirmation</b>\n\nThis permanently removes all managed AI Topics, OpenCode sessions, persistent memory, Topic runtime state, Topic workspaces/files, saved bot settings, model/agent selection, Topic defaults, permissions, scheduled-task state, integrations and other persisted application data. Runtime code and deployment configuration are not deleted.\n\nThis cannot be undone.",
+    text: "☢️ <b>Factory Reset — Confirmation</b>\n\nThis permanently deletes all managed AI Topics, OpenCode sessions, conversation memory, Topic runtime state, Topic workspaces/files, and saved bot configuration — including providers, API keys, model/agent selection, Topic defaults, permissions, scheduled tasks, integrations, and other persisted application data.\n\nYour source code and deployment/runtime configuration are not deleted.\n\n<b>This action cannot be undone.</b>",
     keyboard: new InlineKeyboard()
       .text("✅ I understand, continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
       .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
