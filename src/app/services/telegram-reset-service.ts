@@ -13,6 +13,7 @@ import { clearAllMemories, listMemories } from "./memory-service.js";
 import { clearSessionDirectoryCache, flushSettings, resetGlobalSettingsForFactory } from "../stores/settings-store.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearAllTopicRuntimeStates, listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
+import { clearAllModelPreferences } from "./model-preferences-service.js";
 import { logger } from "../../utils/logger.js";
 
 async function removeOrphanedTopicWorkspaces(chatId?: number): Promise<number> {
@@ -41,12 +42,15 @@ async function deleteBindings(api: Api, bindings: TelegramTopicBinding[]): Promi
 
   for (const binding of bindings) {
     if (assistantRunState.hasActiveRun(binding.sessionId)) {
-      throw new Error(`Cannot reset while ${binding.title ?? `session ${binding.sessionId}`} is actively running.`);
+      logger.error(`[TelegramReset] Skipping active Topic during reset: chat=${binding.chatId}, thread=${binding.threadId}, session=${binding.sessionId}`);
+      failed += 1;
+      continue;
     }
 
     try {
       await deleteTelegramTopicSession(api, binding);
       deleted += 1;
+      logger.info(`[TelegramReset] Topic removed: chat=${binding.chatId}, thread=${binding.threadId}, session=${binding.sessionId}`);
     } catch (error) {
       failed += 1;
       logger.error(`[TelegramReset] Failed to remove Topic during reset: chat=${binding.chatId}, thread=${binding.threadId}, session=${binding.sessionId}`, error);
@@ -102,9 +106,6 @@ function clearTransientState(reason: string): void {
 }
 
 export async function resetHistory(api: Api, _chatId: number): Promise<{ deleted: number; failed: number; orphanedWorkspaces: number; memoriesCleared: number }> {
-  // History is the managed application history, so the destructive reset is
-  // global across all managed Topics rather than limited to whichever chat
-  // happened to open Settings.
   const bindings = await listTelegramTopicBindings();
   const result = await deleteBindings(api, bindings);
   const orphanedWorkspaces = result.failed === 0 ? await removeOrphanedTopicWorkspaces() : 0;
@@ -134,6 +135,8 @@ async function clearFactoryPersistentState(): Promise<void> {
   const appHome = getRuntimePaths().appHome;
   const knownPaths = [
     "custom-providers.json",
+    "image-ai-providers.json",
+    "cloudflare-workers-ai.json",
     "settings.json",
     "settings.json.bak",
     "settings.json.tmp",
@@ -148,14 +151,22 @@ async function clearFactoryPersistentState(): Promise<void> {
     path.join(".config", "opencode-telegram"),
   ];
   for (const relativePath of knownPaths) await fs.rm(path.join(appHome, relativePath), { recursive: true, force: true });
+
+  const stateHome = process.env.XDG_STATE_HOME?.trim() || (process.env.HOME || process.env.USERPROFILE || "/data") + "/.local/state";
+  await fs.rm(path.join(stateHome, "opencode", "model.json"), { force: true });
+  await clearAllModelPreferences();
+
   delete process.env.GITHUB_TOKEN;
-  logger.info(`[TelegramReset] Cleared known persisted application state under ${appHome}`);
+  logger.info(`[TelegramReset] Cleared known persisted application state under ${appHome} and Model Center preferences`);
 }
 
 export async function factoryReset(api: Api, chatId: number): Promise<{ deleted: number; failed: number; orphanedWorkspaces: number; memoriesCleared: number }> {
   const bindings = await listTelegramTopicBindings();
   const result = await deleteBindings(api, bindings);
-  if (result.failed > 0) return { ...result, orphanedWorkspaces: 0, memoriesCleared: 0 };
+  if (result.failed > 0) {
+    logger.error(`[TelegramReset] Factory reset aborted before config purge: deleted=${result.deleted}, failed=${result.failed}, total=${bindings.length}`);
+    return { ...result, orphanedWorkspaces: 0, memoriesCleared: 0 };
+  }
 
   const remainingSessions = await verifyManagedSessionsDeleted(bindings);
   if (remainingSessions > 0) {
@@ -177,6 +188,6 @@ export async function factoryReset(api: Api, chatId: number): Promise<{ deleted:
     return { deleted: result.deleted, failed: 1, orphanedWorkspaces, memoriesCleared };
   }
 
-  logger.warn(`[TelegramReset] Factory reset VERIFIED globally: requestedChat=${chatId}, deleted=${result.deleted}, bindings=0, runtimeStates=0, memories=0, workspaces=0 (${orphanedWorkspaces} root(s) removed), memoriesCleared=${memoriesCleared}, settings=fresh`);
+  logger.warn(`[TelegramReset] Factory reset VERIFIED globally: requestedChat=${chatId}, deleted=${result.deleted}/${bindings.length}, bindings=0, runtimeStates=0, memories=0, workspaces=0 (${orphanedWorkspaces} root(s) removed), memoriesCleared=${memoriesCleared}, settings=fresh, modelCenter=fresh`);
   return { ...result, orphanedWorkspaces, memoriesCleared };
 }
