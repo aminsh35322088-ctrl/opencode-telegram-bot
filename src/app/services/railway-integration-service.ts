@@ -52,4 +52,14 @@ export async function getRailwayToken(): Promise<string> { return withStoreLock(
 export async function getActiveRailwayTokenType(): Promise<RailwayTokenType | null> { return withStoreLock(async () => { const index = await readIndex(); return (index.accounts.find((item) => item.id === index.activeId) ?? index.accounts[0])?.tokenType ?? null; }); }
 export async function hasRailwayToken(): Promise<boolean> { try { return Boolean(await getRailwayToken()); } catch { return false; } }
 export async function clearRailwayToken(): Promise<void> { await withStoreLock(async () => { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), railway: { accounts: [], activeId: undefined } } }); delete process.env.RAILWAY_TOKEN; delete process.env.RAILWAY_API_TOKEN; }); }
-export async function initializeRailwayTokenFromEnvironment(): Promise<boolean> { return withStoreLock(async () => { const index = await readIndex(); if (index.accounts.length) { await applyActiveRailwayToken(); return true; } const accountToken = process.env.RAILWAY_API_TOKEN?.trim(); const projectToken = process.env.RAILWAY_TOKEN?.trim(); const envToken = accountToken || projectToken; if (!envToken) return false; const account: StoredRailwayAccount = { id: "railway", name: "Railway", tokenFile: "", createdAt: new Date().toISOString(), tokenType: accountToken ? "account" : "project", token: envToken }; await writeIndex({ accounts: [account], activeId: account.id }); delete process.env.RAILWAY_TOKEN; delete process.env.RAILWAY_API_TOKEN; await applyActiveRailwayToken(); return true; }); }
+
+export async function initializeRailwayTokenFromEnvironment(): Promise<boolean> {
+  // Railway credentials are owned by the bot's persistent Integrations store.
+  // Railway environment variables are intentionally not a credential source.
+  const index = await readIndex();
+  delete process.env.RAILWAY_TOKEN;
+  delete process.env.RAILWAY_API_TOKEN;
+  if (!index.accounts.length) return false;
+  await applyActiveRailwayToken();
+  return true;
+}
