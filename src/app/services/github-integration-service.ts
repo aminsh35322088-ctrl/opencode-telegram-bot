@@ -35,7 +35,18 @@ function publicAccount(account: StoredGithubAccount): GithubAccount { const { to
 function normalizeToken(value: string): string { const token = value.trim(); if (!token) throw new Error("GitHub token is empty"); if (token.length > 1024) throw new Error("GitHub token is too long"); return token; }
 function slugify(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "github"; }
 function getActiveAccount(index: GithubIndex): StoredGithubAccount | undefined { return index.accounts.find((account) => account.id === index.activeId) ?? index.accounts[0]; }
-function applyActiveToken(index: GithubIndex): string { const active = getActiveAccount(index); if (!active) { delete process.env.GITHUB_TOKEN; return ""; } process.env.GITHUB_TOKEN = active.token; return active.token; }
+
+function applyActiveToken(index: GithubIndex): string {
+  const active = getActiveAccount(index);
+  if (!active) {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    return "";
+  }
+  process.env.GITHUB_TOKEN = active.token;
+  process.env.GH_TOKEN = active.token;
+  return active.token;
+}
 
 export async function validateGithubToken(tokenValue: string): Promise<GithubTokenValidation> {
   const token = tokenValue.trim(); if (!token) return { valid: false, reason: "missing" };
@@ -59,6 +70,17 @@ export async function setActiveGithubAccount(id: string): Promise<GithubAccount>
 export async function getGithubToken(): Promise<string> { return applyActiveToken(await readIndex()); }
 export async function hasGithubToken(): Promise<boolean> { return Boolean(await getGithubToken()); }
 export async function saveGithubToken(value: string): Promise<void> { const token = normalizeToken(value); const validation = await validateGithubToken(token); if (!validation.valid) throw new Error("GitHub token verification failed. The token was not saved."); const index = await readIndex(); const active = getActiveAccount(index); if (active) { active.token = token; active.username = validation.username ?? active.username; await writeIndex(index); applyActiveToken(index); return; } await addGithubAccount("GitHub", token, validation.username); }
-export async function clearGithubToken(): Promise<void> { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), github: { accounts: [], activeId: undefined } } }); delete process.env.GITHUB_TOKEN; }
-export async function initializeGithubTokenFromEnvironment(): Promise<boolean> { const index = await readIndex(); if (index.accounts.length) { applyActiveToken(index); return Boolean(process.env.GITHUB_TOKEN); } const token = process.env.GITHUB_TOKEN?.trim(); if (!token) return false; const validation = await validateGithubToken(token); if (!validation.valid) return false; const account: StoredGithubAccount = { id: "github", name: "GitHub", username: validation.username, tokenFile: "", createdAt: new Date().toISOString(), token }; const initialIndex = { accounts: [account], activeId: account.id }; await writeIndex(initialIndex); applyActiveToken(initialIndex); return true; }
+export async function clearGithubToken(): Promise<void> { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), github: { accounts: [], activeId: undefined } } }); delete process.env.GITHUB_TOKEN; delete process.env.GH_TOKEN; }
+
+export async function initializeGithubTokenFromEnvironment(): Promise<boolean> {
+  // GitHub credentials are owned by the bot's persistent Integrations store.
+  // Railway environment variables are intentionally not a credential source.
+  const index = await readIndex();
+  delete process.env.GITHUB_TOKEN;
+  delete process.env.GH_TOKEN;
+  if (!index.accounts.length) return false;
+  applyActiveToken(index);
+  return Boolean(getActiveAccount(index));
+}
+
 export function getGithubTokenPath(): string { return getAppStatePath(); }
