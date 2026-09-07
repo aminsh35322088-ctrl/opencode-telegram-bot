@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { keyboardManager } from "./keyboards/keyboard-manager.js";
-import { MAIN_BUTTONS, TOPIC_BUTTONS } from "./keyboards/main-reply-keyboard.js";
+import { MAIN_BUTTONS } from "./keyboards/main-reply-keyboard.js";
 import { getStoredModel } from "../app/services/model-selection-service.js";
 import { formatModelForButton } from "../app/types/model.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
@@ -100,20 +100,13 @@ export async function classifyReplyKeyboardInteraction(ctx: Context): Promise<Re
   const runtime = getTopicRuntimeContext();
   const sessionId = scope === "ai-topic" ? runtime?.sessionId : undefined;
   const rendered = getRenderedLabels(scope, sessionId);
-  const staticControls = staticControlMap();
-  const controlId = staticControls.get(text);
+  const controlId = staticControlMap().get(text);
 
   if (controlId) return { isControl: true, scope, text, controlId };
-  if (rendered.has(text)) {
-    if (text === normalize(TOPIC_BUTTONS.modelCenter(keyboardManager.getState(sessionId)?.currentModel))) {
-      return { isControl: true, scope, text, controlId: "model" };
-    }
-    return { isControl: true, scope, text, controlId: "keyboard-control" };
-  }
+  if (rendered.has(text)) return { isControl: true, scope, text, controlId: "keyboard-control" };
 
   const globalModel = normalize(currentGlobalModelButton());
-  const topicModel = normalize(TOPIC_BUTTONS.modelCenter(keyboardManager.getState(sessionId)?.currentModel));
-  if (text === globalModel || text === topicModel) return { isControl: true, scope, text, controlId: "model" };
+  if (text === globalModel) return { isControl: true, scope, text, controlId: "model" };
 
   return { isControl: false, scope, text };
 }
