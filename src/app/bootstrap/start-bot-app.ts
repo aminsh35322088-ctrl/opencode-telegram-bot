@@ -10,7 +10,7 @@ import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeGithubIntegration } from "../services/github-integration-service.js";
-import { initializeRailwayTokenFromEnvironment } from "../services/railway-integration-service.js";
+import { initializeRailwayIntegration } from "../services/railway-integration-service.js";
 import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -38,7 +38,7 @@ export async function startBotApp(): Promise<void> {
   process.on("unhandledRejection", unhandledRejectionHandler); process.on("uncaughtException", uncaughtExceptionHandler);
   await loadSettings();
   const githubConfigured = await initializeGithubIntegration().catch((error) => { logger.warn("[GithubIntegration] Could not initialize stored GitHub integration; continuing without GitHub integration", error); return false; }); logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
-  const railwayConfigured = await initializeRailwayTokenFromEnvironment().catch((error) => { logger.warn("[RailwayIntegration] Could not initialize stored Railway integration; continuing without Railway integration", error); return false; }); logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
+  const railwayConfigured = await initializeRailwayIntegration().catch((error) => { logger.warn("[RailwayIntegration] Could not initialize stored Railway integration; continuing without Railway integration", error); return false; }); logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
   try { process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig(); } catch (error) { logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error); }
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
