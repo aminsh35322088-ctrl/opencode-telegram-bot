@@ -14,7 +14,7 @@ import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
-import { handleRenameCancel } from "./rename-callback-handler.js";
+import { handleRenameCancel } from "./rename-cancel-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
@@ -66,8 +66,6 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
   const callbackMessage = ctx.callbackQuery?.message;
   const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
 
-  // Home restores the canonical main inline layout on this exact Telegram
-  // message. It intentionally does not delete or send a replacement message.
   if (data === "main:home") {
     const chatId = ctx.chat?.id ?? callbackMessage?.chat.id;
     const messageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : undefined;
@@ -75,17 +73,18 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
 
     await ctx.answerCallbackQuery().catch(() => {});
     try {
-      const text = await buildMainStatusText(getStoredModel());
+      const currentModel = getStoredModel();
+      const text = await buildMainStatusText(currentModel);
       await ctx.api.editMessageText(chatId, messageId, text, {
         parse_mode: "HTML",
-        reply_markup: createMainInlineKeyboard(getStoredModel()),
+        reply_markup: createMainInlineKeyboard(currentModel),
       });
       keyboardManager.setMainInlineMessage(chatId, messageId);
+      await keyboardManager.pinMainInlineMessage(chatId, messageId);
       clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
-      logger.info(`[Navigation] Restored Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
+      logger.info(`[Navigation] Restored persistent pinned Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
     } catch (error) {
-      // Never fall back to delete+send: Home is explicitly an in-place action.
-      logger.warn(`[Navigation] Failed to restore Main status + InlineKeyboard in-place from Home: chat=${chatId}, message=${messageId}`, error);
+      logger.warn(`[Navigation] Failed to restore persistent Main status in-place from Home: chat=${chatId}, message=${messageId}`, error);
     }
     return true;
   }
