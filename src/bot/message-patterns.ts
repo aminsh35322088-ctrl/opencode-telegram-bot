@@ -5,8 +5,8 @@ export const MODEL_CENTER_BUTTON_TEXT = "🧠 Model Center";
 
 export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^(📋|🛠|💬|🔍|📝|📄|📦|🤖)\s.+\s(?:Mode|Agent)$/;
 export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s.+$/u;
-export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/;
-export const CONTEXT_BUTTON_TEXT_PATTERN = /^📊(?:\s|$)/;
+export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/u;
+export const CONTEXT_BUTTON_TEXT_PATTERN = /^📊(?:\s|$)/u;
 export const QUEUED_PROMPT_BUTTON_TEXT_PATTERN = /^❌\s\d+\.\s/;
 export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙️ Main Settings|⚙️ Topic Settings|⚙️ Settings|🎨 Image AI|🗑️ Delete Chat|📦 Compact: (?:ON|OFF)|⏸️ Pause|▶️ Resume|🛑 Abort|🧠 Model Center)$/u;
 
@@ -23,27 +23,23 @@ function normalizeReplyKeyboardText(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
 }
 
-const STATIC_REPLY_KEYBOARD_LABELS = new Set<string>([
-  MAIN_SETTINGS_BUTTON_TEXT,
-  TOPIC_SETTINGS_BUTTON_TEXT,
-  LEGACY_SETTINGS_BUTTON_TEXT,
-  MODEL_CENTER_BUTTON_TEXT,
-  "🕘 History",
-  "💬 New Chat",
-  "🎨 Image AI",
-  "🗑️ Delete Chat",
-  "📦 Compact: ON",
-  "📦 Compact: OFF",
-  "⏸️ Pause",
-  "▶️ Resume",
-  "🛑 Abort",
-].map(normalizeReplyKeyboardText));
-
+/**
+ * Legacy/pattern-based classifier used only by downstream Telegram handlers.
+ *
+ * When the caller supplies the buttons that are actually rendered in the
+ * current Telegram context, that exact registry is authoritative. Never fall
+ * back to broad emoji/prefix patterns in that mode: doing so can classify an
+ * ordinary prompt as a keyboard control, and (more importantly) can make the
+ * caller skip the real control handler and continue into prompt processing.
+ */
 export function isReplyKeyboardButtonText(text: string, knownButtonTexts?: ReadonlySet<string>): boolean {
   const normalized = normalizeReplyKeyboardText(text);
   if (knownButtonTexts) {
-    for (const knownText of knownButtonTexts) if (normalizeReplyKeyboardText(knownText) === normalized) return true;
+    for (const knownText of knownButtonTexts) {
+      if (normalizeReplyKeyboardText(knownText) === normalized) return true;
+    }
+    return false;
   }
-  if (STATIC_REPLY_KEYBOARD_LABELS.has(normalized)) return true;
+
   return REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
