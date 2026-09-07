@@ -384,7 +384,6 @@ describe("bot/services/event-subscription-service lifecycle", () => {
 
       emitAssistantTextPart(summaryAggregator, "Answer");
       await settle();
-      const writesBefore = countTelegramWrites(api);
 
       sessionService.setCurrentSession({
         id: "session-2",
