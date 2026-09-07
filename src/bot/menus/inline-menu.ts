@@ -3,6 +3,7 @@ import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionMetadata, InteractionState } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { buildMainStatusText } from "../keyboards/keyboard-manager.js";
 
 export const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 export const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
@@ -50,9 +51,13 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
   const threadId = getTopicThreadId(ctx);
   let messageId: number;
   const callbackMessageId = getCallbackMessageId(ctx);
+  const callbackData = ctx.callbackQuery?.data ?? "";
+  const preserveMainStatus = callbackMessageId !== null && callbackData.startsWith("main:");
+
   if (callbackMessageId !== null && chatId !== null) {
     try {
-      await ctx.api.editMessageText(chatId, callbackMessageId, options.text, replyOptions);
+      const messageText = preserveMainStatus ? await buildMainStatusText() : options.text;
+      await ctx.api.editMessageText(chatId, callbackMessageId, messageText, preserveMainStatus ? { reply_markup: keyboard, parse_mode: "HTML" } : replyOptions);
       messageId = callbackMessageId;
     } catch (error) {
       logger.debug("[InlineMenu] Could not edit callback message; falling back to reply", error);
