@@ -1,4 +1,4 @@
-import { Context, InlineKeyboard } from "grammy";
+import { Context, Context as GramContext } from "grammy";
 import { fetchCurrentAgent, getAvailableAgents } from "../../app/services/agent-selection-service.js";
 import { getAgentDisplayName } from "../../app/types/agent.js";
 import { logger } from "../../utils/logger.js";
@@ -6,8 +6,8 @@ import { t } from "../../i18n/index.js";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
 /** Build the available agent choices for the current Topic. */
-export async function buildAgentSelectionMenu(currentAgent?: string): Promise<InlineKeyboard> {
-  const keyboard = new InlineKeyboard();
+export async function buildAgentSelectionMenu(currentAgent?: string): Promise<import("grammy").InlineKeyboard> {
+  const keyboard = new (await import("grammy")).InlineKeyboard();
   const agents = await getAvailableAgents();
 
   if (agents.length === 0) {
@@ -22,6 +22,12 @@ export async function buildAgentSelectionMenu(currentAgent?: string): Promise<In
   }
 
   return keyboard;
+}
+
+function isTopicContext(ctx: GramContext): boolean {
+  const message = ctx.message ?? ctx.callbackQuery?.message;
+  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
+  return typeof threadId === "number" && threadId > 1;
 }
 
 /** Show the agent picker. In a Topic this changes only that Topic's behavior. */
@@ -51,6 +57,7 @@ export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
       text,
       keyboard,
       parseMode: "HTML",
+      navigation: isTopicContext(ctx) ? "both" : "auto",
     });
   } catch (err) {
     logger.error("[AgentHandler] Error showing agent menu:", err);
