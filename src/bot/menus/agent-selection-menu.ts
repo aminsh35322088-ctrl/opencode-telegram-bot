@@ -5,11 +5,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
-/**
- * Build inline keyboard with available agents
- * @param currentAgent Current agent name for highlighting
- * @returns InlineKeyboard with agent selection buttons
- */
+/** Build the available agent choices for the current Topic. */
 export async function buildAgentSelectionMenu(currentAgent?: string): Promise<InlineKeyboard> {
   const keyboard = new InlineKeyboard();
   const agents = await getAvailableAgents();
@@ -19,23 +15,16 @@ export async function buildAgentSelectionMenu(currentAgent?: string): Promise<In
     return keyboard;
   }
 
-  // Add button for each agent
-  agents.forEach((agent) => {
+  for (const agent of agents) {
     const isActive = agent.name === currentAgent;
-    const label = isActive
-      ? `✅ ${getAgentDisplayName(agent.name)}`
-      : getAgentDisplayName(agent.name);
-
+    const label = isActive ? `✅ ${getAgentDisplayName(agent.name)}` : getAgentDisplayName(agent.name);
     keyboard.text(label, `agent:${agent.name}`).row();
-  });
+  }
 
   return keyboard;
 }
 
-/**
- * Show agent selection menu
- * @param ctx grammY context
- */
+/** Show the agent picker. In a Topic this changes only that Topic's behavior. */
 export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
   try {
     const currentAgent = await fetchCurrentAgent();
@@ -46,14 +35,22 @@ export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
       return;
     }
 
-    const text = currentAgent
-      ? t("agent.menu.current", { name: getAgentDisplayName(currentAgent) })
-      : t("agent.menu.select");
+    const text = [
+      "🧑‍💻 <b>Agent</b>",
+      "",
+      currentAgent
+        ? `Current: <b>${getAgentDisplayName(currentAgent)}</b>`
+        : "Current: <b>Inherited default</b>",
+      "",
+      "The agent controls the high-level behavior and tool strategy used by this Topic.",
+      "Choose an agent below. Your other Topics are not changed.",
+    ].join("\n");
 
     await replyWithInlineMenu(ctx, {
       menuKind: "agent",
       text,
       keyboard,
+      parseMode: "HTML",
     });
   } catch (err) {
     logger.error("[AgentHandler] Error showing agent menu:", err);
