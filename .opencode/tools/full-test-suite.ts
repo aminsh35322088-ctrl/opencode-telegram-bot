@@ -83,7 +83,7 @@ async function prepareSandbox(): Promise<void> {
   );
 }
 
-async function checkDisk(before: number): Promise<CommandResult | null> {
+async function checkDisk(): Promise<CommandResult | null> {
   const free = await dataFreeBytes();
   if (free < criticalFreeBytes) {
     return { command: "disk-budget", exitCode: 2, durationMs: 0, stdout: "", stderr: JSON.stringify(diskState(free)) };
@@ -93,10 +93,8 @@ async function checkDisk(before: number): Promise<CommandResult | null> {
 
 export default tool({
   description: "Run the repository's complete CI-equivalent validation suite from the baked image toolchain without installing packages or writing test/build output to the 500MB /data volume.",
-  args: {
-    includeCoverage: tool.schema.boolean().optional().describe("Collect V8 coverage into /tmp as an optional extra pass. Defaults to false."),
-  },
-  async execute(args) {
+  args: {},
+  async execute() {
     const before = await dataFreeBytes();
     if (before < criticalFreeBytes) {
       return JSON.stringify({ ok: false, blocked: true, reason: "Insufficient free space on /data", disk: diskState(before) }, null, 2);
@@ -131,20 +129,17 @@ export default tool({
       results.push(await run("node", ["scripts/check-changelog.mjs"]));
       results.push(await run(path.join(bakedBin, "eslint"), ["src", "--max-warnings=0"], workspace));
       results.push(await run(path.join(bakedBin, "eslint"), [path.join(testRoot, "tests"), "--max-warnings=0"], workspace));
-      results.push(await run(path.join(bakedBin, "tsc"), ["--noEmit"], workspace));
+      results.push(await run(path.join(bakedBin, "tsc"), ["--noEmit", "--tsBuildInfoFile", path.join(testRoot, "source.tsbuildinfo")], workspace));
       results.push(await run(path.join(bakedBin, "tsc"), ["-p", path.join(testRoot, "tsconfig.test.json"), "--noEmit"], workspace));
       results.push(await run(path.join(bakedBin, "tsc"), ["--outDir", path.join(testRoot, "dist"), "--tsBuildInfoFile", path.join(testRoot, "build.tsbuildinfo")], workspace));
 
-      const diskCheck = await checkDisk(before);
+      const diskCheck = await checkDisk();
       if (diskCheck) {
         results.push(diskCheck);
         return JSON.stringify({ ok: false, blocked: true, reason: "Validation stopped before test runner because /data crossed the critical threshold", disk: diskState(await dataFreeBytes()), results }, null, 2);
       }
 
       results.push(await run(path.join(bakedBin, "vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts")], testRoot, 120_000));
-      if (args.includeCoverage === true) {
-        results.push(await run(path.join(bakedBin, "vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts"), "--coverage", `--coverage.reportsDirectory=${path.join(testRoot, "coverage")}`, "--coverage.reporter=text"], testRoot, 120_000));
-      }
 
       const failed = results.filter((result) => result.exitCode !== 0);
       const after = await dataFreeBytes();
@@ -154,7 +149,6 @@ export default tool({
         diskAfter: diskState(after),
         diskDeltaMb: Math.floor((before - after) / 1024 / 1024),
         warningCrossed: before >= warningFreeBytes && after < warningFreeBytes,
-        includeCoverage: args.includeCoverage === true,
         sandbox: testRoot,
         results: results.map(({ stderr, ...result }) => ({ ...result, stderr: stderr.slice(-4000) })),
       }, null, 2);
