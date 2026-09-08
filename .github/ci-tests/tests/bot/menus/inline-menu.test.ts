@@ -9,6 +9,12 @@ function getCallbackData(button: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function getButtonText(button: unknown): string | undefined {
+  if (!button || typeof button !== "object" || !("text" in button)) return undefined;
+  const value = (button as { text?: unknown }).text;
+  return typeof value === "string" ? value : undefined;
+}
+
 describe("inline-menu", () => {
   beforeEach(() => interactionManager.clear("test_setup"));
 
@@ -17,6 +23,31 @@ describe("inline-menu", () => {
     appendInlineMenuCancelButton(keyboard, "session");
     expect(keyboard.inline_keyboard.some((row) => row.length === 0)).toBe(false);
     expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("inline:cancel:session");
+  });
+
+  it("uses Close instead of Home for Topic Settings", () => {
+    const keyboard = new InlineKeyboard().text("Option", "settings:appearance").row();
+    appendInlineMenuCancelButton(keyboard, "settings", 735542);
+    const last = keyboard.inline_keyboard.at(-1)?.[0];
+    expect(getButtonText(last)).toBe("✖ Close");
+    expect(getCallbackData(last)).toBe("inline:cancel:settings");
+    expect(keyboard.inline_keyboard.some((row) => row.some((button) => button.text === "🏠 Home"))).toBe(false);
+  });
+
+  it("uses Back for Topic Settings child menus", () => {
+    const keyboard = new InlineKeyboard().text("Agent A", "agent:a").row();
+    appendInlineMenuCancelButton(keyboard, "agent", 735542);
+    const last = keyboard.inline_keyboard.at(-1)?.[0];
+    expect(getButtonText(last)).toBe("← Back");
+    expect(getCallbackData(last)).toBe("settings:back");
+  });
+
+  it("keeps Home for non-Topic menus", () => {
+    const keyboard = new InlineKeyboard().text("Option", "settings:appearance").row();
+    appendInlineMenuCancelButton(keyboard, "settings");
+    const last = keyboard.inline_keyboard.at(-1)?.[0];
+    expect(getButtonText(last)).toBe("🏠 Home");
+    expect(getCallbackData(last)).toBe("main:home");
   });
 
   it("registers an active inline interaction", async () => {
