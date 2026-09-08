@@ -204,6 +204,23 @@ describe("busy reconciliation", () => {
     expect(mocked.clearRunMock).not.toHaveBeenCalled();
   });
 
+  it("keeps local state when the server returns no entry for a tracked session", async () => {
+    attachManager.attach("session-1", "D:/repo");
+    attachManager.markBusy("session-1");
+    markForegroundBusyAt("session-1", "D:/repo");
+    mocked.sessionStatusMock.mockResolvedValue({
+      data: {},
+      error: null,
+    });
+
+    await reconcileBusyStateNow("D:/repo", 13_000);
+
+    expect(mocked.markAttachedSessionIdleMock).not.toHaveBeenCalled();
+    expect(foregroundSessionState.isBusy()).toBe(true);
+    expect(mocked.clearRunMock).not.toHaveBeenCalled();
+    expect(mocked.flushDeferredDeliveriesMock).not.toHaveBeenCalled();
+  });
+
   it("does not spend throttle interval when there are no tracked sessions", async () => {
     await reconcileBusyState("D:/repo", 10_000);
 
