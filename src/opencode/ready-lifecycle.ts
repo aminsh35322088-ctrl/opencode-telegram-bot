@@ -26,13 +26,16 @@ class OpencodeReadyLifecycle {
     this.ready = true;
     logger.info(`[OpenCodeReady] OpenCode server is ready: reason=${reason}`);
 
-    for (const handler of this.handlers) {
-      try {
-        await handler(reason);
-      } catch (error) {
-        logger.warn(`[OpenCodeReady] Ready handler failed: reason=${reason}`, error);
-      }
-    }
+    const handlers = [...this.handlers];
+    await Promise.all(
+      handlers.map(async (handler) => {
+        try {
+          await handler(reason);
+        } catch (error) {
+          logger.warn(`[OpenCodeReady] Ready handler failed: reason=${reason}`, error);
+        }
+      }),
+    );
 
     return true;
   }
