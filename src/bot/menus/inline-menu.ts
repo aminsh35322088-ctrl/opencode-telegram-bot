@@ -37,13 +37,6 @@ function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInli
   return { menuKind, messageId, ...(typeof threadId === "number" ? { threadId } : {}) };
 }
 
-function hasExistingNavigation(keyboard: InlineKeyboard): boolean {
-  return keyboard.inline_keyboard.some((row) => row.some((button) => {
-    const callbackData = "callback_data" in button ? button.callback_data : undefined;
-    return button.text?.startsWith("←") || button.text === INLINE_MENU_CLOSE_LABEL || button.text === INLINE_MENU_HOME_LABEL || callbackData === INLINE_MENU_HOME_CALLBACK || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || (callbackData?.startsWith("mc:") === true && callbackData.includes("back"));
-  }));
-}
-
 export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind, threadId?: number, navigation: InlineMenuNavigation = "auto"): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) {
     const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1];
@@ -53,7 +46,8 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
 
   const isTopic = typeof threadId === "number" && threadId > 1;
   if (!isTopic) {
-    if (!hasExistingNavigation(keyboard)) {
+    const hasHome = keyboard.inline_keyboard.some((row) => row.some((button) => button.text === INLINE_MENU_HOME_LABEL && "callback_data" in button && button.callback_data === INLINE_MENU_HOME_CALLBACK));
+    if (!hasHome) {
       keyboard.row();
       keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
     }
@@ -94,14 +88,13 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
         continue;
       }
 
-      if (menuKind === "settings" && mode === "back" && isSemanticBack) {
-        button.text = INLINE_MENU_BACK_LABEL;
-        button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+      if (isSemanticBack) {
         hasNavigationButton = true;
-        continue;
+        if (menuKind === "settings" && mode === "back") {
+          button.text = INLINE_MENU_BACK_LABEL;
+          button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+        }
       }
-
-      if (isSemanticBack) hasNavigationButton = true;
     }
   }
 
