@@ -10,15 +10,40 @@ const getAuth = () => {
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 };
 
+const CONTROL_REQUEST_TIMEOUT_MS = 10_000;
+
+function isLongLivedRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (/\/event(?:\?|$)/u.test(url)) return true;
+  const accept = init?.headers instanceof Headers
+    ? init.headers.get("accept")
+    : Array.isArray(init?.headers)
+      ? init.headers.find(([key]) => key.toLowerCase() === "accept")?.[1]
+      : typeof init?.headers === "object" && init?.headers !== null
+        ? Object.entries(init.headers).find(([key]) => key.toLowerCase() === "accept")?.[1]
+        : undefined;
+  return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
+}
+
+const boundedControlFetch: typeof fetch = (input, init) => {
+  if (isLongLivedRequest(input, init)) return fetch(input, init);
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.any([
+      init?.signal ?? new AbortController().signal,
+      AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+    ]),
+  });
+};
+
 const baseClient = createOpencodeClient({
   baseUrl: config.opencode.apiUrl,
   headers: config.opencode.password ? { Authorization: getAuth() } : undefined,
+  fetch: boundedControlFetch,
 });
 
 // prompt_async is a fire-and-forget endpoint and should return 204 immediately.
 // A stalled HTTP response must never pin the Telegram update handler for minutes.
-// Keep this timeout only on the dispatch client; normal status/messages/event calls
-// must not inherit it because those operations can legitimately be long-lived.
 const PROMPT_DISPATCH_TIMEOUT_MS = 15_000;
 const promptDispatchFetch: typeof fetch = (input, init) =>
   fetch(input, {
@@ -108,9 +133,6 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
     return result;
   } catch (error) {
     const elapsedMs = Date.now() - dispatchStartedAt;
-    // If the HTTP transport timed out, determine whether OpenCode accepted the
-    // prompt before surfacing an error. This prevents duplicate retries while
-    // guaranteeing that a broken transport cannot leave Telegram waiting forever.
     if (elapsedMs >= PROMPT_DISPATCH_TIMEOUT_MS) {
       try {
         const status = await baseClient.session.status({ directory: options.directory });
@@ -120,8 +142,8 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
         const sessionStatus = statusRecord && typeof statusRecord === "object"
           ? (statusRecord as Record<string, unknown>).type
           : undefined;
-        if (sessionStatus === "busy") {
-          logger.warn(`[LLM Prompt] prompt_async transport timed out after ${elapsedMs}ms, but OpenCode reports session=${options.sessionID} busy; prompt was accepted and will continue`);
+        if (sessionStatus === "busy" || sessionStatus === "retry") {
+          logger.warn(`[LLM Prompt] prompt_async transport timed out after ${elapsedMs}ms, but OpenCode reports session=${options.sessionID} status=${String(sessionStatus)}; prompt was accepted and will continue`);
           observePromptUsage(baseClient as never, { sessionId: options.sessionID, directory: options.directory, model, promptChars });
           return undefined;
         }
