@@ -45,7 +45,7 @@ jobs:
       - name: Materialize CI-only test suite
         run: |
           rm -rf ./tests
-          cp -a .github/ci-tests/tests ./tests
+          cp -a .github/ci-tests/tests/. ./tests/
           cp .github/ci-tests/tsconfig.test.json ./tsconfig.test.json
           cp .github/ci-tests/vitest.config.ts ./vitest.config.ts
 
