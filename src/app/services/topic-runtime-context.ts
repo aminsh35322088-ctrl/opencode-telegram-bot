@@ -5,6 +5,7 @@ export interface TopicRuntimeContext {
   chatId: number;
   threadId: number;
   sessionId?: string;
+  directory?: string;
 }
 
 const storage = new AsyncLocalStorage<TopicRuntimeContext>();
