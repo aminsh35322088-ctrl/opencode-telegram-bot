@@ -1,0 +1,70 @@
+name: Full Test Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to validate"
+        required: false
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-test-suite-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint, Typecheck, Build, Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Install CI test runner
+        run: npm install --no-save --package-lock=false vitest@3.2.4
+
+      - name: Materialize CI-only test suite
+        run: |
+          rm -rf ./tests
+          cp -a .github/ci-tests/tests/. ./tests/
+          cp .github/ci-tests/tsconfig.test.json ./tsconfig.test.json
+          cp .github/ci-tests/vitest.config.ts ./vitest.config.ts
+
+      - name: Lint
+        run: |
+          ./node_modules/.bin/eslint src --max-warnings=0
+          ./node_modules/.bin/eslint tests --max-warnings=0
+
+      - name: Typecheck
+        run: |
+          ./node_modules/.bin/tsc --noEmit
+          ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit
+
+      - name: Build
+        run: ./node_modules/.bin/tsc
+
+      - name: Test
+        run: ./node_modules/.bin/vitest run
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf tests tsconfig.test.json vitest.config.ts coverage node_modules/vitest node_modules/@vitest
