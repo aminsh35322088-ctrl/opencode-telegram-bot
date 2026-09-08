@@ -12,21 +12,17 @@ const getAuth = () => {
 
 const CONTROL_REQUEST_TIMEOUT_MS = 10_000;
 
-function isLongLivedRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+type FetchInput = string | URL | Request;
+
+function isLongLivedRequest(input: FetchInput, init?: RequestInit): boolean {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   if (/\/event(?:\?|$)/u.test(url)) return true;
-  const accept = init?.headers instanceof Headers
-    ? init.headers.get("accept")
-    : Array.isArray(init?.headers)
-      ? init.headers.find(([key]) => key.toLowerCase() === "accept")?.[1]
-      : typeof init?.headers === "object" && init?.headers !== null
-        ? Object.entries(init.headers).find(([key]) => key.toLowerCase() === "accept")?.[1]
-        : undefined;
-  return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
+  const accept = new Headers(init?.headers).get("accept") ?? (input instanceof Request ? input.headers.get("accept") : null);
+  return accept?.toLowerCase().includes("text/event-stream") ?? false;
 }
 
 const boundedControlFetch: typeof fetch = (input, init) => {
-  if (isLongLivedRequest(input, init)) return fetch(input, init);
+  if (isLongLivedRequest(input as FetchInput, init)) return fetch(input, init);
   return fetch(input, {
     ...init,
     signal: AbortSignal.any([
