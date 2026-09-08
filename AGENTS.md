@@ -28,10 +28,23 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 
 The Railway production image ships the bot plus a **baked validation toolchain** at `/opt/test-deps`
 (the full dependency tree including dev dependencies, `typescript`, `eslint`, and `vitest@3.2.4`).
-It lives in the image layer, so it costs zero bytes on the 500MB `/data` volume.
+It lives in the image layer, so it does not consume the persistent `/data` volume.
 
 The production application uses the runtime capabilities, custom OpenCode tools, and toolchain provided by the image.
 Dependency changes belong to source control and the GitHub Actions build/deploy path, never to per-workspace `npm install`.
+
+The persistent `/data` volume is expected to be **500MB**. Runtime exports expose the actual environment budget:
+
+- `OPENCODE_DATA_VOLUME_BUDGET_MB` - configured volume budget (default `500`)
+- `OPENCODE_DATA_VOLUME_WARN_MB` - warning threshold (default `150`)
+- `OPENCODE_DATA_VOLUME_CRITICAL_MB` - critical threshold (default `100`)
+- `OPENCODE_TEST_DEPS` - read-only baked dependency source (default `/opt/test-deps`)
+
+Always trust `df -P /data` or `storage-health` for the live filesystem state rather than assuming the budget equals the current free space.
+
+When the volume is below the warning threshold, keep disposable validation data in `/tmp` and avoid persistent downloads.
+When it is below the critical threshold, do not start disk-heavy validation until disposable caches have been cleaned.
+Only the `storage-health` tool's `cleanup-safe` action may automatically delete disposable tool/package caches; it must never delete user workspaces, sessions, databases, source files, or generated user artifacts.
 
 When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
 
@@ -119,20 +132,17 @@ so agents can run fast local sanity checks **without installing anything and wit
 
 ### Disk economy (MANDATORY)
 
-The `/data` volume is 500MB. Every agent action must respect this budget:
+The persistent `/data` volume is a 500MB budget. Every agent action must respect the live free-space thresholds.
 
-- **Symbolic-link dependencies only.** Use `ln -s /opt/test-deps node_modules` in the workspace. NEVER create a real `node_modules` in `/data`.
-- **Never install.** All package-management installs (`npm install`, `npm ci`, `npm add`, `pnpm`, `yarn`, `bun`, `npx`) are forbidden here and denied by opencode permission rules. The baked `/opt/test-deps` is the only dependency source.
-- **Check before writing.** Before any command that writes to disk, run `df -h /data`. If free space is below 100MB, STOP and ask before proceeding.
-- **Never write build output.** Run `tsc --noEmit` for typechecking. NEVER run bare `tsc` (or `npm run build`) which emits `dist/` into `/data`.
-- **Materialize tests temporarily, then clean up.** Copy the CI test suite into place, run it, then remove it in the same operation:
-  - `cp -a .github/ci-tests/tests tests`
-  - `cp .github/ci-tests/vitest.config.ts vitest.config.ts`
-  - `cp .github/ci-tests/tsconfig.test.json tsconfig.test.json`
-  - run checks, then `rm -rf tests vitest.config.ts tsconfig.test.json coverage`
-- **Never commit materialized CI files.** `tests/`, `vitest.config.ts`, `tsconfig.test.json`, `coverage/` must never be committed.
-- **Clean up caches and temp files** after heavy operations (`/tmp`, tool caches) and never leave downloaded files in `/data`.
-- **Prune stale sessions.** Old session artifacts under `topic-workspaces/` may be removed to reclaim space, but only with explicit user confirmation.
+- **Discover before writing.** Inspect `df -P /data` or call `storage-health` before disk-heavy work. Never infer available space from an old log.
+- **Use the baked tree.** Workspace `node_modules` must be a symbolic link to `/opt/test-deps`; never materialize another dependency tree under `/data`.
+- **Never install.** All package-management installs (`npm install`, `npm ci`, `npm add`, `pnpm`, `yarn`, `bun`, `npx`) are forbidden in the runtime and denied by OpenCode permission rules.
+- **Keep validation disposable data off-volume.** The full validation tool writes its temporary test tree, build output, and optional coverage only under `/tmp/opencode-full-test-suite`.
+- **No persistent build output.** Do not run bare `tsc` in `/data`; the full-test tool redirects emitted build output into `/tmp`.
+- **Stop at critical pressure.** Below 100MB free, do not run disk-heavy validation. Run `storage-health` with `cleanup-safe` first; never delete user/session data automatically.
+- **Prefer warning headroom.** Below 150MB free, use `/tmp` for disposable data and avoid downloads or generated artifacts on `/data`.
+- **Always clean validation artifacts.** The full-test tool removes its `/tmp` sandbox in a `finally` block, including tests, config, build output, and coverage.
+- **Never commit materialized CI files.** `tests/`, `vitest.config.ts`, and `tsconfig.test.json` should remain CI-only and are never needed in the persistent workspace.
 
 ### Mandatory rules
 
@@ -142,14 +152,13 @@ The `/data` volume is 500MB. Every agent action must respect this budget:
 - **Local checks are supplementary.** A green local run does not replace a push that triggers the GitHub Actions workflow.
 - Do not bypass the CI policy with equivalent commands through `bash`, `node`, `npx`, `npm exec`, `pnpm`, `yarn`, `bun`, or direct binaries.
 
-### Local check recipe (allowed)
+### Standard local validation
 
-When a fast local sanity check is useful before pushing:
+Use the custom `full-test-suite` tool for the repository's CI-equivalent local validation. It runs changelog policy, source/test lint, source/test typecheck, a real TypeScript build into `/tmp`, and the complete Vitest suite from the baked dependency tree.
 
-1. Ensure `node_modules` is a symlink to `/opt/test-deps` (create with `ln -s /opt/test-deps node_modules` if missing).
-2. Typecheck: `./node_modules/.bin/tsc --noEmit` (and `./node_modules/.bin/tsc -p tsconfig.test.json --noEmit` after materializing tests).
-3. Lint: `./node_modules/.bin/eslint src --max-warnings=0` (and `eslint tests --max-warnings=0` after materializing).
-4. Test: materialize the CI test suite (see above), run `./node_modules/.bin/vitest run`, then remove the materialized files.
+Run `storage-health` before or after heavy work when disk state matters. Its `cleanup-safe` action may remove only disposable package/tool caches.
+
+Do not manually recreate the CI test tree under `/data` unless the test itself specifically requires it.
 
 ### GitHub Actions workflow
 
@@ -162,4 +171,4 @@ When validation is required:
 
 ### Runtime diagnostics
 
-Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session, use `full-diagnostics` and `session-recovery` to inspect and recover the runtime session; never switch to local CI/test execution.
+Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session, use `full-diagnostics` and `session-recovery` to inspect and recover the runtime session; never switch to local package installation or ad-hoc dependency bootstrapping.
