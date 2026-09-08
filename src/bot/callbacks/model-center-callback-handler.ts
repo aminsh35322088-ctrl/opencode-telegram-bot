@@ -25,7 +25,7 @@ import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { formatModelForDisplay, type ModelInfo } from "../../app/types/model.js";
 import { resolveProjectAgent, getStoredAgent } from "../../app/services/agent-selection-service.js";
-import { createMainKeyboard, createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
@@ -167,7 +167,7 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, topicSessionId);
 
   const keyboard = isTopic
-    ? createTopicKeyboard({ currentModel: modelInfo })
+    ? (keyboardManager.getKeyboard(topicSessionId) ?? createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default")))
     : createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
   await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
