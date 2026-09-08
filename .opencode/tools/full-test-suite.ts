@@ -8,7 +8,7 @@ import { tool } from "@opencode-ai/plugin";
 const execFileAsync = promisify(execFile);
 const workspace = "/data/workspace";
 const testRoot = path.join(os.tmpdir(), "opencode-full-test-suite");
-const bakedDeps = process.env.OPENCODE_TEST_DEPS ?? "/opt/test-deps";
+const bakedDeps = process.env.OPENCODE_TEST_DEPS ?? "/opt/test-deps/node_modules";
 const bakedBin = path.join(bakedDeps, ".bin");
 const volumeBudgetBytes = Number(process.env.OPENCODE_DATA_VOLUME_BUDGET_MB ?? 500) * 1024 * 1024;
 const criticalFreeBytes = Number(process.env.OPENCODE_DATA_VOLUME_CRITICAL_MB ?? 100) * 1024 * 1024;
