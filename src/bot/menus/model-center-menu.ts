@@ -99,11 +99,10 @@ async function appendModelRows(
   }
 }
 
-function appendPagination(keyboard: InlineKeyboard, page: number, totalPages: number, callback: (page: number) => string): void {
-  if (totalPages <= 1) return;
-  if (page > 0) keyboard.text("‹ Prev", callback(page - 1));
-  if (page < totalPages - 1) keyboard.text("Next ›", callback(page + 1));
-  keyboard.row();
+function isTopicContext(ctx: Context): boolean {
+  const message = ctx.message ?? ctx.callbackQuery?.message;
+  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
+  return typeof threadId === "number" && threadId > 1;
 }
 
 export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> {
@@ -142,6 +141,7 @@ export async function showModelCenterMenu(ctx: Context): Promise<void> {
     keyboard: view.keyboard,
     parseMode: "HTML",
     metadata: { modelLists: { favorites: [], recent: [] } },
+    navigation: isTopicContext(ctx) ? "both" : "auto",
   });
 }
 
@@ -200,6 +200,13 @@ export async function buildModelCenterSearchResults(query: string, current?: Mod
       : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`,
     keyboard,
   };
+}
+
+function appendPagination(keyboard: InlineKeyboard, page: number, totalPages: number, callback: (page: number) => string): void {
+  if (totalPages <= 1) return;
+  if (page > 0) keyboard.text("‹ Prev", callback(page - 1));
+  if (page < totalPages - 1) keyboard.text("Next ›", callback(page + 1));
+  keyboard.row();
 }
 
 function escapeHtml(value: string): string {
