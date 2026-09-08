@@ -1,10 +1,8 @@
 import { Context } from "grammy";
 import { selectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { getAgentDisplayName } from "../../app/types/agent.js";
 import { logger } from "../../utils/logger.js";
-import { t } from "../../i18n/index.js";
 import { failure, switched } from "./feedback.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -26,22 +24,25 @@ export async function handleAgentSelect(ctx: Context): Promise<boolean> {
   logger.debug(`[AgentHandler] Received callback: ${callbackQuery.data}`);
   try {
     const threadId = getTopicThreadId(ctx);
-    if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id, getCurrentSession()?.id, threadId);
+    const topic = getCurrentTopicSettings();
+    const currentSession = getCurrentSession();
+    const sessionId = topic && currentSession?.id ? currentSession.id : undefined;
+    if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id, sessionId, threadId);
     if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
 
     const agentName = callbackQuery.data.replace("agent:", "");
-    const topicSettings = getCurrentTopicSettings();
-    if (topicSettings) selectAgent(agentName);
+    if (topic) selectAgent(agentName);
     else updateTopicDefaults({ agent: agentName });
-    keyboardManager.updateAgent(agentName);
+    keyboardManager.updateAgent(agentName, sessionId);
 
     const currentModel = getStoredModel();
     const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
-    keyboardManager.updateModel(currentModel);
-    if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-    const state = keyboardManager.getState();
-    const variantName = state?.variantName ?? formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(agentName, currentModel, contextInfo ?? undefined, variantName);
+    keyboardManager.updateModel(currentModel, sessionId);
+    if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, sessionId);
+    const keyboard = sessionId
+      ? keyboardManager.getKeyboard(sessionId)
+      : createMainKeyboard(agentName, currentModel, contextInfo ?? undefined);
+    if (!keyboard) throw new Error(`No Topic keyboard state available for agent selection: session=${sessionId ?? "none"}`);
     const displayName = getAgentDisplayName(agentName);
     clearActiveInlineMenu("agent_selected", ctx.chat?.id, threadId);
     await switched(ctx, t("agent.changed_message", { name: displayName }), keyboard);
