@@ -89,7 +89,7 @@ describe("variant manager", () => {
     );
 
     await expect(getAvailableVariants("openai", "test-model")).resolves.toEqual([
-      { id: "high", disabled: false },
+      { id: "high" },
       { id: "fast", disabled: true },
     ]);
   });
