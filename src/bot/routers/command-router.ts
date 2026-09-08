@@ -28,7 +28,7 @@ import { imageCommand, editCommand } from "../commands/media-command.js";
 import { BOT_COMMANDS } from "../commands/definitions.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "../handlers/message-merger.js";
-import { isGeminiWizardActive, clearGeminiWizard, clearProviderWizard as clearProviderWizardState } from "../services/gemini-wizard-state.js";
+import { isGeminiWizardActive, clearGeminiWizard } from "../services/gemini-wizard-state.js";
 import { verifyAndSaveGeminiChatProvider } from "../../app/services/gemini-chat-service.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
@@ -69,7 +69,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
         try {
           await verifyAndSaveGeminiChatProvider(ctx.message.text);
           clearGeminiWizard();
-          clearProviderWizardState();
+          clearProviderWizard();
           await ctx.reply("✅ Gemini API verified and activated.\n\n🤖 Chat model: gemini-3.1-flash-lite\n💸 Free Tier model");
         } catch (error) {
           clearGeminiWizard();
