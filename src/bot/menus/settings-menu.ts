@@ -61,15 +61,15 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       text: [
         "🧵 <b>Topic Settings</b>",
         "",
-        "🎯 <b>This Topic, your rules.</b>",
-        "Tune its AI behavior and output without touching other Topics.",
+        "🎯 <b>Your Topic. Your settings.</b>",
+        "Only this Topic is affected by the options below.",
         "",
         `🤖 <b>Model</b> · ${model}`,
         `🧑‍💻 <b>Agent</b> · ${agent}`,
         `🎛 <b>Variant</b> · ${variant}`,
-        "💬 <b>Response</b> · Streaming, thinking & output",
+        "💬 <b>Response</b> · Output & thinking",
         `📥 <b>Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
-        "🧠 <b>Context</b> · Token usage & health",
+        "🧠 <b>Context</b> · Usage & window health",
       ].join("\n"),
       keyboard: new InlineKeyboard()
         .text(`🤖 Model · ${model}`, SETTINGS_MODEL_CALLBACK).row()
