@@ -10,6 +10,7 @@ import { openCommand } from "../commands/open-command.js";
 import { lsCommand } from "../commands/ls-command.js";
 import { messagesCommand } from "../commands/messages-command.js";
 import { abortCommand } from "../commands/abort-command.js";
+import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
 import { detachCommand } from "../commands/detach-command.js";
 import { taskCommand } from "../commands/task-command.js";
 import { taskListCommand } from "../commands/tasklist-command.js";
@@ -29,10 +30,34 @@ import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "../handlers/message-merger.js";
 import { isGeminiWizardActive, clearGeminiWizard } from "../services/gemini-wizard-state.js";
 import { verifyAndSaveGeminiChatProvider } from "../../app/services/gemini-chat-service.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { showModelCenterMenu } from "../menus/model-center-menu.js";
+import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
+import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 
 interface CommandRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; clearRuntimeState: (reason: string) => void; }
 let commandsInitialized = false;
-export async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Promise<void> { if (commandsInitialized || !ctx.from || ctx.from.id !== config.telegram.allowedUserId) { await next(); return; } if (!ctx.chat) { logger.warn("[Bot] Cannot initialize commands: chat context is missing"); await next(); return; } try { await ctx.api.setMyCommands(BOT_COMMANDS, { scope: { type: "chat", chat_id: ctx.chat.id } }); commandsInitialized = true; } catch (err) { logger.error("[Bot] Failed to set commands:", err); } await next(); }
+
+export async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Promise<void> {
+  if (commandsInitialized || !ctx.from || ctx.from.id !== config.telegram.allowedUserId) { await next(); return; }
+  if (!ctx.chat) { logger.warn("[Bot] Cannot initialize commands: chat context is missing"); await next(); return; }
+  try { await ctx.api.setMyCommands(BOT_COMMANDS, { scope: { type: "chat", chat_id: ctx.chat.id } }); commandsInitialized = true; }
+  catch (err) { logger.error("[Bot] Failed to set commands:", err); }
+  await next();
+}
+
+function isAiTopicCommandContext(ctx: Context): boolean {
+  const runtime = getTopicRuntimeContext();
+  return runtime?.sessionId !== undefined && typeof runtime.threadId === "number" && runtime.threadId > 1;
+}
+
+async function rejectNonAiTopicControl(ctx: Context, command: string): Promise<boolean> {
+  if (isAiTopicCommandContext(ctx)) return false;
+  await ctx.reply(`ℹ️ /${command} is only available inside an AI Topic.`);
+  return true;
+}
+
 export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps): void {
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.message?.text?.startsWith("/")) flushPendingPrompt(ctx.chat.id);
@@ -55,6 +80,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
     }
     await next();
   });
+
   bot.hears(/^⚙(?:️)? (?:Main Settings|Topic Settings|Settings)$/u, async (ctx) => {
     try {
       await settingsCommand(ctx as never);
@@ -63,5 +89,57 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
       await ctx.reply("❌ Could not open Settings. Please try again.");
     }
   });
-  bot.command("start", startCommand); bot.command("update", updateCommand); bot.command("all", allVersionInfoCommand); bot.command("help", helpCommand); bot.command("status", statusCommand); bot.command("settings", settingsCommand); bot.command("providers", providersCommand); bot.command("integrations", integrationsCommand); bot.command("opencode_start", opencodeStartCommand); bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState })); bot.command("worktree", worktreeCommand); bot.command("open", openCommand); bot.command("ls", lsCommand); bot.command("messages", messagesCommand); bot.command("abort", abortCommand); bot.command("detach", detachCommand); bot.command("task", taskCommand); bot.command("tasklist", taskListCommand); bot.command("rename", renameCommand); bot.command("commands", commandsCommand); bot.command("skills", skillsCommand); bot.command("mcps", mcpsCommand); bot.command("memory", memoryCommand); bot.command("remember", rememberCommand); bot.command("forget", forgetCommand); bot.command("image", imageCommand); bot.command("edit", editCommand);
+
+  bot.command("start", startCommand);
+  bot.command("update", updateCommand);
+  bot.command("all", allVersionInfoCommand);
+  bot.command("help", helpCommand);
+  bot.command("status", statusCommand);
+  bot.command("settings", settingsCommand);
+  bot.command("providers", providersCommand);
+  bot.command("integrations", integrationsCommand);
+  bot.command("opencode_start", opencodeStartCommand);
+  bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }));
+  bot.command("worktree", worktreeCommand);
+  bot.command("open", openCommand);
+  bot.command("ls", lsCommand);
+  bot.command("messages", messagesCommand);
+  bot.command("abort", abortCommand);
+  bot.command("stop", abortCommand);
+  bot.command("pause", async (ctx) => {
+    if (await rejectNonAiTopicControl(ctx, "pause")) return;
+    await pauseCurrentChat(ctx);
+  });
+  bot.command("resume", async (ctx) => {
+    if (await rejectNonAiTopicControl(ctx, "resume")) return;
+    await resumePausedChat(ctx, deps);
+  });
+  bot.command("model", async (ctx) => {
+    if (await rejectNonAiTopicControl(ctx, "model")) return;
+    await showModelCenterMenu(ctx);
+  });
+  bot.command("compact", async (ctx) => {
+    if (await rejectNonAiTopicControl(ctx, "compact")) return;
+    const enabled = !getCompactOutputMode();
+    setCompactOutputMode(enabled);
+    const runtime = getTopicRuntimeContext();
+    if (runtime?.sessionId) await keyboardManager.sendKeyboardUpdate(runtime.chatId, true, runtime.sessionId);
+    await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`);
+  });
+  bot.command("delete_topic", async (ctx) => {
+    if (await rejectNonAiTopicControl(ctx, "delete_topic")) return;
+    await showTelegramTopicDeleteConfirmation(ctx);
+  });
+  bot.command("detach", detachCommand);
+  bot.command("task", taskCommand);
+  bot.command("tasklist", taskListCommand);
+  bot.command("rename", renameCommand);
+  bot.command("commands", commandsCommand);
+  bot.command("skills", skillsCommand);
+  bot.command("mcps", mcpsCommand);
+  bot.command("memory", memoryCommand);
+  bot.command("remember", rememberCommand);
+  bot.command("forget", forgetCommand);
+  bot.command("image", imageCommand);
+  bot.command("edit", editCommand);
 }
