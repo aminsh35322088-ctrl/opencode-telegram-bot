@@ -20,6 +20,7 @@ const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
 const SSE_IDLE_TIMEOUT_ERROR = "SSE stream idle timeout";
 const subscribers = new Map<string, Subscriber>();
 const directoryListeners = new Map<string, DirectoryListener>();
+const dispatchChains = new Map<string, Promise<void>>();
 const abortedRetrySessions = new Set<string>();
 let sseIdleTimeoutMs = DEFAULT_SSE_IDLE_TIMEOUT_MS;
 function normalizeDirectory(directory: string): string { return directory.replace(/\\/g, "/").replace(/\/+$/u, "").toLowerCase(); }
@@ -70,7 +71,7 @@ function createStreamController(parentSignal: AbortSignal): { controller: AbortC
   };
 }
 
-function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void { void (async () => {
+async function dispatchEventToSubscribers(event: EventLike, scopedDirectory?: string): Promise<void> {
   const sessionId = getSessionId(event);
   const eventDirectory = getEventDirectory(event);
   let binding = sessionId ? await findTelegramTopicBindingBySessionId(sessionId) : null;
@@ -99,7 +100,23 @@ function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void
     const invoke = async () => { try { await agentArtifactDeliveryService.processEvent(sdkEvent); await target.callback(sdkEvent); } catch (error) { logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error); } };
     if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, invoke); else await invoke();
   }
-})(); }
+}
+
+function dispatchKey(event: EventLike, scopedDirectory?: string): string {
+  const sessionId = getSessionId(event);
+  if (sessionId) return `session:${sessionId}`;
+  return `directory:${normalizeDirectory(scopedDirectory ?? getEventDirectory(event) ?? "")}`;
+}
+
+function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void {
+  const key = dispatchKey(event, scopedDirectory);
+  const previous = dispatchChains.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(() => dispatchEventToSubscribers(event, scopedDirectory));
+  dispatchChains.set(key, current);
+  void current.finally(() => {
+    if (dispatchChains.get(key) === current) dispatchChains.delete(key);
+  });
+}
 
 async function startDirectoryListener(directory: string, localController: AbortController): Promise<void> {
   let reconnectAttempt = 0;
@@ -152,5 +169,5 @@ function ensureDirectoryListener(directory: string): void {
 function stopDirectoryListenerIfUnused(directory: string): void { const normalized = normalizeDirectory(directory); if (subscribersForDirectory(normalized).length > 0) return; const listener = directoryListeners.get(normalized); if (!listener) return; listener.controller.abort(); directoryListeners.delete(normalized); }
 export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string): () => void { const key = subscriberKey(directory, callback, sessionId); subscribers.set(key, { directory, sessionId, callback }); topicTelemetry("subscription_added", { sessionId, directory }, { subscriberCount: subscribers.size, scoped: sessionId !== undefined }); ensureDirectoryListener(directory); return () => { if (subscribers.delete(key)) { topicTelemetry("subscription_removed", { sessionId, directory }, { subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); } }; }
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
-export function stopTopicEventBus(): void { const previousSubscriberCount = subscribers.size; for (const listener of directoryListeners.values()) listener.controller.abort(); directoryListeners.clear(); subscribers.clear(); abortedRetrySessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
+export function stopTopicEventBus(): void { const previousSubscriberCount = subscribers.size; for (const listener of directoryListeners.values()) listener.controller.abort(); directoryListeners.clear(); subscribers.clear(); dispatchChains.clear(); abortedRetrySessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
 export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { sseIdleTimeoutMs = Math.max(1, timeoutMs); }
