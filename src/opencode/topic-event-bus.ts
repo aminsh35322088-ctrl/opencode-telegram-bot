@@ -54,8 +54,20 @@ async function consumeEventStream(stream: AsyncGenerator<unknown, unknown, unkno
       if (isEventLike(result.value)) onEvent(result.value);
     }
   } finally {
+    controller.abort();
     void iterator.return?.(undefined as never)?.catch(() => undefined);
   }
+}
+
+function createStreamController(parentSignal: AbortSignal): { controller: AbortController; cleanup: () => void } {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(parentSignal.reason);
+  if (parentSignal.aborted) controller.abort(parentSignal.reason);
+  else parentSignal.addEventListener("abort", onAbort, { once: true });
+  return {
+    controller,
+    cleanup: () => parentSignal.removeEventListener("abort", onAbort),
+  };
 }
 
 function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void { void (async () => {
@@ -93,17 +105,19 @@ async function startDirectoryListener(directory: string, localController: AbortC
   let reconnectAttempt = 0;
   const normalized = normalizeDirectory(directory);
   while (!localController.signal.aborted && directoryListeners.get(normalized)?.controller === localController && subscribersForDirectory(normalized).length > 0) {
+    const streamContext = createStreamController(localController.signal);
+    const streamController = streamContext.controller;
     try {
       const clientWithEvent = opencodeClient as typeof opencodeClient & { event?: { subscribe: (options?: { directory?: string; signal?: AbortSignal }) => Promise<{ stream?: AsyncGenerator<unknown, unknown, unknown> | null }> } };
       const eventApi = clientWithEvent.event;
       if (!eventApi?.subscribe) { logger.warn(`[TopicEventBus] OpenCode event.subscribe API is unavailable; directory=${directory}`); return; }
       logger.info(`[SessionTrace] phase=topic_directory_stream_connecting directory=${directory}`);
-      const result = await eventApi.subscribe({ directory, signal: localController.signal });
+      const result = await eventApi.subscribe({ directory, signal: streamController.signal });
       if (!result.stream) throw new Error(FATAL_NO_STREAM_ERROR);
       reconnectAttempt = 0;
       logger.info(`[SessionTrace] phase=topic_directory_stream_active directory=${directory}`);
       topicTelemetry("directory_stream_active", { directory }, { subscriberCount: subscribersForDirectory(normalized).length });
-      await consumeEventStream(result.stream, localController, (rawEvent) => {
+      await consumeEventStream(result.stream, streamController, (rawEvent) => {
         if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) return;
         const retryStatus = isRecord(rawEvent.properties["status"]) ? rawEvent.properties["status"] : null;
         const retrySessionId = rawEvent.properties["sessionID"];
@@ -120,6 +134,9 @@ async function startDirectoryListener(directory: string, localController: AbortC
       }
       reconnectAttempt++;
       if (!(await wait(getReconnectDelayMs(reconnectAttempt), localController.signal))) break;
+    } finally {
+      streamController.abort();
+      streamContext.cleanup();
     }
   }
 }
