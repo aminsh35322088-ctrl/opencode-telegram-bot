@@ -15,6 +15,10 @@ function getButtonText(button: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function allButtons(keyboard: InlineKeyboard): unknown[] {
+  return keyboard.inline_keyboard.flat() as unknown[];
+}
+
 describe("inline-menu", () => {
   beforeEach(() => interactionManager.clear("test_setup"));
 
@@ -25,21 +29,36 @@ describe("inline-menu", () => {
     expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("inline:cancel:session");
   });
 
-  it("uses Close instead of Home for Topic Settings", () => {
+  it("uses Close instead of Home for Topic Settings root", () => {
     const keyboard = new InlineKeyboard().text("Option", "settings:appearance").row();
     appendInlineMenuCancelButton(keyboard, "settings", 735542);
     const last = keyboard.inline_keyboard.at(-1)?.[0];
     expect(getButtonText(last)).toBe("✖ Close");
     expect(getCallbackData(last)).toBe("inline:cancel:settings");
-    expect(keyboard.inline_keyboard.some((row) => row.some((button) => button.text === "🏠 Home"))).toBe(false);
+    expect(allButtons(keyboard).some((button) => getButtonText(button) === "🏠 Home")).toBe(false);
   });
 
-  it("uses Back for Topic Settings child menus", () => {
-    const keyboard = new InlineKeyboard().text("Agent A", "agent:a").row();
-    appendInlineMenuCancelButton(keyboard, "agent", 735542);
+  it("uses Back for Topic Settings child screens", () => {
+    const keyboard = new InlineKeyboard().text("← Settings", "settings:back");
+    appendInlineMenuCancelButton(keyboard, "settings", 735542, "back");
     const last = keyboard.inline_keyboard.at(-1)?.[0];
     expect(getButtonText(last)).toBe("← Back");
     expect(getCallbackData(last)).toBe("settings:back");
+  });
+
+  it("adds Back to Topic Model Center screens that have no existing navigation", () => {
+    const keyboard = new InlineKeyboard().text("🧠 Model", "mc:select:test");
+    appendInlineMenuCancelButton(keyboard, "model", 735542);
+    const last = keyboard.inline_keyboard.at(-1)?.[0];
+    expect(getButtonText(last)).toBe("← Back");
+    expect(getCallbackData(last)).toBe("settings:back");
+  });
+
+  it("does not duplicate existing Model Center Back navigation", () => {
+    const keyboard = new InlineKeyboard().text("← Back", "mc:settings_back");
+    appendInlineMenuCancelButton(keyboard, "model", 735542);
+    expect(allButtons(keyboard).filter((button) => getButtonText(button) === "← Back")).toHaveLength(1);
+    expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("mc:settings_back");
   });
 
   it("keeps Home for non-Topic menus", () => {
