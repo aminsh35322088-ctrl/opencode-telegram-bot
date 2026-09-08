@@ -78,6 +78,7 @@ async function startDirectoryListener(directory: string, localController: AbortC
         const retryStatus = isRecord(rawEvent.properties["status"]) ? rawEvent.properties["status"] : null;
         const retrySessionId = rawEvent.properties["sessionID"];
         if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] === "retry" && typeof retryStatus["message"] === "string" && isDeterministicProviderRetryError(retryStatus["message"])) { abortDeterministicRetrySession(retrySessionId, retryStatus["message"], directory, typeof retryStatus["attempt"] === "number" ? retryStatus["attempt"] : undefined); continue; }
+        if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] !== "retry") abortedRetrySessions.delete(retrySessionId);
         dispatchToSubscribers(rawEvent, directory);
       }
     } catch (error) {
