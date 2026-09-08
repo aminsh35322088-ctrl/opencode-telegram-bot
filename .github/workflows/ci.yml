@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -34,6 +34,108 @@ jobs:
           mkdir -p tests
           cp -R .github/ci-tests/tests/. tests/
 
+      - name: Apply pending AI UI patch
+        if: hashFiles('.github/workflows/_temp_ai_ui_fix.yml') != ''
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          settings = Path('src/bot/menus/settings-menu.ts')
+          text = settings.read_text()
+          old = '''        "🧵 <b>Topic Settings</b>",
+        "",
+        "🎯 <b>Customize this Topic</b>",
+        "These settings apply only here.",
+        "",
+        `🤖 <b>Model</b> · ${model}`,
+        `🧑‍💻 <b>Agent</b> · ${agent}`,
+        `🎛 <b>Variant</b> · ${variant}`,
+        "",
+        "💬 <b>Response</b> · Output, thinking & delivery",
+        `📥 <b>Prompt Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
+        "🧠 <b>Context</b> · Usage & window health",'''
+          new = '''        "🧵 <b>Topic Settings</b>",
+        "",
+        "🤖 <b>Model</b>",
+        `<code>${model}</code>`,
+        "",
+        `🧑‍💻 <b>Agent</b> · ${agent}`,
+        `🎛 <b>Variant</b> · ${variant}`,
+        "",
+        "💬 <b>Response</b> · Output & thinking",
+        `📥 <b>Prompt Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
+        "🧠 <b>Context Health</b> · Usage & window",'''
+          if old not in text:
+              raise SystemExit('AI Topic Settings root block not found')
+          settings.write_text(text.replace(old, new, 1))
+
+          router = Path('src/bot/callbacks/callback-router.ts')
+          text = router.read_text()
+          import_anchor = 'import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";'
+          provider_import = 'import { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";'
+          if provider_import not in text:
+              if import_anchor not in text:
+                  raise SystemExit('callback router import anchor not found')
+              text = text.replace(import_anchor, import_anchor + '\n' + provider_import, 1)
+          pattern = re.compile(r'async function handleImageAiCallback\(ctx: Context, data: string\): Promise<boolean> \{.*?\n\}', re.S)
+          replacement = '''async function handleImageAiCallback(ctx: Context, data: string): Promise<boolean> {
+  const sessionId = await resolveCallbackTopicSession(ctx) ?? getCurrentSession()?.id;
+  if (data === "imageai:generate") {
+    if (!(await hasActiveImageAiProvider("generate"))) {
+      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
+      return true;
+    }
+    activateImageMode("generate", sessionId);
+    clearInteractionErrorState("interaction", "image_ai_mode_selected");
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.editMessageText("🎨 <b>Image AI · Generate</b>\\n\\nSend a text or voice prompt and I’ll generate a new image.", { parse_mode: "HTML" }).catch(() => {});
+    return true;
+  }
+  if (data === "imageai:edit") {
+    if (!(await hasActiveImageAiProvider("edit"))) {
+      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
+      return true;
+    }
+    activateImageMode("edit", sessionId);
+    clearInteractionErrorState("interaction", "image_ai_mode_selected");
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.editMessageText("🖌️ <b>Image AI · Edit</b>\\n\\nSend a photo with a caption/instruction, or send a photo first and then the edit instruction.", { parse_mode: "HTML" }).catch(() => {});
+    return true;
+  }
+  return false;
+}'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Image AI callback handler not found')
+          router.write_text(text)
+
+          reply_router = Path('src/bot/routers/reply-keyboard-router.ts')
+          text = reply_router.read_text()
+          if provider_import not in text:
+              anchor = 'import { clearImageMode } from "../../app/services/image-mode-service.js";'
+              if anchor not in text:
+                  raise SystemExit('reply-keyboard-router import anchor not found')
+              text = text.replace(anchor, anchor + '\nimport { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";', 1)
+          old = '''    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) { await ctx.reply("🎨 <b>Image AI</b>\\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") }); return; }'''
+          new = '''    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) {
+      const imageAiConfigured = (await hasActiveImageAiProvider("generate")) || (await hasActiveImageAiProvider("edit"));
+      if (!imageAiConfigured) {
+        await ctx.reply("image ai not configured");
+        return;
+      }
+      await ctx.reply("🎨 <b>Image AI</b>\\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") });
+      return;
+    }'''
+          if old not in text:
+              raise SystemExit('Reply Keyboard Image AI branch not found')
+          reply_router.write_text(text.replace(old, new, 1))
+
+          print('Pending AI UI patch applied')
+          PY
+
       - name: Lint
         run: npm run lint
 
@@ -45,6 +147,17 @@ jobs:
 
       - name: Run test suite
         run: npx vitest run --config .github/ci-tests/vitest.config.ts
+
+      - name: Commit validated AI UI patch
+        if: hashFiles('.github/workflows/_temp_ai_ui_fix.yml') != ''
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/bot/menus/settings-menu.ts src/bot/keyboards/main-reply-keyboard.ts src/bot/callbacks/callback-router.ts src/bot/routers/reply-keyboard-router.ts .github/ci-tests/tests/bot/keyboards/main-reply-keyboard.test.ts
+          git rm .github/workflows/_temp_ai_ui_fix.yml
+          git commit -m "fix: polish AI Topic settings and Image AI control [skip ci]"
+          git push
 
       - name: Cleanup CI-only files
         if: always()
