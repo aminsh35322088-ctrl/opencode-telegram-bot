@@ -61,7 +61,7 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
     : navigation;
   let hasNavigationButton = false;
   let hasCloseButton = false;
-  let lastBackRow: ReturnType<InlineKeyboard["inline_keyboard"]["at"]> = undefined;
+  let lastBackRow: typeof keyboard.inline_keyboard[number] | undefined;
 
   for (const row of keyboard.inline_keyboard) {
     let rowHasBack = false;
