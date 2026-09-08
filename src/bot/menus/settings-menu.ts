@@ -40,50 +40,67 @@ export const SETTINGS_FACTORY_RESET_FINAL_CALLBACK = `${SETTINGS_FACTORY_RESET_C
 export function formatBooleanSettingValue(enabled: boolean): string { return enabled ? "ON" : "OFF"; }
 export function formatResponseStreamingModeValue(mode: ResponseStreamingMode): string { return mode === "draft" ? "Live draft" : "Live edit"; }
 export function formatMessageFormatModeValue(mode: MessageFormatMode): string { return mode === "raw" ? "Raw" : "Markdown"; }
+
 function settingButton(label: string, value: string): string { return `${label}: ${value}`; }
-function appendSettingsBackButton(keyboard: InlineKeyboard): void { keyboard.row().text("← Settings", SETTINGS_BACK_CALLBACK); }
-function formatTopicModel(): string { const model = getCurrentTopicSettings()?.model; return model ? `${model.providerID}/${model.modelID}` : "Inherited default"; }
+function backButton(callback = SETTINGS_BACK_CALLBACK): InlineKeyboard { return new InlineKeyboard().text("← Back", callback); }
+function appendSettingsBackButton(keyboard: InlineKeyboard): InlineKeyboard { return keyboard.row().text("← Back", SETTINGS_BACK_CALLBACK); }
+function formatTopicModel(): string {
+  const model = getCurrentTopicSettings()?.model;
+  return model ? `${model.providerID}/${model.modelID}` : "Inherited default";
+}
+function statusPill(enabled: boolean): string { return enabled ? "🟢 ON" : "⚪ OFF"; }
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
-  if (getCurrentTopicSettings()) return {
-    text: [
-      "🧵 Topic Settings",
-      "",
-      "These controls affect only the current Topic.",
-      "",
-      "🤖 Model — Select the model used by this Topic.",
-      "🧑‍💻 Agent — Choose the agent behavior for this Topic.",
-      "🎛 Variant — Adjust model-specific behavior when available.",
-      "🎨 Reply & Output — Control response formatting and streaming.",
-      "📥 Prompt Queue — Control queued prompts while a run is busy.",
-      "🧠 Context — View the latest observed context usage.",
-    ].join("\n"),
-    keyboard: new InlineKeyboard()
-      .text(`🤖 Model: ${formatTopicModel()}`, SETTINGS_MODEL_CALLBACK).row()
-      .text("🧑‍💻 Agent", SETTINGS_AGENT_CALLBACK).text("🎛 Variant", SETTINGS_VARIANT_CALLBACK).row()
-      .text("🎨 Reply & Output", SETTINGS_APPEARANCE_CALLBACK).row()
-      .text("📥 Prompt Queue", SETTINGS_NOTIFICATIONS_CALLBACK).row()
-      .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK),
-  };
+  if (getCurrentTopicSettings()) {
+    const model = formatTopicModel();
+    const agent = getCurrentTopicSettings()?.agent ?? "Inherited default";
+    const variant = getCurrentTopicSettings()?.variant ?? "Default";
+    return {
+      text: [
+        "🧵 <b>Topic Settings</b>",
+        "",
+        "Fine-tune this Topic without changing other Topics or global defaults.",
+        "",
+        `🤖 <b>Model</b>  ${model}`,
+        `🧑‍💻 <b>Agent</b>  ${agent}`,
+        `🎛 <b>Variant</b>  ${variant}`,
+        "💬 <b>Response</b>  Streaming, format, thinking, footer & files",
+        `📥 <b>Prompt Queue</b>  ${statusPill(getPromptQueueEnabled())}`,
+        "🧠 <b>Context</b>  Live usage and model-window health",
+        "⚙️ <b>Advanced</b>  MCP, Skills, Commands and data controls",
+      ].join("\n"),
+      keyboard: new InlineKeyboard()
+        .text(`🤖 Model · ${model}`, SETTINGS_MODEL_CALLBACK).row()
+        .text(`🧑‍💻 Agent · ${agent}`, SETTINGS_AGENT_CALLBACK).row()
+        .text(`🎛 Variant · ${variant}`, SETTINGS_VARIANT_CALLBACK).row()
+        .text("💬 Response & Output", SETTINGS_APPEARANCE_CALLBACK).row()
+        .text(`📥 Prompt Queue · ${formatBooleanSettingValue(getPromptQueueEnabled())}`, SETTINGS_NOTIFICATIONS_CALLBACK).row()
+        .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
+        .text("⚙️ Advanced", SETTINGS_ADVANCED_CALLBACK).row()
+        .text("✖ Close", SETTINGS_BACK_CALLBACK),
+    };
+  }
 
   return {
     text: [
-      "⚙️ Settings",
+      "⚙️ <b>Settings</b>",
       "",
-      "Manage how OpenCode behaves and how the bot connects to it.",
+      "Global configuration and defaults for the bot.",
       "",
-      "🤖 Default Model — Choose the model used by new Topics.",
-      "🧩 Topic Defaults — Set defaults copied into new Topics.",
-      "🔌 Providers & Models — Add providers and discover their models.",
-      "🔗 Integrations — Manage GitHub and Railway connections.",
-      "🧰 Advanced — OpenCode tools, MCP, commands, skills, and resets.",
+      "🤖 <b>Default Model</b> · Used when a new Topic has no explicit model.",
+      "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
+      "🔌 <b>Providers & Models</b> · Discover available coding providers.",
+      "🔗 <b>Integrations</b> · Manage connected services.",
+      "🧰 <b>Advanced</b> · OpenCode tools and destructive data controls.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("🤖 Default Model", SETTINGS_MODEL_CALLBACK).row()
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
       .text("🔌 Providers & Models", "provider:menu").row()
       .text("🔗 Integrations", "integration:menu").row()
-      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
+      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK)
+      .row()
+      .text("✖ Close", SETTINGS_BACK_CALLBACK),
   };
 }
 
@@ -92,13 +109,28 @@ export function buildTopicDefaultsSettingsView(): { text: string; keyboard: Inli
   const keyboard = new InlineKeyboard()
     .text(settingButton("📦 Compact", formatBooleanSettingValue(defaults.compactOutputMode)), SETTINGS_DEFAULT_COMPACT_CALLBACK).row()
     .text(settingButton("🧠 Thinking", formatBooleanSettingValue(defaults.showThinkingContent)), SETTINGS_DEFAULT_THINKING_CALLBACK).row()
-    .text(`✍️ Streaming: ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, SETTINGS_DEFAULT_STREAMING_CALLBACK).row()
-    .text(`📝 Format: ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, SETTINGS_DEFAULT_FORMAT_CALLBACK).row()
+    .text(`✍️ Streaming · ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, SETTINGS_DEFAULT_STREAMING_CALLBACK).row()
+    .text(`📝 Format · ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, SETTINGS_DEFAULT_FORMAT_CALLBACK).row()
     .text(settingButton("📊 Run footer", formatBooleanSettingValue(defaults.showAssistantRunFooter)), SETTINGS_DEFAULT_FOOTER_CALLBACK).row()
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(defaults.sendDiffFileAttachments)), SETTINGS_DEFAULT_DIFF_CALLBACK).row()
     .text(settingButton("📥 Prompt queue", formatBooleanSettingValue(defaults.promptQueueEnabled)), SETTINGS_DEFAULT_QUEUE_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: ["🧩 Topic Defaults", "", "These values are copied when a new Topic is created. Changes here do not modify existing Topics.", "", `📦 Compact — ${defaults.compactOutputMode ? "ON" : "OFF"}`, `🧠 Thinking — ${defaults.showThinkingContent ? "ON" : "OFF"}`, `✍️ Streaming — ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, `📝 Format — ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, `📊 Run footer — ${defaults.showAssistantRunFooter ? "ON" : "OFF"}`, `📎 Diff files — ${defaults.sendDiffFileAttachments ? "ON" : "OFF"}`, `📥 Prompt queue — ${defaults.promptQueueEnabled ? "ON" : "OFF"}`].join("\n"), keyboard };
+  return {
+    text: [
+      "🧩 <b>Topic Defaults</b>",
+      "",
+      "These values are copied only when a new Topic is created. Existing Topics keep their own settings.",
+      "",
+      `📦 Compact output · ${formatBooleanSettingValue(defaults.compactOutputMode)} — reduce verbose response formatting.`,
+      `🧠 Thinking details · ${formatBooleanSettingValue(defaults.showThinkingContent)} — include model reasoning/details when available.`,
+      `✍️ Streaming · ${formatResponseStreamingModeValue(defaults.responseStreamingMode)} — choose live-edit or live-draft delivery.`,
+      `📝 Message format · ${formatMessageFormatModeValue(defaults.messageFormatMode)} — choose Markdown or raw text.`,
+      `📊 Run footer · ${formatBooleanSettingValue(defaults.showAssistantRunFooter)} — show completion/usage footer information.`,
+      `📎 Diff files · ${formatBooleanSettingValue(defaults.sendDiffFileAttachments)} — attach generated diffs as files when applicable.`,
+      `📥 Prompt queue · ${formatBooleanSettingValue(defaults.promptQueueEnabled)} — queue new prompts while a run is busy.`,
+    ].join("\n"),
+    keyboard,
+  };
 }
 
 export function buildAppearanceSettingsView(): { text: string; keyboard: InlineKeyboard } {
@@ -111,19 +143,45 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
   const keyboard = new InlineKeyboard()
     .text(settingButton("📦 Compact output", formatBooleanSettingValue(compact)), SETTINGS_COMPACT_OUTPUT_CALLBACK).row()
     .text(settingButton("🧠 Thinking details", formatBooleanSettingValue(thinking)), SETTINGS_THINKING_CONTENT_CALLBACK).row()
-    .text(`✍️ Reply streaming: ${formatResponseStreamingModeValue(streaming)}`, SETTINGS_RESPONSE_STREAMING_CALLBACK).row()
-    .text(`📝 Message format: ${formatMessageFormatModeValue(format)}`, SETTINGS_MESSAGE_FORMAT_CALLBACK).row()
+    .text(`✍️ Reply streaming · ${formatResponseStreamingModeValue(streaming)}`, SETTINGS_RESPONSE_STREAMING_CALLBACK).row()
+    .text(`📝 Message format · ${formatMessageFormatModeValue(format)}`, SETTINGS_MESSAGE_FORMAT_CALLBACK).row()
     .text(settingButton("📊 Run footer", formatBooleanSettingValue(footer)), SETTINGS_ASSISTANT_FOOTER_CALLBACK).row()
     .text(settingButton("📎 Diff files", formatBooleanSettingValue(diff)), SETTINGS_DIFF_FILES_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: ["🎨 Reply & Output", "", "Control how OpenCode responses are presented in this Topic.", "", `📦 Compact output — ${compact ? "ON" : "OFF"}`, `🧠 Thinking details — ${thinking ? "ON" : "OFF"}`, `✍️ Reply streaming — ${formatResponseStreamingModeValue(streaming)}`, `📝 Message format — ${formatMessageFormatModeValue(format)}`, `📊 Run footer — ${footer ? "ON" : "OFF"}`, `📎 Diff files — ${diff ? "ON" : "OFF"}`].join("\n"), keyboard };
+  return {
+    text: [
+      "💬 <b>Response & Output</b>",
+      "",
+      "Control exactly how this Topic receives and displays model responses.",
+      "",
+      `📦 <b>Compact output</b> · ${statusPill(compact)} — keeps responses less verbose when supported.`,
+      `🧠 <b>Thinking details</b> · ${statusPill(thinking)} — show reasoning/thinking content when exposed by the provider.`,
+      `✍️ <b>Reply streaming</b> · ${formatResponseStreamingModeValue(streaming)} — edit one live message or use a draft-style stream.`,
+      `📝 <b>Message format</b> · ${formatMessageFormatModeValue(format)} — Markdown formatting or raw text.`,
+      `📊 <b>Run footer</b> · ${statusPill(footer)} — append run completion/usage information.`,
+      `📎 <b>Diff files</b> · ${statusPill(diff)} — send generated diff content as file attachments when available.`,
+    ].join("\n"),
+    keyboard,
+  };
 }
 
 export function buildNotificationsSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const queue = getPromptQueueEnabled();
   const keyboard = new InlineKeyboard().text(settingButton("📥 Prompt queue", formatBooleanSettingValue(queue)), SETTINGS_PROMPT_QUEUE_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "📥 Prompt Queue\n\nChoose whether new prompts wait in a queue while the current run is busy.", keyboard };
+  return {
+    text: [
+      "📥 <b>Prompt Queue</b>",
+      "",
+      "Choose whether new prompts should wait instead of colliding with an active run.",
+      "",
+      `Current state: ${statusPill(queue)}`,
+      "",
+      "🟢 ON · new prompts are held in order until the current run is free.",
+      "⚪ OFF · new prompts follow the normal busy/run handling path.",
+    ].join("\n"),
+    keyboard,
+  };
 }
 
 function contextGauge(tokensUsed: number, tokensLimit: number): string {
@@ -135,10 +193,37 @@ function contextGauge(tokensUsed: number, tokensLimit: number): string {
 
 export function buildContextSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const info = keyboardManager.getContextInfo();
-  if (!info || info.tokensLimit <= 0) return { text: "🧠 Context\n\nView the latest observed context usage for the current Topic.\n\nNo usage has been observed yet.", keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
-  const percent = Math.round((info.tokensUsed / info.tokensLimit) * 100);
+  if (!info || info.tokensLimit <= 0) {
+    return {
+      text: [
+        "🧠 <b>Context Health</b>",
+        "",
+        "Shows the latest observed input-context usage for this Topic.",
+        "",
+        "⚪ <b>No usage observed yet.</b>",
+        "Start a model run and return here to see the live context window estimate.",
+      ].join("\n"),
+      keyboard: backButton(),
+    };
+  }
+  const percent = Math.max(0, Math.round((info.tokensUsed / info.tokensLimit) * 100));
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
-  return { text: ["🧠 Context", "", "View the latest observed context usage for the current Topic.", "", health, "", contextGauge(info.tokensUsed, info.tokensLimit), `${info.tokensUsed.toLocaleString()} / ${info.tokensLimit.toLocaleString()} tokens`, "", "📌 Latest observed input context.", "📐 Model window from provider metadata when available."].join("\n"), keyboard: new InlineKeyboard().text("← Settings", SETTINGS_BACK_CALLBACK) };
+  return {
+    text: [
+      "🧠 <b>Context Health</b>",
+      "",
+      "Live snapshot of the most recently observed model input context.",
+      "",
+      `${health} · ${percent}% used`,
+      contextGauge(info.tokensUsed, info.tokensLimit),
+      `<b>${info.tokensUsed.toLocaleString()}</b> / ${info.tokensLimit.toLocaleString()} tokens`,
+      "",
+      "📌 <b>Tokens used</b> · latest observed input context.",
+      "📐 <b>Model window</b> · provider metadata when available.",
+      "💡 A high percentage can increase trimming or compaction pressure.",
+    ].join("\n"),
+    keyboard: backButton(),
+  };
 }
 
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
@@ -149,32 +234,69 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
     .text("🧹 Clear Conversation History", SETTINGS_RESET_HISTORY_CALLBACK).row()
     .text("☢️ Factory Reset", SETTINGS_FACTORY_RESET_CALLBACK);
   appendSettingsBackButton(keyboard);
-  return { text: "🛠 Advanced Settings\n\nOpenCode tools, customization, and data-management controls.", keyboard };
+  return {
+    text: [
+      "⚙️ <b>Advanced</b>",
+      "",
+      "Tools and maintenance controls for this bot.",
+      "",
+      "🔗 <b>MCP Servers</b> · inspect and manage Model Context Protocol integrations.",
+      "🧠 <b>Skills</b> · inspect available reusable skills.",
+      "🧩 <b>Custom Commands</b> · inspect bot/OpenCode command definitions.",
+      "🧹 <b>Clear Conversation History</b> · remove managed Topics and conversation state while keeping global configuration.",
+      "☢️ <b>Factory Reset</b> · wipe managed data and saved bot configuration; source code/runtime remain intact.",
+    ].join("\n"),
+    keyboard,
+  };
 }
 
 export function buildResetHistoryConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "⚠️ Clear All Conversation History?\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.\n\nYour providers, API keys, model/agent settings, Topic defaults, and other global configuration stay intact.\n\nThis action cannot be undone.",
+    text: [
+      "⚠️ <b>Clear All Conversation History?</b>",
+      "",
+      "This permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, and bot-created Topic workspaces/files.",
+      "",
+      "✅ Providers, API keys, model/agent settings, Topic defaults and other global configuration stay intact.",
+      "❌ This action cannot be undone.",
+    ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("✅ Clear All History", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
-      .text("Cancel", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
+      .text("← Back", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
   };
 }
 
 export function buildFactoryResetConfirmationView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "☢️ Reset Bot to Defaults?\n\nThis permanently removes all managed AI Topics, their OpenCode sessions, conversation memory, Topic runtime state, Topic workspaces/files, and saved bot configuration — including providers, API keys, model/agent selection, Topic defaults, permissions, scheduled-task state, integrations, and other persisted application data.\n\nYour source code and deployment/runtime configuration stay intact.\n\nThis action cannot be undone.",
+    text: [
+      "☢️ <b>Factory Reset</b>",
+      "",
+      "This removes all managed Topics, OpenCode sessions, memory, Topic runtime state, workspaces/files and saved bot configuration.",
+      "",
+      "🧹 Providers, API keys, model/agent selection, Topic defaults, permissions, scheduled tasks, integrations and persisted application data are reset.",
+      "🛡 Source code and deployment/runtime configuration stay intact.",
+      "❌ This action cannot be undone.",
+    ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("✅ Continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
-      .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
+      .text("← Back", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
   };
 }
 
 export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🔴 Final Factory Reset\n\nYou are about to return the bot to a fresh application state. Managed Topics, their OpenCode sessions, persistent memory, and bot-created files will be deleted, and saved configuration will be reset.\n\nSource code and deployment/runtime configuration stay intact.\n\nProceed only if you are sure.",
+    text: [
+      "🔴 <b>Final Factory Reset</b>",
+      "",
+      "You are one step away from returning the bot to a fresh application state.",
+      "",
+      "Managed Topics, sessions, persistent memory, Topic workspaces and saved configuration will be deleted.",
+      "🛡 Source code and deployment/runtime configuration stay intact.",
+      "",
+      "Proceed only if you are certain.",
+    ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("🔴 Confirm Factory Reset", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
-      .text("Cancel", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
+      .text("← Back", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
   };
 }
