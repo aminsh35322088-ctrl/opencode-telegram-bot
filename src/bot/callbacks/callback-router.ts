@@ -152,11 +152,13 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
   ]);
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
-    if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id, getCurrentSession()?.id);
-    if (data === "provider:gemini:configure") markGeminiWizard();
-    if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
-    let errorScope: InteractionErrorScope = "interaction";
+    let topicSessionId: string | null = null;
     try {
+      topicSessionId = await resolveCallbackTopicSession(ctx);
+      if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id, topicSessionId ?? getCurrentSession()?.id);
+      if (data === "provider:gemini:configure") markGeminiWizard();
+      if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
+      let errorScope: InteractionErrorScope = "interaction";
       if (await handleMainNavigationCallback(ctx, data, bot, deps)) return;
       if (await handleImageAiCallback(ctx, data)) return;
       if (await handleTelegramTopicDeleteCallback(ctx)) return;
@@ -172,7 +174,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
       await ctx.answerCallbackQuery({ text: t("callback.unknown_command") });
     } catch (err) {
       logger.error("[Bot] Error handling callback:", err);
-      clearInteractionErrorState(errorScope, "callback_handler_error");
+      clearInteractionErrorState("interaction", "callback_handler_error");
       clearGeminiWizard();
       await ctx.answerCallbackQuery({ text: t("callback.processing_error") }).catch(() => {});
     }
