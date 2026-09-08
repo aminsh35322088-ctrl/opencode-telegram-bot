@@ -2,6 +2,10 @@
 
 Instructions for AI agents working on this project.
 
+## First step — read this file
+
+Always read `AGENTS.md` before changing code. It is the project's operating contract.
+
 ## About the project
 
 **opencode-telegram-bot** is a Telegram bot client for OpenCode.
@@ -26,127 +30,74 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 
 ## Runtime environment
 
-The Railway production image contains only production dependencies from `npm ci` followed by `npm prune --omit=dev`.
-It does **not** ship Vitest, TypeScript test dependencies, a second `node_modules` tree, or any other CI-only validation packages.
+Railway is production only. Do not turn the production container into a test runner.
 
-The production application uses the runtime capabilities, custom OpenCode tools, and system toolchain provided by the image.
-Dependency changes belong to source control and the GitHub Actions build/deploy path, never to per-workspace `npm install`.
+The full validation suite runs directly in **GitHub Actions**. CI-only tests live under `.github/ci-tests/` and are materialized only on the GitHub-hosted runner. Test runners and validation-only packages must never be installed into Railway or `/data`.
 
-The persistent `/data` volume is expected to be **500MB**. Runtime exports expose the actual environment budget:
+Dependency changes belong in source control and the GitHub Actions build/validation path.
 
-- `OPENCODE_DATA_VOLUME_BUDGET_MB` - configured volume budget (default `500`)
-- `OPENCODE_DATA_VOLUME_WARN_MB` - warning threshold (default `150`)
-- `OPENCODE_DATA_VOLUME_CRITICAL_MB` - critical threshold (default `100`)
+## AI agent behavior
 
-Always trust `df -P /data` or `storage-health` for the live filesystem state rather than assuming the budget equals the current free space.
+### GitHub-first validation
 
-When the volume is below the warning threshold, keep disposable runtime data in `/tmp` and avoid persistent downloads.
-When it is below the critical threshold, do not start disk-heavy work until disposable caches have been cleaned.
-Only the `storage-health` tool's `cleanup-safe` action may automatically delete disposable tool/package caches; it must never delete user workspaces, sessions, databases, source files, or generated user artifacts.
+After reading this file, use GitHub as the source of truth for repository work.
 
-When a user asks for an archive, create a real archive with shell tooling and verify it before delivery.
+For code changes:
+1. Inspect the relevant source and existing GitHub history.
+2. Make the smallest correct change.
+3. Push/commit the authorized change to GitHub.
+4. Let `.github/workflows/ci.yml` run on GitHub Actions.
+5. Inspect the Actions result and logs.
+6. Fix failures and repeat until the revision passes.
 
-### Sending generated files to Telegram
+Do not install test dependencies in Railway to imitate CI. Do not create a second runtime dependency tree for validation.
 
-When the user asks to receive a generated file, archive, website, image, document, build artifact, or other output file, use the custom `send_file` tool after the file has been created and verified.
-
-For multi-file projects, create a real archive first, verify it, then call `send_file` with the archive path.
-
-## Architecture
-
-### Main components
-
-1. **Bot Layer** - grammY setup, middleware, commands, callback handlers
-2. **OpenCode Client Layer** - SDK wrapper and SSE event subscription
-3. **State Managers** - session/project/settings/question/permission/model/agent/variant/keyboard/pinned
-4. **Summary Pipeline** - event aggregation and Telegram-friendly formatting
-5. **Process Manager** - local OpenCode server process start, stop, and status
-6. **Runtime/CLI Layer** - runtime mode, config bootstrap, CLI commands
-7. **I18n Layer** - localized bot and CLI strings to multiple languages
-
-### Data flow
-
-```text
-Telegram User
-  -> Telegram Bot (grammY)
-  -> Managers + OpenCodeClient
-  -> OpenCode Server
-
-OpenCode Server
-  -> SSE Events
-  -> Event Listener
-  -> Summary Aggregator / Tool Managers
-  -> Telegram Bot
-  -> Telegram User
-```
-
-### State management
-
-- Persistent state is stored in `settings.json`.
-- Active runtime state is kept in dedicated in-memory managers.
-- Session/project/model/agent context is synchronized through OpenCode API calls.
-- The app is currently single-user by design.
-
-## AI agent behavior rules
-
-### Communication
-
-- **Response language:** Reply in the same language the user uses in their questions.
-- **Clarifications:** If plan confirmation is needed, use the `question` tool. Do not make major decisions (architecture changes, mass deletion, risky changes) without explicit confirmation.
-
-### Think Before Coding
-
-Don't assume. Before implementing, state assumptions, surface tradeoffs, and prefer the simplest solution that meets the request.
-
-### Surgical Changes
+### Surgical changes
 
 Touch only what is necessary. Do not refactor unrelated code or delete unrelated dead code.
 
-### Goal-Driven Execution
+### Goal-driven execution
 
-Define success criteria and verify them. For bugs, reproduce the failure, fix the underlying issue, run a local sanity check when useful, and validate through the repository's GitHub Actions CI as the source of truth.
+For bugs, identify the root cause, implement the fix, validate the affected path, then validate the repository through GitHub Actions.
+
+### Communication
+
+- Reply in the same language the user uses.
+- User-facing Telegram text must use the existing i18n system.
+- Do not expose internal stack traces to users.
 
 ### Git
 
-- **Commits:** Never create commits automatically. Commit only when the user explicitly asks.
+When the user explicitly asks for a fix/change, direct GitHub changes are authorized. Keep commits focused and descriptive.
 
-## Validation policy: GitHub Actions only for the full suite
+## Validation policy: GitHub Actions only
 
-GitHub Actions is the canonical and exclusive environment for the repository's full lint/typecheck/build/test validation.
-The CI workflow is defined in `.github/workflows/ci.yml` and owns linting, typechecking, building, and the full test suite.
-The manually triggerable `.github/workflows/full-test-suite.yml` runs the same validation on demand without sharing the Railway production process.
-The test source/configuration lives under `.github/ci-tests/` and is the single source of truth for tests.
+GitHub Actions is the canonical and exclusive environment for linting, typechecking, building, and the full test suite.
 
-CI installs the test runner and materializes the CI-only test tree temporarily on the GitHub-hosted runner. Those packages and files must not be copied into the Railway image or persistent workspaces.
+The canonical workflow is `.github/workflows/ci.yml`.
 
-### Disk economy (MANDATORY)
-
-The persistent `/data` volume is a 500MB budget. Runtime agent actions must respect the live free-space thresholds.
-
-- **Discover before writing.** Inspect `df -P /data` or call `storage-health` before disk-heavy work. Never infer available space from an old log.
-- **No CI dependency tree in production.** Never create `/opt/test-deps`, `node_modules.full`, or another validation dependency tree in the Railway image.
-- **Never install test packages in runtime.** Do not run `npm install`, `npm ci`, `npm add`, `npx`, `npm exec`, `pnpm`, `yarn`, or `bun` merely to obtain validation packages inside the Railway runtime.
-- **Keep validation off Railway.** The `full-test-suite` OpenCode tool delegates the complete suite to GitHub Actions instead of executing tests locally.
-- **No persistent test output.** CI-only `tests/`, `vitest.config.ts`, and `tsconfig.test.json` are materialized and removed inside the GitHub Actions runner.
-- **Stop at critical pressure.** Below 100MB free, do not run disk-heavy runtime diagnostics. Run `storage-health` with `cleanup-safe` first; never delete user/session data automatically.
-- **Prefer warning headroom.** Below 150MB free, use `/tmp` for disposable runtime work and avoid downloads or generated artifacts on `/data`.
+CI:
+- installs project dependencies on the GitHub runner;
+- installs CI-only test tooling on the GitHub runner;
+- materializes `.github/ci-tests/` temporarily;
+- runs lint, typecheck, build, and tests;
+- removes temporary test files and coverage before finishing.
 
 ### Mandatory rules
 
-- **GitHub Actions is the source of truth** for linting, typechecking, building, and the full test suite.
-- **Do not ship test dependencies in production.** The Docker runtime must contain production dependencies only.
-- **Do not bypass CI** with local test-package installation inside Railway.
-- **Local runtime diagnostics are not tests.** `full-diagnostics` and `session-recovery` are operational tools for stuck sessions; they do not replace CI validation.
+- Never run `npm install`, `npm ci`, `npm add`, `npx`, or equivalent commands in Railway merely to obtain test tooling.
+- Never ship Vitest or other CI-only validation dependencies in the Railway production image.
+- Never create `/opt/test-deps`, `node_modules.full`, or another baked validation dependency tree.
+- Never materialize CI tests into persistent `/data` workspaces.
+- Runtime diagnostics are operational diagnostics, not test execution.
 
-### GitHub Actions workflow
+## Runtime diagnostics
 
-When validation is required:
+For a stuck coding session, use the existing runtime diagnostics and recovery tools. Do not turn those tools into a local test runner.
 
-1. Make the smallest source/configuration change needed.
-2. Push or commit the authorized change so `.github/workflows/ci.yml` runs, or trigger `.github/workflows/full-test-suite.yml` for an explicit full-suite run.
-3. Inspect the GitHub Actions result/logs.
-4. Fix failures from the CI evidence and validate the next revision.
+## Coding rules
 
-### Runtime diagnostics
-
-Runtime diagnostics and session recovery are operational tools, not test runners. For a stuck coding session, use `full-diagnostics` and `session-recovery` to inspect and recover the runtime session; never switch to local package installation or ad-hoc dependency bootstrapping.
+- Code, identifiers, comments, and in-code documentation must be in English.
+- Use TypeScript strict mode and existing project style.
+- Use `async/await` for asynchronous control flow.
+- Log errors with context and never expose stack traces to users.
