@@ -181,6 +181,6 @@ async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboa
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(view.text, { reply_markup: view.keyboard, parse_mode: "HTML" }).catch(() => {});
   const threadId = getTopicThreadId(ctx);
-  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) });
+  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
   return true;
 }
