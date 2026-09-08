@@ -2,6 +2,11 @@
 
 All notable Telegram-bot changes are documented here. OpenCode has its own independent release/version lifecycle.
 
+## [Unreleased]
+
+### Fixed
+- Reply Keyboard controls pressed while replying to a bot message are now classified from the authentic button label instead of the enriched `Replying to @Chat Bot.` text, so Topic and control buttons are consumed as controls and no longer fall through into Coding AI prompt handling.
+
 ## [0.26.2] - 2026-09-04
 
 ### Fixed

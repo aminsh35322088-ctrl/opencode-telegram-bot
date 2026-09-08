@@ -10,6 +10,7 @@ import { openSessionInTelegramTopic, sendToTelegramTopic } from "../../app/servi
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { enrichTelegramReplyContext } from "../../app/services/telegram-reply-context-service.js";
+import { stashRawReplyKeyboardText } from "../interaction-classifier.js";
 import { createTopicAwareBot, getTelegramTopicRuntimeDependencies, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -108,6 +109,16 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
     logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
     return;
   }
+
+  // Telegram KeyboardButton presses arrive as ordinary text messages. Preserve
+  // the authentic text for every update before any downstream middleware can
+  // enrich or mutate ctx.message.text. The classifier uses this immutable
+  // snapshot for all Reply Keyboard controls, not just Topic Settings.
+  const rawMessageText = typeof ctx.message?.text === "string" ? ctx.message.text : undefined;
+  if (rawMessageText !== undefined) {
+    stashRawReplyKeyboardText(ctx, rawMessageText);
+  }
+
   if (await handleSessionContinueCallback(ctx)) return;
 
   const topic = getTopicMessage(ctx);
