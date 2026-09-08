@@ -44,12 +44,12 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(label).not.toContain("\n");
   });
 
-  it("reflects compact mode state", () => {
+  it("reflects compact mode state in an AI Topic", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: true, isTopic: true },
     );
-    expect(buttonTextAt(keyboard, 1, 1)).toBe("📦 Compact: ON");
+    expect(buttonTextAt(keyboard, 2, 1)).toBe("📦 Compact: ON");
   });
 
   it("keeps queued prompts above the fixed idle grid", () => {
@@ -73,9 +73,17 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
       [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
       [{ text: "🎨 Image AI" }],
-      [{ text: "🧠 GPT 4o" }],
-      [{ text: "⚙️ Topic Settings" }, { text: "🗑️ Delete Chat" }],
+      [{ text: "🗑️ Delete Chat" }, { text: "📦 Compact: ON" }],
+      [{ text: "🧠 GPT 4o" }, { text: "⚙️ Topic Settings" }],
     ]);
+  });
+
+  it("always includes Image AI in an idle AI Topic keyboard", () => {
+    const keyboard = createMainKeyboard(
+      { providerID: "openrouter", modelID: "openai/gpt-4o" },
+      { compactOutputMode: false, isTopic: true },
+    );
+    expect(keyboard.keyboard.flat().map(getButtonText)).toContain("🎨 Image AI");
   });
 
   it("creates custom agent keyboard and remove payload", () => {
