@@ -4,6 +4,8 @@ import { logger } from "../utils/logger.js";
 import { opencodeClient } from "./client.js";
 import { opencodeReadyLifecycle } from "./ready-lifecycle.js";
 import {
+  findServerPid,
+  killServerProcess,
   resolveLocalOpencodeTarget,
   startLocalOpencodeServer,
   type LocalOpencodeTarget,
@@ -52,7 +54,8 @@ async function isOpencodeServerHealthy(logTimeout = true): Promise<boolean> {
     }
     const { data, error } = result;
     return !error && data?.healthy === true;
-  } catch {
+  } catch (error) {
+    if (logTimeout) logger.warn("[OpenCodeAutoRestart] Health-check request failed", error);
     return false;
   }
 }
@@ -73,6 +76,7 @@ export class OpencodeAutoRestartService {
   private checkInProgress = false;
   private serverWasHealthy = false;
   private consecutiveHealthFailures = 0;
+  private managedServerPid: number | null = null;
 
   async start(): Promise<boolean> {
     if (this.started || !config.opencode.autoRestartEnabled) return false;
@@ -102,6 +106,7 @@ export class OpencodeAutoRestartService {
     this.localTarget = null;
     this.serverWasHealthy = false;
     this.consecutiveHealthFailures = 0;
+    this.managedServerPid = null;
   }
 
   private async checkAndRestart(reason: "startup" | "interval"): Promise<void> {
@@ -136,6 +141,40 @@ export class OpencodeAutoRestartService {
     }
   }
 
+  private async recoverAfterUnexpectedExit(pid: number): Promise<void> {
+    if (!this.started || !this.localTarget || this.managedServerPid !== null) return;
+    if (this.checkInProgress) return;
+
+    this.checkInProgress = true;
+    try {
+      this.serverWasHealthy = false;
+      this.consecutiveHealthFailures = 0;
+      opencodeReadyLifecycle.notifyUnavailable("process_exit");
+      logger.warn(`[OpenCodeAutoRestart] Recovering immediately after OpenCode process exit: pid=${pid}`);
+      await this.startServer("interval");
+    } catch (error) {
+      logger.error("[OpenCodeAutoRestart] Failed immediate recovery after OpenCode process exit", error);
+    } finally {
+      this.checkInProgress = false;
+    }
+  }
+
+  private async stopExistingServerIfNeeded(): Promise<void> {
+    if (!this.localTarget) return;
+
+    const existingPid = await findServerPid(this.localTarget.port);
+    if (existingPid === null) return;
+
+    if (existingPid === process.pid) {
+      logger.error(`[OpenCodeAutoRestart] Refusing to stop bot process that owns OpenCode port: pid=${existingPid}, port=${this.localTarget.port}`);
+      return;
+    }
+
+    logger.warn(`[OpenCodeAutoRestart] Existing listener found before recovery: pid=${existingPid}, port=${this.localTarget.port}; stopping it before spawn`);
+    const stopped = await killServerProcess(existingPid);
+    logger.info(`[OpenCodeAutoRestart] Existing OpenCode listener stop result: pid=${existingPid}, stopped=${stopped}`);
+  }
+
   private async startServer(reason: "startup" | "interval"): Promise<void> {
     if (!this.localTarget) return;
     if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
@@ -143,18 +182,30 @@ export class OpencodeAutoRestartService {
       return;
     }
     const prefix = reason === "startup" ? "Startup" : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
+    logger.info(`[OpenCodeAutoRestart] ${prefix}: preparing local OpenCode server on port=${this.localTarget.port}`);
+    await this.stopExistingServerIfNeeded();
     logger.info(`[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`);
     const childProcess = startLocalOpencodeServer(this.localTarget);
-    childProcess.once("error", (error) => logger.error("[OpenCodeAutoRestart] OpenCode server process failed to start", error));
-    const pid = childProcess.pid;
+    const pid = childProcess.pid ?? null;
+    this.managedServerPid = pid;
+    childProcess.once("error", (error) => logger.error(`[OpenCodeAutoRestart] OpenCode server process failed to start: pid=${pid ?? "unknown"}`, error));
+    childProcess.once("exit", (code, signal) => {
+      if (this.managedServerPid === pid) this.managedServerPid = null;
+      logger.error(`[OpenCodeAutoRestart] OpenCode server exited: pid=${pid ?? "unknown"}, code=${code ?? "null"}, signal=${signal ?? "none"}`);
+      if (this.serverWasHealthy && this.started) {
+        void this.recoverAfterUnexpectedExit(pid ?? -1);
+      }
+    });
     childProcess.unref();
     const ready = await waitForOpencodeServerReady(SERVER_READY_TIMEOUT_MS);
     if (!ready) {
+      if (this.managedServerPid === pid) this.managedServerPid = null;
       logger.warn(`[OpenCodeAutoRestart] OpenCode server was started but did not become ready: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`);
       return;
     }
-    logger.info(`[OpenCodeAutoRestart] OpenCode server recovered: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`);
     this.serverWasHealthy = true;
+    this.managedServerPid = pid;
+    logger.info(`[OpenCodeAutoRestart] OpenCode server recovered: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`);
     await opencodeReadyLifecycle.notifyReady(`auto_restart_${reason}`);
   }
 }
