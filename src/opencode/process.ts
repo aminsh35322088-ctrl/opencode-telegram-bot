@@ -1,11 +1,12 @@
 import { exec, spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 const DEFAULT_OPENCODE_PORT = 4096;
 const PROCESS_EXIT_POLL_MS = 100;
+const DEFAULT_OPENCODE_LOG_DIR = "/data/logs";
 
 export interface LocalOpencodeTarget {
   host: string;
@@ -129,15 +130,39 @@ function buildAgentEnvironment(): NodeJS.ProcessEnv {
   return environment;
 }
 
+function resolveOpencodeLogDir(): string {
+  const configuredDir = process.env.OPENCODE_LOG_DIR?.trim();
+  if (configuredDir) return configuredDir;
+
+  if (existsSync("/data")) return DEFAULT_OPENCODE_LOG_DIR;
+
+  return path.join(process.cwd(), ".logs");
+}
+
+function openOpencodeLogFile(fileName: string): number {
+  const logDir = resolveOpencodeLogDir();
+  mkdirSync(logDir, { recursive: true });
+  return openSync(path.join(logDir, fileName), "a", 0o640);
+}
+
 export function startLocalOpencodeServer(target: LocalOpencodeTarget): ChildProcess {
   const spawnCommand = createOpencodeServeSpawnCommand(target);
+  const stdoutFd = openOpencodeLogFile("opencode-server.stdout.log");
+  const stderrFd = openOpencodeLogFile("opencode-server.stderr.log");
 
-  return spawn(spawnCommand.command, spawnCommand.args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: spawnCommand.windowsHide,
-    env: buildAgentEnvironment(),
-  });
+  try {
+    return spawn(spawnCommand.command, spawnCommand.args, {
+      detached: true,
+      stdio: ["ignore", stdoutFd, stderrFd],
+      windowsHide: spawnCommand.windowsHide,
+      env: buildAgentEnvironment(),
+    });
+  } finally {
+    // The spawned child receives its own descriptor handles. Close the parent's
+    // copies so detached OpenCode logging cannot keep the bot alive on shutdown.
+    closeSync(stdoutFd);
+    closeSync(stderrFd);
+  }
 }
 
 function parsePid(value: string): number | null {
