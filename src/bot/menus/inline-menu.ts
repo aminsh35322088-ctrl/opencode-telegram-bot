@@ -37,12 +37,14 @@ function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInli
   return { menuKind, messageId, ...(typeof threadId === "number" ? { threadId } : {}) };
 }
 
-export function appendInlineMenuCancelButton(
-  keyboard: InlineKeyboard,
-  menuKind: InlineMenuKind,
-  threadId?: number,
-  navigation: InlineMenuNavigation = "auto",
-): InlineKeyboard {
+function hasExistingNavigation(keyboard: InlineKeyboard): boolean {
+  return keyboard.inline_keyboard.some((row) => row.some((button) => {
+    const callbackData = "callback_data" in button ? button.callback_data : undefined;
+    return button.text?.startsWith("←") || button.text === INLINE_MENU_CLOSE_LABEL || button.text === INLINE_MENU_HOME_LABEL || callbackData === INLINE_MENU_HOME_CALLBACK || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || (callbackData?.startsWith("mc:") === true && callbackData.includes("back"));
+  }));
+}
+
+export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind, threadId?: number, navigation: InlineMenuNavigation = "auto"): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) {
     const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1];
     if (!lastRow || lastRow.length > 0) break;
@@ -51,7 +53,7 @@ export function appendInlineMenuCancelButton(
 
   const isTopic = typeof threadId === "number" && threadId > 1;
   if (!isTopic) {
-    if (!keyboard.inline_keyboard.some((row) => row.some((button) => button.text === INLINE_MENU_HOME_LABEL && "callback_data" in button && button.callback_data === INLINE_MENU_HOME_CALLBACK))) {
+    if (!hasExistingNavigation(keyboard)) {
       keyboard.row();
       keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
     }
@@ -61,14 +63,14 @@ export function appendInlineMenuCancelButton(
   const mode: Exclude<InlineMenuNavigation, "auto"> = navigation === "auto"
     ? (menuKind === "settings" ? "close" : "back")
     : navigation;
-
   let hasNavigationButton = false;
+
   for (const row of keyboard.inline_keyboard) {
     for (const button of row) {
       const callbackData = "callback_data" in button ? button.callback_data : undefined;
       const isHome = button.text === INLINE_MENU_HOME_LABEL && callbackData === INLINE_MENU_HOME_CALLBACK;
       const isClose = button.text === INLINE_MENU_CLOSE_LABEL;
-      const isBack = button.text?.startsWith("←") || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || callbackData?.startsWith("mc:") && callbackData.includes("back");
+      const isSemanticBack = button.text?.startsWith("←") || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || (callbackData?.startsWith("mc:") === true && callbackData.includes("back"));
 
       if (isHome) {
         if (mode === "close") {
@@ -83,9 +85,8 @@ export function appendInlineMenuCancelButton(
       }
 
       if (isClose) {
-        if (mode === "close") {
-          button.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
-        } else {
+        if (mode === "close") button.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+        else {
           button.text = INLINE_MENU_BACK_LABEL;
           button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
         }
@@ -93,7 +94,14 @@ export function appendInlineMenuCancelButton(
         continue;
       }
 
-      if (isBack) hasNavigationButton = true;
+      if (menuKind === "settings" && mode === "back" && isSemanticBack) {
+        button.text = INLINE_MENU_BACK_LABEL;
+        button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+        hasNavigationButton = true;
+        continue;
+      }
+
+      if (isSemanticBack) hasNavigationButton = true;
     }
   }
 
