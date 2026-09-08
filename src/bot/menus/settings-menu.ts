@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { getCompactOutputMode, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
@@ -29,6 +30,7 @@ export const SETTINGS_MCP_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}mcp`;
 export const SETTINGS_SKILLS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}skills`;
 export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
 export const SETTINGS_BACK_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}back`;
+export const SETTINGS_CLOSE_CALLBACK = `${INLINE_MENU_CANCEL_PREFIX}settings`;
 export const SETTINGS_RESET_HISTORY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}reset_history`;
 export const SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK = `${SETTINGS_RESET_HISTORY_CALLBACK}:confirm`;
 export const SETTINGS_RESET_HISTORY_CANCEL_CALLBACK = `${SETTINGS_RESET_HISTORY_CALLBACK}:cancel`;
@@ -77,7 +79,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
         .text(`📥 Prompt Queue · ${formatBooleanSettingValue(getPromptQueueEnabled())}`, SETTINGS_NOTIFICATIONS_CALLBACK).row()
         .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
         .text("⚙️ Advanced", SETTINGS_ADVANCED_CALLBACK).row()
-        .text("✖ Close", SETTINGS_BACK_CALLBACK),
+        .text("✖ Close", SETTINGS_CLOSE_CALLBACK),
     };
   }
 
@@ -100,7 +102,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       .text("🔗 Integrations", "integration:menu").row()
       .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK)
       .row()
-      .text("✖ Close", SETTINGS_BACK_CALLBACK),
+      .text("✖ Close", SETTINGS_CLOSE_CALLBACK),
   };
 }
 
