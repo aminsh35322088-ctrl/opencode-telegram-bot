@@ -9,18 +9,8 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
-/**
- * Build inline keyboard with available variants
- * @param currentVariant Current variant for highlighting
- * @param providerID Provider ID
- * @param modelID Model ID
- * @returns InlineKeyboard with variant selection buttons
- */
-export async function buildVariantSelectionMenu(
-  currentVariant: string,
-  providerID: string,
-  modelID: string,
-): Promise<InlineKeyboard> {
+/** Build the active variant choices for the current Topic/model. */
+export async function buildVariantSelectionMenu(currentVariant: string, providerID: string, modelID: string): Promise<InlineKeyboard> {
   const keyboard = new InlineKeyboard();
   const variants = await getAvailableVariants(providerID, modelID);
 
@@ -29,60 +19,51 @@ export async function buildVariantSelectionMenu(
     return keyboard;
   }
 
-  // Filter only active variants (not disabled)
-  const activeVariants = variants.filter((v) => !v.disabled);
-
+  const activeVariants = variants.filter((variant) => !variant.disabled);
   if (activeVariants.length === 0) {
     logger.warn("[VariantHandler] No active variants found");
-    // If no active variants, show default at least
     keyboard.text(`✅ ${formatVariantForDisplay("default")}`, "variant:default").row();
     return keyboard;
   }
 
-  // Add button for each variant (one per row)
-  activeVariants.forEach((variant) => {
-    const isActive = variant.id === currentVariant;
+  for (const variant of activeVariants) {
     const label = formatVariantForDisplay(variant.id);
-    const labelWithCheck = isActive ? `✅ ${label}` : label;
-
-    keyboard.text(labelWithCheck, `variant:${variant.id}`).row();
-  });
+    keyboard.text(variant.id === currentVariant ? `✅ ${label}` : label, `variant:${variant.id}`).row();
+  }
 
   return keyboard;
 }
 
-/**
- * Show variant selection menu
- * @param ctx grammY context
- */
+/** Show model-specific variants. Selecting one updates only the current Topic when opened from a Topic. */
 export async function showVariantSelectionMenu(ctx: Context): Promise<void> {
   try {
     const currentModel = getStoredModel();
-
     if (!currentModel.providerID || !currentModel.modelID) {
       await ctx.reply(t("variant.select_model_first"));
       return;
     }
 
     const currentVariant = getCurrentVariant();
-    const keyboard = await buildVariantSelectionMenu(
-      currentVariant,
-      currentModel.providerID,
-      currentModel.modelID,
-    );
-
+    const keyboard = await buildVariantSelectionMenu(currentVariant, currentModel.providerID, currentModel.modelID);
     if (keyboard.inline_keyboard.length === 0) {
       await ctx.reply(t("variant.menu.empty"));
       return;
     }
 
-    const displayName = formatVariantForDisplay(currentVariant);
-    const text = t("variant.menu.current", { name: displayName });
+    const text = [
+      "🎛 <b>Variant</b>",
+      "",
+      `Current: <b>${formatVariantForDisplay(currentVariant)}</b>`,
+      "",
+      "Variants change model-specific behavior such as reasoning depth or response strategy when the selected model exposes them.",
+      "Choose one below. The selection is scoped to the current Topic when this menu is opened from Topic Settings.",
+    ].join("\n");
 
     await replyWithInlineMenu(ctx, {
       menuKind: "variant",
       text,
       keyboard,
+      parseMode: "HTML",
     });
   } catch (err) {
     logger.error("[VariantHandler] Error showing variant menu:", err);
