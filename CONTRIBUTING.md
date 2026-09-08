@@ -70,7 +70,7 @@ Rules:
 - Use lowercase letters and kebab-case only.
 - Use only `a-z`, `0-9`, and `-`.
 - Keep `short-description` concise (2-6 words).
-- Recommended `type` values: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`, `build`, `perf`, `hotfix`.
+- Recommended `type` values: `feat`, `fix`, `docs`, `refactor`, `chore`, `ci`, `build`, `perf`, `hotfix`.
 
 ## Release Notes Mapping
 
@@ -85,7 +85,7 @@ Sections are shown only when they contain at least one item.
 - `Major Changes`: `feat!` only
 - `Changes`: `feat`, `perf`
 - `Fixes`: `fix`, `revert`
-- `Technical`: `refactor`, `chore`, `ci`, `build`, `test`, `style`
+- `Technical`: `refactor`, `chore`, `ci`, `build`, `style`
 - `Documentation`: `docs`
 - `Other`: any subject that does not match the rules above
 
@@ -102,7 +102,7 @@ This repository is currently in `0.x`, but version bumps still follow a strict S
 - **Patch (`0.1.1 -> 0.1.2`)**
   - Bug fixes (`fix`)
   - Small UX polish that does not change expected behavior
-  - Internal/release/docs/test/ci updates (`chore`, `refactor`, `docs`, `test`, `ci`, `build`, `style`)
+  - Internal/release/docs/ci updates (`chore`, `refactor`, `docs`, `ci`, `build`, `style`)
   - No breaking changes
 
 - **Minor (`0.1.1 -> 0.2.0`)**
@@ -127,7 +127,7 @@ Quick decision rule:
 
 Each PR must contain exactly one logically complete change: one feature, one fix, one refactor, etc.
 
-If your contribution covers multiple unrelated things, split it into separate PRs. This keeps reviews focused, makes history readable, and ensures release notes stay accurate.
+If your contribution covers multiple unrelated things, split them into separate PRs. This keeps reviews focused, makes history readable, and ensures release notes stay accurate.
 
 ### PR title format
 
@@ -142,7 +142,7 @@ Examples:
 - `docs(readme): clarify setup steps`
 - `feat(ui)!: redesign keyboard layout`
 
-A PR with a title that does not follow this format will not be merged until it is corrected.
+A PR with a title that does not follow the Conventional Commits format will not be merged until it is corrected.
 
 ### OS-sensitive changes
 
@@ -153,21 +153,21 @@ Treat a change as OS-sensitive if it touches OS interaction, including:
 - Shell command invocation or quoting
 - Filesystem behavior and permissions
 
-For OS-sensitive changes, verify behavior on Linux, macOS, and Windows. If you could not test one or more platforms directly, state that explicitly in the PR description and describe known limitations.
+For OS-sensitive changes, verify behavior on Linux, macOS, and Windows. If you could not verify one or more platforms directly, state that explicitly in the PR description and describe known limitations.
 
-### PR Quality Bar
+## PR Quality Bar
 
 **MUST**
 
 - PR title must follow the Conventional Commits format (see above).
 - PR must contain exactly one logically complete change (see above).
 - At PR creation time, the branch must be rebased on the latest `main` and be conflict-free.
-- CI must pass (`npm run lint`, `npm run typecheck`, `npm run build`, `npm test`).
+- CI must pass (`npm run lint`, `npm run typecheck`, `npm run build`).
 - Changes must be compatible with Linux, macOS, and Windows (our supported platforms).
 - If a feature affects OS interaction (processes, paths, shell commands, filesystem behavior), it must work correctly on all three supported platforms.
 
 **SHOULD**
 
-- Add or update tests for behavior changes.
+- Keep implementation and verification coverage aligned with behavior changes.
 - Describe user-visible impact in 1-2 lines in the PR description.
-- If you could not test on one or more supported platforms locally, mention it in the PR description.
+- If you could not verify one or more supported platforms locally, mention it in the PR description.
