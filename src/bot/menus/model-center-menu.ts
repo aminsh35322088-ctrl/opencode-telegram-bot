@@ -8,96 +8,53 @@ import { logger } from "../../utils/logger.js";
 import type { Context } from "grammy";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
-export const MODEL_CENTER_ROOT = "mc:root";
-export const MODEL_CENTER_FAVORITES = "mc:favorites";
-export const MODEL_CENTER_RECENT = "mc:recent";
-export const MODEL_CENTER_PROVIDERS = "mc:providers";
-export const MODEL_CENTER_SEARCH = "mc:search";
-export const MODEL_CENTER_SEARCH_AGAIN = "mc:search:again";
-export const MODEL_CENTER_SEARCH_CANCEL = "mc:search:cancel";
-export const MODEL_CENTER_SETTINGS_BACK = "mc:settings_back";
-export const MODEL_CENTER_PROVIDER_PREFIX = "mc:provider:";
-export const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
-export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
-
-const MODELS_PER_PAGE = 8;
-const MAX_ACTION_MODELS = 4096;
+const MODEL_CENTER_ROOT = "mc:root";
+const MODEL_CENTER_FAVORITES = "mc:favorites";
+const MODEL_CENTER_RECENT = "mc:recent";
+const MODEL_CENTER_PROVIDERS = "mc:providers";
+const MODEL_CENTER_SEARCH = "mc:search";
+const MODEL_CENTER_SEARCH_AGAIN = "mc:search-again";
+const MODEL_CENTER_SEARCH_CANCEL = "mc:search-cancel";
+const MODEL_CENTER_SETTINGS_BACK = "settings:back";
+const MODEL_CENTER_PROVIDER_PREFIX = "mc:provider:";
+const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
+const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
 const SEARCH_RESULTS_LIMIT = 10;
-const actionModels = new Map<string, ModelInfo>();
+const MODELS_PER_PAGE = 8;
 
-export type ModelCenterFavoriteTarget =
+type ModelCenterFavoriteTarget =
   | { kind: "root" }
   | { kind: "list"; list: "favorites" | "recent" }
   | { kind: "provider"; providerID: string; page: number }
   | { kind: "search"; query: string };
 
-const favoriteTargets = new Map<string, ModelCenterFavoriteTarget>();
+function modelKey(model: { providerID: string; modelID: string }): string { return `${model.providerID}/${model.modelID}`; }
+function escapeHtml(value: string): string { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;"); }
+function actionToken(model: ModelInfo, target: ModelCenterFavoriteTarget): string { return createHash("sha1").update(JSON.stringify({ model, target })).digest("hex").slice(0, 10); }
+function modelButtonLabel(model: FavoriteModel, active: boolean, favorite: boolean): string { return `${active ? "✅ " : ""}${formatModelName(model.modelID, model.name)}${favorite ? " ⭐" : ""}`; }
 
-function modelKey(model: FavoriteModel | ModelInfo): string {
-  return `${model.providerID}/${model.modelID}`;
-}
-
-function actionToken(model: ModelInfo, favoriteTarget?: ModelCenterFavoriteTarget): string {
-  const token = createHash("sha256")
-    .update(`${modelKey(model)}:${model.variant ?? "default"}`)
-    .digest("base64url")
-    .slice(0, 10);
-  actionModels.delete(token);
-  favoriteTargets.delete(token);
-  actionModels.set(token, {
-    providerID: model.providerID,
-    modelID: model.modelID,
-    name: model.name,
-    variant: model.variant ?? "default",
-  });
-  if (favoriteTarget) favoriteTargets.set(token, favoriteTarget);
-  while (actionModels.size > MAX_ACTION_MODELS) {
-    const oldest = actionModels.keys().next().value as string | undefined;
-    if (!oldest) break;
-    actionModels.delete(oldest);
-    favoriteTargets.delete(oldest);
-  }
-  return token;
-}
-
-export function resolveModelCenterAction(token: string): ModelInfo | null {
-  return actionModels.get(token) ?? null;
-}
-
-export function resolveModelCenterFavoriteTarget(token: string): ModelCenterFavoriteTarget | null {
-  return favoriteTargets.get(token) ?? null;
-}
-
-function modelButtonLabel(model: FavoriteModel | ModelInfo, active: boolean, favorite: boolean): string {
-  const marker = favorite ? " ⭐" : "";
-  const icon = active ? "🟢" : "🧠";
-  return `${icon} ${formatModelName(model.modelID, model.name)}${marker}`;
-}
-
-async function appendModelRows(
-  keyboard: InlineKeyboard,
-  models: FavoriteModel[],
-  current?: ModelInfo,
-  favoriteTarget?: ModelCenterFavoriteTarget,
-): Promise<void> {
-  const favorites = await getFavoriteModels();
-  const favoriteKeys = new Set(favorites.map(modelKey));
-
+async function appendModelRows(keyboard: InlineKeyboard, models: FavoriteModel[], current: ModelInfo | undefined, target: Omit<ModelCenterFavoriteTarget, "kind"> & { kind: ModelCenterFavoriteTarget["kind"] }): Promise<void> {
+  const favoriteKeys = new Set((await getFavoriteModels()).map(modelKey));
   for (const model of models) {
-    const info: ModelInfo = {
-      providerID: model.providerID,
-      modelID: model.modelID,
-      name: model.name,
-      variant: "default",
-    };
-    const token = actionToken(info, favoriteTarget);
+    const info: ModelInfo = { providerID: model.providerID, modelID: model.modelID, name: model.name, variant: "default" };
+    const token = actionToken(info, target);
     const favorite = favoriteKeys.has(modelKey(model));
     const active = !!current && modelKey(current) === modelKey(model);
-
     keyboard.text(modelButtonLabel(model, active, favorite), `${MODEL_CENTER_SELECT_PREFIX}${token}`);
     keyboard.text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`).row();
   }
 }
+
+export function resolveModelCenterAction(token: string): ModelInfo | undefined {
+  const target = modelActionRegistry.get(token);
+  return target?.model;
+}
+
+export function resolveModelCenterFavoriteTarget(token: string): ModelCenterFavoriteTarget | undefined {
+  return modelActionRegistry.get(token)?.target;
+}
+
+const modelActionRegistry = new Map<string, { model: ModelInfo; target: ModelCenterFavoriteTarget }>();
 
 function appendPagination(keyboard: InlineKeyboard, page: number, totalPages: number, callback: (page: number) => string): void {
   if (totalPages <= 1) return;
@@ -115,11 +72,17 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
   keyboard.text("← Back", MODEL_CENTER_SETTINGS_BACK);
 
   const currentBlock = current?.providerID && current.modelID
-    ? `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>`
-    : "🟢 <b>CURRENT MODEL</b>\nNo model selected";
+    ? `🟢 <b>Current model</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>`
+    : "🟢 <b>Current model</b>\nNo model selected";
 
   return {
-    text: ["🤖 <b>MODEL CENTER</b>", "", currentBlock, "", "Select a model, manage favorites, or browse the live provider catalog."].join("\n"),
+    text: [
+      "🤖 <b>Model Center</b>",
+      "",
+      currentBlock,
+      "",
+      "Select a model for this Topic, browse providers, search the live catalog, or manage favorites.",
+    ].join("\n"),
     keyboard,
   };
 }
@@ -128,7 +91,6 @@ export async function showModelCenterMenu(ctx: Context): Promise<void> {
   void refreshAllCustomProviderModels().catch((error) => {
     logger.warn("[ModelCenter] Background provider refresh failed", error);
   });
-
   const view = await buildModelCenterRoot(fetchCurrentModel());
   await replyWithInlineMenu(ctx, {
     menuKind: "model",
@@ -144,9 +106,13 @@ export async function buildModelCenterList(kind: "favorites" | "recent", current
   const keyboard = new InlineKeyboard();
   await appendModelRows(keyboard, models, current, { kind: "list", list: kind });
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
-  const title = kind === "favorites" ? "⭐ <b>FAVORITE MODELS</b>" : "🕘 <b>RECENT MODELS</b>";
+  const title = kind === "favorites" ? "⭐ <b>Favorite Models</b>" : "🕘 <b>Recent Models</b>";
   return {
-    text: models.length ? `${title}\n\nModel names are shown without provider/company prefixes.` : `${title}\n\nNo models here yet.`,
+    text: [
+      title,
+      "",
+      models.length ? "Choose a model below. The active Topic model is marked with ✅." : "No models are available in this list yet.",
+    ].join("\n"),
     keyboard,
   };
 }
@@ -157,7 +123,11 @@ export async function buildModelCenterProviders(): Promise<{ text: string; keybo
   providers.forEach((provider) => keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row());
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
-    text: providers.length ? "🧩 <b>PROVIDERS</b>\n\nLive model catalog from every available provider." : "🧩 <b>PROVIDERS</b>\n\nNo providers are currently available.",
+    text: [
+      "🧩 <b>Providers</b>",
+      "",
+      providers.length ? "Live coding providers discovered by OpenCode. Open one to browse its available models." : "No providers are currently available.",
+    ].join("\n"),
     keyboard,
   };
 }
@@ -173,7 +143,12 @@ export async function buildModelCenterProvider(provider: ProviderInfo, page: num
   keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row();
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
-    text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${models.length} live models · page ${normalizedPage + 1}/${totalPages}.\nTap a model to select it or ☆/⭐ to manage favorites.`,
+    text: [
+      `🧩 <b>${escapeHtml(provider.name)}</b>`,
+      "",
+      `${models.length} live models · page ${normalizedPage + 1}/${totalPages}.`,
+      "Tap a model to select it or ☆/⭐ to manage favorites.",
+    ].join("\n"),
     keyboard,
     page: normalizedPage,
   };
@@ -183,13 +158,13 @@ export async function buildModelCenterSearchResults(query: string, current?: Mod
   const models = (await searchModels(query)).slice(0, SEARCH_RESULTS_LIMIT);
   const keyboard = new InlineKeyboard();
   await appendModelRows(keyboard, models, current, { kind: "search", query });
-  keyboard.text("🔎 Search again", MODEL_CENTER_SEARCH_AGAIN).text("Cancel", MODEL_CENTER_SEARCH_CANCEL).row();
+  keyboard.text("🔎 Search again", MODEL_CENTER_SEARCH_AGAIN).text("← Back", MODEL_CENTER_ROOT).row();
   return {
-    text: models.length ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nResults are shown by model name only.` : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`,
+    text: [
+      "🔎 <b>Search Models</b>",
+      "",
+      models.length ? `Results for <code>${escapeHtml(query)}</code>.` : `No models matched <code>${escapeHtml(query)}</code>.`,
+    ].join("\n"),
     keyboard,
   };
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
