@@ -3,6 +3,7 @@ import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-se
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton, formatVariantForDisplay, setCurrentVariant } from "../../app/services/variant-selection-service.js";
 import { logger } from "../../utils/logger.js";
+import { t } from "../../i18n/index.js";
 import { failure, notify, switched } from "./feedback.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
