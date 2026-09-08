@@ -12,13 +12,17 @@ import type { VariantAvailability, VariantInfo } from "../types/variant.js";
 function normalizeVariants(input: unknown): VariantInfo[] {
   if (!input || typeof input !== "object" || Array.isArray(input)) return [];
 
-  return Object.entries(input as Record<string, unknown>).map(([id, info]) => ({
-    id,
-    disabled:
+  return Object.entries(input as Record<string, unknown>).map(([id, info]) => {
+    const disabled =
       typeof info === "object" && info !== null && !Array.isArray(info)
-        ? Boolean((info as { disabled?: unknown }).disabled)
-        : undefined,
-  }));
+        ? (info as { disabled?: unknown }).disabled
+        : undefined;
+
+    return {
+      id,
+      ...(typeof disabled === "boolean" ? { disabled } : {}),
+    };
+  });
 }
 
 /**
