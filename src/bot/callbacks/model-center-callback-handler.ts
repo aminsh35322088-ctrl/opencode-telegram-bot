@@ -100,8 +100,9 @@ async function beginSearch(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.deleteMessage().catch(() => {});
   const threadId = getTopicThreadId(ctx);
+  const keyboard = new InlineKeyboard().text("← Back", MODEL_CENTER_ROOT);
   interactionManager.start({ kind: "custom", expectedInput: "text", metadata: { flow: SEARCH_FLOW, stage: "input" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
-  await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML", ...(threadId !== undefined ? { message_thread_id: threadId } : {}) } as never);
+  await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML", reply_markup: keyboard, ...(threadId !== undefined ? { message_thread_id: threadId } : {}) } as never);
   return true;
 }
 
