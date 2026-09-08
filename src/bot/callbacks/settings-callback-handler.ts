@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import type { InlineKeyboard } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
