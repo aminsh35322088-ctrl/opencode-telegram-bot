@@ -106,11 +106,14 @@ async function requestAbort(sessionId: string, directory: string): Promise<boole
 
 async function waitForIdle(sessionId: string, directory: string): Promise<boolean> {
   const deadline = Date.now() + ABORT_CONFIRMATION_TIMEOUT_MS;
+  let lastStatus: SessionStatus | null = null;
   while (Date.now() < deadline) {
     const status = await getStatus(sessionId, directory);
-    if (!status || status.type === "idle" || status.type === "error") return true;
+    if (status) lastStatus = status;
+    if (status?.type === "idle" || status?.type === "error") return true;
     await sleep(POLL_INTERVAL_MS);
   }
+  logger.warn(`[StallWatchdog] Abort confirmation timed out: session=${sessionId}, lastStatus=${lastStatus?.type ?? "unknown"}`);
   return false;
 }
 
