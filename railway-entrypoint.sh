@@ -16,6 +16,9 @@ OPENCODE_TELEGRAM_WORKSPACE="/data/workspace"
 OPENCODE_EXPERIMENTAL_LSP_TOOL="true"
 OPENCODE_ENABLE_EXA="1"
 PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
+OPENCODE_DATA_VOLUME_BUDGET_MB="${OPENCODE_DATA_VOLUME_BUDGET_MB:-500}"
+OPENCODE_DATA_VOLUME_WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
+OPENCODE_DATA_VOLUME_CRITICAL_MB="${OPENCODE_DATA_VOLUME_CRITICAL_MB:-100}"
 
 # Never rely on or persist integration credentials through Railway variables.
 # These are only compatibility guardrails for the process environment; the
@@ -26,6 +29,7 @@ GH_PROMPT_DISABLED="1"
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
 export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
+export OPENCODE_DATA_VOLUME_BUDGET_MB OPENCODE_DATA_VOLUME_WARN_MB OPENCODE_DATA_VOLUME_CRITICAL_MB
 export GH_HOST GH_PROMPT_DISABLED
 
 GLOBAL_OPENCODE_DIR="/data/.config/opencode"
@@ -34,6 +38,25 @@ INTEGRATION_STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 INTEGRATION_BIN_DIR="/data/run/integration-bin"
 GH_ACCOUNTS_DIR="/data/.config/gh/accounts"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR" "$GH_ACCOUNTS_DIR"
+
+# Clean only disposable caches automatically. Never delete workspaces,
+# sessions, databases, source files, or generated user artifacts here.
+rm -rf /data/.cache/npm /data/.npm /data/.cache/tsx /data/.cache/opencode
+
+# Publish the real persistent-volume state to every OpenCode session through
+# stable environment variables and startup diagnostics.
+DATA_FREE_KB="$(df -Pk /data | awk 'NR==2 {print $4}')"
+DATA_USED_KB="$(df -Pk /data | awk 'NR==2 {print $3}')"
+DATA_TOTAL_KB="$(df -Pk /data | awk 'NR==2 {print $2}')"
+DATA_FREE_MB="$((DATA_FREE_KB / 1024))"
+DATA_USED_MB="$((DATA_USED_KB / 1024))"
+DATA_TOTAL_MB="$((DATA_TOTAL_KB / 1024))"
+printf '%s\n' "[railway] Persistent volume: total=${DATA_TOTAL_MB}MB used=${DATA_USED_MB}MB free=${DATA_FREE_MB}MB budget=${OPENCODE_DATA_VOLUME_BUDGET_MB}MB warn=${OPENCODE_DATA_VOLUME_WARN_MB}MB critical=${OPENCODE_DATA_VOLUME_CRITICAL_MB}MB"
+if [ "$DATA_FREE_MB" -lt "$OPENCODE_DATA_VOLUME_CRITICAL_MB" ]; then
+  printf '%s\n' "[railway] WARNING: /data is below the critical free-space threshold; disk-heavy validation is blocked" >&2
+elif [ "$DATA_FREE_MB" -lt "$OPENCODE_DATA_VOLUME_WARN_MB" ]; then
+  printf '%s\n' "[railway] WARNING: /data is below the warning free-space threshold; use /tmp for disposable validation data"
+fi
 
 # OpenCode's global AGENTS.md is loaded into the initial instruction context
 # of every session, before the first user message is sent to the model.
