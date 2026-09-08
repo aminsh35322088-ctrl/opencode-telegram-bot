@@ -69,7 +69,6 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
         "💬 <b>Response</b>  Streaming, format, thinking, footer & files",
         `📥 <b>Prompt Queue</b>  ${statusPill(getPromptQueueEnabled())}`,
         "🧠 <b>Context</b>  Live usage and model-window health",
-        "⚙️ <b>Advanced</b>  MCP, Skills, Commands and data controls",
       ].join("\n"),
       keyboard: new InlineKeyboard()
         .text(`🤖 Model · ${model}`, SETTINGS_MODEL_CALLBACK).row()
@@ -78,7 +77,6 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
         .text("💬 Response & Output", SETTINGS_APPEARANCE_CALLBACK).row()
         .text(`📥 Prompt Queue · ${formatBooleanSettingValue(getPromptQueueEnabled())}`, SETTINGS_NOTIFICATIONS_CALLBACK).row()
         .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
-        .text("⚙️ Advanced", SETTINGS_ADVANCED_CALLBACK).row()
         .text("✖ Close", SETTINGS_CLOSE_CALLBACK),
     };
   }
@@ -100,9 +98,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
       .text("🔌 Providers & Models", "provider:menu").row()
       .text("🔗 Integrations", "integration:menu").row()
-      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK)
-      .row()
-      .text("✖ Close", SETTINGS_CLOSE_CALLBACK),
+      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
   };
 }
 
