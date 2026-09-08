@@ -25,7 +25,7 @@ import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { formatModelForDisplay, type ModelInfo } from "../../app/types/model.js";
 import { resolveProjectAgent, getStoredAgent } from "../../app/services/agent-selection-service.js";
-import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
@@ -35,6 +35,7 @@ import { stopEventListening } from "../../opencode/events.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
+import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 
 const SEARCH_FLOW = "model-search";
 interface ModelCenterSearchState { stage: "input" | "results"; }
@@ -131,8 +132,17 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
 
 async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo): Promise<void> {
   const threadId = getTopicThreadId(ctx);
-  const currentSession = getCurrentSession();
-  if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id, currentSession?.id, threadId);
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  const topicBinding = chatId && typeof threadId === "number" && threadId > 1
+    ? await findTelegramTopicBindingByThread(chatId, threadId)
+    : null;
+  const topicSessionId = topicBinding?.sessionId;
+  const currentSession = topicSessionId
+    ? { id: topicSessionId, title: topicBinding?.title ?? "Telegram Topic", directory: topicBinding.directory }
+    : getCurrentSession();
+  const isTopic = Boolean(topicBinding && topicSessionId);
+
+  if (chatId) keyboardManager.initialize(ctx.api, chatId, currentSession?.id, threadId);
   const previousModel = fetchCurrentModel();
   const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
@@ -140,22 +150,35 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
     stopEventListening();
     summaryAggregator.clear();
     clearSession();
-    keyboardManager.clearContext();
+    keyboardManager.clearContext(topicSessionId);
     try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
-    logger.info(`[ModelCenter] Retired current Topic session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
+    logger.info(`[ModelCenter] Retired current Topic session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}, topic=${topicSessionId ?? "global"}`);
   }
 
   interactionManager.clear("model_selected");
   selectModel(modelInfo);
   if (!getCurrentTopicSettings()) updateTopicDefaults({ model: modelInfo });
   await recordRecentModel(modelInfo);
-  keyboardManager.updateModel(modelInfo);
+  keyboardManager.updateModel(modelInfo, topicSessionId);
   await pinnedMessageManager.refreshContextLimit();
   const currentAgent = await resolveProjectAgent(getStoredAgent());
   const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
-  keyboardManager.updateAgent(currentAgent);
-  if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-  const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
+  keyboardManager.updateAgent(currentAgent, topicSessionId);
+  if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, topicSessionId);
+
+  const keyboard = isTopic
+    ? createTopicKeyboard({
+        paused: false,
+        running: false,
+        compactOutputMode: undefined,
+        currentModel: modelInfo,
+      })
+    : createTopicKeyboard({
+        paused: false,
+        running: false,
+        compactOutputMode: undefined,
+        currentModel: modelInfo,
+      });
   await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
 
@@ -163,6 +186,6 @@ async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboa
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(view.text, { reply_markup: view.keyboard, parse_mode: "HTML" }).catch(() => {});
   const threadId = getTopicThreadId(ctx);
-  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
+  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) });
   return true;
 }
