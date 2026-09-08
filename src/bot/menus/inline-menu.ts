@@ -15,12 +15,12 @@ const INLINE_MENU_SETTINGS_BACK_CALLBACK = "settings:back";
 
 const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
-export type InlineMenuNavigation = "auto" | "close" | "back";
+export type InlineMenuNavigation = "auto" | "close" | "back" | "both";
 
 type CallbackNavigationButton = { text: string; callback_data: string };
 
 interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; threadId?: number; }
-interface InlineMenuReplyOptions { menuKind: InlineMenuKind; text: string; keyboard: InlineKeyboard; parseMode?: "Markdown" | "HTML"; metadata?: InteractionMetadata; }
+interface InlineMenuReplyOptions { menuKind: InlineMenuKind; text: string; keyboard: InlineKeyboard; parseMode?: "Markdown" | "HTML"; metadata?: InteractionMetadata; navigation?: InlineMenuNavigation; }
 
 const activeInlineMenus = new Map<string, ActiveInlineMenuMetadata>();
 
@@ -60,8 +60,11 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
     ? (menuKind === "settings" ? "close" : "back")
     : navigation;
   let hasNavigationButton = false;
+  let hasCloseButton = false;
+  let lastBackRow: ReturnType<InlineKeyboard["inline_keyboard"]["at"]> = undefined;
 
   for (const row of keyboard.inline_keyboard) {
+    let rowHasBack = false;
     for (const button of row) {
       if (!("callback_data" in button)) continue;
       const callbackButton = button as CallbackNavigationButton;
@@ -74,19 +77,24 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
         if (mode === "close") {
           callbackButton.text = INLINE_MENU_CLOSE_LABEL;
           callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+          hasCloseButton = true;
         } else {
           callbackButton.text = INLINE_MENU_BACK_LABEL;
           callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+          rowHasBack = true;
         }
         hasNavigationButton = true;
         continue;
       }
 
       if (isClose) {
-        if (mode === "close") callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
-        else {
+        if (mode === "close" || mode === "both") {
+          callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+          hasCloseButton = true;
+        } else {
           callbackButton.text = INLINE_MENU_BACK_LABEL;
           callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+          rowHasBack = true;
         }
         hasNavigationButton = true;
         continue;
@@ -94,12 +102,26 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
 
       if (isSemanticBack) {
         hasNavigationButton = true;
-        if (menuKind === "settings" && mode === "back") {
+        rowHasBack = true;
+        if (menuKind === "settings" && (mode === "back" || mode === "both")) {
           callbackButton.text = INLINE_MENU_BACK_LABEL;
           callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
         }
       }
     }
+    if (rowHasBack) lastBackRow = row;
+  }
+
+  if (mode === "both") {
+    if (!lastBackRow) {
+      keyboard.row().text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
+      lastBackRow = keyboard.inline_keyboard.at(-1);
+      hasNavigationButton = true;
+    }
+    if (!hasCloseButton && lastBackRow) {
+      lastBackRow.push({ text: INLINE_MENU_CLOSE_LABEL, callback_data: `${INLINE_MENU_CANCEL_PREFIX}settings` });
+    }
+    return keyboard;
   }
 
   if (!hasNavigationButton) {
@@ -112,7 +134,7 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
 
 export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReplyOptions): Promise<number> {
   const threadId = getTopicThreadId(ctx);
-  const keyboard = appendInlineMenuCancelButton(options.keyboard, options.menuKind, threadId ?? undefined);
+  const keyboard = appendInlineMenuCancelButton(options.keyboard, options.menuKind, threadId ?? undefined, options.navigation);
   const replyOptions: { reply_markup: InlineKeyboard; parse_mode?: "Markdown" | "HTML" } = { reply_markup: keyboard };
   if (options.parseMode) replyOptions.parse_mode = options.parseMode;
 
