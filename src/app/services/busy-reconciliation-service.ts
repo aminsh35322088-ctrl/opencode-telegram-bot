@@ -60,7 +60,7 @@ function getSessionStatus(
 }
 
 function isTerminalStatus(status: SessionStatus | null): boolean {
-  return !status || status.type === "idle" || status.type === "error";
+  return status?.type === "idle" || status?.type === "error";
 }
 
 function isWithinForegroundBusyGracePeriod(
