@@ -17,6 +17,8 @@ const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "o
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
 export type InlineMenuNavigation = "auto" | "close" | "back";
 
+type CallbackNavigationButton = { text: string; callback_data: string };
+
 interface ActiveInlineMenuMetadata { menuKind: InlineMenuKind; messageId: number; threadId?: number; }
 interface InlineMenuReplyOptions { menuKind: InlineMenuKind; text: string; keyboard: InlineKeyboard; parseMode?: "Markdown" | "HTML"; metadata?: InteractionMetadata; }
 
@@ -61,28 +63,30 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
 
   for (const row of keyboard.inline_keyboard) {
     for (const button of row) {
-      const callbackData = "callback_data" in button ? button.callback_data : undefined;
-      const isHome = button.text === INLINE_MENU_HOME_LABEL && callbackData === INLINE_MENU_HOME_CALLBACK;
-      const isClose = button.text === INLINE_MENU_CLOSE_LABEL;
-      const isSemanticBack = button.text?.startsWith("←") || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || (callbackData?.startsWith("mc:") === true && callbackData.includes("back"));
+      if (!("callback_data" in button)) continue;
+      const callbackButton = button as CallbackNavigationButton;
+      const callbackData = callbackButton.callback_data;
+      const isHome = callbackButton.text === INLINE_MENU_HOME_LABEL && callbackData === INLINE_MENU_HOME_CALLBACK;
+      const isClose = callbackButton.text === INLINE_MENU_CLOSE_LABEL;
+      const isSemanticBack = callbackButton.text?.startsWith("←") || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || (callbackData.startsWith("mc:") && callbackData.includes("back"));
 
       if (isHome) {
         if (mode === "close") {
-          button.text = INLINE_MENU_CLOSE_LABEL;
-          button.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+          callbackButton.text = INLINE_MENU_CLOSE_LABEL;
+          callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
         } else {
-          button.text = INLINE_MENU_BACK_LABEL;
-          button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+          callbackButton.text = INLINE_MENU_BACK_LABEL;
+          callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
         }
         hasNavigationButton = true;
         continue;
       }
 
       if (isClose) {
-        if (mode === "close") button.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+        if (mode === "close") callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
         else {
-          button.text = INLINE_MENU_BACK_LABEL;
-          button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+          callbackButton.text = INLINE_MENU_BACK_LABEL;
+          callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
         }
         hasNavigationButton = true;
         continue;
@@ -91,8 +95,8 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
       if (isSemanticBack) {
         hasNavigationButton = true;
         if (menuKind === "settings" && mode === "back") {
-          button.text = INLINE_MENU_BACK_LABEL;
-          button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+          callbackButton.text = INLINE_MENU_BACK_LABEL;
+          callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
         }
       }
     }
