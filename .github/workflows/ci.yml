@@ -30,12 +30,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.14
+          cache: npm
 
       - name: Install project dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Install CI test dependency
-        run: npm install --no-save --package-lock=false vitest@3.2.4
+      - name: Install CI test dependencies
+        run: npm install --no-save --package-lock=false vitest@3.2.4 @vitest/coverage-v8@3.2.4
 
       - name: Changelog policy
         if: github.event_name == 'pull_request'
@@ -49,19 +50,19 @@ jobs:
 
       - name: Lint
         run: |
-          npm run lint
-          npx eslint tests --max-warnings=0
+          ./node_modules/.bin/eslint src --max-warnings=0
+          ./node_modules/.bin/eslint tests --max-warnings=0
 
       - name: Typecheck
         run: |
-          npm run typecheck
-          npx tsc -p tsconfig.test.json --noEmit
+          ./node_modules/.bin/tsc --noEmit
+          ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit
 
       - name: Build
-        run: npm run build
+        run: ./node_modules/.bin/tsc
 
       - name: Test
-        run: npx vitest run
+        run: ./node_modules/.bin/vitest run
 
       - name: Remove materialized test suite
         if: always()
