@@ -6,6 +6,8 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ### Fixed
 - Reply Keyboard controls pressed while replying to a bot message are now classified from the authentic button label instead of the enriched `Replying to @Chat Bot.` text, so Topic and control buttons are consumed as controls and no longer fall through into Coding AI prompt handling.
+- AI Topic slash commands (`/abort`, `/pause`, `/resume`, `/model`, `/compact`, `/topic_settings`, `/delete_topic`, and friends) sent while in Telegram reply mode are no longer corrupted by reply-context enrichment, so `bot.command()` routing matches them instead of leaking them into Coding AI prompts.
+- AI Topic run-management commands (`/pause`, `/resume`, `/delete_topic`, `/stop`) now reach their handlers while a run is busy or an interaction is pending, matching the behavior of the equivalent Reply Keyboard buttons.
 
 ## [0.26.2] - 2026-09-04
 
