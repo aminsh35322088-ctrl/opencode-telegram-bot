@@ -15,11 +15,13 @@ interface Subscriber { directory: string; sessionId?: string; callback: TopicEve
 interface DirectoryListener { directory: string; controller: AbortController; promise: Promise<void>; }
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
+const DEFAULT_SSE_IDLE_TIMEOUT_MS = 45000;
 const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
 const SSE_IDLE_TIMEOUT_ERROR = "SSE stream idle timeout";
 const subscribers = new Map<string, Subscriber>();
 const directoryListeners = new Map<string, DirectoryListener>();
 const abortedRetrySessions = new Set<string>();
+let sseIdleTimeoutMs = DEFAULT_SSE_IDLE_TIMEOUT_MS;
 function normalizeDirectory(directory: string): string { return directory.replace(/\\/g, "/").replace(/\/+$/u, "").toLowerCase(); }
 function subscriberKey(directory: string, callback: TopicEventCallback, sessionId?: string): string { return `${normalizeDirectory(directory)}:${sessionId ?? "*"}:${String(callback)}`; }
 function isEventLike(value: unknown): value is EventLike { return isRecord(value) && typeof value.type === "string" && isRecord(value.properties); }
@@ -28,6 +30,34 @@ function getEventDirectory(event: EventLike): string | null { const candidates: 
 function getReconnectDelayMs(attempt: number): number { return Math.min(RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1), RECONNECT_MAX_DELAY_MS); }
 function wait(ms: number, signal: AbortSignal): Promise<boolean> { return new Promise((resolve) => { if (signal.aborted) return resolve(false); const onAbort = () => { clearTimeout(timer); signal.removeEventListener("abort", onAbort); resolve(false); }; const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(true); }, ms); signal.addEventListener("abort", onAbort, { once: true }); }); }
 function abortDeterministicRetrySession(sessionId: string, message: string, directory: string, attempt?: number): void { if (abortedRetrySessions.has(sessionId)) return; abortedRetrySessions.add(sessionId); logger.warn(`[ProviderPolicy] Aborting non-retryable provider error: session=${sessionId} attempt=${attempt ?? "n/a"} message=${message}`); if (!directory) return; void opencodeClient.session.abort({ sessionID: sessionId, directory }).catch((error) => logger.warn(`[ProviderPolicy] Exception aborting deterministic retry session=${sessionId}`, error)); }
+
+async function readNextWithIdleTimeout<T>(iterator: AsyncIterator<T>, signal: AbortSignal): Promise<IteratorResult<T>> {
+  if (signal.aborted) return { done: true, value: undefined as never };
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const next = iterator.next();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(SSE_IDLE_TIMEOUT_ERROR)), sseIdleTimeoutMs);
+    });
+    return await Promise.race([next, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function consumeEventStream(stream: AsyncGenerator<unknown, unknown, unknown>, controller: AbortController, onEvent: (event: EventLike) => void): Promise<void> {
+  const iterator = stream[Symbol.asyncIterator]();
+  try {
+    while (!controller.signal.aborted) {
+      const result = await readNextWithIdleTimeout(iterator, controller.signal);
+      if (result.done) return;
+      if (isEventLike(result.value)) onEvent(result.value);
+    }
+  } finally {
+    await iterator.return?.().catch(() => undefined);
+  }
+}
+
 function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void { void (async () => {
   const sessionId = getSessionId(event);
   const eventDirectory = getEventDirectory(event);
@@ -58,6 +88,7 @@ function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void
     if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, invoke); else await invoke();
   }
 })(); }
+
 async function startDirectoryListener(directory: string, localController: AbortController): Promise<void> {
   let reconnectAttempt = 0;
   const normalized = normalizeDirectory(directory);
@@ -72,18 +103,21 @@ async function startDirectoryListener(directory: string, localController: AbortC
       reconnectAttempt = 0;
       logger.info(`[SessionTrace] phase=topic_directory_stream_active directory=${directory}`);
       topicTelemetry("directory_stream_active", { directory }, { subscriberCount: subscribersForDirectory(normalized).length });
-      for await (const rawEvent of result.stream) {
-        if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break;
-        if (!isEventLike(rawEvent)) continue;
+      await consumeEventStream(result.stream, localController, (rawEvent) => {
+        if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) return;
         const retryStatus = isRecord(rawEvent.properties["status"]) ? rawEvent.properties["status"] : null;
         const retrySessionId = rawEvent.properties["sessionID"];
-        if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] === "retry" && typeof retryStatus["message"] === "string" && isDeterministicProviderRetryError(retryStatus["message"])) { abortDeterministicRetrySession(retrySessionId, retryStatus["message"], directory, typeof retryStatus["attempt"] === "number" ? retryStatus["attempt"] : undefined); continue; }
+        if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] === "retry" && typeof retryStatus["message"] === "string" && isDeterministicProviderRetryError(retryStatus["message"])) { abortDeterministicRetrySession(retrySessionId, retryStatus["message"], directory, typeof retryStatus["attempt"] === "number" ? retryStatus["attempt"] : undefined); return; }
         if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] !== "retry") abortedRetrySessions.delete(retrySessionId);
         dispatchToSubscribers(rawEvent, directory);
-      }
+      });
     } catch (error) {
       if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break;
-      if (!(error instanceof Error && (error.message === "SSE aborted" || error.message === SSE_IDLE_TIMEOUT_ERROR)) && !isExpectedOpencodeUnavailableError(error)) logger.warn(`[TopicEventBus] Directory event stream failed; retrying: directory=${directory}`, error);
+      if (error instanceof Error && error.message === SSE_IDLE_TIMEOUT_ERROR) {
+        logger.warn(`[TopicEventBus] Directory event stream idle timeout; reconnecting: directory=${directory}, timeoutMs=${sseIdleTimeoutMs}`);
+      } else if (!(error instanceof Error && error.message === "SSE aborted") && !isExpectedOpencodeUnavailableError(error)) {
+        logger.warn(`[TopicEventBus] Directory event stream failed; retrying: directory=${directory}`, error);
+      }
       reconnectAttempt++;
       if (!(await wait(getReconnectDelayMs(reconnectAttempt), localController.signal))) break;
     }
@@ -102,4 +136,4 @@ function stopDirectoryListenerIfUnused(directory: string): void { const normaliz
 export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string): () => void { const key = subscriberKey(directory, callback, sessionId); subscribers.set(key, { directory, sessionId, callback }); topicTelemetry("subscription_added", { sessionId, directory }, { subscriberCount: subscribers.size, scoped: sessionId !== undefined }); ensureDirectoryListener(directory); return () => { if (subscribers.delete(key)) { topicTelemetry("subscription_removed", { sessionId, directory }, { subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); } }; }
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
 export function stopTopicEventBus(): void { const previousSubscriberCount = subscribers.size; for (const listener of directoryListeners.values()) listener.controller.abort(); directoryListeners.clear(); subscribers.clear(); abortedRetrySessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
-export function setTopicEventBusIdleTimeoutForTests(_timeoutMs: number): void {}
+export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { sseIdleTimeoutMs = Math.max(1, timeoutMs); }
