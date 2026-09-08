@@ -11,7 +11,7 @@ vi.mock("../../../src/app/services/file-download-service.js", () => ({
 }));
 
 vi.mock("../../../src/app/managers/prompt-attachment-manager.js", () => ({
-  promptAttachment: { set: promptAttachmentSetMock },
+  promptAttachment: { set: promptAttachmentSetMock, __resetForTests: vi.fn() },
 }));
 
 import { enrichTelegramReplyContext } from "../../../src/app/services/telegram-reply-context-service.js";

@@ -13,12 +13,13 @@ import { formatModelForButton } from "../../app/types/model.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 
-// Commands that manage an existing run must always reach their handler, even
-// while the session is busy or an interaction is pending. The equivalent
-// Reply Keyboard buttons are consumed by the router before this guard runs, so
-// slash-command parity requires the same commands to pass through here. Menu
-// controls (model/agent/variant/context/compact/topic_settings) intentionally
-// stay gated while busy, matching the buttons' menuAllowed behavior.
+// Commands that manage an existing run must reach their handler while the
+// session is busy. The equivalent Reply Keyboard buttons are consumed by the
+// router before this guard runs, so slash-command parity requires the same
+// commands to pass the busy gate here. Menu controls (model/agent/variant/
+// context/compact/topic_settings) intentionally stay gated while busy, matching
+// the buttons' menuAllowed behavior. During an active interaction the stricter
+// per-interaction allowedCommands list still applies.
 const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
   "/abort",
   "/stop",
@@ -90,7 +91,7 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
     return createBusyBlockDecision(inputType, scopedState, "expected_text", command);
   }
   if (!scopedState) return createAllowDecision(inputType, null, command);
-  if (inputType === "command") { if (command === "/start") return createAllowDecision(inputType, scopedState, command); if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, scopedState, command); if (command && scopedState.allowedCommands.includes(command)) return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "command_not_allowed", command); }
+  if (inputType === "command") { if (command === "/start") return createAllowDecision(inputType, scopedState, command); if (command && scopedState.allowedCommands.includes(command)) return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "command_not_allowed", command); }
   if (scopedState.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "expected_text", command); }
   if (inputType === "callback" && (isAllowedRenameCancelCallback(ctx, scopedState) || isAllowedTaskCallback(ctx, scopedState))) return createAllowDecision(inputType, scopedState, command);
   if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command);
