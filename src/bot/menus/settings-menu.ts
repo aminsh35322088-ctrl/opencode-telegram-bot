@@ -61,14 +61,15 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       text: [
         "🧵 <b>Topic Settings</b>",
         "",
-        "Fine-tune this Topic without changing other Topics or global defaults.",
+        "🎯 <b>This Topic, your rules.</b>",
+        "Tune its AI behavior and output without touching other Topics.",
         "",
-        `🤖 <b>Model</b>  ${model}`,
-        `🧑‍💻 <b>Agent</b>  ${agent}`,
-        `🎛 <b>Variant</b>  ${variant}`,
-        "💬 <b>Response</b>  Streaming, format, thinking, footer & files",
-        `📥 <b>Prompt Queue</b>  ${statusPill(getPromptQueueEnabled())}`,
-        "🧠 <b>Context</b>  Live usage and model-window health",
+        `🤖 <b>Model</b> · ${model}`,
+        `🧑‍💻 <b>Agent</b> · ${agent}`,
+        `🎛 <b>Variant</b> · ${variant}`,
+        "💬 <b>Response</b> · Streaming, thinking & output",
+        `📥 <b>Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
+        "🧠 <b>Context</b> · Token usage & health",
       ].join("\n"),
       keyboard: new InlineKeyboard()
         .text(`🤖 Model · ${model}`, SETTINGS_MODEL_CALLBACK).row()
@@ -76,7 +77,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
         .text(`🎛 Variant · ${variant}`, SETTINGS_VARIANT_CALLBACK).row()
         .text("💬 Response & Output", SETTINGS_APPEARANCE_CALLBACK).row()
         .text(`📥 Prompt Queue · ${formatBooleanSettingValue(getPromptQueueEnabled())}`, SETTINGS_NOTIFICATIONS_CALLBACK).row()
-        .text("🧠 Context", SETTINGS_CONTEXT_CALLBACK).row()
+        .text("🧠 Context Health", SETTINGS_CONTEXT_CALLBACK).row()
         .text("✖ Close", SETTINGS_CLOSE_CALLBACK),
     };
   }
