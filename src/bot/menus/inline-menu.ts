@@ -10,6 +10,8 @@ export const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
 export const INLINE_MENU_HOME_CALLBACK = "main:home";
 export const INLINE_MENU_HOME_LABEL = "🏠 Home";
 const INLINE_MENU_CLOSE_LABEL = "✖ Close";
+const INLINE_MENU_BACK_LABEL = "← Back";
+const INLINE_MENU_SETTINGS_BACK_CALLBACK = "settings:back";
 
 const INLINE_MENU_KINDS = ["session", "model", "agent", "variant", "context", "open", "ls", "worktree", "settings"] as const;
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
@@ -34,38 +36,58 @@ function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInli
   return { menuKind, messageId, ...(typeof threadId === "number" ? { threadId } : {}) };
 }
 
-export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, _menuKind: InlineMenuKind): InlineKeyboard {
+export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind, threadId?: number): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) { const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1]; if (!lastRow || lastRow.length > 0) break; keyboard.inline_keyboard.pop(); }
 
-  let hasHome = false;
+  const isTopic = typeof threadId === "number" && threadId > 1;
+  const isTopicSettingsNavigation = isTopic && menuKind === "settings";
+  const isTopicSettingsChild = isTopic && (menuKind === "agent" || menuKind === "variant");
+
+  let hasNavigationButton = false;
   for (const row of keyboard.inline_keyboard) {
     for (const button of row) {
       if (button.text === INLINE_MENU_HOME_LABEL && "callback_data" in button && button.callback_data === INLINE_MENU_HOME_CALLBACK) {
-        hasHome = true;
+        if (isTopicSettingsNavigation) {
+          button.text = INLINE_MENU_CLOSE_LABEL;
+          button.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+        } else if (isTopicSettingsChild) {
+          button.text = INLINE_MENU_BACK_LABEL;
+          button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+        } else {
+          hasNavigationButton = true;
+        }
         continue;
       }
       if (button.text === INLINE_MENU_CLOSE_LABEL) {
-        button.text = INLINE_MENU_HOME_LABEL;
-        if ("callback_data" in button) button.callback_data = INLINE_MENU_HOME_CALLBACK;
-        hasHome = true;
+        if (isTopicSettingsNavigation) {
+          button.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
+          hasNavigationButton = true;
+        } else if (isTopicSettingsChild) {
+          button.text = INLINE_MENU_BACK_LABEL;
+          if ("callback_data" in button) button.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
+          hasNavigationButton = true;
+        }
       }
+      if (button.text === INLINE_MENU_BACK_LABEL && "callback_data" in button && button.callback_data === INLINE_MENU_SETTINGS_BACK_CALLBACK) hasNavigationButton = true;
     }
   }
 
-  if (!hasHome) {
+  if (!hasNavigationButton) {
     keyboard.row();
-    keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
+    if (isTopicSettingsNavigation) keyboard.text(INLINE_MENU_CLOSE_LABEL, `${INLINE_MENU_CANCEL_PREFIX}settings`);
+    else if (isTopicSettingsChild) keyboard.text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
+    else keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
   }
   return keyboard;
 }
 
 export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReplyOptions): Promise<number> {
-  const keyboard = appendInlineMenuCancelButton(options.keyboard, options.menuKind);
+  const threadId = getTopicThreadId(ctx);
+  const keyboard = appendInlineMenuCancelButton(options.keyboard, options.menuKind, threadId ?? undefined);
   const replyOptions: { reply_markup: InlineKeyboard; parse_mode?: "Markdown" | "HTML" } = { reply_markup: keyboard };
   if (options.parseMode) replyOptions.parse_mode = options.parseMode;
 
   const chatId = getChatId(ctx);
-  const threadId = getTopicThreadId(ctx);
   let messageId: number;
   const callbackMessageId = getCallbackMessageId(ctx);
   const callbackData = ctx.callbackQuery?.data ?? "";
