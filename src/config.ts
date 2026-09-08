@@ -31,7 +31,7 @@ const HARDCODED = {
     username: "opencode",
     password: "",
     autoRestartEnabled: true,
-    monitorIntervalSec: 60,
+    monitorIntervalSec: 20,
     modelProvider: "opencode",
     modelId: "big-pickle",
   },
