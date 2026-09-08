@@ -38,8 +38,8 @@ The browser tool is approval-gated because it can interact with external website
 
 Railway, Cloudflare, Vercel and other cloud APIs are intentionally handled through Settings → Integrations, where credentials can be stored and switched independently, just like GitHub.
 
-## Dependency and validation policy
+## Dependency policy
 
-The Railway runtime has no custom package-management capability. Dependency changes are made in source control and resolved during the GitHub Actions / container build process; the running bot must not install, update, remove, or execute packages on demand.
+The Railway runtime has no custom package-management capability. Dependency changes are made in source control and resolved during the normal GitHub Actions / container build process; the running bot must not install, update, remove, or execute packages on demand.
 
-Validation is owned by GitHub Actions. The production runtime does not ship the CI-only test suite or local validation toolchain.
+Operational diagnostics belong in the runtime toolbelt and must remain separate from the bot's normal application execution paths.
