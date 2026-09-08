@@ -68,10 +68,23 @@ async function saveReplyDocument(ctx: Context, message: Record<string, unknown>,
   return { relativePath, mimeType };
 }
 
+const SLASH_COMMAND_PATTERN = /^\/[a-zA-Z0-9_]+(?:@\w+)?(?:\s|$)/u;
+
+function isSlashCommand(text: string | undefined): boolean {
+  return typeof text === "string" && SLASH_COMMAND_PATTERN.test(text.trim());
+}
+
 export async function enrichTelegramReplyContext(ctx: Context, workspace: string): Promise<void> {
   const message = ctx.message as (Record<string, unknown> & { reply_to_message?: unknown }) | undefined;
   const replied = message?.reply_to_message;
   if (!message || !replied || typeof replied !== "object") return;
+
+  // A Telegram command must keep its exact leading "/name" so grammY's
+  // bot.command() router can match it. When the user is in reply mode and
+  // sends a control command (for example /abort), enriching the text with a
+  // "Replying to ..." prefix would break command parsing and leak the command
+  // into Coding AI prompt handling. Reply context only applies to prompts.
+  if (isSlashCommand(message.text as string | undefined)) return;
 
   const replyMessage = replied as Record<string, unknown>;
   const description = describeReply(replyMessage);

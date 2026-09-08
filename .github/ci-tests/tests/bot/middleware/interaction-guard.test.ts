@@ -369,7 +369,33 @@ describe("interactionGuardMiddleware", () => {
     }
   });
 
-  it("allows active question callback while busy", async () => {
+  it("allows AI Topic management commands while busy so they match the Reply Keyboard buttons", async () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+
+    for (const command of ["/pause", "/resume", "/delete_topic", "/stop"]) {
+      const ctx = createTextContext(command);
+      const next: NextFunction = vi.fn().mockResolvedValue(undefined);
+
+      await interactionGuardMiddleware(ctx, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(ctx.reply).not.toHaveBeenCalled();
+    }
+  });
+
+  it("still blocks menu-opening Topic commands while busy", async () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+
+    const ctx = createTextContext("/model");
+    const next: NextFunction = vi.fn().mockResolvedValue(undefined);
+
+    await interactionGuardMiddleware(ctx, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(t("bot.session_busy"));
+  });
+
+
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
     interactionManager.start({
       kind: "question",

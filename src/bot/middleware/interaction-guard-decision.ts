@@ -13,10 +13,26 @@ import { formatModelForButton } from "../../app/types/model.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 
-const BUSY_ALLOWED_COMMANDS = ["/abort", "/detach", "/status", "/help", "/opencode_stop"] as const;
-const BUSY_ALLOWED_COMMAND_SET = new Set<string>(BUSY_ALLOWED_COMMANDS);
+// Commands that manage an existing run must reach their handler while the
+// session is busy. The equivalent Reply Keyboard buttons are consumed by the
+// router before this guard runs, so slash-command parity requires the same
+// commands to pass the busy gate here. Menu controls (model/agent/variant/
+// context/compact/topic_settings) intentionally stay gated while busy, matching
+// the buttons' menuAllowed behavior. During an active interaction the stricter
+// per-interaction allowedCommands list still applies.
+const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
+  "/abort",
+  "/stop",
+  "/detach",
+  "/status",
+  "/help",
+  "/opencode_stop",
+  "/pause",
+  "/resume",
+  "/delete_topic",
+]);
+function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && ALWAYS_REACHABLE_CONTROL_COMMANDS.has(command)); }
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
-function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && BUSY_ALLOWED_COMMAND_SET.has(command)); }
 function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
 function resolveCurrentSessionBusy(): boolean {
