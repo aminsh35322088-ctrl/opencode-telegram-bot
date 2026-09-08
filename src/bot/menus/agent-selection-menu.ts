@@ -43,10 +43,12 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-/** Show the agent picker with the live agent description from OpenCode. */
+/** Show the agent picker; richer metadata is intentionally Topic-only. */
 export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
   try {
-    const [currentAgent, agents] = await Promise.all([fetchCurrentAgent(), getAvailableAgents()]);
+    const topicContext = isTopicContext(ctx);
+    const currentAgent = await fetchCurrentAgent();
+    const agents = topicContext ? await getAvailableAgents() : undefined;
     const keyboard = await buildAgentSelectionMenu(currentAgent);
 
     if (keyboard.inline_keyboard.length === 0) {
@@ -54,35 +56,49 @@ export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
       return;
     }
 
-    const activeAgent = agents.find((agent) => agent.name === currentAgent);
-    const detailLines = activeAgent
-      ? [
-          `Current: <b>${escapeHtml(getAgentDisplayName(activeAgent.name))}</b>`,
-          activeAgent.description
-            ? `Description: ${escapeHtml(activeAgent.description)}`
-            : "Description: OpenCode did not provide a description for this agent.",
-          `Mode: <b>${escapeHtml(activeAgent.mode)}</b>`,
-          typeof activeAgent.steps === "number"
-            ? `Steps: <b>${activeAgent.steps}</b>`
-            : "Steps: <b>Unspecified</b>",
-        ]
-      : ["Current: <b>Inherited default</b>"];
+    let text: string;
+    if (!topicContext) {
+      text = [
+        "🧑‍💻 <b>Agent</b>",
+        "",
+        currentAgent
+          ? `Current: <b>${getAgentDisplayName(currentAgent)}</b>`
+          : "Current: <b>Inherited default</b>",
+        "",
+        "The agent controls the high-level behavior and tool strategy used by this Topic.",
+        "Choose an agent below. Your other Topics are not changed.",
+      ].join("\n");
+    } else {
+      const activeAgent = agents?.find((agent) => agent.name === currentAgent);
+      const detailLines = activeAgent
+        ? [
+            `Current: <b>${escapeHtml(getAgentDisplayName(activeAgent.name))}</b>`,
+            activeAgent.description
+              ? `Description: ${escapeHtml(activeAgent.description)}`
+              : "Description: OpenCode did not provide a description for this agent.",
+            `Mode: <b>${escapeHtml(activeAgent.mode)}</b>`,
+            typeof activeAgent.steps === "number"
+              ? `Steps: <b>${activeAgent.steps}</b>`
+              : "Steps: <b>Unspecified</b>",
+          ]
+        : ["Current: <b>Inherited default</b>"];
 
-    const text = [
-      "🧑‍💻 <b>Agent</b>",
-      "",
-      ...detailLines,
-      "",
-      "The agent controls the high-level behavior used by this Topic. Its description, mode and step limit come directly from OpenCode.",
-      "Choose an agent below. Your other Topics are not changed.",
-    ].join("\n");
+      text = [
+        "🧑‍💻 <b>Agent</b>",
+        "",
+        ...detailLines,
+        "",
+        "The agent controls the high-level behavior used by this Topic. Its description, mode and step limit come directly from OpenCode.",
+        "Choose an agent below. Your other Topics are not changed.",
+      ].join("\n");
+    }
 
     await replyWithInlineMenu(ctx, {
       menuKind: "agent",
       text,
       keyboard,
       parseMode: "HTML",
-      navigation: isTopicContext(ctx) ? "both" : "auto",
+      navigation: topicContext ? "both" : "auto",
     });
   } catch (err) {
     logger.error("[AgentHandler] Error showing agent menu:", err);
