@@ -42,9 +42,9 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
       case SETTINGS_AGENT_CALLBACK: await ctx.answerCallbackQuery(); await showAgentSelectionMenu(ctx); return true;
       case SETTINGS_VARIANT_CALLBACK: await ctx.answerCallbackQuery(); await showVariantSelectionMenu(ctx); return true;
-      case SETTINGS_APPEARANCE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAppearanceSettingsView(), "back"); return true;
-      case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "back"); return true;
-      case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "back"); return true;
+      case SETTINGS_APPEARANCE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAppearanceSettingsView(), "both"); return true;
+      case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "both"); return true;
+      case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "both"); return true;
       case SETTINGS_ADVANCED_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
       case SETTINGS_TOPIC_DEFAULTS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicDefaultsSettingsView(), "back"); return true;
       case SETTINGS_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx as never); return true;
@@ -104,7 +104,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
           default: await ctx.answerCallbackQuery({ text: t("callback.processing_error") }); return true;
         }
         await ctx.answerCallbackQuery({ text: t("settings.saved") });
-        await renderSettingsView(ctx, destination(), "back");
+        await renderSettingsView(ctx, destination(), "both");
         const topic = getTopicRuntimeContext();
         if (refreshTopicKeyboard && getCurrentTopicSettings() && topic?.sessionId && topic.chatId) {
           await keyboardManager.sendKeyboardUpdate(topic.chatId, true, topic.sessionId);
