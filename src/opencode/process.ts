@@ -1,5 +1,5 @@
 import { exec, spawn, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, statSync, truncateSync } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
@@ -7,6 +7,7 @@ const execAsync = promisify(exec);
 const DEFAULT_OPENCODE_PORT = 4096;
 const PROCESS_EXIT_POLL_MS = 100;
 const DEFAULT_OPENCODE_LOG_DIR = "/data/logs";
+const MAX_OPENCODE_LOG_BYTES = 5 * 1024 * 1024;
 
 export interface LocalOpencodeTarget {
   host: string;
@@ -142,7 +143,17 @@ function resolveOpencodeLogDir(): string {
 function openOpencodeLogFile(fileName: string): number {
   const logDir = resolveOpencodeLogDir();
   mkdirSync(logDir, { recursive: true });
-  return openSync(path.join(logDir, fileName), "a", 0o640);
+  const logPath = path.join(logDir, fileName);
+
+  try {
+    if (statSync(logPath).size > MAX_OPENCODE_LOG_BYTES) {
+      truncateSync(logPath, 0);
+    }
+  } catch {
+    // The file may not exist yet; openSync below creates it.
+  }
+
+  return openSync(logPath, "a", 0o640);
 }
 
 export function startLocalOpencodeServer(target: LocalOpencodeTarget): ChildProcess {
