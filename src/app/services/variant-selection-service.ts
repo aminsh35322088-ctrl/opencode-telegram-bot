@@ -1,86 +1,100 @@
 /**
- * Variant Manager - manages model variants (reasoning modes)
+ * Variant manager - reads model-specific variants from OpenCode metadata.
+ *
+ * Important: OpenCode owns the variant semantics. This service must never
+ * invent a variant for a model that does not expose one.
  */
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentModel, setCurrentModel } from "../stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
-import type { VariantInfo } from "../types/variant.js";
+import type { VariantAvailability, VariantInfo } from "../types/variant.js";
+
+function normalizeVariants(input: unknown): VariantInfo[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return [];
+
+  return Object.entries(input as Record<string, unknown>).map(([id, info]) => ({
+    id,
+    disabled:
+      typeof info === "object" && info !== null && !Array.isArray(info)
+        ? Boolean((info as { disabled?: unknown }).disabled)
+        : undefined,
+  }));
+}
 
 /**
- * Get available variants for a model from OpenCode API
- * @param providerID Provider ID
- * @param modelID Model ID
- * @returns Array of available variants
+ * Resolve model variant capability directly from OpenCode's provider catalog.
+ *
+ * `UNSUPPORTED` means the model exists and exposes no variants. API/provider
+ * failures remain distinguishable so a transient outage is not mislabeled.
  */
-export async function getAvailableVariants(
+export async function getVariantAvailability(
   providerID: string,
   modelID: string,
-): Promise<VariantInfo[]> {
+): Promise<VariantAvailability> {
+  if (!providerID || !modelID) {
+    return { supported: false, reason: "MODEL_NOT_FOUND" };
+  }
+
   try {
     const { data, error } = await opencodeClient.config.providers();
 
     if (error || !data) {
       logger.warn("[VariantManager] Failed to fetch providers:", error);
-      return [{ id: "default" }];
+      return { supported: false, reason: "UNAVAILABLE" };
     }
 
-    const provider = data.providers.find((p) => p.id === providerID);
+    const provider = data.providers.find((item) => item.id === providerID);
     if (!provider) {
       logger.warn(`[VariantManager] Provider ${providerID} not found`);
-      return [{ id: "default" }];
+      return { supported: false, reason: "PROVIDER_NOT_FOUND" };
     }
 
     const model = provider.models[modelID];
     if (!model) {
       logger.warn(`[VariantManager] Model ${modelID} not found in provider ${providerID}`);
-      return [{ id: "default" }];
+      return { supported: false, reason: "MODEL_NOT_FOUND" };
     }
 
-    // Start with default variant (always present)
-    const variants: VariantInfo[] = [{ id: "default" }];
-
-    if (model.variants) {
-      // Add other variants from API (excluding default if it's already there)
-      const apiVariants = Object.entries(model.variants)
-        .filter(([id]) => id !== "default")
-        .map(([id, info]) => ({
-          id,
-          disabled: (info as { disabled?: boolean }).disabled,
-        }));
-
-      variants.push(...apiVariants);
-      logger.debug(
-        `[VariantManager] Found ${variants.length} variants for ${providerID}/${modelID} (including default)`,
-      );
-    } else {
-      logger.debug(
-        `[VariantManager] No variants found for ${providerID}/${modelID}, using default only`,
-      );
+    const variants = normalizeVariants(model.variants);
+    if (variants.length === 0) {
+      logger.debug(`[VariantManager] Model ${providerID}/${modelID} does not expose variants`);
+      return { supported: false, reason: "UNSUPPORTED" };
     }
 
-    return variants;
+    const enabledVariants = variants.filter((variant) => !variant.disabled);
+    logger.debug(
+      `[VariantManager] Found ${variants.length} variants for ${providerID}/${modelID}; enabled=${enabledVariants.length}`,
+    );
+    return { supported: true, variants };
   } catch (err) {
-    logger.error("[VariantManager] Error fetching variants:", err);
-    return [{ id: "default" }];
+    logger.error("[VariantManager] Error fetching variant metadata:", err);
+    return { supported: false, reason: "UNAVAILABLE" };
   }
 }
 
 /**
- * Get current variant from settings
- * @returns Current variant ID (defaults to "default")
+ * Backwards-compatible list API. Unsupported/unavailable models return an
+ * empty list rather than a fabricated `default` variant.
  */
-export function getCurrentVariant(): string {
-  const currentModel = getCurrentModel();
-  return currentModel?.variant || "default";
+export async function getAvailableVariants(
+  providerID: string,
+  modelID: string,
+): Promise<VariantInfo[]> {
+  const availability = await getVariantAvailability(providerID, modelID);
+  return availability.supported ? availability.variants : [];
 }
 
 /**
- * Set current variant in settings
- * @param variantId Variant ID to set
+ * Get current stored variant. `default` is an internal no-explicit-variant
+ * sentinel and is not treated as proof that the model supports variants.
  */
+export function getCurrentVariant(): string {
+  return getCurrentModel()?.variant || "default";
+}
+
+/** Set current variant in settings after the caller validates support. */
 export function setCurrentVariant(variantId: string): void {
   const currentModel = getCurrentModel();
-
   if (!currentModel) {
     logger.warn("[VariantManager] Cannot set variant: no current model");
     return;
@@ -91,38 +105,23 @@ export function setCurrentVariant(variantId: string): void {
   logger.info(`[VariantManager] Variant set to: ${variantId}`);
 }
 
-/**
- * Format variant for button display
- * @param variantId Variant ID (e.g., "default", "low", "high")
- * @returns Formatted string "💭 Default", "💭 Low", etc.
- */
 export function formatVariantForButton(variantId: string): string {
   const capitalized = variantId.charAt(0).toUpperCase() + variantId.slice(1);
   return `💡 ${capitalized}`;
 }
 
-/**
- * Format variant for display in messages
- * @param variantId Variant ID
- * @returns Formatted string with capitalized first letter
- */
 export function formatVariantForDisplay(variantId: string): string {
   return variantId.charAt(0).toUpperCase() + variantId.slice(1);
 }
 
-/**
- * Validate if a model supports a specific variant
- * @param providerID Provider ID
- * @param modelID Model ID
- * @param variantId Variant ID to validate
- * @returns true if variant is supported, false otherwise
- */
+/** Validate a variant against the selected model's actual OpenCode metadata. */
 export async function validateVariantForModel(
   providerID: string,
   modelID: string,
   variantId: string,
 ): Promise<boolean> {
-  const variants = await getAvailableVariants(providerID, modelID);
-  const found = variants.find((v) => v.id === variantId && !v.disabled);
-  return found !== undefined;
+  const availability = await getVariantAvailability(providerID, modelID);
+  if (!availability.supported) return false;
+
+  return availability.variants.some((variant) => variant.id === variantId && !variant.disabled);
 }
