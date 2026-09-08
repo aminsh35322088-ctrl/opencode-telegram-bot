@@ -22,6 +22,7 @@ import {
 } from "../menus/model-center-menu.js";
 import { fetchCurrentModel, getProviders, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
+import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { formatModelForDisplay, type ModelInfo } from "../../app/types/model.js";
 import { resolveProjectAgent, getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
