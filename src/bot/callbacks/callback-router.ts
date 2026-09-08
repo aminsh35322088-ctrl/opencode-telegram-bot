@@ -14,7 +14,7 @@ import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
-import { handleRenameCancel } from "./rename-callback-handler.js";
+import { handleRenameCancel } from "./rename-cancel-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
@@ -32,6 +32,7 @@ import { clearActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu
 import { MODEL_CENTER_SETTINGS_BACK } from "../menus/model-center-menu.js";
 import { markGeminiWizard, clearGeminiWizard } from "../services/gemini-wizard-state.js";
 import { activateImageMode } from "../../app/services/image-mode-service.js";
+import { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 import { getCurrentSession, setCurrentSession } from "../../app/services/session-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { handleTelegramTopicDeleteCallback, registerTelegramTopicDeleteHandlers } from "../services/telegram-topic-delete-handler.js";
@@ -115,8 +116,28 @@ async function handleSettingsChildNavigation(ctx: Context, data: string): Promis
 async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> { if (data !== "commands:list_back" && data !== "skills:list_back") return false; await ctx.answerCallbackQuery().catch(() => {}); if (data === "commands:list_back") await commandsCommand(ctx as never); else await skillsCommand(ctx as never); logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`); return true; }
 async function handleImageAiCallback(ctx: Context, data: string): Promise<boolean> {
   const sessionId = await resolveCallbackTopicSession(ctx) ?? getCurrentSession()?.id;
-  if (data === "imageai:generate") { activateImageMode("generate", sessionId); clearInteractionErrorState("interaction", "image_ai_mode_selected"); await ctx.answerCallbackQuery().catch(() => {}); await ctx.editMessageText("🎨 <b>Image AI · Generate</b>\n\nSend a text or voice prompt and I’ll generate a new image.", { parse_mode: "HTML" }).catch(() => {}); return true; }
-  if (data === "imageai:edit") { activateImageMode("edit", sessionId); clearInteractionErrorState("interaction", "image_ai_mode_selected"); await ctx.answerCallbackQuery().catch(() => {}); await ctx.editMessageText("🖌️ <b>Image AI · Edit</b>\n\nSend a photo with a caption/instruction, or send a photo first and then the edit instruction.", { parse_mode: "HTML" }).catch(() => {}); return true; }
+  if (data === "imageai:generate") {
+    if (!(await hasActiveImageAiProvider("generate"))) {
+      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
+      return true;
+    }
+    activateImageMode("generate", sessionId);
+    clearInteractionErrorState("interaction", "image_ai_mode_selected");
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.editMessageText("🎨 <b>Image AI · Generate</b>\n\nSend a text or voice prompt and I’ll generate a new image.", { parse_mode: "HTML" }).catch(() => {});
+    return true;
+  }
+  if (data === "imageai:edit") {
+    if (!(await hasActiveImageAiProvider("edit"))) {
+      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
+      return true;
+    }
+    activateImageMode("edit", sessionId);
+    clearInteractionErrorState("interaction", "image_ai_mode_selected");
+    await ctx.answerCallbackQuery().catch(() => {});
+    await ctx.editMessageText("🖌️ <b>Image AI · Edit</b>\n\nSend a photo with a caption/instruction, or send a photo first and then the edit instruction.", { parse_mode: "HTML" }).catch(() => {});
+    return true;
+  }
   return false;
 }
 
