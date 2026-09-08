@@ -14,7 +14,7 @@ import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
-import { handleRenameCancel } from "./rename-cancel-callback-handler.js";
+import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
@@ -157,7 +157,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["permission", { name: "permission", handlers: [handlePermissionCallback], errorScope: "permission" }],
     ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],
     ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }],
-    ["session", { name: "session", handlers: [(ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }), (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["session", { name: "session", handlers: [ (ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }), (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }],
     ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }],
