@@ -53,12 +53,14 @@ async function resolveCallbackTopicSession(ctx: Context): Promise<string | null>
   const callbackMessage = ctx.callbackQuery?.message;
   if (!callbackMessage || callbackMessage.chat.type !== "private") return null;
   const threadId = "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
-  const isTopicMessage = "is_topic_message" in callbackMessage ? callbackMessage.is_topic_message : false;
-  if (typeof threadId !== "number" || !isTopicMessage) return null;
+  if (typeof threadId !== "number" || threadId <= 1) return null;
   const binding = await findTelegramTopicBindingByThread(callbackMessage.chat.id, threadId);
   if (!binding) return null;
   const current = getCurrentSession();
-  if (current?.id !== binding.sessionId || current.directory !== binding.directory) setCurrentSession({ id: binding.sessionId, title: binding.title || `Session ${binding.sessionId.slice(0, 8)}`, directory: binding.directory });
+  if (current?.id !== binding.sessionId || current.directory !== binding.directory) {
+    setCurrentSession({ id: binding.sessionId, title: binding.title || `Session ${binding.sessionId.slice(0, 8)}`, directory: binding.directory });
+  }
+  logger.debug(`[TopicNavigation] Resolved callback by bound thread: chat=${callbackMessage.chat.id}, thread=${threadId}, session=${binding.sessionId}`);
   return binding.sessionId;
 }
 
@@ -71,17 +73,13 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
     const chatId = ctx.chat?.id ?? callbackMessage?.chat.id;
     const messageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : undefined;
     if (typeof chatId !== "number" || typeof messageId !== "number") return true;
-
     await ctx.answerCallbackQuery().catch(() => {});
     try {
       const canonicalMessageId = getMainNavigationMessageId(chatId);
       if (canonicalMessageId === messageId) {
         const currentModel = getStoredModel();
         const text = await buildMainStatusText(currentModel);
-        await ctx.api.editMessageText(chatId, canonicalMessageId, text, {
-          parse_mode: "HTML",
-          reply_markup: createMainInlineKeyboard(currentModel),
-        });
+        await ctx.api.editMessageText(chatId, canonicalMessageId, text, { parse_mode: "HTML", reply_markup: createMainInlineKeyboard(currentModel) });
         await keyboardManager.pinMainInlineMessage(chatId, canonicalMessageId);
         clearActiveInlineMenu("inline_menu_home", chatId, typeof threadId === "number" ? threadId : undefined);
         logger.info(`[Navigation] Restored canonical Main anchor in-place from Home: chat=${chatId}, message=${canonicalMessageId}, sourceThread=${typeof threadId === "number" ? threadId : "General/native-default"}`);
@@ -91,9 +89,7 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
         clearActiveInlineMenu("inline_menu_home_restore", chatId, typeof threadId === "number" ? threadId : undefined);
         logger.info(`[Navigation] Restored canonical Main anchor from Home: chat=${chatId}, childMessage=${messageId}, previousCanonical=${canonicalMessageId ?? "none"}`);
       }
-    } catch (error) {
-      logger.warn(`[Navigation] Failed to restore canonical Main from Home: chat=${chatId}, message=${messageId}`, error);
-    }
+    } catch (error) { logger.warn(`[Navigation] Failed to restore canonical Main from Home: chat=${chatId}, message=${messageId}`, error); }
     return true;
   }
 
