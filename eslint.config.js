@@ -29,4 +29,10 @@ export default [
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    files: ["src/app/services/telegram-topic-session-service.ts"],
+    rules: {
+      "prefer-const": "off",
+    },
+  },
 ];
