@@ -124,6 +124,25 @@ describe("opencode/auto-restart", () => {
     service.stop();
   });
 
+  it("does not start a process in a container when spawn is disabled", async () => {
+    mocked.config.opencode.autoRestartEnabled = true;
+    vi.stubEnv("OPENCODE_TELEGRAM_CONTAINER", "1");
+    mocked.healthMock.mockRejectedValueOnce(new Error("offline"));
+    vi.stubEnv("OPENCODE_AUTO_START_IN_CONTAINER", "0");
+    const service = new OpencodeAutoRestartService();
+
+    await service.start();
+
+    expect(mocked.healthMock).toHaveBeenCalledTimes(1);
+    expect(mocked.startLocalOpencodeServerMock).not.toHaveBeenCalled();
+    expect(mocked.notifyUnavailableMock).not.toHaveBeenCalled();
+    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("local spawn is disabled in this container"),
+    );
+
+    service.stop();
+  });
+
   it("stops an existing listener before recovery spawn", async () => {
     mocked.config.opencode.autoRestartEnabled = true;
     mocked.healthMock
@@ -227,8 +246,6 @@ describe("opencode/auto-restart", () => {
 
   it("recovers immediately when a healthy OpenCode child exits", async () => {
     mocked.config.opencode.autoRestartEnabled = true;
-    mocked.healthMock.mockResolvedValue(healthyResponse());
-
     let exitHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
     const childProcess = createChildProcess(987);
     childProcess.once = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
@@ -238,9 +255,11 @@ describe("opencode/auto-restart", () => {
       return childProcess;
     }) as ChildProcess["once"];
     mocked.startLocalOpencodeServerMock.mockReturnValue(childProcess);
+    mocked.healthMock
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(healthyResponse());
 
     const service = new OpencodeAutoRestartService();
-    mocked.healthMock.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(healthyResponse());
     await service.start();
 
     exitHandler?.(1, "SIGTERM");
