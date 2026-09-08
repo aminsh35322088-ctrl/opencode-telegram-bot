@@ -24,7 +24,7 @@ export default [
     },
   },
   {
-    files: ["tests/tests/bot/services/event-subscription-service.lifecycle.test.ts"],
+    files: ["tests/**/*.ts"],
     rules: {
       "@typescript-eslint/no-unused-vars": "off",
     },
