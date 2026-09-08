@@ -26,6 +26,7 @@ function getTopicThreadId(ctx: Context): number | undefined {
 async function renderSettingsView(ctx: Context, view: { text: string; keyboard: InlineKeyboard }, navigation: InlineMenuNavigation = "back"): Promise<void> {
   const threadId = getTopicThreadId(ctx);
   await ctx.editMessageText(view.text, {
+    parse_mode: "HTML",
     reply_markup: appendInlineMenuCancelButton(view.keyboard, "settings", threadId, navigation),
   });
 }
