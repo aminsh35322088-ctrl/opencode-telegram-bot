@@ -1,0 +1,46 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildAppearanceSettingsView,
+  SETTINGS_ASSISTANT_FOOTER_CALLBACK,
+  SETTINGS_BACK_CALLBACK,
+  SETTINGS_COMPACT_OUTPUT_CALLBACK,
+  SETTINGS_DIFF_FILES_CALLBACK,
+  SETTINGS_MESSAGE_FORMAT_CALLBACK,
+  SETTINGS_RESPONSE_STREAMING_CALLBACK,
+  SETTINGS_THINKING_CONTENT_CALLBACK,
+} from "../../../src/bot/menus/settings-menu.js";
+
+function getButtons() {
+  return buildAppearanceSettingsView().keyboard.inline_keyboard.flatMap((row) => row);
+}
+
+function getCallbackData(): string[] {
+  return getButtons().flatMap((button) =>
+    "callback_data" in button && typeof button.callback_data === "string" ? [button.callback_data] : [],
+  );
+}
+
+describe("appearance settings UI", () => {
+  it("exposes every appearance control with a matching callback", () => {
+    const callbacks = getCallbackData();
+
+    expect(callbacks).toContain(SETTINGS_COMPACT_OUTPUT_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_THINKING_CONTENT_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_RESPONSE_STREAMING_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_MESSAGE_FORMAT_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_ASSISTANT_FOOTER_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_DIFF_FILES_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_BACK_CALLBACK);
+  });
+
+  it("describes every visible appearance control", () => {
+    const text = buildAppearanceSettingsView().text;
+
+    expect(text).toContain("Compact output");
+    expect(text).toContain("Thinking details");
+    expect(text).toContain("Reply streaming");
+    expect(text).toContain("Message format");
+    expect(text).toContain("Run footer");
+    expect(text).toContain("Diff files");
+  });
+});
