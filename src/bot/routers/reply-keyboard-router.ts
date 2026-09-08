@@ -33,7 +33,7 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-import { classifyReplyKeyboardInteraction } from "../interaction-classifier.js";
+import { classifyReplyKeyboardInteraction, getRawReplyKeyboardText } from "../interaction-classifier.js";
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -130,7 +130,7 @@ async function handleReplyKeyboardInput(
 ): Promise<void> {
   const raw = ctx.message?.text;
   if (typeof raw !== "string") { await next(); return; }
-  const text = normalized(raw);
+  let text = normalized(raw);
   if (!text) { await next(); return; }
 
   const scope = await getTopicScope(ctx);
@@ -141,6 +141,13 @@ async function handleReplyKeyboardInput(
   // allowed to turn arbitrary text into a Reply Keyboard control.
   const classified = await classifyReplyKeyboardInteraction(ctx);
   if (!classified.isControl) { await next(); return; }
+
+  // The classifier matched the authentic, pre-enrichment button label. When a
+  // press is sent in Telegram reply mode, ctx.message.text carries a leading
+  // "Replying to ..." block; dispatch matching must use the real label so the
+  // recognized control is actually executed instead of being consumed silently.
+  const controlRaw = getRawReplyKeyboardText(ctx) ?? raw;
+  text = normalized(controlRaw);
 
   const runtime = getTopicRuntimeContext();
   const renderedButtonTexts = getRenderedReplyKeyboardTexts(scope, runtime);
@@ -166,7 +173,7 @@ async function handleReplyKeyboardInput(
   );
 
   if (!exactControls.has(text) && !dynamicTopicControl) {
-    logger.info(`[Bot] Consuming classified Reply Keyboard control without legacy route: thread=${ctx.message?.message_thread_id ?? 0} text=${raw} control=${classified.controlId ?? "unknown"}`);
+    logger.info(`[Bot] Consuming classified Reply Keyboard control without legacy route: thread=${ctx.message?.message_thread_id ?? 0} text=${text} control=${classified.controlId ?? "unknown"}`);
     await consumeReplyKeyboardMessage(ctx);
     return;
   }
@@ -176,12 +183,12 @@ async function handleReplyKeyboardInput(
   const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
   const allowedInRoute = scope.aiTopic ? topicOnly.has(text) || dynamicTopicControl : mainOnly.has(text);
   if (!allowedInRoute) {
-    logger.info(`[Bot] Consuming stale/wrong-scope Reply Keyboard control instead of falling through to prompt: scope=${scope.topicMode ? "topic" : "main"}${scope.topicMode && !scope.aiTopic ? "/general" : ""} thread=${ctx.message?.message_thread_id ?? 0} text=${raw}`);
+    logger.info(`[Bot] Consuming stale/wrong-scope Reply Keyboard control instead of falling through to prompt: scope=${scope.topicMode ? "topic" : "main"}${scope.topicMode && !scope.aiTopic ? "/general" : ""} thread=${ctx.message?.message_thread_id ?? 0} text=${text}`);
     await consumeReplyKeyboardMessage(ctx);
     return;
   }
 
-  logger.info(`[Bot] Consuming Reply Keyboard control: scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"} thread=${ctx.message?.message_thread_id ?? 0} text=${raw}`);
+  logger.info(`[Bot] Consuming Reply Keyboard control: scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"} thread=${ctx.message?.message_thread_id ?? 0} text=${text}`);
   await consumeReplyKeyboardMessage(ctx);
   try {
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) { await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") }); return; }
@@ -199,7 +206,7 @@ async function handleReplyKeyboardInput(
     if (scope.aiTopic && CONTEXT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await handleContextButtonPress(ctx); return; }
     if (scope.aiTopic && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text)) {
       if (!await menuAllowed(ctx)) return;
-      const queued = findQueuedPromptByButtonLabel(raw);
+      const queued = findQueuedPromptByButtonLabel(controlRaw);
       const keyboard = keyboardManager.getKeyboard(runtime?.sessionId);
       if (queued) { promptQueue.removeById(queued.id); await ctx.reply(t("queue.removed"), keyboard ? { reply_markup: keyboard } : {}); }
       else await ctx.reply(t("queue.not_found"), keyboard ? { reply_markup: keyboard } : {});

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   getStoredModel: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn(), hasActiveRuns: vi.fn() },
   interactionManager: { getSnapshot: vi.fn(), clear: vi.fn(), clearAll: vi.fn(), start: vi.fn(), isActive: vi.fn(), clearSession: vi.fn() },
-  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn() },
+  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn() },
   showModelCenterMenu: vi.fn(),
   showAgentSelectionMenu: vi.fn(),
   showVariantSelectionMenu: vi.fn(),
@@ -57,6 +57,7 @@ vi.mock("../../../src/bot/commands/integrations-command.js", () => ({ isIntegrat
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { registerReplyKeyboardRouter } from "../../../src/bot/routers/reply-keyboard-router.js";
+import { stashRawReplyKeyboardText } from "../../../src/bot/interaction-classifier.js";
 
 const CHAT_ID = -1001234567890;
 const THREAD_ID = 42;
@@ -71,10 +72,9 @@ function makeTopicContext(text: string) {
 }
 
 function registerHandler(): { handler: (ctx: unknown, next: () => Promise<void>) => Promise<void>; next: ReturnType<typeof vi.fn> } {
-  const bot = { on: vi.fn(), hears: vi.fn() };
+  const bot = { on: vi.fn(), hears: vi.fn(), use: vi.fn() };
   registerReplyKeyboardRouter(bot as never, { bot: bot as never, ensureEventSubscription: vi.fn() });
-  const call = bot.on.mock.calls.find(([event]) => event === "message:text");
-  const handler = call?.[1] as (ctx: unknown, next: () => Promise<void>) => Promise<void>;
+  const handler = bot.use.mock.calls[0]?.[0] as (ctx: unknown, next: () => Promise<void>) => Promise<void>;
   return { handler, next: vi.fn() };
 }
 
@@ -91,6 +91,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     mocks.interactionManager.getSnapshot.mockReturnValue(null);
     mocks.keyboardManager.getState.mockReturnValue(undefined);
     mocks.keyboardManager.getKeyboard.mockReturnValue(undefined);
+    mocks.keyboardManager.isTopicMode.mockReturnValue(false);
     mocks.getCompactOutputMode.mockReturnValue(false);
     mocks.isProviderWizardActive.mockReturnValue(false);
     mocks.isIntegrationWizardActive.mockReturnValue(false);
@@ -127,6 +128,28 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     const { handler, next } = registerHandler();
     await handler(makeTopicContext("⚙️ Topic Settings"), next);
     expect(mocks.settingsCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches a reply-enriched control from its authentic stashed label", async () => {
+    const { handler, next } = registerHandler();
+    const ctx = makeTopicContext("Replying to @Chat Bot.\n\n🗑️ Delete Chat");
+    stashRawReplyKeyboardText(ctx, "🗑️ Delete Chat");
+
+    await handler(ctx, next);
+
+    expect(mocks.showTelegramTopicDeleteConfirmation).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("dispatches an enriched Abort press from its authentic stashed label", async () => {
+    const { handler, next } = registerHandler();
+    const ctx = makeTopicContext("Replying to @Chat Bot.\n\n🛑 Abort");
+    stashRawReplyKeyboardText(ctx, "🛑 Abort");
+
+    await handler(ctx, next);
+
+    expect(mocks.abortCurrentOperation).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("consumes dynamic agent buttons inside a topic instead of leaking them as prompts", async () => {
