@@ -1,7 +1,12 @@
 import { Context } from "grammy";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { formatVariantForButton, formatVariantForDisplay, setCurrentVariant } from "../../app/services/variant-selection-service.js";
+import {
+  formatVariantForButton,
+  formatVariantForDisplay,
+  setCurrentVariant,
+  validateVariantForModel,
+} from "../../app/services/variant-selection-service.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { failure, notify, switched } from "./feedback.js";
@@ -10,11 +15,18 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { clearActiveInlineMenu, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
-import { getCurrentTopicSettings, updateCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
+import {
+  getCurrentTopicSettings,
+  updateCurrentTopicSettings,
+  updateTopicDefaults,
+} from "../../app/stores/settings-store.js";
 
 function getTopicThreadId(ctx: Context): number | undefined {
   const message = ctx.callbackQuery?.message;
-  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
+  const threadId =
+    message && "message_thread_id" in message
+      ? (message as { message_thread_id?: number }).message_thread_id
+      : undefined;
   return typeof threadId === "number" ? threadId : undefined;
 }
 
@@ -26,18 +38,43 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
 
   const threadId = getTopicThreadId(ctx);
   try {
-    const topic = getCurrentTopicSettings();
-    const currentSession = getCurrentSession();
-    const sessionId = topic && currentSession?.id ? currentSession.id : undefined;
-    if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id, sessionId, threadId);
-    if (pinnedMessageManager.getContextLimit() === 0) await pinnedMessageManager.refreshContextLimit();
+    const variantId = callbackQuery.data.slice("variant:".length).trim();
+    if (!variantId) {
+      await ctx.answerCallbackQuery({ text: "Invalid variant selection.", show_alert: true });
+      return true;
+    }
 
-    const variantId = callbackQuery.data.replace("variant:", "");
     const currentModel = getStoredModel();
     if (!currentModel.providerID || !currentModel.modelID) {
       logger.error("[VariantHandler] No model selected");
       await notify(ctx, "variant.model_not_selected_callback");
       return true;
+    }
+
+    // Re-validate against live OpenCode metadata. This protects against stale
+    // inline buttons, model switches, disabled variants, and config changes.
+    const supported = await validateVariantForModel(
+      currentModel.providerID,
+      currentModel.modelID,
+      variantId,
+    );
+    if (!supported) {
+      logger.warn(
+        `[VariantHandler] Rejected unsupported/disabled variant ${variantId} for ${currentModel.providerID}/${currentModel.modelID}`,
+      );
+      await ctx.answerCallbackQuery({
+        text: "This variant is not supported by the selected model.",
+        show_alert: true,
+      });
+      return true;
+    }
+
+    const topic = getCurrentTopicSettings();
+    const currentSession = getCurrentSession();
+    const sessionId = topic && currentSession?.id ? currentSession.id : undefined;
+    if (ctx.chat) keyboardManager.initialize(ctx.api, ctx.chat.id, sessionId, threadId);
+    if (pinnedMessageManager.getContextLimit() === 0) {
+      await pinnedMessageManager.refreshContextLimit();
     }
 
     if (topic) {
@@ -52,15 +89,32 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
     keyboardManager.updateModel(updatedModel, sessionId);
     keyboardManager.updateVariant(variantId, sessionId);
     const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
+    const contextInfo =
+      pinnedMessageManager.getContextInfo() ??
+      (pinnedMessageManager.getContextLimit() > 0
+        ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
+        : null);
     keyboardManager.updateAgent(currentAgent, sessionId);
     if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, sessionId);
     const keyboard = sessionId
       ? keyboardManager.getKeyboard(sessionId)
-      : createMainKeyboard(currentAgent, updatedModel, contextInfo ?? undefined, formatVariantForButton(variantId));
-    if (!keyboard) throw new Error(`No Topic keyboard state available for variant selection: session=${sessionId ?? "none"}`);
+      : createMainKeyboard(
+          currentAgent,
+          updatedModel,
+          contextInfo ?? undefined,
+          formatVariantForButton(variantId),
+        );
+    if (!keyboard) {
+      throw new Error(
+        `No Topic keyboard state available for variant selection: session=${sessionId ?? "none"}`,
+      );
+    }
     clearActiveInlineMenu("variant_selected", ctx.chat?.id, threadId);
-    await switched(ctx, t("variant.changed_message", { name: formatVariantForDisplay(variantId) }), keyboard);
+    await switched(
+      ctx,
+      t("variant.changed_message", { name: formatVariantForDisplay(variantId) }),
+      keyboard,
+    );
     return true;
   } catch (err) {
     clearActiveInlineMenu("variant_select_error", ctx.chat?.id, threadId);
