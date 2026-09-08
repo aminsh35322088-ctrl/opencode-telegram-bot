@@ -15,6 +15,26 @@ const baseClient = createOpencodeClient({
   headers: config.opencode.password ? { Authorization: getAuth() } : undefined,
 });
 
+// prompt_async is a fire-and-forget endpoint and should return 204 immediately.
+// A stalled HTTP response must never pin the Telegram update handler for minutes.
+// Keep this timeout only on the dispatch client; normal status/messages/event calls
+// must not inherit it because those operations can legitimately be long-lived.
+const PROMPT_DISPATCH_TIMEOUT_MS = 15_000;
+const promptDispatchFetch: typeof fetch = (input, init) =>
+  fetch(input, {
+    ...init,
+    signal: AbortSignal.any([
+      init?.signal ?? new AbortController().signal,
+      AbortSignal.timeout(PROMPT_DISPATCH_TIMEOUT_MS),
+    ]),
+  });
+
+const promptDispatchClient = createOpencodeClient({
+  baseUrl: config.opencode.apiUrl,
+  headers: config.opencode.password ? { Authorization: getAuth() } : undefined,
+  fetch: promptDispatchFetch,
+});
+
 type PromptPart = { type?: string; text?: string };
 type PromptOptions = {
   sessionID: string;
@@ -56,7 +76,7 @@ async function searchMemoriesWithinBudget(options: { query: string; projectDirec
   }
 }
 
-const originalPromptAsync = baseClient.session.promptAsync.bind(baseClient.session);
+const originalPromptAsync = promptDispatchClient.session.promptAsync.bind(promptDispatchClient.session);
 const originalSessionCreate = baseClient.session.create.bind(baseClient.session);
 
 async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown> {
@@ -81,10 +101,37 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
   const promptChars = countPromptChars(parts);
   logger.info(`[LLM Prompt] session=${options.sessionID} model=${model} agent=${options.agent ?? "default"} parts=${parts.length} promptChars=${promptChars} memoryInjected=${parts.length > originalParts.length} prepMs=${Date.now() - promptStart}`);
   const dispatchStartedAt = Date.now();
-  const result = await originalPromptAsync(promptOptions);
-  logger.info(`[LLM Prompt] session=${options.sessionID} promptAsync returned in ${Date.now() - dispatchStartedAt}ms`);
-  observePromptUsage(baseClient as never, { sessionId: options.sessionID, directory: options.directory, model, promptChars });
-  return result;
+  try {
+    const result = await originalPromptAsync(promptOptions);
+    logger.info(`[LLM Prompt] session=${options.sessionID} promptAsync returned in ${Date.now() - dispatchStartedAt}ms`);
+    observePromptUsage(baseClient as never, { sessionId: options.sessionID, directory: options.directory, model, promptChars });
+    return result;
+  } catch (error) {
+    const elapsedMs = Date.now() - dispatchStartedAt;
+    // If the HTTP transport timed out, determine whether OpenCode accepted the
+    // prompt before surfacing an error. This prevents duplicate retries while
+    // guaranteeing that a broken transport cannot leave Telegram waiting forever.
+    if (elapsedMs >= PROMPT_DISPATCH_TIMEOUT_MS) {
+      try {
+        const status = await baseClient.session.status({ directory: options.directory });
+        const statusRecord = status.data && typeof status.data === "object"
+          ? (status.data as Record<string, unknown>)[options.sessionID]
+          : undefined;
+        const sessionStatus = statusRecord && typeof statusRecord === "object"
+          ? (statusRecord as Record<string, unknown>).type
+          : undefined;
+        if (sessionStatus === "busy") {
+          logger.warn(`[LLM Prompt] prompt_async transport timed out after ${elapsedMs}ms, but OpenCode reports session=${options.sessionID} busy; prompt was accepted and will continue`);
+          observePromptUsage(baseClient as never, { sessionId: options.sessionID, directory: options.directory, model, promptChars });
+          return undefined;
+        }
+      } catch (statusError) {
+        logger.warn(`[LLM Prompt] Dispatch timed out after ${elapsedMs}ms and acceptance status could not be confirmed:`, statusError);
+      }
+    }
+    logger.error(`[LLM Prompt] prompt_async dispatch failed after ${elapsedMs}ms:`, error);
+    throw error;
+  }
 }
 
 async function instrumentedSessionCreate(options: SessionCreateOptions): Promise<unknown> {
