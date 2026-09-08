@@ -23,6 +23,12 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "providers", description: "🔌 Manage AI providers" },
   { command: "rename", description: "🏷️ Rename the current session" },
   { command: "abort", description: "🛑 Stop the current task" },
+  { command: "stop", description: "🛑 Alias for /abort" },
+  { command: "pause", description: "⏸️ Pause the current AI Topic run" },
+  { command: "resume", description: "▶️ Resume the paused AI Topic run" },
+  { command: "model", description: "🧠 Open Model Center in the current AI Topic" },
+  { command: "compact", description: "📦 Toggle compact output mode in the current AI Topic" },
+  { command: "delete_topic", description: "🗑️ Delete the current AI Topic" },
   { command: "image", description: "🎨 Generate an image with AI" },
   { command: "edit", description: "✨ Edit a photo with AI" },
 ];
