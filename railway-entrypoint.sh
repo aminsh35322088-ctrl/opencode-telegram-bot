@@ -13,6 +13,7 @@ OPENCODE_TELEGRAM_WORKSPACE="/data/workspace"
 OPENCODE_EXPERIMENTAL_LSP_TOOL="true"
 OPENCODE_ENABLE_EXA="1"
 PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
+OPENCODE_TEST_DEPS="${OPENCODE_TEST_DEPS:-/opt/test-deps/node_modules}"
 OPENCODE_DATA_VOLUME_BUDGET_MB="${OPENCODE_DATA_VOLUME_BUDGET_MB:-500}"
 OPENCODE_DATA_VOLUME_WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
 OPENCODE_DATA_VOLUME_CRITICAL_MB="${OPENCODE_DATA_VOLUME_CRITICAL_MB:-100}"
@@ -22,7 +23,7 @@ GH_HOST="${GH_HOST:-github.com}"
 GH_PROMPT_DISABLED="1"
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
-export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH
+export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH OPENCODE_TEST_DEPS
 export OPENCODE_DATA_VOLUME_BUDGET_MB OPENCODE_DATA_VOLUME_WARN_MB OPENCODE_DATA_VOLUME_CRITICAL_MB
 export GH_HOST GH_PROMPT_DISABLED
 
@@ -79,12 +80,16 @@ ln -sfn /data/workspace /tmp/site
 # The persistent workspace must never own a second dependency tree. Replace
 # only node_modules (a disposable/generated directory) with the image-baked tree.
 if [ -e /data/workspace/node_modules ] || [ -L /data/workspace/node_modules ]; then
-  if [ "$(readlink /data/workspace/node_modules 2>/dev/null || true)" != "/opt/test-deps" ]; then
-    printf '%s\n' "[railway] Removing workspace-local node_modules; using baked /opt/test-deps instead"
+  if [ "$(readlink /data/workspace/node_modules 2>/dev/null || true)" != "$OPENCODE_TEST_DEPS" ]; then
+    printf '%s\n' "[railway] Removing workspace-local node_modules; using baked ${OPENCODE_TEST_DEPS} instead"
     rm -rf /data/workspace/node_modules
   fi
 fi
-ln -sfn /opt/test-deps /data/workspace/node_modules
+if [ ! -d "$OPENCODE_TEST_DEPS" ]; then
+  printf '%s\n' "[railway] FATAL: baked validation dependency tree is missing: ${OPENCODE_TEST_DEPS}" >&2
+  exit 1
+fi
+ln -sfn "$OPENCODE_TEST_DEPS" /data/workspace/node_modules
 
 if [ -d /app/.opencode/tools ]; then
   cp -a /app/.opencode/tools/. "$GLOBAL_TOOLS_DIR/"
@@ -181,6 +186,7 @@ printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Validation deps: ${OPENCODE_TEST_DEPS}"
 printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
