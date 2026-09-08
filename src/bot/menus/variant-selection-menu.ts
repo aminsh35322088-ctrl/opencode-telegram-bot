@@ -1,4 +1,4 @@
-import { Context } from "grammy";
+import { Context, InlineKeyboard } from "grammy";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import {
   formatVariantForDisplay,
@@ -10,8 +10,8 @@ import { t } from "../../i18n/index.js";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
 /** Build the active variant choices for the current Topic/model. */
-export async function buildVariantSelectionMenu(currentVariant: string, providerID: string, modelID: string): Promise<import("grammy").InlineKeyboard> {
-  const keyboard = new (await import("grammy")).InlineKeyboard();
+export async function buildVariantSelectionMenu(currentVariant: string, providerID: string, modelID: string): Promise<InlineKeyboard> {
+  const keyboard = new InlineKeyboard();
   const variants = await getAvailableVariants(providerID, modelID);
 
   if (variants.length === 0) {
