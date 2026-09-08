@@ -54,7 +54,7 @@ async function consumeEventStream(stream: AsyncGenerator<unknown, unknown, unkno
       if (isEventLike(result.value)) onEvent(result.value);
     }
   } finally {
-    void iterator.return?.().catch(() => undefined);
+    void iterator.return?.(undefined as never)?.catch(() => undefined);
   }
 }
 
