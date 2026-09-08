@@ -47,14 +47,13 @@ export async function ensureCommandsInitialized(ctx: Context, next: NextFunction
   await next();
 }
 
-function isAiTopicCommandContext(ctx: Context): boolean {
+function isAiTopicCommandContext(): boolean {
   const runtime = getTopicRuntimeContext();
   return runtime?.sessionId !== undefined && typeof runtime.threadId === "number" && runtime.threadId > 1;
 }
 
-async function rejectNonAiTopicControl(ctx: Context, command: string): Promise<boolean> {
-  if (isAiTopicCommandContext(ctx)) return false;
-  await ctx.reply(`ℹ️ /${command} is only available inside an AI Topic.`);
+async function rejectNonAiTopicControl(command: string): Promise<boolean> {
+  if (isAiTopicCommandContext()) return false;
   return true;
 }
 
@@ -107,19 +106,19 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.command("abort", abortCommand);
   bot.command("stop", abortCommand);
   bot.command("pause", async (ctx) => {
-    if (await rejectNonAiTopicControl(ctx, "pause")) return;
+    if (await rejectNonAiTopicControl("pause")) { await ctx.reply("ℹ️ /pause is only available inside an AI Topic."); return; }
     await pauseCurrentChat(ctx);
   });
   bot.command("resume", async (ctx) => {
-    if (await rejectNonAiTopicControl(ctx, "resume")) return;
-    await resumePausedChat(ctx, deps);
+    if (await rejectNonAiTopicControl("resume")) { await ctx.reply("ℹ️ /resume is only available inside an AI Topic."); return; }
+    await resumePausedChat(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
   bot.command("model", async (ctx) => {
-    if (await rejectNonAiTopicControl(ctx, "model")) return;
+    if (await rejectNonAiTopicControl("model")) { await ctx.reply("ℹ️ /model is only available inside an AI Topic."); return; }
     await showModelCenterMenu(ctx);
   });
   bot.command("compact", async (ctx) => {
-    if (await rejectNonAiTopicControl(ctx, "compact")) return;
+    if (await rejectNonAiTopicControl("compact")) { await ctx.reply("ℹ️ /compact is only available inside an AI Topic."); return; }
     const enabled = !getCompactOutputMode();
     setCompactOutputMode(enabled);
     const runtime = getTopicRuntimeContext();
@@ -127,7 +126,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
     await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`);
   });
   bot.command("delete_topic", async (ctx) => {
-    if (await rejectNonAiTopicControl(ctx, "delete_topic")) return;
+    if (await rejectNonAiTopicControl("delete_topic")) { await ctx.reply("ℹ️ /delete_topic is only available inside an AI Topic."); return; }
     await showTelegramTopicDeleteConfirmation(ctx);
   });
   bot.command("detach", detachCommand);
