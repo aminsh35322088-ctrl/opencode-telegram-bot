@@ -20,6 +20,15 @@ export function setCurrentSession(sessionInfo: SessionInfo): void {
 }
 
 export function getCurrentSession(): SessionInfo | null {
+  const topic = getTopicRuntimeContext();
+  if (topic?.sessionId && topic.directory) {
+    return {
+      id: topic.sessionId,
+      title: "Telegram Topic",
+      directory: topic.directory,
+    };
+  }
+
   return getSettingsSession() ?? null;
 }
 
