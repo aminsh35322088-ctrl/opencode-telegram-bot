@@ -33,6 +33,10 @@ export function stashRawReplyKeyboardText(ctx: object, text: string): void {
   rawReplyKeyboardTextByContext.set(ctx, text);
 }
 
+export function getRawReplyKeyboardText(ctx: object): string | undefined {
+  return rawReplyKeyboardTextByContext.get(ctx);
+}
+
 function normalize(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
 }
