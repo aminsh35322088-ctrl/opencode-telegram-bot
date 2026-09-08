@@ -35,8 +35,8 @@ jobs:
       - name: Install project dependencies
         run: npm ci
 
-      - name: Install CI test dependencies
-        run: npm install --no-save --package-lock=false vitest@3.2.4 @vitest/coverage-v8@3.2.4
+      - name: Install CI test dependency
+        run: npm install --no-save --package-lock=false vitest@3.2.4
 
       - name: Changelog policy
         if: github.event_name == 'pull_request'
