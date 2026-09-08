@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install CI-only test runner
+        run: npm install --no-save --package-lock=false vitest@3.2.4
+
+      - name: Materialize CI-only tests
+        run: |
+          rm -rf tests
+          mkdir -p tests
+          cp -R .github/ci-tests/tests/. tests/
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Run test suite
+        run: npx vitest run --config .github/ci-tests/vitest.config.ts
+
+      - name: Cleanup CI-only files
+        if: always()
+        run: rm -rf tests node_modules/vitest node_modules/@vitest
