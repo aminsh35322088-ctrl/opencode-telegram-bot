@@ -66,6 +66,13 @@ function createAbortableStream(signal: AbortSignal): AsyncGenerator<Event, void,
   })();
 }
 
+function createNeverResolvingStream(): AsyncGenerator<Event, void, unknown> {
+  return (async function* () {
+    await new Promise(() => undefined);
+    yield undefined as never;
+  })();
+}
+
 function flushImmediate(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
@@ -76,6 +83,7 @@ describe("opencode/events", () => {
     bindings.byDirectory.mockReset().mockResolvedValue(null);
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectoryList.mockReset().mockResolvedValue([]);
+    __setSseIdleTimeoutForTests(30_000);
   });
   afterEach(() => {
     stopEventListening();
@@ -248,6 +256,25 @@ describe("opencode/events", () => {
       { timeout: 4000 },
     );
 
+    stopEventListening();
+    await subscription;
+  });
+
+  it("reconnects when the SSE stream becomes idle", async () => {
+    vi.useFakeTimers();
+    __setSseIdleTimeoutForTests(1000);
+    subscribeMock
+      .mockImplementationOnce(async () => ({ stream: createNeverResolvingStream() }))
+      .mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+        stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+      }));
+
+    const subscription = subscribeToEvents("D:/repo", vi.fn());
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(subscribeMock).toHaveBeenCalledTimes(2);
     stopEventListening();
     await subscription;
   });
