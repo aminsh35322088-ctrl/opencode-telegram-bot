@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -34,144 +34,6 @@ jobs:
           mkdir -p tests
           cp -R .github/ci-tests/tests/. tests/
 
-      - name: Apply pending AI UI patch
-        if: github.event_name == 'push' && !contains(github.event.head_commit.message, 'fix: polish AI Topic settings')
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          settings = Path('src/bot/menus/settings-menu.ts')
-          text = settings.read_text()
-          old = '''        "🧵 <b>Topic Settings</b>",
-        "",
-        "🎯 <b>Customize this Topic</b>",
-        "These settings apply only here.",
-        "",
-        `🤖 <b>Model</b> · ${model}`,
-        `🧑‍💻 <b>Agent</b> · ${agent}`,
-        `🎛 <b>Variant</b> · ${variant}`,
-        "",
-        "💬 <b>Response</b> · Output, thinking & delivery",
-        `📥 <b>Prompt Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
-        "🧠 <b>Context</b> · Usage & window health",'''
-          new = '''        "🧵 <b>Topic Settings</b>",
-        "",
-        "🤖 <b>Model</b>",
-        `<code>${model}</code>`,
-        "",
-        `🧑‍💻 <b>Agent</b> · ${agent}`,
-        `🎛 <b>Variant</b> · ${variant}`,
-        "",
-        "💬 <b>Response</b> · Output & thinking",
-        `📥 <b>Prompt Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
-        "🧠 <b>Context Health</b> · Usage & window",'''
-          if old not in text:
-              raise SystemExit('AI Topic Settings root block not found')
-          settings.write_text(text.replace(old, new, 1))
-
-          for path in [
-              'src/bot/callbacks/callback-router.ts',
-              'src/bot/routers/reply-keyboard-router.ts',
-          ]:
-              p = Path(path)
-              text = p.read_text()
-              if 'hasActiveImageAiProvider' not in text:
-                  anchor = ('import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";'
-                            if path.endswith('callback-router.ts')
-                            else 'import { clearImageMode } from "../../app/services/image-mode-service.js";')
-                  if anchor not in text:
-                      raise SystemExit(f'import anchor not found: {path}')
-                  text = text.replace(anchor, anchor + '\nimport { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";', 1)
-              if path.endswith('callback-router.ts'):
-                  pattern = re.compile(r'async function handleImageAiCallback\(ctx: Context, data: string\): Promise<boolean> \{.*?\n\}', re.S)
-                  replacement = '''async function handleImageAiCallback(ctx: Context, data: string): Promise<boolean> {
-  const sessionId = await resolveCallbackTopicSession(ctx) ?? getCurrentSession()?.id;
-  if (data === "imageai:generate") {
-    if (!(await hasActiveImageAiProvider("generate"))) {
-      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
-      return true;
-    }
-    activateImageMode("generate", sessionId);
-    clearInteractionErrorState("interaction", "image_ai_mode_selected");
-    await ctx.answerCallbackQuery().catch(() => {});
-    await ctx.editMessageText("🎨 <b>Image AI · Generate</b>\\n\\nSend a text or voice prompt and I’ll generate a new image.", { parse_mode: "HTML" }).catch(() => {});
-    return true;
-  }
-  if (data === "imageai:edit") {
-    if (!(await hasActiveImageAiProvider("edit"))) {
-      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
-      return true;
-    }
-    activateImageMode("edit", sessionId);
-    clearInteractionErrorState("interaction", "image_ai_mode_selected");
-    await ctx.answerCallbackQuery().catch(() => {});
-    await ctx.editMessageText("🖌️ <b>Image AI · Edit</b>\\n\\nSend a photo with a caption/instruction, or send a photo first and then the edit instruction.", { parse_mode: "HTML" }).catch(() => {});
-    return true;
-  }
-  return false;
-}'''
-                  text, count = pattern.subn(replacement, text, count=1)
-                  if count != 1:
-                      raise SystemExit('Image AI callback handler not found')
-              else:
-                  old = '''    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) { await ctx.reply("🎨 <b>Image AI</b>\\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") }); return; }'''
-                  new = '''    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) {
-      const imageAiConfigured = (await hasActiveImageAiProvider("generate")) || (await hasActiveImageAiProvider("edit"));
-      if (!imageAiConfigured) {
-        await ctx.reply("image ai not configured");
-        return;
-      }
-      await ctx.reply("🎨 <b>Image AI</b>\\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") });
-      return;
-    }'''
-                  if old not in text:
-                      raise SystemExit('Reply Keyboard Image AI branch not found')
-                  text = text.replace(old, new, 1)
-              p.write_text(text)
-
-          keyboard = Path('src/bot/keyboards/main-reply-keyboard.ts')
-          text = keyboard.read_text()
-          if 'keyboard.text(MAIN_BUTTONS.imageAi).row();' not in text:
-              old = '  keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();\n'
-              new = '  keyboard.text(MAIN_BUTTONS.imageAi).row();\n  keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();\n'
-              if old not in text:
-                  raise SystemExit('AI Topic keyboard insertion anchor not found')
-              keyboard.write_text(text.replace(old, new, 1))
-
-          kbtest = Path('.github/ci-tests/tests/bot/keyboards/main-reply-keyboard.test.ts')
-          text = kbtest.read_text()
-          expected_old = '''    expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
-      [{ text: "🎨 Image AI" }],
-      [{ text: "🧠 GPT 4o" }],
-      [{ text: "⚙️ Topic Settings" }, { text: "🗑️ Delete Chat" }],
-    ]);'''
-          expected_new = '''    expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
-      [{ text: "🎨 Image AI" }],
-      [{ text: "🗑️ Delete Chat" }, { text: "📦 Compact: ON" }],
-      [{ text: "🧠 GPT 4o" }, { text: "⚙️ Topic Settings" }],
-    ]);'''
-          if expected_old in text:
-              text = text.replace(expected_old, expected_new, 1)
-          marker = '  it("creates custom agent keyboard and remove payload", () => {'
-          if marker in text and 'always includes Image AI in an idle AI Topic keyboard' not in text:
-              extra = '''  it("always includes Image AI in an idle AI Topic keyboard", () => {
-    const keyboard = createMainKeyboard(
-      { providerID: "openrouter", modelID: "openai/gpt-4o" },
-      { compactOutputMode: false, isTopic: true },
-    );
-    expect(keyboard.keyboard.flat().map(getButtonText)).toContain("🎨 Image AI");
-  });
-
-'''
-              text = text.replace(marker, extra + marker, 1)
-          kbtest.write_text(text)
-          print('AI UI patch applied')
-          PY
-
       - name: Lint
         run: npm run lint
 
@@ -183,19 +45,6 @@ jobs:
 
       - name: Run test suite
         run: npx vitest run --config .github/ci-tests/vitest.config.ts
-
-      - name: Commit validated AI UI patch
-        if: github.event_name == 'push' && !contains(github.event.head_commit.message, 'fix: polish AI Topic settings')
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/bot/menus/settings-menu.ts src/bot/keyboards/main-reply-keyboard.ts src/bot/callbacks/callback-router.ts src/bot/routers/reply-keyboard-router.ts .github/ci-tests/tests/bot/keyboards/main-reply-keyboard.test.ts
-          git rm .github/workflows/_temp_ai_ui_fix.yml || true
-          git diff --cached --check
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m "fix: polish AI Topic settings and Image AI control [skip ci]"
-          git push
 
       - name: Cleanup CI-only files
         if: always()
