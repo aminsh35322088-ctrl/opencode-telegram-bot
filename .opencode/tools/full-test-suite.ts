@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import { tool } from "@opencode-ai/plugin";
 
 const repository = process.env.GITHUB_REPOSITORY ?? "aminsh35322088-ctrl/opencode-telegram-bot";
-const defaultRef = process.env.GITHUB_REF_NAME ?? "main";
-const workflow = "full-test-suite.yml";
-const triggerTimeoutMs = 30_000;
+const workflow = "ci.yml";
+const ref = process.env.GITHUB_REF_NAME ?? "main";
+const timeoutMs = 30_000;
 const watchTimeoutMs = 20 * 60_000;
 const maxOutputBytes = 128 * 1024;
 
@@ -12,207 +12,166 @@ type CommandResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
-  durationMs: number;
 };
 
-function appendOutput(current: string, chunk: Buffer | string): string {
-  const next = current + chunk.toString();
-  return next.length > maxOutputBytes ? next.slice(-maxOutputBytes) : next;
-}
-
-function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs: number,
-): Promise<CommandResult> {
-  const startedAt = Date.now();
+function run(command: string, args: string[], timeout: number): Promise<CommandResult> {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    let timeoutHandle: NodeJS.Timeout | undefined;
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+    });
 
-    const finish = (exitCode: number): void => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      resolve({
-        exitCode,
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
-        durationMs: Date.now() - startedAt,
-      });
+    const append = (current: string, chunk: Buffer | string) => {
+      const value = current + chunk.toString();
+      return value.length > maxOutputBytes ? value.slice(-maxOutputBytes) : value;
     };
 
-    let child;
-    try {
-      child = spawn(command, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
-      });
-    } catch (error) {
-      finish(1);
-      stderr = String(error);
-      return;
-    }
+    const finish = (exitCode: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ exitCode, stdout: stdout.trim(), stderr: stderr.trim() });
+    };
 
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      stdout = appendOutput(stdout, chunk);
+    child.stdout?.on("data", (chunk) => {
+      stdout = append(stdout, chunk);
     });
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr = appendOutput(stderr, chunk);
+    child.stderr?.on("data", (chunk) => {
+      stderr = append(stderr, chunk);
     });
-    child.on("error", (error) => {
-      if (!stderr) stderr = String(error);
+    child.once("error", (error) => {
+      stderr = append(stderr, String(error));
       finish(1);
     });
     child.once("close", (code, signal) => {
       finish(code ?? (signal ? 1 : 0));
     });
 
-    timeoutHandle = setTimeout(() => {
-      stderr = `${stderr}\nCommand timed out after ${timeoutMs}ms.`.trim();
+    const timer = setTimeout(() => {
+      stderr = append(stderr, `Command timed out after ${timeout}ms.`);
       try {
         child.kill("SIGTERM");
       } catch {
-        // Child may already have exited.
+        // The child may already have exited.
       }
       finish(124);
-    }, timeoutMs);
+    }, timeout);
   });
-}
-
-async function getLatestDispatchedRunId(): Promise<number | null> {
-  const result = await runCommand(
-    "gh",
-    [
-      "run",
-      "list",
-      "--repo",
-      repository,
-      "--workflow",
-      workflow,
-      "--event",
-      "workflow_dispatch",
-      "--limit",
-      "10",
-      "--json",
-      "databaseId,headBranch,status,createdAt",
-      "--jq",
-      `[.[] | select(.headBranch == "${defaultRef}")] | sort_by(.createdAt) | reverse | .[0].databaseId // empty`,
-    ],
-    triggerTimeoutMs,
-  );
-
-  if (result.exitCode !== 0 || !result.stdout) {
-    return null;
-  }
-
-  const runId = Number(result.stdout.trim());
-  return Number.isSafeInteger(runId) && runId > 0 ? runId : null;
 }
 
 export default tool({
   description:
-    "Run the complete repository validation suite in GitHub Actions. Tests and their dependencies never run inside the Railway production container. The command is bounded and returns the GitHub Actions result.",
+    "Run the complete repository validation suite directly in GitHub Actions. Never installs or executes test dependencies inside Railway.",
   args: {},
   async execute() {
-    const trigger = await runCommand(
+    const dispatch = await run(
       "gh",
-      [
-        "workflow",
-        "run",
-        workflow,
-        "--repo",
-        repository,
-        "--ref",
-        defaultRef,
-        "-f",
-        `ref=${defaultRef}`,
-      ],
-      triggerTimeoutMs,
+      ["workflow", "run", workflow, "--repo", repository, "--ref", ref],
+      timeoutMs,
     );
 
-    if (trigger.exitCode !== 0) {
+    if (dispatch.exitCode !== 0) {
       return JSON.stringify(
         {
           ok: false,
-          stage: "trigger",
+          stage: "dispatch",
           repository,
           workflow,
-          ref: defaultRef,
-          error: trigger.stderr || trigger.stdout || "Failed to trigger GitHub Actions workflow.",
-          durationMs: trigger.durationMs,
+          ref,
+          error: dispatch.stderr || dispatch.stdout || "Failed to dispatch GitHub Actions.",
         },
         null,
         2,
       );
     }
 
-    // GitHub creates the workflow run asynchronously. Poll briefly until the
-    // dispatch appears, rather than assuming the newest run immediately.
-    let runId: number | null = null;
-    const lookupDeadline = Date.now() + triggerTimeoutMs;
-    while (!runId && Date.now() < lookupDeadline) {
-      runId = await getLatestDispatchedRunId();
-      if (!runId) await new Promise((resolve) => setTimeout(resolve, 1_000));
-    }
+    const waitForRun = await run(
+      "gh",
+      [
+        "run",
+        "list",
+        "--repo",
+        repository,
+        "--workflow",
+        workflow,
+        "--branch",
+        ref,
+        "--limit",
+        "1",
+        "--json",
+        "databaseId,status,conclusion,headSha,url",
+      ],
+      timeoutMs,
+    );
 
-    if (!runId) {
+    if (waitForRun.exitCode !== 0 || !waitForRun.stdout) {
       return JSON.stringify(
         {
           ok: false,
           stage: "locate-run",
           repository,
           workflow,
-          ref: defaultRef,
-          error: "Workflow was dispatched but its run could not be located within the trigger window.",
-          triggerOutput: trigger.stdout,
+          ref,
+          error: waitForRun.stderr || "Workflow dispatched but run could not be located.",
         },
         null,
         2,
       );
     }
 
-    const watch = await runCommand(
+    let runInfo: { databaseId?: number; status?: string; conclusion?: string | null; headSha?: string; url?: string };
+    try {
+      runInfo = JSON.parse(waitForRun.stdout)[0] ?? {};
+    } catch {
+      return JSON.stringify(
+        { ok: false, stage: "parse-run", error: "GitHub CLI returned invalid run metadata.", output: waitForRun.stdout },
+        null,
+        2,
+      );
+    }
+
+    const runId = runInfo.databaseId;
+    if (!runId) {
+      return JSON.stringify(
+        { ok: false, stage: "locate-run", repository, workflow, ref, error: "No workflow run ID was returned." },
+        null,
+        2,
+      );
+    }
+
+    const watched = await run(
       "gh",
       ["run", "watch", String(runId), "--repo", repository, "--exit-status"],
       watchTimeoutMs,
     );
 
-    const details = await runCommand(
+    const details = await run(
       "gh",
-      [
-        "run",
-        "view",
-        String(runId),
-        "--repo",
-        repository,
-        "--json",
-        "databaseId,status,conclusion,headBranch,headSha,url,jobs",
-      ],
-      triggerTimeoutMs,
+      ["run", "view", String(runId), "--repo", repository, "--json", "databaseId,status,conclusion,headSha,url,jobs"],
+      timeoutMs,
     );
 
-    let runDetails: unknown = details.stdout;
+    let finalRun: unknown = details.stdout;
     try {
-      runDetails = JSON.parse(details.stdout);
+      finalRun = JSON.parse(details.stdout);
     } catch {
-      // Preserve raw output when GitHub CLI did not return JSON.
+      // Preserve raw CLI output.
     }
 
     return JSON.stringify(
       {
-        ok: watch.exitCode === 0,
+        ok: watched.exitCode === 0,
         stage: "complete",
         repository,
         workflow,
-        ref: defaultRef,
+        ref,
         runId,
-        run: runDetails,
-        watchOutput: watch.stdout,
-        watchError: watch.stderr,
-        durationMs: watch.durationMs,
+        run: finalRun,
+        watchOutput: watched.stdout,
+        watchError: watched.stderr,
       },
       null,
       2,
