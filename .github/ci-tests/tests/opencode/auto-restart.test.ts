@@ -5,6 +5,8 @@ const mocked = vi.hoisted(() => ({
   healthMock: vi.fn(),
   resolveLocalOpencodeTargetMock: vi.fn(),
   startLocalOpencodeServerMock: vi.fn(),
+  findServerPidMock: vi.fn(),
+  killServerProcessMock: vi.fn(),
   notifyReadyMock: vi.fn(),
   notifyUnavailableMock: vi.fn(),
   loggerDebugMock: vi.fn(),
@@ -25,6 +27,8 @@ vi.mock("../../src/opencode/client.js", () => ({ opencodeClient: { global: { hea
 vi.mock("../../src/opencode/process.js", () => ({
   resolveLocalOpencodeTarget: mocked.resolveLocalOpencodeTargetMock,
   startLocalOpencodeServer: mocked.startLocalOpencodeServerMock,
+  findServerPid: mocked.findServerPidMock,
+  killServerProcess: mocked.killServerProcessMock,
 }));
 vi.mock("../../src/opencode/ready-lifecycle.js", () => ({
   opencodeReadyLifecycle: {
@@ -57,6 +61,8 @@ describe("opencode/auto-restart", () => {
     mocked.healthMock.mockReset();
     mocked.resolveLocalOpencodeTargetMock.mockReset();
     mocked.startLocalOpencodeServerMock.mockReset();
+    mocked.findServerPidMock.mockReset();
+    mocked.killServerProcessMock.mockReset();
     mocked.notifyReadyMock.mockReset();
     mocked.notifyUnavailableMock.mockReset();
     mocked.loggerDebugMock.mockReset();
@@ -69,6 +75,8 @@ describe("opencode/auto-restart", () => {
     mocked.config.opencode.monitorIntervalSec = 300;
     mocked.resolveLocalOpencodeTargetMock.mockReturnValue({ host: "localhost", port: 4096 });
     mocked.startLocalOpencodeServerMock.mockReturnValue(createChildProcess(123));
+    mocked.findServerPidMock.mockResolvedValue(null);
+    mocked.killServerProcessMock.mockResolvedValue(true);
     mocked.notifyReadyMock.mockResolvedValue(true);
   });
 
@@ -108,30 +116,32 @@ describe("opencode/auto-restart", () => {
 
     expect(mocked.healthMock).toHaveBeenCalledTimes(2);
     expect(mocked.startLocalOpencodeServerMock).toHaveBeenCalledTimes(1);
+    expect(mocked.findServerPidMock).toHaveBeenCalledWith(4096);
     expect(childProcess.unref).toHaveBeenCalledTimes(1);
     expect(mocked.notifyUnavailableMock).not.toHaveBeenCalled();
     expect(mocked.notifyReadyMock).toHaveBeenCalledWith("auto_restart_startup");
-    expect(mocked.loggerWarnMock).not.toHaveBeenCalledWith(expect.stringContaining("consecutiveFailures=1/2"));
-    expect(mocked.loggerWarnMock).not.toHaveBeenCalledWith(expect.stringContaining("consecutiveFailures=2/2"));
 
     service.stop();
   });
 
-  it("does not spawn a local process in a container when startup spawn is disabled", async () => {
+  it("stops an existing listener before recovery spawn", async () => {
     mocked.config.opencode.autoRestartEnabled = true;
-    vi.stubEnv("OPENCODE_TELEGRAM_CONTAINER", "1");
-    mocked.healthMock.mockRejectedValueOnce(new Error("offline"));
+    mocked.healthMock
+      .mockResolvedValueOnce(healthyResponse())
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(healthyResponse());
+    mocked.findServerPidMock.mockResolvedValueOnce(null).mockResolvedValueOnce(456);
     const service = new OpencodeAutoRestartService();
 
     await service.start();
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
 
-    expect(mocked.healthMock).toHaveBeenCalledTimes(1);
-    expect(mocked.startLocalOpencodeServerMock).not.toHaveBeenCalled();
-    expect(mocked.notifyUnavailableMock).not.toHaveBeenCalled();
-    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
-      expect.stringContaining("local spawn is disabled in this container"),
-    );
-
+    expect(mocked.killServerProcessMock).toHaveBeenCalledWith(456);
+    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(expect.stringContaining("Existing listener found before recovery"));
     service.stop();
   });
 
@@ -212,6 +222,34 @@ describe("opencode/auto-restart", () => {
 
     expect(mocked.startLocalOpencodeServerMock).not.toHaveBeenCalled();
 
+    service.stop();
+  });
+
+  it("recovers immediately when a healthy OpenCode child exits", async () => {
+    mocked.config.opencode.autoRestartEnabled = true;
+    mocked.healthMock.mockResolvedValue(healthyResponse());
+
+    let exitHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+    const childProcess = createChildProcess(987);
+    childProcess.once = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      if (event === "exit") {
+        exitHandler = handler as typeof exitHandler;
+      }
+      return childProcess;
+    }) as ChildProcess["once"];
+    mocked.startLocalOpencodeServerMock.mockReturnValue(childProcess);
+
+    const service = new OpencodeAutoRestartService();
+    mocked.healthMock.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(healthyResponse());
+    await service.start();
+
+    exitHandler?.(1, "SIGTERM");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mocked.loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("OpenCode server exited: pid=987, code=1, signal=SIGTERM"));
+    expect(mocked.notifyUnavailableMock).toHaveBeenCalledWith("process_exit");
+    expect(mocked.startLocalOpencodeServerMock).toHaveBeenCalledTimes(2);
     service.stop();
   });
 });
