@@ -30,15 +30,13 @@ Functional requirements, features, and development status are in [PRODUCT.md](./
 
 ## Runtime environment
 
-Railway is production only. Do not turn the production container into a test runner.
+Railway is production only. Keep production runtime dependencies minimal and deterministic.
 
-The full validation suite runs directly in **GitHub Actions**. CI-only tests live under `.github/ci-tests/` and are materialized only on the GitHub-hosted runner. Test runners and validation-only packages must never be installed into Railway or `/data`.
-
-Dependency changes belong in source control and the GitHub Actions build/validation path.
+Dependency changes belong in source control and are resolved during the normal GitHub/container build process. The running bot must not install or mutate its application dependency graph on demand.
 
 ## AI agent behavior
 
-### GitHub-first validation
+### GitHub-first workflow
 
 After reading this file, use GitHub as the source of truth for repository work.
 
@@ -46,11 +44,11 @@ For code changes:
 1. Inspect the relevant source and existing GitHub history.
 2. Make the smallest correct change.
 3. Push/commit the authorized change to GitHub.
-4. Let `.github/workflows/ci.yml` run on GitHub Actions.
-5. Inspect the Actions result and logs.
-6. Fix failures and repeat until the revision passes.
+4. Inspect the resulting GitHub build/deployment status.
+5. Inspect Railway build/runtime logs after deployment.
+6. Fix failures and repeat until the revision is healthy.
 
-Do not install test dependencies in Railway to imitate CI. Do not create a second runtime dependency tree for validation.
+Do not create a second application dependency tree on the Railway volume. Do not add disposable build tooling to the production image.
 
 ### Surgical changes
 
@@ -58,7 +56,7 @@ Touch only what is necessary. Do not refactor unrelated code or delete unrelated
 
 ### Goal-driven execution
 
-For bugs, identify the root cause, implement the fix, validate the affected path, then validate the repository through GitHub Actions.
+For bugs, identify the root cause, implement the fix, verify the affected path, then verify the repository build and deployment behavior.
 
 ### Communication
 
@@ -70,30 +68,9 @@ For bugs, identify the root cause, implement the fix, validate the affected path
 
 When the user explicitly asks for a fix/change, direct GitHub changes are authorized. Keep commits focused and descriptive.
 
-## Validation policy: GitHub Actions only
-
-GitHub Actions is the canonical and exclusive environment for linting, typechecking, building, and the full test suite.
-
-The canonical workflow is `.github/workflows/ci.yml`.
-
-CI:
-- installs project dependencies on the GitHub runner;
-- installs CI-only test tooling on the GitHub runner;
-- materializes `.github/ci-tests/` temporarily;
-- runs lint, typecheck, build, and tests;
-- removes temporary test files and coverage before finishing.
-
-### Mandatory rules
-
-- Never run `npm install`, `npm ci`, `npm add`, `npx`, or equivalent commands in Railway merely to obtain test tooling.
-- Never ship Vitest or other CI-only validation dependencies in the Railway production image.
-- Never create `/opt/test-deps`, `node_modules.full`, or another baked validation dependency tree.
-- Never materialize CI tests into persistent `/data` workspaces.
-- Runtime diagnostics are operational diagnostics, not test execution.
-
 ## Runtime diagnostics
 
-For a stuck coding session, use the existing runtime diagnostics and recovery tools. Do not turn those tools into a local test runner.
+For a stuck coding session, use the existing runtime diagnostics and recovery tools. Keep operational diagnostics separate from application execution paths.
 
 ## Coding rules
 

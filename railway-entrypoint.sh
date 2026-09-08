@@ -13,7 +13,7 @@ OPENCODE_TELEGRAM_WORKSPACE="/data/workspace"
 OPENCODE_EXPERIMENTAL_LSP_TOOL="true"
 OPENCODE_ENABLE_EXA="1"
 PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
-OPENCODE_TEST_DEPS="${OPENCODE_TEST_DEPS:-/opt/test-deps/node_modules}"
+OPENCODE_RUNTIME_NODE_DEPS="/app/node_modules"
 OPENCODE_DATA_VOLUME_BUDGET_MB="${OPENCODE_DATA_VOLUME_BUDGET_MB:-500}"
 OPENCODE_DATA_VOLUME_WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
 OPENCODE_DATA_VOLUME_CRITICAL_MB="${OPENCODE_DATA_VOLUME_CRITICAL_MB:-100}"
@@ -23,7 +23,7 @@ GH_HOST="${GH_HOST:-github.com}"
 GH_PROMPT_DISABLED="1"
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
 export OPENCODE_MONITOR_INTERVAL_SEC OPENCODE_MODEL_PROVIDER OPENCODE_MODEL_ID OPEN_BROWSER_ROOTS
-export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH OPENCODE_TEST_DEPS
+export OPENCODE_CONFIG_DIR OPENCODE_TELEGRAM_WORKSPACE OPENCODE_EXPERIMENTAL_LSP_TOOL OPENCODE_ENABLE_EXA PLAYWRIGHT_BROWSERS_PATH OPENCODE_RUNTIME_NODE_DEPS
 export OPENCODE_DATA_VOLUME_BUDGET_MB OPENCODE_DATA_VOLUME_WARN_MB OPENCODE_DATA_VOLUME_CRITICAL_MB
 export GH_HOST GH_PROMPT_DISABLED
 
@@ -44,9 +44,9 @@ DATA_USED_MB="$((DATA_USED_KB / 1024))"
 DATA_TOTAL_MB="$((DATA_TOTAL_KB / 1024))"
 printf '%s\n' "[railway] Persistent volume: total=${DATA_TOTAL_MB}MB used=${DATA_USED_MB}MB free=${DATA_FREE_MB}MB budget=${OPENCODE_DATA_VOLUME_BUDGET_MB}MB warn=${OPENCODE_DATA_VOLUME_WARN_MB}MB critical=${OPENCODE_DATA_VOLUME_CRITICAL_MB}MB"
 if [ "$DATA_FREE_MB" -lt "$OPENCODE_DATA_VOLUME_CRITICAL_MB" ]; then
-  printf '%s\n' "[railway] WARNING: /data is below the critical free-space threshold; disk-heavy validation is blocked" >&2
+  printf '%s\n' "[railway] WARNING: /data is below the critical free-space threshold"
 elif [ "$DATA_FREE_MB" -lt "$OPENCODE_DATA_VOLUME_WARN_MB" ]; then
-  printf '%s\n' "[railway] WARNING: /data is below the warning free-space threshold; use /tmp for disposable validation data"
+  printf '%s\n' "[railway] WARNING: /data is below the warning free-space threshold"
 fi
 
 if [ ! -f /app/AGENTS.md ]; then
@@ -77,19 +77,20 @@ if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
 fi
 ln -sfn /data/workspace /tmp/site
 
-# The persistent workspace must never own a second dependency tree. Replace
-# only node_modules (a disposable/generated directory) with the image-baked tree.
+# Keep a single generated dependency tree in the workspace and point it at the
+# production dependency tree baked into the image. This avoids stale dependencies
+# persisting on the Railway volume across deploys.
 if [ -e /data/workspace/node_modules ] || [ -L /data/workspace/node_modules ]; then
-  if [ "$(readlink /data/workspace/node_modules 2>/dev/null || true)" != "$OPENCODE_TEST_DEPS" ]; then
-    printf '%s\n' "[railway] Removing workspace-local node_modules; using baked ${OPENCODE_TEST_DEPS} instead"
+  if [ "$(readlink /data/workspace/node_modules 2>/dev/null || true)" != "$OPENCODE_RUNTIME_NODE_DEPS" ]; then
+    printf '%s\n' "[railway] Removing workspace-local node_modules; using runtime dependencies from ${OPENCODE_RUNTIME_NODE_DEPS}"
     rm -rf /data/workspace/node_modules
   fi
 fi
-if [ ! -d "$OPENCODE_TEST_DEPS" ]; then
-  printf '%s\n' "[railway] FATAL: baked validation dependency tree is missing: ${OPENCODE_TEST_DEPS}" >&2
+if [ ! -d "$OPENCODE_RUNTIME_NODE_DEPS" ]; then
+  printf '%s\n' "[railway] FATAL: runtime dependency tree is missing: ${OPENCODE_RUNTIME_NODE_DEPS}" >&2
   exit 1
 fi
-ln -sfn "$OPENCODE_TEST_DEPS" /data/workspace/node_modules
+ln -sfn "$OPENCODE_RUNTIME_NODE_DEPS" /data/workspace/node_modules
 
 if [ -d /app/.opencode/tools ]; then
   cp -a /app/.opencode/tools/. "$GLOBAL_TOOLS_DIR/"
@@ -186,7 +187,7 @@ printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Validation deps: ${OPENCODE_TEST_DEPS}"
+printf '%s\n' "[railway] Runtime dependencies: ${OPENCODE_RUNTIME_NODE_DEPS}"
 printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
