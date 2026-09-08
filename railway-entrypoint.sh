@@ -35,6 +35,20 @@ INTEGRATION_BIN_DIR="/data/run/integration-bin"
 GH_ACCOUNTS_DIR="/data/.config/gh/accounts"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR" "$GH_ACCOUNTS_DIR"
 
+# OpenCode's global AGENTS.md is loaded into the initial instruction context
+# of every session, before the first user message is sent to the model.
+# Keep the image-baked project contract in the exact XDG global location that
+# OpenCode discovers automatically; do not rely on the session workspace.
+if [ ! -f /app/AGENTS.md ]; then
+  printf '%s\n' "[railway] FATAL: /app/AGENTS.md is missing from the image" >&2
+  exit 1
+fi
+cp /app/AGENTS.md "$GLOBAL_OPENCODE_DIR/AGENTS.md"
+chown node:node "$GLOBAL_OPENCODE_DIR/AGENTS.md"
+AGENTS_SHA="$(sha256sum "$GLOBAL_OPENCODE_DIR/AGENTS.md" | awk '{print $1}')"
+AGENTS_LINES="$(wc -l < "$GLOBAL_OPENCODE_DIR/AGENTS.md" | tr -d ' ')"
+printf '%s\n' "[railway] Global AGENTS.md loaded: ${GLOBAL_OPENCODE_DIR}/AGENTS.md (${AGENTS_LINES} lines, sha256=${AGENTS_SHA})"
+
 if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
   if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     printf '%s\n' "[railway] Migrating image-local workspace contents to persistent volume"
