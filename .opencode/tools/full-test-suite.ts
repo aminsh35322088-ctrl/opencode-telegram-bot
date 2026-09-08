@@ -12,8 +12,10 @@ const bakedBin = path.join(bakedDeps, ".bin");
 const volumeBudgetBytes = Number(process.env.OPENCODE_DATA_VOLUME_BUDGET_MB ?? 500) * 1024 * 1024;
 const criticalFreeBytes = Number(process.env.OPENCODE_DATA_VOLUME_CRITICAL_MB ?? 100) * 1024 * 1024;
 const warningFreeBytes = Number(process.env.OPENCODE_DATA_VOLUME_WARN_MB ?? 150) * 1024 * 1024;
-const defaultCommandTimeoutMs = Number(process.env.OPENCODE_TEST_COMMAND_TIMEOUT_MS ?? 300_000);
+const defaultCommandTimeoutMs = Number(process.env.OPENCODE_TEST_COMMAND_TIMEOUT_MS ?? 120_000);
+const testCommandTimeoutMs = Number(process.env.OPENCODE_TEST_RUNNER_TIMEOUT_MS ?? 180_000);
 const killGraceMs = Number(process.env.OPENCODE_TEST_KILL_GRACE_MS ?? 2_000);
+const postExitDrainMs = Number(process.env.OPENCODE_TEST_POST_EXIT_DRAIN_MS ?? 1_000);
 const maxOutputBytes = 4 * 1024 * 1024;
 
 type CommandResult = {
@@ -56,12 +58,14 @@ async function run(bin: string, args: string[], cwd = workspace, timeout = defau
     let settled = false;
     let timeoutHandle: NodeJS.Timeout | undefined;
     let forceKillHandle: NodeJS.Timeout | undefined;
+    let postExitHandle: NodeJS.Timeout | undefined;
 
     const finish = (exitCode: number) => {
       if (settled) return;
       settled = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (forceKillHandle) clearTimeout(forceKillHandle);
+      if (postExitHandle) clearTimeout(postExitHandle);
       resolve({ command, exitCode, durationMs: Date.now() - started, ...(timedOut ? { timedOut: true } : {}), stdout: stdout.trim(), stderr: stderr.trim() });
     };
 
@@ -74,8 +78,8 @@ async function run(bin: string, args: string[], cwd = workspace, timeout = defau
         env: { ...process.env, CI: "1", NODE_ENV: "test" },
       });
     } catch (error) {
-      finish(1);
       stderr = String(error);
+      finish(1);
       return;
     }
 
@@ -89,8 +93,21 @@ async function run(bin: string, args: string[], cwd = workspace, timeout = defau
       if (!stderr) stderr = String(error);
       finish(1);
     });
-    child.on("close", (code, signal) => {
-      if (timedOut && !stderr.includes("timed out")) stderr = `${stderr}\nCommand timed out after ${timeout}ms and the entire process tree was terminated.`.trim();
+
+    // Do not depend exclusively on the `close` event. `close` waits for stdout
+    // and stderr to close too; a forgotten grandchild can inherit those pipes
+    // after the main process exits and otherwise make a completed command look
+    // hung until the outer hard timeout fires.
+    child.once("exit", (code, signal) => {
+      const exitCode = code ?? (signal ? 1 : 0);
+      if (postExitDrainMs <= 0) {
+        finish(exitCode);
+        return;
+      }
+      postExitHandle = setTimeout(() => finish(exitCode), postExitDrainMs);
+    });
+
+    child.once("close", (code, signal) => {
       finish(code ?? (signal ? 1 : 0));
     });
 
@@ -174,10 +191,10 @@ export default tool({
         results.push(diskCheck);
         return JSON.stringify({ ok: false, blocked: true, reason: "Validation stopped before test runner because /data crossed the critical threshold", disk: diskState(await dataFreeBytes()), results }, null, 2);
       }
-      results.push(await run(path.join(bakedBin, "vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts")], testRoot, Math.max(defaultCommandTimeoutMs, 300_000)));
+      results.push(await run(path.join(bakedBin, "vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts")], testRoot, testCommandTimeoutMs));
       const failed = results.filter((result) => result.exitCode !== 0);
       const after = await dataFreeBytes();
-      return JSON.stringify({ ok: failed.length === 0, diskBefore: diskState(before), diskAfter: diskState(after), diskDeltaMb: Math.floor((before - after) / 1024 / 1024), warningCrossed: before >= warningFreeBytes && after < warningFreeBytes, sandbox: testRoot, commandTimeoutMs: defaultCommandTimeoutMs, results: results.map(({ stderr, ...result }) => ({ ...result, stderr: stderr.slice(-4000) })) }, null, 2);
+      return JSON.stringify({ ok: failed.length === 0, diskBefore: diskState(before), diskAfter: diskState(after), diskDeltaMb: Math.floor((before - after) / 1024 / 1024), warningCrossed: before >= warningFreeBytes && after < warningFreeBytes, sandbox: testRoot, commandTimeoutMs: defaultCommandTimeoutMs, testRunnerTimeoutMs: testCommandTimeoutMs, results: results.map(({ stderr, ...result }) => ({ ...result, stderr: stderr.slice(-4000) })) }, null, 2);
     } finally {
       await fs.rm(testRoot, { recursive: true, force: true });
     }
