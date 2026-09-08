@@ -61,15 +61,17 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       text: [
         "🧵 <b>Topic Settings</b>",
         "",
+        "✨ <b>Your Topic, your rules.</b>",
+        "Customize how this Topic thinks, responds, and behaves.",
+        "",
         "🤖 <b>Model</b>",
         `<code>${model}</code>`,
-        "",
         `🧑‍💻 <b>Agent</b> · ${agent}`,
         `🎛 <b>Variant</b> · ${variant}`,
         "",
         "💬 <b>Response</b> · Output & thinking",
         `📥 <b>Prompt Queue</b> · ${statusPill(getPromptQueueEnabled())}`,
-        "🧠 <b>Context Health</b> · Usage & window",
+        "🧠 <b>Context Health</b> · Token usage & window",
       ].join("\n"),
       keyboard: new InlineKeyboard()
         .text(`🤖 Model · ${model}`, SETTINGS_MODEL_CALLBACK).row()
@@ -151,7 +153,7 @@ export function buildAppearanceSettingsView(): { text: string; keyboard: InlineK
     text: [
       "💬 <b>Response & Output</b>",
       "",
-      "Control exactly how this Topic receives and displays model responses.",
+      "Control how this Topic receives and displays model responses.",
       "",
       `📦 <b>Compact output</b> · ${statusPill(compact)} — keeps responses less verbose when supported.`,
       `🧠 <b>Thinking details</b> · ${statusPill(thinking)} — show reasoning/thinking content when exposed by the provider.`,
@@ -197,10 +199,10 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
       text: [
         "🧠 <b>Context Health</b>",
         "",
-        "Shows the latest observed input-context usage for this Topic.",
+        "Shows the latest context usage for this Topic.",
         "",
         "⚪ <b>No usage observed yet.</b>",
-        "Start a model run and return here to see the live context window estimate.",
+        "Start a model run and return here to see the latest context-window estimate.",
       ].join("\n"),
       keyboard: backButton(),
     };
@@ -211,7 +213,7 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
     text: [
       "🧠 <b>Context Health</b>",
       "",
-      "Live snapshot of the most recently observed model input context.",
+      "Latest snapshot of the model input context for this Topic.",
       "",
       `${health} · ${percent}% used`,
       contextGauge(info.tokensUsed, info.tokensLimit),
