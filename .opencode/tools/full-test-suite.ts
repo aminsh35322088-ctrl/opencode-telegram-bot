@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const workspace = "/data/workspace";
 const testRoot = path.join(os.tmpdir(), "opencode-full-test-suite");
 const bakedDeps = process.env.OPENCODE_TEST_DEPS ?? "/opt/test-deps";
+const bakedBin = path.join(bakedDeps, ".bin");
 const volumeBudgetBytes = Number(process.env.OPENCODE_DATA_VOLUME_BUDGET_MB ?? 500) * 1024 * 1024;
 const criticalFreeBytes = Number(process.env.OPENCODE_DATA_VOLUME_CRITICAL_MB ?? 100) * 1024 * 1024;
 const warningFreeBytes = Number(process.env.OPENCODE_DATA_VOLUME_WARN_MB ?? 150) * 1024 * 1024;
@@ -22,11 +23,7 @@ async function run(bin: string, args: string[], cwd = workspace, timeout = 120_0
       cwd,
       timeout,
       maxBuffer: 4 * 1024 * 1024,
-      env: {
-        ...process.env,
-        CI: "1",
-        NODE_ENV: "test",
-      },
+      env: { ...process.env, CI: "1", NODE_ENV: "test" },
     });
     return { command: [bin, ...args].join(" "), exitCode: 0, durationMs: Date.now() - started, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
   } catch (error) {
@@ -55,8 +52,29 @@ async function prepareSandbox(): Promise<void> {
   await fs.rm(testRoot, { recursive: true, force: true });
   await fs.mkdir(testRoot, { recursive: true });
   await fs.cp(path.join(workspace, ".github/ci-tests/tests"), path.join(testRoot, "tests"), { recursive: true });
-  await fs.cp(path.join(workspace, ".github/ci-tests/tsconfig.test.json"), path.join(testRoot, "tsconfig.test.json"));
-  await fs.cp(path.join(workspace, "tsconfig.json"), path.join(testRoot, "tsconfig.json"));
+  const baseTsconfig = JSON.parse(await fs.readFile(path.join(workspace, "tsconfig.json"), "utf8")) as Record<string, unknown>;
+  const baseCompilerOptions = (baseTsconfig.compilerOptions ?? {}) as Record<string, unknown>;
+  await fs.writeFile(path.join(testRoot, "tsconfig.json"), JSON.stringify({
+    ...baseTsconfig,
+    compilerOptions: {
+      ...baseCompilerOptions,
+      outDir: path.join(testRoot, "dist"),
+      rootDir: ".",
+      tsBuildInfoFile: path.join(testRoot, "build.tsbuildinfo"),
+    },
+    include: ["src/**/*"],
+    exclude: ["node_modules", "**/*.test.ts"],
+  }));
+  await fs.writeFile(path.join(testRoot, "tsconfig.test.json"), JSON.stringify({
+    extends: "./tsconfig.json",
+    compilerOptions: {
+      rootDir: ".",
+      noEmit: true,
+      tsBuildInfoFile: path.join(testRoot, "test.tsbuildinfo"),
+    },
+    include: ["src/**/*", "tests/**/*"],
+    exclude: ["node_modules", "dist"],
+  }));
   await fs.symlink(path.join(workspace, "src"), path.join(testRoot, "src"));
   await fs.symlink(bakedDeps, path.join(testRoot, "node_modules"));
   await fs.writeFile(
@@ -65,8 +83,12 @@ async function prepareSandbox(): Promise<void> {
   );
 }
 
-async function safeCleanup(): Promise<void> {
-  await fs.rm(testRoot, { recursive: true, force: true });
+async function checkDisk(before: number): Promise<CommandResult | null> {
+  const free = await dataFreeBytes();
+  if (free < criticalFreeBytes) {
+    return { command: "disk-budget", exitCode: 2, durationMs: 0, stdout: "", stderr: JSON.stringify(diskState(free)) };
+  }
+  return null;
 }
 
 export default tool({
@@ -79,11 +101,23 @@ export default tool({
     if (before < criticalFreeBytes) {
       return JSON.stringify({ ok: false, blocked: true, reason: "Insufficient free space on /data", disk: diskState(before) }, null, 2);
     }
-    if (!(await fs.lstat(path.join(workspace, "node_modules")).catch(() => null))?.isSymbolicLink()) {
-      return JSON.stringify({ ok: false, blocked: true, reason: `${workspace}/node_modules must be a symlink to the baked dependency tree`, expected: bakedDeps }, null, 2);
+    const workspaceDeps = path.join(workspace, "node_modules");
+    const depsLink = await fs.readlink(workspaceDeps).catch(() => null);
+    if (depsLink === null) {
+      return JSON.stringify({ ok: false, blocked: true, reason: `${workspaceDeps} must be a symlink to the baked dependency tree`, expected: bakedDeps }, null, 2);
     }
-    if (!(await fs.stat(bakedDeps)).isDirectory()) {
-      return JSON.stringify({ ok: false, blocked: true, reason: `Baked dependency tree is missing: ${bakedDeps}` }, null, 2);
+    const depsResolved = await fs.realpath(workspaceDeps).catch(() => "");
+    const bakedResolved = await fs.realpath(bakedDeps).catch(() => "");
+    if (!bakedResolved || depsResolved !== bakedResolved) {
+      return JSON.stringify({ ok: false, blocked: true, reason: "Workspace dependencies are not linked to the baked tree", expected: bakedDeps, actual: depsResolved || depsLink }, null, 2);
+    }
+    if (!(await fs.stat(bakedBin).catch(() => null))?.isDirectory()) {
+      return JSON.stringify({ ok: false, blocked: true, reason: `Baked dependency binaries are missing: ${bakedBin}` }, null, 2);
+    }
+    for (const binary of ["tsc", "eslint", "vitest"]) {
+      if (!(await fs.stat(path.join(bakedBin, binary)).catch(() => null))) {
+        return JSON.stringify({ ok: false, blocked: true, reason: `Baked validation binary is missing: ${path.join(bakedBin, binary)}` }, null, 2);
+      }
     }
 
     const results: CommandResult[] = [];
@@ -95,20 +129,21 @@ export default tool({
       }
 
       results.push(await run("node", ["scripts/check-changelog.mjs"]));
-      results.push(await run(path.join(bakedDeps, "node_modules/.bin/eslint"), ["src", "--max-warnings=0"], workspace));
-      results.push(await run(path.join(bakedDeps, "node_modules/.bin/eslint"), [path.join(testRoot, "tests"), "--max-warnings=0"], workspace));
-      results.push(await run(path.join(bakedDeps, "node_modules/.bin/tsc"), ["--noEmit"], workspace));
-      results.push(await run(path.join(bakedDeps, "node_modules/.bin/tsc"), ["-p", path.join(testRoot, "tsconfig.test.json"), "--noEmit"], workspace));
-      results.push(await run(path.join(bakedDeps, "node_modules/.bin/tsc"), ["--outDir", path.join(testRoot, "dist")], workspace));
+      results.push(await run(path.join(bakedBin, "eslint"), ["src", "--max-warnings=0"], workspace));
+      results.push(await run(path.join(bakedBin, "eslint"), [path.join(testRoot, "tests"), "--max-warnings=0"], workspace));
+      results.push(await run(path.join(bakedBin, "tsc"), ["--noEmit"], workspace));
+      results.push(await run(path.join(bakedBin, "tsc"), ["-p", path.join(testRoot, "tsconfig.test.json"), "--noEmit"], workspace));
+      results.push(await run(path.join(bakedBin, "tsc"), ["--outDir", path.join(testRoot, "dist"), "--tsBuildInfoFile", path.join(testRoot, "build.tsbuildinfo")], workspace));
 
-      const lastCheck = await dataFreeBytes();
-      if (lastCheck < criticalFreeBytes) {
-        return JSON.stringify({ ok: false, blocked: true, reason: "Validation stopped before test runner because /data crossed the critical threshold", disk: diskState(lastCheck), results }, null, 2);
+      const diskCheck = await checkDisk(before);
+      if (diskCheck) {
+        results.push(diskCheck);
+        return JSON.stringify({ ok: false, blocked: true, reason: "Validation stopped before test runner because /data crossed the critical threshold", disk: diskState(await dataFreeBytes()), results }, null, 2);
       }
 
-      results.push(await run(path.join(bakedDeps, "node_modules/.bin/vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts")], testRoot, 120_000));
+      results.push(await run(path.join(bakedBin, "vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts")], testRoot, 120_000));
       if (args.includeCoverage === true) {
-        results.push(await run(path.join(bakedDeps, "node_modules/.bin/vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts"), "--coverage", `--coverage.reportsDirectory=${path.join(testRoot, "coverage")}`, "--coverage.reporter=text"], testRoot, 120_000));
+        results.push(await run(path.join(bakedBin, "vitest"), ["run", "--config", path.join(testRoot, "vitest.config.ts"), "--coverage", `--coverage.reportsDirectory=${path.join(testRoot, "coverage")}`, "--coverage.reporter=text"], testRoot, 120_000));
       }
 
       const failed = results.filter((result) => result.exitCode !== 0);
@@ -120,10 +155,11 @@ export default tool({
         diskDeltaMb: Math.floor((before - after) / 1024 / 1024),
         warningCrossed: before >= warningFreeBytes && after < warningFreeBytes,
         includeCoverage: args.includeCoverage === true,
+        sandbox: testRoot,
         results: results.map(({ stderr, ...result }) => ({ ...result, stderr: stderr.slice(-4000) })),
       }, null, 2);
     } finally {
-      await safeCleanup();
+      await fs.rm(testRoot, { recursive: true, force: true });
     }
   },
 });
