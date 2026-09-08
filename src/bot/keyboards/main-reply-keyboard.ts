@@ -60,6 +60,8 @@ function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean,
   if (running || paused) {
     keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   }
+  // AI Topic-only control; General/Main keeps its existing keyboard untouched.
+  keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter(currentModel)).text(MAIN_BUTTONS.topicSettings).row();
 }
