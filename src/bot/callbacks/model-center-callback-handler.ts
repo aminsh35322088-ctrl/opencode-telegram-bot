@@ -22,7 +22,6 @@ import {
 } from "../menus/model-center-menu.js";
 import { fetchCurrentModel, getProviders, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
-import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { formatModelForDisplay, type ModelInfo } from "../../app/types/model.js";
 import { resolveProjectAgent, getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
@@ -166,9 +165,14 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   keyboardManager.updateAgent(currentAgent, topicSessionId);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, topicSessionId);
 
-  const keyboard = isTopic
-    ? (keyboardManager.getKeyboard(topicSessionId) ?? createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default")))
-    : createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
+  if (isTopic) {
+    const topicKeyboard = keyboardManager.getKeyboard(topicSessionId);
+    if (!topicKeyboard) throw new Error(`No Topic keyboard state available after model selection: session=${topicSessionId}`);
+    await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, topicKeyboard);
+    return;
+  }
+
+  const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
   await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, keyboard);
 }
 
