@@ -2,6 +2,12 @@
 
 All notable Telegram-bot changes are documented here. OpenCode has its own independent release/version lifecycle.
 
+## [0.26.4] - 2026-09-08
+
+### Changed
+- Baked the full validation toolchain (dev dependencies, `typescript`, `eslint`, `vitest@3.2.4`) into the runtime image at `/opt/test-deps`, so local sanity checks run from a symbolic-linked `node_modules` without per-workspace `npm install` and without consuming the `/data` volume.
+- Validation policy now permits fast local typecheck/lint/test via the baked toolchain while keeping GitHub Actions as the source of truth and all package installs forbidden in the runtime.
+
 ## [0.26.2] - 2026-09-04
 
 ### Fixed
