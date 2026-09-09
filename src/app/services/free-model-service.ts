@@ -44,10 +44,11 @@ interface AvailabilityCacheEntry {
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const AVAILABILITY_CACHE_TTL_MS = 2 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
-const AVAILABILITY_CONCURRENCY = 8;
+const AVAILABILITY_CONCURRENCY = 16;
 let cache: ScanCache | null = null;
 let inFlight: Promise<FreeModelInfo[]> | null = null;
 const availabilityCache = new Map<string, AvailabilityCacheEntry>();
+const providerConfigPromises = new Map<string, ReturnType<typeof getCustomProviderConfig>>();
 
 function normalizeBaseURL(value: string): string {
   const url = new URL(value.trim());
@@ -205,8 +206,19 @@ export async function listVerifiedFreeModels(options?: { force?: boolean }): Pro
   return inFlight;
 }
 
-async function probeAvailability(model: FreeModelInfo): Promise<Exclude<FreeModelAvailability, "untested">> {
-  const config = await getCustomProviderConfig(model.providerID);
+async function getCachedProviderConfig(providerID: string): Promise<Awaited<ReturnType<typeof getCustomProviderConfig>>> {
+  let promise = providerConfigPromises.get(providerID);
+  if (!promise) {
+    promise = getCustomProviderConfig(providerID);
+    providerConfigPromises.set(providerID, promise);
+  }
+  return promise;
+}
+
+async function probeAvailability(
+  model: FreeModelInfo,
+  config: Awaited<ReturnType<typeof getCustomProviderConfig>>,
+): Promise<Exclude<FreeModelAvailability, "untested">> {
   if (!config) return "unavailable";
   const baseURL = normalizeBaseURL(config.apiUrl);
   try {
@@ -237,30 +249,44 @@ function availabilityKey(model: FreeModelInfo): string {
 
 export async function verifyFreeModelAvailability(models?: FreeModelInfo[]): Promise<FreeModelInfo[]> {
   const candidates = models ?? (await listVerifiedFreeModels());
+  const now = Date.now();
   const result = candidates.map((model) => {
     const cached = availabilityCache.get(availabilityKey(model));
-    return cached && Date.now() < cached.expiresAt ? { ...model, availability: cached.availability } : { ...model, availability: "untested" as const };
+    return cached && now < cached.expiresAt
+      ? { ...model, availability: cached.availability }
+      : { ...model, availability: "untested" as const };
   });
-  let nextIndex = 0;
-  const pending = result.filter((model) => model.availability === "untested");
+  const pending = result
+    .map((model, index) => ({ model, index }))
+    .filter(({ model }) => model.availability === "untested");
+  let nextPending = 0;
 
   async function worker(): Promise<void> {
     while (true) {
-      const index = nextIndex++;
-      if (index >= pending.length) return;
-      const model = pending[index];
-      if (!model) return;
-      const availability = await probeAvailability(model);
-      availabilityCache.set(availabilityKey(model), { availability, expiresAt: Date.now() + AVAILABILITY_CACHE_TTL_MS });
-      const target = result.findIndex((candidate) => availabilityKey(candidate) === availabilityKey(model));
-      if (target >= 0) result[target] = { ...result[target], availability };
+      const pendingIndex = nextPending++;
+      if (pendingIndex >= pending.length) return;
+      const entry = pending[pendingIndex];
+      if (!entry) return;
+      const config = await getCachedProviderConfig(entry.model.providerID);
+      const availability = await probeAvailability(entry.model, config);
+      availabilityCache.set(availabilityKey(entry.model), {
+        availability,
+        expiresAt: Date.now() + AVAILABILITY_CACHE_TTL_MS,
+      });
+      result[entry.index] = { ...entry.model, availability };
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(AVAILABILITY_CONCURRENCY, pending.length) }, () => worker()));
+  await Promise.all(
+    Array.from({ length: Math.min(AVAILABILITY_CONCURRENCY, pending.length) }, () => worker()),
+  );
+
   return result.sort((a, b) => {
     const rank = (value: FreeModelAvailability): number => value === "available" ? 0 : value === "untested" ? 1 : 2;
-    return rank(a.availability) - rank(b.availability) || a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+    return rank(a.availability) - rank(b.availability)
+      || a.providerID.localeCompare(b.providerID)
+      || a.name.localeCompare(b.name)
+      || a.id.localeCompare(b.id);
   });
 }
 
@@ -268,4 +294,5 @@ export function __resetFreeModelScanCacheForTests(): void {
   cache = null;
   inFlight = null;
   availabilityCache.clear();
+  providerConfigPromises.clear();
 }
