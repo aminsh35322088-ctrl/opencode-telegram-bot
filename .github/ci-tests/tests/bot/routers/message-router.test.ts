@@ -7,7 +7,10 @@ import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
 const mergerMock = vi.hoisted(() => ({ queuePromptForMerging: vi.fn() }));
-vi.mock("../../../src/bot/handlers/message-merger.js", () => mergerMock);
+vi.mock("../../../src/bot/handlers/message-merger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/bot/handlers/message-merger.js")>();
+  return { ...actual, queuePromptForMerging: mergerMock.queuePromptForMerging };
+});
 
 describe("bot/routers/message-router", () => {
   it("registers all current reply-keyboard and message routes", () => {
