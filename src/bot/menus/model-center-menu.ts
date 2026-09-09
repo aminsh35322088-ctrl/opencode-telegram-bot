@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import { getFavoriteModels, getRecentModels } from "../../app/services/model-preferences-service.js";
 import { fetchCurrentModel, getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
-import { listVerifiedFreeModels } from "../../app/services/free-model-service.js";
+import { listVerifiedFreeModels, verifyFreeModelAvailability, type FreeModelAvailability } from "../../app/services/free-model-service.js";
 import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
@@ -164,19 +164,44 @@ export async function buildModelCenterList(kind: "favorites" | "recent", current
   };
 }
 
+function freeAvailabilityIcon(availability: FreeModelAvailability): string {
+  return availability === "available" ? "🟢" : availability === "unavailable" ? "🔴" : "🟡";
+}
+
+async function appendFreeModelRows(
+  keyboard: InlineKeyboard,
+  models: Awaited<ReturnType<typeof verifyFreeModelAvailability>>,
+  current?: ModelInfo,
+  favoriteTarget?: ModelCenterFavoriteTarget,
+): Promise<void> {
+  const favorites = await getFavoriteModels();
+  const favoriteKeys = new Set(favorites.map(modelKey));
+  for (const model of models) {
+    const info: ModelInfo = { providerID: model.providerID, modelID: model.id, name: model.name, variant: "default" };
+    const token = actionToken(info, favoriteTarget);
+    const favorite = favoriteKeys.has(modelKey({ providerID: model.providerID, modelID: model.id }));
+    const active = !!current && modelKey(current) === modelKey(info);
+    keyboard.text(`${freeAvailabilityIcon(model.availability)} ${formatModelName(model.id, model.name)}${favorite ? " ⭐" : ""}`, `${MODEL_CENTER_SELECT_PREFIX}${token}`);
+    keyboard.text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`).row();
+  }
+}
+
 export async function buildModelCenterFree(page: number, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
-  const models = await listVerifiedFreeModels();
+  const detected = await listVerifiedFreeModels();
+  const models = await verifyFreeModelAvailability(detected);
   const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
   const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
   const pageModels = models.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE);
-  const rows = pageModels.map((model) => ({ providerID: model.providerID, modelID: model.id, name: model.name }));
   const keyboard = new InlineKeyboard();
-  await appendModelRows(keyboard, rows, current, { kind: "free", page: normalizedPage }, true);
+  await appendFreeModelRows(keyboard, pageModels, current, { kind: "free", page: normalizedPage });
   appendPagination(keyboard, normalizedPage, totalPages, (target) => `${MODEL_CENTER_FREE}:${target}`);
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+  const available = models.filter((model) => model.availability === "available").length;
+  const untested = models.filter((model) => model.availability === "untested").length;
+  const unavailable = models.filter((model) => model.availability === "unavailable").length;
   return {
     text: models.length
-      ? `🆓 <b>VERIFIED FREE MODELS</b>\n\n${models.length} verified-free models discovered from your custom provider catalogs · page ${normalizedPage + 1}/${totalPages}.\nOnly authoritative free pricing/metadata or an explicit <code>:free</code> variant is included.`
+      ? `🆓 <b>VERIFIED FREE MODELS</b>\n\n${models.length} free models · 🟢 ${available} available · 🟡 ${untested} not tested · 🔴 ${unavailable} unavailable.\nHealthy free models are shown first; untested/unavailable models stay at the bottom.\nPage ${normalizedPage + 1}/${totalPages}.`
       : "🆓 <b>VERIFIED FREE MODELS</b>\n\nNo verified-free models were found in the current custom-provider catalogs.",
     keyboard,
     page: normalizedPage,
