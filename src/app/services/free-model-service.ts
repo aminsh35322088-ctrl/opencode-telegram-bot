@@ -31,15 +31,8 @@ interface ModelRecord {
   metadata?: unknown;
 }
 
-interface ScanCache {
-  expiresAt: number;
-  models: FreeModelInfo[];
-}
-
-interface AvailabilityCacheEntry {
-  expiresAt: number;
-  availability: Exclude<FreeModelAvailability, "untested">;
-}
+interface ScanCache { expiresAt: number; models: FreeModelInfo[]; }
+interface AvailabilityCacheEntry { expiresAt: number; availability: Exclude<FreeModelAvailability, "untested">; }
 
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const AVAILABILITY_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -84,7 +77,6 @@ function extractPricing(value: unknown): Pricing | undefined {
     ["inputCacheRead", ["input_cache_read", "cache_read"]],
     ["inputCacheWrite", ["input_cache_write", "cache_write"]],
   ];
-
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== "object") continue;
     const record = candidate as Record<string, unknown>;
@@ -112,10 +104,7 @@ function readExplicitFree(record: ModelRecord): boolean | undefined {
   return undefined;
 }
 
-function hasPositivePricing(pricing: Pricing): boolean {
-  return Object.values(pricing).some((value) => typeof value === "number" && value > 0);
-}
-
+function hasPositivePricing(pricing: Pricing): boolean { return Object.values(pricing).some((value) => typeof value === "number" && value > 0); }
 function hasCompleteZeroPricing(pricing: Pricing): boolean {
   const values = Object.values(pricing).filter((value): value is number => typeof value === "number");
   return values.length >= 2 && values.every((value) => value === 0);
@@ -127,7 +116,6 @@ function classify(record: ModelRecord): Omit<FreeModelInfo, "providerID" | "avai
   const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : id;
   const pricing = extractPricing(record.pricing);
   const explicitFree = readExplicitFree(record);
-
   if (explicitFree === true && pricing && hasPositivePricing(pricing)) return { id, name, status: "unknown", confidence: "none", reason: "Free metadata conflicts with non-zero pricing.", ...(pricing ? { pricing } : {}) };
   if (explicitFree === false && pricing && hasCompleteZeroPricing(pricing)) return { id, name, status: "unknown", confidence: "none", reason: "Non-free metadata conflicts with zero pricing.", ...(pricing ? { pricing } : {}) };
   if (explicitFree === true) return { id, name, status: "free", confidence: "high", reason: "Provider metadata explicitly marks this model as free.", ...(pricing ? { pricing } : {}) };
@@ -147,11 +135,7 @@ async function scanProvider(providerID: string): Promise<FreeModelInfo[]> {
   if (!response.ok) throw new Error(`Free-model scan failed for ${providerID}: HTTP ${response.status}`);
   const payload = (await response.json()) as { data?: unknown };
   if (!Array.isArray(payload.data)) return [];
-  return payload.data
-    .filter((item): item is ModelRecord => Boolean(item) && typeof item === "object")
-    .map(classify)
-    .filter((model): model is Omit<FreeModelInfo, "providerID" | "availability"> => Boolean(model))
-    .map((model) => ({ ...model, providerID, availability: "untested" as const }));
+  return payload.data.filter((item): item is ModelRecord => Boolean(item) && typeof item === "object").map(classify).filter((model): model is Omit<FreeModelInfo, "providerID" | "availability"> => Boolean(model)).map((model) => ({ ...model, providerID, availability: "untested" as const }));
 }
 
 async function scanAllProviders(): Promise<FreeModelInfo[]> {
@@ -163,8 +147,7 @@ async function scanAllProviders(): Promise<FreeModelInfo[]> {
     if (result.status === "fulfilled") results.push(...result.value);
     else logger.warn(`[FreeModelScan] Provider ${providerID} failed; continuing with other providers.`, result.reason);
   });
-  return results.filter((model) => model.status === "free" && model.confidence === "high")
-    .sort((a, b) => a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return results.filter((model) => model.status === "free" && model.confidence === "high").sort((a, b) => a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 export async function listVerifiedFreeModels(options?: { force?: boolean }): Promise<FreeModelInfo[]> {
@@ -203,7 +186,6 @@ export async function verifyFreeModelAvailability(models?: FreeModelInfo[]): Pro
   });
   const pending = result.map((model, index) => ({ model, index })).filter(({ model }) => model.availability === "untested");
   let nextPending = 0;
-
   async function worker(): Promise<void> {
     while (true) {
       const pendingIndex = nextPending++;
@@ -216,7 +198,6 @@ export async function verifyFreeModelAvailability(models?: FreeModelInfo[]): Pro
       result[entry.index] = { ...entry.model, availability };
     }
   }
-
   await Promise.all(Array.from({ length: Math.min(AVAILABILITY_CONCURRENCY, pending.length) }, () => worker()));
   return result.sort((a, b) => {
     const rank = (value: FreeModelAvailability): number => value === "available" ? 0 : value === "untested" ? 1 : 2;
