@@ -180,7 +180,6 @@ async function appendFreeModelRows(
     const info: ModelInfo = { providerID: model.providerID, modelID: model.id, name: model.name, variant: "default" };
     const token = actionToken(info, favoriteTarget);
     const favorite = favoriteKeys.has(modelKey({ providerID: model.providerID, modelID: model.id }));
-    const active = !!current && modelKey(current) === modelKey(info);
     keyboard.text(`${freeAvailabilityIcon(model.availability)} ${formatModelName(model.id, model.name)}${favorite ? " ⭐" : ""}`, `${MODEL_CENTER_SELECT_PREFIX}${token}`);
     keyboard.text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`).row();
   }
