@@ -6,7 +6,7 @@ import { tool } from "@opencode-ai/plugin";
 const execFileAsync = promisify(execFile);
 
 export default tool({
-  description: "Inspect image files for format, dimensions, color space, and file metadata. Use before handing an image to a vision-capable model or when debugging generated assets.",
+  description: "Inspect image files for format, dimensions, color space, and file metadata only. This tool cannot see or describe image contents and is not a substitute for native multimodal image input. Do not use it instead of passing an image to a vision-capable model.",
   args: {
     path: tool.schema.string().describe("Image path, absolute or relative to the worktree."),
   },
