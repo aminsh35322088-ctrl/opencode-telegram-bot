@@ -120,10 +120,21 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
   }
   const promptOptions = { ...options, parts } as Parameters<SessionApi["promptAsync"]>[0];
   if (promptOptions.variant === "default") {
-    // `default` is our UI sentinel for "no explicit variant". It is not an
-    // OpenCode variant ID and must never be sent to the OpenCode API.
-    delete promptOptions.variant;
-    logger.debug(`[OpenCode] Omitting internal default variant for model=${model}`);
+    let effectiveProviderID = promptOptions.model?.providerID;
+    if (!effectiveProviderID) {
+      try {
+        const { getCurrentModel } = await import("../app/stores/settings-store.js");
+        effectiveProviderID = getCurrentModel()?.providerID;
+      } catch (error) {
+        logger.debug("[OpenCode] Could not resolve current model while normalizing prompt variant; leaving variant untouched", error);
+      }
+    }
+    if (effectiveProviderID === "opencode") {
+      // `default` is our UI sentinel for "no explicit variant". It is not an
+      // OpenCode variant ID and must never be sent for native OpenCode models.
+      delete promptOptions.variant;
+      logger.debug(`[OpenCode] Omitting internal default variant for native model=${model}`);
+    }
   }
   const promptChars = countPromptChars(parts);
   logger.info(`[LLM Prompt] session=${options.sessionID} model=${model} agent=${options.agent ?? "default"} parts=${parts.length} promptChars=${promptChars} memoryInjected=${parts.length > originalParts.length} prepMs=${Date.now() - promptStart}`);
