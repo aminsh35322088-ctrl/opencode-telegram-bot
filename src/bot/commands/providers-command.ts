@@ -32,25 +32,14 @@ async function getProviderCapabilitySummary(customProviders: Awaited<ReturnType<
   const lines: string[] = [];
   for (const capability of CAPABILITIES) {
     if (capability === "image") {
-      const configuredImage: string[] = [];
       const cloudflare = imageProviders.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
-      if (cloudflare && (await validateConfiguredCloudflareCredentials()).valid) configuredImage.push(`Cloudflare Workers AI — ${cloudflare.model}`);
       const custom = imageProviders.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID && provider.active);
-      if (custom) configuredImage.push(`Custom API — ${custom.model}`);
-      lines.push(`${LABEL[capability]}: ${configuredImage.length ? `✅ ${configuredImage.join(" · ")}` : "⚪ Not configured"}`);
+      const configured = Boolean(custom) || Boolean(cloudflare && (await validateConfiguredCloudflareCredentials()).valid);
+      lines.push(`${LABEL[capability]}: ${configured ? "✅" : "⚪ Not configured"}`);
       continue;
     }
-    if (capability === "stt" && groq) {
-      const custom = customProviders.filter((provider) => provider.capability === capability).map((provider) => `${provider.name} — ${displayProviderModels(provider.models)}`).filter(Boolean);
-      const configured = [`Groq — ${groq.model}`, ...custom];
-      lines.push(`${LABEL[capability]}: ✅ ${configured.join(" · ")}`);
-      continue;
-    }
-    const configured = customProviders
-      .filter((provider) => provider.capability === capability)
-      .map((provider) => `${provider.name} — ${displayProviderModels(provider.models)}`)
-      .filter(Boolean);
-    lines.push(`${LABEL[capability]}: ${configured.length ? `✅ ${configured.join(" · ")}` : "⚪ Not configured"}`);
+    const configured = capability === "stt" ? Boolean(groq) || customProviders.some((provider) => provider.capability === capability) : customProviders.some((provider) => provider.capability === capability);
+    lines.push(`${LABEL[capability]}: ${configured ? "✅" : "⚪ Not configured"}`);
   }
   return lines;
 }
