@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import { getFavoriteModels, getRecentModels } from "../../app/services/model-preferences-service.js";
 import { fetchCurrentModel, getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
+import { listVerifiedFreeModels } from "../../app/services/free-model-service.js";
 import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
@@ -12,6 +13,7 @@ export const MODEL_CENTER_ROOT = "mc:root";
 export const MODEL_CENTER_FAVORITES = "mc:favorites";
 export const MODEL_CENTER_RECENT = "mc:recent";
 export const MODEL_CENTER_PROVIDERS = "mc:providers";
+export const MODEL_CENTER_FREE = "mc:free";
 export const MODEL_CENTER_SEARCH = "mc:search";
 export const MODEL_CENTER_SEARCH_AGAIN = "mc:search:again";
 export const MODEL_CENTER_SEARCH_CANCEL = "mc:search:cancel";
@@ -25,10 +27,11 @@ const MAX_ACTION_MODELS = 4096;
 const SEARCH_RESULTS_LIMIT = 10;
 const actionModels = new Map<string, ModelInfo>();
 
-export type ModelCenterFavoriteTarget =
+type ModelCenterFavoriteTarget =
   | { kind: "root" }
   | { kind: "list"; list: "favorites" | "recent" }
   | { kind: "provider"; providerID: string; page: number }
+  | { kind: "free"; page: number }
   | { kind: "search"; query: string };
 
 const favoriteTargets = new Map<string, ModelCenterFavoriteTarget>();
@@ -68,9 +71,9 @@ export function resolveModelCenterFavoriteTarget(token: string): ModelCenterFavo
   return favoriteTargets.get(token) ?? null;
 }
 
-function modelButtonLabel(model: FavoriteModel | ModelInfo, active: boolean, favorite: boolean): string {
+function modelButtonLabel(model: FavoriteModel | ModelInfo, active: boolean, favorite: boolean, free = false): string {
   const marker = favorite ? " ⭐" : "";
-  const icon = active ? "🟢" : "🧠";
+  const icon = active ? "🟢" : free ? "🆓" : "🧠";
   return `${icon} ${formatModelName(model.modelID, model.name)}${marker}`;
 }
 
@@ -79,6 +82,7 @@ async function appendModelRows(
   models: FavoriteModel[],
   current?: ModelInfo,
   favoriteTarget?: ModelCenterFavoriteTarget,
+  free = false,
 ): Promise<void> {
   const favorites = await getFavoriteModels();
   const favoriteKeys = new Set(favorites.map(modelKey));
@@ -94,7 +98,7 @@ async function appendModelRows(
     const favorite = favoriteKeys.has(modelKey(model));
     const active = !!current && modelKey(current) === modelKey(model);
 
-    keyboard.text(modelButtonLabel(model, active, favorite), `${MODEL_CENTER_SELECT_PREFIX}${token}`);
+    keyboard.text(modelButtonLabel(model, active, favorite, free), `${MODEL_CENTER_SELECT_PREFIX}${token}`);
     keyboard.text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`).row();
   }
 }
@@ -109,6 +113,7 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
   const [favorites, recent] = await Promise.all([getFavoriteModels(), getRecentModels()]);
   const keyboard = new InlineKeyboard();
   keyboard.text(`⭐ Favorites · ${favorites.length}`, MODEL_CENTER_FAVORITES).text(`🕘 Recent models · ${recent.length}`, MODEL_CENTER_RECENT).row();
+  keyboard.text("🆓 Verified free models", MODEL_CENTER_FREE).row();
   keyboard.text("🔎 Search models", MODEL_CENTER_SEARCH).row();
   keyboard.text("🧩 Browse providers", MODEL_CENTER_PROVIDERS).row();
   keyboard.text("← Back", MODEL_CENTER_SETTINGS_BACK);
@@ -123,7 +128,7 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
       "",
       currentBlock,
       "",
-      "Select a model for this Topic, browse providers, search the live catalog, or manage favorites.",
+      "Select a model for this Topic, browse providers, see verified-free models, search the live catalog, or manage favorites.",
     ].join("\n"),
     keyboard,
   };
@@ -156,6 +161,25 @@ export async function buildModelCenterList(kind: "favorites" | "recent", current
       ? `${title}\n\nChoose a model below. The active Topic model is marked with 🟢.`
       : `${title}\n\nNo models here yet.`,
     keyboard,
+  };
+}
+
+export async function buildModelCenterFree(page: number, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
+  const models = await listVerifiedFreeModels();
+  const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
+  const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
+  const pageModels = models.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE);
+  const rows = pageModels.map((model) => ({ providerID: model.providerID, modelID: model.id, name: model.name }));
+  const keyboard = new InlineKeyboard();
+  await appendModelRows(keyboard, rows, current, { kind: "free", page: normalizedPage }, true);
+  appendPagination(keyboard, normalizedPage, totalPages, (target) => `${MODEL_CENTER_FREE}:${target}`);
+  keyboard.text("← Model Center", MODEL_CENTER_ROOT);
+  return {
+    text: models.length
+      ? `🆓 <b>VERIFIED FREE MODELS</b>\n\n${models.length} verified-free models discovered from your custom provider catalogs · page ${normalizedPage + 1}/${totalPages}.\nOnly authoritative free pricing/metadata or an explicit <code>:free</code> variant is included.`
+      : "🆓 <b>VERIFIED FREE MODELS</b>\n\nNo verified-free models were found in the current custom-provider catalogs.",
+    keyboard,
+    page: normalizedPage,
   };
 }
 
