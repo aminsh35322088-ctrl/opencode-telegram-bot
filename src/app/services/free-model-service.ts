@@ -187,7 +187,6 @@ async function scanAllProviders(): Promise<FreeModelInfo[]> {
     }
   });
   return results
-    .flat()
     .filter((model) => model.status === "free" && model.confidence === "high")
     .sort((a, b) => a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
