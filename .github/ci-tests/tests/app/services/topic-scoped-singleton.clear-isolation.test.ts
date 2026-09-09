@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   runInTopicRuntimeContext,
   getTopicRuntimeContext,
-} from "../../../src/app/services/topic-runtime-context.js";
-import { installTopicScopedSingleton } from "../../../src/app/services/topic-scoped-singleton.js";
+} from "../../../../../src/app/services/topic-runtime-context.js";
+import { installTopicScopedSingleton } from "../../../../../src/app/services/topic-scoped-singleton.js";
 
 class ClearProbe {
   private onClearedCallback: (() => void) | null = null;
