@@ -5,6 +5,7 @@ import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { getCompactOutputMode, getMainNavigationMessageId, setMainNavigationMessageId, clearMainNavigationMessageId } from "../../app/stores/settings-store.js";
+import { getTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
 import { t } from "../../i18n/index.js";
@@ -50,6 +51,18 @@ class KeyboardManager {
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
   private resolveSessionId(sessionId?: string): string | undefined { return sessionId ?? getTopicRuntimeContext()?.sessionId; }
 
+  private topicSelection(chatId: number, threadId?: number): { model?: ModelInfo; agent?: string } {
+    const normalized = normalizeOutboundThreadId(threadId);
+    if (normalized === undefined) return {};
+    try {
+      const state = getTopicRuntimeStateSync(chatId, normalized);
+      return { model: state?.settings.model ?? undefined, agent: state?.settings.agent ?? undefined };
+    } catch (error) {
+      logger.debug(`[KeyboardManager] Could not resolve topic-scoped selection for chat=${chatId}, thread=${normalized}`, error);
+      return {};
+    }
+  }
+
   private async withMainAnchorLock<T>(chatId: number, operation: () => Promise<T>): Promise<T> {
     const previous = this.mainAnchorLocks.get(chatId) ?? Promise.resolve();
     let release!: () => void;
@@ -69,13 +82,14 @@ class KeyboardManager {
     this.api = api;
     const key = this.key(sessionId);
     const existing = this.states.get(key);
+    const topicSelection = this.topicSelection(chatId, threadId);
     if (!existing) {
-      const currentModel = getStoredModel();
+      const currentModel = topicSelection.model ?? getStoredModel();
       this.states.set(key, {
         sessionId,
         chatId,
         threadId: normalizeOutboundThreadId(threadId),
-        currentAgent: getStoredAgent(),
+        currentAgent: topicSelection.agent ?? getStoredAgent(),
         currentModel,
         contextInfo: null,
         variantName: formatVariantForButton(currentModel.variant || "default"),
@@ -85,6 +99,11 @@ class KeyboardManager {
     }
     existing.chatId = chatId;
     if (threadId !== undefined) existing.threadId = normalizeOutboundThreadId(threadId);
+    if (topicSelection.model) {
+      existing.currentModel = topicSelection.model;
+      existing.variantName = formatVariantForButton(topicSelection.model.variant || "default");
+    }
+    if (topicSelection.agent) existing.currentAgent = topicSelection.agent;
   }
 
   public bindTopic(api: Api, chatId: number, threadId: number, sessionId: string): void {

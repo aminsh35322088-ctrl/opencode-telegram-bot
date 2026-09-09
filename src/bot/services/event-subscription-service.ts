@@ -1064,6 +1064,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
+      if (assistantRunState.getRun(update.sessionId)?.hasCompletedResponse) {
+        logger.debug(
+          `[Bot] Suppressing thinking update after the final response was delivered: session=${update.sessionId}, message=${update.messageId}`,
+        );
+        return;
+      }
+
       logger.debug("[Bot] Agent thinking update", {
         sessionId: update.sessionId,
         messageId: update.messageId,
@@ -1122,9 +1129,20 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
+      if (assistantRunState.getRun(sessionId)?.hasCompletedResponse) {
+        this.clearThinkingStream(sessionId, messageId, "thinking_finished_after_response");
+        return;
+      }
+
       logger.debug("[Bot] Agent thinking finished", { sessionId, messageId });
-      void this.completeThinkingStream(sessionId, messageId).catch((error) => {
-        logger.error("[Bot] Failed to finalize thinking stream early", error);
+      // Serialize through the completion queue so a pending thinking flush can
+      // never land in Telegram after the finalized assistant answer.
+      void this.enqueueSessionCompletionTask(sessionId, async () => {
+        try {
+          await this.completeThinkingStream(sessionId, messageId);
+        } catch (error) {
+          logger.error("[Bot] Failed to finalize thinking stream early", error);
+        }
       });
     });
 

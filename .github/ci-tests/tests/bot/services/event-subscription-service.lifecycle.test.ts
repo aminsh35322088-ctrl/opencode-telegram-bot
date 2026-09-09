@@ -109,6 +109,21 @@ function emitAssistantCompleted(aggregator: Aggregator): void {
   } as unknown as Event);
 }
 
+function emitReasoningPart(aggregator: Aggregator, text: string): void {
+  aggregator.processEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "reasoning-1",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "reasoning",
+        text,
+      },
+    },
+  } as unknown as Event);
+}
+
 function emitSessionIdle(aggregator: Aggregator): void {
   aggregator.processEvent({
     type: "session.idle",
@@ -547,6 +562,36 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       // The draft is persisted with a real message, never edited in place.
       expect(api.editMessageText).not.toHaveBeenCalled();
       expect(defined(api.sendMessage.mock.calls[0]?.[1])).toBe("Partial answer, now complete");
+    }, 30_000);
+  });
+
+  describe("assistant final answer ordering", () => {
+    it("never delivers thinking after the answer has been finalized", async () => {
+      const { api, summaryAggregator } = await setupService({ startAssistantRun: true });
+
+      emitReasoningPart(summaryAggregator, "Early reasoning about the task");
+      await vi.waitFor(
+        () => {
+          expect(collectSentTexts(api).some((text) => text.includes("Early reasoning"))).toBe(true);
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
+
+      emitAssistantTextPart(summaryAggregator, "The final answer");
+      emitAssistantCompleted(summaryAggregator);
+      await vi.waitFor(
+        () => {
+          expect(collectSentTexts(api).at(-1)).toContain("The final answer");
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
+
+      const writesAfterAnswer = countTelegramWrites(api);
+      emitReasoningPart(summaryAggregator, "Late reasoning after the answer");
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+
+      expect(collectSentTexts(api).some((text) => text.includes("Late reasoning"))).toBe(false);
+      expect(countTelegramWrites(api)).toBe(writesAfterAnswer);
     }, 30_000);
   });
 

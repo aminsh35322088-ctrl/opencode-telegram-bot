@@ -5,6 +5,9 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ## [Unreleased]
 
 ### Fixed
+- AI Topic bottom keyboards now show each Topic's own persisted model after restarts/re-opens instead of the ambient default: keyboard state initialization resolves the model and agent directly from the Topic runtime store rather than relying on the async Topic context being active.
+- Concurrent live chats across AI Topics no longer freeze when another Topic attaches: switching aggregator focus no longer wipes other sessions' in-flight aggregation state, every session-rooted event gate now honors the per-event Topic runtime context, and switching the model in one Topic retires only that Topic's event subscription instead of tearing down every Topic's stream.
+- Reasoning/thinking parts that arrive after the finalized assistant answer are no longer delivered, and pending thinking flushes are serialized through the completion queue, so the final answer is always the last message in a Topic.
 - Reply Keyboard controls pressed while replying to a bot message are now classified from the authentic button label instead of the enriched `Replying to @Chat Bot.` text, so Topic and control buttons are consumed as controls and no longer fall through into Coding AI prompt handling.
 - AI Topic slash commands (`/abort`, `/pause`, `/resume`, `/model`, `/compact`, `/topic_settings`, `/delete_topic`, and friends) sent while in Telegram reply mode are no longer corrupted by reply-context enrichment, so `bot.command()` routing matches them instead of leaking them into Coding AI prompts.
 - AI Topic run-management commands (`/pause`, `/resume`, `/delete_topic`, `/stop`) now reach their handlers while a run is busy or an interaction is pending, matching the behavior of the equivalent Reply Keyboard buttons.

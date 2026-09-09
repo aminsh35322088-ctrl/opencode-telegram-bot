@@ -339,7 +339,7 @@ class SummaryAggregator {
   private pendingSubagentCardIdsByParent: Map<string, string[]> = new Map();
   private pendingChildSessionIdsByParent: Map<string, string[]> = new Map();
   private fallbackSubagentCardIdsByParent: Map<string, string[]> = new Map();
-  private lastSubagentSnapshot = "";
+  private readonly lastSubagentSnapshotByParent = new Map<string, string>();
 
   setBotAndChatId(bot: Bot, chatId: number): void {
     this.bot = bot;
@@ -549,11 +549,27 @@ class SummaryAggregator {
   }
 
   setSession(sessionId: string): void {
-    if (this.currentSessionId !== sessionId) {
-      this.clear();
-      this.currentSessionId = sessionId;
-      this.trackedSessionParents.set(sessionId, null);
-    }
+    // Concurrent AI topics each dispatch their own events inside that topic's
+    // runtime context (see topic-event-bus). Re-attaching a different session
+    // must not wipe another topic's in-flight aggregation state, or that
+    // topic's answer is dropped mid-run and the chat looks frozen.
+    this.currentSessionId = sessionId;
+    this.trackedSessionParents.set(sessionId, null);
+  }
+
+  /**
+   * Root session the currently-handled event belongs to. While a bound topic's
+   * events are dispatched, the bus restores that topic's runtime context, so
+   * concurrent topics gate on their own session instead of racing on the
+   * single last-attached `currentSessionId` focus.
+   */
+  private activeSessionId(): string | null {
+    return getTopicRuntimeContext()?.sessionId ?? this.currentSessionId;
+  }
+
+  private isEventForActiveSession(sessionId: string): boolean {
+    const active = this.activeSessionId();
+    return active !== null && sessionId === active;
   }
 
   clear(): void {
@@ -590,7 +606,7 @@ class SummaryAggregator {
   }
 
   private isTrackedChildSession(sessionId: string): boolean {
-    return this.trackedSessionParents.has(sessionId) && sessionId !== this.currentSessionId;
+    return this.trackedSessionParents.has(sessionId) && !this.isEventForActiveSession(sessionId);
   }
 
   /**
@@ -646,13 +662,14 @@ class SummaryAggregator {
   }
 
   private emitSubagentState(): void {
-    if (!this.currentSessionId || !this.onSubagentCallback || this.subagentOrder.length === 0) {
+    const active = this.activeSessionId();
+    if (!active || !this.onSubagentCallback || this.subagentOrder.length === 0) {
       return;
     }
 
     const subagents = this.subagentOrder
       .map((cardId) => this.subagentStates.get(cardId))
-      .filter((state): state is SubagentState => Boolean(state))
+      .filter((state): state is SubagentState => state?.parentSessionId === active)
       .map((state) => ({
         cardId: state.cardId,
         sessionId: state.sessionId,
@@ -701,13 +718,13 @@ class SummaryAggregator {
       })),
     );
 
-    if (snapshot === this.lastSubagentSnapshot) {
+    if (this.lastSubagentSnapshotByParent.get(active) === snapshot) {
       return;
     }
 
-    this.lastSubagentSnapshot = snapshot;
+    this.lastSubagentSnapshotByParent.set(active, snapshot);
 
-    this.onSubagentCallback(this.currentSessionId, subagents);
+    this.onSubagentCallback(active, subagents);
   }
 
   private createSubagentState(
@@ -892,7 +909,7 @@ class SummaryAggregator {
     }
 
     const parentSessionId =
-      this.trackedSessionParents.get(sessionId) ?? this.currentSessionId ?? sessionId;
+      this.trackedSessionParents.get(sessionId) ?? this.activeSessionId() ?? sessionId;
     this.removeFromQueue(this.pendingChildSessionIdsByParent, parentSessionId, sessionId);
     const state = this.createSubagentState(parentSessionId, sessionId);
     this.getQueue(this.fallbackSubagentCardIdsByParent, parentSessionId).push(state.cardId);
@@ -955,7 +972,7 @@ class SummaryAggregator {
       type: "session.created" | "session.updated";
     },
   ): void {
-    if (!this.currentSessionId) {
+    if (!this.activeSessionId()) {
       return;
     }
 
@@ -968,7 +985,7 @@ class SummaryAggregator {
       return;
     }
 
-    if (info.id === this.currentSessionId) {
+    if (info.id === this.activeSessionId()) {
       return;
     }
 
@@ -1130,7 +1147,7 @@ class SummaryAggregator {
     const { info } = event.properties;
 
     if (
-      info.sessionID !== this.currentSessionId &&
+      !this.isEventForActiveSession(info.sessionID) &&
       !this.trackedSessionParents.has(info.sessionID) &&
       info.role === "assistant"
     ) {
@@ -1144,7 +1161,7 @@ class SummaryAggregator {
       return;
     }
 
-    if (info.sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(info.sessionID)) {
       return;
     }
 
@@ -1202,7 +1219,7 @@ class SummaryAggregator {
         const finalText = messageText;
 
         logger.debug(
-          `[Aggregator] Message part completed: messageId=${messageID}, textLength=${finalText.length}, totalParts=${textState.orderedPartIds.length}, session=${this.currentSessionId}`,
+          `[Aggregator] Message part completed: messageId=${messageID}, textLength=${finalText.length}, totalParts=${textState.orderedPartIds.length}, session=${info.sessionID}`,
         );
 
         // This is the only trace left once the placeholder is filtered out, so
@@ -1212,7 +1229,7 @@ class SummaryAggregator {
         );
         if (droppedParts.length > 0) {
           logger.warn(
-            `[Aggregator] Dropped upstream empty-response placeholder: messageId=${messageID}, parts=${droppedParts.length}, session=${this.currentSessionId}`,
+            `[Aggregator] Dropped upstream empty-response placeholder: messageId=${messageID}, parts=${droppedParts.length}, session=${info.sessionID}`,
           );
         }
 
@@ -1223,7 +1240,7 @@ class SummaryAggregator {
         }
 
         if (this.onCompleteCallback && finalText.length > 0) {
-          this.onCompleteCallback(this.currentSessionId!, messageID, finalText, {
+          this.onCompleteCallback(info.sessionID, messageID, finalText, {
             agent: info.agent,
             providerID: info.providerID,
             modelID: info.modelID,
@@ -1250,14 +1267,14 @@ class SummaryAggregator {
     const { part } = event.properties;
 
     if (
-      part.sessionID !== this.currentSessionId &&
+      !this.isEventForActiveSession(part.sessionID) &&
       !this.trackedSessionParents.has(part.sessionID) &&
       part.type !== "subtask"
     ) {
       this.attachUnknownSessionToPendingSubagent(part.sessionID);
     }
 
-    const isCurrentRootSession = part.sessionID === this.currentSessionId;
+    const isCurrentRootSession = this.isEventForActiveSession(part.sessionID);
     const isTrackedChildSession = this.isTrackedChildSession(part.sessionID);
 
     if (!isCurrentRootSession && !isTrackedChildSession) {
@@ -1559,7 +1576,7 @@ class SummaryAggregator {
     delta: string,
     fullTextHint?: string,
   ): void {
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       return;
     }
 
@@ -1684,7 +1701,7 @@ class SummaryAggregator {
     fullTextHint?: string,
     title?: string,
   ): void {
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       return;
     }
 
@@ -1752,7 +1769,7 @@ class SummaryAggregator {
   }
 
   private emitExternalUserInputIfReady(sessionId: string, messageId: string): void {
-    if (sessionId !== this.currentSessionId || this.deliveredExternalUserMessageIds.has(messageId)) {
+    if (!this.isEventForActiveSession(sessionId) || this.deliveredExternalUserMessageIds.has(messageId)) {
       return;
     }
 
@@ -2014,7 +2031,7 @@ class SummaryAggregator {
   ): void {
     const { sessionID, status } = event.properties;
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       return;
     }
 
@@ -2052,7 +2069,7 @@ class SummaryAggregator {
       return;
     }
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       return;
     }
 
@@ -2077,7 +2094,7 @@ class SummaryAggregator {
     const properties = event.properties;
     const { sessionID } = properties;
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       return;
     }
 
@@ -2113,7 +2130,7 @@ class SummaryAggregator {
       return;
     }
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       return;
     }
 
@@ -2135,9 +2152,9 @@ class SummaryAggregator {
   ): void {
     const { id, sessionID, questions } = event.properties;
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(sessionID)) {
       logger.debug(
-        `[Aggregator] Ignoring question.asked for different session: ${sessionID} (current: ${this.currentSessionId})`,
+        `[Aggregator] Ignoring question.asked for different session: ${sessionID} (current: ${this.activeSessionId()})`,
       );
       return;
     }
@@ -2163,7 +2180,7 @@ class SummaryAggregator {
   ): void {
     const properties = event.properties;
 
-    if (properties.sessionID !== this.currentSessionId) {
+    if (!this.isEventForActiveSession(properties.sessionID)) {
       return;
     }
 
@@ -2190,12 +2207,12 @@ class SummaryAggregator {
   ): void {
     const request = event.properties;
 
-    const isCurrent = request.sessionID === this.currentSessionId;
+    const isCurrent = this.isEventForActiveSession(request.sessionID);
     const isTrackedChild = this.isTrackedChildSession(request.sessionID);
 
     if (!isCurrent && !isTrackedChild) {
       logger.debug(
-        `[Aggregator] Ignoring permission.asked for different session: ${request.sessionID} (current: ${this.currentSessionId})`,
+        `[Aggregator] Ignoring permission.asked for different session: ${request.sessionID} (current: ${this.activeSessionId()})`,
       );
       return;
     }
@@ -2220,12 +2237,12 @@ class SummaryAggregator {
     },
   ): void {
     const { sessionID, requestID } = event.properties;
-    const isCurrent = sessionID === this.currentSessionId;
+    const isCurrent = this.isEventForActiveSession(sessionID);
     const isTrackedChild = this.isTrackedChildSession(sessionID);
 
     if (!isCurrent && !isTrackedChild) {
       logger.debug(
-        `[Aggregator] Ignoring permission.replied for different session: ${sessionID} (current: ${this.currentSessionId})`,
+        `[Aggregator] Ignoring permission.replied for different session: ${sessionID} (current: ${this.activeSessionId()})`,
       );
       return;
     }

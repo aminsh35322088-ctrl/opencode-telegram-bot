@@ -80,17 +80,19 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
     const sessionInfo = { id: session.id, title: session.title, directory: currentProject.worktree };
     const binding = await openSessionInTelegramTopic(ctx.api, chatId, sessionInfo);
     setActiveTelegramTopic({ chatId, threadId: binding.threadId });
-    setCurrentSession(sessionInfo);
-    keyboardManager.bindTopic(ctx.api, chatId, binding.threadId, session.id);
-    clearAllInteractionState("telegram_topic_session_opened");
-    const topicBot = createTopicAwareBot(
-      { api: ctx.api } as unknown as Bot<Context>,
-      { chatId, threadId: binding.threadId },
-    );
-    const runtime = getTelegramTopicRuntimeDependencies();
-    if (!runtime) throw new Error("Telegram topic runtime dependencies are not initialized");
-    await attachToSession({ bot: topicBot, chatId, session: sessionInfo, ensureEventSubscription: runtime.ensureEventSubscription });
-    await sendToTelegramTopic(ctx.api, binding, t("sessions.selected", { title: session.title }));
+    await runInTopicRuntimeContext({ chatId, threadId: binding.threadId, sessionId: session.id, directory: sessionInfo.directory }, async () => {
+      setCurrentSession(sessionInfo);
+      keyboardManager.bindTopic(ctx.api, chatId, binding.threadId, session.id);
+      clearAllInteractionState("telegram_topic_session_opened");
+      const topicBot = createTopicAwareBot(
+        { api: ctx.api } as unknown as Bot<Context>,
+        { chatId, threadId: binding.threadId },
+      );
+      const runtime = getTelegramTopicRuntimeDependencies();
+      if (!runtime) throw new Error("Telegram topic runtime dependencies are not initialized");
+      await attachToSession({ bot: topicBot, chatId, session: sessionInfo, ensureEventSubscription: runtime.ensureEventSubscription });
+      await sendToTelegramTopic(ctx.api, binding, t("sessions.selected", { title: session.title }));
+    });
     await ctx.answerCallbackQuery().catch(() => {});
     await ctx.deleteMessage().catch(() => {});
     logger.info(`[TelegramTopics] Opened History session in topic: session=${session.id}, chat=${chatId}, thread=${binding.threadId}`);
@@ -126,13 +128,18 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
     setActiveTelegramTopic(topic);
     const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
     if (binding) {
-      const attached = await attachBoundTopicSession(ctx, binding);
-      if (!attached) {
-        await sendToTelegramTopic(ctx.api, binding, "❌ Could not restore this Topic session. Please reopen it from History.").catch(() => {});
-        return;
-      }
-      await enrichTelegramReplyContext(ctx, binding.directory);
-      await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId, sessionId: binding.sessionId }, () => next());
+      // Bind/attach must run inside this Topic's runtime context: otherwise
+      // keyboard/session state lands on the shared main instance and can
+      // clobber or mis-read the state of other concurrently streaming Topics.
+      await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId, sessionId: binding.sessionId, directory: binding.directory }, async () => {
+        const attached = await attachBoundTopicSession(ctx, binding);
+        if (!attached) {
+          await sendToTelegramTopic(ctx.api, binding, "❌ Could not restore this Topic session. Please reopen it from History.").catch(() => {});
+          return;
+        }
+        await enrichTelegramReplyContext(ctx, binding.directory);
+        await next();
+      });
       return;
     }
     await runInTopicRuntimeContext({ chatId: topic.chatId, threadId: topic.threadId }, () => next());
