@@ -26,7 +26,6 @@ export function clearProviderWizard(): void { pending = null; }
 async function deleteInput(ctx: Context) { const id = ctx.message?.message_id; if (ctx.chat?.id && id) await ctx.api.deleteMessage(ctx.chat.id, id).catch(() => {}); }
 async function editWizard(ctx: Context, id: number, text: string, back = "provider:menu") { if (ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: wizardKeyboard(back) }); }
 async function restartOpenCodeAfterProviderChange() { const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath; const target = resolveLocalOpencodeTarget(config.opencode.apiUrl); if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((r) => setTimeout(r, 500)); startLocalOpencodeServer(target).unref(); } await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch((e) => logger.warn("[Providers] Model refresh failed:", e)); }
-function displayProviderModels(models: Array<{ id: string; name: string }>): string { return models.map((model) => model.name || model.id).filter(Boolean).join(", "); }
 async function getProviderCapabilitySummary(customProviders: Awaited<ReturnType<typeof listCustomProviders>>) {
   const [imageProviders, groq] = await Promise.all([listImageAiProviders(), getGroqSttConfig()]);
   const lines: string[] = [];
