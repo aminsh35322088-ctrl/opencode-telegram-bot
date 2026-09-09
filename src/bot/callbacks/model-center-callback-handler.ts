@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import {
+  buildModelCenterFree,
   buildModelCenterList,
   buildModelCenterProvider,
   buildModelCenterProviders,
@@ -8,6 +9,7 @@ import {
   buildModelCenterSearchResults,
   MODEL_CENTER_FAVORITE_PREFIX,
   MODEL_CENTER_FAVORITES,
+  MODEL_CENTER_FREE,
   MODEL_CENTER_PROVIDERS,
   MODEL_CENTER_PROVIDER_PREFIX,
   MODEL_CENTER_RECENT,
@@ -49,6 +51,11 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     if (data === MODEL_CENTER_FAVORITES) return await render(ctx, await buildModelCenterList("favorites", fetchCurrentModel()));
     if (data === MODEL_CENTER_RECENT) return await render(ctx, await buildModelCenterList("recent", fetchCurrentModel()));
     if (data === MODEL_CENTER_PROVIDERS) return await render(ctx, await buildModelCenterProviders());
+    if (data === MODEL_CENTER_FREE || data.startsWith(`${MODEL_CENTER_FREE}:`)) {
+      const page = data === MODEL_CENTER_FREE ? 0 : Number.parseInt(data.slice(`${MODEL_CENTER_FREE}:`.length), 10);
+      if (!Number.isInteger(page) || page < 0) return true;
+      return await render(ctx, await buildModelCenterFree(page, fetchCurrentModel()));
+    }
     if (data === MODEL_CENTER_SEARCH || data === MODEL_CENTER_SEARCH_AGAIN) return beginSearch(ctx);
     if (data === MODEL_CENTER_SEARCH_CANCEL) { await ctx.answerCallbackQuery().catch(() => {}); interactionManager.clear("model_search_cancelled"); await ctx.deleteMessage().catch(() => {}); return true; }
     if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
@@ -93,6 +100,7 @@ async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTar
       if (!provider) return await render(ctx, await buildModelCenterProviders());
       return await render(ctx, await buildModelCenterProvider(provider, target.page, fetchCurrentModel()));
     }
+    case "free": return await render(ctx, await buildModelCenterFree(target.page, fetchCurrentModel()));
     case "search": return await render(ctx, await buildModelCenterSearchResults(target.query, fetchCurrentModel()));
   }
 }
@@ -180,8 +188,11 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
 
 async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
-  await ctx.editMessageText(view.text, { reply_markup: view.keyboard, parse_mode: "HTML" }).catch(() => {});
-  const threadId = getTopicThreadId(ctx);
-  interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
+  try {
+    await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+  } catch (error) {
+    const message = String(error);
+    if (!message.includes("message is not modified")) throw error;
+  }
   return true;
 }
