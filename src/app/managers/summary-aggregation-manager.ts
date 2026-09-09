@@ -592,7 +592,7 @@ class SummaryAggregator {
     this.pendingSubagentCardIdsByParent.clear();
     this.pendingChildSessionIdsByParent.clear();
     this.fallbackSubagentCardIdsByParent.clear();
-    this.lastSubagentSnapshot = "";
+    this.lastSubagentSnapshotByParent.clear();
     this.permissionQueue = Promise.resolve();
     this.messageCount = 0;
 
@@ -2130,7 +2130,7 @@ class SummaryAggregator {
       return;
     }
 
-    if (!this.isEventForActiveSession(sessionID)) {
+    if (sessionID === undefined || !this.isEventForActiveSession(sessionID)) {
       return;
     }
 
