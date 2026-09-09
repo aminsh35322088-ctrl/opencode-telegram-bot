@@ -186,13 +186,18 @@ describe("subscription retirement lifecycle", () => {
 
     const event1 = { type: "message.updated", properties: { sessionID: "a", n: 1 } } as unknown as Event;
     const event2 = { type: "message.updated", properties: { sessionID: "a", n: 2 } } as unknown as Event;
+    const event3 = { type: "message.updated", properties: { sessionID: "a", n: 3 } } as unknown as Event;
     let releaseEvent2!: () => void;
     const event2Gate = new Promise<void>((resolve) => { releaseEvent2 = resolve; });
+    let releaseEvent3!: () => void;
+    const event3Gate = new Promise<void>((resolve) => { releaseEvent3 = resolve; });
     subscribeMock.mockImplementation(async (options: { signal: AbortSignal }) => ({
       stream: (async function* () {
         yield event1;
         await event2Gate;
         yield event2;
+        await event3Gate;
+        yield event3;
         while (!options.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
       })(),
     }));
@@ -214,7 +219,8 @@ describe("subscription retirement lifecycle", () => {
     expect(wildcard).toHaveBeenCalledTimes(1);
 
     subscribeToTopicEvents("/workspace", vi.fn(), "a");
+    releaseEvent3();
     await vi.waitFor(() => expect(wildcard).toHaveBeenCalledTimes(2));
-    expect(wildcard).toHaveBeenLastCalledWith(event2);
+    expect(wildcard).toHaveBeenLastCalledWith(event3);
   });
 });
