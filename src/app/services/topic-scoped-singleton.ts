@@ -12,9 +12,13 @@ function copySharedConfiguration<T extends object>(source: T, target: T): void {
   for (const key of Reflect.ownKeys(source)) {
     if (typeof key !== "string") continue;
 
-    // These fields are configuration/callbacks shared by all Topic instances.
-    // Mutable collections are intentionally not copied because they must remain
-    // isolated inside each Topic-scoped instance.
+    // Configuration/callbacks that are safe to share across Topic instances.
+    // Mutable collections remain isolated inside each Topic-scoped instance.
+    // `onCleared` is intentionally NOT copied: its current callback belongs to
+    // the global event-subscription service and historically calls clearAll()
+    // on every active response stream. Sharing it would let a session change in
+    // one Topic cancel an unrelated Topic's live response.
+    if (key === "onCleared") continue;
     if (!key.startsWith("on") && key !== "bot" && key !== "chatId" && key !== "typingIndicatorEnabled") {
       continue;
     }
