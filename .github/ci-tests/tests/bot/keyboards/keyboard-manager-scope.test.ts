@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   isChatPaused: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn() },
   getMainTelegramThreadIdSync: vi.fn(),
+  getTopicRuntimeStateSync: vi.fn(),
 }));
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({ getCompactOutputMode: mocks.getCompactOutputMode, setCompactOutputMode: vi.fn() }));
@@ -19,6 +20,7 @@ vi.mock("../../../src/bot/keyboards/queued-prompt-button.js", () => ({ getQueued
 vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({ isChatPaused: mocks.isChatPaused }));
 vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: mocks.assistantRunState }));
 vi.mock("../../../src/app/services/telegram-main-topic-store.js", () => ({ getMainTelegramThreadIdSync: mocks.getMainTelegramThreadIdSync }));
+vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({ getTopicRuntimeStateSync: mocks.getTopicRuntimeStateSync }));
 vi.mock("../../../src/i18n/index.js", () => ({ t: (key: string) => key, normalizeLocale: vi.fn(() => "en") }));
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
@@ -44,7 +46,35 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     mocks.isChatPaused.mockReturnValue(false);
     mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
     mocks.getMainTelegramThreadIdSync.mockReturnValue(null);
+    mocks.getTopicRuntimeStateSync.mockReturnValue(null);
     mocks.getCompactOutputMode.mockReturnValue(false);
+  });
+
+  it("bindTopic outside any runtime context still seeds the Topic's own persisted model, not the ambient default", () => {
+    mocks.getStoredModel.mockReturnValue({ providerID: "p", modelID: "global-default", name: "Global Default" });
+    mocks.getTopicRuntimeStateSync.mockReturnValue({
+      settings: { model: { providerID: "p2", modelID: "topicone" } },
+    });
+
+    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-topic-model");
+    const texts = keyboardTexts(keyboardManager.getKeyboard("session-topic-model"));
+
+    expect(mocks.getTopicRuntimeStateSync).toHaveBeenCalledWith(CHAT_ID, THREAD_ID);
+    expect(texts.some((text) => text.includes("topicone"))).toBe(true);
+    expect(texts.some((text) => text.includes("Global Default"))).toBe(false);
+  });
+
+  it("re-syncs a stale keyboard state to the Topic's persisted model on the next bind", () => {
+    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
+    mocks.getTopicRuntimeStateSync.mockReturnValue({
+      settings: { model: { providerID: "p3", modelID: "persisted-model", name: "Persisted" } },
+    });
+
+    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
+    const texts = keyboardTexts(keyboardManager.getKeyboard("session-resync"));
+
+    expect(texts.some((text) => text.includes("Persisted"))).toBe(true);
+    expect(texts.some((text) => text.includes("Global Model"))).toBe(false);
   });
 
   it("returns the Main keyboard when no topic runtime context is active", () => {

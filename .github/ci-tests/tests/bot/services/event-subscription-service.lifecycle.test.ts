@@ -109,6 +109,21 @@ function emitAssistantCompleted(aggregator: Aggregator): void {
   } as unknown as Event);
 }
 
+function emitReasoningPart(aggregator: Aggregator, text: string): void {
+  aggregator.processEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "reasoning-1",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "reasoning",
+        text,
+      },
+    },
+  } as unknown as Event);
+}
+
 function emitSessionIdle(aggregator: Aggregator): void {
   aggregator.processEvent({
     type: "session.idle",
@@ -547,6 +562,49 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       // The draft is persisted with a real message, never edited in place.
       expect(api.editMessageText).not.toHaveBeenCalled();
       expect(defined(api.sendMessage.mock.calls[0]?.[1])).toBe("Partial answer, now complete");
+    }, 30_000);
+  });
+
+  describe("assistant final answer ordering", () => {
+    it("never delivers thinking after the answer has been finalized", async () => {
+      const { api, summaryAggregator } = await setupService({ startAssistantRun: true });
+
+      // Chronological log of outbound text: send and edit mocks are separate,
+      // so the recorded call order is the only proof of what lands last.
+      const timeline: string[] = [];
+      let nextMessageId = 500;
+      api.sendMessage.mockImplementation(async (...args: unknown[]) => {
+        timeline.push(String(args[1]));
+        return { message_id: ++nextMessageId };
+      });
+      api.editMessageText.mockImplementation(async (...args: unknown[]) => {
+        timeline.push(String(args[2]));
+        return undefined;
+      });
+
+      emitReasoningPart(summaryAggregator, "Early reasoning about the task");
+      await vi.waitFor(
+        () => {
+          expect(timeline.some((text) => text.includes("Early reasoning"))).toBe(true);
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
+
+      emitAssistantTextPart(summaryAggregator, "The final answer");
+      emitAssistantCompleted(summaryAggregator);
+      await vi.waitFor(
+        () => {
+          expect(timeline.at(-1)).toContain("The final answer");
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
+
+      const timelineLengthAfterAnswer = timeline.length;
+      emitReasoningPart(summaryAggregator, "Late reasoning after the answer");
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+
+      expect(timeline.some((text) => text.includes("Late reasoning"))).toBe(false);
+      expect(timeline).toHaveLength(timelineLengthAfterAnswer);
     }, 30_000);
   });
 

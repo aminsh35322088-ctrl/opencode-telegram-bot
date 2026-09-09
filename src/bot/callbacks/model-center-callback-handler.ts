@@ -31,7 +31,8 @@ import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { clearSession, getCurrentSession } from "../../app/services/session-service.js";
-import { stopEventListening } from "../../opencode/events.js";
+import { detachAttachedSession } from "../../app/services/attach-service.js";
+import { stopEventListening, stopTopicEventSubscription } from "../../opencode/events.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
@@ -148,7 +149,15 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
   if (modelChanged && currentSession && getCurrentTopicSettings()) {
-    stopEventListening();
+    if (isTopic && topicSessionId && topicBinding?.directory) {
+      // Retire only this Topic's session subscription. A global
+      // stopEventListening() here would tear down the event streams of every
+      // other concurrently streaming Topic and freeze their chats.
+      detachAttachedSession("model_switch");
+      stopTopicEventSubscription(topicBinding.directory, topicSessionId);
+    } else {
+      stopEventListening();
+    }
     summaryAggregator.clear();
     clearSession();
     keyboardManager.clearContext(topicSessionId);
