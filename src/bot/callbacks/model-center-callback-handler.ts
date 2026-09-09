@@ -194,5 +194,15 @@ async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboa
     const message = String(error);
     if (!message.includes("message is not modified")) throw error;
   }
+  const threadId = getTopicThreadId(ctx);
+  interactionManager.transition({
+    expectedInput: "callback",
+    metadata: {
+      menuKind: "model",
+      messageId: ctx.callbackQuery?.message?.message_id,
+      ...(ctx.chat ? { chatId: ctx.chat.id } : {}),
+      ...(threadId !== undefined ? { threadId } : {}),
+    },
+  });
   return true;
 }
