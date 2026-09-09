@@ -133,6 +133,8 @@ describe("overlapping Topic execution", () => {
     })() }));
     const callback = vi.fn();
     subscribeToTopicEvents("/workspace", callback, "new");
+    const stopOld = subscribeToTopicEvents("/workspace", vi.fn(), "old");
+    stopOld();
     await vi.waitFor(() => expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("event=stale_session_route_blocked")));
     expect(callback).not.toHaveBeenCalled();
   });
@@ -162,4 +164,16 @@ describe("overlapping Topic execution", () => {
     } finally { release(); }
     await vi.waitFor(() => expect(seenA).toEqual([0, 2]));
   });
+});
+
+
+it("preserves unique-directory routing for an unbound child session", async () => {
+  bindings.bySession.mockResolvedValue(null);
+  bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "parent", directory: "/workspace" }]);
+  const event = { type: "message.updated", properties: { sessionID: "child" } } as unknown as Event;
+  subscribeMock.mockImplementation(async (options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
+  const callback = vi.fn();
+  subscribeToTopicEvents("/workspace", callback, "parent");
+  try { await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(event)); }
+  finally { stopTopicEventBus(); }
 });
