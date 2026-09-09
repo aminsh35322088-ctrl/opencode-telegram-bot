@@ -1,12 +1,15 @@
 import { getCustomProviderConfig, type CustomProviderModel } from "./custom-provider-service.js";
+import { logger } from "../../utils/logger.js";
 
 export type FreeModelConfidence = "high" | "low" | "none";
 export type FreeModelStatus = "free" | "paid" | "unknown";
+export type FreeModelAvailability = "available" | "untested" | "unavailable";
 
 export interface FreeModelInfo extends CustomProviderModel {
   providerID: string;
   status: FreeModelStatus;
   confidence: FreeModelConfidence;
+  availability: FreeModelAvailability;
   reason: string;
 }
 
@@ -35,6 +38,7 @@ interface ScanCache {
 
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
+const AVAILABILITY_CONCURRENCY = 8;
 let cache: ScanCache | null = null;
 let inFlight: Promise<FreeModelInfo[]> | null = null;
 
@@ -109,7 +113,7 @@ function hasCompleteZeroPricing(pricing: Pricing): boolean {
   return values.length >= 2 && values.every((value) => value === 0);
 }
 
-function classify(record: ModelRecord): Omit<FreeModelInfo, "providerID"> | null {
+function classify(record: ModelRecord): Omit<FreeModelInfo, "providerID" | "availability"> | null {
   if (typeof record.id !== "string" || !record.id.trim()) return null;
   const id = record.id.trim();
   const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : id;
@@ -158,13 +162,22 @@ async function scanProvider(providerID: string): Promise<FreeModelInfo[]> {
   return payload.data
     .filter((item): item is ModelRecord => Boolean(item) && typeof item === "object")
     .map(classify)
-    .filter((model): model is Omit<FreeModelInfo, "providerID"> => Boolean(model))
-    .map((model) => ({ ...model, providerID }));
+    .filter((model): model is Omit<FreeModelInfo, "providerID" | "availability"> => Boolean(model))
+    .map((model) => ({ ...model, providerID, availability: "untested" as const }));
 }
 
 async function scanAllProviders(): Promise<FreeModelInfo[]> {
   const providers = await import("./custom-provider-service.js").then(({ listCustomProviders }) => listCustomProviders());
-  const results = await Promise.all(providers.map((provider) => scanProvider(provider.id)));
+  const settled = await Promise.allSettled(providers.map((provider) => scanProvider(provider.id)));
+  const results: FreeModelInfo[] = [];
+  settled.forEach((result, index) => {
+    const providerID = providers[index]?.id ?? "unknown";
+    if (result.status === "fulfilled") {
+      results.push(...result.value);
+    } else {
+      logger.warn(`[FreeModelScan] Provider ${providerID} failed; continuing with other providers.`, result.reason);
+    }
+  });
   return results
     .flat()
     .filter((model) => model.status === "free" && model.confidence === "high")
@@ -183,6 +196,52 @@ export async function listVerifiedFreeModels(options?: { force?: boolean }): Pro
       inFlight = null;
     });
   return inFlight;
+}
+
+async function probeAvailability(model: FreeModelInfo): Promise<FreeModelAvailability> {
+  const config = await getCustomProviderConfig(model.providerID);
+  if (!config) return "unavailable";
+  const baseURL = normalizeBaseURL(config.apiUrl);
+  try {
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: model.id,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return response.ok ? "available" : "unavailable";
+  } catch (error) {
+    logger.debug(`[FreeModelScan] Availability probe failed for ${model.providerID}/${model.id}`, error);
+    return "unavailable";
+  }
+}
+
+export async function verifyFreeModelAvailability(models?: FreeModelInfo[]): Promise<FreeModelInfo[]> {
+  const candidates = models ?? (await listVerifiedFreeModels());
+  const result = [...candidates];
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= result.length) return;
+      result[index] = { ...result[index], availability: await probeAvailability(result[index]) };
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(AVAILABILITY_CONCURRENCY, result.length) }, () => worker()));
+  return result.sort((a, b) => {
+    const rank = (value: FreeModelAvailability): number => value === "available" ? 0 : value === "untested" ? 1 : 2;
+    return rank(a.availability) - rank(b.availability) || a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+  });
 }
 
 export function __resetFreeModelScanCacheForTests(): void {
