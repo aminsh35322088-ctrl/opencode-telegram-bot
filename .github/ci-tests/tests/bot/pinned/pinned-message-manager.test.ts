@@ -658,4 +658,39 @@ describe("pinned/manager", () => {
       expect(fakeApi.sendMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe("per-Topic context accounting", () => {
+    it("keeps token counters isolated per session scope", async () => {
+      const { runInTopicRuntimeContext } = await import("../../../src/app/services/topic-runtime-context.js");
+      pinnedMessageManager.__resetForTests();
+      pinnedMessageManager.initialize(fakeApi as never, 123);
+
+      await pinnedMessageManager.onSessionChange("ses-a", "Topic A");
+      pinnedMessageManager.updateTokensSilent({ input: 100, output: 1, reasoning: 0, cacheRead: 20, cacheWrite: 0 });
+      await pinnedMessageManager.onSessionChange("ses-b", "Topic B");
+      pinnedMessageManager.updateTokensSilent({ input: 500, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0 });
+
+      // The unscoped (main) reader resolves to the most recent focus session.
+      expect(pinnedMessageManager.getContextInfo().tokensUsed).toBe(500);
+
+      // Topic A's own runtime context still sees its own accounting untouched.
+      const scopedA = runInTopicRuntimeContext({ chatId: 123, threadId: 11, sessionId: "ses-a" }, () => pinnedMessageManager.getContextInfo());
+      expect(scopedA.tokensUsed).toBe(120);
+    });
+
+    it("clears only the current Topic scope, not other sessions", async () => {
+      const { runInTopicRuntimeContext } = await import("../../../src/app/services/topic-runtime-context.js");
+      await pinnedMessageManager.onSessionChange("ses-c", "Topic C");
+      pinnedMessageManager.updateTokensSilent({ input: 900, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0 });
+
+      await runInTopicRuntimeContext({ chatId: 123, threadId: 12, sessionId: "ses-d" }, async () => {
+        await pinnedMessageManager.clear();
+        expect(pinnedMessageManager.getContextInfo().tokensUsed).toBe(0);
+      });
+
+      const stillIntact = runInTopicRuntimeContext({ chatId: 123, threadId: 11, sessionId: "ses-c" }, () => pinnedMessageManager.getContextInfo());
+      expect(stillIntact.tokensUsed).toBe(900);
+      pinnedMessageManager.__resetForTests();
+    });
+  });
 });

@@ -42,12 +42,12 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
     if (previewId) { const items = await loadSessionPreviewItems(binding.sessionId, binding.directory, 10); await ctx.answerCallbackQuery(); await ctx.editMessageText(formatSessionPreview(binding.title ?? "Telegram Topic", items), { reply_markup: buildSessionPreviewKeyboard(binding.sessionId) }); return true; }
 
     const runtime = await getTopicRuntimeState(binding.chatId, binding.threadId);
-    const session = runtime?.session ?? { id: binding.sessionId, title: binding.title ?? "Telegram Topic", directory: binding.directory };
-    await initializeTopicRuntimeState(binding.chatId, binding.threadId, { session, model: runtime?.model ?? getStoredModel(), agent: runtime?.agent ?? getStoredAgent(), compactOutputMode: runtime?.compactOutputMode ?? getCompactOutputMode() });
+    const session = runtime?.settings.session ?? { id: binding.sessionId, title: binding.title ?? "Telegram Topic", directory: binding.directory };
+    await initializeTopicRuntimeState(binding.chatId, binding.threadId, { session, model: runtime?.settings.model ?? getStoredModel(), agent: runtime?.settings.agent ?? getStoredAgent(), compactOutputMode: runtime?.settings.compactOutputMode ?? getCompactOutputMode() });
     await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId }, async () => {
       setCurrentSession(session); clearAllInteractionState("topic_history_continue"); keyboardManager.bindTopic(ctx.api, binding.chatId, binding.threadId, binding.sessionId);
-      if (runtime?.model) keyboardManager.updateModel(runtime.model, binding.sessionId);
-      if (runtime?.agent) keyboardManager.updateAgent(runtime.agent, binding.sessionId);
+      if (runtime?.settings.model) keyboardManager.updateModel(runtime.settings.model, binding.sessionId);
+      if (runtime?.settings.agent) keyboardManager.updateAgent(runtime.settings.agent, binding.sessionId);
       await attachToSession({ bot: deps.bot, chatId: binding.chatId, session, ensureEventSubscription: deps.ensureEventSubscription }); await deps.ensureEventSubscription(binding.directory);
     });
     await ctx.answerCallbackQuery({ text: "Topic ready" });

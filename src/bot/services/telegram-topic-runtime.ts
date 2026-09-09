@@ -9,8 +9,6 @@ installTopicScopedSingleton(summaryAggregator);
 export interface TelegramTopicContext { chatId: number; threadId: number; }
 export interface TelegramTopicRuntimeDependencies { ensureEventSubscription: (directory: string) => Promise<void>; }
 let runtimeDependencies: TelegramTopicRuntimeDependencies | null = null;
-export function setActiveTelegramTopic(_context: TelegramTopicContext | null): void {}
-export function getActiveTelegramTopic(chatId?: number): TelegramTopicContext | null { const topic = getTopicRuntimeContext(); if (!topic) return null; if (chatId !== undefined && topic.chatId !== chatId) return null; return { chatId: topic.chatId, threadId: topic.threadId }; }
 export function setTelegramTopicRuntimeDependencies(dependencies: TelegramTopicRuntimeDependencies): void { runtimeDependencies = dependencies; }
 export function getTelegramTopicRuntimeDependencies(): TelegramTopicRuntimeDependencies | null { return runtimeDependencies; }
 const TOPIC_SEND_METHODS = new Set(["sendMessage", "sendMessageDraft", "sendRichMessage", "sendRichMessageDraft", "sendPhoto", "sendVideo", "sendAnimation", "sendAudio", "sendDocument", "sendPaidMedia", "sendSticker", "sendVideoNote", "sendVoice", "sendLocation", "sendVenue", "sendContact", "sendPoll", "sendDice", "sendInvoice", "sendGame", "sendMediaGroup", "sendChatAction"]);

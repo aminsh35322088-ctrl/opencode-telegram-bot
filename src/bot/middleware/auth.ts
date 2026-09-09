@@ -11,7 +11,7 @@ import { findTelegramTopicBindingByThread } from "../../app/services/telegram-to
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { enrichTelegramReplyContext } from "../../app/services/telegram-reply-context-service.js";
 import { stashRawReplyKeyboardText } from "../interaction-classifier.js";
-import { createTopicAwareBot, getTelegramTopicRuntimeDependencies, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
+import { createTopicAwareBot, getTelegramTopicRuntimeDependencies } from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -79,7 +79,6 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
     if (error || !session) throw error ?? new Error("Failed to load the selected session");
     const sessionInfo = { id: session.id, title: session.title, directory: currentProject.worktree };
     const binding = await openSessionInTelegramTopic(ctx.api, chatId, sessionInfo);
-    setActiveTelegramTopic({ chatId, threadId: binding.threadId });
     await runInTopicRuntimeContext({ chatId, threadId: binding.threadId, sessionId: session.id, directory: sessionInfo.directory }, async () => {
       setCurrentSession(sessionInfo);
       keyboardManager.bindTopic(ctx.api, chatId, binding.threadId, session.id);
@@ -125,7 +124,6 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
 
   const topic = getTopicMessage(ctx);
   if (topic) {
-    setActiveTelegramTopic(topic);
     const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
     if (binding) {
       // Bind/attach must run inside this Topic's runtime context: otherwise

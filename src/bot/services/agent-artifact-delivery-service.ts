@@ -5,6 +5,7 @@ import { config } from "../../config.js";
 import { createTelegramBotOptions } from "../telegram-client-options.js";
 import { logger } from "../../utils/logger.js";
 import type { Event } from "@opencode-ai/sdk/v2";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const DEBOUNCE_MS = 1500;
@@ -107,7 +108,7 @@ function captionFor(filePath: string, size: number): string {
 
 class AgentArtifactDeliveryService {
   private botInstance: Bot | null = null;
-  private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pending = new Map<string, { timer: ReturnType<typeof setTimeout>; scope: { chatId: number; threadId: number } | null }>();
   private readonly lastDelivered = new Map<string, { signature: string; at: number }>();
   private chatId: number | null = null;
 
@@ -123,12 +124,19 @@ class AgentArtifactDeliveryService {
   }
 
   processEvent(event: Event): void {
+    // Capture the Topic scope while still inside the event dispatch context:
+    // the debounce timer and the awaited file checks below run after the
+    // AsyncLocalStorage scope has ended, and artifacts must still land in the
+    // Topic thread that produced them instead of the chat root.
+    const runtime = getTopicRuntimeContext();
+    const scope = runtime ? { chatId: runtime.chatId, threadId: runtime.threadId } : null;
+
     if (event.type === "file.edited" || event.type === "file.watcher.updated") {
       const properties = event.properties as { file?: unknown; event?: unknown };
       const filePath = properties.file;
       if (typeof filePath !== "string") return;
       if (event.type === "file.watcher.updated" && properties.event === "unlink") return;
-      void this.scheduleAutoDetection(filePath);
+      void this.scheduleAutoDetection(filePath, scope);
       return;
     }
 
@@ -139,52 +147,53 @@ class AgentArtifactDeliveryService {
       ...extractArtifactMarkers(part.state.output),
       ...extractArtifactMarkers(part.state.input.command),
     ];
-    for (const filePath of markerPaths) this.scheduleDelivery(filePath);
+    for (const filePath of markerPaths) this.scheduleDelivery(filePath, scope);
   }
 
   clear(): void {
-    for (const timer of this.pending.values()) clearTimeout(timer);
+    for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
     this.lastDelivered.clear();
     this.chatId = null;
   }
 
-  private async scheduleAutoDetection(filePath: string): Promise<void> {
+  private async scheduleAutoDetection(filePath: string, scope: { chatId: number; threadId: number } | null): Promise<void> {
     try {
       if (isIgnoredPath(filePath) || isSensitiveArtifactPath(filePath)) return;
       const sample = await fs.readFile(filePath).then((buffer) => buffer.subarray(0, 4096)).catch(() => null);
       if (!sample || !isLikelyArtifactFromFileEvent(filePath, sample)) return;
-      this.scheduleDelivery(filePath);
+      this.scheduleDelivery(filePath, scope);
     } catch (error) {
       logger.debug(`[Artifact] Unable to inspect generated file: ${filePath}`, error);
     }
   }
 
-  private scheduleDelivery(filePath: string): void {
+  private scheduleDelivery(filePath: string, scope: { chatId: number; threadId: number } | null): void {
     if (isSensitiveArtifactPath(filePath)) {
       logger.warn(`[Artifact] Refusing to deliver sensitive path: ${filePath}`);
       return;
     }
 
     const previous = this.pending.get(filePath);
-    if (previous) clearTimeout(previous);
+    if (previous) clearTimeout(previous.timer);
 
     const timer = setTimeout(() => {
       this.pending.delete(filePath);
-      void this.deliver(filePath);
+      void this.deliver(filePath, scope);
     }, DEBOUNCE_MS);
-    this.pending.set(filePath, timer);
+    this.pending.set(filePath, { timer, scope });
   }
 
-  private async deliver(filePath: string): Promise<void> {
+  private async deliver(filePath: string, scope: { chatId: number; threadId: number } | null): Promise<void> {
     try {
       if (isSensitiveArtifactPath(filePath)) return;
-      if (this.chatId === null) {
+      if (this.chatId === null && scope === null) {
         logger.warn(`[Artifact] No Telegram chat context; refusing to deliver file: ${filePath}`);
         return;
       }
 
-      const targetChatId = this.chatId;
+      const targetChatId = scope?.chatId ?? this.chatId;
+      if (targetChatId === null) return;
       const stat = await fs.stat(filePath).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_FILE_SIZE_BYTES || stat.size === 0) {
         logger.warn(`[Artifact] Skipping unavailable/empty/oversized file: ${filePath}`);
@@ -199,6 +208,7 @@ class AgentArtifactDeliveryService {
       await this.bot.api.sendDocument(targetChatId, new InputFile(filePath), {
         caption: captionFor(filePath, stat.size),
         disable_notification: true,
+        ...(scope && scope.threadId > 1 ? { message_thread_id: scope.threadId } : {}),
       });
 
       this.lastDelivered.set(filePath, { signature, at: now });

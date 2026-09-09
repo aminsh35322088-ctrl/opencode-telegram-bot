@@ -15,7 +15,7 @@ import { openSessionInTelegramTopic } from "../../app/services/telegram-topic-se
 import { createTelegramTopicWorkspace, deleteTelegramTopicWorkspace } from "../../app/services/telegram-topic-workspace-service.js";
 import { deleteTelegramTopicSession } from "../../app/services/telegram-topic-delete-service.js";
 import type { TelegramTopicBinding } from "../../app/services/telegram-topic-store.js";
-import { createTopicAwareBot, setActiveTelegramTopic } from "../services/telegram-topic-runtime.js";
+import { createTopicAwareBot } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
@@ -63,8 +63,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       model: initialModel,
       compactOutputMode: initialCompact,
     });
-
-    setActiveTelegramTopic({ chatId: ctx.chat.id, threadId: binding.threadId });
 
     await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },

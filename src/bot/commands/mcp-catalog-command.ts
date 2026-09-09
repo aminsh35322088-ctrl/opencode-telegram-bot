@@ -6,9 +6,10 @@ import { getCurrentSessionDirectory } from "../../app/services/session-service.j
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { buildMcpsAddTypeKeyboard, buildMcpsEmptyKeyboard, buildMcpsListKeyboard } from "../menus/mcp-catalog-menu.js";
+import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 
 interface PendingMcpAdd { step: "name" | "type" | "value"; name?: string; type?: "local" | "remote"; messageId: number; projectDirectory: string; }
-let pendingMcpAdd: PendingMcpAdd | null = null;
+const mcpAddWizard = new TopicScopedValue<PendingMcpAdd>();
 
 function callbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
@@ -24,8 +25,8 @@ async function renderAddWizard(ctx: Context, messageId: number, text: string, ke
   if (!ctx.chat?.id) return;
   await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard });
 }
-export function isMcpAddWizardActive(): boolean { return pendingMcpAdd !== null; }
-export function clearMcpAddWizard(): void { pendingMcpAdd = null; }
+export function isMcpAddWizardActive(): boolean { return mcpAddWizard.isActive(); }
+export function clearMcpAddWizard(): void { mcpAddWizard.clear(); }
 
 export async function startMcpAddWizard(ctx: Context): Promise<void> {
   const projectDirectory = getCurrentSessionDirectory();
@@ -34,29 +35,30 @@ export async function startMcpAddWizard(ctx: Context): Promise<void> {
     await ctx.answerCallbackQuery({ text: "This menu has expired. Please open MCP Servers again.", show_alert: true }).catch(() => {});
     return;
   }
-  pendingMcpAdd = { step: "name", messageId, projectDirectory };
+  mcpAddWizard.set({ step: "name", messageId, projectDirectory });
   await ctx.answerCallbackQuery().catch(() => {});
   await renderAddWizard(ctx, messageId, "➕ Add MCP Server\n\n1/3 · Server name\n\nSend a unique name for this MCP server.", new InlineKeyboard().text("✖ Cancel", "mcps:cancel"));
   interactionManager.start({ kind: "custom", expectedInput: "text", metadata: { flow: "mcps", stage: "add", messageId, projectDirectory } });
 }
 
 export async function selectMcpAddType(ctx: Context, type: "local" | "remote"): Promise<void> {
-  if (!pendingMcpAdd || pendingMcpAdd.step !== "type") {
+  const wizard = mcpAddWizard.get();
+  if (!wizard || wizard.step !== "type") {
     await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
     return;
   }
-  pendingMcpAdd.type = type;
-  pendingMcpAdd.step = "value";
+  wizard.type = type;
+  wizard.step = "value";
   await ctx.answerCallbackQuery().catch(() => {});
   const prompt = type === "remote"
     ? "➕ Add Remote MCP Server\n\n3/3 · Server URL\n\nSend the absolute MCP Streamable HTTP URL.\n\nExample: https://mcp.example.com/mcp"
     : "➕ Add Local MCP Server\n\n3/3 · Command\n\nSend the command OpenCode should run.\n\nExample: npx -y @modelcontextprotocol/server-everything";
-  await renderAddWizard(ctx, pendingMcpAdd.messageId, prompt, new InlineKeyboard().text("✖ Cancel", "mcps:cancel"));
-  interactionManager.transition({ expectedInput: "text", metadata: { flow: "mcps", stage: "add", messageId: pendingMcpAdd.messageId, projectDirectory: pendingMcpAdd.projectDirectory, name: pendingMcpAdd.name, type } });
+  await renderAddWizard(ctx, wizard.messageId, prompt, new InlineKeyboard().text("✖ Cancel", "mcps:cancel"));
+  interactionManager.transition({ expectedInput: "text", metadata: { flow: "mcps", stage: "add", messageId: wizard.messageId, projectDirectory: wizard.projectDirectory, name: wizard.name, type } });
 }
 
 export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
-  const pending = pendingMcpAdd;
+  const pending = mcpAddWizard.get();
   const text = ctx.message?.text?.trim();
   if (!pending || !text || !ctx.chat?.id) return false;
 
@@ -78,7 +80,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   try {
     await addMcpCatalogServer({ projectDirectory: pending.projectDirectory, name: pending.name, type: pending.type, value: text });
     const servers = await loadMcpCatalog(pending.projectDirectory);
-    pendingMcpAdd = null;
+    mcpAddWizard.clear();
     interactionManager.clear("mcp_add_completed");
     await ctx.api.editMessageText(ctx.chat.id, pending.messageId, t("mcps.select"), { reply_markup: buildMcpsListKeyboard(servers) });
     interactionManager.start({ kind: "custom", expectedInput: "callback", metadata: { flow: "mcps", stage: "list", messageId: pending.messageId, projectDirectory: pending.projectDirectory, servers } });
