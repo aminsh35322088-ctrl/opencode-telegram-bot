@@ -4,7 +4,23 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+### Added
+- Topic isolation architecture is now documented in `docs/TOPIC_ISOLATION_ARCHITECTURE.md`: the ALS scope contract, the per-topic vs per-session keying rules for all mutable state, and the liveness guarantees behind concurrent multi-Topic AI chat.
+- `TopicScopedValue` primitive: one mutable value per Telegram Topic scope, resolved from the runtime context, used to give every Topic its own independent setup wizards.
+
 ### Fixed
+- Provider, Integrations (GitHub/Railway) and MCP-add wizards are now per-Topic: two Topics can no longer hijack or cancel each other's in-progress form, and text typed in one Topic is never consumed by another Topic's wizard.
+- Generated artifact files are now delivered into the Topic thread that produced them instead of always landing at the chat root.
+- Context accounting (used tokens, context limit, cost, changed files) is tracked per session, so a concurrently streaming Topic can no longer show another Topic's context usage on the keyboard or pinned state.
+
+### Changed
+- Concurrent AI topics are the tested baseline for `summaryAggregator` gating and per-topic keyboards (see the linked architecture doc).
+
+### Removed
+- Dead legacy `setActiveTelegramTopic`/`getActiveTelegramTopic` no-op API and all call sites.
+- Unreachable Gemini wizard branch and its unused constants in the providers command.
+- Deprecated duplicated top-level `session/model/agent/compactOutputMode` fields from Topic runtime states; `settings` is the single source of truth (legacy files are still migrated on load).
+
 - AI Topic bottom keyboards now show each Topic's own persisted model after restarts/re-opens instead of the ambient default: keyboard state initialization resolves the model and agent directly from the Topic runtime store rather than relying on the async Topic context being active.
 - Concurrent live chats across AI Topics no longer freeze when another Topic attaches: switching aggregator focus no longer wipes other sessions' in-flight aggregation state, every session-rooted event gate now honors the per-event Topic runtime context, and switching the model in one Topic retires only that Topic's event subscription instead of tearing down every Topic's stream.
 - Reasoning/thinking parts that arrive after the finalized assistant answer are no longer delivered, and pending thinking flushes are serialized through the completion queue, so the final answer is always the last message in a Topic.

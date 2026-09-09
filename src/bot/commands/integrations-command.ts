@@ -6,12 +6,13 @@ import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
+import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingRailway { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingState { github?: PendingGithub; railway?: PendingRailway; }
 
-let pending: PendingState | null = null;
+const integrationWizard = new TopicScopedValue<PendingState>();
 function callbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
   if (!message || !("message_id" in message)) return null;
@@ -20,8 +21,8 @@ function callbackMessageId(ctx: Context): number | null {
 function wizardKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Integrations", "integration:menu");
 }
-export function isIntegrationWizardActive(): boolean { return Boolean(pending?.github || pending?.railway); }
-export function clearIntegrationWizard(): void { pending = null; }
+export function isIntegrationWizardActive(): boolean { const pending = integrationWizard.get(); return Boolean(pending?.github || pending?.railway); }
+export function clearIntegrationWizard(): void { integrationWizard.clear(); }
 function railwayValidationError(validation: RailwayTokenValidation): Error {
   switch (validation.reason) {
     case "unauthorized": return new Error("Railway rejected this token (unauthorized). Check that it is active and copied correctly.");
@@ -69,10 +70,10 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:close") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
   if (data === "integration:advanced") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
-  if (data === "integration:cancel") { const state = pending; clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx, state?.github?.messageId ?? state?.railway?.messageId, "❌ Setup cancelled."); return true; }
+  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx, state?.github?.messageId ?? state?.railway?.messageId, "❌ Setup cancelled."); return true; }
   if (data === "integration:menu") { await showIntegrationsMenu(ctx); return true; }
-  if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); pending = { github: { step: "name", messageId } }; await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
-  if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); pending = { railway: { step: "name", messageId } }; await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
+  if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
+  if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ railway: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "GitHub account removed" : "GitHub account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:railway:select:")) { const account = await setActiveRailwayAccount(data.slice("integration:railway:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
@@ -80,7 +81,7 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   return true;
 }
 export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
-  const text = ctx.message?.text?.trim(); const state = pending; if (!ctx.chat?.id || !text || !state) return false;
+  const text = ctx.message?.text?.trim(); const state = integrationWizard.get(); if (!ctx.chat?.id || !text || !state) return false;
   const github = state.github; const railway = state.railway;
   try {
     if (github) {
@@ -97,7 +98,7 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   } catch (error) {
     logger.error("[Integrations] wizard failed:", error);
     const messageId = github?.messageId ?? railway?.messageId; const kind = github ? "GitHub" : "Railway";
-    if (messageId !== undefined && pending) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
+    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
     return true;
   }
 }
