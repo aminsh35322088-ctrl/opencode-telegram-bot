@@ -251,6 +251,7 @@ export const ko: I18nDictionary = {
   "new.project_not_selected":
     "🏗 프로젝트가 선택되지 않았습니다.\n\n먼저 /projects로 프로젝트를 선택해 주세요.",
   "new.created": "✅ 새 세션이 생성되었습니다: {title}",
+  "general.topic_only_prompt": "🚫 포럼의 일반 토픽입니다 — AI 프롬프트는 AI 토픽 안에서만 사용할 수 있습니다.\n\n💬 New Chat을 눌러 새 코딩 토픽을 시작하거나, History에서 기존 토픽을 여세요.\n\n여기서는 봇이 명시적으로 입력을 요청할 때만 텍스트가 허용됩니다.",
   "new.create_error":
     "🔴 OpenCode 서버에 연결할 수 없거나 세션을 만드는 중 오류가 발생했습니다.",
 

@@ -238,6 +238,7 @@ export const ar: I18nDictionary = {
 
   "new.project_not_selected": "🏗 لم تحدد مشروعًا بعد.\n\nاختر مشروعًا أولًا باستخدام /projects.",
   "new.created": "✅ تم إنشاء جلسة جديدة: {title}",
+  "general.topic_only_prompt": "🚫 هذا هو الموضوع العام للمجموعة — موجهات الذكاء الاصطناعي مسموح بها فقط داخل مواضيع AI.\n\n💬 اضغط New Chat لبدء موضوع برمجي جديد، أو افتح موضوعًا موجودًا من History.\n\nيُقبل النص هنا فقط عندما يطلب منك البوت الإدخال صراحةً.",
   "new.create_error": "🔴 خادم OpenCode غير متاح أو حدث خطأ أثناء إنشاء الجلسة.",
 
   "stop.no_active_session":

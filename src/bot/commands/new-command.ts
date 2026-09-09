@@ -18,7 +18,6 @@ import type { TelegramTopicBinding } from "../../app/services/telegram-topic-sto
 import { createTopicAwareBot } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
-import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -85,10 +84,11 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     await keyboardManager.enterTopicMode(ctx.chat.id);
     await keyboardManager.clearMainInlineMessage(ctx.chat.id);
     const successText = `${t("new.created", { title: chatTitle })}\n\nUse this Topic for the conversation.`;
-    const navigationMessage = await deps.bot.api.sendMessage(ctx.chat.id, successText, {
-      reply_markup: createMainInlineKeyboard(initialModel),
-    });
-    await keyboardManager.setMainInlineMessage(ctx.chat.id, navigationMessage.message_id);
+    await deps.bot.api.sendMessage(ctx.chat.id, successText);
+    // The Main panel keyboard must live only under the welcome/anchor message.
+    // Reposting it under the New Chat confirmation created a second keyboard
+    // panel in General and moved the anchor away from its pinned message.
+    await keyboardManager.sendMainInlineKeyboard(ctx.chat.id, initialModel, true);
 
     await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 

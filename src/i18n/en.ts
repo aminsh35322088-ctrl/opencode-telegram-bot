@@ -242,6 +242,7 @@ export const en = {
   "new.project_not_selected":
     "🏗 Project is not selected.\n\nFirst select a project with /projects.",
   "new.created": "✅ New session created: {title}",
+  "general.topic_only_prompt": "🚫 This is the General Topic of the forum — AI prompts are only allowed inside AI Topics.\n\n💬 Press New Chat to start a fresh coding Topic, or open an existing Topic from History.\n\nText is accepted here only when the bot explicitly asks you for input.",
   "new.create_error":
     "🔴 OpenCode Server is unavailable or an error occurred while creating session.",
 

@@ -36,6 +36,7 @@ import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
+import { isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
 import { abortCurrentOperation } from "../commands/abort-command.js";
@@ -47,7 +48,7 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
-import { clearImageMode, getImageMode } from "../../app/services/image-mode-service.js";
+import { clearImageMode, getImageMode, isImageModeActive } from "../../app/services/image-mode-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -233,6 +234,35 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   return false;
 }
 
+/**
+ * In a forum group, the General ("All") topic is a lobby, not a chat surface:
+ * AI conversations live in their own Topics. Free-form text there is accepted
+ * only while the bot explicitly waits for input (a wizard step, a question,
+ * rename, task creation, model search, Image AI prompt, …); everything else
+ * would silently start a prompt against whatever session the General chat
+ * happens to follow.
+ */
+function isForumGeneralTopic(ctx: Context): boolean {
+  const chat = ctx.chat as { type?: string; is_forum?: boolean } | undefined;
+  if (!chat || chat.type === "private" || chat.is_forum !== true) return false;
+  const threadId = (ctx.message as { message_thread_id?: number } | undefined)?.message_thread_id;
+  return typeof threadId !== "number" || threadId <= 1;
+}
+
+function isBotAwaitingTextInput(): boolean {
+  const state = interactionManager.getSnapshot();
+  if (state && (state.expectedInput === "text" || state.expectedInput === "mixed")) return true;
+  return isImageModeActive() || isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive();
+}
+
+function isGeneralTopicPromptBlocked(ctx: Context): boolean {
+  return isForumGeneralTopic(ctx) && !isBotAwaitingTextInput();
+}
+
+async function rejectGeneralTopicPrompt(ctx: Context): Promise<void> {
+  await ctx.reply(t("general.topic_only_prompt"));
+}
+
 function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
   bot.on("message:text", async (ctx, next) => {
     const rawText = ctx.message.text;
@@ -276,6 +306,11 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
 
     const promptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
     if (await handleCatalogTextArguments(ctx, promptDeps)) return;
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
 
     queuePromptForMerging(ctx, text, promptDeps, config.bot.messageMergeWindowMs);
   });
@@ -399,6 +434,10 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
   bot.on("message:voice", async (ctx) => {
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
@@ -406,6 +445,10 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   });
 
   bot.on("message:audio", async (ctx) => {
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
@@ -444,10 +487,19 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       return;
     }
 
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
   bot.on("message:document", async (ctx) => {
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);

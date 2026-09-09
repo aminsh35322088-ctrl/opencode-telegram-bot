@@ -3,6 +3,7 @@ import { foregroundSessionState } from "../managers/foreground-session-state-man
 import { assistantRunState } from "../managers/assistant-run-state-manager.js";
 import { markAttachedSessionIdle } from "./attach-service.js";
 import { logger } from "../../utils/logger.js";
+import { markAbortExpected } from "../managers/abort-suppression-manager.js";
 
 const POLL_INTERVAL_MS = 5000;
 const STALL_AFTER_MS = 4 * 60 * 1000;
@@ -90,6 +91,7 @@ async function getStatus(sessionId: string, directory: string): Promise<SessionS
 }
 
 async function requestAbort(sessionId: string, directory: string): Promise<boolean> {
+  markAbortExpected(sessionId);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ABORT_REQUEST_TIMEOUT_MS);
   try {

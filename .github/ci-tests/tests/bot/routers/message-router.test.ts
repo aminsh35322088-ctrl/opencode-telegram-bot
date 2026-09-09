@@ -6,6 +6,9 @@ import { interactionManager } from "../../../src/app/managers/interaction-manage
 import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
+const mergerMock = vi.hoisted(() => ({ queuePromptForMerging: vi.fn() }));
+vi.mock("../../../src/bot/handlers/message-merger.js", () => mergerMock);
+
 describe("bot/routers/message-router", () => {
   it("registers all current reply-keyboard and message routes", () => {
     const bot = {
@@ -36,6 +39,89 @@ describe("bot/routers/message-router", () => {
       "message:photo",
       "message:document",
     ]);
+  });
+
+  describe("General topic prompt gate", () => {
+    function registerAndGetTextHandler() {
+      const bot = { on: vi.fn(), hears: vi.fn() };
+      registerMessageRouter(bot as never, {
+        ensureEventSubscription: vi.fn(),
+        setTelegramContext: vi.fn(),
+      });
+      const call = bot.on.mock.calls.find(([event]) => event === "message:text");
+      return defined(call?.[1]) as (ctx: unknown, next: () => Promise<void>) => Promise<void>;
+    }
+
+    function makeTextContext(overrides: { chat: Record<string, unknown>; message: Record<string, unknown> }) {
+      return {
+        chat: overrides.chat,
+        message: overrides.message,
+        reply: vi.fn().mockResolvedValue(undefined),
+      };
+    }
+
+    beforeEach(() => {
+      mergerMock.queuePromptForMerging.mockReset();
+      interactionManager.clear("general_gate_test_reset");
+    });
+
+    it("blocks free-text AI prompts in the forum General topic", async () => {
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "write me a python script", message_thread_id: 1 },
+      });
+
+      await handler(ctx, vi.fn());
+
+      expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"));
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+    });
+
+    it("treats unthreaded forum messages as General too", async () => {
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "another prompt" },
+      });
+
+      await handler(ctx, vi.fn());
+
+      expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"));
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+    });
+
+    it("accepts input in General while the bot explicitly waits for text", async () => {
+      interactionManager.start({ kind: "custom", expectedInput: "text", metadata: { flow: "provider" } });
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "sk-abcdef123456", message_thread_id: 1 },
+      });
+
+      await handler(ctx, vi.fn());
+
+      expect(ctx.reply).not.toHaveBeenCalledWith(t("general.topic_only_prompt"));
+      expect(mergerMock.queuePromptForMerging).toHaveBeenCalled();
+    });
+
+    it("keeps AI Topics and private chats unaffected", async () => {
+      const handler = registerAndGetTextHandler();
+      const topicCtx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "topic prompt", message_thread_id: 42 },
+      });
+      await handler(topicCtx, vi.fn());
+      expect(mergerMock.queuePromptForMerging).toHaveBeenCalledTimes(1);
+
+      const privateCtx = makeTextContext({
+        chat: { id: 7, type: "private" },
+        message: { text: "private prompt" },
+      });
+      await handler(privateCtx, vi.fn());
+      expect(mergerMock.queuePromptForMerging).toHaveBeenCalledTimes(2);
+      expect(privateCtx.reply).not.toHaveBeenCalled();
+    });
   });
 
   describe("queued prompt button handler", () => {

@@ -241,6 +241,7 @@ export const ru: I18nDictionary = {
 
   "new.project_not_selected": "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
   "new.created": "✅ Создана новая сессия: {title}",
+  "general.topic_only_prompt": "🚫 Это общая тема форума — запросы к ИИ разрешены только внутри ИИ-топиков.\n\n💬 Нажмите New Chat, чтобы создать новую тему для кода, или откройте существующую через History.\n\nТекст принимается здесь только когда бот явно запрашивает ввод.",
   "new.create_error": "🔴 OpenCode Server недоступен или произошла ошибка при создании сессии.",
 
   "stop.no_active_session":

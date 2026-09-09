@@ -250,6 +250,7 @@ export const es: I18nDictionary = {
   "new.project_not_selected":
     "🏗 No hay un proyecto seleccionado.\n\nPrimero selecciona un proyecto con /projects.",
   "new.created": "✅ Sesión nueva creada: {title}",
+  "general.topic_only_prompt": "🚫 Este es el tema General del foro: los prompts de IA solo están permitidos dentro de los temas de IA.\n\n💬 Pulsa New Chat para iniciar un nuevo tema de código o abre uno existente desde History.\n\nEl texto solo se acepta aquí cuando el bot pide entrada explícitamente.",
   "new.create_error":
     "🔴 OpenCode Server no está disponible u ocurrió un error al crear la sesión.",
 

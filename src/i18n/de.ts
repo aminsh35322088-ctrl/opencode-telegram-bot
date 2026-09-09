@@ -253,6 +253,7 @@ export const de: I18nDictionary = {
   "new.project_not_selected":
     "🏗 Projekt ist nicht ausgewählt.\n\nWähle zuerst ein Projekt mit /projects.",
   "new.created": "✅ Neue Sitzung erstellt: {title}",
+  "general.topic_only_prompt": "🚫 Dies ist das Allgemeine Thema der Gruppe — KI-Prompts sind nur in KI-Themen erlaubt.\n\n💬 Drücke New Chat, um ein neues Coding-Thema zu starten, oder öffne ein bestehendes Thema über History.\n\nText wird hier nur akzeptiert, wenn der Bot ausdrücklich nach Eingabe fragt.",
   "new.create_error":
     "🔴 OpenCode-Server ist nicht verfügbar oder beim Erstellen der Sitzung ist ein Fehler aufgetreten.",
 

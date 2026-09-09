@@ -8,6 +8,7 @@ import {
   registerScheduledTaskSessionIgnore,
 } from "./scheduled-task-session-ignore-service.js";
 import type { ScheduledTask, ScheduledTaskExecutionResult } from "../types/scheduled-task.js";
+import { markAbortExpected } from "../managers/abort-suppression-manager.js";
 
 const SCHEDULED_TASK_SESSION_TITLE = "Scheduled task run";
 const EXECUTION_POLL_INTERVAL_MS = 2000;
@@ -326,6 +327,7 @@ async function rejectInteractiveRequest(
 }
 
 async function abortScheduledTaskSession(sessionId: string, directory: string): Promise<void> {
+  markAbortExpected(sessionId);
   try {
     const { error } = await opencodeClient.session.abort({ sessionID: sessionId, directory });
     if (error) {

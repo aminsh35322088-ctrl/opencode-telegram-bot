@@ -8,10 +8,12 @@ import { beginImageAiOperation, endImageAiOperation } from "../../app/services/i
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
+import { markAbortExpected } from "../../app/managers/abort-suppression-manager.js";
 export { downloadPhoto } from "../services/media-ai-service.js";
 
 async function abortCodingModelSilently(sessionId: string, directory: string): Promise<void> {
   if (!assistantRunState.hasActiveRun(sessionId)) return;
+  markAbortExpected(sessionId);
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);

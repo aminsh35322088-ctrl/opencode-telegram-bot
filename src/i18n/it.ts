@@ -254,6 +254,7 @@ export const it: I18nDictionary = {
   "new.project_not_selected":
     "🏗 Nessun progetto selezionato.\n\nSeleziona prima un progetto con /projects.",
   "new.created": "✅ Nuova sessione creata: {title}",
+  "general.topic_only_prompt": "🚫 Questo è l'argomento Generale del forum: i prompt IA sono consentiti solo negli argomenti IA.\n\n💬 Premi New Chat per avviare un nuovo argomento di coding, o aprine uno esistente da History.\n\nIl testo è accettato qui solo quando il bot richiede esplicitamente un input.",
   "new.create_error":
     "🔴 Il server OpenCode non è disponibile o si è verificato un errore durante la creazione della sessione.",
 

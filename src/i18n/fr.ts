@@ -253,6 +253,7 @@ export const fr: I18nDictionary = {
   "new.project_not_selected":
     "🏗 Aucun projet n'est sélectionné.\n\nSélectionnez d'abord un projet avec /projects.",
   "new.created": "✅ Nouvelle session créée : {title}",
+  "general.topic_only_prompt": "🚫 Ceci est le sujet Général du forum — les prompts IA sont uniquement autorisés dans les sujets IA.\n\n💬 Appuyez sur New Chat pour démarrer un nouveau sujet de code, ou ouvrez un sujet existant depuis History.\n\nLe texte n'est accepté ici que lorsque le bot demande explicitement une saisie.",
   "new.create_error":
     "🔴 Le serveur OpenCode est indisponible ou une erreur s'est produite lors de la création de la session.",
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __getUserAbortErrorSuppressionSizeForTests,
   __resetUserAbortErrorSuppressionForTests,
+  markAbortExpected,
   markUserAbortRequested,
   shouldSuppressUserAbortSessionError,
 } from "../../../src/app/managers/abort-suppression-manager.js";
@@ -56,4 +57,11 @@ describe("app/managers/abort-suppression-manager", () => {
     expect(shouldSuppressUserAbortSessionError("session-1", "Aborted")).toBe(false);
     expect(shouldSuppressUserAbortSessionError("session-2", "Aborted")).toBe(true);
   });
+  it("suppresses the Aborted error of a bot-initiated abort only in its own session", () => {
+    markAbortExpected("session-a");
+
+    expect(shouldSuppressUserAbortSessionError("session-b", "Aborted")).toBe(false);
+    expect(shouldSuppressUserAbortSessionError("session-a", "Aborted")).toBe(true);
+  });
+
 });

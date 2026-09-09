@@ -227,13 +227,11 @@ describe("bot/commands/new", () => {
       },
       ensureEventSubscription: mocked.ensureEventSubscriptionMock,
     });
-    expect(deps.sendMessageMock).toHaveBeenCalledWith(
-      123,
-      expect.stringContaining("Session Two"),
-      expect.objectContaining({
-        reply_markup: { keyboard: true },
-      }),
-    );
+    // The New Chat confirmation must be a plain message: the Main keyboard
+    // panel belongs exclusively to the pinned welcome/anchor message.
+    const createdCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("Session Two"));
+    expect(createdCall).toBeDefined();
+    expect(createdCall?.[2] ?? {}).not.toHaveProperty("reply_markup");
   });
 
   it("allows concurrent session creation", async () => {
