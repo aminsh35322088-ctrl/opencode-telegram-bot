@@ -55,7 +55,7 @@ const HARDCODED = {
     initialSettingsPreset: {} as Record<string, unknown>,
   },
   files: {
-    maxFileSizeKb: 100,
+    maxFileSizeKb: 20 * 1024,
   },
   open: {
     browserRoots: "/data/workspace",
