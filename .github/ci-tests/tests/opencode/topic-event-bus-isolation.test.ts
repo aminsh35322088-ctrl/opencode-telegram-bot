@@ -116,3 +116,50 @@ describe("topic-event-bus session isolation", () => {
     expect(bindings.byDirectory).toHaveBeenCalledWith("/workspace");
   });
 });
+
+
+describe("overlapping Topic execution", () => {
+  afterEach(() => stopTopicEventBus());
+
+  it("does not rebind an old session event to the only remaining directory binding", async () => {
+    bindings.bySession.mockResolvedValue(null);
+    bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "new", directory: "/workspace" }]);
+    const event = { type: "message.updated", properties: { sessionID: "old" } } as unknown as Event;
+    const { logger } = await import("../../src/utils/logger.js");
+    subscribeMock.mockImplementation(async (options: { signal: AbortSignal }) => ({ stream: (async function* () {
+      yield event;
+
+      while (!options.signal.aborted) await new Promise(resolve => setTimeout(resolve, 5));
+    })() }));
+    const callback = vi.fn();
+    subscribeToTopicEvents("/workspace", callback, "new");
+    await vi.waitFor(() => expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("event=stale_session_route_blocked")));
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("keeps B progressing and preserves per-session order while A is suspended", async () => {
+    const context = await import("../../src/app/services/topic-runtime-context.js");
+    bindings.bySession.mockImplementation(async (id: string) => ({ chatId: 100, threadId: id === "a" ? 11 : 22, sessionId: id, directory: "/workspace" }));
+    const events = ["a", "b", "a", "b"].map((id, index) => ({ type: "message.updated", properties: { sessionID: id, index } } as unknown as Event));
+    subscribeMock.mockImplementation(async (options: { signal: AbortSignal }) => ({ stream: createStream(events, options.signal) }));
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const seenA: number[] = [];
+    const seenB: number[] = [];
+    subscribeToTopicEvents("/workspace", async event => {
+      const index = (event.properties as unknown as { index: number }).index;
+      if (index === 0) await blocked;
+      expect(context.getTopicRuntimeContext()?.sessionId).toBe("a");
+      seenA.push(index);
+    }, "a");
+    subscribeToTopicEvents("/workspace", async event => {
+      expect(context.getTopicRuntimeContext()?.sessionId).toBe("b");
+      seenB.push((event.properties as unknown as { index: number }).index);
+    }, "b");
+    try {
+      await vi.waitFor(() => expect(seenB).toEqual([1, 3]));
+      expect(seenA).toEqual([]);
+    } finally { release(); }
+    await vi.waitFor(() => expect(seenA).toEqual([0, 2]));
+  });
+});

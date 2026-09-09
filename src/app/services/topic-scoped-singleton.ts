@@ -18,7 +18,7 @@ function copySharedConfiguration<T extends object>(source: T, target: T): void {
     // the global event-subscription service and historically calls clearAll()
     // on every active response stream. Sharing it would let a session change in
     // one Topic cancel an unrelated Topic's live response.
-    if (key === "onCleared") continue;
+    if (key === "onCleared" || key === "onClearedCallback") continue;
     if (!key.startsWith("on") && key !== "bot" && key !== "chatId" && key !== "typingIndicatorEnabled") {
       continue;
     }
