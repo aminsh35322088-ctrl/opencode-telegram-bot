@@ -27,7 +27,7 @@ const MAX_ACTION_MODELS = 4096;
 const SEARCH_RESULTS_LIMIT = 10;
 const actionModels = new Map<string, ModelInfo>();
 
-type ModelCenterFavoriteTarget =
+export type ModelCenterFavoriteTarget =
   | { kind: "root" }
   | { kind: "list"; list: "favorites" | "recent" }
   | { kind: "provider"; providerID: string; page: number }
