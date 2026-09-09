@@ -120,6 +120,13 @@ export interface BotEventSubscriptionService {
   ensureEventSubscription(directory: string): Promise<void>;
   setTelegramContext(bot: Bot<Context> | null, chatId: number | null): void;
   clearRuntimeState(reason: string): void;
+  /**
+   * Purges every per-session runtime buffer owned by the service after a
+   * session was retired (model switch, topic deletion). Without this, the
+   * scoped onCleared suppression would let retired sessions leak streamer
+   * state and flush stale tool lines without a Telegram topic context.
+   */
+  retireSessionRuntime(sessionId: string, reason: string): void;
   cleanup(reason: string): void;
 }
 
@@ -520,6 +527,23 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.sessionChatIds.clear();
     this.clearToolElapsedState(null, reason);
     assistantRunState.clearAll(reason);
+  };
+
+  retireSessionRuntime = (sessionId: string, reason: string): void => {
+    if (!sessionId) return;
+    this.clearAssistantResponseSession(sessionId, reason);
+    this.thinkingResponseStreamer.clearSession(sessionId, reason);
+    for (const key of Array.from(this.thinkingSections.keys())) {
+      if (key.startsWith(`${sessionId}:`)) this.thinkingSections.delete(key);
+    }
+    this.toolCallStreamer.clearSession(sessionId, reason);
+    this.toolMessageBatcher.clearSession(sessionId, reason);
+    this.compactProgressStreamer.clearSession(sessionId, reason);
+    this.clearToolElapsedState(sessionId, reason);
+    interactionEventGate.clearSession(sessionId);
+    assistantRunState.clearRun(sessionId, reason);
+    this.sessionChatIds.delete(sessionId);
+    logger.info(`[Bot] Retired session runtime state: session=${sessionId}, reason=${reason}`);
   };
 
   cleanup(reason: string): void {

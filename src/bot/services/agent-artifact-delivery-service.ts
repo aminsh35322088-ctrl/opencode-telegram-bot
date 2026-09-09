@@ -133,7 +133,7 @@ class AgentArtifactDeliveryService {
       ? { chatId: runtime.chatId, threadId: runtime.threadId, sessionId: runtime.sessionId }
       : this.chatId === null ? null : { chatId: this.chatId, threadId: 0 };
     if (!scope) {
-      logger.debug(`[Artifact] No destination at event time; refusing delivery`);
+      logger.warn(`[Artifact] No Telegram destination at event time; refusing delivery for generated file`);
       return;
     }
 

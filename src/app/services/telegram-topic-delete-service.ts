@@ -11,6 +11,7 @@ import { keyboardManager } from "../../bot/keyboards/keyboard-manager.js";
 import { stopTopicEventSubscription } from "../../opencode/events.js";
 import { logger } from "../../utils/logger.js";
 import { topicTelemetry } from "../../utils/topic-observability.js";
+import { getTelegramTopicRuntimeDependencies } from "../../bot/services/telegram-topic-runtime.js";
 
 function isAlreadyDeletedTopicError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -91,6 +92,7 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
   }
 
   stopTopicEventSubscription(binding.directory, binding.sessionId);
+  getTelegramTopicRuntimeDependencies()?.retireSessionRuntime(binding.sessionId, "topic_deleted");
   topicTelemetry("event_subscription_removed", context);
 
   try {

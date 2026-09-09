@@ -7,7 +7,7 @@ import { summaryAggregator } from "../../app/managers/summary-aggregation-manage
 installTopicScopedSingleton(summaryAggregator);
 
 export interface TelegramTopicContext { chatId: number; threadId: number; }
-export interface TelegramTopicRuntimeDependencies { ensureEventSubscription: (directory: string) => Promise<void>; }
+export interface TelegramTopicRuntimeDependencies { ensureEventSubscription: (directory: string) => Promise<void>; retireSessionRuntime: (sessionId: string, reason: string) => void; }
 let runtimeDependencies: TelegramTopicRuntimeDependencies | null = null;
 export function setTelegramTopicRuntimeDependencies(dependencies: TelegramTopicRuntimeDependencies): void { runtimeDependencies = dependencies; }
 export function getTelegramTopicRuntimeDependencies(): TelegramTopicRuntimeDependencies | null { return runtimeDependencies; }

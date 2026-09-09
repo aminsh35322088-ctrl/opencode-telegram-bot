@@ -177,3 +177,44 @@ it("preserves unique-directory routing for an unbound child session", async () =
   try { await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(event)); }
   finally { stopTopicEventBus(); }
 });
+
+describe("subscription retirement lifecycle", () => {
+  it("blocks retired-session events for wildcard listeners and revives them after reattachment", async () => {
+    bindings.bySession.mockImplementation((id: string) => Promise.resolve(
+      id === "a" ? { chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" } : null));
+    bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" }]);
+
+    const event1 = { type: "message.updated", properties: { sessionID: "a", n: 1 } } as unknown as Event;
+    const event2 = { type: "message.updated", properties: { sessionID: "a", n: 2 } } as unknown as Event;
+    let releaseEvent2!: () => void;
+    const event2Gate = new Promise<void>((resolve) => { releaseEvent2 = resolve; });
+    subscribeMock.mockImplementation(async (options: { signal: AbortSignal }) => ({
+      stream: (async function* () {
+        yield event1;
+        await event2Gate;
+        yield event2;
+        while (!options.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
+      })(),
+    }));
+
+    const scoped = vi.fn();
+    const wildcard = vi.fn();
+    subscribeToTopicEvents("/workspace", scoped, "a");
+    subscribeToTopicEvents("/workspace", wildcard);
+    await vi.waitFor(() => expect(scoped).toHaveBeenCalledWith(event1));
+    expect(wildcard).toHaveBeenCalledWith(event1);
+
+    stopTopicEventSubscription("/workspace", "a");
+    releaseEvent2();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // While retired, even the unscoped wildcard listener must not receive the
+    // session's events through the unique-directory fallback route.
+    expect(scoped).toHaveBeenCalledTimes(1);
+    expect(wildcard).toHaveBeenCalledTimes(1);
+
+    subscribeToTopicEvents("/workspace", vi.fn(), "a");
+    await vi.waitFor(() => expect(wildcard).toHaveBeenCalledTimes(2));
+    expect(wildcard).toHaveBeenLastCalledWith(event2);
+  });
+});

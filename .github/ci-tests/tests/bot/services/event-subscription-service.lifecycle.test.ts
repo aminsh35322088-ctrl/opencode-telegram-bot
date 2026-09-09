@@ -608,6 +608,28 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     }, 30_000);
   });
 
+  describe("session retirement cleanup", () => {
+    it("retireSessionRuntime drops active assistant streams and run state for the retired session only", async () => {
+      const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
+      const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
+
+      emitAssistantTextPart(summaryAggregator, "Partial answer");
+      await vi.waitFor(
+        () => {
+          expect(api.sendMessage).toHaveBeenCalled();
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
+      expect(hasActiveStream("session-1")).toBe(true);
+
+      (service as unknown as { retireSessionRuntime: (sessionId: string, reason: string) => void })
+        .retireSessionRuntime("session-1", "test_retire");
+
+      expect(hasActiveStream("session-1")).toBe(false);
+      expect(assistantRunState.hasActiveRun("session-1")).toBe(false);
+    });
+  });
+
   describe("runtime state teardown", () => {
     it("clearRuntimeState drops active assistant streams and runs", async () => {
       const { summaryAggregator, service } = await setupService({ startAssistantRun: true });
