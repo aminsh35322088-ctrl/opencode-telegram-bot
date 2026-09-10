@@ -27,7 +27,7 @@ COPY --chown=node:node .opencode/tools ./.opencode/tools
 # Dockerfile/entrypoint. Only this Northflank image receives the platform label.
 COPY --chown=root:root railway-entrypoint.sh ./northflank-runtime.sh
 RUN sed -i 's/\[railway\]/[northflank]/g; s/Railway volume/Northflank volume/g' ./northflank-runtime.sh \
-    && sed -i '/OpenCode CLI:/a chown -R node:node /data' ./northflank-runtime.sh \
+    && sed -i 's#$(opencode --version 2>/dev/null || echo unknown)#$(su -s /bin/sh node -c "opencode --version" 2>/dev/null || echo unknown)#' ./northflank-runtime.sh \
     && chmod +x ./northflank-runtime.sh
 COPY --chown=root:root northflank-entrypoint.sh ./northflank-entrypoint.sh
 RUN chmod +x ./northflank-entrypoint.sh
