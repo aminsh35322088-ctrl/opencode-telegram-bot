@@ -26,7 +26,9 @@ COPY --chown=node:node .opencode/tools ./.opencode/tools
 # Reuse the proven runtime bootstrap without modifying Railway's production
 # Dockerfile/entrypoint. Only this Northflank image receives the platform label.
 COPY --chown=root:root railway-entrypoint.sh ./northflank-runtime.sh
-RUN sed -i 's/\[railway\]/[northflank]/g; s/Railway volume/Northflank volume/g' ./northflank-runtime.sh && chmod +x ./northflank-runtime.sh
+RUN sed -i 's/\[railway\]/[northflank]/g; s/Railway volume/Northflank volume/g' ./northflank-runtime.sh \
+    && sed -i '/OpenCode CLI:/a chown -R node:node /data' ./northflank-runtime.sh \
+    && chmod +x ./northflank-runtime.sh
 COPY --chown=root:root northflank-entrypoint.sh ./northflank-entrypoint.sh
 RUN chmod +x ./northflank-entrypoint.sh
 
