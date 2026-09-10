@@ -36,6 +36,9 @@ settings.json.bak
 settings.json.tmp
 .tmp/
 
+# Orbit runtime state
+.orbit-state/
+
 # Packaging artifacts
 *.tgz
 
