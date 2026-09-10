@@ -1,4 +1,3 @@
-import { stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -31,6 +30,7 @@ import {
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { logger } from "../../utils/logger.js";
+import { stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
