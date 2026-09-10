@@ -1,3 +1,4 @@
+import { stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -140,6 +141,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private readonly sessionChatIds = new Map<string, number>();
   private nextDraftId = 1;
   private readonly thinkingSections = new Map<string, ThinkingSection[]>();
+  private readonly completionGenerations = new Map<string, object>();
   private readonly sessionCompletionTasks = new Map<string, Promise<void>>();
   private readonly compactProgressFinalizationTasks = new Map<string, Promise<void>>();
   private readonly assistantEditResponseStreamer: ResponseStreamer;
@@ -524,6 +526,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.compactProgressFinalizationTasks.clear();
     this.thinkingSections.clear();
     this.sessionCompletionTasks.clear();
+    this.completionGenerations.clear();
     this.sessionChatIds.clear();
     this.clearToolElapsedState(null, reason);
     assistantRunState.clearAll(reason);
@@ -531,6 +534,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
   retireSessionRuntime = (sessionId: string, reason: string): void => {
     if (!sessionId) return;
+    stopSessionStallWatchdog(sessionId);
+    this.completionGenerations.delete(sessionId);
+    this.sessionCompletionTasks.delete(sessionId);
+    this.compactProgressFinalizationTasks.delete(sessionId);
+    foregroundSessionState.markIdle(sessionId);
     this.clearAssistantResponseSession(sessionId, reason);
     this.thinkingResponseStreamer.clearSession(sessionId, reason);
     for (const key of Array.from(this.thinkingSections.keys())) {
@@ -1717,13 +1725,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   }
 
   private enqueueSessionCompletionTask(sessionId: string, task: () => Promise<void>): Promise<void> {
+    const generation = this.completionGenerations.get(sessionId) ?? {};
+    this.completionGenerations.set(sessionId, generation);
     const previousTask = this.sessionCompletionTasks.get(sessionId) ?? Promise.resolve();
     const nextTask = previousTask
       .catch(() => undefined)
-      .then(task)
+      .then(() => {
+        if (this.completionGenerations.get(sessionId) === generation) return task();
+      })
       .finally(() => {
         if (this.sessionCompletionTasks.get(sessionId) === nextTask) {
           this.sessionCompletionTasks.delete(sessionId);
+          if (this.completionGenerations.get(sessionId) === generation) this.completionGenerations.delete(sessionId);
         }
       });
 

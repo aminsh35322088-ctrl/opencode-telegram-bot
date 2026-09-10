@@ -126,6 +126,15 @@ class AgentArtifactDeliveryService {
   }
 
   processEvent(event: Event): void {
+    const fileEvent = event.type === "file.edited" || event.type === "file.watcher.updated";
+    const part = getToolEventPart(event);
+    const markerPaths = part?.state.status === "completed" ? [
+      ...extractArtifactMarkers(part.state.output),
+      ...extractArtifactMarkers(part.state.input.command),
+    ] : [];
+    // Heartbeats and ordinary text parts carry no artifact; missing a destination
+    // for those events must not flood production logs with dropped-file warnings.
+    if (!fileEvent && markerPaths.length === 0) return;
     // Capture identity before asynchronous inspection or delayed delivery.
     // Never resolve the destination from a later foreground chat selection.
     const runtime = getTopicRuntimeContext();
@@ -146,13 +155,6 @@ class AgentArtifactDeliveryService {
       return;
     }
 
-    const part = getToolEventPart(event);
-    if (!part || part.state.status !== "completed") return;
-
-    const markerPaths = [
-      ...extractArtifactMarkers(part.state.output),
-      ...extractArtifactMarkers(part.state.input.command),
-    ];
     for (const filePath of markerPaths) this.scheduleDelivery(filePath, scope);
   }
 

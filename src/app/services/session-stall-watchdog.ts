@@ -68,9 +68,31 @@ function buildMeaningfulFingerprint(messages: unknown[]): string {
   return JSON.stringify(recent);
 }
 
-async function getMessages(sessionId: string, directory: string): Promise<unknown[] | null> {
+// Bound read probes independently of provider responsiveness, and release them
+// immediately when this watchdog generation is stopped.
+async function probe<T>(request: (signal: AbortSignal) => Promise<T>, parent: AbortSignal): Promise<T> {
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  parent.addEventListener("abort", onParentAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), ABORT_REQUEST_TIMEOUT_MS);
+  let onAbort!: () => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new Error("Watchdog probe cancelled or timed out"));
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+  });
+  if (parent.aborted) controller.abort();
   try {
-    const { data, error } = await opencodeClient.session.messages({ sessionID: sessionId, directory, limit: MESSAGE_LIMIT });
+    return await Promise.race([cancelled, request(controller.signal)]);
+  } finally {
+    clearTimeout(timer);
+    parent.removeEventListener("abort", onParentAbort);
+    controller.signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function getMessages(sessionId: string, directory: string, signal: AbortSignal): Promise<unknown[] | null> {
+  try {
+    const { data, error } = await probe((probeSignal) => opencodeClient.session.messages({ sessionID: sessionId, directory, limit: MESSAGE_LIMIT }, { signal: probeSignal }), signal);
     if (error || !Array.isArray(data)) return null;
     return data as unknown[];
   } catch (error) {
@@ -79,9 +101,9 @@ async function getMessages(sessionId: string, directory: string): Promise<unknow
   }
 }
 
-async function getStatus(sessionId: string, directory: string): Promise<SessionStatus | null> {
+async function getStatus(sessionId: string, directory: string, signal: AbortSignal): Promise<SessionStatus | null> {
   try {
-    const { data, error } = await opencodeClient.session.status({ directory });
+    const { data, error } = await probe((probeSignal) => opencodeClient.session.status({ directory }, { signal: probeSignal }), signal);
     if (error || !data) return null;
     return ((data as Record<string, SessionStatus>)[sessionId] ?? null) as SessionStatus | null;
   } catch (error) {
@@ -106,11 +128,11 @@ async function requestAbort(sessionId: string, directory: string): Promise<boole
   }
 }
 
-async function waitForIdle(sessionId: string, directory: string): Promise<boolean> {
+async function waitForIdle(sessionId: string, directory: string, signal: AbortSignal): Promise<boolean> {
   const deadline = Date.now() + ABORT_CONFIRMATION_TIMEOUT_MS;
   let lastStatus: SessionStatus | null = null;
-  while (Date.now() < deadline) {
-    const status = await getStatus(sessionId, directory);
+  while (!signal.aborted && Date.now() < deadline) {
+    const status = await getStatus(sessionId, directory, signal);
     if (status) lastStatus = status;
     if (status?.type === "idle" || status?.type === "error") return true;
     await sleep(POLL_INTERVAL_MS);
@@ -159,10 +181,13 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
       while (!controller.signal.aborted) {
         await sleep(POLL_INTERVAL_MS);
         if (controller.signal.aborted) return;
-        const status = await getStatus(options.sessionId, options.directory);
-        if (!status || status.type === "idle" || status.type === "error") return;
+        const status = await getStatus(options.sessionId, options.directory, controller.signal);
+        if (controller.signal.aborted) return;
+        if (!status) continue;
+        if (status.type === "idle" || status.type === "error") return;
         if (status.type !== "busy" && status.type !== "retry") continue;
-        const messages = await getMessages(options.sessionId, options.directory);
+        const messages = await getMessages(options.sessionId, options.directory, controller.signal);
+        if (controller.signal.aborted) return;
         if (!messages) continue;
         if (hasRunningToolPart(messages)) {
           lastMeaningfulProgressAt = Date.now();
@@ -178,20 +203,23 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         if (stalledForMs < STALL_AFTER_MS) continue;
         logger.warn(`[StallWatchdog] Session stalled: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}, status=${status.type}. Requesting abort.`);
         const aborted = await requestAbort(options.sessionId, options.directory);
+        if (controller.signal.aborted) return;
         if (!aborted) {
           logger.error(`[StallWatchdog] Could not confirm abort request: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
-        const idle = await waitForIdle(options.sessionId, options.directory);
+        const idle = await waitForIdle(options.sessionId, options.directory, controller.signal);
+        if (controller.signal.aborted) return;
         if (!idle) {
           logger.error(`[StallWatchdog] Abort acknowledged but session did not become idle: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
         await clearLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
+        if (controller.signal.aborted) return;
         logger.warn(`[StallWatchdog] Recovered stalled session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}`);
-        activeWatchdogs.delete(options.sessionId);
+        if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
         try {
           await options.onStalled({
             sessionId: options.sessionId,
@@ -209,7 +237,7 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
     } catch (error) {
       logger.error(`[StallWatchdog] Unexpected watchdog failure: session=${options.sessionId}`, error);
     } finally {
-      activeWatchdogs.delete(options.sessionId);
+      if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
     }
   })();
 }

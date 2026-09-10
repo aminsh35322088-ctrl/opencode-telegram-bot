@@ -81,6 +81,15 @@ describe("artifact destination isolation", () => {
     expect(send.mock.calls[0][0]).toBe(100);
   });
 
+  it("warns for an unroutable artifact but not for heartbeat traffic", async () => {
+    const { logger } = await import("../../../src/utils/logger.js");
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    delivery.processEvent({ type: "server.heartbeat", properties: {} } as unknown as Event);
+    expect(warn).not.toHaveBeenCalled();
+    delivery.processEvent(artifact);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("No Telegram destination"));
+  });
+
   it("does not assign an initially unroutable artifact to a later chat", async () => {
     delivery.processEvent(artifact); delivery.setChatId(200);
     await vi.advanceTimersByTimeAsync(1500);

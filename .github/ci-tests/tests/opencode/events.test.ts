@@ -260,6 +260,24 @@ describe("opencode/events", () => {
     await subscription;
   });
 
+  it("retries a hanging SSE connection without blocking another directory", async () => {
+    vi.useFakeTimers();
+    __setSseIdleTimeoutForTests(1000);
+    subscribeMock
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockImplementation(async (params: { directory?: string; signal?: AbortSignal }) => ({
+        stream: createStream([{ type: "server.heartbeat", properties: {} }], params.signal!),
+      }));
+    const a = vi.fn(); const b = vi.fn();
+    await subscribeToEvents("/a", a, "a");
+    await subscribeToEvents("/b", b);
+    await vi.advanceTimersByTimeAsync(2200);
+    expect(subscribeMock.mock.calls.filter(call => call[0].directory === "/a")).toHaveLength(2);
+    expect(b).toHaveBeenCalled();
+    expect(subscribeMock.mock.calls[0][0].signal.aborted).toBe(true);
+    stopEventListening();
+  });
+
   it("reconnects when the SSE stream becomes idle", async () => {
     vi.useFakeTimers();
     __setSseIdleTimeoutForTests(1000);
