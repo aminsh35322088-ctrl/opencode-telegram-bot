@@ -47,11 +47,6 @@ function resolveAppHome(mode: RuntimeMode): string {
   return getInstalledAppHome();
 }
 
-function resolveOptionalPathOverride(envKey: string, fallbackPath: string): string {
-  const override = process.env[envKey]?.trim();
-  return override ? path.resolve(override) : fallbackPath;
-}
-
 export function getRuntimePaths(): RuntimePaths {
   const mode = getRuntimeMode();
   const appHome = resolveAppHome(mode);
@@ -61,7 +56,7 @@ export function getRuntimePaths(): RuntimePaths {
     appHome,
     envFilePath: path.join(appHome, ".env"),
     settingsFilePath: path.join(appHome, "app-state.json"),
-    logsDirPath: resolveOptionalPathOverride("OPENCODE_TELEGRAM_LOGS_DIR", path.join(appHome, "logs")),
-    runDirPath: resolveOptionalPathOverride("OPENCODE_TELEGRAM_RUN_DIR", path.join(appHome, "run")),
+    logsDirPath: path.join(appHome, "logs"),
+    runDirPath: path.join(appHome, "run"),
   };
 }
