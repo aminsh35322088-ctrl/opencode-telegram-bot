@@ -58,7 +58,7 @@ const HARDCODED = {
     maxFileSizeKb: 20 * 1024,
   },
   open: {
-    browserRoots: process.env.OPEN_BROWSER_ROOTS?.trim() || "/data/workspace",
+    browserRoots: "/data/workspace",
   },
   stt: {
     apiUrl: "",
