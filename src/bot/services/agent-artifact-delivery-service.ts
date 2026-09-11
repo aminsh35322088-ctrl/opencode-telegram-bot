@@ -106,13 +106,15 @@ function captionFor(filePath: string, size: number): string {
   return `📎 ${path.basename(filePath)} · ${sizeMb} MB`;
 }
 
-type DeliveryScope = { chatId: number; threadId: number; sessionId?: string };
+type DeliveryScope = { chatId: number; threadId: number; sessionId?: string; generation: object; sessionGeneration?: object };
 
 class AgentArtifactDeliveryService {
   private botInstance: Bot | null = null;
   private readonly pending = new Map<string, { timer: ReturnType<typeof setTimeout>; scope: DeliveryScope }>();
-  private readonly lastDelivered = new Map<string, { signature: string; at: number }>();
+  private readonly lastDelivered = new Map<string, { signature: string; at: number; sessionId?: string }>();
   private chatId: number | null = null;
+  private generation = {};
+  private readonly sessionGenerations = new Map<string, object>();
 
   private get bot(): Bot {
     if (!this.botInstance) {
@@ -139,8 +141,8 @@ class AgentArtifactDeliveryService {
     // Never resolve the destination from a later foreground chat selection.
     const runtime = getTopicRuntimeContext();
     const scope: DeliveryScope | null = runtime
-      ? { chatId: runtime.chatId, threadId: runtime.threadId, sessionId: runtime.sessionId }
-      : this.chatId === null ? null : { chatId: this.chatId, threadId: 0 };
+      ? { chatId: runtime.chatId, threadId: runtime.threadId, sessionId: runtime.sessionId, generation: this.generation, sessionGeneration: runtime.sessionId ? this.sessionGenerations.get(runtime.sessionId) : undefined }
+      : this.chatId === null ? null : { chatId: this.chatId, threadId: 0, generation: this.generation };
     if (!scope) {
       logger.warn(`[Artifact] No Telegram destination at event time; refusing delivery for generated file`);
       return;
@@ -158,7 +160,26 @@ class AgentArtifactDeliveryService {
     for (const filePath of markerPaths) this.scheduleDelivery(filePath, scope);
   }
 
+  retireSession(sessionId: string): void {
+    this.sessionGenerations.set(sessionId, {});
+    for (const [key, entry] of this.pending) {
+      if (entry.scope.sessionId !== sessionId) continue;
+      clearTimeout(entry.timer);
+      this.pending.delete(key);
+    }
+    for (const [key, entry] of this.lastDelivered) {
+      if (entry.sessionId === sessionId) this.lastDelivered.delete(key);
+    }
+  }
+
+  private isCurrent(scope: DeliveryScope): boolean {
+    return scope.generation === this.generation && (!scope.sessionId ||
+      scope.sessionGeneration === this.sessionGenerations.get(scope.sessionId));
+  }
+
   clear(): void {
+    this.generation = {};
+    this.sessionGenerations.clear();
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
     this.lastDelivered.clear();
@@ -169,7 +190,7 @@ class AgentArtifactDeliveryService {
     try {
       if (isIgnoredPath(filePath) || isSensitiveArtifactPath(filePath)) return;
       const sample = await fs.readFile(filePath).then((buffer) => buffer.subarray(0, 4096)).catch(() => null);
-      if (!sample || !isLikelyArtifactFromFileEvent(filePath, sample)) return;
+      if (!this.isCurrent(scope) || !sample || !isLikelyArtifactFromFileEvent(filePath, sample)) return;
       this.scheduleDelivery(filePath, scope);
     } catch (error) {
       logger.debug(`[Artifact] Unable to inspect generated file: ${filePath}`, error);
@@ -177,6 +198,7 @@ class AgentArtifactDeliveryService {
   }
 
   private scheduleDelivery(filePath: string, scope: DeliveryScope): void {
+    if (!this.isCurrent(scope)) return;
     if (isSensitiveArtifactPath(filePath)) {
       logger.warn(`[Artifact] Refusing to deliver sensitive path: ${filePath}`);
       return;
@@ -196,6 +218,7 @@ class AgentArtifactDeliveryService {
   private async deliver(filePath: string, scope: DeliveryScope, key: string): Promise<void> {
     try {
       if (isSensitiveArtifactPath(filePath)) return;
+      if (!this.isCurrent(scope)) return;
       const targetChatId = scope.chatId;
       const stat = await fs.stat(filePath).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_FILE_SIZE_BYTES || stat.size === 0) {
@@ -203,6 +226,7 @@ class AgentArtifactDeliveryService {
         return;
       }
 
+      if (!this.isCurrent(scope)) return;
       const signature = `${stat.size}:${stat.mtimeMs}`;
       const previous = this.lastDelivered.get(key);
       const now = Date.now();
@@ -214,7 +238,7 @@ class AgentArtifactDeliveryService {
         ...(scope && scope.threadId > 1 ? { message_thread_id: scope.threadId } : {}),
       });
 
-      this.lastDelivered.set(key, { signature, at: now });
+      if (this.isCurrent(scope)) this.lastDelivered.set(key, { signature, at: now, sessionId: scope.sessionId });
       logger.info(`[Artifact] Delivered generated file to Telegram chat ${targetChatId}: ${filePath} (${stat.size} bytes)`);
     } catch (error) {
       logger.error(`[Artifact] Failed to deliver generated file: ${filePath}`, error);

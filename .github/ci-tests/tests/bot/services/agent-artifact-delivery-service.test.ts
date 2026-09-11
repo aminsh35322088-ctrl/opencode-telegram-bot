@@ -112,4 +112,35 @@ describe("artifact destination isolation", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1][2].message_thread_id).toBe(22);
   });
+
+  it("cancels pending artifacts only for the retired session", async () => {
+    enqueue(topicA); enqueue(topicB);
+    delivery.retireSession("a");
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2].message_thread_id).toBe(22);
+  });
+
+  it("does not resume an old file inspection after clear", async () => {
+    let release!: (value: Buffer) => void;
+    vi.spyOn(fs, "readFile").mockImplementationOnce(() => new Promise(resolve => { release = resolve; }) as never);
+    runInTopicRuntimeContext(topicA, () => delivery.processEvent({
+      type: "file.edited", properties: { file: "/tmp/report.pdf" },
+    } as unknown as Event));
+    delivery.clear();
+    release(Buffer.from("%PDF-1.4"));
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("cancels a file stat in flight before upload when its session retires", async () => {
+    let release!: (value: unknown) => void;
+    vi.mocked(fs.stat).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }) as never);
+    enqueue(topicA);
+    await vi.advanceTimersByTimeAsync(1500);
+    delivery.retireSession("a");
+    release({ isFile: () => true, size: 42, mtimeMs: 1 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(send).not.toHaveBeenCalled();
+  });
 });

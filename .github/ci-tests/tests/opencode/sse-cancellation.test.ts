@@ -46,7 +46,7 @@ describe("OpenCode SSE cancellation", () => {
     let firstSignal: AbortSignal | undefined;
 
     subscribeMock
-      .mockImplementationOnce(async (params: { signal?: AbortSignal }) => {
+      .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => {
         firstSignal = params.signal;
         return {
           stream: (async function* () {
@@ -55,7 +55,7 @@ describe("OpenCode SSE cancellation", () => {
           })(),
         };
       })
-      .mockImplementationOnce(async (params: { signal?: AbortSignal }) => ({
+      .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
         stream: (async function* () {
           while (!params.signal?.aborted) {
             await new Promise((resolve) => setTimeout(resolve, 5));
@@ -65,13 +65,11 @@ describe("OpenCode SSE cancellation", () => {
 
     const subscription = subscribeToEvents("D:/repo", vi.fn());
 
-    await vi.advanceTimersByTimeAsync(1000);
-    await vi.advanceTimersByTimeAsync(1000);
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
 
     expect(subscribeMock).toHaveBeenCalledTimes(2);
     expect(firstSignal?.aborted).toBe(true);
-    const secondSignal = subscribeMock.mock.calls[1]?.[0]?.signal as AbortSignal | undefined;
+    const secondSignal = subscribeMock.mock.calls[1]?.[1]?.signal as AbortSignal | undefined;
     expect(secondSignal).toBeDefined();
     expect(secondSignal).not.toBe(firstSignal);
     expect(secondSignal?.aborted).toBe(false);

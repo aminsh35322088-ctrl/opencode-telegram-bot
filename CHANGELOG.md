@@ -10,6 +10,8 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - `general.topic_only_prompt` message in all supported languages.
 
 ### Fixed
+- Pass SSE cancellation through the SDK request options and invalidate queued event routes across session retirement or bus restart.
+- Cancel pending artifact inspection and delivery for retired sessions without interrupting other Topics.
 - Retired AI Topics now purge their service-side runtime state (assistant/thinking/tool/compact streams, tool-message batches, elapsed timers, run state, chat bindings) when the model is switched or the Topic is deleted, closing per-session leaks and stale-flush delivery to the chat root.
 - Dropped artifacts without a Telegram destination now log at warn level instead of debug.
 - The General ("All") Topic of a forum group is now a lobby: free-text AI prompts, voice/audio prompts, coding-AI photos and prompt documents typed there are rejected with a clear message unless the bot is explicitly waiting for input (wizard step, question, rename, task setup, model search, Image AI). AI chats keep running in their own Topics; private chats and AI Topic threads are unchanged.

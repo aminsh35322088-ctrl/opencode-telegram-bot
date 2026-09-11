@@ -1,3 +1,4 @@
+import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.js";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -535,6 +536,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   retireSessionRuntime = (sessionId: string, reason: string): void => {
     if (!sessionId) return;
     stopSessionStallWatchdog(sessionId);
+    agentArtifactDeliveryService.retireSession(sessionId);
     this.completionGenerations.delete(sessionId);
     this.sessionCompletionTasks.delete(sessionId);
     this.compactProgressFinalizationTasks.delete(sessionId);

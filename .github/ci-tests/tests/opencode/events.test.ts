@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 
 const { subscribeMock, bindings } = vi.hoisted(() => ({
@@ -94,7 +94,7 @@ describe("opencode/events", () => {
   it("subscribes to the directory stream and forwards events to callback", async () => {
     const eventA = { type: "session.status", properties: { sessionID: "s1" } } as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "s1" } } as Event;
-    subscribeMock.mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
       stream: createStream([eventA, eventB], params?.signal ?? new AbortController().signal),
     }));
 
@@ -110,7 +110,8 @@ describe("opencode/events", () => {
     await subscription;
 
     expect(subscribeMock).toHaveBeenCalledWith(
-      expect.objectContaining({ directory: "D:/repo", signal: expect.any(AbortSignal) }),
+      { directory: "D:/repo" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(callback).toHaveBeenCalledTimes(2);
     expect(defined(callback.mock.calls[0]?.[0])).toEqual(eventA);
@@ -120,7 +121,7 @@ describe("opencode/events", () => {
   it("logs callback errors without failing event delivery", async () => {
     const eventA = { type: "session.status", properties: { sessionID: "s1" } } as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "s1" } } as Event;
-    subscribeMock.mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
       stream: createStream([eventA, eventB], params?.signal ?? new AbortController().signal),
     }));
     const callbackError = new Error("callback failed");
@@ -152,7 +153,7 @@ describe("opencode/events", () => {
   it("scopes an explicit sessionId subscription to that session's events", async () => {
     const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "session-b", directory: "D:/repo" } } as unknown as Event;
-    subscribeMock.mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
       stream: createStream([eventA, eventB], params?.signal ?? new AbortController().signal),
     }));
 
@@ -174,7 +175,7 @@ describe("opencode/events", () => {
     bindings.byDirectory.mockResolvedValue({ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" });
     const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "session-b", directory: "D:/repo" } } as unknown as Event;
-    subscribeMock.mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
       stream: createStream([eventA, eventB], params?.signal ?? new AbortController().signal),
     }));
 
@@ -217,7 +218,7 @@ describe("opencode/events", () => {
   });
 
   it("stopTopicEventSubscription removes only the matching session subscription", async () => {
-    subscribeMock.mockImplementation(async (params: { directory?: string; signal?: AbortSignal }) => ({
+    subscribeMock.mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
       stream: createAbortableStream(params?.signal ?? new AbortController().signal),
     }));
 
@@ -243,7 +244,7 @@ describe("opencode/events", () => {
           // ends immediately
         })(),
       }))
-      .mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+      .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
         stream: createAbortableStream(params?.signal ?? new AbortController().signal),
       }));
 
@@ -265,7 +266,7 @@ describe("opencode/events", () => {
     __setSseIdleTimeoutForTests(1000);
     subscribeMock
       .mockImplementationOnce(() => new Promise(() => {}))
-      .mockImplementation(async (params: { directory?: string; signal?: AbortSignal }) => ({
+      .mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
         stream: createStream([{ type: "server.heartbeat", properties: {} }], params.signal!),
       }));
     const a = vi.fn(); const b = vi.fn();
@@ -274,7 +275,7 @@ describe("opencode/events", () => {
     await vi.advanceTimersByTimeAsync(2200);
     expect(subscribeMock.mock.calls.filter(call => call[0].directory === "/a")).toHaveLength(2);
     expect(b).toHaveBeenCalled();
-    expect(subscribeMock.mock.calls[0][0].signal.aborted).toBe(true);
+    expect(subscribeMock.mock.calls[0][1].signal.aborted).toBe(true);
     stopEventListening();
   });
 
@@ -283,7 +284,7 @@ describe("opencode/events", () => {
     __setSseIdleTimeoutForTests(1000);
     subscribeMock
       .mockImplementationOnce(async () => ({ stream: createNeverResolvingStream() }))
-      .mockImplementationOnce(async (params: { directory?: string; signal?: AbortSignal }) => ({
+      .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
         stream: createAbortableStream(params?.signal ?? new AbortController().signal),
       }));
 

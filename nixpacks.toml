@@ -1,0 +1,29 @@
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+PLAYWRIGHT_BROWSERS_PATH = "/opt/ms-playwright"
+
+[phases.setup]
+aptPkgs = [
+  "ca-certificates", "curl", "wget", "git", "git-lfs", "gh", "unzip", "zip", "jq",
+  "ripgrep", "fd-find", "tree", "file", "less", "rsync", "openssh-client", "procps",
+  "strace", "ltrace", "gdb", "lsof", "iproute2", "dnsutils", "iputils-ping", "tmux",
+  "htop", "fzf", "python3", "python3-pip", "python3-venv", "sqlite3", "build-essential",
+  "pkg-config", "ffmpeg", "imagemagick"
+]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = [
+  "npm run build",
+  "OPENCODE_VERSION=\"$(tr -d '\\r\\n' < .opencode-version)\" && test -n \"$OPENCODE_VERSION\" && npm install -g \"opencode-ai@$OPENCODE_VERSION\"",
+  "npm install -g @playwright/cli@0.1.18 @railway/cli",
+  "PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright playwright-cli install-browser chromium --with-deps",
+  "git lfs install --system || true",
+  "npm prune --omit=dev",
+  "chmod +x orbit-entrypoint.sh"
+]
+
+[start]
+cmd = "./orbit-entrypoint.sh"
