@@ -82,14 +82,14 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const keyboard = keyboardManager.getKeyboard();
     const texts = keyboardTexts(keyboard);
     expect(texts).toContain("💬 New Chat");
-    expect(texts).not.toContain("🧠 Model Center");
+    expect(texts).toContain("🧠 Global Model");
   });
 
   it("returns the Topic keyboard when called inside the topic runtime context", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     const keyboard = runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.getKeyboard());
     const texts = keyboardTexts(keyboard);
-    expect(texts).toContain("🧠 Model Center");
+    expect(texts).toContain("🧠 Global Model");
     expect(texts).not.toContain("💬 New Chat");
     expect(texts).not.toContain("⏸️ Pause");
     expect(texts).not.toContain("▶️ Resume");
@@ -130,19 +130,15 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
     expect(options.message_thread_id).toBe(THREAD_ID);
-    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Model Center");
+    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
   });
 
-  it("sendKeyboardUpdate outside any topic runtime context keeps the Main keyboard", async () => {
-    const sendMessage = vi.fn().mockResolvedValue({});
-    keyboardManager.initialize({ sendMessage } as never, CHAT_ID);
+  it("sendKeyboardUpdate outside a Topic routes to the persistent Main panel", async () => {
+    const updateMain = vi.spyOn(keyboardManager, "sendMainInlineKeyboard").mockResolvedValue();
+    keyboardManager.initialize({} as never, CHAT_ID);
     await keyboardManager.sendKeyboardUpdate(CHAT_ID, true);
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
-    expect(options.message_thread_id).toBeUndefined();
-    expect(keyboardTexts(options.reply_markup)).toContain("💬 New Chat");
-    expect(keyboardTexts(options.reply_markup)).not.toContain("🧠 Model Center");
+    expect(updateMain).toHaveBeenCalledWith(CHAT_ID, expect.objectContaining({ modelID: "m" }), true);
   });
 
   it("an explicit sessionId always wins over the runtime context", () => {

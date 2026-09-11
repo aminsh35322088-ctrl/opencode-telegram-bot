@@ -37,6 +37,7 @@ import { summaryAggregator } from "../../app/managers/summary-aggregation-manage
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { getTelegramTopicRuntimeDependencies } from "../services/telegram-topic-runtime.js";
 
 const SEARCH_FLOW = "model-search";
 interface ModelCenterSearchState { stage: "input" | "results"; }
@@ -155,6 +156,7 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
       // other concurrently streaming Topic and freeze their chats.
       detachAttachedSession("model_switch");
       stopTopicEventSubscription(topicBinding.directory, topicSessionId);
+      getTelegramTopicRuntimeDependencies()?.retireSessionRuntime(topicSessionId, "model_switch");
     } else {
       stopEventListening();
     }

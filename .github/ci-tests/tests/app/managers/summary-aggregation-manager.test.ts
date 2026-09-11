@@ -764,7 +764,7 @@ describe("summary/aggregator", () => {
             status: "completed",
             input: {
               filePath: "src/huge.ts",
-              content: "x".repeat(101 * 1024),
+              content: "x".repeat(21 * 1024 * 1024),
             },
             metadata: {},
           },

@@ -608,6 +608,55 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     }, 30_000);
   });
 
+  describe("retired completion queues", () => {
+    it("invalidates queued A completions while B and a replacement A queue continue", async () => {
+      const { service } = await setupService({ startAssistantRun: false });
+      const queue = service as unknown as { enqueueSessionCompletionTask: (id: string, task: () => Promise<void>) => Promise<void>; retireSessionRuntime: (id: string, reason: string) => void };
+      const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
+      foregroundSessionState.markBusy("a", "/a"); foregroundSessionState.markBusy("b", "/b");
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const blocker = new Promise<void>(resolve => { release = resolve; });
+      const first = queue.enqueueSessionCompletionTask("a", async () => { entered(); await blocker; });
+      await started;
+      const stale = vi.fn().mockResolvedValue(undefined);
+      const pending = queue.enqueueSessionCompletionTask("a", stale);
+      queue.retireSessionRuntime("a", "test_retirement");
+      const delivered: string[] = [];
+      await queue.enqueueSessionCompletionTask("b", async () => { delivered.push("b"); });
+      const replacement = queue.enqueueSessionCompletionTask("a", async () => { delivered.push("new-a"); });
+      try {
+        await vi.waitFor(() => expect(delivered).toEqual(["b", "new-a"]));
+        expect(foregroundSessionState.isSessionBusy("a")).toBe(false);
+        expect(foregroundSessionState.isSessionBusy("b")).toBe(true);
+      } finally { release(); await Promise.all([first, pending, replacement]); }
+      expect(stale).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("session retirement cleanup", () => {
+    it("retireSessionRuntime drops active assistant streams and run state for the retired session only", async () => {
+      const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
+      const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
+
+      emitAssistantTextPart(summaryAggregator, "Partial answer");
+      await vi.waitFor(
+        () => {
+          expect(api.sendMessage).toHaveBeenCalled();
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
+      expect(hasActiveStream("session-1")).toBe(true);
+
+      (service as unknown as { retireSessionRuntime: (sessionId: string, reason: string) => void })
+        .retireSessionRuntime("session-1", "test_retire");
+
+      expect(hasActiveStream("session-1")).toBe(false);
+      expect(assistantRunState.hasActiveRun("session-1")).toBe(false);
+    });
+  });
+
   describe("runtime state teardown", () => {
     it("clearRuntimeState drops active assistant streams and runs", async () => {
       const { summaryAggregator, service } = await setupService({ startAssistantRun: true });
