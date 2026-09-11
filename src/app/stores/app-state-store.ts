@@ -17,17 +17,40 @@ export interface AppState {
 const APP_STATE_FILENAME = "app-state.json";
 const APP_STATE_BACKUP_FILENAME = "app-state.json.bak";
 const APP_STATE_TEMP_SUFFIX = ".tmp";
+const RENAME_FALLBACK_CODES = new Set(["ENOSYS", "EOPNOTSUPP", "ENOTSUP", "EXDEV"]);
 let writeQueue: Promise<void> = Promise.resolve();
 let initialized = false;
 
 function getStatePath(): string { return path.join(getRuntimePaths().appHome, APP_STATE_FILENAME); }
 function getBackupPath(): string { return path.join(getRuntimePaths().appHome, APP_STATE_BACKUP_FILENAME); }
 function isNotFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
+function isRenameUnsupported(error: unknown): boolean { return RENAME_FALLBACK_CODES.has((error as NodeJS.ErrnoException).code ?? ""); }
 function normalizeState(value: unknown): AppState {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { version: 2 };
   return { ...(value as Record<string, unknown>), version: 2 } as AppState;
 }
-async function readJson(filePath: string): Promise<AppState> { return normalizeState(JSON.parse(await fs.readFile(filePath, "utf8"))); }
+async function readJson(filePath: string): Promise<AppState> {
+  const raw = await fs.readFile(filePath, "utf8");
+  // A failed/non-atomic object-store write may leave a brand-new file empty.
+  // Treat only that case as an uninitialized store; malformed non-empty JSON
+  // still fails loudly so existing state is never silently discarded.
+  if (!raw.trim()) return { version: 2 };
+  return normalizeState(JSON.parse(raw));
+}
+async function replaceFile(sourcePath: string, destinationPath: string): Promise<void> {
+  try {
+    await fs.rename(sourcePath, destinationPath);
+    return;
+  } catch (error) {
+    if (!isRenameUnsupported(error)) throw error;
+  }
+
+  // Daytona Volumes are S3/FUSE-backed and may reject rename(2). copyFile +
+  // unlink preserves the same logical replacement while keeping POSIX rename
+  // on normal filesystems (including Railway volumes).
+  await fs.copyFile(sourcePath, destinationPath);
+  await fs.rm(sourcePath, { force: true });
+}
 async function readCurrentState(): Promise<AppState> {
   const statePath = getStatePath();
   try { return await readJson(statePath); }
@@ -50,8 +73,8 @@ async function writeAppStateAtomically(state: AppState): Promise<void> {
   await fs.mkdir(appHome, { recursive: true });
   try {
     await fs.writeFile(tempPath, `${JSON.stringify(normalizeState(state), null, 2)}\n`, { mode: 0o600 });
-    try { await fs.rename(statePath, backupPath); } catch (error) { if (!isNotFound(error)) throw error; }
-    await fs.rename(tempPath, statePath);
+    try { await replaceFile(statePath, backupPath); } catch (error) { if (!isNotFound(error)) throw error; }
+    await replaceFile(tempPath, statePath);
     await fs.chmod(statePath, 0o600).catch(() => {});
     initialized = true;
   } finally { await fs.rm(tempPath, { force: true }).catch(() => {}); }
