@@ -7,6 +7,9 @@ import { logger } from "../../utils/logger.js";
 import type { ModelInfo, FavoriteModel, ModelSelectionLists, ProviderInfo } from "../types/model.js";
 import path from "node:path";
 
+const cachedPriceMetadata = new Map<string, { fetchedAt: number; models: Array<[string, unknown]> }>();
+export function getCachedProviderPriceMetadata(providerID: string) { return cachedPriceMetadata.get(providerID); }
+
 interface OpenCodeModelState {
   favorite?: Array<{ providerID?: string; modelID?: string }>;
   recent?: Array<{ providerID?: string; modelID?: string }>;
@@ -97,10 +100,12 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       const all: FavoriteModel[] = [];
       const providers: ProviderInfo[] = [];
       const byProvider = new Map<string, FavoriteModel[]>();
+      const priceMetadata = new Map<string, { fetchedAt: number; models: Array<[string, unknown]> }>();
 
       for (const provider of response.data.providers) {
         if (provider.id === COPILOT_PROVIDER_ID || customProviderIds.has(provider.id)) continue;
 
+        priceMetadata.set(provider.id, { fetchedAt: Date.now(), models: Object.entries(provider.models) });
         const providerModels: FavoriteModel[] = Object.entries(provider.models).map(([modelID, metadata]) => ({
           providerID: provider.id,
           modelID,
@@ -144,6 +149,8 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       cachedAllModels = dedupeModels(all);
       cachedProviders = providers;
       cachedModelsByProvider = byProvider;
+      cachedPriceMetadata.clear();
+      for (const [id, metadata] of priceMetadata) cachedPriceMetadata.set(id, metadata);
       modelCatalogCacheExpiresAt = Date.now() + MODEL_CATALOG_CACHE_TTL_MS;
       logger.info(
         `[ModelManager] Model catalog refreshed: providers=${providers.length}, models=${valid.size}, providerIds=${providers.map((p) => p.id).join(",")}, copilot=removed, customProviders=coding-only`,
@@ -226,6 +233,7 @@ export async function refreshModelCatalog(): Promise<void> {
 }
 
 export function __resetModelCatalogCacheForTests() {
+  cachedPriceMetadata.clear();
   cachedValidModelKeys = null;
   cachedAllModels = null;
   cachedProviders = null;

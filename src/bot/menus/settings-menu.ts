@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { getCompactOutputMode, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import { getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 
@@ -8,6 +8,8 @@ export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
+export const SETTINGS_EXPERIMENTAL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}experimental`;
+export const SETTINGS_FREE_DETECTION_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}free_detection`;
 export const SETTINGS_ADVANCED_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}advanced`;
 export const SETTINGS_TOPIC_DEFAULTS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}topic_defaults`;
 export const SETTINGS_AGENT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}agent`;
@@ -92,6 +94,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
       "🔌 <b>Providers & Models</b> · Discover available coding providers.",
       "🔗 <b>Integrations</b> · Manage connected services.",
+      "🧪 <b>Experimental</b> · Optional features under evaluation.",
       "🧰 <b>Advanced</b> · OpenCode tools and destructive data controls.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
@@ -99,6 +102,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
       .text("🔌 Providers & Models", "provider:menu").row()
       .text("🔗 Integrations", "integration:menu").row()
+      .text("🧪 Experimental", SETTINGS_EXPERIMENTAL_CALLBACK).row()
       .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
   };
 }
@@ -297,5 +301,12 @@ export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKe
     keyboard: new InlineKeyboard()
       .text("🔴 Confirm Factory Reset", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
       .text("← Back", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
+  };
+}
+
+export function buildExperimentalSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: "🧪 <b>Experimental</b>\n\nFree Model Detection adds price colors and free-first ordering to provider model lists. Provider information can be incomplete. Applies to the whole bot.",
+    keyboard: new InlineKeyboard().text("Free Model Detection: " + formatBooleanSettingValue(getFreeModelDetectionEnabled()), SETTINGS_FREE_DETECTION_CALLBACK).row().text("← Back", SETTINGS_BACK_CALLBACK),
   };
 }

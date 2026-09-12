@@ -120,3 +120,10 @@ export async function loadSettings(): Promise<void> {
   applyInitialSettingsPreset(config.bot.initialSettingsPreset);
   if (!storedTopicDefaults) void writeSettingsFile(currentSettings);
 }
+
+// Global even when called from a Topic.
+export function getFreeModelDetectionEnabled(): boolean { return currentSettings.experimentalFreeModelDetection === true; }
+export function setFreeModelDetectionEnabled(enabled: boolean): Promise<void> {
+  currentSettings.experimentalFreeModelDetection = enabled;
+  return writeSettingsFile(currentSettings);
+}

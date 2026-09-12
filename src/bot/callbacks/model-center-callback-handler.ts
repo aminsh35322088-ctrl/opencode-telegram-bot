@@ -1,3 +1,6 @@
+import { PRICE_LEGEND } from "../../app/services/model-price-classifier.js";
+import { getFreeModelDetectionEnabled } from "../../app/stores/settings-store.js";
+import { PriceViewExpiredError, resolvePriceViewProvider } from "../menus/provider-price-view.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import {
@@ -12,6 +15,8 @@ import {
   MODEL_CENTER_PROVIDER_PREFIX,
   MODEL_CENTER_RECENT,
   MODEL_CENTER_ROOT,
+  MODEL_CENTER_PRICE_LEGEND,
+  MODEL_CENTER_PRICE_PAGE_PREFIX,
   MODEL_CENTER_SEARCH,
   MODEL_CENTER_SEARCH_AGAIN,
   MODEL_CENTER_SEARCH_CANCEL,
@@ -47,6 +52,19 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
   const data = ctx.callbackQuery?.data;
   if (!data?.startsWith("mc:")) return false;
   try {
+    if (data === MODEL_CENTER_PRICE_LEGEND) {
+      await ctx.answerCallbackQuery({ text: getFreeModelDetectionEnabled() ? PRICE_LEGEND : "Free Model Detection is OFF.", show_alert: true });
+      return true;
+    }
+    if (data.startsWith(MODEL_CENTER_PRICE_PAGE_PREFIX)) {
+      const [id, pageText, extra] = data.slice(MODEL_CENTER_PRICE_PAGE_PREFIX.length).split(":");
+      const providerID = id ? resolvePriceViewProvider(id) : undefined;
+      if (!providerID || !pageText || !/^\d+$/.test(pageText) || extra !== undefined) throw new PriceViewExpiredError();
+      await ctx.answerCallbackQuery().catch(() => {});
+      const provider = (await getProviders()).find((item) => item.id === providerID);
+      if (!provider) throw new PriceViewExpiredError();
+      return await render(ctx, await buildModelCenterProvider(provider, Number(pageText), fetchCurrentModel(), id));
+    }
     if (data === MODEL_CENTER_ROOT) return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
     if (data === MODEL_CENTER_FAVORITES) return await render(ctx, await buildModelCenterList("favorites", fetchCurrentModel()));
     if (data === MODEL_CENTER_RECENT) return await render(ctx, await buildModelCenterList("recent", fetchCurrentModel()));
@@ -59,6 +77,7 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       const providerID = decodeURIComponent(parts[0] ?? "");
       const page = Number.parseInt(parts[1] ?? "0", 10);
       if (!providerID || !Number.isInteger(page) || page < 0) return true;
+      await ctx.answerCallbackQuery().catch(() => {});
       const provider = (await getProviders()).find((item) => item.id === providerID);
       if (!provider) { await ctx.answerCallbackQuery({ text: "Provider is no longer available.", show_alert: true }).catch(() => {}); return true; }
       return await render(ctx, await buildModelCenterProvider(provider, page, fetchCurrentModel()));
@@ -80,6 +99,10 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     }
     return false;
   } catch (error) {
+    if (error instanceof PriceViewExpiredError) {
+      await ctx.answerCallbackQuery({ text: error.message, show_alert: true }).catch(() => {});
+      return true;
+    }
     logger.error("[ModelCenter] Callback failed", error);
     await ctx.answerCallbackQuery({ text: "Model Center action failed.", show_alert: true }).catch(() => {});
     return true;
@@ -93,7 +116,7 @@ async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTar
     case "provider": {
       const provider = (await getProviders()).find((item) => item.id === target.providerID);
       if (!provider) return await render(ctx, await buildModelCenterProviders());
-      return await render(ctx, await buildModelCenterProvider(provider, target.page, fetchCurrentModel()));
+      return await render(ctx, await buildModelCenterProvider(provider, target.page, fetchCurrentModel(), target.viewID));
     }
     case "search": return await render(ctx, await buildModelCenterSearchResults(target.query, fetchCurrentModel()));
   }

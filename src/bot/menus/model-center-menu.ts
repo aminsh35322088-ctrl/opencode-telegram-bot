@@ -1,3 +1,5 @@
+import { getProviderPriceView } from "./provider-price-view.js";
+import { PRICE_COLOR, type ModelPrice } from "../../app/services/model-price-classifier.js";
 import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import { getFavoriteModels, getRecentModels } from "../../app/services/model-preferences-service.js";
@@ -8,6 +10,8 @@ import { logger } from "../../utils/logger.js";
 import type { Context } from "grammy";
 import { replyWithInlineMenu } from "./inline-menu.js";
 
+export const MODEL_CENTER_PRICE_LEGEND = "mc:price_legend";
+export const MODEL_CENTER_PRICE_PAGE_PREFIX = "mc:priced:";
 export const MODEL_CENTER_ROOT = "mc:root";
 export const MODEL_CENTER_FAVORITES = "mc:favorites";
 export const MODEL_CENTER_RECENT = "mc:recent";
@@ -28,7 +32,7 @@ const actionModels = new Map<string, ModelInfo>();
 export type ModelCenterFavoriteTarget =
   | { kind: "root" }
   | { kind: "list"; list: "favorites" | "recent" }
-  | { kind: "provider"; providerID: string; page: number }
+  | { kind: "provider"; providerID: string; page: number; viewID?: string }
   | { kind: "search"; query: string };
 
 const favoriteTargets = new Map<string, ModelCenterFavoriteTarget>();
@@ -39,7 +43,7 @@ function modelKey(model: FavoriteModel | ModelInfo): string {
 
 function actionToken(model: ModelInfo, favoriteTarget?: ModelCenterFavoriteTarget): string {
   const token = createHash("sha256")
-    .update(`${modelKey(model)}:${model.variant ?? "default"}`)
+    .update(`${modelKey(model)}:${model.variant ?? "default"}:${JSON.stringify(favoriteTarget)}`)
     .digest("base64url")
     .slice(0, 10);
   actionModels.delete(token);
@@ -79,6 +83,7 @@ async function appendModelRows(
   models: FavoriteModel[],
   current?: ModelInfo,
   favoriteTarget?: ModelCenterFavoriteTarget,
+  prices?: Map<string, ModelPrice>,
 ): Promise<void> {
   const favorites = await getFavoriteModels();
   const favoriteKeys = new Set(favorites.map(modelKey));
@@ -94,7 +99,10 @@ async function appendModelRows(
     const favorite = favoriteKeys.has(modelKey(model));
     const active = !!current && modelKey(current) === modelKey(model);
 
-    keyboard.text(modelButtonLabel(model, active, favorite), `${MODEL_CENTER_SELECT_PREFIX}${token}`);
+    const label = prices
+      ? PRICE_COLOR[prices.get(model.modelID)?.group ?? "unknown"] + " " + formatModelName(model.modelID, model.name) + (active ? " ✓" : "") + (favorite ? " ⭐" : "")
+      : modelButtonLabel(model, active, favorite);
+    keyboard.text(label, `${MODEL_CENTER_SELECT_PREFIX}${token}`);
     keyboard.text(favorite ? "⭐" : "☆", `${MODEL_CENTER_FAVORITE_PREFIX}${token}`).row();
   }
 }
@@ -172,14 +180,17 @@ export async function buildModelCenterProviders(): Promise<{ text: string; keybo
   };
 }
 
-export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
-  const models = await getProviderModels(provider.id);
+export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo, viewID?: string): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
+  const catalogModels = await getProviderModels(provider.id);
+  const view = await getProviderPriceView(provider.id, catalogModels, viewID);
+  const models = view?.models ?? catalogModels;
   const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
   const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
   const pageModels = models.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE);
   const keyboard = new InlineKeyboard();
-  await appendModelRows(keyboard, pageModels, current, { kind: "provider", providerID: provider.id, page: normalizedPage });
-  appendPagination(keyboard, normalizedPage, totalPages, (target) => `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:${target}`);
+  await appendModelRows(keyboard, pageModels, current, { kind: "provider", providerID: provider.id, page: normalizedPage, viewID: view?.id }, view?.prices);
+  appendPagination(keyboard, normalizedPage, totalPages, (target) => view ? MODEL_CENTER_PRICE_PAGE_PREFIX + view.id + ":" + target : `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:${target}`);
+  if (view) keyboard.text("ⓘ Colors", MODEL_CENTER_PRICE_LEGEND).row();
   keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row();
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {

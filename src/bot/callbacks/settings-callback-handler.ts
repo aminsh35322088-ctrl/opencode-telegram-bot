@@ -1,3 +1,4 @@
+import { clearProviderPriceViews } from "../menus/provider-price-view.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { mcpsCommand } from "../commands/mcp-catalog-command.js";
@@ -5,12 +6,12 @@ import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
-import { getCompactOutputMode, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, getCurrentTopicSettings, setCompactOutputMode, setMessageFormatMode, setPromptQueueEnabled, setResponseStreamingMode, setSendDiffFileAttachments, setShowAssistantRunFooter, setShowThinkingContent, updateTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import { getFreeModelDetectionEnabled, setFreeModelDetectionEnabled, getCompactOutputMode, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, getCurrentTopicSettings, setCompactOutputMode, setMessageFormatMode, setPromptQueueEnabled, setResponseStreamingMode, setSendDiffFileAttachments, setShowAssistantRunFooter, setShowThinkingContent, updateTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
-import { buildAdvancedSettingsView, buildAppearanceSettingsView, buildContextSettingsView, buildFactoryResetConfirmationView, buildFactoryResetFinalView, buildNotificationsSettingsView, buildResetHistoryConfirmationView, buildSettingsMenuView, buildTopicDefaultsSettingsView, SETTINGS_AGENT_CALLBACK, SETTINGS_ADVANCED_CALLBACK, SETTINGS_APPEARANCE_CALLBACK, SETTINGS_ASSISTANT_FOOTER_CALLBACK, SETTINGS_BACK_CALLBACK, SETTINGS_COMMANDS_CALLBACK, SETTINGS_COMPACT_OUTPUT_CALLBACK, SETTINGS_CONTEXT_CALLBACK, SETTINGS_DEFAULT_COMPACT_CALLBACK, SETTINGS_DEFAULT_DIFF_CALLBACK, SETTINGS_DEFAULT_FOOTER_CALLBACK, SETTINGS_DEFAULT_FORMAT_CALLBACK, SETTINGS_DEFAULT_QUEUE_CALLBACK, SETTINGS_DEFAULT_STREAMING_CALLBACK, SETTINGS_DEFAULT_THINKING_CALLBACK, SETTINGS_DIFF_FILES_CALLBACK, SETTINGS_FACTORY_RESET_CALLBACK, SETTINGS_FACTORY_RESET_CANCEL_CALLBACK, SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK, SETTINGS_FACTORY_RESET_FINAL_CALLBACK, SETTINGS_MESSAGE_FORMAT_CALLBACK, SETTINGS_MCP_CALLBACK, SETTINGS_MODEL_CALLBACK, SETTINGS_NOTIFICATIONS_CALLBACK, SETTINGS_PROMPT_QUEUE_CALLBACK, SETTINGS_RESET_HISTORY_CALLBACK, SETTINGS_RESET_HISTORY_CANCEL_CALLBACK, SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK, SETTINGS_RESPONSE_STREAMING_CALLBACK, SETTINGS_SKILLS_CALLBACK, SETTINGS_THINKING_CONTENT_CALLBACK, SETTINGS_TOPIC_DEFAULTS_CALLBACK, SETTINGS_VARIANT_CALLBACK, SETTINGS_CALLBACK_PREFIX } from "../menus/settings-menu.js";
+import { buildExperimentalSettingsView, SETTINGS_EXPERIMENTAL_CALLBACK, SETTINGS_FREE_DETECTION_CALLBACK, buildAdvancedSettingsView, buildAppearanceSettingsView, buildContextSettingsView, buildFactoryResetConfirmationView, buildFactoryResetFinalView, buildNotificationsSettingsView, buildResetHistoryConfirmationView, buildSettingsMenuView, buildTopicDefaultsSettingsView, SETTINGS_AGENT_CALLBACK, SETTINGS_ADVANCED_CALLBACK, SETTINGS_APPEARANCE_CALLBACK, SETTINGS_ASSISTANT_FOOTER_CALLBACK, SETTINGS_BACK_CALLBACK, SETTINGS_COMMANDS_CALLBACK, SETTINGS_COMPACT_OUTPUT_CALLBACK, SETTINGS_CONTEXT_CALLBACK, SETTINGS_DEFAULT_COMPACT_CALLBACK, SETTINGS_DEFAULT_DIFF_CALLBACK, SETTINGS_DEFAULT_FOOTER_CALLBACK, SETTINGS_DEFAULT_FORMAT_CALLBACK, SETTINGS_DEFAULT_QUEUE_CALLBACK, SETTINGS_DEFAULT_STREAMING_CALLBACK, SETTINGS_DEFAULT_THINKING_CALLBACK, SETTINGS_DIFF_FILES_CALLBACK, SETTINGS_FACTORY_RESET_CALLBACK, SETTINGS_FACTORY_RESET_CANCEL_CALLBACK, SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK, SETTINGS_FACTORY_RESET_FINAL_CALLBACK, SETTINGS_MESSAGE_FORMAT_CALLBACK, SETTINGS_MCP_CALLBACK, SETTINGS_MODEL_CALLBACK, SETTINGS_NOTIFICATIONS_CALLBACK, SETTINGS_PROMPT_QUEUE_CALLBACK, SETTINGS_RESET_HISTORY_CALLBACK, SETTINGS_RESET_HISTORY_CANCEL_CALLBACK, SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK, SETTINGS_RESPONSE_STREAMING_CALLBACK, SETTINGS_SKILLS_CALLBACK, SETTINGS_THINKING_CONTENT_CALLBACK, SETTINGS_TOPIC_DEFAULTS_CALLBACK, SETTINGS_VARIANT_CALLBACK, SETTINGS_CALLBACK_PREFIX } from "../menus/settings-menu.js";
 import { factoryReset, resetHistory } from "../../app/services/telegram-reset-service.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -45,6 +46,13 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_APPEARANCE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAppearanceSettingsView(), "both"); return true;
       case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "both"); return true;
       case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "both"); return true;
+      case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
+      case SETTINGS_FREE_DETECTION_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await setFreeModelDetectionEnabled(!getFreeModelDetectionEnabled());
+        clearProviderPriceViews();
+        await renderSettingsView(ctx, buildExperimentalSettingsView(), "back");
+        return true;
       case SETTINGS_ADVANCED_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
       case SETTINGS_TOPIC_DEFAULTS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicDefaultsSettingsView(), "back"); return true;
       case SETTINGS_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx as never); return true;

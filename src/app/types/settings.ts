@@ -23,6 +23,7 @@ export interface AlwaysAllowedPermissionInfo {
  * excluded from this interface; a Topic owns its own TopicSettings.
  */
 export interface GlobalSettings {
+  experimentalFreeModelDetection?: boolean;
   pinnedMessageId?: number;
   mainNavigationMessageIds?: Record<string, number>;
   sessionDirectoryCache?: SessionDirectoryCacheInfo;

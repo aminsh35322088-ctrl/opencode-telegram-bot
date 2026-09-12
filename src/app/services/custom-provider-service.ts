@@ -1,3 +1,4 @@
+import { fetchProviderCatalog } from "./provider-catalog-service.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -262,14 +263,8 @@ export async function discoverModels(baseURL: string, apiKey: string): Promise<C
   const key = apiKey.trim();
   if (!key) throw new Error("API key is empty");
 
-  const response = await fetch(`${normalizedURL}/models`, {
-    headers: { Authorization: `Bearer ${key}` },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`Model discovery failed: HTTP ${response.status}`);
-
-  const payload = (await response.json()) as { data?: DiscoveredModelRecord[] };
-  const models = (payload.data ?? [])
+  const catalog = await fetchProviderCatalog(normalizedURL, key);
+  const models = catalog.records
     .map(normalizeDiscoveredModel)
     .filter((model): model is CustomProviderModel => Boolean(model));
 
