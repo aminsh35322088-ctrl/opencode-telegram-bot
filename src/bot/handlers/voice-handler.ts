@@ -37,7 +37,8 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     const fileData = await downloadFile(ctx, fileId); if (!fileData) { await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, t("stt.error", { error: "download failed" })); return; }
     const result = await transcribe(fileData.buffer, fileData.filename); const recognizedText = result.text.trim();
     if (!recognizedText) { await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, t("stt.empty_result")); return; }
-    try { const notification = buildQuotedNotification(t("stt.recognized"), recognizedText, { blankLineAfterTitle: false }); await editBotText({ api: ctx.api, chatId: ctx.chat!.id, messageId: statusMessage.message_id, text: notification.text, rawFallbackText: notification.rawFallbackText, format: "markdown_v2" }); } catch (editError) { logger.warn("[Voice] Failed to edit status message with recognized text:", editError); }
+    try { const notification = buildQuotedNotification(t(result.uncertain ? "stt.uncertain" : "stt.recognized"), recognizedText, { blankLineAfterTitle: false }); await editBotText({ api: ctx.api, chatId: ctx.chat!.id, messageId: statusMessage.message_id, text: notification.text, rawFallbackText: notification.rawFallbackText, format: "markdown_v2" }); } catch (editError) { logger.warn("[Voice] Failed to edit status message with recognized text:", editError); if (result.uncertain) await ctx.reply(`${t("stt.uncertain")}\n${recognizedText}`); }
+    if (result.uncertain) return;
     logger.info(`[Voice] Transcribed audio: ${recognizedText.length} chars`);
     let textForLLM = recognizedText; const notePrompt = config.stt.notePrompt.trim(); if (notePrompt && notePrompt.toLowerCase() !== "false" && notePrompt !== "0") textForLLM = `[Note: ${notePrompt}]\n${recognizedText}`;
     if (isImageModeActive()) {

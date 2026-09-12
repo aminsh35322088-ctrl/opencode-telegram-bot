@@ -598,6 +598,7 @@ export const en = {
   "legacy.models.env_hint": "💡 To use model in .env:\n",
   "legacy.models.error": "🔴 An error occurred while loading models list.",
 
+  "stt.uncertain": "🎤 Some words may be incorrect. Review and send the corrected text to continue:",
   "stt.recognizing": "🎤 Recognizing audio...",
   "stt.recognized": "🎤 Recognized:",
   "stt.not_configured":

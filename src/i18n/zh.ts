@@ -551,6 +551,7 @@ export const zh: I18nDictionary = {
   "legacy.models.env_hint": "💡 在 .env 中使用该模型：\n",
   "legacy.models.error": "🔴 加载模型列表时发生错误。",
 
+  "stt.uncertain": "🎤 部分词语可能识别有误。请检查并发送修正后的文本：",
   "stt.recognizing": "🎤 正在识别音频...",
   "stt.recognized": "🎤 识别结果：",
   "stt.not_configured":

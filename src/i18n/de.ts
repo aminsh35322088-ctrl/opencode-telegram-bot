@@ -625,6 +625,7 @@ export const de: I18nDictionary = {
   "legacy.models.env_hint": "💡 Um ein Modell in .env zu nutzen:\n",
   "legacy.models.error": "🔴 Beim Laden der Modellliste ist ein Fehler aufgetreten.",
 
+  "stt.uncertain": "🎤 Einige Wörter sind möglicherweise falsch. Prüfe und sende den korrigierten Text:",
   "stt.recognizing": "🎤 Erkenne Audio...",
   "stt.recognized": "🎤 Erkannt:",
   "stt.not_configured":

@@ -580,6 +580,7 @@ export const ar: I18nDictionary = {
   "legacy.models.env_hint": "💡 لاستخدام النموذج في .env:\n",
   "legacy.models.error": "🔴 حدث خطأ أثناء تحميل قائمة النماذج.",
 
+  "stt.uncertain": "🎤 قد تكون بعض الكلمات غير صحيحة. راجع النص وأرسل التصحيح للمتابعة:",
   "stt.recognizing": "🎤 جارٍ تحويل الصوت إلى نص...",
   "stt.recognized": "🎤 النص المستخرج من الرسالة الصوتية:",
   "stt.not_configured":

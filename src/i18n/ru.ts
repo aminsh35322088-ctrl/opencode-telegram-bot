@@ -606,6 +606,7 @@ export const ru: I18nDictionary = {
   "legacy.models.env_hint": "💡 Для использования модели в .env:\n",
   "legacy.models.error": "🔴 Произошла ошибка при получении списка моделей.",
 
+  "stt.uncertain": "🎤 Некоторые слова могли быть распознаны неверно. Проверьте и отправьте исправленный текст:",
   "stt.recognizing": "🎤 Распознаю аудио...",
   "stt.recognized": "🎤 Распознано:",
   "stt.not_configured":

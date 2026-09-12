@@ -608,6 +608,7 @@ export const ko: I18nDictionary = {
   "legacy.models.env_hint": "💡 .env에서 이 모델을 사용하려면:\n",
   "legacy.models.error": "🔴 모델 목록을 불러오는 중 오류가 발생했습니다.",
 
+  "stt.uncertain": "🎤 일부 단어가 잘못 인식되었을 수 있습니다. 확인 후 수정한 텍스트를 보내세요:",
   "stt.recognizing": "🎤 오디오를 인식하는 중...",
   "stt.recognized": "🎤 인식 결과:",
   "stt.not_configured":
