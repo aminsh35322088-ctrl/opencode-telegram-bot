@@ -43,3 +43,39 @@ describe("price evidence source", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+
+describe("official OpenCode Zen runtime prices", () => {
+  const api = { id: "model", url: "https://opencode.ai/zen/v1", npm: "@ai-sdk/openai-compatible" };
+  const zero = { input: 0, output: 0, cache: { read: 0, write: 0 } };
+  function catalog(cost: unknown, url: string = api.url, id = "model-free") {
+    fixture.native = { fetchedAt: Date.now(), models: [[id, { name: id, api: { ...api, url }, cost }]] };
+  }
+  it.each(["model-free", "big-pickle", "ordinary-name"])("shows official zero-cost %s as green without network requests", async (id) => {
+    catalog(zero, api.url, id);
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    expect((await getProviderModelPrices("opencode")).get(id)?.group).toBe("free");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ ...zero, cache: { read: 0.1, write: 0 } }, "paid"],
+    [{ ...zero, input: 1 }, "paid"],
+    [{ input: 0, cache: { read: 0, write: 0 } }, "hint"],
+    [{ ...zero, cache: { read: "bad", write: 0 } }, "hint"],
+    [{ ...zero, new_charge: 1 }, "hint"],
+    [{ ...zero, experimentalOver200K: { input: 1, output: 2, cache: { read: 0, write: 0 } } }, "conditional"],
+    [{ ...zero, experimentalOver200K: zero }, "free"],
+    [{ ...zero, experimentalOver200K: { input: 0 } }, "hint"],
+  ])("respects nested costs and incomplete evidence %j", async (cost, group) => {
+    catalog(cost);
+    expect((await getProviderModelPrices("opencode")).get("model-free")?.group).toBe(group);
+  });
+  it.each(["https://opencode.ai.example/zen/v1", "https://proxy.example/zen/v1", "http://opencode.ai/zen/v1", "https://opencode.ai/other/v1", "invalid"])("does not trust overridden endpoint %s", async (url) => {
+    catalog(zero, url);
+    expect((await getProviderModelPrices("opencode")).get("model-free")?.group).toBe("unknown");
+  });
+  it("keeps generic zero estimates conservative even when their endpoint is Zen", async () => {
+    catalog(zero);
+    expect((await getProviderModelPrices("other")).get("model-free")?.group).toBe("unknown");
+  });
+});

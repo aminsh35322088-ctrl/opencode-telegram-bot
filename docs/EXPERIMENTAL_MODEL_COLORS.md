@@ -27,8 +27,13 @@ verified. A successful request never promotes a model's price rank.
   unknown or hints. Unrecognized cost dimensions block a free inference.
 - The official :free convention is trusted only on HTTPS openrouter.ai.
   Other providers can advertise explicit free flags or complete numeric pricing.
-- OpenCode's zero cost estimates alone remain gray: defaults are not proof of
-  upstream free pricing. Positive runtime prices can be shown as paid.
+- Generic OpenCode runtime zero estimates remain gray. Built-in `opencode`
+  models using the official HTTPS `opencode.ai/zen/v1` endpoint use their
+  catalog prices: complete zero text/cache costs are green. Nested cache costs
+  and `experimentalOver200K` tiers are normalized before classification.
+  An endpoint override or incomplete costs cannot gain a green label merely
+  through a provider ID or a model name containing `free`.
+  Positive runtime prices can be shown as paid.
 - Evidence older than 15 minutes is not used for newly opened views. Failed
   refreshes retain the last successful catalog with its original timestamp;
   a 30-second cooldown prevents repeated failed refreshes.
