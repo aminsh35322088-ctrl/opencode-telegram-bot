@@ -12,7 +12,7 @@ const ROLE_PREFIX = "role:select:";
 const PROVIDER_PREFIX = "role:provider:";
 const PICK_PREFIX = "role:pick:";
 const BACK = "role:back";
-const ROLES: AiRole[] = ["coding", "image", "video", "stt"];
+const ROLES: AiRole[] = ["coding", "image", "stt"];
 
 function roleFromData(data: string): AiRole | null {
   const value = data.slice(ROLE_PREFIX.length) as AiRole;

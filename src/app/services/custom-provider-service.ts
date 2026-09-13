@@ -5,7 +5,7 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
-export type AiCapability = "coding" | "image" | "video" | "stt";
+export type AiCapability = "coding" | "image" | "stt";
 
 /**
  * OpenCode model capability metadata.
@@ -61,7 +61,7 @@ const SUPPORTED_MODALITIES = new Set(["text", "audio", "image", "video", "pdf"])
 type DiscoveredModelRecord = Record<string, unknown>;
 
 function normalizeCapability(value: unknown): AiCapability {
-  return value === "image" || value === "video" || value === "stt" ? value : "coding";
+  return value === "image" || value === "stt" ? value : "coding";
 }
 
 function normalizeModalityList(value: unknown): string[] | undefined {
@@ -167,7 +167,7 @@ function normalizeStore(value: unknown): ProviderStoreFile {
   const raw = value as Partial<ProviderStoreFile>;
   const providers = Array.isArray(raw.providers)
     ? raw.providers
-        .filter((provider): provider is StoredProvider => Boolean(provider) && typeof provider.id === "string" && typeof provider.apiKey === "string")
+        .filter((provider): provider is StoredProvider => Boolean(provider) && typeof provider.id === "string" && typeof provider.apiKey === "string" && (provider as { capability?: unknown }).capability !== "video")
         .map((provider) => ({
           ...provider,
           capability: normalizeCapability(provider.capability),
@@ -322,6 +322,7 @@ export async function saveCustomProvider(input: {
   models: CustomProviderModel[];
   capability?: AiCapability;
 }): Promise<CustomProvider> {
+  if ((input as { capability?: unknown }).capability === "video") throw new Error("Video AI is no longer supported");
   const key = input.apiKey.trim();
   if (!key) throw new Error("API key is empty");
   const name = input.name.trim().slice(0, 80);

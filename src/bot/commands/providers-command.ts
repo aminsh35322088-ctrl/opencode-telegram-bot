@@ -11,8 +11,8 @@ import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 
-const CAPABILITIES: AiCapability[] = ["coding", "image", "video", "stt"];
-const LABEL: Record<AiCapability, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", video: "🎬 Video AI", stt: "🎙️ Speech-to-Text" };
+const CAPABILITIES: AiCapability[] = ["coding", "image", "stt"];
+const LABEL: Record<AiCapability, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", stt: "🎙️ Speech-to-Text" };
 type ImageStep = "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
 interface PendingProvider { step: "slot" | "name" | "url" | "key" | "groq-stt-key" | ImageStep; capability?: AiCapability; name?: string; baseURL?: string; apiKey?: string; model?: string; editModel?: string; accountId?: string; messageId: number; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
