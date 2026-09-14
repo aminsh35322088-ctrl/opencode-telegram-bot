@@ -1,22 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
-import { handleReactionFeedback } from "../../../../src/app/services/reaction-feedback-service.js";
-import { registerBotMessage, __resetBotMessageRegistryForTests } from "../../../../src/app/managers/bot-message-registry.js";
-import { assistantRunState } from "../../../../src/app/managers/assistant-run-state-manager.js";
-import { promptQueue } from "../../../../src/app/managers/prompt-queue-manager.js";
-import { opencodeClient } from "../../../../src/opencode/client.js";
-import { getCurrentSession } from "../../../../src/app/services/session-service.js";
-import { findTelegramTopicBindingBySessionId } from "../../../../src/app/services/telegram-topic-store.js";
+import { handleReactionFeedback } from "../../../src/app/services/reaction-feedback-service.js";
+import { registerBotMessage, __resetBotMessageRegistryForTests } from "../../../src/app/managers/bot-message-registry.js";
+import { assistantRunState } from "../../../src/app/managers/assistant-run-state-manager.js";
+import { promptQueue } from "../../../src/app/managers/prompt-queue-manager.js";
+import { opencodeClient } from "../../../src/opencode/client.js";
+import { getCurrentSession } from "../../../src/app/services/session-service.js";
+import { findTelegramTopicBindingBySessionId } from "../../../src/app/services/telegram-topic-store.js";
 
-vi.mock("../../../../src/app/services/session-service.js", () => ({
+vi.mock("../../../src/app/services/session-service.js", () => ({
   getCurrentSession: vi.fn(() => null),
 }));
 
-vi.mock("../../../../src/app/services/telegram-topic-store.js", () => ({
+vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
   findTelegramTopicBindingBySessionId: vi.fn(async () => null),
 }));
 
-vi.mock("../../../../src/opencode/client.js", () => ({
+vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: {
     session: {
       promptAsync: vi.fn(async () => ({ error: null })),
@@ -25,7 +25,7 @@ vi.mock("../../../../src/opencode/client.js", () => ({
   },
 }));
 
-vi.mock("../../../../src/utils/logger.js", () => ({
+vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
