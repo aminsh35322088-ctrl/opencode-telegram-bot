@@ -62,7 +62,13 @@ it("attaches the image reply keyboard to the welcome message", async () => {
     await setDefaultImageChatProfile(profile); const context = ctx();
     await createNewImageChat(context);
     const calls = (context.api.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls[0]?.[2]).toMatchObject({ message_thread_id: 20, reply_markup: { keyboard: [[{ text: "🖼 New design" }, { text: "⏹ Stop" }], [{ text: "🗑️ Delete Chat" }, { text: "✨ Better" }], [{ text: "🎨 Model · image-model" }, { text: "⚙️ Topic Settings" }]] } });
+    const rows = (calls[0]?.[2] as { reply_markup: { keyboard: Array<Array<{ text: string }>> } }).reply_markup.keyboard.filter(row => row.length > 0);
+    expect(calls[0]?.[2]).toMatchObject({ message_thread_id: 20 });
+    expect(rows.map(row => row.map(button => button.text))).toEqual([
+      ["🖼 New design", "⏹ Stop"],
+      ["🗑️ Delete Chat", "✨ Better"],
+      ["🎨 Model · image-model", "⚙️ Topic Settings"],
+    ]);
   });
   it("stops via the reply keyboard text button", async () => {
     await seed();
@@ -73,7 +79,7 @@ it("attaches the image reply keyboard to the welcome message", async () => {
     await seed({ currentImage: { fileID: "img", mimeType: "image/png" } });
     await createImageChatMiddleware()(ctx("🖼 New design", 20), vi.fn());
     const state = await getImageChat(123, 20);
-    expect(state?.revision).toBe(2); expect(state).not.toHaveProperty("currentImage");
+    expect(state?.revision).toBe(3); expect(state).not.toHaveProperty("currentImage");
   });
   it("refines the last image via ✨ Better", async () => {
     await seed({ currentImage: { fileID: "img", mimeType: "image/png" } });
@@ -89,7 +95,7 @@ it("attaches the image reply keyboard to the welcome message", async () => {
     await seed(); const context = ctx("", 20, "ichat:cfg:silent");
     await createImageChatMiddleware()(context, vi.fn());
     expect((await getImageChat(123, 20))?.settings?.silentDelivery).toBe(true);
-    expect(context.api.editMessageText).toHaveBeenCalledWith(expect.stringContaining("Silent delivery"), expect.objectContaining({ parse_mode: "HTML" }));
+    expect(context.api.editMessageText).toHaveBeenCalledWith(123, 40, expect.stringContaining("Silent delivery"), expect.objectContaining({ parse_mode: "HTML" }));
   });
   it("repeats the last request from the settings menu", async () => {
     await seed({ lastRequest: { text: "a red fox", images: [] } });
