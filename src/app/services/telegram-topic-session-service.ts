@@ -7,14 +7,29 @@ const OPEN_SESSION_LOCKS = new Map<string, Promise<TelegramTopicBinding>>();
 const CHAT_TOPIC_CREATION_LOCKS = new Map<number, Promise<void>>();
 function normalizeTopicTitle(title: string): string { const normalized = title.replace(/\s+/gu, " ").trim(); const codePoints = Array.from(normalized).slice(0, 128).join("").trim(); return codePoints || "New Chat"; }
 function formatChatTitle(number: number): string { return `Chat #${String(number).padStart(2, "0")}`; }
-async function getNextChatTitle(chatId: number): Promise<string> {
-  const bindings = (await listTelegramTopicBindings()).filter((binding) => binding.chatId === chatId);
-  let maxNumber = 0;
+
+/**
+ * Allocate the lowest free managed Chat number instead of a monotonic max+1.
+ * This keeps topic names compact after deletions: #01, #02, #05 -> next is #03.
+ * The per-chat creation lock below makes this allocation race-safe for
+ * concurrent New Chat requests.
+ */
+export function getNextManagedChatTitle(bindings: TelegramTopicBinding[], chatId: number): string {
+  const used = new Set<number>();
   for (const binding of bindings) {
+    if (binding.chatId !== chatId) continue;
     const match = /^Chat #(\d+)$/u.exec(binding.title?.trim() ?? "");
-    if (match) maxNumber = Math.max(maxNumber, Number(match[1]));
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isSafeInteger(value) && value > 0) used.add(value);
   }
-  return formatChatTitle(maxNumber + 1);
+  let candidate = 1;
+  while (used.has(candidate)) candidate += 1;
+  return formatChatTitle(candidate);
+}
+
+async function getNextChatTitle(chatId: number): Promise<string> {
+  return getNextManagedChatTitle(await listTelegramTopicBindings(), chatId);
 }
 async function createForumTopic(api: Api, chatId: number, title: string): Promise<number> { const result = await api.raw.createForumTopic({ chat_id: chatId, name: title }); if (!result.message_thread_id) throw new Error("Telegram created a topic without a message_thread_id"); return result.message_thread_id; }
 async function persistNewBinding(chatId: number, session: SessionInfo, threadId: number, title: string): Promise<TelegramTopicBinding> { const now = new Date().toISOString(); const binding: TelegramTopicBinding = { chatId, threadId, sessionId: session.id, directory: session.directory, createdAt: now, updatedAt: now, title }; await saveTelegramTopicBinding(binding); return binding; }
