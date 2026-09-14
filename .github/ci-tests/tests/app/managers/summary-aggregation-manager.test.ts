@@ -2552,28 +2552,26 @@ describe("summary/aggregator", () => {
 
     it("setSession on another topic does not wipe in-flight text state", () => {
       const onComplete = vi.fn();
-      const onPartialProbe = vi.fn();
+      const onPartial = vi.fn();
       summaryAggregator.setOnComplete(onComplete);
-      summaryAggregator.setOnPartial(onPartialProbe);
+      summaryAggregator.setOnPartial(onPartial);
 
+      // msg-a2 is created and streams its first part while session-a has focus.
       summaryAggregator.setSession("session-a");
-      runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
-        console.error("DEBUG concurrent-2 ctx1:", JSON.stringify(getTopicRuntimeContext()));
-        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2"));
-        summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a2", "part-a2", "Partial answer in flight"));
-        console.error("DEBUG concurrent-2 partials1:", JSON.stringify(onPartialProbe.mock.calls));
-        // Realistic confirmation update (see optimistic anti-flicker mode).
-        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", false));
-        console.error("DEBUG concurrent-2 partials2:", JSON.stringify(onPartialProbe.mock.calls));
-      });
+      summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2"));
+      summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a2", "part-a2", "Partial answer in flight"));
 
-      // Main chat/other topic attaches elsewhere, then A's message completes.
+      // session-b attaches and steals the single focus.
       summaryAggregator.setSession("session-b");
+
+      // session-a's confirmation + completion still arrive inside session-a's
+      // own topic runtime context; the in-flight text must survive the focus
+      // change and complete exactly once.
       runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
+        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", false));
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", true));
       });
 
-      console.error("DEBUG concurrent-2 onComplete:", JSON.stringify(onComplete.mock.calls.map((c: unknown[]) => [c[0], c[1], String(c[2]).slice(0, 60)])), "partials:", JSON.stringify(onPartialProbe.mock.calls));
       expect(onComplete).toHaveBeenCalledTimes(1);
       expect(defined(onComplete.mock.calls[0]?.[2])).toContain("Partial answer in flight");
     });
