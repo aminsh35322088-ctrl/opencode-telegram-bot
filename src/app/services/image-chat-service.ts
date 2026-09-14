@@ -7,6 +7,7 @@ let running = 0;
 const waiters: Array<() => void> = [];
 const id = (chat: number, thread: number) => `${chat}:${thread}`;
 export function isImageChatBusy(chat: number, thread: number): boolean { return !!queues.get(id(chat, thread))?.controllers.size; }
+export function getImageChatQueueSize(chat: number, thread: number): number { return queues.get(id(chat, thread))?.controllers.size ?? 0; }
 export async function stopImageChat(chat: number, thread: number): Promise<void> {
   for (const controller of queues.get(id(chat, thread))?.controllers ?? []) controller.abort();
   const state = await getImageChat(chat, thread);
@@ -79,7 +80,8 @@ async function execute(input: ImageChatInput, io: ImageChatIO, signal: AbortSign
   const turns: ImageChatTurn[] = [...requestTurns, { role: "model", parts: delivered }];
   // Never drop signature-bearing native parts silently. Oversized responses start a fresh context with an explicit notice.
   const oversized = Buffer.byteLength(JSON.stringify(turns)) > MAX_IMAGE_HISTORY_BYTES;
-  if (await updateImageChat(input.chatID, input.threadID, state.revision, { turns: oversized ? [] : turns, currentImage: current, updatedAt: Date.now() }, () => signal.throwIfAborted())) {
+  const settingsPatch = text ? { lastRequest: { text, images: input.images, ...(input.replyImage ? { replyImage: input.replyImage } : {}) } } : {};
+  if (await updateImageChat(input.chatID, input.threadID, state.revision, { turns: oversized ? [] : turns, currentImage: current, updatedAt: Date.now(), ...settingsPatch }, () => signal.throwIfAborted())) {
     if (oversized) await io.text("The result is saved. Its context was too large to retain; the next message starts from the latest image.");
   } else throw new DOMException("Cancelled", "AbortError");
   } catch (error) { await io.rollback?.().catch(() => {}); throw error; }
