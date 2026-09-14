@@ -48,7 +48,7 @@ export async function updateImageChat(chatID: number, threadID: number, revision
     if (!old || old.revision !== revision) return {};
     beforeWrite();
     updated = true;
-    return { imageChats: { ...all, [id]: { ...old, ...patch, kind: "image", chatID, threadID } } };
+    return { imageChats: { ...all, [id]: { ...old, ...patch, kind: "image", chatID, threadID } };
   });
   return updated;
 }
@@ -81,4 +81,13 @@ export async function getImageChatDefaultMode(): Promise<ImageChatDefaultMode> {
 }
 export async function setImageChatDefaultMode(mode: ImageChatDefaultMode): Promise<void> {
   await updateAppState({ imageChatDefaultMode: mode });
+}
+/** Image generation is an independent default: Auto only owns the free vision/chat planner selection. */
+export async function getDefaultImageChatImageProviderID(): Promise<string | undefined> {
+  const value = (await readAppState()).imageChatDefaultImageProviderID;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+export async function setDefaultImageChatImageProviderID(providerID: string): Promise<void> {
+  if (!providerID) throw new Error("Invalid image provider");
+  await updateAppState({ imageChatDefaultImageProviderID: providerID });
 }
