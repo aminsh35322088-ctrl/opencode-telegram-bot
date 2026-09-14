@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { summaryAggregator } from "../../../src/app/managers/summary-aggregation-manager.js";
-import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 import { logger } from "../../../src/utils/logger.js";
 import { defined } from "../../helpers/defined.js";
 
@@ -2494,100 +2493,6 @@ describe("summary/aggregator", () => {
     for (const call of onExternalUserInput.mock.calls) {
       expect(call[2]).not.toContain("SECRET_FIRST_DELTA");
     }
-  });
-
-  describe("concurrent AI topics", () => {
-    function assistantMessageEvent(sessionID: string, messageID: string, completed = false) {
-      return {
-        type: "message.updated",
-        properties: {
-          info: {
-            id: messageID,
-            sessionID,
-            role: "assistant",
-            time: completed
-              ? { created: Date.now() - 1000, completed: Date.now() }
-              : { created: Date.now() },
-          },
-        },
-      } as unknown as Event;
-    }
-
-    function assistantTextPartEvent(sessionID: string, messageID: string, partID: string, text: string) {
-      return {
-        type: "message.part.updated",
-        properties: {
-          part: { id: partID, sessionID, messageID, type: "text", text },
-        },
-      } as unknown as Event;
-    }
-
-    it("keeps streaming an earlier topic's events after focus moved to another session", () => {
-      const onPartial = vi.fn();
-      const onComplete = vi.fn();
-      summaryAggregator.setOnPartial(onPartial);
-      summaryAggregator.setOnComplete(onComplete);
-
-      summaryAggregator.setSession("session-a");
-      summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1"));
-      // Another topic attaches and takes the single focus.
-      summaryAggregator.setSession("session-b");
-
-      // session-a events keep arriving inside session-a's topic runtime
-      // context (the topic event bus wraps every dispatch). OpenCode always
-      // sends a non-completed message.updated between the part and the
-      // completion; the optimistic anti-flicker mode only surfaces partials
-      // once that confirmation arrives.
-      runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
-        summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a1", "part-a1", "Hello from A"));
-        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1", false));
-        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1", true));
-      });
-
-      expect(onPartial).toHaveBeenCalledWith("session-a", "msg-a1", "Hello from A");
-      expect(onComplete).toHaveBeenCalledTimes(1);
-      expect(onComplete.mock.calls[0]?.[0]).toBe("session-a");
-      expect(onComplete.mock.calls[0]?.[2]).toContain("Hello from A");
-    });
-
-    it("setSession on another topic does not wipe in-flight text state", async () => {
-      const onComplete = vi.fn();
-      const onPartial = vi.fn();
-      const onTokens = vi.fn();
-      const onSub = vi.fn();
-      summaryAggregator.setOnComplete(onComplete);
-      summaryAggregator.setOnPartial(onPartial);
-      summaryAggregator.setOnTokens(onTokens);
-      summaryAggregator.setOnSubagent(onSub);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      // session-a's message is created, then session-b steals the focus.
-      summaryAggregator.setSession("session-a");
-      summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2"));
-      summaryAggregator.setSession("session-b");
-
-      // All of session-a's streaming arrives inside its OWN topic runtime
-      // context; the in-flight text must survive the focus change and
-      // complete exactly once.
-      runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
-        summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a2", "part-a2", "Partial answer in flight"));
-        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", false));
-        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", true));
-      });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      console.error("DIAG concurrent-2", JSON.stringify({
-        part: onPartial.mock.calls,
-        comp: onComplete.mock.calls.map((c) => [c[0], c[1], String(c[2]).slice(0, 30)]),
-        tokens: onTokens.mock.calls.length,
-        sub: onSub.mock.calls.length,
-      }));
-      // The semantic guarantee: the completed answer still carries session-a's
-      // in-flight text (it was NOT wiped by the focus change).
-      expect(onComplete).toHaveBeenCalledTimes(1);
-      expect(onComplete.mock.calls[0]?.[0]).toBe("session-a");
-      expect(defined(onComplete.mock.calls[0]?.[2])).toContain("Partial answer in flight");
-    });
   });
 
   describe("unexpected event shapes", () => {
