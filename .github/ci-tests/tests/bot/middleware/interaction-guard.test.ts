@@ -395,7 +395,7 @@ describe("interactionGuardMiddleware", () => {
     expect(ctx.reply).toHaveBeenCalledWith(t("bot.session_busy"));
   });
 
-
+  it("allows active question callback while busy", async () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
     interactionManager.start({
       kind: "question",

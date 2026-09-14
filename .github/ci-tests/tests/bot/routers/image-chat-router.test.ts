@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { createImageChatMiddleware, createNewImageChat, cleanupImageChatRouter } from "../../../src/bot/routers/image-chat-router.js";
-import { createImageChat, getImageChat, listImageChats, setDefaultImageChatProfile } from "../../../src/app/stores/image-chat-store.js";
+import { createImageChat, getImageChat, listImageChats, setDefaultImageChatProfile, setImageChatDefaultMode } from "../../../src/app/stores/image-chat-store.js";
 import { writeAppState } from "../../../src/app/stores/app-state-store.js";
 import type { ImageChatProfile } from "../../../src/app/types/image-chat.js";
 
@@ -19,7 +19,7 @@ async function seed() { await createImageChat({ kind: "image", chatID: 123, thre
 
 describe("Image Chat Telegram routing", () => {
   it("creates a persisted image-only topic without an OpenCode session binding", async () => {
-    await setDefaultImageChatProfile(profile); const context = ctx();
+    await setDefaultImageChatProfile(profile); await setImageChatDefaultMode("manual"); const context = ctx();
     await createNewImageChat(context);
     expect(context.api.createForumTopic).toHaveBeenCalledOnce();
     expect((await listImageChats())[0]).toMatchObject({ kind: "image", threadID: 20, profile });

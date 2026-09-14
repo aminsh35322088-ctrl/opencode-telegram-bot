@@ -2541,6 +2541,7 @@ describe("summary/aggregator", () => {
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1", true));
       });
 
+      console.error("DEBUG concurrent-1 onPartial:", JSON.stringify(onPartial.mock.calls), "onComplete:", JSON.stringify(onComplete.mock.calls.map((c: unknown[]) => [c[0], c[1], String(c[2]).slice(0, 60)])));
       expect(onPartial).toHaveBeenCalledWith("session-a", "msg-a1", "Hello from A");
       expect(onComplete).toHaveBeenCalledTimes(1);
       expect(onComplete.mock.calls[0]?.[0]).toBe("session-a");
@@ -2563,6 +2564,7 @@ describe("summary/aggregator", () => {
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", true));
       });
 
+      console.error("DEBUG concurrent-2 onComplete:", JSON.stringify(onComplete.mock.calls.map((c: unknown[]) => [c[0], c[1], String(c[2]).slice(0, 60)])));
       expect(onComplete).toHaveBeenCalledTimes(1);
       expect(defined(onComplete.mock.calls[0]?.[2])).toContain("Partial answer in flight");
     });
