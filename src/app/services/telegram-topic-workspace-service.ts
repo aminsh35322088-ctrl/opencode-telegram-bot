@@ -31,3 +31,42 @@ function assertManagedWorkspace(directory: string): string {
 export async function deleteTelegramTopicWorkspace(directory: string): Promise<void> { const fs = await import("fs/promises"); const managedDirectory = assertManagedWorkspace(directory); await fs.rm(managedDirectory, { recursive: true, force: true }); logger.info(`[TelegramTopics] Deleted isolated workspace: directory=${managedDirectory}`); }
 export function isTelegramTopicWorkspace(directory: string): boolean { try { assertManagedWorkspace(directory); return true; } catch { return false; } }
 export function getTelegramTopicWorkspaceRoot(): string { return getWorkspaceRoot(); }
+
+/**
+ * Deletes every managed topic workspace directory that is not referenced by the
+ * given (live) binding directories. Runs after topic deletes and during resets
+ * and startup so a failed or interrupted delete can never orphan a workspace
+ * (and its full repo copy) on the persistent volume.
+ */
+export async function reconcileTopicWorkspaces(referencedDirectories: ReadonlySet<string>): Promise<string[]> {
+  const fs = await import("fs/promises");
+  const root = path.resolve(getWorkspaceRoot());
+  const referenced = new Set([...referencedDirectories].map((directory) => path.resolve(directory)));
+  const removed: string[] = [];
+  let chatEntries: import("fs").Dirent[];
+  try { chatEntries = await fs.readdir(root, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return removed; throw error; }
+  for (const chatEntry of chatEntries) {
+    if (!chatEntry.isDirectory() || !/^[-]?\d+$/.test(chatEntry.name)) continue;
+    const chatDir = path.join(root, chatEntry.name);
+    let sessionEntries: import("fs").Dirent[];
+    try { sessionEntries = await fs.readdir(chatDir, { withFileTypes: true }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    for (const sessionEntry of sessionEntries) {
+      if (!sessionEntry.isDirectory()) continue;
+      const workspaceDir = path.join(chatDir, sessionEntry.name);
+      let managed: string;
+      try { managed = assertManagedWorkspace(workspaceDir); }
+      catch { logger.warn(`[TelegramTopics] Skipping unmanaged workspace path during reconcile: ${workspaceDir}`); continue; }
+      if (referenced.has(managed)) continue;
+      await fs.rm(managed, { recursive: true, force: true });
+      removed.push(managed);
+      logger.info(`[TelegramTopics] Reconciled orphaned workspace: directory=${managed}`);
+    }
+    try {
+      const remaining = await fs.readdir(chatDir);
+      if (remaining.length === 0) await fs.rmdir(chatDir);
+    } catch { /* chat dir already gone or not removable */ }
+  }
+  return removed;
+}
