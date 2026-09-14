@@ -12,17 +12,17 @@ function normalizeDirectory(projectDirectory: string): string {
   return projectDirectory.replace(/\\/g, "/");
 }
 
-/** Load skills directly from OpenCode's native v2 skill registry. */
+/** Load skills from OpenCode's dedicated Skills API instead of the generic command catalog. */
 export async function loadSkillsCatalog(projectDirectory: string): Promise<SkillCatalogItem[]> {
-  const { data, error } = await opencodeClient.skill.list({
-    location: { directory: normalizeDirectory(projectDirectory) },
+  const { data, error } = await opencodeClient.app.skills({
+    directory: normalizeDirectory(projectDirectory),
   });
 
   if (error || !data) {
     throw error || new Error("No skill data received");
   }
 
-  return data.data
+  return data
     .filter((skill) => typeof skill.name === "string" && skill.name.trim().length > 0)
     .map((skill) => ({
       name: skill.name.trim(),
