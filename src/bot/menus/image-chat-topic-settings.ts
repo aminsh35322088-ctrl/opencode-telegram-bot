@@ -76,7 +76,7 @@ export function buildImageChatDeliveryView(state: ImageChatState): { text: strin
   };
 }
 
-export function buildImageChatQueueView(state: ImageChatState, queueSize: number): { text: string; keyboard: InlineKeyboard } {
+export function buildImageChatQueueView(queueSize: number): { text: string; keyboard: InlineKeyboard } {
   return {
     text: [
       "📥 <b>Request Queue</b>",

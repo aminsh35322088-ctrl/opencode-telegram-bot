@@ -152,7 +152,7 @@ async function handleImageChatConfigCallback(ctx: Context, state: ImageChatState
   };
   if (data === ICHAT_CFG_ROOT) { await edit(buildImageChatTopicSettingsView(state)); return; }
   if (data === ICHAT_CFG_DELIVERY) { await edit(buildImageChatDeliveryView(state)); return; }
-  if (data === ICHAT_CFG_QUEUE) { await edit(buildImageChatQueueView(state, getImageChatQueueSize(state.chatID, state.threadID))); return; }
+  if (data === ICHAT_CFG_QUEUE) { await edit(buildImageChatQueueView(getImageChatQueueSize(state.chatID, state.threadID))); return; }
   if (data === ICHAT_CFG_CONTEXT) { await edit(buildImageChatContextView(state)); return; }
   if (data === ICHAT_CFG_SILENT || data === ICHAT_CFG_FORMAT) {
     const settings = { ...state.settings };
@@ -245,7 +245,7 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
           return;
         }
         if (albums.size >= 20) { await send(ctx, "Too many pending albums. Wait a moment."); return; }
-        const timer = setTimeout(() => {
+        const timer = setTimeout(async () => {
           const album = albums.get(key); albums.delete(key); if (!album) return;
           if (album.overflow) void send(album.ctx, "An Image Chat accepts up to four reference images per album. Send a smaller album.").catch(() => {});
           else { const albumState = await getImageChat(album.input.chatID, album.input.threadID); if (albumState) dispatch(album.ctx, album.input, albumState); }
