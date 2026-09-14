@@ -347,6 +347,9 @@ describe("bot/services/event-subscription-service", () => {
     activeService = null;
 
     const settingsStore = await import("../../../src/app/stores/settings-store.js");
+    // Drain the app-state write queue so a queued atomic rename cannot race the
+    // temp-home removal below and surface as an unhandled ENOENT rejection.
+    await settingsStore.flushSettings().catch(() => {});
     settingsStore.__resetSettingsForTests();
     vi.unstubAllEnvs();
     // Settings writes can still be landing on Windows when the temp home is
