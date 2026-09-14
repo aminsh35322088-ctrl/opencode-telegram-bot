@@ -82,7 +82,9 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const keyboard = keyboardManager.getKeyboard();
     const texts = keyboardTexts(keyboard);
     expect(texts).toContain("💬 New Chat");
-    expect(texts).toContain("🧠 Global Model");
+    // Model choices live under Settings → Default Models; Main must not expose a model button.
+    expect(texts).toContain("⚙️ Main Settings");
+    expect(texts.some((text) => text.includes("🧠"))).toBe(false);
   });
 
   it("returns the Topic keyboard when called inside the topic runtime context", () => {

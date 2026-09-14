@@ -25,6 +25,16 @@ const mocked = vi.hoisted(() => ({
   initializeLoggerMock: vi.fn(),
   getLogFilePathMock: vi.fn(),
   flushLoggerMock: vi.fn(),
+  getGlobalSettingsMock: vi.fn(() => ({})),
+  githubInitializeMock: vi.fn(),
+  railwayInitializeMock: vi.fn(),
+  syncCustomConfigMock: vi.fn(),
+  cleanupLegacyConfigMock: vi.fn(),
+  modelCatalogStartMock: vi.fn(),
+  modelCatalogStopMock: vi.fn(),
+  deliverySenderMock: vi.fn(),
+  watchdogStartMock: vi.fn(),
+  watchdogStopMock: vi.fn(),
   config: {
     opencode: {
       apiUrl: "http://localhost:4096",
@@ -59,6 +69,45 @@ vi.mock("../../src/opencode/ready-refresh.js", () => ({
 vi.mock("../../src/app/stores/settings-store.js", () => ({
   flushSettings: mocked.flushSettingsMock,
   loadSettings: mocked.loadSettingsMock,
+  getGlobalSettings: mocked.getGlobalSettingsMock,
+}));
+
+vi.mock("../../src/bot/messages/scheduled-task-delivery.js", () => ({
+  createScheduledTaskDeliverySender: mocked.deliverySenderMock,
+}));
+
+vi.mock("../../src/app/services/github-integration-service.js", () => ({
+  initializeGithubIntegration: mocked.githubInitializeMock,
+}));
+
+vi.mock("../../src/app/services/railway-integration-service.js", () => ({
+  initializeRailwayIntegration: mocked.railwayInitializeMock,
+}));
+
+vi.mock("../../src/app/services/custom-provider-service.js", () => ({
+  syncOpenCodeCustomConfig: mocked.syncCustomConfigMock,
+}));
+
+vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
+  startModelCatalogRefreshService: mocked.modelCatalogStartMock,
+  stopModelCatalogRefreshService: mocked.modelCatalogStopMock,
+}));
+
+vi.mock("../../src/app/services/persistent-state-registry.js", () => ({
+  cleanupLegacyUserConfiguration: mocked.cleanupLegacyConfigMock,
+}));
+
+vi.mock("../../src/utils/runtime-observability.js", () => ({
+  RuntimeObservabilityWatchdog: class {
+    start = mocked.watchdogStartMock;
+    stop = mocked.watchdogStopMock;
+  },
+}));
+
+vi.mock("../../src/utils/safe-background-task.js", () => ({
+  safeBackgroundTask: vi.fn((options: { task: () => Promise<unknown> }) => {
+    void options.task();
+  }),
 }));
 
 vi.mock("../../src/app/services/scheduled-task-runtime-service.js", () => ({
@@ -109,6 +158,7 @@ function createBot() {
     api: {
       deleteWebhook: vi.fn().mockResolvedValue(undefined),
       getWebhookInfo: vi.fn().mockResolvedValue({ url: "" }),
+      getMe: vi.fn().mockResolvedValue({ has_topics_enabled: true, allows_users_to_create_topics: true }),
     },
     start: vi.fn().mockImplementation(async ({ onStart }) => {
       onStart?.({ username: "test_bot" });
@@ -126,6 +176,7 @@ function createPendingBot() {
     api: {
       deleteWebhook: vi.fn().mockResolvedValue(undefined),
       getWebhookInfo: vi.fn().mockResolvedValue({ url: "" }),
+      getMe: vi.fn().mockResolvedValue({ has_topics_enabled: true, allows_users_to_create_topics: true }),
     },
     start: vi.fn().mockImplementation(async ({ onStart }) => {
       onStart?.({ username: "test_bot" });
@@ -194,6 +245,16 @@ describe("app/start-bot-app", () => {
     mocked.initializeLoggerMock.mockReset();
     mocked.getLogFilePathMock.mockReset();
     mocked.flushLoggerMock.mockReset();
+    mocked.getGlobalSettingsMock.mockReset().mockReturnValue({});
+    mocked.githubInitializeMock.mockReset();
+    mocked.railwayInitializeMock.mockReset();
+    mocked.syncCustomConfigMock.mockReset();
+    mocked.cleanupLegacyConfigMock.mockReset();
+    mocked.modelCatalogStartMock.mockReset();
+    mocked.modelCatalogStopMock.mockReset();
+    mocked.deliverySenderMock.mockReset();
+    mocked.watchdogStartMock.mockReset();
+    mocked.watchdogStopMock.mockReset();
 
     mocked.createBotMock.mockReturnValue(createBot());
     mocked.autoRestartStartMock.mockResolvedValue(false);
@@ -206,6 +267,11 @@ describe("app/start-bot-app", () => {
     mocked.initializeLoggerMock.mockResolvedValue(undefined);
     mocked.getLogFilePathMock.mockReturnValue(null);
     mocked.flushLoggerMock.mockResolvedValue(undefined);
+    mocked.githubInitializeMock.mockResolvedValue(false);
+    mocked.railwayInitializeMock.mockResolvedValue(false);
+    mocked.syncCustomConfigMock.mockResolvedValue("");
+    mocked.cleanupLegacyConfigMock.mockResolvedValue(undefined);
+    mocked.deliverySenderMock.mockReturnValue(vi.fn());
 
     registeredProcessHandlers.clear();
     vi.spyOn(process, "on").mockImplementation(((

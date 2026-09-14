@@ -5,11 +5,18 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ## [Unreleased]
 
 ### Added
+- `github-ci` OpenCode tool: bounded GitHub Actions companion (`status`/`watch`/`logs`/`verify`) that reads CI run state and failed-test logs through `gh` with hard per-call timeouts, so test validation always returns output and never hangs or goes silent on constrained runtimes. `verify` combines waiting and auto-fetching failure logs in one bounded call.
+- Bounded CI test-runner resources: the vitest suite runs in process forks with hard per-file isolation and a fixed worker cap, keeping several test files running concurrently at a deterministic memory envelope; per-file singleton leakage can no longer depend on execution order.
+- `validation-gateway-policy` coverage for the intentionally allowed baked toolchain binaries (`tsc`/`vitest`/`eslint`), keeping installer commands denied.
 - Topic isolation architecture is now documented in `docs/TOPIC_ISOLATION_ARCHITECTURE.md`: the ALS scope contract, the per-topic vs per-session keying rules for all mutable state, and the liveness guarantees behind concurrent multi-Topic AI chat.
 - `TopicScopedValue` primitive: one mutable value per Telegram Topic scope, resolved from the runtime context, used to give every Topic its own independent setup wizards.
 - `general.topic_only_prompt` message in all supported languages.
 
 ### Fixed
+- Reply Keyboard pattern matching no longer strips the U+FE0F variation selector from labels without normalizing the regex literals too: `⚙️ Settings`, `⚙️ Main Settings`, `🗑️ Delete Chat`, `⏸️ Pause` and `▶️ Resume` are recognized as keyboard controls again instead of leaking into AI prompts.
+- CI-only test suite synchronized with the current source: app-state storage layout (`app-state.json` with nested `settings`), 20 MB file limit, 20 s monitor interval, STT Groq `verbose_json`/`uncertain` results, MCP catalog keyboard, Main keyboard without a model button, `/start` inline-anchor behavior, concurrent-topic `/new` creation, sessions Home navigation row, auto-restart listener lookup order, and Image Chat manual default mode.
+- Broken CI-only test files repaired: missing `it()` header in `interaction-guard.test.ts` (syntax error that failed the whole file), missing `INLINE_MENU_CANCEL_PREFIX` export in the `settings-model-selection` inline-menu mock, and `node:child_process` mocks missing `execFile` (service manager suite).
+- `message-merger` tests await the classifier boundary and mock the interaction/pause modules the merger now uses, removing the microtask race that made every assertion see zero calls; `event-subscription` lifecycle tests drain the app-state write queue before removing their temp home, ending the unhandled rename rejection.
 - Pass SSE cancellation through the SDK request options and invalidate queued event routes across session retirement or bus restart.
 - Cancel pending artifact inspection and delivery for retired sessions without interrupting other Topics.
 - Retired AI Topics now purge their service-side runtime state (assistant/thinking/tool/compact streams, tool-message batches, elapsed timers, run state, chat bindings) when the model is switched or the Topic is deleted, closing per-session leaks and stale-flush delivery to the chat root.

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { createImageChatMiddleware, createNewImageChat, cleanupImageChatRouter } from "../../../src/bot/routers/image-chat-router.js";
-import { createImageChat, getImageChat, listImageChats, setDefaultImageChatProfile } from "../../../src/app/stores/image-chat-store.js";
+import { createImageChat, getImageChat, listImageChats, setDefaultImageChatProfile, setImageChatDefaultMode } from "../../../src/app/stores/image-chat-store.js";
 import { writeAppState } from "../../../src/app/stores/app-state-store.js";
 import type { ImageChatProfile } from "../../../src/app/types/image-chat.js";
 
@@ -13,13 +13,13 @@ function ctx(text = "hello", threadID?: number, callback?: string) {
   const chat = { id: 123, type: "private" }, message = { message_id: 40, chat, text, ...(threadID ? { message_thread_id: threadID } : {}) };
   return { chat, ...(callback ? { callbackQuery: { data: callback, message } } : { message }), reply: vi.fn(async () => ({ message_id: 70 })), answerCallbackQuery: vi.fn(async () => {}), api: { sendMessage: vi.fn(async () => ({ message_id: 50 })), deleteMessage: vi.fn(async () => true), createForumTopic: vi.fn(async () => ({ message_thread_id: 20, name: "Image Chat" })), deleteForumTopic: vi.fn(async () => true) } } as unknown as Context;
 }
-beforeEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2 }); queued.mockClear(); });
+beforeEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2, imageChatGemini: { apiKey: "test-gemini-key" } }); queued.mockClear(); });
 afterEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2 }); });
 async function seed() { await createImageChat({ kind: "image", chatID: 123, threadID: 20, title: "Image", profile, revision: 1, turns: [], handledMessageIDs: [], updatedAt: Date.now() }); }
 
 describe("Image Chat Telegram routing", () => {
   it("creates a persisted image-only topic without an OpenCode session binding", async () => {
-    await setDefaultImageChatProfile(profile); const context = ctx();
+    await setDefaultImageChatProfile(profile); await setImageChatDefaultMode("manual"); const context = ctx();
     await createNewImageChat(context);
     expect(context.api.createForumTopic).toHaveBeenCalledOnce();
     expect((await listImageChats())[0]).toMatchObject({ kind: "image", threadID: 20, profile });

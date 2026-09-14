@@ -30,11 +30,25 @@ describe("validation gateway policy", () => {
       "*bun install*",
       "*bunx*",
       "*bun test*",
+    ]) {
+      expect(bash[pattern]).toBe("deny");
+    }
+  });
+
+  it("permits the baked validation toolchain binaries", async () => {
+    const config = JSON.parse(await readFile(path.join(root, "opencode.json"), "utf8")) as {
+      permission?: { bash?: Record<string, string> };
+    };
+    const bash = config.permission?.bash ?? {};
+    for (const pattern of [
       "*tsc *",
       "*vitest *",
       "*eslint *",
+      "*node_modules/.bin/tsc*",
+      "*node_modules/.bin/vitest*",
+      "*node_modules/.bin/eslint*",
     ]) {
-      expect(bash[pattern]).toBe("deny");
+      expect(bash[pattern]).toBe("allow");
     }
   });
 

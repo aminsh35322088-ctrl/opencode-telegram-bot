@@ -18,6 +18,7 @@ vi.mock("../../../src/app/services/document-extractor-service.js", () => ({
   extractDocument: vi.fn(),
 }));
 import { t } from "../../../src/i18n/index.js";
+import { config } from "../../../src/config.js";
 import { isDocExtractorConfigured } from "../../../src/app/services/document-extractor-service.js";
 
 function createDocumentContext(overrides: Partial<Context["message"]> = {}): {
@@ -127,14 +128,16 @@ describe("bot/handlers/document", () => {
           file_unique_id: "unique-id",
           file_name: "large.txt",
           mime_type: "text/plain",
-          file_size: 200 * 1024, // 200KB
+          file_size: (config.files.maxFileSizeKb + 1) * 1024,
         },
       });
       const { deps, processPromptMock, downloadMock } = createDocumentDeps();
 
       await handleDocumentMessage(ctx, deps);
 
-      expect(replyMock).toHaveBeenCalledWith(t("bot.text_file_too_large", { maxSizeKb: "100" }));
+      expect(replyMock).toHaveBeenCalledWith(
+        t("bot.text_file_too_large", { maxSizeKb: String(config.files.maxFileSizeKb) }),
+      );
       expect(downloadMock).not.toHaveBeenCalled();
       expect(processPromptMock).not.toHaveBeenCalled();
     });

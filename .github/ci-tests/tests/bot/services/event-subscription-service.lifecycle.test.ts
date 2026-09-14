@@ -290,6 +290,9 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     activeService = null;
 
     const settingsStore = await import("../../../src/app/stores/settings-store.js");
+    // Drain the app-state write queue first: a queued atomic rename would
+    // otherwise race the temp home removal below and surface as ENOENT.
+    await settingsStore.flushSettings().catch(() => {});
     settingsStore.__resetSettingsForTests();
     vi.unstubAllEnvs();
     await rm(tempHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
