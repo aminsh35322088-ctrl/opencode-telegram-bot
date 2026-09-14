@@ -165,6 +165,10 @@ function clearMessagesInteraction(reason: string): void {
   }
 }
 
+function supportsSessionRedo(): boolean {
+  return typeof opencodeClient.session.unrevert === "function";
+}
+
 async function sendLatestAssistantResponse(
   api: Context["api"],
   chatId: number,
@@ -234,9 +238,15 @@ export async function handleMessagesCallback(
         }
 
         const successText = t("messages.revert_success", { text: selectedMessage.text });
-        await ctx.editMessageText(truncateMessageHistoryText(successText, TELEGRAM_MESSAGE_LIMIT), {
-          reply_markup: buildMessageRevertedKeyboard(),
-        });
+        const renderedSuccess = truncateMessageHistoryText(successText, TELEGRAM_MESSAGE_LIMIT);
+        if (supportsSessionRedo()) {
+          await ctx.editMessageText(renderedSuccess, {
+            reply_markup: buildMessageRevertedKeyboard(),
+          });
+        } else {
+          await ctx.editMessageText(renderedSuccess);
+          clearMessagesInteraction("messages_revert_success_no_redo");
+        }
       } catch (error) {
         logger.error("[Messages] Error reverting message:", error);
         await ctx.editMessageText(t("messages.revert_error"));
@@ -247,7 +257,7 @@ export async function handleMessagesCallback(
     }
 
     if (data === MESSAGES_CALLBACK_REDO) {
-      if (metadata.stage !== "detail") {
+      if (metadata.stage !== "detail" || !supportsSessionRedo()) {
         await ctx.answerCallbackQuery({ text: t("messages.inactive_callback"), show_alert: true });
         return true;
       }
