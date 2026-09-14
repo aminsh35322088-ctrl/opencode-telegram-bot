@@ -14,7 +14,7 @@ function normalizeDirectory(projectDirectory: string): string {
 
 /** Load skills directly from OpenCode's native v2 skill registry. */
 export async function loadSkillsCatalog(projectDirectory: string): Promise<SkillCatalogItem[]> {
-  const { data, error } = await opencodeClient.v2.skill.list({
+  const { data, error } = await opencodeClient.skill.list({
     location: { directory: normalizeDirectory(projectDirectory) },
   });
 
