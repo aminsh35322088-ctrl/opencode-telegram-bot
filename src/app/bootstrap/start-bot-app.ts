@@ -5,7 +5,7 @@ import { createScheduledTaskDeliverySender } from "../../bot/messages/scheduled-
 import { config } from "../../config.js";
 import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
-import { clearMainNavigationMessageId, flushSettings, getGlobalSettings, getMainNavigationIsolationVersion, loadSettings, setMainNavigationIsolationVersion } from "../stores/settings-store.js";
+import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
@@ -23,7 +23,6 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
 const LOG_FLUSH_TIMEOUT_MS = 1000;
-const MAIN_NAVIGATION_ISOLATION_VERSION = 2;
 
 async function getBotVersion(): Promise<string> { try { const packageJsonPath = new URL("../../../package.json", import.meta.url); const packageJsonContent = await readFile(packageJsonPath, "utf-8"); const packageJson = JSON.parse(packageJsonContent) as { version?: string }; return packageJson.version ?? "unknown"; } catch (error) { logger.warn("[App] Failed to read bot version", error); return "unknown"; } }
 
@@ -45,29 +44,18 @@ export async function startBotApp(): Promise<void> {
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
 
-  // v2 fixes the actual Topic leak: attach/session restoration could replace the
-  // keyboard manager's global API with a Topic-scoped proxy. A Main refresh that
-  // followed would then be sent into that Topic. Persisted anchors created by
-  // those builds cannot be moved between Telegram Topics, so retire the exact
-  // bot-owned canonical message once and forget its ID. The next Main refresh
-  // recreates it through the now-unscoped API.
-  if (getMainNavigationIsolationVersion() < MAIN_NAVIGATION_ISOLATION_VERSION) {
-    const mainNavigationMessageIds = getGlobalSettings().mainNavigationMessageIds ?? {};
-    for (const [chatIdText, messageId] of Object.entries(mainNavigationMessageIds)) {
-      const chatId = Number(chatIdText);
-      if (!Number.isSafeInteger(chatId) || typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) continue;
-      try { await bot.api.unpinChatMessage(chatId, messageId); } catch {}
-      try {
-        await bot.api.deleteMessage(chatId, messageId);
-        logger.info(`[TelegramKeyboard] Isolation migration retired canonical Main message: chat=${chatId}, message=${messageId}`);
-      } catch (error) {
-        logger.debug(`[TelegramKeyboard] Isolation migration Main message already absent/unavailable: chat=${chatId}, message=${messageId}`, error);
-      }
-      await clearMainNavigationMessageId(chatId);
+  // Older builds could pin Main at chat scope. Unpin only the exact persisted
+  // bot-owned Main anchor; do not delete messages or alter Topic contents.
+  const mainNavigationMessageIds = getGlobalSettings().mainNavigationMessageIds ?? {};
+  for (const [chatIdText, messageId] of Object.entries(mainNavigationMessageIds)) {
+    const chatId = Number(chatIdText);
+    if (!Number.isSafeInteger(chatId) || typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) continue;
+    try {
+      await bot.api.unpinChatMessage(chatId, messageId);
+      logger.info(`[TelegramKeyboard] Startup migration unpinned Main navigation anchor: chat=${chatId}, message=${messageId}`);
+    } catch (error) {
+      logger.debug(`[TelegramKeyboard] Startup Main anchor was already unpinned or unavailable: chat=${chatId}, message=${messageId}`, error);
     }
-    await setMainNavigationIsolationVersion(MAIN_NAVIGATION_ISOLATION_VERSION);
-    await flushSettings();
-    logger.info(`[TelegramKeyboard] Main navigation isolation migration complete: version=${MAIN_NAVIGATION_ISOLATION_VERSION}`);
   }
 
   const botInfo = await bot.api.getMe();
