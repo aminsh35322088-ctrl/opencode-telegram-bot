@@ -1,12 +1,12 @@
 import { InlineKeyboard, InputFile, type Bot, type Context, type MiddlewareFn } from "grammy";
 import type { Message } from "grammy/types";
-import { createImageChat, getDefaultImageChatProfile, getImageChat, listImageChats, removeImageChat, resetImageChat } from "../../app/stores/image-chat-store.js";
+import { createImageChat, getImageChat, listImageChats, removeImageChat, resetImageChat } from "../../app/stores/image-chat-store.js";
 import { enqueueImageChat, isImageChatBusy, stopImageChat, stopAllImageChats, type ImageChatInput, type ImageChatIO } from "../../app/services/image-chat-service.js";
-import { validateImageChatProfile } from "../../app/services/image-chat-profile-service.js";
+import { resolveDefaultImageChatProfile, validateImageChatProfile } from "../../app/services/image-chat-profile-service.js";
 import type { ImageChatPart, ImageChatState, ImageReference } from "../../app/types/image-chat.js";
 import { downloadTelegramFile } from "../../app/services/file-download-service.js";
 import { validateImage } from "../../app/services/ai-http-service.js";
-import { handleImageChatSetup, showImageChatSettings } from "../menus/image-chat-settings.js";
+import { handleImageChatSetup } from "../menus/image-chat-settings.js";
 import { logger } from "../../utils/logger.js";
 import { clearProviderWizard } from "../commands/providers-command.js";
 import { MAIN_BUTTONS } from "../keyboards/main-reply-keyboard.js";
@@ -50,16 +50,16 @@ export function cleanupImageChatRouter(): void {
 }
 export async function createNewImageChat(ctx: Context): Promise<void> {
   if (!ctx.chat) return;
-  if (location(ctx)) { await ctx.reply("Open New Image Chat from Main/General."); return; }
-  const profile = await getDefaultImageChatProfile();
-  if (!profile) { await showImageChatSettings(ctx); return; }
+  const resolved = await resolveDefaultImageChatProfile();
+  const profile = resolved.profile;
   await validateImageChatProfile(profile);
   if ((await listImageChats()).length >= 100) throw new Error("Delete an old Image Chat before creating another.");
   const topic = await ctx.api.createForumTopic(ctx.chat.id, "🎨 Image Chat");
   const state: ImageChatState = { kind: "image", chatID: ctx.chat.id, threadID: topic.message_thread_id, title: topic.name, profile, revision: 1, turns: [], updatedAt: Date.now(), handledMessageIDs: [] };
   try {
     await createImageChat(state);
-    await ctx.api.sendMessage(state.chatID, "🎨 Image Chat\n\nDiscuss a design, ask for an image, or send one to edit. Reply to any image to work on that version; otherwise the latest image is used.\n\nImages stay in Telegram. Use New design to start fresh.", { message_thread_id: state.threadID, reply_markup: imageChatKeyboard() });
+    const selected = resolved.source === "auto" ? `\nAuto planner: ${resolved.selection}` : `\nManual planner: ${resolved.selection}`;
+    await ctx.api.sendMessage(state.chatID, `🎨 Image Chat\n\nDiscuss a design, ask for an image, or send one to edit. Reply to any image to work on that version; otherwise the latest image is used.\n\nImages stay in Telegram. Use New design to start fresh.${selected}`, { message_thread_id: state.threadID, reply_markup: imageChatKeyboard() });
     await ctx.api.sendMessage(state.chatID, `🎨 Image Chat created: ${state.title}. Open its Topic to begin.`);
   } catch (error) {
     // Remove only the exact topic created by this attempt. Keep its binding if cleanup fails.
@@ -136,15 +136,15 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
       if (!state) {
         if (!loc && data?.startsWith("icfg:")) clearProviderWizard();
         if (!loc && await handleImageChatSetup(ctx)) return;
-        if (data === "main:new_image" || /^\/new_image(?:@\w+)?$/.test(text) || text === NEW_IMAGE_CHAT) {
+        if (data === "main:new_image" || /^\/new_image(?:@\w+)?$/.test(text) || text === NEW_IMAGE_CHAT || text === MAIN_BUTTONS.imageAi) {
           if (data) await ctx.answerCallbackQuery().catch(() => {});
           if (!loc) clearProviderWizard();
           await createNewImageChat(ctx); return;
         }
-        // Old messages/buttons cannot re-enable Image AI inside a coding Topic.
-        if (data?.startsWith("imageai:") || data?.startsWith("ichat:") || text === "🎨 Image AI" || /^\/(?:image|edit)(?:@\w+)?(?:\s|$)/.test(text) || /^\/edit(?:@\w+)?(?:\s|$)/.test(ctx.message?.caption ?? "")) {
+        // Retire legacy image-mode callbacks/commands without forwarding them to OpenCode.
+        if (data?.startsWith("imageai:") || data?.startsWith("ichat:") || /^\/(?:image|edit)(?:@\w+)?(?:\s|$)/.test(text) || /^\/edit(?:@\w+)?(?:\s|$)/.test(ctx.message?.caption ?? "")) {
           if (data) await ctx.answerCallbackQuery().catch(() => {});
-          await ctx.reply("Use 🎨 New Image Chat from Main to create and edit images."); return;
+          await ctx.reply("Use 🎨 New Image Chat to create and edit images."); return;
         }
         return next();
       }
@@ -161,14 +161,14 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
       }
       if (data === "ichat:new" || /^\/new_design(?:@\w+)?$/.test(text) || data === "ichat:adopt") {
         clearAlbums(state.chatID, state.threadID); await stopImageChat(state.chatID, state.threadID);
-        const profile = data === "ichat:adopt" ? await getDefaultImageChatProfile() : undefined;
-        if (data === "ichat:adopt" && !profile) { await send(ctx, "Configure the Image Chat default in Main Settings first."); return; }
-        if (profile) await validateImageChatProfile(profile);
-        await resetImageChat(state.chatID, state.threadID, profile); await send(ctx, "🖼 New design started. Send an idea or reply to an image."); return;
+        const resolved = data === "ichat:adopt" ? await resolveDefaultImageChatProfile() : undefined;
+        if (resolved) await validateImageChatProfile(resolved.profile);
+        await resetImageChat(state.chatID, state.threadID, resolved?.profile);
+        await send(ctx, resolved ? `🖼 New design started with ${resolved.source === "auto" ? `Auto · ${resolved.selection}` : `Manual · ${resolved.selection}`}. Send an idea or reply to an image.` : "🖼 New design started. Send an idea or reply to an image."); return;
       }
       const oldControl = Object.values(MAIN_BUTTONS).some(value => typeof value === "string" && value === text) || ["📦 Compact: ON", "📦 Compact: OFF", "🧠 Model", "🧠 Model Center", "❌ Cancel"].includes(text);
       if (data || text === "/settings" || text === "/model" || oldControl) {
-        await send(ctx, `🎨 Image Chat\nModel: ${state.profile.modelID}\n${isImageChatBusy(state.chatID, state.threadID) ? "Working / queued" : "Ready"}\n\nTo change the model, update Image settings in Main, then start a new design with that default.`, new InlineKeyboard().text("New design with current default", "ichat:adopt").row().text("🖼 New design", "ichat:new").text("⏹ Stop", "ichat:stop")); return;
+        await send(ctx, `🎨 Image Chat\nModel: ${state.profile.modelID}\n${isImageChatBusy(state.chatID, state.threadID) ? "Working / queued" : "Ready"}\n\nTo change defaults, open Settings → Default Models. Existing Image Chats keep their pinned profile until you choose New design with current default.`, new InlineKeyboard().text("New design with current default", "ichat:adopt").row().text("🖼 New design", "ichat:new").text("⏹ Stop", "ichat:stop")); return;
       }
       const message = ctx.message; if (!message || message.forum_topic_created || message.forum_topic_edited || message.forum_topic_reopened) return;
       if (text.startsWith("/") && !/^\/(?:image|edit)(?:@\w+)?(?:\s|$)/.test(text)) { await send(ctx, "This is an Image Chat. Send a design request or use its image controls."); return; }
