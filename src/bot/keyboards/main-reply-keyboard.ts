@@ -50,11 +50,12 @@ function addMainControls(keyboard: Keyboard): void {
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.mainSettings).row();
 }
 
-function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, currentModel?: ModelInfo): void {
+function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean, compactOutputMode: boolean, currentModel?: ModelInfo): void {
   if (running || paused) {
     keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   }
-  keyboard.text(MAIN_BUTTONS.imageAi).text(TOPIC_BUTTONS.modelCenter(currentModel)).row();
+  keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
+  keyboard.text(TOPIC_BUTTONS.modelCenter(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.topicSettings).row();
 }
 
@@ -66,6 +67,7 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
       keyboard,
       options.paused ?? false,
       options.running ?? false,
+      options.compactOutputMode ?? false,
       options.currentModel ?? currentModel,
     );
   } else {
