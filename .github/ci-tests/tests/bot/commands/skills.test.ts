@@ -33,8 +33,8 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: {
-    skill: {
-      list: mocked.skillListMock,
+    app: {
+      skills: mocked.skillListMock,
     },
   },
 }));
@@ -116,32 +116,27 @@ describe("bot/commands/skills", () => {
 
   it("shows skills list and starts custom interaction", async () => {
     mocked.skillListMock.mockResolvedValue({
-      data: {
-        location: { directory: "D:/Projects/Repo" },
-        data: [
-          {
-            name: "borsch",
-            description: "Cook borsch",
-            location: "/proj/.opencode/skills/borsch/SKILL.md",
-            content: "",
-          },
-          {
-            name: "release",
-            description: "Prepare release",
-            location: "/proj/.opencode/skills/release/SKILL.md",
-            content: "",
-          },
-        ],
-      },
+      data: [
+        {
+          name: "borsch",
+          description: "Cook borsch",
+          location: "/proj/.opencode/skills/borsch/SKILL.md",
+          content: "",
+        },
+        {
+          name: "release",
+          description: "Prepare release",
+          location: "/proj/.opencode/skills/release/SKILL.md",
+          content: "",
+        },
+      ],
       error: null,
     });
 
     const ctx = createCommandContext(123);
     await skillsCommand(ctx as never);
 
-    expect(mocked.skillListMock).toHaveBeenCalledWith({
-      location: { directory: "D:/Projects/Repo" },
-    });
+    expect(mocked.skillListMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo" });
     expect(ctx.reply).toHaveBeenCalledTimes(1);
 
     const [, options] = defined((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]) as [
@@ -162,19 +157,16 @@ describe("bot/commands/skills", () => {
 
   it("normalizes skill entries and sorts them by name", async () => {
     mocked.skillListMock.mockResolvedValue({
-      data: {
-        location: { directory: "D:/Projects/Repo" },
-        data: [
-          {
-            name: "release",
-            description: "Prepare release",
-            location: "/skills/release/SKILL.md",
-            content: "x",
-          },
-          { name: "  ", description: "Invalid entry", location: "", content: "" },
-          { name: "borsch", description: "  ", location: undefined, content: "" },
-        ],
-      },
+      data: [
+        {
+          name: "release",
+          description: "Prepare release",
+          location: "/skills/release/SKILL.md",
+          content: "x",
+        },
+        { name: "  ", description: "Invalid entry", location: "", content: "" },
+        { name: "borsch", description: "  ", location: undefined, content: "" },
+      ],
       error: null,
     });
 
