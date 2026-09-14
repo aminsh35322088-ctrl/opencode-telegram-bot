@@ -78,6 +78,8 @@ export function clearPinnedMessageId(): void { currentSettings.pinnedMessageId =
 export function getMainNavigationMessageId(chatId: number): number | undefined { return currentSettings.mainNavigationMessageIds?.[String(chatId)]; }
 export function setMainNavigationMessageId(chatId: number, messageId: number): Promise<void> { currentSettings.mainNavigationMessageIds = { ...(currentSettings.mainNavigationMessageIds ?? {}), [String(chatId)]: messageId }; return writeSettingsFile(currentSettings); }
 export function clearMainNavigationMessageId(chatId: number): Promise<void> { if (!currentSettings.mainNavigationMessageIds) return Promise.resolve(); const next = { ...currentSettings.mainNavigationMessageIds }; delete next[String(chatId)]; currentSettings.mainNavigationMessageIds = Object.keys(next).length ? next : undefined; return writeSettingsFile(currentSettings); }
+export function getMainNavigationIsolationVersion(): number { return Number.isInteger(currentSettings.mainNavigationIsolationVersion) ? currentSettings.mainNavigationIsolationVersion! : 0; }
+export function setMainNavigationIsolationVersion(version: number): Promise<void> { currentSettings.mainNavigationIsolationVersion = Math.max(0, Math.trunc(version)); return writeSettingsFile(currentSettings); }
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined { return currentSettings.sessionDirectoryCache; }
 export function setSessionDirectoryCache(cache: SessionDirectoryCacheInfo): Promise<void> { currentSettings.sessionDirectoryCache = cache; return writeSettingsFile(currentSettings); }
 export function clearSessionDirectoryCache(): void { currentSettings.sessionDirectoryCache = undefined; void writeSettingsFile(currentSettings); }
@@ -102,6 +104,7 @@ export async function loadSettings(): Promise<void> {
   currentSettings.alwaysAllowedPermissions = Array.isArray(loadedSettings.alwaysAllowedPermissions) ? loadedSettings.alwaysAllowedPermissions.filter((rule) => rule && typeof rule.chatId === "number" && typeof rule.permission === "string" && typeof rule.createdAt === "string") : [];
   currentSettings.mainNavigationMessageIds = Object.fromEntries(Object.entries(loadedSettings.mainNavigationMessageIds ?? {}).filter(([chatId, messageId]) => /^-?\d+$/.test(chatId) && typeof messageId === "number" && Number.isInteger(messageId) && messageId > 0));
   if (!Object.keys(currentSettings.mainNavigationMessageIds).length) currentSettings.mainNavigationMessageIds = undefined;
+  if (!Number.isInteger(currentSettings.mainNavigationIsolationVersion) || (currentSettings.mainNavigationIsolationVersion ?? 0) < 0) currentSettings.mainNavigationIsolationVersion = undefined;
   currentSettings.topicDefaults = {
     ...DEFAULT_TOPIC_DEFAULTS,
     ...(storedTopicDefaults ?? {}),
