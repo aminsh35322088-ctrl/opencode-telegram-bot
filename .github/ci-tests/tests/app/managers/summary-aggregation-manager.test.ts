@@ -2530,22 +2530,21 @@ describe("summary/aggregator", () => {
 
       summaryAggregator.setSession("session-a");
       summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1"));
-      // Control probe: same handler path WITHOUT focus move and WITHOUT context.
-      summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a1", "part-a0", "CONTROL"));
-      console.error("DEBUG concurrent-1 control partial:", JSON.stringify(onPartial.mock.calls));
-
       // Another topic attaches and takes the single focus.
       summaryAggregator.setSession("session-b");
 
       // session-a events keep arriving inside session-a's topic runtime
       // context (the topic event bus wraps every dispatch).
       runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
-        console.error("DEBUG concurrent-1 ctx visible:", JSON.stringify(getTopicRuntimeContext()));
         summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a1", "part-a1", "Hello from A"));
+        console.error("DEBUG concurrent-1 after-part:", JSON.stringify(onPartial.mock.calls));
+        // Probe: a non-completed message.updated emits exactly when this
+        // message is in optimistic mode with count===1.
+        summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1", false));
+        console.error("DEBUG concurrent-1 after-probe:", JSON.stringify(onPartial.mock.calls));
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1", true));
       });
 
-      console.error("DEBUG concurrent-1 onPartial:", JSON.stringify(onPartial.mock.calls), "onComplete:", JSON.stringify(onComplete.mock.calls.map((c: unknown[]) => [c[0], c[1], String(c[2]).slice(0, 60)])));
       expect(onPartial).toHaveBeenCalledWith("session-a", "msg-a1", "Hello from A");
       expect(onComplete).toHaveBeenCalledTimes(1);
       expect(onComplete.mock.calls[0]?.[0]).toBe("session-a");
