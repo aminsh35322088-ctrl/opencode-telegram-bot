@@ -113,4 +113,43 @@ describe("summary/aggregator concurrent AI topics", () => {
     expect(defined(aCompletion)).toBeDefined();
     expect(defined(aCompletion?.[2])).toContain("Partial answer in flight");
   });
+
+  it("keeps three interleaved topics streaming independently while focus bounces", () => {
+    const onComplete = vi.fn();
+    const onPartial = vi.fn();
+    summaryAggregator.setOnComplete(onComplete);
+    summaryAggregator.setOnPartial(onPartial);
+
+    // Three AI Topics stream at the same time; the event bus reattaches the
+    // focus before dispatching each topic's next event.
+    summaryAggregator.setSession("session-a");
+    summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-1"));
+    summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-1", "part-1", "First topic answer"));
+
+    summaryAggregator.setSession("session-b");
+    summaryAggregator.processEvent(assistantMessageEvent("session-b", "msg-2"));
+    summaryAggregator.processEvent(assistantTextPartEvent("session-b", "msg-2", "part-2", "Second topic answer"));
+
+    summaryAggregator.setSession("session-c");
+    summaryAggregator.processEvent(assistantMessageEvent("session-c", "msg-3"));
+    summaryAggregator.processEvent(assistantTextPartEvent("session-c", "msg-3", "part-3", "Third topic answer"));
+
+    // Completions land out of order (C, then A, then B); none may wipe or
+    // hijack another topic's in-flight text.
+    summaryAggregator.processEvent(assistantMessageEvent("session-c", "msg-3", true));
+    summaryAggregator.setSession("session-a");
+    summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-1", true));
+    summaryAggregator.setSession("session-b");
+    summaryAggregator.processEvent(assistantMessageEvent("session-b", "msg-2", true));
+
+    expect(onPartial).toHaveBeenCalledWith("session-a", "msg-1", "First topic answer");
+    expect(onPartial).toHaveBeenCalledWith("session-b", "msg-2", "Second topic answer");
+    expect(onPartial).toHaveBeenCalledWith("session-c", "msg-3", "Third topic answer");
+
+    expect(onComplete).toHaveBeenCalledTimes(3);
+    const completions = onComplete.mock.calls.map((call) => [call[0], call[1], call[2]]);
+    expect(completions).toContainEqual(["session-a", "msg-1", "First topic answer"]);
+    expect(completions).toContainEqual(["session-b", "msg-2", "Second topic answer"]);
+    expect(completions).toContainEqual(["session-c", "msg-3", "Third topic answer"]);
+  });
 });

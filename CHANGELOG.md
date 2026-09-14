@@ -5,7 +5,8 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ## [Unreleased]
 
 ### Added
-- `github-ci` OpenCode tool: bounded GitHub Actions companion (`status`/`watch`/`logs`) that reads CI run state and failed-test logs through `gh` with hard per-call timeouts, so test validation always returns output and never hangs or goes silent on constrained runtimes.
+- `github-ci` OpenCode tool: bounded GitHub Actions companion (`status`/`watch`/`logs`/`verify`) that reads CI run state and failed-test logs through `gh` with hard per-call timeouts, so test validation always returns output and never hangs or goes silent on constrained runtimes. `verify` combines waiting and auto-fetching failure logs in one bounded call.
+- Bounded CI test-runner resources: the vitest suite runs in process forks with hard per-file isolation and a fixed worker cap, keeping several test files running concurrently at a deterministic memory envelope; per-file singleton leakage can no longer depend on execution order.
 - `validation-gateway-policy` coverage for the intentionally allowed baked toolchain binaries (`tsc`/`vitest`/`eslint`), keeping installer commands denied.
 - Topic isolation architecture is now documented in `docs/TOPIC_ISOLATION_ARCHITECTURE.md`: the ALS scope contract, the per-topic vs per-session keying rules for all mutable state, and the liveness guarantees behind concurrent multi-Topic AI chat.
 - `TopicScopedValue` primitive: one mutable value per Telegram Topic scope, resolved from the runtime context, used to give every Topic its own independent setup wizards.

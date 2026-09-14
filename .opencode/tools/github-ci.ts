@@ -67,6 +67,15 @@ function result(payload: Record<string, unknown>): string {
   return JSON.stringify(payload, null, 2);
 }
 
+async function failedLogs(runId: string): Promise<string> {
+  const failed = await gh(["run", "view", runId, "--log-failed"]);
+  const logText = failed.stdout.trim();
+  if (!failed.ok && !logText) {
+    return clip(failed.stderr);
+  }
+  return clip(logText);
+}
+
 function nextStepHint(run: RunSummary): string {
   if (run.status === "queued" || run.status === "in_progress") {
     return "The run is still executing. Call action=watch again with the same runId. Do not re-run or force-push while it is in progress.";
@@ -79,9 +88,9 @@ function nextStepHint(run: RunSummary): string {
 
 export default tool({
   description:
-    "Bounded GitHub Actions companion for the repository test suite: read the latest CI run status, wait briefly for completion, and fetch failed test logs via the gh CLI. Every call returns within a fixed time budget and always produces text output: if the run is still going, it reports progress and you must call again. Use this after pushing test or source changes to validate on GitHub instead of running heavy local test toolchains on constrained runtimes.",
+    "Bounded GitHub Actions companion for the repository test suite: read the latest CI run status, wait briefly for completion, fetch failed test logs, or verify in one call (wait + auto-fetch failure logs). Every call returns within a fixed time budget and always produces text output: if the run is still going, it reports progress and you must call again. Use this after pushing test or source changes to validate on GitHub instead of running heavy local test toolchains on constrained runtimes.",
   args: {
-    action: tool.schema.string().describe("One of: status | watch | logs"),
+    action: tool.schema.string().describe("One of: status | watch | logs | verify"),
     branch: tool.schema.string().optional().describe("Filter the latest run by branch name (default: any recent)."),
     workflow: tool.schema.string().optional().describe("Workflow name filter (default: 'CI')."),
     runId: tool.schema.string().optional().describe("Explicit Actions run id for watch/logs (default: resolve the latest run)."),
@@ -89,8 +98,9 @@ export default tool({
   },
   async execute(args) {
     const action = String(args.action ?? "").trim().toLowerCase();
-    if (action !== "status" && action !== "watch" && action !== "logs") {
-      return result({ ok: false, error: "action must be one of: status | watch | logs" });
+    const validActions = ["status", "watch", "logs", "verify"];
+    if (!validActions.includes(action)) {
+      return result({ ok: false, error: `action must be one of: ${validActions.join(" | ")}` });
     }
 
     const workflowName = (args.workflow ?? "CI").trim() || "CI";
@@ -112,12 +122,8 @@ export default tool({
     }
 
     if (action === "logs") {
-      const failed = await gh(["run", "view", runId, "--log-failed"]);
-      const logText = failed.stdout.trim();
-      if (!failed.ok && !logText) {
-        return result({ ok: true, runId, logs: "", note: clip(failed.stderr), hint: "No failed-job logs yet (the run may still be in progress or everything passed). Call action=status to check." });
-      }
-      return result({ ok: true, runId, logs: clip(logText), hint: "Fix every reported failure, push the branch, then action=watch the new run." });
+      const logs = await failedLogs(runId);
+      return result({ ok: true, runId, logs, hint: "Fix every reported failure, push the branch, then action=verify the new run." });
     }
 
     if (action === "status") {
@@ -152,10 +158,18 @@ export default tool({
       }
       const status = String(last?.status ?? "");
       if (status !== "queued" && status !== "in_progress") {
-        return result({ ok: true, run: last, waitedMs: Date.now() - (deadline - budget), polls, hint: last?.conclusion && last.conclusion !== "success" ? `Call action=logs with runId=${runId}.` : "Suite is green; continue the task." });
+        const failedConclusion = Boolean(last?.conclusion) && last?.conclusion !== "success";
+        if (action === "verify") {
+          if (!failedConclusion) {
+            return result({ ok: true, run: last, waitedMs: Date.now() - (deadline - budget), polls, logs: "", hint: "CI is green: the suite is validated. Continue with the next task step." });
+          }
+          const logs = await failedLogs(runId);
+          return result({ ok: false, run: last, waitedMs: Date.now() - (deadline - budget), polls, logs, hint: "Read the logs, fix every reported failure, push, then call action=verify again on the new run." });
+        }
+        return result({ ok: true, run: last, waitedMs: Date.now() - (deadline - budget), polls, hint: failedConclusion ? `Call action=logs with runId=${runId}.` : "Suite is green; continue the task." });
       }
       if (Date.now() + POLL_INTERVAL_MS > deadline) {
-        return result({ ok: true, run: last, waitedMs: budget, polls, hint: `Still running after ${budget}ms of waiting. Call action=watch again with runId=${runId} — do not assume failure or silence.` });
+        return result({ ok: true, run: last, waitedMs: budget, polls, hint: `Still running after ${budget}ms of waiting. Call action=${action} again with runId=${runId} — do not assume failure or silence.` });
       }
       await sleep(POLL_INTERVAL_MS);
     }
