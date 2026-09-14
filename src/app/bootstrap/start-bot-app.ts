@@ -5,7 +5,7 @@ import { createScheduledTaskDeliverySender } from "../../bot/messages/scheduled-
 import { config } from "../../config.js";
 import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
-import { flushSettings, loadSettings } from "../stores/settings-store.js";
+import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
@@ -43,6 +43,24 @@ export async function startBotApp(): Promise<void> {
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
+
+  // Builds before the Topic-isolation fix pinned the Main InlineKeyboard at the
+  // chat level. Telegram renders chat-wide pins while other forum Topics are
+  // open, which made Main controls appear inside coding Topics. Migrate every
+  // persisted Main anchor by unpinning that exact bot-owned message only; never
+  // touch unrelated user pins.
+  const mainNavigationMessageIds = getGlobalSettings().mainNavigationMessageIds ?? {};
+  for (const [chatIdText, messageId] of Object.entries(mainNavigationMessageIds)) {
+    const chatId = Number(chatIdText);
+    if (!Number.isSafeInteger(chatId) || typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) continue;
+    try {
+      await bot.api.unpinChatMessage(chatId, messageId);
+      logger.info(`[TelegramKeyboard] Startup migration unpinned Main navigation anchor: chat=${chatId}, message=${messageId}`);
+    } catch (error) {
+      logger.debug(`[TelegramKeyboard] Startup Main anchor was already unpinned or unavailable: chat=${chatId}, message=${messageId}`, error);
+    }
+  }
+
   const botInfo = await bot.api.getMe();
   logger.info(`[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`);
   if (!botInfo.has_topics_enabled) logger.warn("[TelegramTopics] Private Topics/Threaded Mode is disabled for this bot. Enable Threaded Mode in @BotFather; code cannot create the native General topic UI while this capability is disabled.");
