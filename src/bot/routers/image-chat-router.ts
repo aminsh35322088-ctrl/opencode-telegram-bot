@@ -1,12 +1,15 @@
-import { InlineKeyboard, InputFile, type Bot, type Context, type MiddlewareFn } from "grammy";
+import { InlineKeyboard, InputFile, Keyboard, type Bot, type Context, type MiddlewareFn } from "grammy";
 import type { Message } from "grammy/types";
-import { createImageChat, getDefaultImageChatProfile, getImageChat, listImageChats, removeImageChat, resetImageChat } from "../../app/stores/image-chat-store.js";
-import { enqueueImageChat, isImageChatBusy, stopImageChat, stopAllImageChats, type ImageChatInput, type ImageChatIO } from "../../app/services/image-chat-service.js";
+import { createImageChat, getDefaultImageChatProfile, getImageChat, listImageChats, removeImageChat, resetImageChat, updateImageChat } from "../../app/stores/image-chat-store.js";
+import { enqueueImageChat, getImageChatQueueSize, isImageChatBusy, stopImageChat, stopAllImageChats, type ImageChatInput, type ImageChatIO } from "../../app/services/image-chat-service.js";
 import { validateImageChatProfile } from "../../app/services/image-chat-profile-service.js";
-import type { ImageChatPart, ImageChatState, ImageReference } from "../../app/types/image-chat.js";
+import type { ImageChatPart, ImageChatProfile, ImageChatState, ImageReference } from "../../app/types/image-chat.js";
 import { downloadTelegramFile } from "../../app/services/file-download-service.js";
 import { validateImage } from "../../app/services/ai-http-service.js";
 import { handleImageChatSetup, showImageChatSettings } from "../menus/image-chat-settings.js";
+import { buildImageChatContextView, buildImageChatDeliveryView, buildImageChatQueueView, buildImageChatTopicSettingsView, ICHAT_CFG_CLOSE, ICHAT_CFG_CONTEXT, ICHAT_CFG_DELIVERY, ICHAT_CFG_FORMAT, ICHAT_CFG_HELP, ICHAT_CFG_PREFIX, ICHAT_CFG_QUEUE, ICHAT_CFG_REPEAT, ICHAT_CFG_ROOT, ICHAT_CFG_SILENT, IMAGE_CHAT_HELP_TEXT } from "../menus/image-chat-topic-settings.js";
+import { createImageChatReplyKeyboard, IMAGE_CHAT_BUTTONS } from "../keyboards/image-chat-keyboard.js";
+import { sendMessageWithMarkdownFallback } from "../messages/send-with-markdown-fallback.js";
 import { logger } from "../../utils/logger.js";
 import { clearProviderWizard } from "../commands/providers-command.js";
 import { MAIN_BUTTONS } from "../keyboards/main-reply-keyboard.js";
@@ -20,8 +23,13 @@ function location(ctx: Context): { chatID: number; threadID: number } | undefine
   const threadID = message && "message_thread_id" in message ? message.message_thread_id : undefined;
   return ctx.chat && typeof threadID === "number" && threadID > 1 ? { chatID: ctx.chat.id, threadID } : undefined;
 }
-export function imageChatKeyboard(): InlineKeyboard {
-  return new InlineKeyboard().text("🖼 New design", "ichat:new").text("⏹ Stop", "ichat:stop").row().text("⚙️ Image settings", "ichat:settings").text("🗑 Delete", "ichat:delete");
+function replyMarkup(profile: ImageChatProfile | undefined): InlineKeyboard | Keyboard | undefined {
+  return profile ? createImageChatReplyKeyboard(profile) : undefined;
+}
+async function sendMenu(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<void> {
+  const loc = location(ctx);
+  if (loc) await ctx.api.sendMessage(loc.chatID, view.text, { message_thread_id: loc.threadID, parse_mode: "HTML", reply_markup: view.keyboard });
+  else await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
 }
 export function imageReference(message: Message | undefined): ImageReference | undefined {
   if (!message) return;
@@ -36,10 +44,11 @@ export function imageReference(message: Message | undefined): ImageReference | u
     return { fileID: photo.file_id, mimeType: "image/jpeg", messageID: message.message_id };
   }
 }
-async function send(ctx: Context, text: string, keyboard = imageChatKeyboard()): Promise<void> {
+async function send(ctx: Context, text: string, options: { inline?: InlineKeyboard; profile?: ImageChatProfile } = {}): Promise<void> {
+  const reply_markup = options.inline ?? replyMarkup(options.profile);
   const loc = location(ctx);
-  if (loc) await ctx.api.sendMessage(loc.chatID, text.slice(0, 4000), { message_thread_id: loc.threadID, reply_markup: keyboard });
-  else await ctx.reply(text.slice(0, 4000), { reply_markup: keyboard });
+  if (loc) await ctx.api.sendMessage(loc.chatID, text.slice(0, 4000), { message_thread_id: loc.threadID, ...(reply_markup ? { reply_markup } : {}) });
+  else await ctx.reply(text.slice(0, 4000), { ...(reply_markup ? { reply_markup } : {}) });
 }
 function clearAlbums(chatID: number, threadID: number): void {
   for (const [id, album] of albums) if (album.input.chatID === chatID && album.input.threadID === threadID) { clearTimeout(album.timer); albums.delete(id); }
@@ -59,7 +68,7 @@ export async function createNewImageChat(ctx: Context): Promise<void> {
   const state: ImageChatState = { kind: "image", chatID: ctx.chat.id, threadID: topic.message_thread_id, title: topic.name, profile, revision: 1, turns: [], updatedAt: Date.now(), handledMessageIDs: [] };
   try {
     await createImageChat(state);
-    await ctx.api.sendMessage(state.chatID, "🎨 Image Chat\n\nDiscuss a design, ask for an image, or send one to edit. Reply to any image to work on that version; otherwise the latest image is used.\n\nImages stay in Telegram. Use New design to start fresh.", { message_thread_id: state.threadID, reply_markup: imageChatKeyboard() });
+    await ctx.api.sendMessage(state.chatID, "🎨 Image Chat\n\nDiscuss a design, ask for an image, or send one to edit. Reply to any image to work on that version; otherwise the latest image is used.\n\nImages stay in Telegram. Use 🖼 New design to start fresh.", { message_thread_id: state.threadID, reply_markup: createImageChatReplyKeyboard(state.profile) });
     await ctx.api.sendMessage(state.chatID, `🎨 Image Chat created: ${state.title}. Open its Topic to begin.`);
   } catch (error) {
     // Remove only the exact topic created by this attempt. Keep its binding if cleanup fails.
@@ -67,12 +76,14 @@ export async function createNewImageChat(ctx: Context): Promise<void> {
     throw error;
   }
 }
-function ioFor(ctx: Context, input: ImageChatInput): ImageChatIO {
+function ioFor(ctx: Context, input: ImageChatInput, state: ImageChatState): ImageChatIO {
   const sent: number[] = [];
+  const silent = state.settings?.silentDelivery === true;
+  const markdown = state.settings?.messageFormat === "markdown";
   const rollback = async () => { for (const messageID of sent) await ctx.api.deleteMessage(input.chatID, messageID).catch(() => {}); sent.length = 0; };
   return {
     rollback,
-    text: (text) => send(ctx, text),
+    text: (text) => send(ctx, text, { profile: state.profile }),
     load: async (reference, signal) => {
       try {
         const { buffer } = await downloadTelegramFile(ctx.api, reference.fileID, { signal, maxBytes: 8 * 1024 * 1024 });
@@ -94,7 +105,7 @@ function ioFor(ctx: Context, input: ImageChatInput): ImageChatIO {
           if (part.image) {
             const image = part.image; validateImage(image.buffer, image.mimeType);
             // Documents retain original pixels, avoiding cumulative compression during editing.
-            const message = await ctx.api.sendDocument(input.chatID, new InputFile(image.buffer, `design.${image.mimeType.split("/")[1]}`), { message_thread_id: input.threadID, caption: "🎨 Image Chat", reply_markup: imageChatKeyboard() }, telegramSignal);
+            const message = await ctx.api.sendDocument(input.chatID, new InputFile(image.buffer, `design.${image.mimeType.split("/")[1]}`), { message_thread_id: input.threadID, caption: "🎨 Image Chat", disable_notification: silent, reply_markup: createImageChatReplyKeyboard(state.profile) }, telegramSignal);
             sent.push(message.message_id); signal.throwIfAborted();
             if (!message.document) throw new Error("Telegram returned no image file ID");
             value.image = { fileID: message.document.file_id, mimeType: image.mimeType, messageID: message.message_id };
@@ -102,7 +113,9 @@ function ioFor(ctx: Context, input: ImageChatInput): ImageChatIO {
           if (!part.thought && part.text?.trim()) {
             for (let at = 0; at < part.text.length; at += 3500) {
               signal.throwIfAborted();
-              const message = await ctx.api.sendMessage(input.chatID, part.text.slice(at, at + 3500), { message_thread_id: input.threadID, reply_markup: imageChatKeyboard() }, telegramSignal);
+              const message = markdown
+                ? await sendMessageWithMarkdownFallback({ api: ctx.api, chatId: input.chatID, text: part.text.slice(at, at + 3500), parseMode: "Markdown", options: { message_thread_id: input.threadID, disable_notification: silent, reply_markup: createImageChatReplyKeyboard(state.profile) } })
+                : await ctx.api.sendMessage(input.chatID, part.text.slice(at, at + 3500), { message_thread_id: input.threadID, disable_notification: silent, reply_markup: createImageChatReplyKeyboard(state.profile) }, telegramSignal);
               sent.push(message.message_id);
             }
           }
@@ -116,9 +129,9 @@ function ioFor(ctx: Context, input: ImageChatInput): ImageChatIO {
     },
   };
 }
-function dispatch(ctx: Context, input: ImageChatInput): void {
-  const status = ctx.api.sendMessage(input.chatID, "⏳ Image request queued. You can keep writing or tap Stop.", { message_thread_id: input.threadID, reply_markup: imageChatKeyboard() }).catch(() => undefined);
-  void enqueueImageChat(input, ioFor(ctx, input)).catch(async error => {
+function dispatch(ctx: Context, input: ImageChatInput, state: ImageChatState): void {
+  const status = ctx.api.sendMessage(input.chatID, "⏳ Image request queued. You can keep writing or tap ⏹ Stop.", { message_thread_id: input.threadID, reply_markup: createImageChatReplyKeyboard(state.profile) }).catch(() => undefined);
+  void enqueueImageChat(input, ioFor(ctx, input, state)).catch(async error => {
     if (error?.name === "AbortError") return;
     logger.warn(`[ImageChat] Request failed: ${error?.name ?? "Error"}`);
     const text = error?.name === "TimeoutError" ? "The image request timed out. It was not retried; you can submit it again." : error instanceof Error ? error.message : "Image request failed";
@@ -128,11 +141,47 @@ function dispatch(ctx: Context, input: ImageChatInput): void {
     if (message) await ctx.api.deleteMessage(input.chatID, message.message_id).catch(() => {});
   });
 }
+async function handleImageChatConfigCallback(ctx: Context, state: ImageChatState): Promise<void> {
+  const data = ctx.callbackQuery?.data ?? "";
+  const edit = async (view: { text: string; keyboard: InlineKeyboard }): Promise<void> => {
+    const source = ctx.callbackQuery?.message;
+    if (source && "message_id" in source && "chat" in source) {
+      try { await ctx.api.editMessageText(source.chat.id, source.message_id, view.text, { parse_mode: "HTML", reply_markup: view.keyboard }); return; } catch { /* fall through */ }
+    }
+    await sendMenu(ctx, view);
+  };
+  if (data === ICHAT_CFG_ROOT) { await edit(buildImageChatTopicSettingsView(state)); return; }
+  if (data === ICHAT_CFG_DELIVERY) { await edit(buildImageChatDeliveryView(state)); return; }
+  if (data === ICHAT_CFG_QUEUE) { await edit(buildImageChatQueueView(state, getImageChatQueueSize(state.chatID, state.threadID))); return; }
+  if (data === ICHAT_CFG_CONTEXT) { await edit(buildImageChatContextView(state)); return; }
+  if (data === ICHAT_CFG_SILENT || data === ICHAT_CFG_FORMAT) {
+    const settings = { ...state.settings };
+    if (data === ICHAT_CFG_SILENT) settings.silentDelivery = !(state.settings?.silentDelivery === true);
+    else settings.messageFormat = state.settings?.messageFormat === "markdown" ? "raw" : "markdown";
+    await updateImageChat(state.chatID, state.threadID, state.revision, { settings });
+    const fresh = (await getImageChat(state.chatID, state.threadID)) ?? state;
+    await edit(buildImageChatDeliveryView(fresh));
+    return;
+  }
+  if (data === ICHAT_CFG_REPEAT) {
+    if (!state.lastRequest?.text) { await send(ctx, "🔁 Nothing to repeat yet. Ask for an image first.", { profile: state.profile }); return; }
+    dispatch(ctx, { chatID: state.chatID, threadID: state.threadID, revision: state.revision, messageIDs: [Date.now()], text: state.lastRequest.text, images: state.lastRequest.images, ...(state.lastRequest.replyImage ? { replyImage: state.lastRequest.replyImage } : {}) }, state);
+    return;
+  }
+  if (data === ICHAT_CFG_HELP) { await sendMenu(ctx, { text: IMAGE_CHAT_HELP_TEXT, keyboard: new InlineKeyboard().text("✖ Close", ICHAT_CFG_CLOSE) }); return; }
+  if (data === ICHAT_CFG_CLOSE) {
+    const source = ctx.callbackQuery?.message;
+    if (source && "message_id" in source && "chat" in source) await ctx.api.deleteMessage(source.chat.id, source.message_id).catch(() => {});
+    return;
+  }
+}
+
 export function createImageChatMiddleware(): MiddlewareFn<Context> {
   return async (ctx, next) => {
     const loc = location(ctx), data = ctx.callbackQuery?.data, text = ctx.message?.text?.trim() ?? "";
+    let state: ImageChatState | undefined;
     try {
-      const state = loc ? await getImageChat(loc.chatID, loc.threadID) : undefined;
+      state = loc ? await getImageChat(loc.chatID, loc.threadID) : undefined;
       if (!state) {
         if (!loc && data?.startsWith("icfg:")) clearProviderWizard();
         if (!loc && await handleImageChatSetup(ctx)) return;
@@ -149,33 +198,40 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
         return next();
       }
       if (data) await ctx.answerCallbackQuery().catch(() => {});
-      const isStop = data === "ichat:stop" || /^\/(stop|abort)(?:@\w+)?$/.test(text) || text === "🛑 Abort";
+      if (data?.startsWith(ICHAT_CFG_PREFIX)) { await handleImageChatConfigCallback(ctx, state); return; }
+      const isStop = data === "ichat:stop" || /^\/(stop|abort)(?:@\w+)?$/.test(text) || text === "🛑 Abort" || text === IMAGE_CHAT_BUTTONS.stop;
       if (isStop || ctx.message?.forum_topic_closed) {
         clearAlbums(state.chatID, state.threadID); await stopImageChat(state.chatID, state.threadID);
-        if (isStop) await send(ctx, "⏹ Stopped. The last completed image is kept."); return;
+        if (isStop) await send(ctx, "⏹ Stopped. The last completed image is kept.", { profile: state.profile }); return;
       }
-      if (data === "ichat:delete" || text === "/delete_topic" || text === "🗑️ Delete Chat") { await send(ctx, "Delete this Image Chat and its Telegram messages?", new InlineKeyboard().text("Delete permanently", "ichat:delete_confirm").text("Cancel", "ichat:settings")); return; }
+      if (data === "ichat:delete" || text === "/delete_topic" || text === MAIN_BUTTONS.deleteChat) { await send(ctx, "Delete this Image Chat and its Telegram messages?", { inline: new InlineKeyboard().text("Delete permanently", "ichat:delete_confirm").text("Cancel", ICHAT_CFG_ROOT) }); return; }
       if (data === "ichat:delete_confirm") {
         clearAlbums(state.chatID, state.threadID); await stopImageChat(state.chatID, state.threadID);
         await ctx.api.deleteForumTopic(state.chatID, state.threadID); await removeImageChat(state.chatID, state.threadID); return;
       }
-      if (data === "ichat:new" || /^\/new_design(?:@\w+)?$/.test(text) || data === "ichat:adopt") {
+      if (data === "ichat:new" || /^\/new_design(?:@\w+)?$/.test(text) || data === "ichat:adopt" || text === IMAGE_CHAT_BUTTONS.newDesign) {
         clearAlbums(state.chatID, state.threadID); await stopImageChat(state.chatID, state.threadID);
         const profile = data === "ichat:adopt" ? await getDefaultImageChatProfile() : undefined;
-        if (data === "ichat:adopt" && !profile) { await send(ctx, "Configure the Image Chat default in Main Settings first."); return; }
+        if (data === "ichat:adopt" && !profile) { await send(ctx, "Configure the Image Chat default in Main Settings first.", { profile: state.profile }); return; }
         if (profile) await validateImageChatProfile(profile);
-        await resetImageChat(state.chatID, state.threadID, profile); await send(ctx, "🖼 New design started. Send an idea or reply to an image."); return;
+        await resetImageChat(state.chatID, state.threadID, profile); await send(ctx, "🖼 New design started. Send an idea or reply to an image.", { profile: profile ?? state.profile }); return;
       }
+      if (text === MAIN_BUTTONS.topicSettings || text.startsWith(IMAGE_CHAT_BUTTONS.modelPrefix) || data === "ichat:settings") { await sendMenu(ctx, buildImageChatTopicSettingsView(state)); return; }
       const oldControl = Object.values(MAIN_BUTTONS).some(value => typeof value === "string" && value === text) || ["📦 Compact: ON", "📦 Compact: OFF", "🧠 Model", "🧠 Model Center", "❌ Cancel"].includes(text);
       if (data || text === "/settings" || text === "/model" || oldControl) {
-        await send(ctx, `🎨 Image Chat\nModel: ${state.profile.modelID}\n${isImageChatBusy(state.chatID, state.threadID) ? "Working / queued" : "Ready"}\n\nTo change the model, update Image settings in Main, then start a new design with that default.`, new InlineKeyboard().text("New design with current default", "ichat:adopt").row().text("🖼 New design", "ichat:new").text("⏹ Stop", "ichat:stop")); return;
+        await send(ctx, `🎨 Image Chat\nModel: ${state.profile.modelID}\n${isImageChatBusy(state.chatID, state.threadID) ? "Working / queued" : "Ready"}\n\nTo change the model, update Image settings in Main, then start a new design with that default.`, { inline: new InlineKeyboard().text("New design with current default", "ichat:adopt").row().text("🖼 New design", "ichat:new").text("⏹ Stop", "ichat:stop") }); return;
       }
       const message = ctx.message; if (!message || message.forum_topic_created || message.forum_topic_edited || message.forum_topic_reopened) return;
-      if (text.startsWith("/") && !/^\/(?:image|edit)(?:@\w+)?(?:\s|$)/.test(text)) { await send(ctx, "This is an Image Chat. Send a design request or use its image controls."); return; }
+      if (text.startsWith("/") && !/^\/(?:image|edit)(?:@\w+)?(?:\s|$)/.test(text)) { await send(ctx, "This is an Image Chat. Send a design request or use its image controls.", { profile: state.profile }); return; }
       const image = imageReference(message);
       const reply = message.reply_to_message;
       const replyImage = reply && (reply.message_thread_id === undefined || reply.message_thread_id === state.threadID) && reply.chat.id === state.chatID ? imageReference(reply) : undefined;
-      if (!text && !message.caption && !image) { await send(ctx, "Send text, a photo, or a PNG/JPEG/WebP file for this Image Chat."); return; }
+      if (!text && !message.caption && !image) { await send(ctx, "Send text, a photo, or a PNG/JPEG/WebP file for this Image Chat.", { profile: state.profile }); return; }
+      if (text === IMAGE_CHAT_BUTTONS.better) {
+        if (!state.currentImage) { await send(ctx, "✨ Generate or send an image first, then I can refine it.", { profile: state.profile }); return; }
+        dispatch(ctx, { chatID: state.chatID, threadID: state.threadID, revision: state.revision, messageIDs: [message.message_id], text: "✨ Improve the last image: keep the subject and composition, but raise quality, detail, lighting and polish.", images: [], replyImage: state.currentImage }, state);
+        return;
+      }
       const input: ImageChatInput = { chatID: state.chatID, threadID: state.threadID, revision: state.revision, messageIDs: [message.message_id], text: (text || message.caption || "").replace(/^\/(?:image|edit)(?:@\w+)?\s*/, "").slice(0, 6000), images: image ? [image] : [], replyImage };
       if (message.media_group_id) {
         const key = `${state.chatID}:${state.threadID}:${message.media_group_id}`;
@@ -192,14 +248,14 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
         const timer = setTimeout(() => {
           const album = albums.get(key); albums.delete(key); if (!album) return;
           if (album.overflow) void send(album.ctx, "An Image Chat accepts up to four reference images per album. Send a smaller album.").catch(() => {});
-          else dispatch(album.ctx, album.input);
+          else { const albumState = await getImageChat(album.input.chatID, album.input.threadID); if (albumState) dispatch(album.ctx, album.input, albumState); }
         }, 1200);
         timer.unref(); albums.set(key, { timer, input, ctx }); return;
       }
-      dispatch(ctx, input);
+      dispatch(ctx, input, state);
     } catch (error) {
       logger.warn(`[ImageChat] Routing failed: ${error instanceof Error ? error.name : "Error"}`);
-      await send(ctx, error instanceof Error ? error.message : "Image Chat is unavailable").catch(() => {});
+      await send(ctx, error instanceof Error ? error.message : "Image Chat is unavailable", { profile: state?.profile }).catch(() => {});
       // Fail closed: a failed image lookup must never forward to OpenCode.
     }
   };

@@ -11,11 +11,13 @@ vi.mock("../../../src/app/services/image-chat-profile-service.js", async importO
 const profile: ImageChatProfile = { mode: "gemini", connectionID: "gemini-image-chat", modelID: "image-model", endpoint: "https://generativelanguage.googleapis.com/v1beta" };
 function ctx(text = "hello", threadID?: number, callback?: string) {
   const chat = { id: 123, type: "private" }, message = { message_id: 40, chat, text, ...(threadID ? { message_thread_id: threadID } : {}) };
-  return { chat, ...(callback ? { callbackQuery: { data: callback, message } } : { message }), reply: vi.fn(async () => ({ message_id: 70 })), answerCallbackQuery: vi.fn(async () => {}), api: { sendMessage: vi.fn(async () => ({ message_id: 50 })), deleteMessage: vi.fn(async () => true), createForumTopic: vi.fn(async () => ({ message_thread_id: 20, name: "Image Chat" })), deleteForumTopic: vi.fn(async () => true) } } as unknown as Context;
+  return { chat, ...(callback ? { callbackQuery: { data: callback, message } } : { message }), reply: vi.fn(async () => ({ message_id: 70 })), answerCallbackQuery: vi.fn(async () => {}), api: { sendMessage: vi.fn(async () => ({ message_id: 50 })), editMessageText: vi.fn(async () => ({ message_id: 50 })), deleteMessage: vi.fn(async () => true), createForumTopic: vi.fn(async () => ({ message_thread_id: 20, name: "Image Chat" })), deleteForumTopic: vi.fn(async () => true) } } as unknown as Context;
 }
 beforeEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2 }); queued.mockClear(); });
 afterEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2 }); });
-async function seed() { await createImageChat({ kind: "image", chatID: 123, threadID: 20, title: "Image", profile, revision: 1, turns: [], handledMessageIDs: [], updatedAt: Date.now() }); }
+async function seed(extra?: { currentImage?: { fileID: string; mimeType: string }; lastRequest?: { text: string; images: never[]; replyImage?: { fileID: string; mimeType: string } } }) {
+  await createImageChat({ kind: "image", chatID: 123, threadID: 20, title: "Image", profile, revision: 1, turns: [], handledMessageIDs: [], updatedAt: Date.now(), ...extra });
+}
 
 describe("Image Chat Telegram routing", () => {
   it("creates a persisted image-only topic without an OpenCode session binding", async () => {
@@ -55,6 +57,44 @@ describe("Image Chat Telegram routing", () => {
     Object.assign(context.message!, { reply_to_message: { message_id: 5, message_thread_id: 21, chat: { id: 123 }, document: { mime_type: "image/png", file_id: "other-topic" } } });
     await createImageChatMiddleware()(context, vi.fn());
     expect(queued.mock.calls[0]?.[0]).toMatchObject({ replyImage: undefined });
+  });
+it("attaches the image reply keyboard to the welcome message", async () => {
+    await setDefaultImageChatProfile(profile); const context = ctx();
+    await createNewImageChat(context);
+    const calls = (context.api.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]?.[2]).toMatchObject({ message_thread_id: 20, reply_markup: { keyboard: [[{ text: "🖼 New design" }, { text: "⏹ Stop" }], [{ text: "🗑️ Delete Chat" }, { text: "✨ Better" }], [{ text: "🎨 Model · image-model" }, { text: "⚙️ Topic Settings" }]] } });
+  });
+  it("stops via the reply keyboard text button", async () => {
+    await seed();
+    await createImageChatMiddleware()(ctx("⏹ Stop", 20), vi.fn());
+    expect((await getImageChat(123, 20))?.revision).toBe(2);
+  });
+  it("starts a new design via the reply keyboard text button", async () => {
+    await seed({ currentImage: { fileID: "img", mimeType: "image/png" } });
+    await createImageChatMiddleware()(ctx("🖼 New design", 20), vi.fn());
+    const state = await getImageChat(123, 20);
+    expect(state?.revision).toBe(2); expect(state).not.toHaveProperty("currentImage");
+  });
+  it("refines the last image via ✨ Better", async () => {
+    await seed({ currentImage: { fileID: "img", mimeType: "image/png" } });
+    await createImageChatMiddleware()(ctx("✨ Better", 20), vi.fn());
+    expect(queued.mock.calls[0]?.[0]).toMatchObject({ text: expect.stringContaining("Improve the last image"), replyImage: { fileID: "img" } });
+  });
+  it("opens the topic settings menu from the reply keyboard", async () => {
+    await seed(); const context = ctx("⚙️ Topic Settings", 20);
+    await createImageChatMiddleware()(context, vi.fn());
+    expect(context.api.sendMessage).toHaveBeenCalledWith(123, expect.stringContaining("Topic Settings"), expect.objectContaining({ parse_mode: "HTML", message_thread_id: 20 }));
+  });
+  it("persists the silent delivery toggle from the settings menu", async () => {
+    await seed(); const context = ctx("", 20, "ichat:cfg:silent");
+    await createImageChatMiddleware()(context, vi.fn());
+    expect((await getImageChat(123, 20))?.settings?.silentDelivery).toBe(true);
+    expect(context.api.editMessageText).toHaveBeenCalledWith(expect.stringContaining("Silent delivery"), expect.objectContaining({ parse_mode: "HTML" }));
+  });
+  it("repeats the last request from the settings menu", async () => {
+    await seed({ lastRequest: { text: "a red fox", images: [] } });
+    await createImageChatMiddleware()(ctx("", 20, "ichat:cfg:repeat"), vi.fn());
+    expect(queued.mock.calls[0]?.[0]).toMatchObject({ text: "a red fox" });
   });
   it("clears pending album input when Stop is pressed", async () => {
     await seed(); vi.useFakeTimers(); const photo = ctx("", 20);

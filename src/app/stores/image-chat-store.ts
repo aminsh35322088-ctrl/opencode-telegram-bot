@@ -57,6 +57,7 @@ export async function resetImageChat(chatID: number, threadID: number, profile?:
     if (!old) return {};
     const next = { ...old, revision: old.revision + 1, turns: [], updatedAt: Date.now(), ...(profile ? { profile } : {}) };
     delete next.currentImage;
+    delete next.lastRequest;
     return { imageChats: { ...all, [id]: next } };
   });
 }
