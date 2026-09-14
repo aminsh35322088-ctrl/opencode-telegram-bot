@@ -13,7 +13,7 @@ function ctx(text = "hello", threadID?: number, callback?: string) {
   const chat = { id: 123, type: "private" }, message = { message_id: 40, chat, text, ...(threadID ? { message_thread_id: threadID } : {}) };
   return { chat, ...(callback ? { callbackQuery: { data: callback, message } } : { message }), reply: vi.fn(async () => ({ message_id: 70 })), answerCallbackQuery: vi.fn(async () => {}), api: { sendMessage: vi.fn(async () => ({ message_id: 50 })), deleteMessage: vi.fn(async () => true), createForumTopic: vi.fn(async () => ({ message_thread_id: 20, name: "Image Chat" })), deleteForumTopic: vi.fn(async () => true) } } as unknown as Context;
 }
-beforeEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2 }); queued.mockClear(); });
+beforeEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2, imageChatGemini: { apiKey: "test-gemini-key" } }); queued.mockClear(); });
 afterEach(async () => { cleanupImageChatRouter(); await writeAppState({ version: 2 }); });
 async function seed() { await createImageChat({ kind: "image", chatID: 123, threadID: 20, title: "Image", profile, revision: 1, turns: [], handledMessageIDs: [], updatedAt: Date.now() }); }
 

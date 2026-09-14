@@ -66,6 +66,10 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     updateModel: vi.fn(),
     getContextInfo: vi.fn(() => null),
     setPaused: vi.fn(),
+    enterTopicMode: vi.fn().mockResolvedValue(undefined),
+    clearMainInlineMessage: vi.fn().mockResolvedValue(undefined),
+    sendMainInlineKeyboard: vi.fn().mockResolvedValue(undefined),
+    sendKeyboardUpdate: vi.fn().mockResolvedValue(undefined),
   },
 }));
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { summaryAggregator } from "../../../src/app/managers/summary-aggregation-manager.js";
-import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
+import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 import { logger } from "../../../src/utils/logger.js";
 import { defined } from "../../helpers/defined.js";
 
@@ -2530,6 +2530,9 @@ describe("summary/aggregator", () => {
 
       summaryAggregator.setSession("session-a");
       summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1"));
+      // Control probe: same handler path WITHOUT focus move and WITHOUT context.
+      summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a1", "part-a0", "CONTROL"));
+      console.error("DEBUG concurrent-1 control partial:", JSON.stringify(onPartial.mock.calls));
 
       // Another topic attaches and takes the single focus.
       summaryAggregator.setSession("session-b");
@@ -2537,6 +2540,7 @@ describe("summary/aggregator", () => {
       // session-a events keep arriving inside session-a's topic runtime
       // context (the topic event bus wraps every dispatch).
       runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
+        console.error("DEBUG concurrent-1 ctx visible:", JSON.stringify(getTopicRuntimeContext()));
         summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a1", "part-a1", "Hello from A"));
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a1", true));
       });

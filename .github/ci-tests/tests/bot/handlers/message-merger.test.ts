@@ -182,7 +182,7 @@ describe("message-merger", () => {
     await queuePromptForMerging(makeContext(1), "hello", DEPS, 1500);
 
     expect(loggerErrorMock).toHaveBeenCalledWith(
-      "[Bot] Failed to process prompt (chatId=1, main)",
+      "[Bot] Failed to process prompt (1:main)",
       error,
     );
   });

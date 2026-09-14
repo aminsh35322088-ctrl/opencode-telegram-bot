@@ -302,7 +302,7 @@ describe("interactionGuardMiddleware", () => {
   it("does not suggest the queue for a reply keyboard button pressed while busy", async () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
-    const ctx = createTextContext("🧠 openrouter\nopenai/gpt-4o");
+    const ctx = createTextContext("💬 New Chat");
     const next: NextFunction = vi.fn().mockResolvedValue(undefined);
 
     await interactionGuardMiddleware(ctx, next);
