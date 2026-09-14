@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentKeyboard, createMainKeyboard, removeKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
+import { createAgentKeyboard, createMainKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
 import { defined } from "../../helpers/defined.js";
 
 function getButtonText(button: string | { text: string }): string {
@@ -22,12 +22,13 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     );
 
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "🕘 History" }, { text: "💬 New Chat" }],
+      [{ text: "💬 New Chat" }, { text: "🎨 New Image Chat" }],
+      [{ text: "🕘 History" }],
       [{ text: "🧠 GPT 4o" }],
       [{ text: "⚙️ Main Settings" }],
     ]);
     expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBe(true);
+    expect(keyboard.is_persistent).toBeUndefined();
   });
 
   it("prefers the advertised model name and keeps it single-line", () => {
@@ -37,7 +38,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
       name: "Custom Model 2026",
     });
 
-    const label = buttonTextAt(keyboard, 1, 0);
+    const label = buttonTextAt(keyboard, 2, 0);
     expect(label).toBe("🧠 Custom Model 2026");
     expect(label).not.toContain("very-long-provider-name");
     expect(label).not.toContain(" · ");
@@ -49,7 +50,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: true, isTopic: true },
     );
-    expect(buttonTextAt(keyboard, 2, 1)).toBe("📦 Compact: ON");
+    expect(buttonTextAt(keyboard, 0, 1)).toBe("📦 Compact: ON");
   });
 
   it("keeps queued prompts above the fixed idle grid", () => {
@@ -59,10 +60,10 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     );
     expect(buttonTextAt(keyboard, 0, 0)).toBe("❌ 1. first");
     expect(buttonTextAt(keyboard, 1, 0)).toBe("❌ 2. second");
-    expect(buttonTextAt(keyboard, 2, 0)).toBe("🕘 History");
-    expect(buttonTextAt(keyboard, 2, 1)).toBe("💬 New Chat");
-    expect(buttonTextAt(keyboard, 3, 0)).toBe("🧠 GPT 4o");
-    expect(buttonTextAt(keyboard, 4, 0)).toBe("⚙️ Main Settings");
+    expect(buttonTextAt(keyboard, 2, 0)).toBe("💬 New Chat");
+    expect(buttonTextAt(keyboard, 2, 1)).toBe("🎨 New Image Chat");
+    expect(buttonTextAt(keyboard, 4, 0)).toBe("🧠 GPT 4o");
+    expect(buttonTextAt(keyboard, 5, 0)).toBe("⚙️ Main Settings");
   });
 
   it("keeps running controls isolated from idle controls", () => {
@@ -72,25 +73,23 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     );
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
       [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
-      [{ text: "🎨 Image AI" }],
       [{ text: "🗑️ Delete Chat" }, { text: "📦 Compact: ON" }],
       [{ text: "🧠 GPT 4o" }, { text: "⚙️ Topic Settings" }],
     ]);
   });
 
-  it("always includes Image AI in an idle AI Topic keyboard", () => {
+  it("keeps image creation out of coding Topic controls", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: false, isTopic: true },
     );
-    expect(keyboard.keyboard.flat().map(getButtonText)).toContain("🎨 Image AI");
+    expect(keyboard.keyboard.flat().map(getButtonText)).not.toContain("🎨 Image AI");
   });
 
-  it("creates custom agent keyboard and remove payload", () => {
+  it("creates a custom agent keyboard", () => {
     const keyboard = createAgentKeyboard("custom");
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([[{ text: "🤖 Custom Agent" }]]);
     expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBe(true);
-    expect(removeKeyboard()).toEqual({ remove_keyboard: true });
+    expect(keyboard.is_persistent).toBeUndefined();
   });
 });

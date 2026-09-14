@@ -33,8 +33,8 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "context", description: "📊 Open Context controls in the current AI Topic" },
   { command: "compact", description: "📦 Toggle compact output mode in the current AI Topic" },
   { command: "delete_topic", description: "🗑️ Delete the current AI Topic" },
-  { command: "image", description: "🎨 Generate an image with AI" },
-  { command: "edit", description: "✨ Edit a photo with AI" },
+  { command: "new_image", description: "🎨 Create a dedicated Image Chat" },
+  { command: "new_design", description: "🖼 Start a fresh design in Image Chat" },
 ];
 
 export function getLocalizedBotCommands(): BotCommandDefinition[] {
