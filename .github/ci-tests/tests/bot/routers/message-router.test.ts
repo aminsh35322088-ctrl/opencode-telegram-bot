@@ -41,6 +41,7 @@ describe("bot/routers/message-router", () => {
       "message",
       "message:photo",
       "message:document",
+      "message_reaction",
     ]);
   });
 
