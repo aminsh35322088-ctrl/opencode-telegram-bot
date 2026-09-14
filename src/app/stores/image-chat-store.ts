@@ -5,6 +5,7 @@ const MAX_TOPICS = 100;
 export const IMAGE_HISTORY_TTL = 24 * 60 * 60 * 1000;
 export const MAX_IMAGE_TURNS = 12;
 export const MAX_IMAGE_HISTORY_BYTES = 128 * 1024;
+export type ImageChatDefaultMode = "auto" | "manual";
 const key = (chatID: number, threadID: number) => `${chatID}:${threadID}`;
 function topics(state: AppState): Record<string, ImageChatState> {
   const value = state.imageChats;
@@ -73,4 +74,11 @@ export async function getDefaultImageChatProfile(): Promise<ImageChatProfile | u
 export async function setDefaultImageChatProfile(profile: ImageChatProfile): Promise<void> {
   if (!validImageChatProfile(profile)) throw new Error("Invalid Image Chat profile");
   await updateAppState({ imageChatDefault: profile });
+}
+/** Auto is the safe default for new installs and migrated installs unless Manual was explicitly selected. */
+export async function getImageChatDefaultMode(): Promise<ImageChatDefaultMode> {
+  return (await readAppState()).imageChatDefaultMode === "manual" ? "manual" : "auto";
+}
+export async function setImageChatDefaultMode(mode: ImageChatDefaultMode): Promise<void> {
+  await updateAppState({ imageChatDefaultMode: mode });
 }
