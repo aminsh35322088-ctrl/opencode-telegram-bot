@@ -1,4 +1,5 @@
-import type { Context, ReactionType } from "grammy";
+import type { Context } from "grammy";
+import type { ReactionType } from "grammy/types";
 import { assistantRunState } from "../managers/assistant-run-state-manager.js";
 import { lookupBotMessage } from "../managers/bot-message-registry.js";
 import { promptQueue } from "../managers/prompt-queue-manager.js";
@@ -107,7 +108,7 @@ export async function handleReactionFeedback(ctx: Context): Promise<void> {
   const previous = new Set((update.old_reaction ?? []).map(emojiOf).filter((emoji): emoji is string => Boolean(emoji)));
   const added = (update.new_reaction ?? [])
     .map(emojiOf)
-    .filter((emoji): emoji is string => Boolean(emoji) && !previous.has(emoji));
+    .filter((emoji): emoji is string => typeof emoji === "string" && emoji.length > 0 && !previous.has(emoji));
   if (added.length === 0) return;
 
   const entry = lookupBotMessage(chatId, messageId);
