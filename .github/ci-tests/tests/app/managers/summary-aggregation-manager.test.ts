@@ -2556,22 +2556,21 @@ describe("summary/aggregator", () => {
       summaryAggregator.setOnComplete(onComplete);
       summaryAggregator.setOnPartial(onPartial);
 
-      // msg-a2 is created and streams its first part while session-a has focus.
+      // session-a's message is created, then session-b steals the focus.
       summaryAggregator.setSession("session-a");
       summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2"));
-      summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a2", "part-a2", "Partial answer in flight"));
-
-      // session-b attaches and steals the single focus.
       summaryAggregator.setSession("session-b");
 
-      // session-a's confirmation + completion still arrive inside session-a's
-      // own topic runtime context; the in-flight text must survive the focus
-      // change and complete exactly once.
+      // All of session-a's streaming arrives inside its OWN topic runtime
+      // context; the in-flight text must survive the focus change and
+      // complete exactly once.
       runInTopicRuntimeContext({ chatId: 100, threadId: 11, sessionId: "session-a" }, () => {
+        summaryAggregator.processEvent(assistantTextPartEvent("session-a", "msg-a2", "part-a2", "Partial answer in flight"));
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", false));
         summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-a2", true));
       });
 
+      expect(onPartial).toHaveBeenCalledWith("session-a", "msg-a2", "Partial answer in flight");
       expect(onComplete).toHaveBeenCalledTimes(1);
       expect(defined(onComplete.mock.calls[0]?.[2])).toContain("Partial answer in flight");
     });
