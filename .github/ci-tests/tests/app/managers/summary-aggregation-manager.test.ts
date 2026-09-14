@@ -2553,8 +2553,13 @@ describe("summary/aggregator", () => {
     it("setSession on another topic does not wipe in-flight text state", async () => {
       const onComplete = vi.fn();
       const onPartial = vi.fn();
+      const onTokens = vi.fn();
+      const onSub = vi.fn();
       summaryAggregator.setOnComplete(onComplete);
       summaryAggregator.setOnPartial(onPartial);
+      summaryAggregator.setOnTokens(onTokens);
+      summaryAggregator.setOnSubagent(onSub);
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       // session-a's message is created, then session-b steals the focus.
       summaryAggregator.setSession("session-a");
@@ -2571,9 +2576,14 @@ describe("summary/aggregator", () => {
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
 
+      console.error("DIAG concurrent-2", JSON.stringify({
+        part: onPartial.mock.calls,
+        comp: onComplete.mock.calls.map((c) => [c[0], c[1], String(c[2]).slice(0, 30)]),
+        tokens: onTokens.mock.calls.length,
+        sub: onSub.mock.calls.length,
+      }));
       // The semantic guarantee: the completed answer still carries session-a's
-      // in-flight text (it was NOT wiped by the focus change). Partial timing
-      // is an implementation detail, so only the completion is asserted.
+      // in-flight text (it was NOT wiped by the focus change).
       expect(onComplete).toHaveBeenCalledTimes(1);
       expect(onComplete.mock.calls[0]?.[0]).toBe("session-a");
       expect(defined(onComplete.mock.calls[0]?.[2])).toContain("Partial answer in flight");
