@@ -4,7 +4,6 @@ import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfig
 import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 import { configureOpenRouterCodingProvider, OPENROUTER_PROVIDER_ID } from "../../app/services/openrouter-provider-service.js";
 import { imageConnectionUsage } from "../../app/services/image-chat-profile-service.js";
-import { getDefaultImageChatProfile } from "../../app/stores/image-chat-store.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
@@ -21,7 +20,7 @@ type Step = "name" | "url" | "key" | "openrouter-key" | "groq-stt-key" | "stt-se
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
 function messageId(ctx: Context): number | undefined { return ctx.callbackQuery?.message?.message_id; }
-function wizardKeyboard() { return new InlineKeyboard().text("❌ Cancel", "provider:cancel").text("← AI Providers", "provider:menu"); }
+function wizardKeyboard() { return new InlineKeyboard().text("❌ Cancel", "provider:cancel").text("← Connections", "provider:connections"); }
 export function isProviderWizardActive(): boolean { return providerWizard.isActive(); }
 export function clearProviderWizard(): void { providerWizard.clear(); }
 async function deleteInput(ctx: Context) { if (ctx.chat && ctx.message) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
@@ -49,7 +48,7 @@ async function applyCodingChanges(): Promise<string> {
   try { await restartOpenCodeAfterProviderChange(); return ""; }
   catch { logger.warn("[Providers] Settings saved, but OpenCode refresh failed"); return "\n⚠️ Settings are saved. OpenCode could not reload them; restart the bot to apply."; }
 }
-async function renderImage(ctx: Context, id?: number, notice = "") {
+async function renderImage(ctx: Context, id?: number, notice = "", backCallback = "icfg:root") {
   const ps = await listImageAiProviders();
   const cf = ps.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID), custom = ps.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
   const keyboard = new InlineKeyboard()
@@ -57,11 +56,11 @@ async function renderImage(ctx: Context, id?: number, notice = "") {
     .text(`🔌 Custom API${custom ? " · Configured" : ""}`, "provider:image:custom:configure").row();
   if (cf) keyboard.text("Remove Cloudflare", "provider:remove-image:cloudflare").row();
   if (custom) keyboard.text("Remove Custom API", "provider:remove-image:custom").row();
-  keyboard.text("← Image Chat", "icfg:root");
-  await render(ctx, `${notice}🎨 Image generators\n\n${ps.map(p => `${p.name}: ${p.model}${p.editModel ? ` / edit: ${p.editModel}` : ""}`).join("\n") || "No generator configured."}\n\nImage Chat requires generation and editing support. Connect the conversation model under Image settings.`, keyboard, id);
+  keyboard.text(backCallback === "icfg:root" ? "← Image Chat" : "← Connections", backCallback);
+  await render(ctx, `${notice}🎨 Image connections\n\n${ps.map(p => `${p.name}: ${p.model}${p.editModel ? ` / edit: ${p.editModel}` : ""}`).join("\n") || "No generator configured."}\n\nThis screen manages API connections only. Choose the default image model under Settings → Default Models → Image Chat.`, keyboard, id);
 }
 async function renderSlot(ctx: Context, capability: AiCapability, id?: number, notice = "") {
-  if (capability === "image") { await showImageChatSettings(ctx); return; }
+  if (capability === "image") { await renderImage(ctx, id, notice, "provider:connections"); return; }
   const ps = (await listCustomProviders()).filter(p => p.capability === capability);
   const keyboard = new InlineKeyboard();
   if (capability === "coding") keyboard.text(ps.some(p => p.id === OPENROUTER_PROVIDER_ID) ? "OpenRouter · Configure key" : "OpenRouter · Connect", "provider:openrouter:configure").row();
@@ -71,15 +70,23 @@ async function renderSlot(ctx: Context, capability: AiCapability, id?: number, n
     keyboard.text("🎤 Groq · Configure key", "provider:stt:groq:add").row();
     if (await isGroqSttConfigured()) keyboard.text("Remove Groq", "provider:stt:groq:remove").row();
   }
+  keyboard.text("← Connections", "provider:connections");
+  await render(ctx, `${notice}${LABEL[capability]} connections\n\n${capability === "coding" ? "Connect chat/coding APIs here. Model defaults are selected under Settings → Default Models." : "Connect a transcription provider. Voice messages in coding Topics use this selection."}`, keyboard, id);
+}
+async function renderConnections(ctx: Context, id?: number, notice = "") {
+  const keyboard = new InlineKeyboard();
+  for (const capability of CAPABILITIES) keyboard.text(LABEL[capability], `provider:slot:${capability}`).row();
   keyboard.text("← AI Providers", "provider:menu");
-  await render(ctx, `${notice}${LABEL[capability]}\n\n${capability === "coding" ? "Connect custom chat providers here. Built-in OpenCode providers remain available in Default Model. Image and audio output models are excluded from coding selection." : "Connect a transcription provider. Voice messages in coding Topics use this selection."}`, keyboard, id);
+  await render(ctx, `${notice}🔌 Manage Connections\n\nChoose which API connection type you want to manage. These controls no longer choose default models.`, keyboard, id);
 }
 async function renderProviders(ctx: Context, id?: number, notice = "") {
-  const [ps, profile, groq] = await Promise.all([listCustomProviders(), getDefaultImageChatProfile(), isGroqSttConfigured()]);
-  const keyboard = new InlineKeyboard();
-  for (const c of CAPABILITIES) keyboard.text(LABEL[c], `provider:slot:${c}`).row();
-  keyboard.text("← Settings", "provider:settings");
-  await render(ctx, `${notice}🔌 AI Providers\n\n💬 Chat & Coding: ${ps.filter(p => p.capability === "coding").length} custom connections\n🎨 Image: ${profile ? profile.modelID : "Not configured"}\n🎙️ Transcription: ${groq || ps.some(p => p.capability === "stt") ? "Configured" : "Not configured"}\n\nChoose the task to manage its connections.`, keyboard, id);
+  const [ps, imageProviders, groq] = await Promise.all([listCustomProviders(), listImageAiProviders(), isGroqSttConfigured()]);
+  const coding = ps.filter(p => p.capability === "coding").length;
+  const transcription = groq || ps.some(p => p.capability === "stt");
+  const keyboard = new InlineKeyboard()
+    .text("🔌 Manage Connections", "provider:connections").row()
+    .text("← Settings", "provider:settings");
+  await render(ctx, `${notice}🔌 AI Providers\n\n${coding} chat/coding connection${coding === 1 ? "" : "s"}\n${imageProviders.length} image connection${imageProviders.length === 1 ? "" : "s"}\nTranscription: ${transcription ? "Configured" : "Not configured"}\n\nProvider setup lives here. Default model selection now lives under Settings → Default Models.`, keyboard, id);
 }
 export async function providersCommand(ctx: CommandContext<Context>) {
   clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx);
@@ -90,19 +97,20 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
   const id = messageId(ctx);
   if (["provider:menu", "provider:cancel", "provider:add"].includes(data)) { await renderProviders(ctx, id); return true; }
+  if (data === "provider:connections") { await renderConnections(ctx, id); return true; }
   if (["provider:settings", "provider:advanced", "provider:close"].includes(data)) {
     const view = buildSettingsMenuView(); await render(ctx, view.text.replace(/<[^>]*>/g, ""), view.keyboard, id); return true;
   }
   if (data.startsWith("provider:slot:")) {
-    const c = data.slice("provider:slot:".length) as AiCapability;
-    if (CAPABILITIES.includes(c)) await renderSlot(ctx, c, id); return true;
+    const capability = data.slice("provider:slot:".length) as AiCapability;
+    if (CAPABILITIES.includes(capability)) await renderSlot(ctx, capability, id); return true;
   }
   if (data === "provider:image:menu") { await showImageChatSettings(ctx); return true; }
   if (data === "provider:image:engines") { await renderImage(ctx, id); return true; }
   if (data === "provider:openrouter:configure") { await start(ctx, "openrouter-key", "OpenRouter\n\nSend an inference API key. It will be verified before saving.", "coding"); return true; }
   if (data.startsWith("provider:add:")) {
-    const c = data.slice("provider:add:".length) as AiCapability;
-    if (c === "coding" || c === "stt") await start(ctx, "name", `Add ${LABEL[c]} provider\n\n1/3 · Provider name`, c); return true;
+    const capability = data.slice("provider:add:".length) as AiCapability;
+    if (capability === "coding" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
   }
   if (data === "provider:image:cloudflare:configure") { await start(ctx, "image-cloudflare-account", "Cloudflare Workers AI\n\n1/2 · Send the 32-character Account ID"); return true; }
   if (data === "provider:image:custom:configure") { await start(ctx, "image-custom-base-url", "Custom image API\n\n1/4 · Base URL"); return true; }
@@ -124,14 +132,14 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   }
   if (data.startsWith("provider:delete:")) {
     const providerID = data.slice("provider:delete:".length), usage = await imageConnectionUsage(providerID);
-    await render(ctx, `Remove this provider?\n\n${usage} Image Chat/default selections also depend on it.`, new InlineKeyboard().text("Remove", `provider:rm:${providerID}`).text("Cancel", "provider:menu"), id); return true;
+    await render(ctx, `Remove this provider?\n\n${usage} Image Chat/default selections also depend on it.`, new InlineKeyboard().text("Remove", `provider:rm:${providerID}`).text("Cancel", "provider:connections"), id); return true;
   }
   if (data.startsWith("provider:rm:")) {
     const providerID = data.slice("provider:rm:".length);
     const p = (await listCustomProviders()).find(p => p.id === providerID);
     if (p && await deleteCustomProvider(providerID)) {
       const notice = p.capability === "coding" ? await applyCodingChanges() : "";
-      await renderProviders(ctx, id, `✅ Connection removed.${notice}\n\n`);
+      await renderConnections(ctx, id, `✅ Connection removed.${notice}\n\n`);
     }
     return true;
   }
