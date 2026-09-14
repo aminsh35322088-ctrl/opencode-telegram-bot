@@ -1,11 +1,11 @@
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
-import { getDefaultImageChatProfile, getImageChatDefaultMode, listImageChats } from "../stores/image-chat-store.js";
+import { getDefaultImageChatImageProviderID, getDefaultImageChatProfile, getImageChatDefaultMode, listImageChats } from "../stores/image-chat-store.js";
 import type { ImageChatProfile } from "../types/image-chat.js";
 import { getCustomProviderConfig, listCustomProviders, type CustomProvider, type CustomProviderModel } from "./custom-provider-service.js";
 import { getActiveImageAiProviders } from "./image-ai-provider-service.js";
 import { asRecord, readBoundedJson } from "./ai-http-service.js";
 import { isChatModelMetadata } from "./model-eligibility-service.js";
-import { OPENROUTER_PROVIDER_ID } from "./openrouter-provider-service.js";
+import { OPENROUTER_FREE_ROUTER_MODEL_ID, OPENROUTER_PROVIDER_ID } from "./openrouter-provider-service.js";
 
 export const GEMINI_IMAGE_CONNECTION = "gemini-image-chat";
 export const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
@@ -25,22 +25,20 @@ function supportsImageInput(model: CustomProviderModel): boolean {
 }
 
 /**
- * We only classify OpenRouter's explicit zero-cost variants as automatically free.
- * A custom provider may be free to the owner, but its /models response does not
- * standardize price metadata, so Auto must not silently risk a paid request.
+ * Auto never guesses that a third-party/custom gateway is free. Only explicit
+ * OpenRouter zero-cost variants participate, preventing a silent paid fallback.
  */
 function isKnownFreeModel(provider: CustomProvider, model: CustomProviderModel): boolean {
   if (provider.id !== OPENROUTER_PROVIDER_ID) return false;
   const id = model.id.toLowerCase();
-  return id === "openrouter/free" || /:free(?:$|:)/.test(id);
+  return id === OPENROUTER_FREE_ROUTER_MODEL_ID || /:free(?:$|:)/.test(id);
 }
 
 function familyRank(provider: CustomProvider, model: CustomProviderModel): number {
   const haystack = `${provider.id} ${provider.name} ${model.id} ${model.name}`;
   const rank = AUTO_CHAT_FAMILY_PRIORITY.findIndex((family) => family.patterns.some((pattern) => pattern.test(haystack)));
   if (rank >= 0) return rank;
-  // OpenRouter's free router is capability-aware and is the final preferred fallback.
-  if (model.id.toLowerCase() === "openrouter/free") return AUTO_CHAT_FAMILY_PRIORITY.length;
+  if (model.id.toLowerCase() === OPENROUTER_FREE_ROUTER_MODEL_ID) return AUTO_CHAT_FAMILY_PRIORITY.length;
   return AUTO_CHAT_FAMILY_PRIORITY.length + 1;
 }
 
@@ -54,7 +52,7 @@ export function rankAutoImageChatModels(providers: CustomProvider[]): Array<{ pr
     .map(({ provider, model, rank }) => ({
       providerID: provider.id,
       modelID: model.id,
-      family: AUTO_CHAT_FAMILY_PRIORITY[rank]?.label ?? (model.id.toLowerCase() === "openrouter/free" ? "OpenRouter Free Router" : "Other free model"),
+      family: AUTO_CHAT_FAMILY_PRIORITY[rank]?.label ?? (model.id.toLowerCase() === OPENROUTER_FREE_ROUTER_MODEL_ID ? "OpenRouter Free Router" : "Other free model"),
     }));
 }
 
@@ -95,21 +93,22 @@ export async function buildToolImageChatProfile(connectionID: string, modelID: s
 }
 
 export async function buildAutoImageChatProfile(): Promise<{ profile: ImageChatProfile; selection: string }> {
-  const [providers, imageProviders, manual] = await Promise.all([
+  const [providers, imageProviders, preferredImageProviderID, manual] = await Promise.all([
     listCustomProviders(),
     getActiveImageAiProviders(),
+    getDefaultImageChatImageProviderID(),
     getDefaultImageChatProfile(),
   ]);
   const imageCandidates = imageProviders.filter((provider) => provider.capabilities.includes("generate") && provider.capabilities.includes("edit"));
-  const preferredImage = manual?.mode === "tools"
-    ? imageCandidates.find((provider) => provider.id === manual.imageProviderID) ?? imageCandidates[0]
-    : imageCandidates[0];
-  if (!preferredImage) throw new Error("Auto Image Chat needs an image generator/editor. Configure one under AI Providers first.");
+  const preferredImage = imageCandidates.find((provider) => provider.id === preferredImageProviderID)
+    ?? (manual?.mode === "tools" ? imageCandidates.find((provider) => provider.id === manual.imageProviderID) : undefined)
+    ?? imageCandidates[0];
+  if (!preferredImage) throw new Error("Auto Image Chat needs an image generator/editor. Configure one under Settings → Default Models → Image Chat first.");
 
   const candidates = rankAutoImageChatModels(providers);
   const selected = candidates[0];
   if (!selected) {
-    throw new Error("Auto Image Chat found no confirmed free vision chat model. Connect OpenRouter and keep a :free vision model (or openrouter/free), or switch Default Models → Image Chat to Manual.");
+    throw new Error("Auto Image Chat found no confirmed free vision chat model. Connect OpenRouter and keep a :free vision model (or openrouter/free), or switch Settings → Default Models → Image Chat to Manual.");
   }
   const profile = await buildToolImageChatProfile(selected.providerID, selected.modelID, preferredImage.id);
   return { profile, selection: `${selected.family} · ${selected.modelID}` };
