@@ -1,4 +1,3 @@
-import path from "node:path";
 import { listImageChats, removeImageChat } from "../stores/image-chat-store.js";
 import { stopImageChat } from "./image-chat-service.js";
 import { flushAppState } from "../stores/app-state-store.js";

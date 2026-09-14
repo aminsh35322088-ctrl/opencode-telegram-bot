@@ -101,8 +101,8 @@ function result(payload: Record<string, unknown>): string {
   return JSON.stringify(payload, null, 2);
 }
 
-async function failedLogs(runId: string): Promise<FailedLogsResult> {
-  const failed = await gh(["run", "view", runId, "--log-failed"]);
+async function failedLogs(runId: string, repoArgs: string[] = []): Promise<FailedLogsResult> {
+  const failed = await gh(["run", "view", runId, ...repoArgs, "--log-failed"]);
   const logs = clip(failed.stdout.trim());
   if (!failed.ok) {
     return {
@@ -137,6 +137,10 @@ export default tool({
       .optional()
       .describe("Filter the latest run by branch name (default: any recent)."),
     workflow: tool.schema.string().optional().describe("Workflow name filter (default: 'CI')."),
+    repo: tool.schema
+      .string()
+      .optional()
+      .describe("Repository owner/name for gh (default: inferred from the current git checkout)."),
     commit: tool.schema
       .string()
       .optional()
@@ -162,6 +166,8 @@ export default tool({
     const workflowName = (args.workflow ?? "CI").trim() || "CI";
     const branch = args.branch?.trim() || "";
     const commit = args.commit?.trim() || "";
+    const repo = args.repo?.trim() || "";
+    const repoArgs = repo ? ["--repo", repo] : [];
     let runId = String(args.runId ?? "").trim();
     let run: RunSummary | null = null;
 
@@ -169,6 +175,7 @@ export default tool({
       const listArgs = [
         "run",
         "list",
+        ...repoArgs,
         "--workflow",
         workflowName,
         "--limit",
@@ -218,7 +225,7 @@ export default tool({
     }
 
     if (action === "logs") {
-      const failed = await failedLogs(runId);
+      const failed = await failedLogs(runId, repoArgs);
       return result({
         ok: failed.ok,
         runId,
@@ -232,7 +239,7 @@ export default tool({
 
     if (action === "status") {
       if (!run) {
-        const view = await gh(["run", "view", runId, "--json", RUN_JSON_FIELDS]);
+        const view = await gh(["run", "view", runId, ...repoArgs, "--json", RUN_JSON_FIELDS]);
         if (!view.ok) {
           return result({
             ok: false,
@@ -258,7 +265,7 @@ export default tool({
 
     for (;;) {
       polls += 1;
-      const view = await gh(["run", "view", runId, "--json", RUN_JSON_FIELDS]);
+      const view = await gh(["run", "view", runId, ...repoArgs, "--json", RUN_JSON_FIELDS]);
       if (!view.ok) {
         return result({
           ok: false,
@@ -292,7 +299,7 @@ export default tool({
             });
           }
 
-          const failed = await failedLogs(runId);
+          const failed = await failedLogs(runId, repoArgs);
           return result({
             ok: false,
             run: last,
