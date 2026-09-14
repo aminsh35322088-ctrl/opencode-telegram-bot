@@ -7,7 +7,6 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "./message-merger.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
-import { handlePhotoCaptionMessage } from "../commands/media-command.js";
 
 export interface PhotoHandlerDeps extends ProcessPromptDeps {
   downloadFile?: (api: Context["api"], fileId: string) => Promise<{ buffer: Buffer; filePath: string }>;
@@ -24,12 +23,6 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
   const largestPhoto = photos[photos.length - 1];
   if (!largestPhoto) return;
 
-  if (caption && !/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) {
-    logger.info(`[Bot] Photo+caption routed to image AI intent router: chatId=${ctx.chat?.id}`);
-    await handlePhotoCaptionMessage(ctx, caption);
-    return;
-  }
-
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
   const getCapabilities = deps.getModelCapabilities ?? getModelCapabilities;
   const getStored = deps.getStoredModel ?? getStoredModel;
@@ -45,8 +38,8 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
     await ctx.reply(t("bot.photo_downloading"));
     const downloadedFile = await downloadFile(ctx.api, largestPhoto.file_id);
     const filePart: FilePartInput = { type: "file", mime: "image/jpeg", filename: "photo.jpg", url: toDataUri(downloadedFile.buffer, "image/jpeg") };
-    logger.info(`[Bot] Sending captionless photo (${downloadedFile.buffer.length} bytes) to selected coding model`);
-    await processPrompt(ctx, "", deps, [filePart]);
+    logger.info(`[Bot] Sending photo (${downloadedFile.buffer.length} bytes) to selected coding model`);
+    await processPrompt(ctx, caption, deps, [filePart]);
   } catch (err) {
     logger.error("[Bot] Error handling photo message:", err);
     await ctx.reply(t("bot.photo_download_error"));

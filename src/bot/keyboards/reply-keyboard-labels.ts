@@ -26,6 +26,7 @@ export function getCurrentReplyKeyboardLabels(): Set<string> {
     "❌ Cancel",
     MAIN_BUTTONS.history,
     MAIN_BUTTONS.newChat,
+    MAIN_BUTTONS.newImageChat,
     MAIN_BUTTONS.mainSettings,
     MAIN_BUTTONS.topicSettings,
     MAIN_BUTTONS.imageAi,

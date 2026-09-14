@@ -7,6 +7,7 @@ import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 export const MAIN_BUTTONS = {
   history: "🕘 History",
   newChat: "💬 New Chat",
+  newImageChat: "🎨 New Image Chat",
   mainSettings: "⚙️ Main Settings",
   topicSettings: "⚙️ Topic Settings",
   settings: "⚙️ Main Settings",
@@ -22,7 +23,6 @@ export const TOPIC_BUTTONS = {
   abort: MAIN_BUTTONS.abort,
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
-  imageAi: MAIN_BUTTONS.imageAi,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   modelCenter: (model?: ModelInfo) => model?.providerID && model.modelID
     ? formatModelForButton(model.providerID, model.modelID, model.name)
@@ -51,7 +51,8 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
 }
 
 function addMainControls(keyboard: Keyboard, currentModel: ModelInfo): void {
-  keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.newChat).row();
+  keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.newImageChat).row();
+  keyboard.text(MAIN_BUTTONS.history).row();
   keyboard.text(getModelButtonLabel(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.mainSettings).row();
 }
@@ -60,8 +61,6 @@ function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean,
   if (running || paused) {
     keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   }
-  // AI Topic-only control; General/Main keeps its existing keyboard unchanged.
-  keyboard.text(MAIN_BUTTONS.imageAi).row();
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.compact(compact)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter(currentModel)).text(MAIN_BUTTONS.topicSettings).row();
 }
@@ -76,7 +75,7 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
       options.paused ?? false,
       options.running ?? false,
       options.compactOutputMode ?? getCompactOutputMode(),
-      options.currentModel,
+      options.currentModel ?? currentModel,
     );
   } else {
     addMainControls(keyboard, currentModel);
@@ -89,7 +88,8 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
 /** Normal/private-chat navigation stays on the existing inline UI. */
 export function createMainInlineKeyboard(currentModel: ModelInfo): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  keyboard.text(MAIN_BUTTONS.history, "main:history").text(MAIN_BUTTONS.newChat, "main:new").row();
+  keyboard.text(MAIN_BUTTONS.newChat, "main:new").text(MAIN_BUTTONS.newImageChat, "main:new_image").row();
+  keyboard.text(MAIN_BUTTONS.history, "main:history").row();
   keyboard.text(getModelButtonLabel(currentModel), "main:model").row();
   keyboard.text(MAIN_BUTTONS.mainSettings, "main:settings").row();
   return keyboard;

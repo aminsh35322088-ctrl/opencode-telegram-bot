@@ -161,11 +161,13 @@ The bot supports more than plain text coding sessions.
 - Optional text-to-speech can produce audio replies.
 - STT/TTS configuration is kept separate from the core Telegram/OpenCode runtime.
 
-### Image AI
+### Image Chat
 
-Image-capable providers/models can be routed through the bot's AI configuration rather than being hard-coded into the text model selector. This allows image generation/vision-capable workflows to evolve independently from the coding model catalog.
+Use **🎨 New Image Chat** beside New Chat in Main to open a dedicated image Topic. Discuss a design, generate an image, then keep editing it in the same conversation. Reply to an older image to edit that version; otherwise the latest image is used. **New design**, **Stop**, image settings and deletion are available inside the Topic.
 
-The exact available image models depend on the configured providers and their live capabilities.
+Configure it under **Settings → AI Providers → Image** using a native Gemini image model, or a vision conversation model paired with Cloudflare/Custom image generation and editing. Model IDs are chosen explicitly. Existing Topics keep their profile when the default changes.
+
+Image Topics store Telegram file IDs and bounded conversation metadata, with no image archive on Railway and no OpenCode session/workspace. Coding Topics retain photo understanding; their former Image AI generation/edit controls are removed. See [Image Chat setup and limits](docs/IMAGE_CHATS.md).
 
 ## Recent chat history
 

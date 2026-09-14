@@ -25,7 +25,7 @@ import {
   resolveModelCenterFavoriteTarget,
   type ModelCenterFavoriteTarget,
 } from "../menus/model-center-menu.js";
-import { fetchCurrentModel, getProviders, selectModel } from "../../app/services/model-selection-service.js";
+import { fetchCurrentModel, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { formatModelForDisplay, type ModelInfo } from "../../app/types/model.js";
@@ -86,14 +86,14 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       const token = data.slice(MODEL_CENTER_FAVORITE_PREFIX.length);
       const model = resolveModelCenterAction(token);
       const target = resolveModelCenterFavoriteTarget(token);
-      if (!model || !target) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
+      if (!model || !target || !(await isSelectableChatModel(model.providerID, model.modelID))) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
       const added = await toggleFavoriteModel(model);
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
       return await renderFavoriteTarget(ctx, target);
     }
     if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
       const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
-      if (!model) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
+      if (!model || !(await isSelectableChatModel(model.providerID, model.modelID))) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
       await applyModelSelectionAndNotify(ctx, model);
       return true;
     }

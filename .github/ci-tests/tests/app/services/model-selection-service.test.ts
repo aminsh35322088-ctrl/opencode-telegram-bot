@@ -587,7 +587,6 @@ describe("app/services/model-selection-service", () => {
       // The configured default (opencode/big-pickle) is preserved so UI/recovery
       // can still resolve it even though the catalog omits it.
       expect(providers).toEqual([
-        { id: "anthropic", name: "Anthropic", modelCount: 0 },
         { id: "openai", name: "OpenAI", modelCount: 1 },
         { id: "opencode", name: "OpenCode", modelCount: 1 },
       ]);
