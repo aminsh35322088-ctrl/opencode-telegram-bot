@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { summaryAggregator } from "../../../src/app/managers/summary-aggregation-manager.js";
+import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
@@ -112,6 +113,49 @@ describe("summary/aggregator concurrent AI topics", () => {
     const aCompletion = onComplete.mock.calls.find((call) => call[0] === "session-a");
     expect(defined(aCompletion)).toBeDefined();
     expect(defined(aCompletion?.[2])).toContain("Partial answer in flight");
+  });
+
+  it("uses topic runtime context when another session owns the foreground focus", () => {
+    const onComplete = vi.fn();
+    const onPartial = vi.fn();
+    summaryAggregator.setOnComplete(onComplete);
+    summaryAggregator.setOnPartial(onPartial);
+
+    // A begins, then B becomes the last globally attached session.
+    summaryAggregator.setSession("session-a");
+    summaryAggregator.processEvent(assistantMessageEvent("session-a", "msg-context-a"));
+    summaryAggregator.setSession("session-b");
+
+    // The topic event bus dispatches A while restoring A's AsyncLocalStorage
+    // context. activeSessionId() must prefer that context over currentSessionId.
+    runInTopicRuntimeContext(
+      { chatId: 100, threadId: 11, sessionId: "session-a" },
+      () => {
+        summaryAggregator.processEvent(
+          assistantTextPartEvent(
+            "session-a",
+            "msg-context-a",
+            "part-context-a",
+            "Context-routed answer",
+          ),
+        );
+        summaryAggregator.processEvent(
+          assistantMessageEvent("session-a", "msg-context-a", true),
+        );
+      },
+    );
+
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-a",
+      "msg-context-a",
+      "Context-routed answer",
+    );
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-a",
+      "msg-context-a",
+      "Context-routed answer",
+      expect.any(Object),
+    );
   });
 
   it("keeps three interleaved topics streaming independently while focus bounces", () => {
