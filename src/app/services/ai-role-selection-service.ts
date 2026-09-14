@@ -46,4 +46,4 @@ export async function getModelForRole(role: AiRole, fallback: ModelInfo): Promis
   return { ...fallback, providerID: resolved.providerID, modelID: resolved.modelID, variant: "default" };
 }
 export async function clearAiRoleSelection(role: AiRole): Promise<void> { const selections = await readSelections(); delete selections[role]; await writeSelections(selections); }
-export const AI_ROLE_LABELS: Record<AiRole, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", stt: "🎙️ Speech-to-Text" };
+export const AI_ROLE_LABELS: Record<AiRole, string> = { coding: "💻 Coding AI", image: "🎨 Image", stt: "🎙️ Speech-to-Text" };

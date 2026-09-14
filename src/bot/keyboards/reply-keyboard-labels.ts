@@ -29,7 +29,6 @@ export function getCurrentReplyKeyboardLabels(): Set<string> {
     MAIN_BUTTONS.newImageChat,
     MAIN_BUTTONS.mainSettings,
     MAIN_BUTTONS.topicSettings,
-    MAIN_BUTTONS.imageAi,
     MAIN_BUTTONS.deleteChat,
     MAIN_BUTTONS.compact(true),
     MAIN_BUTTONS.compact(false),

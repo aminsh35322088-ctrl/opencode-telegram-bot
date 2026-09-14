@@ -11,7 +11,6 @@ export const MAIN_BUTTONS = {
   mainSettings: "⚙️ Main Settings",
   topicSettings: "⚙️ Topic Settings",
   settings: "⚙️ Main Settings",
-  imageAi: "🎨 Image AI",
   deleteChat: "🗑️ Delete Chat",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
   pause: "⏸️ Pause",
