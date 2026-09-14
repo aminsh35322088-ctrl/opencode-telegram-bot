@@ -39,10 +39,10 @@ vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
   removeTopicRuntimeState: mocks.removeTopicRuntimeStateMock,
 }));
 vi.mock("../../../src/app/managers/prompt-queue-manager.js", () => ({
-  promptQueue: { clearSession: mocks.clearSessionQueueMock },
+  promptQueue: { clearSession: mocks.clearSessionQueueMock, __resetForTests: vi.fn() },
 }));
 vi.mock("../../../src/app/managers/prompt-attachment-manager.js", () => ({
-  promptAttachment: { clearSession: mocks.clearSessionAttachmentMock },
+  promptAttachment: { clearSession: mocks.clearSessionAttachmentMock, __resetForTests: vi.fn() },
 }));
 vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
   keyboardManager: {
@@ -52,7 +52,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
   },
 }));
 vi.mock("../../../src/app/managers/interaction-manager.js", () => ({
-  interactionManager: { clearSession: mocks.clearInteractionMock },
+  interactionManager: { clearSession: mocks.clearInteractionMock, clear: vi.fn() },
 }));
 // Complete export surface of src/opencode/events.js: every named export the
 // module graph can request is present, so missing-export mock errors are
