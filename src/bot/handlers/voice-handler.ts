@@ -15,6 +15,7 @@ import { buildTelegramFileUrl } from "../../app/services/file-download-service.j
 import { buildQuotedNotification } from "../../app/services/quoted-notification.js";
 import { editBotText } from "../messages/telegram-text.js";
 import { clearImageMode, isImageModeActive } from "../../app/services/image-mode-service.js";
+import { saveTopicVoiceAsset } from "../../app/services/telegram-topic-voice-asset-service.js";
 import { handleImageTextPrompt } from "../commands/media-command.js";
 
 const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -35,6 +36,8 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
   const statusMessage = await ctx.reply(t("stt.recognizing"));
   try {
     const fileData = await downloadFile(ctx, fileId); if (!fileData) { await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, t("stt.error", { error: "download failed" })); return; }
+    let voiceAssetPath: string | null = null;
+    try { const savedAsset = await saveTopicVoiceAsset(fileData.buffer, fileData.filename); if (savedAsset) voiceAssetPath = savedAsset.relativePath; } catch (saveError) { logger.warn("[Voice] Failed to persist voice asset:", saveError); }
     const result = await transcribe(fileData.buffer, fileData.filename); const recognizedText = result.text.trim();
     if (!recognizedText) { await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, t("stt.empty_result")); return; }
     try { const notification = buildQuotedNotification(t(result.uncertain ? "stt.uncertain" : "stt.recognized"), recognizedText, { blankLineAfterTitle: false }); await editBotText({ api: ctx.api, chatId: ctx.chat!.id, messageId: statusMessage.message_id, text: notification.text, rawFallbackText: notification.rawFallbackText, format: "markdown_v2" }); } catch (editError) { logger.warn("[Voice] Failed to edit status message with recognized text:", editError); if (result.uncertain) await ctx.reply(`${t("stt.uncertain")}\n${recognizedText}`); }
@@ -47,7 +50,8 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
       await handleImageTextPrompt(ctx, textForLLM);
       return;
     }
-    await processPrompt(ctx, textForLLM, deps, []);
+    const promptText = voiceAssetPath ? `${textForLLM}\n\n[Voice attachment saved at: ${voiceAssetPath}]` : textForLLM;
+    await processPrompt(ctx, promptText, deps, []);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "unknown error"; logger.error("[Voice] Error processing voice message:", err);
     try { await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, t("stt.error", { error: errorMessage })); } catch { await ctx.reply(t("stt.error", { error: errorMessage })).catch(() => {}); }
