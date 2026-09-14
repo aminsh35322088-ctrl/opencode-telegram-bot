@@ -31,6 +31,11 @@ export const SETTINGS_DEFAULT_QUEUE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}defau
 export const SETTINGS_MCP_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}mcp`;
 export const SETTINGS_SKILLS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}skills`;
 export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
+export const SETTINGS_MEMORY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}memory`;
+export const SETTINGS_MEMORY_DELETE_PREFIX = `${SETTINGS_MEMORY_CALLBACK}:delete:`;
+export const SETTINGS_MEMORY_CLEAR_CALLBACK = `${SETTINGS_MEMORY_CALLBACK}:clear`;
+export const SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK = `${SETTINGS_MEMORY_CLEAR_CALLBACK}:confirm`;
+export const SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK = `${SETTINGS_MEMORY_CLEAR_CALLBACK}:cancel`;
 export const SETTINGS_BACK_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}back`;
 export const SETTINGS_CLOSE_CALLBACK = `${INLINE_MENU_CANCEL_PREFIX}settings`;
 export const SETTINGS_RESET_HISTORY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}reset_history`;
@@ -234,6 +239,7 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
     .text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row()
     .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK).row()
+    .text("💾 Persistent Memory", SETTINGS_MEMORY_CALLBACK).row()
     .text("🧹 Clear Conversation History", SETTINGS_RESET_HISTORY_CALLBACK).row()
     .text("☢️ Factory Reset", SETTINGS_FACTORY_RESET_CALLBACK);
   appendSettingsBackButton(keyboard);
@@ -246,10 +252,48 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
       "🔗 <b>MCP Servers</b> · inspect and manage Model Context Protocol integrations.",
       "🧠 <b>Skills</b> · inspect available reusable skills.",
       "🧩 <b>Custom Commands</b> · inspect bot/OpenCode command definitions.",
+      "💾 <b>Persistent Memory</b> · review and delete memories saved via /remember.",
       "🧹 <b>Clear Conversation History</b> · remove managed Topics and conversation state while keeping global configuration.",
       "☢️ <b>Factory Reset</b> · wipe managed data and saved bot configuration; source code/runtime remain intact.",
     ].join("\n"),
     keyboard,
+  };
+}
+
+const MEMORY_LIST_LIMIT = 10;
+
+function escapeHtml(value: string): string { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+export function buildMemorySettingsView(memories: Array<{ id: string; scope: string; content: string }>): { text: string; keyboard: InlineKeyboard } {
+  const keyboard = new InlineKeyboard();
+  const lines = ["💾 <b>Persistent Memory</b>", "", "Memories saved with /remember are injected into prompts across Topics.", ""];
+  if (memories.length === 0) {
+    lines.push("📭 <i>No memories stored yet.</i>");
+  } else {
+    lines.push(`Total: <b>${memories.length}</b>${memories.length > MEMORY_LIST_LIMIT ? ` (showing ${MEMORY_LIST_LIMIT})` : ""}`, "");
+    for (const memory of memories.slice(0, MEMORY_LIST_LIMIT)) {
+      const short = memory.content.length > 90 ? `${memory.content.slice(0, 87)}...` : memory.content;
+      lines.push(`• <code>${memory.scope}</code> ${escapeHtml(short)}`);
+      keyboard.text(`🗑 ${memory.scope} ${memory.id.slice(0, 8)}`, `${SETTINGS_MEMORY_DELETE_PREFIX}${memory.id}`).row();
+    }
+    keyboard.text("🧹 Delete All", SETTINGS_MEMORY_CLEAR_CALLBACK).row();
+  }
+  lines.push("", "Commands /memory, /remember and /forget remain available.");
+  appendSettingsBackButton(keyboard);
+  return { text: lines.join("\n"), keyboard };
+}
+
+export function buildMemoryClearConfirmationView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: [
+      "⚠️ <b>Delete all persistent memories?</b>",
+      "",
+      "This removes every memory saved via /remember (user and project scope).",
+      "❌ This action cannot be undone.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("✅ Delete All", SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK).row()
+      .text("← Back", SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK),
   };
 }
 
