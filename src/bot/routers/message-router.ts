@@ -49,6 +49,7 @@ import { getCurrentSession } from "../../app/services/session-service.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
 import { clearImageMode, getImageMode, isImageModeActive } from "../../app/services/image-mode-service.js";
+import { handleReactionFeedback } from "../../app/services/reaction-feedback-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -504,5 +505,13 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message_reaction", async (ctx) => {
+    try {
+      await handleReactionFeedback(ctx);
+    } catch (error) {
+      logger.error("[Reactions] Error handling message reaction:", error);
+    }
   });
 }
