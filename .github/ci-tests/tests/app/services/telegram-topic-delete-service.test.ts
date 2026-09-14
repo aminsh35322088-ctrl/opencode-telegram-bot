@@ -54,9 +54,20 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
 vi.mock("../../../src/app/managers/interaction-manager.js", () => ({
   interactionManager: { clearSession: mocks.clearInteractionMock },
 }));
-vi.mock("../../../src/opencode/events.js", () => ({
-  stopTopicEventSubscription: mocks.stopTopicEventSubscriptionMock,
-}));
+// Proxy-backed module mock: any named export the graph may request resolves to
+// a stable vi.fn(), so a missing mock export can never break this spec again.
+vi.mock("../../../src/opencode/events.js", () => {
+  const fns: Record<string, unknown> = { stopTopicEventSubscription: mocks.stopTopicEventSubscriptionMock };
+  return new Proxy({ __esModule: true }, {
+    get: (target, prop) => {
+      if (prop === "__esModule") return true;
+      if (typeof prop !== "string" || prop === "default") return undefined;
+      if (!(prop in fns)) fns[prop] = vi.fn();
+      return fns[prop];
+    },
+    has: () => true,
+  });
+});
 vi.mock("../../../src/bot/services/telegram-topic-runtime.js", () => ({
   getTelegramTopicRuntimeDependencies: () => ({ retireSessionRuntime: mocks.retireSessionRuntimeMock }),
 }));
