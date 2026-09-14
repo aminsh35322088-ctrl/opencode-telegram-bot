@@ -14,12 +14,18 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { BOT_VERSION, getOpenCodeVersion } from "../../app/services/version-info-service.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
+import { getUnscopedTelegramApi } from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
 
 const MAIN_KEY = "__main__";
 
 function normalizeOutboundThreadId(threadId?: number): number | undefined {
   return typeof threadId === "number" && threadId > 1 ? threadId : undefined;
+}
+
+function isMessageNotModified(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /message is not modified/i.test(message);
 }
 
 export async function buildMainStatusText(currentModel: ModelInfo = getStoredModel()): Promise<string> {
@@ -78,7 +84,11 @@ class KeyboardManager {
   }
 
   public initialize(api: Api, chatId: number, sessionId?: string, threadId?: number): void {
-    this.api = api;
+    // A Topic-scoped wrapper may arrive from attach/session restoration. The
+    // keyboard manager owns both global Main UI and explicitly-threaded Topic
+    // keyboards, so keeping that wrapper here would make a later Main send leak
+    // into whichever Topic supplied the API. Always retain the raw/global API.
+    this.api = getUnscopedTelegramApi(api);
     const key = this.key(sessionId);
     const existing = this.states.get(key);
     const topicSelection = this.topicSelection(chatId, threadId);
@@ -194,22 +204,33 @@ class KeyboardManager {
       const replyMarkup = createMainInlineKeyboard(currentModel);
       const existingMessageId = this.getPersistedMainInlineMessageId(chatId);
       if (existingMessageId) {
-        // Migrate anchors created by older builds away from chat-wide pinning.
         await this.unpinMainAnchor(chatId, existingMessageId);
         try {
           await this.api.editMessageText(chatId, existingMessageId, text, { parse_mode: "HTML", reply_markup: replyMarkup });
           logger.info(`[TelegramKeyboard] Restored unpinned Main status + InlineKeyboard in-place: chat=${chatId}, message=${existingMessageId}`);
           return;
         } catch (err) {
+          // Telegram returns 400 when both the text and markup are already
+          // identical. That is success for an idempotent refresh, not evidence
+          // that the canonical Main message disappeared.
+          if (isMessageNotModified(err)) {
+            logger.info(`[TelegramKeyboard] Main navigation already current; keeping canonical message: chat=${chatId}, message=${existingMessageId}`);
+            return;
+          }
           logger.debug(`[TelegramKeyboard] Existing Main status message unavailable; creating replacement: chat=${chatId}, message=${existingMessageId}`, err);
         }
         this.mainInlineMessageIds.delete(chatId);
         await clearMainNavigationMessageId(chatId);
       }
       try {
-        // No message_thread_id means General/Main. Do not pin this message: a
-        // chat-wide pin is rendered while other forum Topics are open.
         const response = await this.api.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: replyMarkup });
+        // Main/root navigation must never carry a real Topic id. Fail closed if
+        // a future wrapper regression ever tries to scope it again.
+        if (typeof response.message_thread_id === "number" && response.message_thread_id > 1) {
+          await this.api.deleteMessage(chatId, response.message_id).catch(() => {});
+          logger.error(`[TelegramKeyboard] Refused Topic-scoped Main navigation message: chat=${chatId}, message=${response.message_id}, thread=${response.message_thread_id}`);
+          return;
+        }
         this.mainInlineMessageIds.set(chatId, response.message_id);
         try {
           await setMainNavigationMessageId(chatId, response.message_id);
@@ -218,7 +239,7 @@ class KeyboardManager {
           await this.api.deleteMessage(chatId, response.message_id).catch(() => {});
           throw persistError;
         }
-        logger.info(`[TelegramKeyboard] Main status + InlineKeyboard stored in General without chat-wide pin: chat=${chatId}, message=${response.message_id}`);
+        logger.info(`[TelegramKeyboard] Main status + InlineKeyboard stored outside Topics: chat=${chatId}, message=${response.message_id}, thread=${response.message_thread_id ?? "root"}`);
       } catch (err) { logger.error("[TelegramKeyboard] Failed to send Main InlineKeyboard:", err); }
     });
   }
