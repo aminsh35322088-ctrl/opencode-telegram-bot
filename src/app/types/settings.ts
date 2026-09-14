@@ -26,7 +26,6 @@ export interface GlobalSettings {
   experimentalFreeModelDetection?: boolean;
   pinnedMessageId?: number;
   mainNavigationMessageIds?: Record<string, number>;
-  mainNavigationIsolationVersion?: number;
   sessionDirectoryCache?: SessionDirectoryCacheInfo;
   scheduledTasks?: ScheduledTask[];
   scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[];
