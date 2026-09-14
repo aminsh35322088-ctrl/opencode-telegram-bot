@@ -48,7 +48,7 @@ export async function updateImageChat(chatID: number, threadID: number, revision
     if (!old || old.revision !== revision) return {};
     beforeWrite();
     updated = true;
-    return { imageChats: { ...all, [id]: { ...old, ...patch, kind: "image", chatID, threadID } };
+    return { imageChats: { ...all, [id]: { ...old, ...patch, kind: "image", chatID, threadID } } };
   });
   return updated;
 }
