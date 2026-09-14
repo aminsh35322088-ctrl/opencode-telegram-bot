@@ -33,18 +33,16 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: {
-    v2: {
-      skill: {
-        list: mocked.skillListMock,
-      },
+    skill: {
+      list: mocked.skillListMock,
     },
   },
 }));
 
 vi.mock("../../../src/bot/handlers/prompt.js", () => ({
-    processUserPrompt: mocked.processUserPromptMock,
-    __resetPromptRecoveryStateForTests: vi.fn(),
-  }));
+  processUserPrompt: mocked.processUserPromptMock,
+  __resetPromptRecoveryStateForTests: vi.fn(),
+}));
 
 function createCommandContext(messageId: number): Context {
   return {
