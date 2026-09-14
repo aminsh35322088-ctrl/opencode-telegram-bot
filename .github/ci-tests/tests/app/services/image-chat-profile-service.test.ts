@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { rankAutoImageChatModels } from "../../../../src/app/services/image-chat-profile-service.js";
-import { OPENROUTER_PROVIDER_ID } from "../../../../src/app/services/openrouter-provider-service.js";
-import type { CustomProvider } from "../../../../src/app/services/custom-provider-service.js";
+import { rankAutoImageChatModels } from "../../../src/app/services/image-chat-profile-service.js";
+import { OPENROUTER_PROVIDER_ID } from "../../../src/app/services/openrouter-provider-service.js";
+import type { CustomProvider } from "../../../src/app/services/custom-provider-service.js";
 
 function openRouter(models: CustomProvider["models"]): CustomProvider {
   return {
@@ -26,11 +26,12 @@ describe("image-chat-profile-service auto ranking", () => {
       vision("openai/gpt-oss-120b:free"),
     ])]);
 
-    expect(ranked.map((model) => model.modelID)).toEqual([
+    expect(ranked.slice(0, 3).map((model) => model.modelID)).toEqual([
       "openai/gpt-oss-120b:free",
       "google/gemini-2.5-flash:free",
       "deepseek/deepseek-v3:free",
     ]);
+    expect(ranked.at(-1)?.modelID).toBe("openrouter/free");
   });
 
   it("never includes paid or unconfirmed custom-provider models", () => {
@@ -43,7 +44,19 @@ describe("image-chat-profile-service auto ranking", () => {
       },
     ]);
 
-    expect(ranked.map((model) => model.modelID)).toEqual(["google/gemini-free:free"]);
+    expect(ranked[0]?.modelID).toBe("google/gemini-free:free");
+    expect(ranked.map((model) => model.modelID)).not.toContain("openai/gpt-paid");
+    expect(ranked.map((model) => model.modelID)).not.toContain("openai/custom-free-looking:free");
+    expect(ranked.at(-1)?.modelID).toBe("openrouter/free");
+  });
+
+  it("injects the free router for older saved OpenRouter connections", () => {
+    const ranked = rankAutoImageChatModels([openRouter([])]);
+    expect(ranked).toEqual([{
+      providerID: OPENROUTER_PROVIDER_ID,
+      modelID: "openrouter/free",
+      family: "OpenRouter Free Router",
+    }]);
   });
 
   it("keeps OpenRouter free router as the capability-aware fallback", () => {
