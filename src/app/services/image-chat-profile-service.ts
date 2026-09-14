@@ -10,6 +10,13 @@ import { OPENROUTER_FREE_ROUTER_MODEL_ID, OPENROUTER_PROVIDER_ID } from "./openr
 export const GEMINI_IMAGE_CONNECTION = "gemini-image-chat";
 export const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 
+const OPENROUTER_FREE_ROUTER_MODEL: CustomProviderModel = {
+  id: OPENROUTER_FREE_ROUTER_MODEL_ID,
+  name: "OpenRouter Free Router",
+  attachment: true,
+  modalities: { input: ["text", "image"], output: ["text"] },
+};
+
 const AUTO_CHAT_FAMILY_PRIORITY: ReadonlyArray<{ label: string; patterns: RegExp[] }> = [
   { label: "OpenAI / GPT", patterns: [/\bopenai\b/i, /(^|[/._-])gpt[-_/0-9]/i] },
   { label: "Google / Gemini", patterns: [/\bgemini\b/i, /(^|\/)google\//i] },
@@ -22,6 +29,13 @@ const AUTO_CHAT_FAMILY_PRIORITY: ReadonlyArray<{ label: string; patterns: RegExp
 
 function supportsImageInput(model: CustomProviderModel): boolean {
   return isChatModelMetadata(model) && (model.modalities?.input?.includes("image") === true || model.attachment === true);
+}
+
+function providerModelsForAuto(provider: CustomProvider): CustomProviderModel[] {
+  if (provider.id !== OPENROUTER_PROVIDER_ID || provider.models.some((model) => model.id === OPENROUTER_FREE_ROUTER_MODEL_ID)) return provider.models;
+  // Older saved OpenRouter connections predate the virtual free-router catalog
+  // entry. Add it at read time so existing users do not need to re-enter a key.
+  return [...provider.models, OPENROUTER_FREE_ROUTER_MODEL];
 }
 
 /**
@@ -45,7 +59,7 @@ function familyRank(provider: CustomProvider, model: CustomProviderModel): numbe
 export function rankAutoImageChatModels(providers: CustomProvider[]): Array<{ providerID: string; modelID: string; family: string }> {
   return providers
     .filter((provider) => provider.capability === "coding")
-    .flatMap((provider) => provider.models
+    .flatMap((provider) => providerModelsForAuto(provider)
       .filter((model) => isKnownFreeModel(provider, model) && supportsImageInput(model))
       .map((model) => ({ provider, model, rank: familyRank(provider, model) })))
     .sort((a, b) => a.rank - b.rank || a.model.id.localeCompare(b.model.id))
@@ -77,15 +91,16 @@ export async function resolveImageChatConnection(profile: ImageChatProfile): Pro
     return { apiKey, endpoint: GEMINI_ENDPOINT };
   }
   const config = await getCustomProviderConfig(profile.connectionID);
-  const model = config?.models.find((m) => m.id === profile.modelID);
-  if (!config || config.capability !== "coding" || config.apiUrl !== profile.endpoint || !model || !isChatModelMetadata(model)) throw new Error("The conversation connection/model changed or was removed. Reconfigure this Image Chat.");
-  if (!model.modalities?.input?.includes("image") && model.attachment !== true) throw new Error("The conversation model needs confirmed image input support. Choose a vision model.");
+  const virtualFreeRouter = profile.connectionID === OPENROUTER_PROVIDER_ID && profile.modelID === OPENROUTER_FREE_ROUTER_MODEL_ID;
+  const model = config?.models.find((candidate) => candidate.id === profile.modelID);
+  if (!config || config.capability !== "coding" || config.apiUrl !== profile.endpoint || (!virtualFreeRouter && (!model || !isChatModelMetadata(model)))) throw new Error("The conversation connection/model changed or was removed. Reconfigure this Image Chat.");
+  if (!virtualFreeRouter && model && !model.modalities?.input?.includes("image") && model.attachment !== true) throw new Error("The conversation model needs confirmed image input support. Choose a vision model.");
   return { apiKey: config.apiKey, endpoint: config.apiUrl };
 }
 
 export async function buildToolImageChatProfile(connectionID: string, modelID: string, imageProviderID: string): Promise<ImageChatProfile> {
   const config = await getCustomProviderConfig(connectionID);
-  const image = (await getActiveImageAiProviders()).find((p) => p.id === imageProviderID);
+  const image = (await getActiveImageAiProviders()).find((provider) => provider.id === imageProviderID);
   if (!config || !image || !image.capabilities.includes("generate") || !image.capabilities.includes("edit")) throw new Error("Choose a configured image connection with both generation and editing support");
   const profile: ImageChatProfile = { mode: "tools", connectionID, modelID, endpoint: config.apiUrl, imageProviderID, imageEndpoint: image.baseURL, imageModelID: image.model, imageEditModelID: image.editModel ?? image.model };
   await resolveImageChatConnection(profile);
@@ -129,12 +144,12 @@ export async function resolveDefaultImageChatProfile(): Promise<{ profile: Image
 export async function validateImageChatProfile(profile: ImageChatProfile): Promise<void> {
   await resolveImageChatConnection(profile);
   if (profile.mode === "tools") {
-    const image = (await getActiveImageAiProviders()).find((p) => p.id === profile.imageProviderID);
+    const image = (await getActiveImageAiProviders()).find((provider) => provider.id === profile.imageProviderID);
     if (!image || image.baseURL !== profile.imageEndpoint || image.model !== profile.imageModelID || (image.editModel ?? image.model) !== profile.imageEditModelID) throw new Error("Image generator settings changed. Start a new design with the updated settings.");
   }
 }
 export async function imageConnectionUsage(connectionID: string): Promise<number> {
-  const uses = (p: ImageChatProfile) => p.connectionID === connectionID || p.imageProviderID === connectionID;
+  const uses = (profile: ImageChatProfile) => profile.connectionID === connectionID || profile.imageProviderID === connectionID;
   const profile = await getDefaultImageChatProfile();
   return (await listImageChats()).filter((chat) => uses(chat.profile)).length + (profile && uses(profile) ? 1 : 0);
 }
