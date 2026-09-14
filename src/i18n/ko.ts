@@ -570,6 +570,7 @@ export const ko: I18nDictionary = {
   "skills.button.cancel": "❌ 취소",
   "skills.confirm":
     "스킬 {skill} 실행을 확인해 주세요. 인자와 함께 실행하려면 인자를 메시지로 보내주세요.",
+  "skills.confirm_detail": "스킬 {skill} 실행을 확인하세요.\n\n{description}\n📍 소스: {location}\n\n인수와 함께 실행하려면 인수를 메시지로 보내세요.",
   "skills.inactive_callback": "이 스킬 메뉴는 비활성 상태입니다",
   "skills.execute_callback": "스킬을 사용하는 중...",
   "skills.executing_prefix": "⚡ 스킬 사용 중:",

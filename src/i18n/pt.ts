@@ -581,6 +581,7 @@ export const pt: I18nDictionary = {
   "skills.button.cancel": "❌ Cancelar",
   "skills.confirm":
     "Confirme a execução do skill {skill}. Para executá-lo com argumentos, envie os argumentos como mensagem.",
+  "skills.confirm_detail": "Confirme a execução da skill {skill}.\n\n{description}\n📍 Fonte: {location}\n\nPara executá-la com argumentos, envie os argumentos como mensagem.",
   "skills.inactive_callback": "Este menu de skills está inativo",
   "skills.execute_callback": "Usando skill...",
   "skills.executing_prefix": "⚡ Usando skill:",

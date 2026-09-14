@@ -262,7 +262,14 @@ export async function handleSkillsCallback(
     }
 
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(t("skills.confirm", { skill: `/${selectedSkill.name}` }), {
+    const confirmText = selectedSkill.location
+      ? t("skills.confirm_detail", {
+          skill: `/${selectedSkill.name}`,
+          description: selectedSkill.description ?? t("skills.no_description"),
+          location: selectedSkill.location,
+        })
+      : t("skills.confirm", { skill: `/${selectedSkill.name}` });
+    await ctx.editMessageText(confirmText, {
       reply_markup: buildSkillsConfirmKeyboard(),
     });
 
