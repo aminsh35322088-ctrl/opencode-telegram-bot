@@ -1,9 +1,8 @@
 import { Context } from "grammy";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
-import { buildMainStatusText, keyboardManager } from "../keyboards/keyboard-manager.js";
-import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { syncMainReplyKeyboard } from "../keyboards/main-reply-keyboard-sync.js";
 import { clearSession } from "../../app/services/session-service.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
 import * as settingsStore from "../../app/stores/settings-store.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { abortCurrentOperation } from "./abort-command.js";
@@ -37,46 +36,6 @@ function isPrivateBotTopicMode(ctx: Context): boolean {
   const chat = ctx.chat as { type?: string } | undefined;
   const botInfo = ctx.me as { has_topics_enabled?: boolean } | undefined;
   return chat?.type === "private" && botInfo?.has_topics_enabled === true;
-}
-
-async function replaceRootMainPanel(ctx: Context, chatId: number): Promise<boolean> {
-  const currentModel = getStoredModel();
-  const text = await buildMainStatusText(currentModel);
-  let candidateMessageId: number | undefined;
-
-  try {
-    // Reply keyboards are chat/input state in Telegram. Send the canonical Main
-    // message with the persistent 2x2 keyboard first so any stale Topic reply
-    // keyboard is definitely replaced on the client. Then attach the message-
-    // scoped inline controls to the same message. Do not use a short-lived
-    // carrier message: deleting it immediately can race the client applying the
-    // ReplyKeyboardMarkup and leave the old Topic keyboard visible in All.
-    const response = await ctx.api.sendMessage(chatId, text, {
-      parse_mode: "HTML",
-      reply_markup: keyboardManager.mainScopeReplyKeyboard(),
-    });
-    candidateMessageId = response.message_id;
-
-    if (typeof response.message_thread_id === "number" && response.message_thread_id > 1) {
-      await ctx.api.deleteMessage(chatId, response.message_id).catch(() => {});
-      logger.error(`[TelegramKeyboard] Refused Topic-scoped /start Main candidate: chat=${chatId}, message=${response.message_id}, thread=${response.message_thread_id}`);
-      return false;
-    }
-
-    await ctx.api.editMessageReplyMarkup(chatId, response.message_id, {
-      reply_markup: createMainInlineKeyboard(currentModel),
-    });
-    await keyboardManager.setMainInlineMessage(chatId, response.message_id);
-    keyboardManager.noteMainScopeKeyboardApplied(chatId);
-    logger.info(`[TelegramKeyboard] /start force-replaced stale Reply Keyboard and committed Main panel: chat=${chatId}, message=${response.message_id}`);
-    return true;
-  } catch (error) {
-    if (candidateMessageId) {
-      await ctx.api.deleteMessage(chatId, candidateMessageId).catch(() => {});
-    }
-    logger.error(`[TelegramKeyboard] Failed to force Main Reply Keyboard during /start: chat=${chatId}`, error);
-    return false;
-  }
 }
 
 export async function startCommand(ctx: Context): Promise<void> {
@@ -114,12 +73,16 @@ export async function startCommand(ctx: Context): Promise<void> {
   await sendBotUpdateNotice(ctx);
 
   if (!isInTopic) {
-    const replaced = await replaceRootMainPanel(ctx, chatId);
-    if (!replaced) {
-      // Keep the last known-good navigation available even if the stronger
-      // ReplyKeyboard replacement path fails for a transient Telegram error.
-      await keyboardManager.replaceMainInlineKeyboard(chatId);
-    }
+    // Restore the chat-input Reply Keyboard first, then create the canonical
+    // pinned Main panel. The tiny root carrier is deliberately kept alive so a
+    // Telegram client cannot miss the keyboard because the carrier vanished in
+    // the same update burst. The Main panel is sent second, so it remains the
+    // newest visible navigation message.
+    await syncMainReplyKeyboard(ctx.api, chatId, true).catch((error) => {
+      logger.warn(`[TelegramKeyboard] /start failed to synchronize Main Reply Keyboard: chat=${chatId}`, error);
+    });
+
+    const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId);
     logger.info(`[TelegramKeyboard] /start root Main replacement finished: chat=${chatId}, success=${replaced}, mode=${isTopicMode ? "topic-aware" : "normal"}`);
     return;
   }
