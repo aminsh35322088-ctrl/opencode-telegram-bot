@@ -46,7 +46,8 @@ interface EditBotTextParams {
 
 interface SendRenderedBotPartParams {
   api: SendMessageApi & Partial<SendDraftApi>;
-  chatId: Parameters<SendMessageApi["sendMessage"]>[0];
+  /** Native draft methods only accept private-chat numeric IDs. */
+  chatId: number;
   part: TelegramRenderedPart;
   options?: TelegramSendMessageOptions;
   /** Streaming callers degrade whole payloads themselves and must opt out. */
@@ -55,7 +56,8 @@ interface SendRenderedBotPartParams {
 
 interface EditRenderedBotPartParams {
   api: EditMessageApi & Partial<SendMessageApi & SendDraftApi>;
-  chatId: Parameters<EditMessageApi["editMessageText"]>[0];
+  /** Native draft methods only accept private-chat numeric IDs. */
+  chatId: number;
   messageId: Parameters<EditMessageApi["editMessageText"]>[1];
   part: TelegramRenderedPart;
   options?: TelegramEditMessageOptions;
@@ -147,8 +149,8 @@ function hasSendMessageApi(api: Partial<SendMessageApi>): api is SendMessageApi 
   return typeof api.sendMessage === "function" && typeof api.sendRichMessage === "function";
 }
 
-function thinkingDraftKey(chatId: Parameters<SendMessageApi["sendMessage"]>[0], draftId: number): string {
-  return `${String(chatId)}:${draftId}`;
+function thinkingDraftKey(chatId: number, draftId: number): string {
+  return `${chatId}:${draftId}`;
 }
 
 function cleanupExpiredThinkingDrafts(now = Date.now()): void {
@@ -166,26 +168,17 @@ function allocateThinkingDraftId(): number {
   return draftId;
 }
 
-function markThinkingDraft(
-  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
-  draftId: number,
-): void {
+function markThinkingDraft(chatId: number, draftId: number): void {
   cleanupExpiredThinkingDrafts();
   activeThinkingDrafts.set(thinkingDraftKey(chatId, draftId), Date.now() + THINKING_DRAFT_TTL_MS);
 }
 
-function consumeThinkingDraft(
-  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
-  draftId: number,
-): boolean {
+function consumeThinkingDraft(chatId: number, draftId: number): boolean {
   cleanupExpiredThinkingDrafts();
   return activeThinkingDrafts.delete(thinkingDraftKey(chatId, draftId));
 }
 
-function isActiveThinkingDraft(
-  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
-  draftId: number,
-): boolean {
+function isActiveThinkingDraft(chatId: number, draftId: number): boolean {
   cleanupExpiredThinkingDrafts();
   return activeThinkingDrafts.has(thinkingDraftKey(chatId, draftId));
 }
@@ -310,7 +303,7 @@ export async function sendRenderedBotPart({
 
 async function persistThinkingDraftFinal(
   api: SendMessageApi,
-  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
+  chatId: number,
   part: TelegramRenderedPart,
   options: TelegramEditMessageOptions | undefined,
 ): Promise<RenderedPartDeliveryResult> {
