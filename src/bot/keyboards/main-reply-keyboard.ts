@@ -31,6 +31,8 @@ export const TOPIC_BUTTONS = {
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
 
+// Kept for compatibility with already-sent inline Topic controls from the
+// short-lived migration. New Topic controls are ReplyKeyboardMarkup again.
 export const TOPIC_CONTROL_CALLBACKS = {
   pause: "topicctl:pause",
   resume: "topicctl:resume",
@@ -81,16 +83,17 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
       options.compactOutputMode ?? false,
       options.currentModel ?? currentModel,
     );
-    // Legacy Topic reply-keyboard shape is kept only for stale-button parsing
-    // and compatibility tests. It must never be persistent because Telegram
-    // clients can carry ReplyKeyboardMarkup input state across private bot Topics.
+    // AI Topic controls intentionally remain the original Reply Keyboard UX.
+    // They are not persistent because Telegram can carry reply-keyboard state
+    // across private bot Topics; Main re-applies its own grid when it receives
+    // a root interaction.
     return keyboard.resized();
   }
 
   addMainControls(keyboard);
-  // Main/All owns the only persistent ReplyKeyboardMarkup in the chat. AI Topic
-  // controls are InlineKeyboardMarkup, so switching Topic tabs cannot overwrite
-  // this 2x2 navigation keyboard or hide Telegram's keyboard launcher.
+  // Main/All uses a persistent 2x2 launcher. Topic controls are still Reply
+  // Keyboards by product design, so Main must explicitly restore this grid when
+  // the user interacts with All/root.
   return keyboard.resized().persistent();
 }
 
@@ -114,31 +117,15 @@ export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLab
   });
 }
 
-/** Topic-local controls. Inline keyboards are message-scoped and cannot replace Main/All input state. */
-export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): InlineKeyboard {
-  const paused = options.paused ?? false;
-  const running = options.running ?? false;
-  const compactOutputMode = options.compactOutputMode ?? false;
-  const keyboard = new InlineKeyboard();
-
-  if (running || paused) {
-    keyboard
-      .text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause, paused ? TOPIC_CONTROL_CALLBACKS.resume : TOPIC_CONTROL_CALLBACKS.pause)
-      .text(MAIN_BUTTONS.abort, TOPIC_CONTROL_CALLBACKS.abort)
-      .row();
-  }
-
-  return keyboard
-    .text(MAIN_BUTTONS.imageAi, TOPIC_CONTROL_CALLBACKS.imageAi)
-    .text(MAIN_BUTTONS.compact(compactOutputMode), TOPIC_CONTROL_CALLBACKS.compact)
-    .row()
-    .text(TOPIC_BUTTONS.modelCenter(options.currentModel), TOPIC_CONTROL_CALLBACKS.modelCenter)
-    .row()
-    .text(MAIN_BUTTONS.deleteChat, TOPIC_CONTROL_CALLBACKS.deleteChat)
-    .text(MAIN_BUTTONS.topicSettings, TOPIC_CONTROL_CALLBACKS.topicSettings);
+/** Original AI Topic Reply Keyboard controls. */
+export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): Keyboard {
+  return buildMainKeyboard(
+    options.currentModel ?? { providerID: "", modelID: "" },
+    { ...options, isTopic: true },
+  );
 }
 
-/** Backwards-compatible alias for code/tests that imported the explicit Inline name. */
+/** Compatibility alias for callers from the temporary inline migration. */
 export const createTopicInlineKeyboard = createTopicKeyboard;
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
