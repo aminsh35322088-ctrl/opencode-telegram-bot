@@ -163,7 +163,6 @@ describe("bot/commands/skills-import-flow", () => {
     expect(await handleSkillImportCallback(ctx.context, "skills:imp_pick:0")).toBe(true);
     expect(serviceMock.fetchSkillFromGitHub).toHaveBeenCalledWith(
       "https://github.com/o/r/tree/main/skills/alpha",
-      expect.anything(),
     );
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toContain("skills:imp_confirm");
 

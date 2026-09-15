@@ -1,4 +1,5 @@
 import { opencodeClient } from "../../opencode/client.js";
+import { deriveSkillDescription } from "./skill-markdown.js";
 
 export interface SkillCatalogItem {
   name: string;
@@ -28,11 +29,16 @@ export async function loadSkillsCatalog(projectDirectory: string): Promise<Skill
 
   return data
     .filter((skill) => typeof skill.name === "string" && skill.name.trim().length > 0)
-    .map((skill) => ({
-      name: skill.name.trim(),
-      description: typeof skill.description === "string" && skill.description.trim() ? skill.description.trim() : undefined,
-      location: typeof skill.location === "string" && skill.location ? skill.location : undefined,
-    }))
+    .map((skill) => {
+      const description =
+        typeof skill.description === "string" && skill.description.trim() ? skill.description.trim() : undefined;
+      const content = typeof (skill as { content?: unknown }).content === "string" ? (skill as { content: string }).content : "";
+      return {
+        name: skill.name.trim(),
+        description: description ?? (content ? deriveSkillDescription(content) : undefined),
+        location: typeof skill.location === "string" && skill.location ? skill.location : undefined,
+      };
+    })
     .sort((left, right) => left.name.localeCompare(right.name))
     .slice(0, MAX_CATALOG_SIZE);
 }

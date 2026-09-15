@@ -9,6 +9,7 @@ import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import { processUserPrompt, type ProcessPromptDeps } from "../handlers/prompt.js";
 import { clearSkillWizard, startSkillEdit, startSkillWizard } from "../commands/skills-wizard.js";
+import { clearSkillImportFlow, handleSkillImportCallback, SKILLS_IMPORT_CALLBACK_PREFIX, startSkillImport } from "../commands/skills-import-flow.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "../../app/services/skill-manage-service.js";
 import {
   buildSkillsConfirmKeyboard,
@@ -24,6 +25,7 @@ import {
   SKILLS_CALLBACK_DELETE_CANCEL,
   SKILLS_CALLBACK_DELETE_CONFIRM,
   SKILLS_CALLBACK_EXECUTE,
+  SKILLS_CALLBACK_IMPORT,
   SKILLS_CALLBACK_NEW,
   SKILLS_CALLBACK_PREFIX,
   SKILLS_CALLBACK_WIZARD_CANCEL,
@@ -189,6 +191,10 @@ export async function handleSkillsCallback(
     return false;
   }
 
+  if (data.startsWith(SKILLS_IMPORT_CALLBACK_PREFIX)) {
+    return handleSkillImportCallback(ctx, data);
+  }
+
   const metadata = parseSkillsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
 
@@ -224,8 +230,20 @@ export async function handleSkillsCallback(
 
     if (data === SKILLS_CALLBACK_NEW) {
       clearSkillsInteraction("skills_wizard_start");
+      clearSkillImportFlow();
       await ctx.answerCallbackQuery();
       await startSkillWizard(ctx);
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_IMPORT) {
+      if (metadata.stage !== "list") {
+        await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+        return true;
+      }
+      clearSkillsInteraction("skills_import_start");
+      await ctx.answerCallbackQuery();
+      await startSkillImport(ctx);
       return true;
     }
 

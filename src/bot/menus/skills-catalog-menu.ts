@@ -10,6 +10,7 @@ export const SKILLS_CALLBACK_EXECUTE = `${SKILLS_CALLBACK_PREFIX}execute`;
 export const SKILLS_CALLBACK_BACK = `${SKILLS_CALLBACK_PREFIX}back`;
 export const SKILLS_CALLBACK_LIST_BACK = `${SKILLS_CALLBACK_PREFIX}list_back`;
 export const SKILLS_CALLBACK_NEW = `${SKILLS_CALLBACK_PREFIX}new`;
+export const SKILLS_CALLBACK_IMPORT = `${SKILLS_CALLBACK_PREFIX}import`;
 export const SKILLS_CALLBACK_WIZARD_CANCEL = `${SKILLS_CALLBACK_PREFIX}wizard_cancel`;
 export const SKILLS_CALLBACK_EDIT = `${SKILLS_CALLBACK_PREFIX}edit`;
 export const SKILLS_CALLBACK_DELETE = `${SKILLS_CALLBACK_PREFIX}delete`;
@@ -152,6 +153,7 @@ export function buildSkillsListKeyboard(
   }
 
   keyboard.text(t("skills.button.new"), SKILLS_CALLBACK_NEW).row();
+  keyboard.text(t("skills.button.import"), SKILLS_CALLBACK_IMPORT).row();
   keyboard
     .text("← Back", SKILLS_CALLBACK_BACK)
     .text("✖ Close", SKILLS_CALLBACK_CANCEL);

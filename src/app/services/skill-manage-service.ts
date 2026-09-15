@@ -79,6 +79,18 @@ export async function updateGlobalSkill(input: {
   return skillFile;
 }
 
+export async function writeGlobalSkillRaw(name: string, content: string): Promise<string> {
+  if (!isValidSkillName(name)) throw new Error("Invalid skill name");
+  if (!content.trim()) throw new Error("Skill content is empty");
+  const skillFile = resolveManagedSkillFile(name);
+  const existing = await fs.stat(skillFile).catch(() => null);
+  if (existing) throw new Error(`Skill "${name}" already exists`);
+
+  await fs.mkdir(path.dirname(skillFile), { recursive: true });
+  await fs.writeFile(skillFile, content, "utf8");
+  return skillFile;
+}
+
 export async function deleteGlobalSkill(name: string): Promise<boolean> {
   if (!isValidSkillName(name)) return false;
   const root = path.resolve(getGlobalSkillsDir());

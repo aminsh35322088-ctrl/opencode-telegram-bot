@@ -37,6 +37,7 @@ import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
 import { isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
 import { clearSkillWizard, handleSkillWizardMessage, isSkillWizardActive } from "../commands/skills-wizard.js";
+import { clearSkillImportFlow, handleSkillImportMessage, isSkillImportActive } from "../commands/skills-import-flow.js";
 import { newCommand } from "../commands/new-command.js";
 import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
 import { abortCurrentOperation } from "../commands/abort-command.js";
@@ -161,6 +162,12 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
       await ctx.reply(t("common.cancelled"));
       return true;
     }
+
+    if (isSkillImportActive()) {
+      clearSkillImportFlow();
+      await ctx.reply(t("common.cancelled"));
+      return true;
+    }
   }
 
   return false;
@@ -189,7 +196,13 @@ function isMainNavigationTopic(ctx: Context): boolean {
 function isBotAwaitingTextInput(): boolean {
   const state = interactionManager.getSnapshot();
   if (state && (state.expectedInput === "text" || state.expectedInput === "mixed")) return true;
-  return isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive() || isSkillWizardActive();
+  return (
+    isProviderWizardActive() ||
+    isIntegrationWizardActive() ||
+    isMcpAddWizardActive() ||
+    isSkillWizardActive() ||
+    isSkillImportActive()
+  );
 }
 
 function isGeneralTopicPromptBlocked(ctx: Context): boolean {
@@ -231,6 +244,7 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
     if (await handleSkillWizardMessage(ctx)) return;
+    if (await handleSkillImportMessage(ctx)) return;
     if (questionManager.isActive()) {
       await handleQuestionTextAnswer(ctx);
       return;
