@@ -44,6 +44,7 @@ import {
 import { finalizeAssistantResponse } from "../streaming/finalize-assistant-response.js";
 import { deliverThinkingMessage } from "../messages/thinking-message.js";
 import { shouldSuppressUserAbortSessionError } from "../../app/managers/abort-suppression-manager.js";
+import { markToolCallStarted, markToolCallFinished, clearToolActivity, clearAllToolActivity } from "../../app/managers/tool-activity-manager.js";
 import {
   completeDraftPart,
   editRenderedBotPart,
@@ -478,6 +479,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private clearToolElapsedState(sessionId: string | null, reason: string): void {
     if (!sessionId) {
       this.runningToolTracker.clearAll(reason);
+      clearAllToolActivity();
       this.runningToolInfos.clear();
       this.completedToolDurations.clear();
       this.compactActivityBySession.clear();
@@ -485,6 +487,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       return;
     }
 
+    clearToolActivity(sessionId);
     this.runningToolTracker.clearSession(sessionId, reason);
     this.runningToolTracker.setHeartbeatActive(sessionId, false);
     this.compactActivityBySession.delete(sessionId);
@@ -754,6 +757,17 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnRootToolUpdate((toolInfo) => {
+      const status = "status" in toolInfo.state ? toolInfo.state.status : undefined;
+
+      // Liveness must be recorded before the UI gates below: a session that is
+      // blocked or rendered elsewhere is still busy running a tool, and the
+      // stall watchdog must not abort it.
+      if (status === "completed" || status === "error") {
+        markToolCallFinished(toolInfo.sessionId, toolInfo.callId);
+      } else if (typeof status === "string") {
+        markToolCallStarted(toolInfo.sessionId, toolInfo.callId);
+      }
+
       if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
         logger.debug(`[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
         return;
@@ -764,7 +778,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      const status = "status" in toolInfo.state ? toolInfo.state.status : undefined;
       const compactMode = isCompactProgressMode();
       // In full mode the subagent card already reports what the child agent is
       // doing, so a live line for the task tool itself would duplicate it.
