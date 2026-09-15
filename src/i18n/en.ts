@@ -1,21 +1,4 @@
 export const en = {
-  "cmd.description.status": "Server and session status",
-  "cmd.description.new": "Create a new session",
-  "cmd.description.stop": "Stop current action",
-  "cmd.description.detach": "Detach from current session",
-  "cmd.description.sessions": "List sessions",
-  "cmd.description.messages": "Browse session messages",
-  "cmd.description.settings": "Change bot settings",
-  "cmd.description.projects": "List projects",
-  "cmd.description.worktree": "Switch git worktrees",
-  "cmd.description.task": "Create a scheduled task",
-  "cmd.description.tasklist": "List scheduled tasks",
-  "cmd.description.commands": "Custom commands",
-  "cmd.description.skills": "Skills catalog",
-  "cmd.description.mcps": "MCP servers",
-  "cmd.description.opencode_start": "Start OpenCode server",
-  "cmd.description.opencode_stop": "Stop OpenCode server",
-  "cmd.description.ls": "List directory contents",
   "cmd.description.help": "Help",
 
   "callback.unknown_command": "Unknown command",
@@ -46,20 +29,14 @@ export const en = {
   "question.blocked.command_not_allowed":
     "⚠️ This command is not available until current question flow is completed.",
 
-  "inline.button.cancel": "❌ Cancel",
-  "inline.button.close": "❌ Close",
   "inline.inactive_callback": "This menu is inactive",
 
   "common.cancelled": "Cancelled",
   "common.unknown": "unknown",
   "common.unknown_error": "unknown error",
 
-  "start.welcome":
-    "👋 Welcome to OpenCode Telegram Bot!\n\nUse commands:\n/projects — select project\n/sessions — session list\n/new — new session\n/commands — custom commands\n/skills — skills catalog\n/task — scheduled task\n/tasklist — scheduled tasks\n/status — status\n/help — help\n\nUse the bottom buttons to select the agent, model, and variant.",
   "help.keyboard_hint":
     "💡 Use the bottom keyboard buttons for the agent, model, variant, and context actions.",
-  "help.text":
-    "📖 **Help**\n\n/status - Check server status\n/sessions - Session list\n/new - Create new session\n/help - Help",
 
   "bot.thinking": "💭 Thinking...",
   "progress.compact.activity": "{header}\n{activity}",
@@ -94,13 +71,10 @@ export const en = {
   "background.open_session_button": "Open session",
   "bot.unknown_command": "⚠️ Unknown command: {command}. Use /help to see available commands.",
   "bot.photo_downloading": "⏳ Downloading photo...",
-  "bot.photo_too_large": "⚠️ Photo is too large (max {maxSizeMb}MB)",
   "bot.photo_model_no_image": "⚠️ Current model doesn't support image input. Sending text only.",
   "bot.photo_download_error": "🔴 Failed to download photo",
-  "bot.photo_no_caption": "💡 Tip: Add a caption to describe what you want to do with this photo.",
   "bot.file_downloading": "⏳ Downloading file...",
   "bot.files_downloading": "⏳ Downloading files...",
-  "bot.file_too_large": "⚠️ File is too large (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Failed to download file",
   "bot.file_type_unsupported":
     "⚠️ This file type is not supported. Send an image, document (PDF, DOCX, PPTX), or text/code file.",
@@ -117,74 +91,33 @@ export const en = {
   "status.health.unhealthy": "Unhealthy",
   "status.line.health": "Status: {health}",
   "status.line.version": "Version: {version}",
-  "status.line.managed_yes": "Started by bot: Yes",
-  "status.line.managed_no": "Started by bot: No",
-  "status.line.pid": "PID: {pid}",
-  "status.line.uptime_sec": "Uptime: {seconds} sec",
   "status.line.mode": "Agent: {mode}",
   "status.line.model": "Model: {model}",
-  "status.line.tts": "Audio replies: {tts}",
-  "status.tts.off": "Off",
-  "status.tts.all": "All",
-  "status.tts.auto": "Auto",
   "status.agent_not_set": "not set",
   "status.project_selected": "Project: {project}",
   "status.worktree_selected": "Worktree: {worktree}",
-  "status.project_not_selected": "Project: not selected",
-  "status.project_hint": "Use /projects to select a project",
   "status.session_selected": "Current session: {title}",
   "status.session_not_selected": "Current session: not selected",
   "status.session_hint": "Use /sessions to select one or /new to create one",
   "status.server_unavailable":
     "🔴 OpenCode Server is unavailable\n\nUse /opencode_start to start the server.",
 
-  "tts.off": "🔇 Audio replies disabled.",
-  "tts.all": "🔊 Audio replies enabled for all messages.",
-  "tts.auto": "🎤 Audio replies enabled for voice/audio messages only.",
-  "tts.not_configured":
-    "🎤 Voice recognition is not configured.\n\nSet STT_API_URL and STT_API_KEY in .env to enable it.",
-  "tts.failed": "⚠️ Failed to generate audio reply.",
 
-  "settings.menu.title": "⚙️ Bot settings\nTap a setting to toggle its value:",
-  "settings.compact_output.label": "Compact output mode",
-  "settings.thinking_content.label": "Thinking content",
-  "settings.response_streaming.label": "Response streaming",
-  "settings.response_streaming.edit": "edit",
-  "settings.response_streaming.draft": "draft (experimental)",
-  "settings.diff_files.label": "Diff files",
-  "settings.assistant_footer.label": "Assistant footer",
-  "settings.tts.label": "Audio replies",
-  "settings.prompt_queue.label": "Message queue",
-  "settings.value.on": "On",
-  "settings.value.off": "Off",
   "settings.saved": "✅ Setting saved.",
 
   "projects.empty":
     "📭 No projects found.\n\nOpen a directory in OpenCode and create at least one session, then it will appear here.",
-  "projects.select": "Select a project:",
-  "projects.select_with_current": "Select a project:\n\nCurrent: 🏗 {project}",
   "projects.page_indicator": "Page {current}/{total}",
   "projects.prev_page": "⬅️ Previous",
   "projects.next_page": "Next ➡️",
-  "projects.fetch_error":
-    "🔴 OpenCode Server is unavailable or an error occurred while loading projects.",
-  "projects.page_load_error": "Cannot load this page. Please try again.",
-  "projects.selected":
-    "✅ Project selected: {project}\n\n📋 Session was reset. Use /sessions or /new for this project.",
   "projects.select_error": "🔴 Failed to select project.",
 
-  "sessions.project_not_selected":
-    "🏗 Project is not selected.\n\nFirst select a project with /projects.",
   "sessions.empty": "📭 No sessions found.\n\nCreate a new session with /new.",
-  "sessions.select": "Select a session:",
-  "sessions.select_page": "Select a session (page {page}):",
   "sessions.fetch_error":
     "🔴 OpenCode Server is unavailable or an error occurred while loading sessions.",
   "sessions.select_project_first": "🔴 Project is not selected. Use /projects.",
   "sessions.page_empty_callback": "No sessions on this page",
   "sessions.page_load_error_callback": "Cannot load this page. Please try again.",
-  "sessions.button.prev_page": "⬅️ Prev",
-  "sessions.button.next_page": "Next ➡️",
   "sessions.loading_context": "⏳ Loading context and latest messages...",
   "sessions.selected": "✅ Session selected: {title}",
   "sessions.select_error": "🔴 Failed to select session.",
@@ -217,20 +150,6 @@ export const en = {
   "messages.fork_success": "🔀 Fork created from message:\n\n{text}",
   "messages.fork_error": "❌ Failed to create fork. Please try again.",
 
-  "attach.project_not_selected":
-    "🏗 Project is not selected.\n\nFirst select a project with /projects.",
-  "attach.session_not_selected":
-    "💬 Session is not selected.\n\nFirst choose a session with /sessions.",
-  "attach.session_project_mismatch":
-    "⚠️ The selected session does not match the current project. Choose the session again via /sessions.",
-  "attach.connected": "✅ Connected to session: {title}",
-  "attach.already_connected": "ℹ️ Already connected to session: {title}",
-  "attach.status.idle_message": "Status: idle. Waiting for new events.",
-  "attach.status.busy_message": "Status: busy. New prompts are temporarily blocked.",
-  "attach.restored_question": "Recovered a pending question for this session.",
-  "attach.restored_permissions": "Recovered pending permission requests: {count}.",
-  "attach.disconnect_hint": "To disconnect, switch to another session or project.",
-  "attach.error": "🔴 Failed to attach to the current session.",
 
   "detach.project_not_selected":
     "🏗 Project is not selected.\n\nFirst select a project with /projects.",
@@ -239,8 +158,6 @@ export const en = {
     "✅ Detached from session: {title}\n\nThe OpenCode session was not stopped. If it is still running, it will continue separately. To check it later, select it again via /sessions.",
   "detach.error": "🔴 Failed to detach from the current session.",
 
-  "new.project_not_selected":
-    "🏗 Project is not selected.\n\nFirst select a project with /projects.",
   "new.created": "✅ New session created: {title}",
   "general.topic_only_prompt": "🚫 This is the General Topic of the forum — AI prompts are only allowed inside AI Topics.\n\n💬 Press New Chat to start a fresh coding Topic, or open an existing Topic from History.\n\nText is accepted here only when the bot explicitly asks you for input.",
   "new.create_error":
@@ -261,10 +178,6 @@ export const en = {
   "stop.warn_local_only": "⚠️ Event stream stopped locally, but server-side abort failed.",
   "stop.error": "🔴 Failed to stop action.\n\nEvent stream is stopped, try /abort again.",
 
-  "opencode_start.already_running_managed":
-    "⚠️ OpenCode Server is already running\n\nPID: {pid}\nUptime: {seconds} seconds",
-  "opencode_start.already_running_external":
-    "✅ OpenCode Server is already running as an external process\n\nVersion: {version}\n\nThis server was not started by bot, so /opencode-stop cannot stop it.",
   "opencode_start.already_running": "✅ OpenCode Server is already running\n\nVersion: {version}",
   "opencode_start.remote_configured": "⚠️ /opencode_start works only with a local OpenCode Server.",
   "opencode_start.starting": "🔄 Starting OpenCode Server...",
@@ -276,62 +189,25 @@ export const en = {
     "✅ OpenCode Server started successfully\n\nPID: {pid}\nVersion: {version}",
   "opencode_start.error":
     "🔴 An error occurred while starting server.\n\nCheck application logs for details.",
-  "opencode_stop.external_running":
-    "⚠️ OpenCode Server is running as an external process\n\nThis server was not started via /opencode-start.\nStop it manually or use /status to check state.",
   "opencode_stop.remote_configured": "⚠️ /opencode_stop works only with a local OpenCode Server.",
   "opencode_stop.not_running": "⚠️ OpenCode Server is not running",
-  "opencode_stop.pid_not_found":
-    "⚠️ OpenCode Server responds on port {port}, but no local process was found to stop.",
   "opencode_stop.stopping": "🛑 Stopping OpenCode Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 Failed to stop OpenCode Server\n\nError: {error}",
-  "opencode_stop.still_running": "Server is still responding after the stop request.",
   "opencode_stop.success": "✅ OpenCode Server stopped successfully",
   "opencode_stop.error":
     "🔴 An error occurred while stopping server.\n\nCheck application logs for details.",
 
   "agent.changed_message": "✅ Agent changed to: {name}",
   "agent.change_error_callback": "Failed to change agent",
-  "agent.menu.current": "Current agent: {name}\n\nSelect agent:",
-  "agent.menu.select": "Select agent:",
   "agent.menu.empty": "⚠️ No available agents",
   "agent.menu.error": "🔴 Failed to get agents list",
 
   "model.changed_message": "✅ Model changed to: {name}",
-  "model.change_error_callback": "Failed to change model",
-  "model.menu.empty": "⚠️ No available models",
-  "model.menu.select": "Select model:",
-  "model.menu.current": "Current model: {name}\n\nSelect model:",
-  "model.menu.favorites_title": "⭐ Favorites (Add models to favorites in OpenCode CLI)",
-  "model.menu.favorites_empty": "— Empty.",
-  "model.menu.recent_title": "🕘 Recent",
-  "model.menu.recent_empty": "— Empty.",
-  "model.menu.favorites_hint":
-    "ℹ️ Add models to favorites in OpenCode CLI to keep them at the top.",
-  "model.menu.error": "🔴 Failed to get models list",
-  "model.search.button": "🔍 Search",
-  "model.search.prompt": "🔍 Enter model name to search:",
-  "model.search.results_title": 'Search results for "{query}":',
-  "model.search.no_results": 'No models found for "{query}"',
-  "model.search.search_again": "↩ Search again",
-  "model.search.error": "Search failed",
-  "model.button.back": "⬅️ Back",
-  "model.providers.button": "🗂 Providers",
-  "model.providers.title": "Select provider from the list:",
-  "model.providers.empty": "⚠️ No connected providers",
-  "model.providers.error": "Failed to get providers list",
-  "model.providers.page_indicator": "Page {current}/{total}",
-  "model.providers.prev_page": "⬅️ Previous",
-  "model.providers.next_page": "Next ➡️",
-  "model.provider_models.title": "{provider} — select model:",
-  "model.provider_models.empty": "⚠️ No models available for {provider}",
-  "model.provider_models.page_indicator": "Page {current}/{total}",
 
   "variant.model_not_selected_callback": "Error: model is not selected",
   "variant.changed_message": "✅ Variant changed to: {name}",
   "variant.change_error_callback": "Failed to change variant",
   "variant.select_model_first": "⚠️ Select a model first",
-  "variant.menu.empty": "⚠️ No available variants",
-  "variant.menu.current": "Current variant: {name}\n\nSelect variant:",
   "variant.menu.error": "🔴 Failed to get variants list",
 
   "context.button.confirm": "✅ Yes, compact context",
@@ -392,11 +268,6 @@ export const en = {
   "question.summary.question": "Question {index}:\n{question}\n\n",
   "question.summary.answer": "Answer:\n{answer}\n\n",
 
-  "keyboard.agent_mode": "{emoji} {name} Agent",
-  "keyboard.context": "📊 {used} / {limit} ({percent}%)",
-  "keyboard.context_empty": "📊 0",
-  "keyboard.variant": "💭 {name}",
-  "keyboard.variant_default": "💡 Default",
   "keyboard.queued_prompt": "❌ {index}. {text}",
   "queue.added": "📥 Added to queue ({count}/{max}). It will be sent when the current task finishes.",
   "queue.full": "⚠️ Queue is full ({max}). Remove a message or wait for the current task to finish.",
@@ -407,29 +278,12 @@ export const en = {
 
   "pinned.default_session_title": "new session",
   "pinned.unknown": "Unknown",
-  "pinned.line.project": "Project: {project}",
-  "pinned.line.worktree": "Worktree: {worktree}",
   "pinned.line.model": "Model: {model}",
-  "pinned.line.attach": "Tracking: {status}",
-  "pinned.attach.status.idle": "active, idle",
-  "pinned.attach.status.busy": "active, busy",
-  "pinned.line.context": "Context: {used} / {limit} ({percent}%)",
-  "pinned.line.cost": "Cost: {cost} spent",
-  "subagent.header": "Subagent {agent}: {description}",
-  "subagent.line.status": "Status: {status}",
   "subagent.line.task": "Task: {task}",
   "subagent.line.agent": "Agent: {agent}",
   "subagent.working": "Working...",
-  "subagent.working_with_details": "Working: {details}",
   "subagent.completed": "Completed",
   "subagent.failed": "Task failed",
-  "subagent.status.pending": "pending",
-  "subagent.status.running": "running",
-  "subagent.status.completed": "completed",
-  "subagent.status.error": "error",
-  "pinned.files.title": "Files ({count}):",
-  "pinned.files.item": "  {path}{diff}",
-  "pinned.files.more": "  ... and {count} more",
 
   "tool.todo.overflow": "*({count} more tasks)*",
   "tool.file_header.write":
@@ -530,7 +384,6 @@ export const en = {
   "commands.fetch_error": "🔴 Failed to load OpenCode commands.",
   "commands.no_description": "No description",
   "commands.button.execute": "✅ Execute",
-  "commands.button.cancel": "❌ Cancel",
   "commands.confirm":
     "Confirm execution of command {command}. To run it with arguments, send the arguments as a message.",
   "commands.inactive_callback": "This command menu is inactive",
@@ -542,8 +395,6 @@ export const en = {
   "commands.button.prev_page": "⬅️ Prev",
   "commands.button.next_page": "Next ➡️",
   "commands.page_empty_callback": "No commands on this page",
-  "commands.page_load_error_callback": "Cannot load this page. Please try again.",
-  "commands.download.no_roots": "No allowed browser roots are configured.",
   "commands.download.downloading": "Downloading file...",
   "commands.download.not_found": "File not found",
   "commands.download.not_file": "Path is not a file",
@@ -557,7 +408,6 @@ export const en = {
   "skills.fetch_error": "🔴 Failed to load OpenCode skills.",
   "skills.no_description": "No description",
   "skills.button.execute": "✅ Execute",
-  "skills.button.cancel": "❌ Cancel",
   "skills.confirm":
     "Confirm execution of skill {skill}. To run it with arguments, send the arguments as a message.",
   "skills.inactive_callback": "This skill menu is inactive",
@@ -568,10 +418,8 @@ export const en = {
   "skills.button.prev_page": "⬅️ Prev",
   "skills.button.next_page": "Next ➡️",
   "skills.page_empty_callback": "No skills on this page",
-  "skills.page_load_error_callback": "Cannot load this page. Please try again.",
 
   "mcps.select": "MCP servers:",
-  "mcps.empty": "📭 No MCP servers configured.",
   "mcps.fetch_error": "🔴 Failed to load MCP servers.",
   "mcps.toggle_error": "🔴 Failed to toggle MCP server.",
   "mcps.enabling": "Enabling...",
@@ -589,14 +437,7 @@ export const en = {
   "mcps.button.back": "⬅️ Back",
   "mcps.auth_required": "This server requires authorization and cannot be enabled from the bot.",
 
-  "cmd.description.rename": "Rename current session",
 
-  "legacy.models.fetch_error": "🔴 Failed to get models list. Check server status with /status.",
-  "legacy.models.empty": "📋 No available models. Configure providers in OpenCode.",
-  "legacy.models.header": "📋 Available models:\n\n",
-  "legacy.models.no_provider_models": "  ⚠️ No available models\n",
-  "legacy.models.env_hint": "💡 To use model in .env:\n",
-  "legacy.models.error": "🔴 An error occurred while loading models list.",
 
   "stt.uncertain": "🎤 Some words may be incorrect. Review and send the corrected text to continue:",
   "stt.recognizing": "🎤 Recognizing audio...",
@@ -606,7 +447,6 @@ export const en = {
   "stt.error": "🔴 Failed to recognize audio: {error}",
   "stt.empty_result": "🎤 No speech detected in the audio message.",
 
-  "cmd.description.open": "Add a project by browsing directories",
   "worktree.branch_detached": "detached HEAD",
   "worktree.select_with_current": "Select a worktree:",
   "worktree.project_not_selected":
