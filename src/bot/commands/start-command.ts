@@ -71,25 +71,18 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
-  // In topic mode Main is a dashboard, not a conversation surface. /start must
-  // visibly bring that dashboard back to the bottom of Main instead of merely
-  // editing an old canonical message that may be far above the current viewport.
-  // Deleting the previous bot-owned anchor makes sendMainInlineKeyboard recreate
-  // and persist a fresh canonical panel while preserving its existing single-panel invariant.
-  if (!isInTopic && isTopicMode) {
-    const previousMainMessageId = settingsStore.getMainNavigationMessageId(chatId);
-    if (previousMainMessageId) {
-      await ctx.api.deleteMessage(chatId, previousMainMessageId).then(() => {
-        logger.info(`[TelegramKeyboard] /start retired previous Main navigation anchor for resurfacing: chat=${chatId}, message=${previousMainMessageId}`);
-      }).catch((error) => {
-        logger.debug(`[TelegramKeyboard] /start could not pre-delete previous Main navigation anchor; refresh will recover if it is stale: chat=${chatId}, message=${previousMainMessageId}`, error);
-      });
-    }
+  // /start in All/root is intentionally a replacement, not an edit/refresh.
+  // The keyboard manager creates and pins the new root panel first, persists it
+  // as the canonical Main anchor, then retires the previous bot-owned anchor.
+  // If any creation/pin/persistence step fails, the previous good panel remains.
+  if (!isInTopic) {
+    const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId);
+    logger.info(`[TelegramKeyboard] /start root Main replacement finished: chat=${chatId}, success=${replaced}, mode=${isTopicMode ? "topic-aware" : "normal"}`);
+    return;
   }
 
-  // Main owns one bot-controlled persistent navigation anchor. Do not use
-  // unpinAllChatMessages here: that would also remove unrelated user pins and
-  // would make every /start a destructive pin-list mutation.
+  // A /start typed inside a coding Topic must not create/pin a panel in that
+  // Topic. Refresh the canonical Main/All anchor through the unscoped API only.
   await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
-  logger.info(`[TelegramKeyboard] /start rendered persistent Main status + InlineKeyboard navigation in one message: chat=${chatId}, mode=${isTopicMode ? "topic-aware" : "normal"}, thread=General/native-default`);
+  logger.info(`[TelegramKeyboard] /start inside Topic refreshed canonical Main/All navigation without Topic pin leakage: chat=${chatId}, thread=${inboundThreadId}`);
 }
