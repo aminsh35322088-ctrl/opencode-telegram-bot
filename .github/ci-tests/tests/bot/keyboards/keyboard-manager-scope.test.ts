@@ -32,10 +32,7 @@ const THREAD_ID = 42;
 const SESSION_ID = "sess-scope-1";
 
 function keyboardTexts(keyboard: unknown): string[] {
-  const markup = keyboard as {
-    keyboard?: Array<Array<{ text?: string }>>;
-    inline_keyboard?: Array<Array<{ text?: string }>>;
-  };
+  const markup = keyboard as { keyboard?: Array<Array<{ text?: string }>>; inline_keyboard?: Array<Array<{ text?: string }>> };
   const rows = markup.keyboard ?? markup.inline_keyboard ?? [];
   return rows.flat().map((button) => button?.text ?? "");
 }
@@ -56,9 +53,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
 
   it("bindTopic outside any runtime context still seeds the Topic's own persisted model, not the ambient default", () => {
     mocks.getStoredModel.mockReturnValue({ providerID: "p", modelID: "global-default", name: "Global Default" });
-    mocks.getTopicRuntimeStateSync.mockReturnValue({
-      settings: { model: { providerID: "p2", modelID: "topicone" } },
-    });
+    mocks.getTopicRuntimeStateSync.mockReturnValue({ settings: { model: { providerID: "p2", modelID: "topicone" } } });
 
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-topic-model");
     const texts = keyboardTexts(keyboardManager.getKeyboard("session-topic-model"));
@@ -70,9 +65,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
 
   it("re-syncs a stale keyboard state to the Topic's persisted model on the next bind", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
-    mocks.getTopicRuntimeStateSync.mockReturnValue({
-      settings: { model: { providerID: "p3", modelID: "persisted-model", name: "Persisted" } },
-    });
+    mocks.getTopicRuntimeStateSync.mockReturnValue({ settings: { model: { providerID: "p3", modelID: "persisted-model", name: "Persisted" } } });
 
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
     const texts = keyboardTexts(keyboardManager.getKeyboard("session-resync"));
@@ -91,7 +84,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect((keyboard as { is_persistent?: boolean }).is_persistent).toBe(true);
   });
 
-  it("returns Topic controls as InlineKeyboardMarkup inside the topic runtime context", () => {
+  it("returns the original Topic Reply Keyboard inside the topic runtime context", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     const keyboard = runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.getKeyboard());
     const texts = keyboardTexts(keyboard);
@@ -100,21 +93,20 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("⏸️ Pause");
     expect(texts).not.toContain("▶️ Resume");
     expect(texts).not.toContain("🛑 Abort");
-    expect((keyboard as { inline_keyboard?: unknown }).inline_keyboard).toBeDefined();
-    expect((keyboard as { keyboard?: unknown }).keyboard).toBeUndefined();
+    expect((keyboard as { keyboard?: unknown }).keyboard).toBeDefined();
+    expect((keyboard as { inline_keyboard?: unknown }).inline_keyboard).toBeUndefined();
+    expect((keyboard as { is_persistent?: boolean }).is_persistent).toBeUndefined();
   });
 
   it("shows execution controls only while the Topic session is actively running", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
-    const runningKeyboard = keyboardManager.getKeyboard(SESSION_ID);
-    const runningTexts = keyboardTexts(runningKeyboard);
+    const runningTexts = keyboardTexts(keyboardManager.getKeyboard(SESSION_ID));
     expect(runningTexts).toContain("⏸️ Pause");
     expect(runningTexts).toContain("🛑 Abort");
 
     mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
-    const idleKeyboard = keyboardManager.getKeyboard(SESSION_ID);
-    const idleTexts = keyboardTexts(idleKeyboard);
+    const idleTexts = keyboardTexts(keyboardManager.getKeyboard(SESSION_ID));
     expect(idleTexts).not.toContain("⏸️ Pause");
     expect(idleTexts).not.toContain("▶️ Resume");
     expect(idleTexts).not.toContain("🛑 Abort");
@@ -124,14 +116,13 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     mocks.isChatPaused.mockReturnValue(true);
     mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
-    const keyboard = keyboardManager.getKeyboard(SESSION_ID);
-    const texts = keyboardTexts(keyboard);
+    const texts = keyboardTexts(keyboardManager.getKeyboard(SESSION_ID));
     expect(texts).toContain("▶️ Resume");
     expect(texts).toContain("🛑 Abort");
     expect(texts).not.toContain("⏸️ Pause");
   });
 
-  it("sendKeyboardUpdate sends Topic inline controls to the exact topic thread without ReplyKeyboard leakage", async () => {
+  it("sendKeyboardUpdate sends the Topic Reply Keyboard to the exact topic thread", async () => {
     const sendMessage = vi.fn().mockResolvedValue({});
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
@@ -140,8 +131,8 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(options.message_thread_id).toBe(THREAD_ID);
     expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
-    expect((options.reply_markup as { inline_keyboard?: unknown }).inline_keyboard).toBeDefined();
-    expect((options.reply_markup as { keyboard?: unknown }).keyboard).toBeUndefined();
+    expect((options.reply_markup as { keyboard?: unknown }).keyboard).toBeDefined();
+    expect((options.reply_markup as { inline_keyboard?: unknown }).inline_keyboard).toBeUndefined();
   });
 
   it("sendKeyboardUpdate outside a Topic routes to the persistent Main panel", async () => {
