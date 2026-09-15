@@ -81,16 +81,16 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
       options.compactOutputMode ?? false,
       options.currentModel ?? currentModel,
     );
-    // Legacy Topic reply keyboards are intentionally non-persistent. Telegram
-    // clients can treat ReplyKeyboardMarkup as chat input state across private
-    // bot Topics, so a persistent Topic keyboard can overwrite Main/All.
+    // Legacy Topic reply-keyboard shape is kept only for stale-button parsing
+    // and compatibility tests. It must never be persistent because Telegram
+    // clients can carry ReplyKeyboardMarkup input state across private bot Topics.
     return keyboard.resized();
   }
 
   addMainControls(keyboard);
-  // Main/All owns the one persistent ReplyKeyboardMarkup for the chat. Topic
-  // controls use InlineKeyboardMarkup instead, so switching Topics cannot replace
-  // this navigation keyboard or make Telegram's native keyboard launcher vanish.
+  // Main/All owns the only persistent ReplyKeyboardMarkup in the chat. AI Topic
+  // controls are InlineKeyboardMarkup, so switching Topic tabs cannot overwrite
+  // this 2x2 navigation keyboard or hide Telegram's keyboard launcher.
   return keyboard.resized().persistent();
 }
 
@@ -114,16 +114,8 @@ export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLab
   });
 }
 
-/** Legacy Reply Keyboard shape kept for compatibility and stale-button routing. */
-export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): Keyboard {
-  return buildMainKeyboard(
-    options.currentModel ?? { providerID: "", modelID: "" },
-    { ...options, isTopic: true },
-  );
-}
-
-/** Topic-local controls. Inline keyboards are attached to a Topic message and do not replace Main/All input state. */
-export function createTopicInlineKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): InlineKeyboard {
+/** Topic-local controls. Inline keyboards are message-scoped and cannot replace Main/All input state. */
+export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): InlineKeyboard {
   const paused = options.paused ?? false;
   const running = options.running ?? false;
   const compactOutputMode = options.compactOutputMode ?? false;
@@ -145,6 +137,9 @@ export function createTopicInlineKeyboard(options: { paused?: boolean; running?:
     .text(MAIN_BUTTONS.deleteChat, TOPIC_CONTROL_CALLBACKS.deleteChat)
     .text(MAIN_BUTTONS.topicSettings, TOPIC_CONTROL_CALLBACKS.topicSettings);
 }
+
+/** Backwards-compatible alias for code/tests that imported the explicit Inline name. */
+export const createTopicInlineKeyboard = createTopicKeyboard;
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
 export function createMainKeyboard(_currentAgent: string, currentModel: ModelInfo, _contextInfo?: ContextInfo, _variantName?: string, queuedPromptLabels?: string[], paused?: boolean, running?: boolean): Keyboard;
