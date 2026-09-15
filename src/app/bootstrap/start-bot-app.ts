@@ -5,7 +5,7 @@ import { createScheduledTaskDeliverySender } from "../../bot/messages/scheduled-
 import { config } from "../../config.js";
 import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
-import { flushSettings, loadSettings } from "../stores/settings-store.js";
+import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
@@ -73,10 +73,22 @@ export async function startBotApp(): Promise<void> {
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
 
-  // Main navigation is intentionally preserved across restarts. It is a bot-owned
-  // root/All message, and KeyboardManager re-validates the exact message before
-  // pinning it. Topic-scoped messages are rejected there, so startup must not
-  // globally unpin the canonical Main anchor.
+  // Re-pin only the exact bot-owned Main navigation anchors. These IDs are
+  // persisted exclusively by KeyboardManager's root/All path; real Topic
+  // messages are rejected before persistence, so coding Topic pins are never
+  // touched here. This also repairs an unpinned Main panel immediately after a
+  // restart instead of waiting for the user to run /start again.
+  const mainNavigationMessageIds = getGlobalSettings().mainNavigationMessageIds ?? {};
+  for (const [chatIdText, messageId] of Object.entries(mainNavigationMessageIds)) {
+    const chatId = Number(chatIdText);
+    if (!Number.isSafeInteger(chatId) || typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) continue;
+    try {
+      await bot.api.pinChatMessage(chatId, messageId, { disable_notification: true });
+      logger.info(`[TelegramKeyboard] Startup restored Main navigation pin in All/root: chat=${chatId}, message=${messageId}`);
+    } catch (error) {
+      logger.warn(`[TelegramKeyboard] Startup could not restore Main navigation pin: chat=${chatId}, message=${messageId}`, error);
+    }
+  }
 
   const botInfo = await bot.api.getMe();
   logger.info(`[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`);
