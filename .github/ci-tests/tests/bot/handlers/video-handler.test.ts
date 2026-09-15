@@ -56,7 +56,7 @@ describe("bot/handlers/video-handler", () => {
 
     expect(downloadMock).toHaveBeenCalledWith(ctx.api, "video-1");
     expect(extractMock).toHaveBeenCalledWith(expect.any(Buffer), "documents/file.mp4");
-    const [text, , fileParts] = processPromptMock.mock.calls[0] ?? [];
+    const [, text, , fileParts] = processPromptMock.mock.calls[0] ?? [];
     expect(text).toContain("frame by frame");
     expect(fileParts).toHaveLength(2);
     expect(fileParts[0]).toMatchObject({ type: "file", mime: "image/jpeg", filename: "frame-01.jpg" });
@@ -67,7 +67,7 @@ describe("bot/handlers/video-handler", () => {
     const { ctx } = createVideoContext("summarize this clip");
     const { deps, processPromptMock } = createDeps();
     await handleVideoMessage(ctx, deps);
-    expect(processPromptMock.mock.calls[0]?.[0]).toBe("summarize this clip");
+    expect(processPromptMock.mock.calls[0]?.[1]).toBe("summarize this clip");
   });
 
   it("rejects videos above the Telegram bot download limit", async () => {
