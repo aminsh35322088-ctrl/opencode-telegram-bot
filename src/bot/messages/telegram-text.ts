@@ -45,7 +45,7 @@ interface EditBotTextParams {
 }
 
 interface SendRenderedBotPartParams {
-  api: SendMessageApi;
+  api: SendMessageApi & Partial<SendDraftApi>;
   chatId: Parameters<SendMessageApi["sendMessage"]>[0];
   part: TelegramRenderedPart;
   options?: TelegramSendMessageOptions;
@@ -54,7 +54,7 @@ interface SendRenderedBotPartParams {
 }
 
 interface EditRenderedBotPartParams {
-  api: EditMessageApi;
+  api: EditMessageApi & Partial<SendMessageApi & SendDraftApi>;
   chatId: Parameters<EditMessageApi["editMessageText"]>[0];
   messageId: Parameters<EditMessageApi["editMessageText"]>[1];
   part: TelegramRenderedPart;
@@ -76,6 +76,12 @@ interface RenderedPartCompleteResult extends RenderedPartSendResult {
 }
 
 export { getTelegramRenderedPartSignature };
+
+const IMPLICIT_THINKING_DRAFT_MIN = 1_500_000_000;
+const IMPLICIT_THINKING_DRAFT_MAX = 2_000_000_000;
+const THINKING_DRAFT_TTL_MS = 5 * 60 * 1000;
+let nextImplicitThinkingDraftId = IMPLICIT_THINKING_DRAFT_MIN;
+const activeThinkingDrafts = new Map<string, number>();
 
 function resolveParseMode(format: TelegramTextFormat | undefined): "MarkdownV2" | undefined {
   if (format === "markdown_v2") {
@@ -105,6 +111,10 @@ function isPlainPart(part: TelegramRenderedPart): boolean {
   return part.source === "plain" || part.blocks.length === 0;
 }
 
+function isThinkingPart(part: TelegramRenderedPart): boolean {
+  return part.blocks.some((block) => block.type === "thinking");
+}
+
 function plainSignature(text: string, entities?: MessageEntity[]): string {
   return getTelegramRenderedPartSignature({
     blocks: [],
@@ -125,6 +135,65 @@ function withPlainEntities<T extends { entities?: MessageEntity[] } | undefined>
 
   return { ...(options ?? {}), entities: part.entities } as T;
 }
+
+function hasRichDraftApi(api: Partial<SendDraftApi>): api is SendDraftApi {
+  return (
+    typeof api.sendMessageDraft === "function" &&
+    typeof api.sendRichMessageDraft === "function"
+  );
+}
+
+function hasSendMessageApi(api: Partial<SendMessageApi>): api is SendMessageApi {
+  return typeof api.sendMessage === "function" && typeof api.sendRichMessage === "function";
+}
+
+function thinkingDraftKey(chatId: Parameters<SendMessageApi["sendMessage"]>[0], draftId: number): string {
+  return `${String(chatId)}:${draftId}`;
+}
+
+function cleanupExpiredThinkingDrafts(now = Date.now()): void {
+  for (const [key, expiresAt] of activeThinkingDrafts) {
+    if (expiresAt <= now) activeThinkingDrafts.delete(key);
+  }
+}
+
+function allocateThinkingDraftId(): number {
+  const draftId = nextImplicitThinkingDraftId;
+  nextImplicitThinkingDraftId += 1;
+  if (nextImplicitThinkingDraftId >= IMPLICIT_THINKING_DRAFT_MAX) {
+    nextImplicitThinkingDraftId = IMPLICIT_THINKING_DRAFT_MIN;
+  }
+  return draftId;
+}
+
+function markThinkingDraft(
+  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
+  draftId: number,
+): void {
+  cleanupExpiredThinkingDrafts();
+  activeThinkingDrafts.set(thinkingDraftKey(chatId, draftId), Date.now() + THINKING_DRAFT_TTL_MS);
+}
+
+function consumeThinkingDraft(
+  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
+  draftId: number,
+): boolean {
+  cleanupExpiredThinkingDrafts();
+  return activeThinkingDrafts.delete(thinkingDraftKey(chatId, draftId));
+}
+
+function isActiveThinkingDraft(
+  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
+  draftId: number,
+): boolean {
+  cleanupExpiredThinkingDrafts();
+  return activeThinkingDrafts.has(thinkingDraftKey(chatId, draftId));
+}
+
+const GENERATION_DRAFT_OPTIONS = {
+  can_stop: true,
+  keep_on_stop: true,
+} as const;
 
 export async function sendBotText({
   api,
@@ -158,6 +227,32 @@ export async function sendRenderedBotPart({
     blockCount: part.blocks.length,
     fallbackTextLength: part.fallbackText.length,
   });
+
+  if (isThinkingPart(part) && hasRichDraftApi(api)) {
+    const draftId = allocateThinkingDraftId();
+    try {
+      await api.sendRichMessageDraft(
+        chatId,
+        draftId,
+        { blocks: part.blocks },
+        GENERATION_DRAFT_OPTIONS,
+      );
+      markThinkingDraft(chatId, draftId);
+      return {
+        messageId: draftId,
+        deliveredSignature: getTelegramRenderedPartSignature(part),
+      };
+    } catch (error) {
+      if (!allowPlainFallback || !isTelegramBadRequestError(error)) throw error;
+      logger.warn("[Bot] Native thinking draft failed, falling back to plain reasoning text", error);
+      const sentMessage = await api.sendMessage(chatId, part.fallbackText, rawOptions);
+      return {
+        messageId: sentMessage.message_id,
+        deliveredSignature: plainSignature(part.fallbackText),
+        degradedToPlain: true,
+      };
+    }
+  }
 
   if (isPlainPart(part)) {
     const sentMessage = await api.sendMessage(
@@ -213,6 +308,41 @@ export async function sendRenderedBotPart({
   }
 }
 
+async function persistThinkingDraftFinal(
+  api: SendMessageApi,
+  chatId: Parameters<SendMessageApi["sendMessage"]>[0],
+  part: TelegramRenderedPart,
+  options: TelegramEditMessageOptions | undefined,
+): Promise<RenderedPartDeliveryResult> {
+  const rawOptions = stripRichFormattingOptions(options as TelegramSendMessageOptions | undefined);
+
+  if (isPlainPart(part)) {
+    await api.sendMessage(chatId, part.fallbackText, withPlainEntities(rawOptions, part));
+    return { deliveredSignature: plainSignature(part.fallbackText, part.entities) };
+  }
+
+  try {
+    await api.sendRichMessage(
+      chatId,
+      { blocks: part.blocks },
+      rawOptions as TelegramSendRichOptions,
+    );
+    return { deliveredSignature: getTelegramRenderedPartSignature(part) };
+  } catch (error) {
+    if (!isTelegramBadRequestError(error)) throw error;
+
+    logger.warn("[Bot] Final rich reasoning send failed, retrying as plain text", error);
+    const chunks = chunkPlainText(part.fallbackText);
+    for (const chunk of chunks) {
+      await api.sendMessage(chatId, chunk.fallbackText, rawOptions);
+    }
+    return {
+      deliveredSignature: plainSignature(part.fallbackText),
+      degradedToPlain: true,
+    };
+  }
+}
+
 export async function editRenderedBotPart({
   api,
   chatId,
@@ -229,6 +359,36 @@ export async function editRenderedBotPart({
     blockCount: part.blocks.length,
     fallbackTextLength: part.fallbackText.length,
   });
+
+  if (isActiveThinkingDraft(chatId, messageId)) {
+    if (isThinkingPart(part) && hasRichDraftApi(api)) {
+      await api.sendRichMessageDraft(
+        chatId,
+        messageId,
+        { blocks: part.blocks },
+        GENERATION_DRAFT_OPTIONS,
+      );
+      markThinkingDraft(chatId, messageId);
+      return { deliveredSignature: getTelegramRenderedPartSignature(part) };
+    }
+
+    if (!hasSendMessageApi(api)) {
+      throw new Error("Bot API cannot persist finalized native thinking draft");
+    }
+
+    consumeThinkingDraft(chatId, messageId);
+    return persistThinkingDraftFinal(api, chatId, part, options);
+  }
+
+  // If draft transport is unavailable, a thinking block must degrade to plain
+  // edit text because Telegram only accepts the native block in rich drafts.
+  if (isThinkingPart(part)) {
+    await api.editMessageText(chatId, messageId, part.fallbackText, rawOptions);
+    return {
+      deliveredSignature: plainSignature(part.fallbackText),
+      degradedToPlain: true,
+    };
+  }
 
   if (isPlainPart(part)) {
     await api.editMessageText(
@@ -299,13 +459,23 @@ export async function sendDraftBotPart({
   });
 
   if (isPlainPart(part)) {
-    await api.sendMessageDraft(chatId, draftId, part.fallbackText);
+    await api.sendMessageDraft(
+      chatId,
+      draftId,
+      part.fallbackText,
+      GENERATION_DRAFT_OPTIONS,
+    );
     return {
       deliveredSignature: plainSignature(part.fallbackText),
     };
   }
 
-  await api.sendRichMessageDraft(chatId, draftId, { blocks: part.blocks });
+  await api.sendRichMessageDraft(
+    chatId,
+    draftId,
+    { blocks: part.blocks },
+    GENERATION_DRAFT_OPTIONS,
+  );
   return {
     deliveredSignature: getTelegramRenderedPartSignature(part),
   };
