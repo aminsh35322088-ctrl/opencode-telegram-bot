@@ -33,6 +33,10 @@ const mocked = vi.hoisted(() => ({
   modelCatalogStartMock: vi.fn(),
   modelCatalogStopMock: vi.fn(),
   deliverySenderMock: vi.fn(),
+  listTopicBindingsMock: vi.fn(async () => []),
+  reconcileWorkspacesMock: vi.fn(async () => []),
+  listTopicRuntimeStatesMock: vi.fn(async () => []),
+  removeTopicRuntimeStateMock: vi.fn(async () => {}),
   watchdogStartMock: vi.fn(),
   watchdogStopMock: vi.fn(),
   config: {
@@ -136,6 +140,19 @@ vi.mock("../../src/runtime/service/manager.js", () => ({
 vi.mock("../../src/runtime/service/env.js", () => ({
   getServiceStateFilePathFromEnv: mocked.getServiceStateFilePathFromEnvMock,
   isServiceChildProcess: mocked.isServiceChildProcessMock,
+}));
+
+vi.mock("../../src/app/services/telegram-topic-store.js", () => ({
+  listTelegramTopicBindings: mocked.listTopicBindingsMock,
+}));
+
+vi.mock("../../src/app/services/telegram-topic-workspace-service.js", () => ({
+  reconcileTopicWorkspaces: mocked.reconcileWorkspacesMock,
+}));
+
+vi.mock("../../src/app/stores/topic-runtime-state-store.js", () => ({
+  listTopicRuntimeStates: mocked.listTopicRuntimeStatesMock,
+  removeTopicRuntimeState: mocked.removeTopicRuntimeStateMock,
 }));
 
 vi.mock("../../src/utils/logger.js", () => ({

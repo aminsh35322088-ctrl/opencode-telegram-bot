@@ -1,4 +1,3 @@
-import path from "node:path";
 import { listImageChats, removeImageChat } from "../stores/image-chat-store.js";
 import { stopImageChat } from "./image-chat-service.js";
 import { flushAppState } from "../stores/app-state-store.js";
@@ -11,18 +10,27 @@ import { clearAllInteractionState } from "../managers/interaction-manager.js";
 import { detachAttachedSession } from "./attach-service.js";
 import { deleteTelegramTopicSession } from "./telegram-topic-delete-service.js";
 import { listTelegramTopicBindings, type TelegramTopicBinding } from "./telegram-topic-store.js";
-import { getTelegramTopicWorkspaceRoot } from "./telegram-topic-workspace-service.js";
+import { getTelegramTopicWorkspaceRoot, reconcileTopicWorkspaces } from "./telegram-topic-workspace-service.js";
 import { clearAllMemories, listMemories } from "./memory-service.js";
 import { clearSessionDirectoryCache, flushSettings, resetGlobalSettingsForFactory } from "../stores/settings-store.js";
 import { clearAllTopicRuntimeStates, listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
 import { getPersistentStatePaths } from "./persistent-state-registry.js";
 import { logger } from "../../utils/logger.js";
 
-async function removeOrphanedTopicWorkspaces(chatId?: number): Promise<number> {
-  const fs = await import("fs/promises"); const root = getTelegramTopicWorkspaceRoot(); let removed = 0; let entries: import("fs").Dirent[] = [];
-  try { entries = await fs.readdir(root, { withFileTypes: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0; throw error; }
-  for (const entry of entries) { if (!entry.isDirectory() || (chatId !== undefined && entry.name !== String(chatId)) || !/^-?\d+$/.test(entry.name)) continue; await fs.rm(path.join(root, entry.name), { recursive: true, force: true }); removed += 1; }
-  return removed;
+// Binding-aware sweep: workspace directories of still-bound topics are kept,
+// everything unreferenced (failed/aborted/interrupted deletes) is removed.
+// Runs unconditionally, because gating it on "no delete failed" leaked orphan
+// workspaces forever whenever a single delete errored.
+async function removeOrphanedTopicWorkspaces(): Promise<number> {
+  try {
+    const bindings = await listTelegramTopicBindings();
+    const referenced = new Set(bindings.map((binding) => binding.directory));
+    const removed = await reconcileTopicWorkspaces(referenced);
+    return removed.length;
+  } catch (error) {
+    logger.error("[TelegramReset] Failed to reconcile orphaned topic workspaces", error);
+    return 0;
+  }
 }
 async function deleteBindings(api: Api, bindings: TelegramTopicBinding[]): Promise<{ deleted: number; failed: number }> {
   let deleted = 0; let failed = 0;
@@ -39,8 +47,12 @@ async function deleteImageTopics(api: Api): Promise<{ deleted: number; failed: n
     await stopImageChat(topic.chatID, topic.threadID);
     try {
       await api.deleteForumTopic(topic.chatID, topic.threadID);
-      await removeImageChat(topic.chatID, topic.threadID); deleted++;
-    } catch { failed++; logger.warn("[TelegramReset] Could not remove an Image Topic; its binding was retained"); }
+    } catch (error) {
+      failed++;
+      logger.warn("[TelegramReset] Could not delete the Image Topic in Telegram; removing local state anyway", error);
+    }
+    try { await removeImageChat(topic.chatID, topic.threadID); deleted++; }
+    catch (error) { failed++; logger.error("[TelegramReset] Could not remove the Image Chat state", error); }
   }
   return { deleted, failed };
 }
@@ -50,7 +62,7 @@ async function verifyLocalHistoryState(): Promise<{ bindings: number; runtimeSta
 function clearTransientState(reason: string): void { promptQueue.clearAll(reason); promptAttachment.clearAll(reason); clearAllInteractionState(reason); detachAttachedSession(reason); }
 
 export async function resetHistory(api: Api, _chatId: number): Promise<{ deleted: number; failed: number; orphanedWorkspaces: number; memoriesCleared: number }> {
-  const bindings = await listTelegramTopicBindings(); const result = await deleteBindings(api, bindings); const images = await deleteImageTopics(api); result.deleted += images.deleted; result.failed += images.failed; const orphanedWorkspaces = result.failed === 0 ? await removeOrphanedTopicWorkspaces() : 0; await clearAllTopicRuntimeStates(); clearSessionDirectoryCache(); clearTransientState("history_reset"); const memoriesCleared = await clearAllMemories();
+  const bindings = await listTelegramTopicBindings(); const result = await deleteBindings(api, bindings); const images = await deleteImageTopics(api); result.deleted += images.deleted; result.failed += images.failed; const orphanedWorkspaces = await removeOrphanedTopicWorkspaces(); await clearAllTopicRuntimeStates(); clearSessionDirectoryCache(); clearTransientState("history_reset"); const memoriesCleared = await clearAllMemories();
   if (result.failed > 0) return { ...result, orphanedWorkspaces, memoriesCleared };
   const remainingSessions = await verifyManagedSessionsDeleted(bindings); const state = await verifyLocalHistoryState();
   if (remainingSessions > 0 || state.bindings > 0 || state.runtimeStates > 0 || state.memories > 0 || state.workspaces > 0) { logger.error(`[TelegramReset] History reset verification FAILED: remainingSessions=${remainingSessions}, bindings=${state.bindings}, runtimeStates=${state.runtimeStates}, memories=${state.memories}, workspaces=${state.workspaces}`); return { deleted: result.deleted, failed: 1, orphanedWorkspaces, memoriesCleared }; }
@@ -59,9 +71,10 @@ export async function resetHistory(api: Api, _chatId: number): Promise<{ deleted
 async function clearFactoryPersistentState(): Promise<void> { await flushAppState(); const fs = await import("fs/promises"); for (const statePath of getPersistentStatePaths()) await fs.rm(statePath, { recursive: true, force: true }); delete process.env.GITHUB_TOKEN; logger.info(`[TelegramReset] Cleared registered Bot persistent state and Model Center preferences`); }
 export async function factoryReset(api: Api, chatId: number): Promise<{ deleted: number; failed: number; orphanedWorkspaces: number; memoriesCleared: number }> {
   const bindings = await listTelegramTopicBindings(); const result = await deleteBindings(api, bindings); const images = await deleteImageTopics(api); result.deleted += images.deleted; result.failed += images.failed;
-  if (result.failed > 0) { logger.error(`[TelegramReset] Factory reset aborted before config purge: deleted=${result.deleted}, failed=${result.failed}, total=${bindings.length}`); return { ...result, orphanedWorkspaces: 0, memoriesCleared: 0 }; }
+  const orphanedWorkspacesAtAbort = await removeOrphanedTopicWorkspaces();
+  if (result.failed > 0) { logger.error(`[TelegramReset] Factory reset aborted before config purge: deleted=${result.deleted}, failed=${result.failed}, total=${bindings.length}, orphanedWorkspaces=${orphanedWorkspacesAtAbort}`); return { ...result, orphanedWorkspaces: orphanedWorkspacesAtAbort, memoriesCleared: 0 }; }
   if (await verifyManagedSessionsDeleted(bindings) > 0) { logger.error(`[TelegramReset] Factory reset stopped before clearing persistent state: remainingManagedSessions>0`); return { deleted: result.deleted, failed: 1, orphanedWorkspaces: 0, memoriesCleared: 0 }; }
-  const memoriesCleared = (await listMemories()).length; const orphanedWorkspaces = await removeOrphanedTopicWorkspaces(); await clearAllTopicRuntimeStates(); clearTransientState("factory_reset"); await clearFactoryPersistentState(); resetGlobalSettingsForFactory(); await flushSettings();
+  const memoriesCleared = (await listMemories()).length; const orphanedWorkspaces = orphanedWorkspacesAtAbort + (await removeOrphanedTopicWorkspaces()); await clearAllTopicRuntimeStates(); clearTransientState("factory_reset"); await clearFactoryPersistentState(); resetGlobalSettingsForFactory(); await flushSettings();
   const state = await verifyLocalHistoryState();
   if (state.bindings > 0 || state.runtimeStates > 0 || state.memories > 0 || state.workspaces > 0) { logger.error(`[TelegramReset] Factory reset verification FAILED: bindings=${state.bindings}, runtimeStates=${state.runtimeStates}, memories=${state.memories}, workspaces=${state.workspaces}`); return { deleted: result.deleted, failed: 1, orphanedWorkspaces, memoriesCleared }; }
   logger.warn(`[TelegramReset] Factory reset VERIFIED globally: requestedChat=${chatId}, deleted=${result.deleted}/${bindings.length}, bindings=0, runtimeStates=0, memories=0, workspaces=0, orphanedWorkspaces=${orphanedWorkspaces}, memoriesCleared=${memoriesCleared}, settings=fresh, modelCenter=fresh`); return { ...result, orphanedWorkspaces, memoriesCleared };

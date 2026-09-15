@@ -157,7 +157,11 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
       if (data === "ichat:delete" || text === "/delete_topic" || text === "🗑️ Delete Chat") { await send(ctx, "Delete this Image Chat and its Telegram messages?", new InlineKeyboard().text("Delete permanently", "ichat:delete_confirm").text("Cancel", "ichat:settings")); return; }
       if (data === "ichat:delete_confirm") {
         clearAlbums(state.chatID, state.threadID); await stopImageChat(state.chatID, state.threadID);
-        await ctx.api.deleteForumTopic(state.chatID, state.threadID); await removeImageChat(state.chatID, state.threadID); return;
+        // Telegram deletion is best-effort: the Image Chat state must always
+        // be dropped, otherwise stale entries accumulate forever.
+        try { await ctx.api.deleteForumTopic(state.chatID, state.threadID); }
+        catch (error) { logger.warn(`[ImageChat] Telegram topic delete failed; removing local Image Chat state anyway: chat=${state.chatID}, thread=${state.threadID}`, error); }
+        await removeImageChat(state.chatID, state.threadID); return;
       }
       if (data === "ichat:new" || /^\/new_design(?:@\w+)?$/.test(text) || data === "ichat:adopt") {
         clearAlbums(state.chatID, state.threadID); await stopImageChat(state.chatID, state.threadID);

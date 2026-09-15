@@ -5,6 +5,8 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ## [Unreleased]
 
 ### Added
+- `github-ci` tool accepts an explicit `repo` argument so it works from any workspace, not only inside a git checkout.
+- Startup orphan reconciliation: every boot deletes topic workspace directories and Topic runtime states that no live binding owns, converging state left behind by interrupted or partial deletes (previously these leaked forever on the persistent volume).
 - `github-ci` OpenCode tool: bounded GitHub Actions companion (`status`/`watch`/`logs`/`verify`) that reads CI run state and failed-test logs through `gh` with hard per-call timeouts, so test validation always returns output and never hangs or goes silent on constrained runtimes. `verify` combines waiting and auto-fetching failure logs in one bounded call.
 - Bounded CI test-runner resources: the vitest suite runs in process forks with hard per-file isolation and a fixed worker cap, keeping several test files running concurrently at a deterministic memory envelope; per-file singleton leakage can no longer depend on execution order.
 - `validation-gateway-policy` coverage for the intentionally allowed baked toolchain binaries (`tsc`/`vitest`/`eslint`), keeping installer commands denied.
@@ -13,6 +15,10 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 - `general.topic_only_prompt` message in all supported languages.
 
 ### Fixed
+- `Delete Chat`, history reset, and factory reset now always complete local cleanup: a failing `deleteForumTopic` call no longer aborts workspace deletion, binding removal, runtime-state purge, or session cleanup.
+- History/factory reset workspace sweep is now binding-aware and runs unconditionally, so workspace folders of deleted Topics are actually removed from disk even after a partially failed reset.
+- Image Chat deletion removes local state even when the Telegram topic deletion fails, so stale Image Chat entries no longer accumulate.
+- Log storage is bounded: `LOG_MAX_MB` (default 12) rotates oversized files, `LOG_MAX_TOTAL_MB` (default 80) caps total retained bytes, retention prunes rotated and `.gz` archives, and per-event Topic telemetry moved to debug level so info logs no longer flood the volume.
 - Reply Keyboard pattern matching no longer strips the U+FE0F variation selector from labels without normalizing the regex literals too: `⚙️ Settings`, `⚙️ Main Settings`, `🗑️ Delete Chat`, `⏸️ Pause` and `▶️ Resume` are recognized as keyboard controls again instead of leaking into AI prompts.
 - CI-only test suite synchronized with the current source: app-state storage layout (`app-state.json` with nested `settings`), 20 MB file limit, 20 s monitor interval, STT Groq `verbose_json`/`uncertain` results, MCP catalog keyboard, Main keyboard without a model button, `/start` inline-anchor behavior, concurrent-topic `/new` creation, sessions Home navigation row, auto-restart listener lookup order, and Image Chat manual default mode.
 - Broken CI-only test files repaired: missing `it()` header in `interaction-guard.test.ts` (syntax error that failed the whole file), missing `INLINE_MENU_CANCEL_PREFIX` export in the `settings-model-selection` inline-menu mock, and `node:child_process` mocks missing `execFile` (service manager suite).

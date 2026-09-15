@@ -58,18 +58,31 @@ function asError(error: unknown): Error {
 export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopicBinding): Promise<void> {
   const context = { chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId, directory: binding.directory };
   topicTelemetry("delete_started", context);
-  if (!isTelegramTopicWorkspace(binding.directory)) {
+  const cleanupErrors: Error[] = [];
+
+  // The unmanaged-directory guard only protects the filesystem rm step. Binding,
+  // runtime-state, session, and keyboard cleanup must always run, or a Topic
+  // with a stale directory permanently refuses deletion and leaks workspace
+  // state files on the volume.
+  const managedWorkspace = isTelegramTopicWorkspace(binding.directory);
+  if (!managedWorkspace) {
     topicTelemetry("delete_refused_unmanaged_workspace", context);
-    throw new Error(`Refusing to delete topic session with unmanaged directory: ${binding.directory}`);
+    logger.warn(`[TelegramTopics] Topic directory is not a managed workspace; skipping directory deletion: chat=${binding.chatId}, thread=${binding.threadId}, directory=${binding.directory}`);
+    cleanupErrors.push(new Error(`Refused to delete unmanaged directory: ${binding.directory}`));
   }
 
-  // Telegram Topic deletion is intentionally idempotent and retryable. A stale
-  // binding can point at a Topic that was already deleted manually, while a
-  // factory reset can legitimately delete several Topics in quick succession.
-  await deleteForumTopicWithRetry(api, binding.chatId, binding.threadId);
-  topicTelemetry("telegram_topic_deleted", context);
-
-  const cleanupErrors: Error[] = [];
+  // Telegram Topic deletion is best-effort and idempotent. A failure here (for
+  // example missing permissions or a chat that is briefly unreachable) must
+  // never prevent local session, workspace, binding, and runtime-state cleanup;
+  // the error is reported at the end so the orphan can be retried or reset.
+  try {
+    await deleteForumTopicWithRetry(api, binding.chatId, binding.threadId);
+    topicTelemetry("telegram_topic_deleted", context);
+  } catch (error) {
+    cleanupErrors.push(asError(error));
+    logger.warn(`[TelegramTopics] Telegram Topic delete failed; continuing with local cleanup: chat=${binding.chatId}, thread=${binding.threadId}`, error);
+    topicTelemetry("telegram_topic_delete_failed_cleanup_continues", context);
+  }
 
   try {
     const { data, error } = await opencodeClient.session.delete({ sessionID: binding.sessionId, directory: binding.directory });
@@ -95,13 +108,15 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
   getTelegramTopicRuntimeDependencies()?.retireSessionRuntime(binding.sessionId, "topic_deleted");
   topicTelemetry("event_subscription_removed", context);
 
-  try {
-    await deleteTelegramTopicWorkspace(binding.directory);
-    topicTelemetry("workspace_deleted", context);
-  } catch (error) {
-    cleanupErrors.push(asError(error));
-    logger.error(`[TelegramTopics] Failed to delete managed Topic workspace: directory=${binding.directory}`, error);
-    topicTelemetry("workspace_delete_failed", context);
+  if (managedWorkspace) {
+    try {
+      await deleteTelegramTopicWorkspace(binding.directory);
+      topicTelemetry("workspace_deleted", context);
+    } catch (error) {
+      cleanupErrors.push(asError(error));
+      logger.error(`[TelegramTopics] Failed to delete managed Topic workspace: directory=${binding.directory}`, error);
+      topicTelemetry("workspace_delete_failed", context);
+    }
   }
 
   promptQueue.clearSession(binding.sessionId, "telegram_topic_deleted");
