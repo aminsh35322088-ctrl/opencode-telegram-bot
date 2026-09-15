@@ -5,7 +5,7 @@ import { createScheduledTaskDeliverySender } from "../../bot/messages/scheduled-
 import { config } from "../../config.js";
 import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
-import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
+import { flushSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
@@ -73,19 +73,10 @@ export async function startBotApp(): Promise<void> {
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
 
-  // Older builds could pin Main at chat scope. Unpin only the exact persisted
-  // bot-owned Main anchor; do not delete messages or alter Topic contents.
-  const mainNavigationMessageIds = getGlobalSettings().mainNavigationMessageIds ?? {};
-  for (const [chatIdText, messageId] of Object.entries(mainNavigationMessageIds)) {
-    const chatId = Number(chatIdText);
-    if (!Number.isSafeInteger(chatId) || typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) continue;
-    try {
-      await bot.api.unpinChatMessage(chatId, messageId);
-      logger.info(`[TelegramKeyboard] Startup migration unpinned Main navigation anchor: chat=${chatId}, message=${messageId}`);
-    } catch (error) {
-      logger.debug(`[TelegramKeyboard] Startup Main anchor was already unpinned or unavailable: chat=${chatId}, message=${messageId}`, error);
-    }
-  }
+  // Main navigation is intentionally preserved across restarts. It is a bot-owned
+  // root/All message, and KeyboardManager re-validates the exact message before
+  // pinning it. Topic-scoped messages are rejected there, so startup must not
+  // globally unpin the canonical Main anchor.
 
   const botInfo = await bot.api.getMe();
   logger.info(`[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`);
