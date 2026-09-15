@@ -42,6 +42,9 @@ import {
   setResponseStreamerForReconciliation,
 } from "../../app/services/busy-reconciliation-service.js";
 import { finalizeAssistantResponse } from "../streaming/finalize-assistant-response.js";
+import type { Question } from "../../app/types/question.js";
+import type { PermissionRequest } from "../../app/types/permission.js";
+import { restorePendingInteractions } from "../../app/services/pending-interaction-restore-service.js";
 import { deliverThinkingMessage } from "../messages/thinking-message.js";
 import { shouldSuppressUserAbortSessionError } from "../../app/managers/abort-suppression-manager.js";
 import { markToolCallStarted, markToolCallFinished, clearToolActivity, clearAllToolActivity } from "../../app/managers/tool-activity-manager.js";
@@ -474,6 +477,128 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
   private getToolCacheKey(sessionId: string, callId: string): string {
     return `${sessionId}:${callId}`;
+  }
+
+  private pendingInteractionsRestored = false;
+
+  private async restorePendingInteractionsOnce(): Promise<void> {
+    if (this.pendingInteractionsRestored) {
+      return;
+    }
+
+    if (!this.botInstance || this.chatIdInstance === null) {
+      // Bot context is not wired yet; a later ensureEventSubscription retries.
+      return;
+    }
+
+    this.pendingInteractionsRestored = true;
+    try {
+      await restorePendingInteractions({
+        presentQuestion: async (sessionId, requestID, questions) => {
+          await this.presentQuestionFlow(questions, requestID, sessionId);
+        },
+        presentPermission: async (request) => {
+          await this.presentPermissionFlow(request);
+        },
+      });
+    } catch (error) {
+      logger.warn("[Bot] Pending interaction restore pass failed:", error);
+    }
+  }
+
+  private async presentQuestionFlow(questions: Question[], requestID: string, sessionId: string): Promise<void> {
+
+      if (!this.botInstance || !this.chatIdInstance) {
+        logger.error("Bot or chat ID not available for showing questions");
+        return;
+      }
+
+      const currentSession = getCurrentSession();
+      if (!currentSession || currentSession.id !== sessionId) {
+        return;
+      }
+
+      if (isCompactProgressMode()) {
+        this.compactProgressStreamer.updateWaitingForQuestion(sessionId);
+      }
+
+      await Promise.all([
+        this.toolMessageBatcher.flushSession(currentSession.id, "question_asked"),
+        this.toolCallStreamer.flushSession(currentSession.id, "question_asked"),
+      ]);
+
+      if (questionManager.isActive()) {
+        const previousRequestID = questionManager.getRequestID();
+        const previousMessageIds = questionManager.getMessageIds();
+        logger.warn(
+          `[Bot] Replacing active poll with a new one: previousRequestID=${previousRequestID ?? "none"}, newRequestID=${requestID}`,
+        );
+        for (const messageId of previousMessageIds) {
+          await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch(() => {});
+        }
+        const directoryForReject = currentSession.directory;
+        if (previousRequestID && directoryForReject) {
+          try {
+            const response = await opencodeClient.question.reject({
+              requestID: previousRequestID,
+              directory: directoryForReject,
+            });
+            if (response.error) {
+              logger.warn(
+                `[Bot] Failed to reject replaced question ${previousRequestID}:`,
+                response.error,
+              );
+            } else {
+              logger.info(
+                `[Bot] Rejected replaced question: requestID=${previousRequestID}`,
+              );
+            }
+          } catch (error) {
+            logger.warn(
+              `[Bot] Exception rejecting replaced question ${previousRequestID}:`,
+              error,
+            );
+          }
+        }
+
+        clearAllInteractionState("question_replaced_by_new_poll");
+      }
+
+      logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
+      questionManager.startQuestions(questions, requestID);
+      await showCurrentQuestion(this.botInstance.api, this.chatIdInstance);
+  }
+
+  private async presentPermissionFlow(request: PermissionRequest): Promise<void> {
+
+      interactionEventGate.mark("permission", request.sessionID, request.id);
+      const generation = permissionManager.getGeneration();
+
+      if (!this.botInstance || !this.chatIdInstance) {
+        logger.error("Bot or chat ID not available for showing permission request");
+        return;
+      }
+
+      const currentSession = getCurrentSession();
+      const isCurrent = currentSession?.id === request.sessionID;
+      const isSubagent = summaryAggregator.isSubagentSession(request.sessionID);
+      if (!currentSession || (!isCurrent && !isSubagent)) {
+        return;
+      }
+
+      if (isCompactProgressMode()) {
+        this.compactProgressStreamer.updateWaitingForPermission(currentSession.id);
+      }
+
+      await Promise.all([
+        this.toolMessageBatcher.flushSession(request.sessionID, "permission_asked"),
+        this.toolCallStreamer.flushSession(request.sessionID, "permission_asked"),
+      ]);
+
+      logger.info(
+        `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}, subagent=${isSubagent}`,
+      );
+      await showPermissionRequest(this.botInstance.api, this.chatIdInstance, request, generation);
   }
 
   private clearToolElapsedState(sessionId: string | null, reason: string): void {
@@ -953,67 +1078,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
     });
 
-    summaryAggregator.setOnQuestion(async (questions, requestID, sessionId) => {
-      if (!this.botInstance || !this.chatIdInstance) {
-        logger.error("Bot or chat ID not available for showing questions");
-        return;
-      }
-
-      const currentSession = getCurrentSession();
-      if (!currentSession || currentSession.id !== sessionId) {
-        return;
-      }
-
-      if (isCompactProgressMode()) {
-        this.compactProgressStreamer.updateWaitingForQuestion(sessionId);
-      }
-
-      await Promise.all([
-        this.toolMessageBatcher.flushSession(currentSession.id, "question_asked"),
-        this.toolCallStreamer.flushSession(currentSession.id, "question_asked"),
-      ]);
-
-      if (questionManager.isActive()) {
-        const previousRequestID = questionManager.getRequestID();
-        const previousMessageIds = questionManager.getMessageIds();
-        logger.warn(
-          `[Bot] Replacing active poll with a new one: previousRequestID=${previousRequestID ?? "none"}, newRequestID=${requestID}`,
-        );
-        for (const messageId of previousMessageIds) {
-          await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch(() => {});
-        }
-        const directoryForReject = currentSession.directory;
-        if (previousRequestID && directoryForReject) {
-          try {
-            const response = await opencodeClient.question.reject({
-              requestID: previousRequestID,
-              directory: directoryForReject,
-            });
-            if (response.error) {
-              logger.warn(
-                `[Bot] Failed to reject replaced question ${previousRequestID}:`,
-                response.error,
-              );
-            } else {
-              logger.info(
-                `[Bot] Rejected replaced question: requestID=${previousRequestID}`,
-              );
-            }
-          } catch (error) {
-            logger.warn(
-              `[Bot] Exception rejecting replaced question ${previousRequestID}:`,
-              error,
-            );
-          }
-        }
-
-        clearAllInteractionState("question_replaced_by_new_poll");
-      }
-
-      logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
-      questionManager.startQuestions(questions, requestID);
-      await showCurrentQuestion(this.botInstance.api, this.chatIdInstance);
-    });
+    summaryAggregator.setOnQuestion((questions, requestID, sessionId) => this.presentQuestionFlow(questions, requestID, sessionId));
 
     summaryAggregator.setOnQuestionError(async () => {
       logger.info("[Bot] Question tool failed, clearing active poll and deleting messages");
@@ -1030,36 +1095,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       clearAllInteractionState("question_error");
     });
 
-    summaryAggregator.setOnPermission(async (request) => {
-      interactionEventGate.mark("permission", request.sessionID, request.id);
-      const generation = permissionManager.getGeneration();
-
-      if (!this.botInstance || !this.chatIdInstance) {
-        logger.error("Bot or chat ID not available for showing permission request");
-        return;
-      }
-
-      const currentSession = getCurrentSession();
-      const isCurrent = currentSession?.id === request.sessionID;
-      const isSubagent = summaryAggregator.isSubagentSession(request.sessionID);
-      if (!currentSession || (!isCurrent && !isSubagent)) {
-        return;
-      }
-
-      if (isCompactProgressMode()) {
-        this.compactProgressStreamer.updateWaitingForPermission(currentSession.id);
-      }
-
-      await Promise.all([
-        this.toolMessageBatcher.flushSession(request.sessionID, "permission_asked"),
-        this.toolCallStreamer.flushSession(request.sessionID, "permission_asked"),
-      ]);
-
-      logger.info(
-        `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}, subagent=${isSubagent}`,
-      );
-      await showPermissionRequest(this.botInstance.api, this.chatIdInstance, request, generation);
-    });
+    summaryAggregator.setOnPermission((request) => this.presentPermissionFlow(request));
 
     summaryAggregator.setOnPermissionReplied(async (_sessionId, requestID) => {
       const messageIds = permissionManager.resolveRequest(requestID);
@@ -1428,6 +1464,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
     });
 
+    void this.restorePendingInteractionsOnce();
     logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
     subscribeToEvents(directory, (event) => {
       if ((event as EventStreamItem).type === "server.heartbeat") {
