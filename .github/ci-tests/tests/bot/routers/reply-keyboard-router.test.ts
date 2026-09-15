@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   settingsCommand: vi.fn(),
   sessionsCommand: vi.fn(),
   newCommand: vi.fn(),
+  createNewImageChat: vi.fn(),
   abortCurrentOperation: vi.fn(),
   pauseCurrentChat: vi.fn(),
   resumePausedChat: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("../../../src/bot/menus/context-control-menu.js", () => ({ handleContext
 vi.mock("../../../src/bot/commands/settings-command.js", () => ({ settingsCommand: mocks.settingsCommand }));
 vi.mock("../../../src/bot/commands/sessions-command.js", () => ({ sessionsCommand: mocks.sessionsCommand }));
 vi.mock("../../../src/bot/commands/new-command.js", () => ({ newCommand: mocks.newCommand }));
+vi.mock("../../../src/bot/routers/image-chat-router.js", () => ({ createNewImageChat: mocks.createNewImageChat }));
 vi.mock("../../../src/bot/commands/abort-command.js", () => ({ abortCurrentOperation: mocks.abortCurrentOperation }));
 vi.mock("../../../src/bot/commands/pause-command.js", () => ({ pauseCurrentChat: mocks.pauseCurrentChat, resumePausedChat: mocks.resumePausedChat }));
 vi.mock("../../../src/bot/services/telegram-topic-delete-handler.js", () => ({ showTelegramTopicDeleteConfirmation: mocks.showTelegramTopicDeleteConfirmation }));
@@ -117,6 +119,21 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
 
     expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).toHaveBeenCalledWith(mainChat);
     expect(mocks.newCommand).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("dispatches New Image Chat from the Main Reply Keyboard", async () => {
+    const mainChat = -9000000003;
+    mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
+    mocks.getTopicRuntimeContext.mockReturnValue(null);
+    mocks.keyboardManager.isTopicMode.mockReturnValue(true);
+
+    const { handler, next } = registerHandler();
+    const ctx = makeMainScopeContext(mainChat, "🎨 New Image Chat");
+    await handler(ctx, next);
+
+    expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).toHaveBeenCalledWith(mainChat);
+    expect(mocks.createNewImageChat).toHaveBeenCalledWith(ctx);
     expect(next).not.toHaveBeenCalled();
   });
 
