@@ -1,12 +1,14 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { isValidSkillName, writeGlobalSkill } from "../../app/services/skill-manage-service.js";
+import { isValidSkillName, updateGlobalSkill, writeGlobalSkill } from "../../app/services/skill-manage-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 
+type WizardMode = "create" | "edit";
 type WizardStep = "name" | "description" | "body";
 
 interface SkillWizardState {
+  mode: WizardMode;
   step: WizardStep;
   name?: string;
   description?: string;
@@ -16,8 +18,8 @@ interface SkillWizardState {
 const WIZARD_TTL_MS = 15 * 60_000;
 let wizard: SkillWizardState | null = null;
 
-function freshState(step: WizardStep, extra: Partial<SkillWizardState> = {}): SkillWizardState {
-  return { step, expiresAt: Date.now() + WIZARD_TTL_MS, ...extra };
+function freshState(mode: WizardMode, step: WizardStep, extra: Partial<SkillWizardState> = {}): SkillWizardState {
+  return { mode, step, expiresAt: Date.now() + WIZARD_TTL_MS, ...extra };
 }
 
 export function isSkillWizardActive(): boolean {
@@ -38,8 +40,13 @@ function cancelKeyboard(): InlineKeyboard {
 }
 
 export async function startSkillWizard(ctx: Context): Promise<void> {
-  wizard = freshState("name");
+  wizard = freshState("create", "name");
   await ctx.reply(t("skills.wizard.ask_name"), { reply_markup: cancelKeyboard() });
+}
+
+export async function startSkillEdit(ctx: Context, name: string): Promise<void> {
+  wizard = freshState("edit", "description", { name });
+  await ctx.reply(t("skills.edit.ask_description", { name }), { reply_markup: cancelKeyboard() });
 }
 
 export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
@@ -55,14 +62,15 @@ export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
         await ctx.reply(t("skills.wizard.invalid_name"), { reply_markup: cancelKeyboard() });
         return true;
       }
-      wizard = freshState("description", { name });
+      wizard = freshState("create", "description", { name });
       await ctx.reply(t("skills.wizard.ask_description"), { reply_markup: cancelKeyboard() });
       return true;
     }
 
     if (current.step === "description") {
-      wizard = freshState("body", { name: current.name, description: text });
-      await ctx.reply(t("skills.wizard.ask_body"), { reply_markup: cancelKeyboard() });
+      wizard = freshState(current.mode, "body", { name: current.name, description: text });
+      const nextPrompt = current.mode === "edit" ? t("skills.edit.ask_body") : t("skills.wizard.ask_body");
+      await ctx.reply(nextPrompt, { reply_markup: cancelKeyboard() });
       return true;
     }
 
@@ -73,14 +81,19 @@ export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
       await ctx.reply(t("callback.processing_error"));
       return true;
     }
-    await writeGlobalSkill({ name, description, body: text });
+    if (current.mode === "edit") {
+      await updateGlobalSkill({ name, description, body: text });
+    } else {
+      await writeGlobalSkill({ name, description, body: text });
+    }
+    const savedMessage = current.mode === "edit" ? t("skills.edit.saved", { name }) : t("skills.wizard.saved", { name });
     clearSkillWizard();
-    logger.info(`[SkillWizard] Created global skill: ${name}`);
-    await ctx.reply(`${t("skills.wizard.saved", { name })}\n\n${t("skills.restart_hint")}`);
+    logger.info(`[SkillWizard] ${current.mode === "edit" ? "Updated" : "Created"} global skill: ${name}`);
+    await ctx.reply(`${savedMessage}\n\n${t("skills.restart_hint")}`);
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    logger.warn(`[SkillWizard] Step failed: step=${current.step}, message=${message}`);
+    logger.warn(`[SkillWizard] Step failed: mode=${current.mode}, step=${current.step}, message=${message}`);
     await ctx.reply(t("skills.wizard.write_error", { error: message }), { reply_markup: cancelKeyboard() });
     return true;
   }

@@ -25,29 +25,57 @@ function normalizeFrontmatterValue(value: string): string {
   return value.replace(/[\r\n]+/gu, " ").replace(/"/gu, "'").trim();
 }
 
-export async function writeGlobalSkill(input: {
-  name: string;
+function buildSkillMarkdown(name: string, description: string, body: string): string {
+  return `---\nname: ${name}\ndescription: "${description}"\n---\n\n${body}\n`;
+}
+
+function validateSkillInput(input: { name: string; description: string; body: string }): {
   description: string;
   body: string;
-}): Promise<string> {
+} {
   if (!isValidSkillName(input.name)) throw new Error("Invalid skill name");
   const description = normalizeFrontmatterValue(input.description).slice(0, MAX_DESCRIPTION_LENGTH);
   if (!description) throw new Error("Skill description is empty");
   const body = input.body.trim().slice(0, MAX_BODY_LENGTH);
   if (!body) throw new Error("Skill body is empty");
+  return { description, body };
+}
 
+function resolveManagedSkillFile(name: string): string {
   const root = path.resolve(getGlobalSkillsDir());
-  const skillDir = path.resolve(root, input.name);
+  const skillDir = path.resolve(root, name);
   if (skillDir === root || !skillDir.startsWith(`${root}${path.sep}`)) {
     throw new Error("Refusing to write skill outside the global skills directory");
   }
-  const skillFile = path.join(skillDir, "SKILL.md");
+  return path.join(skillDir, "SKILL.md");
+}
+
+export async function writeGlobalSkill(input: {
+  name: string;
+  description: string;
+  body: string;
+}): Promise<string> {
+  const { description, body } = validateSkillInput(input);
+  const skillFile = resolveManagedSkillFile(input.name);
   const existing = await fs.stat(skillFile).catch(() => null);
   if (existing) throw new Error(`Skill "${input.name}" already exists`);
 
-  const content = `---\nname: ${input.name}\ndescription: "${description}"\n---\n\n${body}\n`;
-  await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(skillFile, content, "utf8");
+  await fs.mkdir(path.dirname(skillFile), { recursive: true });
+  await fs.writeFile(skillFile, buildSkillMarkdown(input.name, description, body), "utf8");
+  return skillFile;
+}
+
+export async function updateGlobalSkill(input: {
+  name: string;
+  description: string;
+  body: string;
+}): Promise<string> {
+  const { description, body } = validateSkillInput(input);
+  const skillFile = resolveManagedSkillFile(input.name);
+  const existing = await fs.stat(skillFile).catch(() => null);
+  if (!existing) throw new Error(`Skill "${input.name}" does not exist`);
+
+  await fs.writeFile(skillFile, buildSkillMarkdown(input.name, description, body), "utf8");
   return skillFile;
 }
 

@@ -8,7 +8,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import { processUserPrompt, type ProcessPromptDeps } from "../handlers/prompt.js";
-import { clearSkillWizard, startSkillWizard } from "../commands/skills-wizard.js";
+import { clearSkillWizard, startSkillEdit, startSkillWizard } from "../commands/skills-wizard.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "../../app/services/skill-manage-service.js";
 import {
   buildSkillsConfirmKeyboard,
@@ -19,6 +19,7 @@ import {
   parseSkillPageCallback,
   parseSkillSelectCallback,
   SKILLS_CALLBACK_CANCEL,
+  SKILLS_CALLBACK_EDIT,
   SKILLS_CALLBACK_DELETE,
   SKILLS_CALLBACK_DELETE_CANCEL,
   SKILLS_CALLBACK_DELETE_CONFIRM,
@@ -235,6 +236,18 @@ export async function handleSkillsCallback(
       return true;
     }
 
+    if (data === SKILLS_CALLBACK_EDIT) {
+      if (metadata.stage !== "confirm" || !isManagedSkillLocation(metadata.skillLocation)) {
+        await ctx.answerCallbackQuery({ text: t("skills.edit_not_managed"), show_alert: true });
+        return true;
+      }
+      clearSkillsInteraction("skills_edit_clicked");
+      await ctx.answerCallbackQuery();
+      await ctx.deleteMessage().catch(() => {});
+      await startSkillEdit(ctx, metadata.skillName);
+      return true;
+    }
+
     if (data === SKILLS_CALLBACK_DELETE) {
       if (metadata.stage !== "confirm" || !isManagedSkillLocation(metadata.skillLocation)) {
         await ctx.answerCallbackQuery({ text: t("skills.delete_not_managed"), show_alert: true });
@@ -323,7 +336,7 @@ export async function handleSkillsCallback(
     }
 
     await ctx.answerCallbackQuery();
-    const canDelete = isManagedSkillLocation(selectedSkill.location);
+    const canManage = isManagedSkillLocation(selectedSkill.location);
     const confirmText = selectedSkill.location
       ? t("skills.confirm_detail", {
           skill: `/${selectedSkill.name}`,
@@ -332,7 +345,7 @@ export async function handleSkillsCallback(
         })
       : t("skills.confirm", { skill: `/${selectedSkill.name}` });
     await ctx.editMessageText(confirmText, {
-      reply_markup: buildSkillsConfirmKeyboard(canDelete),
+      reply_markup: buildSkillsConfirmKeyboard(canManage),
     });
 
     interactionManager.transition({
