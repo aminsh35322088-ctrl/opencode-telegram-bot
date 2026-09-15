@@ -35,4 +35,4 @@ export async function setAiRoleSelection(role: AiRole, providerID: string, model
   if (!normalizedProviderID || !normalizedModelID) throw new Error("AI role selection requires a provider and model.");
   const selections = await readSelections(); selections[role] = { providerID: normalizedProviderID, modelID: normalizedModelID }; await writeSelections(selections);
 }
-export const AI_ROLE_LABELS: Record<AiRole, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", stt: "🎙️ Speech-to-Text" };
+export const AI_ROLE_LABELS: Record<AiRole, string> = { coding: "💻 Coding AI", image: "🎨 Image", stt: "🎙️ Speech-to-Text" };

@@ -71,7 +71,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     );
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
       [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
-      [{ text: "🎨 Image AI" }, { text: "📦 Compact: ON" }],
+      [{ text: "📦 Compact: ON" }],
       [{ text: "🧠 GPT 4o" }],
       [{ text: "🗑️ Delete Chat" }, { text: "⚙️ Topic Settings" }],
     ]);
@@ -83,7 +83,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
       { compactOutputMode: false, isTopic: true },
     );
     const labels = keyboard.keyboard.flat().map(getButtonText);
-    expect(labels).toContain("🎨 Image AI");
+    expect(labels).not.toContain("🎨 Image AI");
     expect(labels).not.toContain("💬 New Chat");
     expect(labels).not.toContain("🎨 New Image Chat");
     expect(labels).not.toContain("🕘 History");
