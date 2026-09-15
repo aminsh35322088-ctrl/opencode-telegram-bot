@@ -104,4 +104,4 @@ scenarios get added as separate files next to it.
 The feature scenario itself is passed to the subagent per task, as behaviour
 only: it gets no diff and no implementation detail, and writes its own cases.
 Commands, features, and interaction routing rules are documented in
-[`PRODUCT.md`](../PRODUCT.md).
+[`PRODUCT.md`](../../../PRODUCT.md).

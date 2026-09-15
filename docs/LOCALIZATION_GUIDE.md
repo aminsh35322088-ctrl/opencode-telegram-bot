@@ -93,8 +93,10 @@ Run quality checks:
 npm run build
 npm run lint
 npm run typecheck
-npm test
 ```
+
+The Vitest suite is owned by CI (GitHub Actions runs it from `.github/ci-tests/`);
+agents inside the running bot use the `full-test-suite` tool for the same coverage.
 
 Manual checks:
 
@@ -123,5 +125,5 @@ Relevant test files if needed:
 - [ ] Added locale entry to `LOCALE_DEFINITIONS` (`en` first, then alphabetical)
 - [ ] Updated `README.md` (`Languages:` line, `Supported locales:` list, `BOT_LOCALE` table row)
 - [ ] Updated `.env.example` (`# Supported locales:` comment)
-- [ ] Ran `npm run build`, `npm run lint`, `npm run typecheck`, `npm test`
+- [ ] Ran `npm run build`, `npm run lint`, `npm run typecheck`; full tests run in CI
 - [ ] Manually validated `BOT_LOCALE` and wizard language selection
