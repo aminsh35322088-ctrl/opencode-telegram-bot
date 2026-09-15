@@ -29,7 +29,6 @@ const staticLabels: Array<[label: string, controlId: string]> = [
   [MAIN_BUTTONS.newChat, "new-chat"],
   [MAIN_BUTTONS.mainSettings, "main-settings"],
   [MAIN_BUTTONS.topicSettings, "topic-settings"],
-  [MAIN_BUTTONS.imageAi, "image-ai"],
   [MAIN_BUTTONS.deleteChat, "delete-chat"],
   [MAIN_BUTTONS.pause, "pause"],
   [MAIN_BUTTONS.resume, "resume"],

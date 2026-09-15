@@ -185,7 +185,7 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
       if (!state) {
         if (!loc && data?.startsWith("icfg:")) clearProviderWizard();
         if (!loc && await handleImageChatSetup(ctx)) return;
-        if (data === "main:new_image" || /^\/new_image(?:@\w+)?$/.test(text) || text === NEW_IMAGE_CHAT || text === MAIN_BUTTONS.imageAi) {
+        if (data === "main:new_image" || /^\/new_image(?:@\w+)?$/.test(text) || text === NEW_IMAGE_CHAT || text === "🎨 Image AI") {
           if (data) await ctx.answerCallbackQuery().catch(() => {});
           if (!loc) clearProviderWizard();
           await createNewImageChat(ctx); return;
