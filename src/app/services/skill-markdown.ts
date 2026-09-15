@@ -21,10 +21,15 @@ export function parseSkillMarkdown(content: string): ParsedSkillMarkdown {
   }
 
   const fields: Record<string, string> = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const field = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
-    if (field && field[1] && field[2] !== undefined) {
-      fields[field[1].toLowerCase()] = unquote(field[2]);
+  const frontmatter = match[1];
+  if (frontmatter) {
+    for (const line of frontmatter.split(/\r?\n/)) {
+      const field = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+      const key = field?.[1];
+      const value = field?.[2];
+      if (key && value !== undefined) {
+        fields[key.toLowerCase()] = unquote(value);
+      }
     }
   }
 
