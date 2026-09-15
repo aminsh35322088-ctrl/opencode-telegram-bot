@@ -72,7 +72,9 @@ function getRetryAfterMs(error: unknown): number | null {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    const timer = setTimeout(resolve, ms);
+    // Never keep the process alive for a flood-wait retry.
+    timer.unref?.();
   });
 }
 

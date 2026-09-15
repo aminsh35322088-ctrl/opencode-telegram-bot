@@ -157,7 +157,9 @@ const MAX_STREAM_SYNC_RATE_LIMIT_RETRIES = 3;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    const timer = setTimeout(resolve, ms);
+    // Never keep the process alive for a flood-wait retry.
+    timer.unref?.();
   });
 }
 

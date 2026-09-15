@@ -183,6 +183,8 @@ interface TextMessageState {
   orderedPartIds: string[];
   partTexts: Map<string, string>;
   optimisticUpdateCount: number;
+  revision: number;
+  combinedMemo?: { revision: number; isFinal: boolean; text: string };
 }
 
 interface ThinkingMessageState {
@@ -472,6 +474,7 @@ class SummaryAggregator {
 
     sendTyping();
     this.typingTimer = setInterval(sendTyping, 4000);
+    this.typingTimer.unref?.();
   }
 
   stopTypingIndicator(): void {
@@ -1191,6 +1194,7 @@ class SummaryAggregator {
           orderedPartIds: [],
           partTexts: new Map(),
           optimisticUpdateCount: 0,
+      revision: 0,
         });
         this.messageCount++;
         this.startTypingIndicator();
@@ -1600,6 +1604,7 @@ class SummaryAggregator {
     }
 
     state.partTexts.set(partID, accumulated);
+    state.revision++;
 
     const combined = this.getCombinedMessageText(messageID);
     if (!combined.trim()) {
@@ -1857,6 +1862,7 @@ class SummaryAggregator {
       orderedPartIds: [],
       partTexts: new Map(),
       optimisticUpdateCount: 0,
+      revision: 0,
     };
     this.textMessageStates.set(messageID, state);
     return state;
@@ -1882,6 +1888,7 @@ class SummaryAggregator {
     const state = this.getOrCreateTextMessageState(messageID);
     if (!state.orderedPartIds.includes(partID)) {
       state.orderedPartIds.push(partID);
+      state.revision++;
     }
   }
 
@@ -1903,6 +1910,7 @@ class SummaryAggregator {
     this.registerTextPart(messageID, partID);
     const state = this.getOrCreateTextMessageState(messageID);
     state.partTexts.set(partID, normalized);
+    state.revision++;
     return true;
   }
 
@@ -1915,6 +1923,7 @@ class SummaryAggregator {
     const state = this.getOrCreateTextMessageState(messageID);
     state.orderedPartIds = [partID];
     state.partTexts = new Map([[partID, text]]);
+    state.revision++;
     return true;
   }
 
@@ -1924,15 +1933,20 @@ class SummaryAggregator {
       return "";
     }
 
+    if (state.combinedMemo && state.combinedMemo.revision === state.revision && state.combinedMemo.isFinal === isFinal) {
+      return state.combinedMemo.text;
+    }
+
     const texts = state.orderedPartIds.map((partID) => state.partTexts.get(partID) || "");
 
     // The placeholder is produced for model responses only, so user text is
     // never filtered - it must reach the bot verbatim.
-    if (this.messages.get(messageID)?.role === "user") {
-      return texts.join("");
-    }
+    const combined = this.messages.get(messageID)?.role === "user"
+      ? texts.join("")
+      : texts.filter((text) => !isUpstreamEmptyResponseText(text, isFinal)).join("");
 
-    return texts.filter((text) => !isUpstreamEmptyResponseText(text, isFinal)).join("");
+    state.combinedMemo = { revision: state.revision, isFinal, text: combined };
+    return combined;
   }
 
   private prepareToolFileContext(

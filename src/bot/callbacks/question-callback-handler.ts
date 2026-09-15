@@ -20,6 +20,8 @@ function getCallbackMessageId(ctx: Context): number | null {
   return typeof messageId === "number" ? messageId : null;
 }
 
+const questionCallbackInFlight = new Set<string>();
+
 export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith("question:")) return false;
@@ -48,6 +50,13 @@ export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
     return true;
   }
 
+  const dispatchKey = `${questionManager.getRequestID() ?? "none"}:${questionIndex}:${action}`;
+  if (questionCallbackInFlight.has(dispatchKey)) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return true;
+  }
+  questionCallbackInFlight.add(dispatchKey);
+
   try {
     switch (action) {
       case "select": {
@@ -67,6 +76,8 @@ export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
   } catch (err) {
     logger.error("[QuestionHandler] Error handling callback:", err);
     await ctx.answerCallbackQuery({ text: t("question.processing_error_callback"), show_alert: true });
+  } finally {
+    questionCallbackInFlight.delete(dispatchKey);
   }
   return true;
 }
