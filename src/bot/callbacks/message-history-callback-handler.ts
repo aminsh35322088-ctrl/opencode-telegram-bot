@@ -19,6 +19,7 @@ import { replyBusyBlocked } from "../messages/busy-blocked-renderer.js";
 import { sendRenderedBotPart } from "../messages/telegram-text.js";
 import {
   buildMessageDetailKeyboard,
+  buildMessageRevertedKeyboard,
   buildMessagesListKeyboard,
   calculateMessagesPaginationRange,
   formatMessageDetailText,
@@ -27,6 +28,7 @@ import {
   MESSAGES_CALLBACK_CANCEL,
   MESSAGES_CALLBACK_FORK,
   MESSAGES_CALLBACK_PREFIX,
+  MESSAGES_CALLBACK_REDO,
   MESSAGES_CALLBACK_REVERT,
   parseMessagePageCallback,
   parseMessageSelectCallback,
@@ -163,6 +165,10 @@ function clearMessagesInteraction(reason: string): void {
   }
 }
 
+function supportsSessionRedo(): boolean {
+  return typeof opencodeClient.session.unrevert === "function";
+}
+
 async function sendLatestAssistantResponse(
   api: Context["api"],
   chatId: number,
@@ -222,19 +228,62 @@ export async function handleMessagesCallback(
       await ctx.answerCallbackQuery();
 
       try {
-        await opencodeClient.session.revert({
+        const { error: revertError } = await opencodeClient.session.revert({
           sessionID: metadata.sessionId,
           directory: metadata.projectDirectory,
           messageID: selectedMessage.id,
         });
+        if (revertError) {
+          throw revertError;
+        }
 
         const successText = t("messages.revert_success", { text: selectedMessage.text });
-        await ctx.editMessageText(truncateMessageHistoryText(successText, TELEGRAM_MESSAGE_LIMIT));
-        clearMessagesInteraction("messages_revert_success");
+        const renderedSuccess = truncateMessageHistoryText(successText, TELEGRAM_MESSAGE_LIMIT);
+        if (supportsSessionRedo()) {
+          await ctx.editMessageText(renderedSuccess, {
+            reply_markup: buildMessageRevertedKeyboard(),
+          });
+        } else {
+          await ctx.editMessageText(renderedSuccess);
+          clearMessagesInteraction("messages_revert_success_no_redo");
+        }
       } catch (error) {
         logger.error("[Messages] Error reverting message:", error);
         await ctx.editMessageText(t("messages.revert_error"));
         clearMessagesInteraction("messages_revert_error");
+      }
+
+      return true;
+    }
+
+    if (data === MESSAGES_CALLBACK_REDO) {
+      if (metadata.stage !== "detail" || !supportsSessionRedo()) {
+        await ctx.answerCallbackQuery({ text: t("messages.inactive_callback"), show_alert: true });
+        return true;
+      }
+
+      const selectedMessage = metadata.messages[metadata.selectedIndex];
+      if (!selectedMessage) {
+        await ctx.answerCallbackQuery({ text: t("messages.fetch_error"), show_alert: true });
+        return true;
+      }
+
+      try {
+        const { error: redoError } = await opencodeClient.session.unrevert({
+          sessionID: metadata.sessionId,
+          directory: metadata.projectDirectory,
+        });
+        if (redoError) {
+          throw redoError;
+        }
+
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(formatMessageDetailText(selectedMessage), {
+          reply_markup: buildMessageDetailKeyboard(),
+        });
+      } catch (error) {
+        logger.error("[Messages] Error redoing reverted session:", error);
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error"), show_alert: true });
       }
 
       return true;

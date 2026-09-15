@@ -22,7 +22,7 @@ const mocked = vi.hoisted(() => ({
     id: "session-1",
     directory: "D:\\Projects\\Repo",
   } as { id: string; directory: string } | null,
-  commandListMock: vi.fn(),
+  skillListMock: vi.fn(),
   processUserPromptMock: vi.fn(),
 }));
 
@@ -33,16 +33,16 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: {
-    command: {
-      list: mocked.commandListMock,
+    app: {
+      skills: mocked.skillListMock,
     },
   },
 }));
 
 vi.mock("../../../src/bot/handlers/prompt.js", () => ({
-    processUserPrompt: mocked.processUserPromptMock,
-    __resetPromptRecoveryStateForTests: vi.fn(),
-  }));
+  processUserPrompt: mocked.processUserPromptMock,
+  __resetPromptRecoveryStateForTests: vi.fn(),
+}));
 
 function createCommandContext(messageId: number): Context {
   return {
@@ -109,16 +109,26 @@ describe("bot/commands/skills", () => {
       worktree: "D:\\Projects\\Repo",
     };
 
-    mocked.commandListMock.mockReset();
+    mocked.skillListMock.mockReset();
     mocked.processUserPromptMock.mockReset();
     mocked.processUserPromptMock.mockResolvedValue(true);
   });
 
   it("shows skills list and starts custom interaction", async () => {
-    mocked.commandListMock.mockResolvedValue({
+    mocked.skillListMock.mockResolvedValue({
       data: [
-        { name: "borsch", description: "Cook borsch", source: "skill" },
-        { name: "release", description: "Prepare release", source: "skill" },
+        {
+          name: "borsch",
+          description: "Cook borsch",
+          location: "/proj/.opencode/skills/borsch/SKILL.md",
+          content: "",
+        },
+        {
+          name: "release",
+          description: "Prepare release",
+          location: "/proj/.opencode/skills/release/SKILL.md",
+          content: "",
+        },
       ],
       error: null,
     });
@@ -126,7 +136,7 @@ describe("bot/commands/skills", () => {
     const ctx = createCommandContext(123);
     await skillsCommand(ctx as never);
 
-    expect(mocked.commandListMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo" });
+    expect(mocked.skillListMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo" });
     expect(ctx.reply).toHaveBeenCalledTimes(1);
 
     const [, options] = defined((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]) as [
@@ -145,13 +155,17 @@ describe("bot/commands/skills", () => {
     expect(state?.metadata.messageId).toBe(123);
   });
 
-  it("filters out non-skill sources from skill list", async () => {
-    mocked.commandListMock.mockResolvedValue({
+  it("normalizes skill entries and sorts them by name", async () => {
+    mocked.skillListMock.mockResolvedValue({
       data: [
-        { name: "borsch", description: "Cook borsch", source: "skill" },
-        { name: "release", description: "Prepare release", source: "skill" },
-        { name: "review", description: "Review changes", source: "command" },
-        { name: "from-mcp", description: "MCP prompt", source: "mcp" },
+        {
+          name: "release",
+          description: "Prepare release",
+          location: "/skills/release/SKILL.md",
+          content: "x",
+        },
+        { name: "  ", description: "Invalid entry", location: "", content: "" },
+        { name: "borsch", description: "  ", location: undefined, content: "" },
       ],
       error: null,
     });
@@ -162,8 +176,12 @@ describe("bot/commands/skills", () => {
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");
     expect(state?.metadata.skills).toEqual([
-      { name: "borsch", description: "Cook borsch" },
-      { name: "release", description: "Prepare release" },
+      { name: "borsch", description: undefined, location: undefined },
+      {
+        name: "release",
+        description: "Prepare release",
+        location: "/skills/release/SKILL.md",
+      },
     ]);
   });
 

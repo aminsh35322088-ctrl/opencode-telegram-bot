@@ -19,6 +19,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "all", description: "🧰 All integrated versions (use /all version info)" },
   { command: "help", description: "❓ Show help & available features" },
   { command: "status", description: "📡 Show server & session status" },
+  { command: "session", description: "🧭 OpenCode session dashboard" },
   { command: "settings", description: "⚙️ Configure bot settings" },
   { command: "topic_settings", description: "⚙️ Open AI Topic settings" },
   { command: "providers", description: "🔌 Manage AI providers" },
