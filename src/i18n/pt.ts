@@ -80,6 +80,9 @@ export const pt: I18nDictionary = {
   "bot.photo_model_no_image":
     "⚠️ O modelo atual não aceita entrada de imagem. Enviando apenas o texto.",
   "bot.photo_download_error": "🔴 Não foi possível baixar a foto",
+  "bot.video_downloading": "⏳ Baixando vídeo...",
+  "bot.video_too_large": "⚠️ O vídeo é muito grande (máx. {maxSizeMb}MB)",
+  "bot.video_error": "🔴 Falha ao processar o vídeo",
   "bot.file_downloading": "⏳ Baixando arquivo...",
   "bot.files_downloading": "⏳ Baixando arquivos...",
   "bot.file_download_error": "🔴 Não foi possível baixar o arquivo",
