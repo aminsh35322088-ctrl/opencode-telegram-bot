@@ -31,14 +31,9 @@ function createThinkingBlock(header: string, text: string): TelegramRichBlock {
 function createFinalThinkingBlock(header: string, text: string): TelegramRichBlock {
   return {
     type: "expandable_blockquote",
-    blocks: [
-      {
-        type: "paragraph",
-        text: text
-          ? [{ type: "bold", text: header }, "\n", text]
-          : { type: "bold", text: header },
-      },
-    ],
+    text: text
+      ? [{ type: "bold", text: header }, "\n", text]
+      : { type: "bold", text: header },
   };
 }
 
