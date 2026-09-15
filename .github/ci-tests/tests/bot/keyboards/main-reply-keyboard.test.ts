@@ -14,10 +14,6 @@ function buttonTextAt(
   return getButtonText(defined(keyboard.keyboard[row]?.[col], `button[${row}][${col}]`));
 }
 
-function inlineTexts(keyboard: ReturnType<typeof createTopicKeyboard>): string[] {
-  return keyboard.inline_keyboard.flat().map((button) => button.text);
-}
-
 describe("bot/keyboards/main-reply-keyboard", () => {
   it("creates a compact persistent main keyboard without model controls", () => {
     const keyboard = createMainKeyboard(
@@ -34,7 +30,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.is_persistent).toBe(true);
   });
 
-  it("keeps the legacy AI Topic reply shape non-persistent", () => {
+  it("keeps the AI Topic reply shape non-persistent", () => {
     const keyboard = createMainKeyboard({
       providerID: "very-long-provider-name-that-keeps-going-and-going",
       modelID: "vendor/very-long-model-name-that-keeps-going-and-going",
@@ -48,29 +44,25 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.is_persistent).toBeUndefined();
   });
 
-  it("renders active AI Topic controls as inline markup, never a Reply Keyboard", () => {
+  it("renders active AI Topic controls as the original Reply Keyboard", () => {
     const keyboard = createTopicKeyboard({
       running: true,
       compactOutputMode: true,
       currentModel: { providerID: "openrouter", modelID: "openai/gpt-4o", name: "GPT 4o" },
     });
-    const labels = inlineTexts(keyboard);
-    expect(labels).toEqual([
-      "⏸️ Pause", "🛑 Abort",
-      "🎨 Image AI", "📦 Compact: ON",
-      "🧠 GPT 4o",
-      "🗑️ Delete Chat", "⚙️ Topic Settings",
+
+    expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
+      [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
+      [{ text: "🎨 Image AI" }, { text: "📦 Compact: ON" }],
+      [{ text: "🧠 GPT 4o" }],
+      [{ text: "🗑️ Delete Chat" }, { text: "⚙️ Topic Settings" }],
     ]);
-    expect((keyboard as unknown as { keyboard?: unknown }).keyboard).toBeUndefined();
-    expect(keyboard.inline_keyboard.flat().map((button) => button.callback_data)).toEqual([
-      "topicctl:pause", "topicctl:abort",
-      "topicctl:image", "topicctl:compact",
-      "topicctl:model",
-      "topicctl:delete", "topicctl:settings",
-    ]);
+    expect(keyboard.resize_keyboard).toBe(true);
+    expect(keyboard.is_persistent).toBeUndefined();
+    expect((keyboard as unknown as { inline_keyboard?: unknown }).inline_keyboard).toBeUndefined();
   });
 
-  it("reflects compact mode state in the legacy AI Topic shape", () => {
+  it("reflects compact mode state in the AI Topic shape", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: true, isTopic: true },
@@ -91,7 +83,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 3, 1)).toBe("⚙️ Main Settings");
   });
 
-  it("keeps running controls isolated inside the legacy Topic keyboard shape", () => {
+  it("keeps running controls isolated inside the Topic keyboard", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { running: true, paused: false, compactOutputMode: true, isTopic: true },
