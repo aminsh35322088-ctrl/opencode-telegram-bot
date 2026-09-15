@@ -15,6 +15,7 @@ import {
   isValidSkillName,
   updateGlobalSkill,
   writeGlobalSkill,
+  writeGlobalSkillRaw,
 } from "../../../src/app/services/skill-manage-service.js";
 
 describe("app/services/skill-manage-service", () => {
@@ -84,6 +85,15 @@ describe("app/services/skill-manage-service", () => {
     );
     await expect(updateGlobalSkill({ name: "solo", description: "   ", body: "b" })).rejects.toThrow("empty");
     await expect(updateGlobalSkill({ name: "solo", description: "d", body: "   " })).rejects.toThrow("empty");
+  });
+
+  it("writes raw content verbatim and rejects duplicates", async () => {
+    const file = await writeGlobalSkillRaw("raw-skill", "custom\ncontent");
+    expect(file).toBe(path.join(tmpHome, ".config", "opencode", "skills", "raw-skill", "SKILL.md"));
+    expect(await fs.readFile(file, "utf8")).toBe("custom\ncontent");
+    await expect(writeGlobalSkillRaw("raw-skill", "again")).rejects.toThrow("already exists");
+    await expect(writeGlobalSkillRaw("../escape", "x")).rejects.toThrow();
+    await expect(writeGlobalSkillRaw("ok-name", "   ")).rejects.toThrow("empty");
   });
 
   it("deletes only managed skills", async () => {

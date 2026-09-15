@@ -6,6 +6,7 @@ import { handleSkillsCallback } from "../../../src/bot/callbacks/skills-catalog-
 import { handleSkillTextArguments } from "../../../src/bot/handlers/text-message-handler.js";
 import { getGlobalSkillsDir } from "../../../src/app/services/skill-manage-service.js";
 import { clearSkillWizard, isSkillWizardActive } from "../../../src/bot/commands/skills-wizard.js";
+import { clearSkillImportFlow, isSkillImportActive } from "../../../src/bot/commands/skills-import-flow.js";
 import {
   calculateSkillsPaginationRange,
   formatSkillsSelectText,
@@ -107,6 +108,7 @@ describe("bot/commands/skills", () => {
   beforeEach(() => {
     interactionManager.clear("test_setup");
     clearSkillWizard();
+    clearSkillImportFlow();
 
     mocked.currentProject = {
       id: "project-1",
@@ -140,7 +142,8 @@ describe("bot/commands/skills", () => {
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("skills:select:0");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("skills:select:1");
     expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("skills:new");
-    expect(options.reply_markup.inline_keyboard[3]?.[0]?.callback_data).toBe("skills:back");
+    expect(options.reply_markup.inline_keyboard[3]?.[0]?.callback_data).toBe("skills:import");
+    expect(options.reply_markup.inline_keyboard[4]?.[0]?.callback_data).toBe("skills:back");
 
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");
@@ -148,6 +151,48 @@ describe("bot/commands/skills", () => {
     expect(state?.metadata.flow).toBe("skills");
     expect(state?.metadata.stage).toBe("list");
     expect(state?.metadata.messageId).toBe(123);
+  });
+
+  it("derives missing descriptions from skill content", async () => {
+    mocked.skillListMock.mockResolvedValue({
+      data: [
+        { name: "plain", description: "", location: "", content: "# Plain\n\nAuto derived description." },
+        { name: "fm", description: undefined, location: "", content: '---\nname: fm\ndescription: "From frontmatter"\n---\n\nBody' },
+      ],
+      error: null,
+    });
+
+    const ctx = createCommandContext(129);
+    await skillsCommand(ctx as never);
+
+    const state = interactionManager.getSnapshot();
+    expect(state?.metadata.skills).toEqual([
+      { name: "fm", description: "From frontmatter", location: undefined },
+      { name: "plain", description: "Auto derived description.", location: undefined },
+    ]);
+  });
+
+  it("starts import flow from list and clears the catalog interaction", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 330,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [{ name: "borsch", description: "Cook borsch" }],
+      },
+    });
+
+    const ctx = createCallbackContext("skills:import", 330);
+    const handled = await handleSkillsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(interactionManager.getSnapshot()).toBeNull();
+    expect(isSkillImportActive()).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    clearSkillImportFlow();
   });
 
   it("normalizes skill entries and sorts them by name", async () => {
