@@ -21,6 +21,7 @@ const mocked = vi.hoisted(() => ({
   keyboardClearContextMock: vi.fn(),
   keyboardSetPausedMock: vi.fn(),
   keyboardIsTopicModeMock: vi.fn(() => false),
+  replaceMainInlineKeyboardMock: vi.fn().mockResolvedValue(true),
   sendMainInlineKeyboardMock: vi.fn().mockResolvedValue(undefined),
   findTelegramTopicBindingByThreadMock: vi.fn(),
 }));
@@ -78,6 +79,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     clearContext: mocked.keyboardClearContextMock,
     setPaused: mocked.keyboardSetPausedMock,
     isTopicMode: mocked.keyboardIsTopicModeMock,
+    replaceMainInlineKeyboard: mocked.replaceMainInlineKeyboardMock,
     sendMainInlineKeyboard: mocked.sendMainInlineKeyboardMock,
   },
 }));
@@ -115,11 +117,12 @@ describe("bot/commands/start-command", () => {
     mocked.keyboardClearContextMock.mockReset();
     mocked.keyboardSetPausedMock.mockReset();
     mocked.keyboardIsTopicModeMock.mockReset().mockReturnValue(false);
+    mocked.replaceMainInlineKeyboardMock.mockReset().mockResolvedValue(true);
     mocked.sendMainInlineKeyboardMock.mockReset().mockResolvedValue(undefined);
     mocked.findTelegramTopicBindingByThreadMock.mockReset().mockResolvedValue(null);
   });
 
-  it("stops active flow, resets project/session, and anchors the Main keyboard", async () => {
+  it("stops active flow, resets project/session, and replaces the root Main panel", async () => {
     const ctx = createStartContext();
 
     await startCommand(ctx);
@@ -137,12 +140,24 @@ describe("bot/commands/start-command", () => {
     expect(mocked.pinnedInitializeMock).toHaveBeenCalledWith(ctx.api, 100);
     expect(mocked.keyboardInitializeMock).toHaveBeenCalledWith(ctx.api, 100);
     expect(mocked.pinnedRefreshContextLimitMock).toHaveBeenCalledTimes(1);
-    expect(mocked.sendMainInlineKeyboardMock).toHaveBeenCalledWith(100, undefined, true);
+    expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
+    expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
     // /start must never spawn Telegram topics on its own.
     expect(mocked.findTelegramTopicBindingByThreadMock).not.toHaveBeenCalled();
   });
 
-  it("treats /start inside a Telegram Topic as navigation without resetting Main", async () => {
+  it("also replaces the root Main panel when topic mode is already active", async () => {
+    mocked.keyboardIsTopicModeMock.mockReturnValue(true);
+    const ctx = createStartContext();
+
+    await startCommand(ctx);
+
+    expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
+    expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
+    expect(mocked.abortCurrentOperationMock).not.toHaveBeenCalled();
+  });
+
+  it("treats /start inside a Telegram Topic as navigation without replacing the root anchor", async () => {
     mocked.findTelegramTopicBindingByThreadMock.mockResolvedValue({
       chatId: 100,
       threadId: 731925,
@@ -157,6 +172,7 @@ describe("bot/commands/start-command", () => {
     expect(mocked.clearSessionMock).not.toHaveBeenCalled();
     expect(mocked.clearProjectMock).not.toHaveBeenCalled();
     expect(mocked.pinnedClearMock).not.toHaveBeenCalled();
+    expect(mocked.replaceMainInlineKeyboardMock).not.toHaveBeenCalled();
     expect(mocked.sendMainInlineKeyboardMock).toHaveBeenCalledWith(100, undefined, true);
   });
 });
