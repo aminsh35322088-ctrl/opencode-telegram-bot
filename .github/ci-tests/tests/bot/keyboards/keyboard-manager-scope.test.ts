@@ -32,7 +32,11 @@ const THREAD_ID = 42;
 const SESSION_ID = "sess-scope-1";
 
 function keyboardTexts(keyboard: unknown): string[] {
-  const rows = (keyboard as { keyboard?: Array<Array<{ text?: string }>> }).keyboard ?? [];
+  const markup = keyboard as {
+    keyboard?: Array<Array<{ text?: string }>>;
+    inline_keyboard?: Array<Array<{ text?: string }>>;
+  };
+  const rows = markup.keyboard ?? markup.inline_keyboard ?? [];
   return rows.flat().map((button) => button?.text ?? "");
 }
 
@@ -82,12 +86,12 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const keyboard = keyboardManager.getKeyboard();
     const texts = keyboardTexts(keyboard);
     expect(texts).toContain("💬 New Chat");
-    // Model choices live under Settings → Default Models; Main must not expose a model button.
     expect(texts).toContain("⚙️ Main Settings");
     expect(texts.some((text) => text.includes("🧠"))).toBe(false);
+    expect((keyboard as { is_persistent?: boolean }).is_persistent).toBe(true);
   });
 
-  it("returns the Topic keyboard when called inside the topic runtime context", () => {
+  it("returns Topic controls as InlineKeyboardMarkup inside the topic runtime context", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     const keyboard = runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.getKeyboard());
     const texts = keyboardTexts(keyboard);
@@ -96,6 +100,8 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("⏸️ Pause");
     expect(texts).not.toContain("▶️ Resume");
     expect(texts).not.toContain("🛑 Abort");
+    expect((keyboard as { inline_keyboard?: unknown }).inline_keyboard).toBeDefined();
+    expect((keyboard as { keyboard?: unknown }).keyboard).toBeUndefined();
   });
 
   it("shows execution controls only while the Topic session is actively running", () => {
@@ -125,7 +131,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("⏸️ Pause");
   });
 
-  it("sendKeyboardUpdate inside a topic runtime context sends the topic keyboard to the topic thread", async () => {
+  it("sendKeyboardUpdate sends Topic inline controls to the exact topic thread without ReplyKeyboard leakage", async () => {
     const sendMessage = vi.fn().mockResolvedValue({});
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
@@ -134,6 +140,8 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(options.message_thread_id).toBe(THREAD_ID);
     expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
+    expect((options.reply_markup as { inline_keyboard?: unknown }).inline_keyboard).toBeDefined();
+    expect((options.reply_markup as { keyboard?: unknown }).keyboard).toBeUndefined();
   });
 
   it("sendKeyboardUpdate outside a Topic routes to the persistent Main panel", async () => {
