@@ -41,7 +41,6 @@ export function getCurrentTopicSettings(): TopicSettings | undefined { return cu
 export function getTopicDefaults(): TopicDefaults { return { ...DEFAULT_TOPIC_DEFAULTS, ...(currentSettings.topicDefaults ?? {}) }; }
 export function setTopicDefaults(defaults: TopicDefaults): void { currentSettings.topicDefaults = { ...DEFAULT_TOPIC_DEFAULTS, ...defaults }; void writeSettingsFile(currentSettings); }
 export function updateTopicDefaults(patch: Partial<TopicDefaults>): void { setTopicDefaults({ ...getTopicDefaults(), ...patch }); }
-export function getEffectiveTopicSettings(): TopicSettings | undefined { return currentTopicState()?.settings; }
 export function updateCurrentTopicSettings(patch: Partial<TopicSettings>): void { updateTopic(patch); }
 export function getCurrentProject(): ProjectInfo { const session = getCurrentSession(); const directory = session?.directory ?? process.cwd(); return { id: `session:${session?.id ?? "default"}`, worktree: directory, name: path.basename(directory) || directory }; }
 export function setCurrentProject(_projectInfo: ProjectInfo): void { void writeSettingsFile(currentSettings); }
@@ -68,13 +67,8 @@ export function getPromptQueueEnabled(): boolean { return currentTopicState()?.s
 export function setPromptQueueEnabled(enabled: boolean): void { if (getTopicRuntimeContext()) { updateTopic({ promptQueueEnabled: enabled }); return; } currentSettings.promptQueueEnabled = enabled; void writeSettingsFile(currentSettings); }
 export function getCurrentAgent(): string | undefined { return currentTopicState()?.settings.agent ?? currentSettings.currentAgent; }
 export function setCurrentAgent(agentName: string): void { if (getTopicRuntimeContext()) { updateTopic({ agent: agentName }); return; } currentSettings.currentAgent = agentName; void writeSettingsFile(currentSettings); }
-export function clearCurrentAgent(): void { if (getTopicRuntimeContext()) { updateTopic({ agent: undefined }); return; } currentSettings.currentAgent = undefined; void writeSettingsFile(currentSettings); }
 export function getCurrentModel(): ModelInfo | undefined { return currentTopicState()?.settings.model ?? currentSettings.currentModel; }
 export function setCurrentModel(modelInfo: ModelInfo): void { if (getTopicRuntimeContext()) { updateTopic({ model: modelInfo, variant: modelInfo.variant }); return; } currentSettings.currentModel = modelInfo; void writeSettingsFile(currentSettings); }
-export function clearCurrentModel(): void { if (getTopicRuntimeContext()) { updateTopic({ model: undefined }); return; } currentSettings.currentModel = undefined; void writeSettingsFile(currentSettings); }
-export function getPinnedMessageId(): number | undefined { return currentSettings.pinnedMessageId; }
-export function setPinnedMessageId(messageId: number): void { currentSettings.pinnedMessageId = messageId; void writeSettingsFile(currentSettings); }
-export function clearPinnedMessageId(): void { currentSettings.pinnedMessageId = undefined; void writeSettingsFile(currentSettings); }
 export function getMainNavigationMessageId(chatId: number): number | undefined { return currentSettings.mainNavigationMessageIds?.[String(chatId)]; }
 export function setMainNavigationMessageId(chatId: number, messageId: number): Promise<void> { currentSettings.mainNavigationMessageIds = { ...(currentSettings.mainNavigationMessageIds ?? {}), [String(chatId)]: messageId }; return writeSettingsFile(currentSettings); }
 export function clearMainNavigationMessageId(chatId: number): Promise<void> { if (!currentSettings.mainNavigationMessageIds) return Promise.resolve(); const next = { ...currentSettings.mainNavigationMessageIds }; delete next[String(chatId)]; currentSettings.mainNavigationMessageIds = Object.keys(next).length ? next : undefined; return writeSettingsFile(currentSettings); }

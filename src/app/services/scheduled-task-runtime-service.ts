@@ -20,6 +20,7 @@ import type { QueuedScheduledTaskDelivery, ScheduledTask } from "../types/schedu
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const TASK_DESCRIPTION_PREVIEW_LENGTH = 64;
 const RESTART_INTERRUPTED_ERROR = "Interrupted by bot restart during scheduled task execution.";
+const UNEXPECTED_EXECUTION_ERROR = "Scheduled task execution failed unexpectedly.";
 
 export interface ScheduledTaskDeliverySender {
   send(delivery: QueuedScheduledTaskDelivery): Promise<boolean>;
@@ -366,6 +367,23 @@ export class ScheduledTaskRuntime {
           result.errorMessage || "Unknown error",
         );
       }
+    } catch (error) {
+      logger.error(
+        `[ScheduledTaskRuntime] Task execution or bookkeeping failed: id=${taskId}`,
+        error,
+      );
+      try {
+        await this.handleFailedExecution(
+          taskSnapshot,
+          new Date().toISOString(),
+          UNEXPECTED_EXECUTION_ERROR,
+        );
+      } catch (recoveryError) {
+        logger.error(
+          `[ScheduledTaskRuntime] Failed to recover task after execution error: id=${taskId}`,
+          recoveryError,
+        );
+      }
     } finally {
       this.runningTaskIds.delete(taskId);
     }
@@ -445,16 +463,8 @@ export class ScheduledTaskRuntime {
   }
 
   private async enqueueDelivery(delivery: QueuedScheduledTaskDelivery): Promise<void> {
-    if (
-      this.deliveryQueue.length === 0 &&
-      !this.flushInProgress &&
-      !foregroundSessionState.isBusy() &&
-      (await this.sendDelivery(delivery))
-    ) {
-      return;
-    }
-
     this.deliveryQueue.push(delivery);
+    await this.flushDeferredDeliveries();
   }
 
   private async sendDelivery(delivery: QueuedScheduledTaskDelivery): Promise<boolean> {

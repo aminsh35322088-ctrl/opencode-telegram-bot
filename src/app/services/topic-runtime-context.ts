@@ -23,10 +23,6 @@ export function getTopicScopeKey(): string {
   return topic ? `${topic.chatId}:${topic.threadId}` : "__main__";
 }
 
-export function isTopicRuntimeContextActive(): boolean {
-  return storage.getStore() !== undefined;
-}
-
 export function runInTopicRuntimeContext<T>(
   context: TopicRuntimeContext,
   callback: () => T,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot, Context } from "grammy";
-import type { ScheduledTask } from "../../../src/app/types/scheduled-task.js";
+import type { QueuedScheduledTaskDelivery, ScheduledTask } from "../../../src/app/types/scheduled-task.js";
 import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
@@ -147,6 +147,18 @@ function createTask(partial: Partial<ScheduledTask> = {}): ScheduledTask {
   } as ScheduledTask;
 }
 
+function createDelivery(taskId: string): QueuedScheduledTaskDelivery {
+  return {
+    taskId,
+    scheduleSummary: "Test schedule",
+    prompt: `Prompt ${taskId}`,
+    runAt: "2026-03-16T10:00:00.000Z",
+    status: "success",
+    notificationText: `Notification ${taskId}`,
+    resultText: `Result ${taskId}`,
+  };
+}
+
 async function createDeliverySender() {
   const { createScheduledTaskDeliverySender } = await import(
     "../../../src/bot/messages/scheduled-task-delivery.js"
@@ -267,6 +279,74 @@ describe("app/services/scheduled-task-runtime-service", () => {
 
     runtime.__resetForTests();
     vi.useRealTimers();
+  });
+
+  it("recovers a throwing recurring execution as a normal failure and advances its schedule", async () => {
+    ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
+      await import("../../../src/app/services/scheduled-task-runtime-service.js"));
+
+    const runtime = new ScheduledTaskRuntimeClass();
+    mocked.tasks = [createTask({ kind: "cron", nextRunAt: "2026-03-16T17:00:00.000Z" })];
+    mocked.executeScheduledTaskMock.mockRejectedValue(new Error("executor crashed"));
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-16T17:00:00.000Z"));
+
+    await (runtime as unknown as { executeTask(taskId: string): Promise<void> }).executeTask("task-1");
+
+    expect(mocked.tasks).toHaveLength(1);
+    expect(mocked.tasks[0]?.lastStatus).toBe("error");
+    expect(mocked.tasks[0]?.lastError).toBe("Scheduled task execution failed unexpectedly.");
+    expect(mocked.tasks[0]?.nextRunAt).toBe("2026-03-17T17:00:00.000Z");
+    expect(mocked.tasks[0]?.runCount).toBe(1);
+
+    runtime.__resetForTests();
+    vi.useRealTimers();
+  });
+
+  it("serializes concurrent deliveries and preserves queue order", async () => {
+    ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
+      await import("../../../src/app/services/scheduled-task-runtime-service.js"));
+    ({ foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js"));
+    foregroundSessionState.__resetForTests();
+
+    const runtime = new ScheduledTaskRuntimeClass();
+    const sentTaskIds: string[] = [];
+    let releaseFirstDelivery: (() => void) | null = null;
+    const firstDeliveryGate = new Promise<void>((resolve) => {
+      releaseFirstDelivery = resolve;
+    });
+    const deliverySender = {
+      send: vi.fn(async (delivery: QueuedScheduledTaskDelivery) => {
+        sentTaskIds.push(delivery.taskId);
+        if (delivery.taskId === "task-a") {
+          await firstDeliveryGate;
+        }
+        return true;
+      }),
+    };
+
+    await runtime.initialize({ api: {} } as Bot<Context>, deliverySender);
+
+    const enqueueDelivery = (runtime as unknown as {
+      enqueueDelivery(delivery: QueuedScheduledTaskDelivery): Promise<void>;
+    }).enqueueDelivery.bind(runtime);
+
+    const first = enqueueDelivery(createDelivery("task-a"));
+    await Promise.resolve();
+    const second = enqueueDelivery(createDelivery("task-b"));
+    await Promise.resolve();
+
+    expect(deliverySender.send).toHaveBeenCalledTimes(1);
+    expect(sentTaskIds).toEqual(["task-a"]);
+
+    releaseFirstDelivery?.();
+    await Promise.all([first, second]);
+
+    expect(sentTaskIds).toEqual(["task-a", "task-b"]);
+    expect(deliverySender.send).toHaveBeenCalledTimes(2);
+
+    runtime.__resetForTests();
   });
 
   it("sends the timeout error text returned by executor", async () => {

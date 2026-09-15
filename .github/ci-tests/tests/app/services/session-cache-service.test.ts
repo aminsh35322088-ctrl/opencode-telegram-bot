@@ -92,15 +92,17 @@ describe("session-cache-service", () => {
       { worktree: "D:/repo-a", lastUpdated: 1_700_000_000_100 },
     ]);
 
-    const settingsPath = path.join(tempHome, "settings.json");
+    const settingsPath = path.join(tempHome, "app-state.json");
     const settingsFile = JSON.parse(await readFile(settingsPath, "utf-8")) as {
-      sessionDirectoryCache: {
-        version: number;
-        lastSyncedUpdatedAt: number;
-        directories: Array<{ worktree: string }>;
+      settings?: {
+        sessionDirectoryCache: {
+          version: number;
+          lastSyncedUpdatedAt: number;
+          directories: Array<{ worktree: string }>;
+        };
       };
     };
-    const cacheFile = settingsFile.sessionDirectoryCache;
+    const cacheFile = settingsFile.settings?.sessionDirectoryCache;
 
     expect(cacheFile).toBeDefined();
     expect(cacheFile.version).toBe(1);

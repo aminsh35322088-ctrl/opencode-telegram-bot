@@ -66,6 +66,10 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     updateModel: vi.fn(),
     getContextInfo: vi.fn(() => null),
     setPaused: vi.fn(),
+    enterTopicMode: vi.fn().mockResolvedValue(undefined),
+    clearMainInlineMessage: vi.fn().mockResolvedValue(undefined),
+    sendMainInlineKeyboard: vi.fn().mockResolvedValue(undefined),
+    sendKeyboardUpdate: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -196,14 +200,18 @@ describe("bot/commands/new", () => {
     mocked.createTopicKeyboardMock.mockReturnValue({ keyboard: true });
   });
 
-  it("blocks new session creation while foreground session is busy", async () => {
+  it("creates a new session even while the foreground session is busy", async () => {
     mocked.isForegroundBusyMock.mockReturnValue(true);
+    mocked.sessionCreateMock.mockResolvedValueOnce({
+      data: { id: "session-2", title: "Session Two" },
+      error: null,
+    });
 
     const ctx = createContext();
     await newCommand(ctx as never, createDeps());
 
-    expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
-    expect(mocked.replyBusyBlockedMock).toHaveBeenCalledWith(ctx);
+    expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(1);
+    expect(mocked.replyBusyBlockedMock).not.toHaveBeenCalled();
   });
 
   it("creates and immediately follows the new session", async () => {
@@ -222,14 +230,14 @@ describe("bot/commands/new", () => {
       chatId: 123,
       session: {
         id: "session-2",
-        title: "Session Two",
+        title: "Chat #1",
         directory: "/repo",
       },
       ensureEventSubscription: mocked.ensureEventSubscriptionMock,
     });
     // The New Chat confirmation must be a plain message: the Main keyboard
     // panel belongs exclusively to the pinned welcome/anchor message.
-    const createdCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("Session Two"));
+    const createdCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("Chat #1"));
     expect(createdCall).toBeDefined();
     expect(createdCall?.[2] ?? {}).not.toHaveProperty("reply_markup");
   });

@@ -90,14 +90,14 @@ describe("bot/handlers/photo-handler", () => {
     );
   });
 
-  it("routes captioned photos to the image AI caption handler", async () => {
+  it("sends captioned photos to the selected coding model for understanding", async () => {
     const { ctx } = createPhotoContext("Use this caption");
     const { deps, processPromptMock, downloadMock } = createDeps();
 
     await handlePhotoMessage(ctx, deps);
 
-    expect(handlePhotoCaptionMessageMock).toHaveBeenCalledWith(ctx, "Use this caption");
-    expect(downloadMock).not.toHaveBeenCalled();
-    expect(processPromptMock).not.toHaveBeenCalled();
+    expect(handlePhotoCaptionMessageMock).not.toHaveBeenCalled();
+    expect(downloadMock).toHaveBeenCalledWith(ctx.api, "large-photo");
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, "Use this caption", deps, [expect.objectContaining({ type: "file", mime: "image/jpeg" })]);
   });
 });

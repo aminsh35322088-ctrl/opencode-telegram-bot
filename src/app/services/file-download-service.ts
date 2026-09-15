@@ -25,7 +25,7 @@ export function buildTelegramFileUrl(filePath: string): string {
   return `${telegramFileUrlBase()}${config.telegram.token}/${filePath}`;
 }
 
-export async function downloadTelegramFile(api: Api, fileId: string): Promise<DownloadedFile> {
+export async function downloadTelegramFile(api: Api, fileId: string, options?: { signal?: AbortSignal; maxBytes?: number }): Promise<DownloadedFile> {
   logger.debug(`[FileDownload] Getting file info for fileId=${fileId}`);
 
   const file = await api.getFile(fileId);
@@ -34,7 +34,8 @@ export async function downloadTelegramFile(api: Api, fileId: string): Promise<Do
     throw new Error("File path not available from Telegram");
   }
 
-  if (file.file_size && file.file_size > MAX_FILE_SIZE_BYTES) {
+  const maxBytes = options?.maxBytes ?? MAX_FILE_SIZE_BYTES;
+  if (file.file_size && file.file_size > maxBytes) {
     const sizeMb = (file.file_size / (1024 * 1024)).toFixed(2);
     throw new Error(`File too large: ${sizeMb}MB (max 20MB)`);
   }
@@ -42,7 +43,8 @@ export async function downloadTelegramFile(api: Api, fileId: string): Promise<Do
   const fileUrl = buildTelegramFileUrl(file.file_path);
   logger.debug(`[FileDownload] Downloading from ${fileUrl.replace(config.telegram.token, "***")}`);
 
-  const fetchOptions: NodeFetchRequestInit = {};
+  options?.signal?.throwIfAborted();
+  const fetchOptions: NodeFetchRequestInit = { size: maxBytes, signal: AbortSignal.any([...(options?.signal ? [options.signal] : []), AbortSignal.timeout(30_000)]) };
 
   if (config.telegram.proxyUrl) {
     const { HttpsProxyAgent } = await import("https-proxy-agent");

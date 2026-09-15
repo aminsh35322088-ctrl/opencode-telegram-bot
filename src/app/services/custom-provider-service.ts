@@ -1,11 +1,12 @@
 import { fetchProviderCatalog } from "./provider-catalog-service.js";
+import { isChatModelMetadata } from "./model-eligibility-service.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
-export type AiCapability = "coding" | "image" | "video" | "stt";
+export type AiCapability = "coding" | "image" | "stt";
 
 /**
  * OpenCode model capability metadata.
@@ -61,7 +62,7 @@ const SUPPORTED_MODALITIES = new Set(["text", "audio", "image", "video", "pdf"])
 type DiscoveredModelRecord = Record<string, unknown>;
 
 function normalizeCapability(value: unknown): AiCapability {
-  return value === "image" || value === "video" || value === "stt" ? value : "coding";
+  return value === "image" || value === "stt" ? value : "coding";
 }
 
 function normalizeModalityList(value: unknown): string[] | undefined {
@@ -167,7 +168,7 @@ function normalizeStore(value: unknown): ProviderStoreFile {
   const raw = value as Partial<ProviderStoreFile>;
   const providers = Array.isArray(raw.providers)
     ? raw.providers
-        .filter((provider): provider is StoredProvider => Boolean(provider) && typeof provider.id === "string" && typeof provider.apiKey === "string")
+        .filter((provider): provider is StoredProvider => Boolean(provider) && typeof provider.id === "string" && typeof provider.apiKey === "string" && (provider as { capability?: unknown }).capability !== "video")
         .map((provider) => ({
           ...provider,
           capability: normalizeCapability(provider.capability),
@@ -194,8 +195,8 @@ async function readStore(): Promise<ProviderStoreFile> {
   return normalizeStore(state.customProviders);
 }
 
-async function writeStore(store: ProviderStoreFile): Promise<void> {
-  await updateAppState({ customProviders: normalizeStore(store) });
+async function writeStore(store: ProviderStoreFile, beforeSave: () => void = () => {}): Promise<void> {
+  await updateAppState(() => { beforeSave(); return { customProviders: normalizeStore(store) }; });
 }
 
 function normalizeId(value: string): string {
@@ -272,11 +273,7 @@ export async function discoverModels(baseURL: string, apiKey: string): Promise<C
   return models;
 }
 
-export async function testProvider(baseURL: string, apiKey: string): Promise<void> {
-  await discoverModels(baseURL, apiKey);
-}
-
-export async function configureGroqStt(apiKey: string): Promise<void> {
+export async function configureGroqStt(apiKey: string, beforeSave: () => void = () => {}): Promise<void> {
   const key = apiKey.trim();
   if (!key) throw new Error("API key is empty");
   const response = await fetch(`${GROQ_STT_BASE_URL}/models`, {
@@ -290,7 +287,7 @@ export async function configureGroqStt(apiKey: string): Promise<void> {
   const payload = (await response.json()) as { data?: Array<{ id?: unknown }> };
   if (!(payload.data ?? []).some((model) => model.id === GROQ_STT_MODEL)) throw new Error(`Groq account does not expose ${GROQ_STT_MODEL}`);
   const store = await readStore();
-  await writeStore({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } });
+  await writeStore({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } }, beforeSave);
   applyProviderEnvironment({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } });
   logger.info(`[CustomProvider] Groq STT configured and verified: model=${GROQ_STT_MODEL}`);
 }
@@ -321,12 +318,15 @@ export async function saveCustomProvider(input: {
   apiKey: string;
   models: CustomProviderModel[];
   capability?: AiCapability;
+  beforeSave?: () => void;
 }): Promise<CustomProvider> {
+  if ((input as { capability?: unknown }).capability === "video") throw new Error("Video AI is no longer supported");
   const key = input.apiKey.trim();
   if (!key) throw new Error("API key is empty");
   const name = input.name.trim().slice(0, 80);
   if (!name) throw new Error("Provider name is empty");
   const id = normalizeId(input.id ?? name);
+  if (!input.id && id.startsWith("builtin-")) throw new Error("This name is reserved for a built-in connection");
   const baseURL = normalizeBaseURL(input.baseURL);
   const capability = normalizeCapability(input.capability);
   const requestedModels = Array.isArray(input.models)
@@ -351,6 +351,7 @@ export async function saveCustomProvider(input: {
   const now = new Date().toISOString();
   const store = await readStore();
   const existing = store.providers.find((provider) => provider.id === id);
+  if (existing && !input.id) throw new Error("A provider with this name already exists. Choose a different name.");
   const provider: StoredProvider = {
     id,
     name,
@@ -362,7 +363,7 @@ export async function saveCustomProvider(input: {
     updatedAt: now,
   };
   const next = { ...store, providers: [...store.providers.filter((item) => item.id !== id), provider] };
-  await writeStore(next);
+  await writeStore(next, input.beforeSave);
   applyProviderEnvironment(next);
   logger.info(`[CustomProvider] Saved verified provider ${id} capability=${capability} models=${provider.models.length}`);
   return toPublicProvider(provider);
@@ -383,7 +384,7 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
   applyProviderEnvironment(store);
   const providers: Record<string, unknown> = {};
 
-  for (const provider of store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID)) {
+  for (const provider of store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID && p.capability === "coding")) {
     if (!provider.apiKey?.trim()) {
       logger.warn(`[CustomProvider] Skipping provider ${provider.id}: API key is empty`);
       continue;
@@ -396,7 +397,7 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
         baseURL: provider.baseURL,
         apiKey: `{env:${envKey(provider.id)}}`,
       },
-      models: Object.fromEntries(provider.models.map((model) => [model.id, getOpenCodeCustomModelConfig(model)])),
+      models: Object.fromEntries(provider.models.filter(isChatModelMetadata).map((model) => [model.id, getOpenCodeCustomModelConfig(model)])),
     };
   }
 

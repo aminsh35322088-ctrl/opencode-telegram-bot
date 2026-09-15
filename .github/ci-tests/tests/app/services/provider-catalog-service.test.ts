@@ -17,6 +17,24 @@ describe("shared provider catalog", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(url + "/models");
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty("method", "POST");
   });
+
+  it("force refresh bypasses a fresh cached catalog", async () => {
+    const first = { data: [{ id: "old-model" }] };
+    const second = { data: [{ id: "old-model" }, { id: "new-model" }] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(first)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(second)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect((await fetchProviderCatalog(url, "key")).records.map((record) => record.id)).toEqual(["old-model"]);
+    expect((await fetchProviderCatalog(url, "key")).records.map((record) => record.id)).toEqual(["old-model"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const refreshed = await fetchProviderCatalog(url, "key", { force: true });
+    expect(refreshed.records.map((record) => record.id)).toEqual(["old-model", "new-model"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("isolates changed credentials and URLs", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(payload)));
     vi.stubGlobal("fetch", fetchMock);
@@ -26,6 +44,7 @@ describe("shared provider catalog", () => {
     await fetchProviderCatalog(url + "/other", "new-key");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
   it("retains old evidence and backs off on refresh failures", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(payload))).mockResolvedValueOnce(new Response("error", { status: 503 }));
@@ -37,6 +56,7 @@ describe("shared provider catalog", () => {
     expect(await fetchProviderCatalog(url, "key")).toBe(old);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
   it.each([{ data: [] }, { error: "bad response" }, { data: [null, {}, { id: 1 }] }])("rejects malformed catalogs %j", async (body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
     await expect(fetchProviderCatalog(url, "key")).rejects.toThrow();

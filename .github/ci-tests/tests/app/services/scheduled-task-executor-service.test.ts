@@ -226,7 +226,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     expect(mocked.messagesMock).toHaveBeenCalledTimes(2);
     expect(mocked.cleanupIgnoresMock).toHaveBeenCalledTimes(1);
     expect(mocked.registerIgnoreMock).toHaveBeenCalledWith("session-1");
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("passes the task's stored agent to promptAsync", async () => {
@@ -297,7 +297,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       errorMessage: expect.stringContaining("https://opencode.ai/docs/config/#models"),
     });
     expect(mocked.messagesMock).not.toHaveBeenCalled();
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("returns a helpful timeout message when assistant result contains a timeout error", async () => {
@@ -349,7 +349,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       resultText: null,
       errorMessage: "Scheduled task exceeded bot execution timeout after 120 minutes.",
     });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("waits through startup before the server registers the session as active", async () => {
@@ -393,7 +393,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     expect(mocked.loggerWarnMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Scheduled task finished without a completed assistant response"),
     );
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("treats an empty completed assistant reply as an execution error", async () => {
@@ -478,7 +478,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       errorMessage: null,
     });
     expect(mocked.messagesMock).toHaveBeenCalledTimes(4);
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("waits for the final assistant response after completed tool-call turns", async () => {
@@ -526,7 +526,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
     expect(mocked.messagesMock).toHaveBeenCalledTimes(5);
     expect(mocked.statusMock).toHaveBeenCalledTimes(4);
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
     expect(mocked.loggerWarnMock).not.toHaveBeenCalledWith(
       "[ScheduledTaskExecutor] Empty completed assistant response diagnostics",
       expect.anything(),
@@ -553,7 +553,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       resultText: "Real scheduled result",
       errorMessage: null,
     });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("fails, rejects, aborts, and cleans up when scheduled task asks a question", async () => {
@@ -587,7 +587,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       sessionID: "session-1",
       directory: "D:\\Projects\\Repo",
     });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
     expect(mocked.messagesMock).not.toHaveBeenCalled();
   });
 
@@ -627,7 +627,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       sessionID: "session-1",
       directory: "D:\\Projects\\Repo",
     });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
     expect(mocked.messagesMock).not.toHaveBeenCalled();
   });
 
@@ -674,7 +674,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     expect(mocked.questionRejectMock).not.toHaveBeenCalled();
     expect(mocked.permissionReplyMock).not.toHaveBeenCalled();
     expect(mocked.abortMock).not.toHaveBeenCalled();
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
   });
 
   it("keeps the successful result even if temporary session cleanup fails", async () => {

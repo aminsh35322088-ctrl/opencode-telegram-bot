@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  isMainTelegramTopic: vi.fn(),
   findTelegramTopicBindingByThread: vi.fn(),
   getTopicRuntimeContext: vi.fn(),
   getCurrentSession: vi.fn(),
@@ -22,14 +21,12 @@ const mocks = vi.hoisted(() => ({
   showTelegramTopicDeleteConfirmation: vi.fn(),
   findQueuedPromptByButtonLabel: vi.fn(),
   promptQueue: { removeById: vi.fn(), __resetForTests: vi.fn() },
-  clearImageMode: vi.fn(),
   isProviderWizardActive: vi.fn(),
   isIntegrationWizardActive: vi.fn(),
   getCompactOutputMode: vi.fn(),
   setCompactOutputMode: vi.fn(),
 }));
 
-vi.mock("../../../src/app/services/telegram-main-topic-store.js", () => ({ isMainTelegramTopic: mocks.isMainTelegramTopic }));
 vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({ findTelegramTopicBindingByThread: mocks.findTelegramTopicBindingByThread }));
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({ getTopicRuntimeContext: mocks.getTopicRuntimeContext }));
 vi.mock("../../../src/app/services/session-service.js", () => ({ getCurrentSession: mocks.getCurrentSession }));
@@ -37,7 +34,6 @@ vi.mock("../../../src/app/services/model-selection-service.js", () => ({ getStor
 vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: mocks.assistantRunState }));
 vi.mock("../../../src/app/managers/interaction-manager.js", () => ({ interactionManager: mocks.interactionManager }));
 vi.mock("../../../src/app/managers/prompt-queue-manager.js", () => ({ promptQueue: mocks.promptQueue }));
-vi.mock("../../../src/app/services/image-mode-service.js", () => ({ clearImageMode: mocks.clearImageMode }));
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({ getStoredAgent: vi.fn() }));
 vi.mock("../../../src/app/stores/settings-store.js", () => ({ getCompactOutputMode: mocks.getCompactOutputMode, setCompactOutputMode: mocks.setCompactOutputMode }));
 vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({ keyboardManager: mocks.keyboardManager }));
@@ -81,7 +77,6 @@ function registerHandler(): { handler: (ctx: unknown, next: () => Promise<void>)
 describe("bot/routers/reply-keyboard-router topic scope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.isMainTelegramTopic.mockResolvedValue(false);
     mocks.findTelegramTopicBindingByThread.mockResolvedValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID, directory: "/proj", createdAt: "", updatedAt: "" });
     mocks.getTopicRuntimeContext.mockReturnValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID });
     mocks.getCurrentSession.mockReturnValue({ id: SESSION_ID, directory: "/proj" });

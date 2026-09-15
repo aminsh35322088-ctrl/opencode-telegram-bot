@@ -22,11 +22,11 @@ function allButtons(keyboard: InlineKeyboard): unknown[] {
 describe("inline-menu", () => {
   beforeEach(() => interactionManager.clear("test_setup"));
 
-  it("adds a cancel button without creating empty rows", () => {
+  it("adds a Home button without creating empty rows in non-topic chats", () => {
     const keyboard = new InlineKeyboard().text("Session A", "session:1").row();
     appendInlineMenuCancelButton(keyboard, "session");
     expect(keyboard.inline_keyboard.some((row) => row.length === 0)).toBe(false);
-    expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("inline:cancel:session");
+    expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("main:home");
   });
 
   it("uses Close instead of Home for Topic Settings root", () => {
