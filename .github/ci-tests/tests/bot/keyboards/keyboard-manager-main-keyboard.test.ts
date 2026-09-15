@@ -64,25 +64,28 @@ describe("keyboard-manager Main scope reply keyboard", () => {
   });
 
   it("applies the keyboard once per chat until a Topic keyboard becomes active again", async () => {
-    await keyboardManager.applyMainScopeReplyKeyboardOnce(CHAT_ID);
-    await keyboardManager.applyMainScopeReplyKeyboardOnce(CHAT_ID);
+    const chat = CHAT_ID - 11;
+    await keyboardManager.applyMainScopeReplyKeyboardOnce(chat);
+    await keyboardManager.applyMainScopeReplyKeyboardOnce(chat);
     expect(api.sendMessage).toHaveBeenCalledTimes(1);
 
-    keyboardManager.markTopicKeyboardActive(CHAT_ID);
-    await keyboardManager.applyMainScopeReplyKeyboardOnce(CHAT_ID);
+    keyboardManager.markTopicKeyboardActive(chat);
+    await keyboardManager.applyMainScopeReplyKeyboardOnce(chat);
     expect(api.sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it("noteMainScopeKeyboardApplied suppresses the notice when a reply already carried the keyboard", async () => {
-    keyboardManager.noteMainScopeKeyboardApplied(CHAT_ID);
-    await keyboardManager.applyMainScopeReplyKeyboardOnce(CHAT_ID);
+    const chat = CHAT_ID - 22;
+    keyboardManager.noteMainScopeKeyboardApplied(chat);
+    await keyboardManager.applyMainScopeReplyKeyboardOnce(chat);
     expect(api.sendMessage).not.toHaveBeenCalled();
   });
 
   it("resets the latch when applying fails so the next message retries", async () => {
+    const chat = CHAT_ID - 33;
     api.sendMessage.mockRejectedValueOnce(new Error("telegram down"));
-    await expect(keyboardManager.applyMainScopeReplyKeyboardOnce(CHAT_ID)).rejects.toThrow("telegram down");
-    await keyboardManager.applyMainScopeReplyKeyboardOnce(CHAT_ID);
+    await expect(keyboardManager.applyMainScopeReplyKeyboardOnce(chat)).rejects.toThrow("telegram down");
+    await keyboardManager.applyMainScopeReplyKeyboardOnce(chat);
     expect(api.sendMessage).toHaveBeenCalledTimes(2);
   });
 });

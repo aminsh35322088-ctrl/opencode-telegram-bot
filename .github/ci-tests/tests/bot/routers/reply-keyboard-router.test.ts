@@ -120,7 +120,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("applies the Main controls keyboard once per chat and still lets prompts through", async () => {
+  it("delegates keyboard sync to the manager on every All message and lets prompts through", async () => {
     const mainChat = -9000000002;
     mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
     mocks.getTopicRuntimeContext.mockReturnValue(null);
@@ -131,8 +131,9 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     await handler(makeMainScopeContext(mainChat, "and another one"), next);
 
     expect(next).toHaveBeenCalledTimes(2);
+    // The router delegates once per message; the manager owns the latch.
     const appliedForChat = mocks.keyboardManager.applyMainScopeReplyKeyboardOnce.mock.calls.filter((call) => call[0] === mainChat);
-    expect(appliedForChat).toHaveLength(1);
+    expect(appliedForChat).toHaveLength(2);
   });
 
   const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "🎨 Image AI", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
