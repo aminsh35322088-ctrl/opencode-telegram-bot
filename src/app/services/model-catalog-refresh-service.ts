@@ -1,7 +1,17 @@
-import { listCustomProviders, getCustomProviderConfig, discoverModels, saveCustomProvider, syncOpenCodeCustomConfig } from "./custom-provider-service.js";
+import { fetchProviderCatalog } from "./provider-catalog-service.js";
+import {
+  listCustomProviders,
+  getCustomProviderConfig,
+  normalizeDiscoveredModel,
+  saveCustomProvider,
+  syncOpenCodeCustomConfig,
+  type CustomProviderModel,
+} from "./custom-provider-service.js";
 import { refreshModelCatalog } from "./model-selection-service.js";
 import { logger } from "../../utils/logger.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { config } from "../../config.js";
+import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -16,53 +26,101 @@ async function isOpenCodeReady(): Promise<boolean> {
   }
 }
 
-function modelsMatch(previous: Array<{ id: string; name: string }>, next: Array<{ id: string; name: string }>): boolean {
+function modelFingerprint(model: CustomProviderModel): string {
+  return JSON.stringify([
+    model.id,
+    model.name,
+    model.attachment ?? null,
+    model.modalities?.input ?? [],
+    model.modalities?.output ?? [],
+  ]);
+}
+
+function modelsMatch(previous: CustomProviderModel[], next: CustomProviderModel[]): boolean {
   if (previous.length !== next.length) return false;
-  const nextById = new Map(next.map((model) => [model.id, model.name]));
-  return previous.every((model) => nextById.get(model.id) === model.name);
+  const left = [...previous].sort((a, b) => a.id.localeCompare(b.id)).map(modelFingerprint);
+  const right = [...next].sort((a, b) => a.id.localeCompare(b.id)).map(modelFingerprint);
+  return left.every((value, index) => value === right[index]);
+}
+
+async function reloadLocalOpenCodeConfig(): Promise<boolean> {
+  const target = resolveLocalOpencodeTarget(config.opencode.apiUrl);
+  if (!target) return false;
+
+  const pid = await findServerPid(target.port);
+  if (pid) await killServerProcess(pid);
+  await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  startLocalOpencodeServer(target).unref();
+  return true;
 }
 
 export async function refreshAllCustomProviderModels(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
+
   refreshInFlight = (async () => {
     let changed = false;
     const providers = await listCustomProviders();
+
     for (const provider of providers) {
       try {
-        const config = await getCustomProviderConfig(provider.id);
-        if (!config) {
+        const providerConfig = await getCustomProviderConfig(provider.id);
+        if (!providerConfig) {
           logger.warn(`[ModelCatalog] Skipping ${provider.id}: API key unavailable`);
           continue;
         }
-        const discovered = await discoverModels(config.apiUrl, config.apiKey);
-        const configuredIds = new Set(provider.models.map((model) => model.id));
-        const next = discovered.filter((model) => configuredIds.has(model.id));
-        if (!next.length) {
-          logger.warn(`[ModelCatalog] ${provider.id} returned no configured models; keeping last known catalog`);
+
+        // This is a real refresh, not a cached read. Custom providers can add or
+        // remove short-lived/free models at any time, so the complete /models
+        // response becomes the next catalog instead of intersecting it with the
+        // models that happened to exist when the provider was first configured.
+        const catalog = await fetchProviderCatalog(providerConfig.apiUrl, providerConfig.apiKey, { force: true });
+        const discovered = catalog.records
+          .map(normalizeDiscoveredModel)
+          .filter((model): model is CustomProviderModel => Boolean(model));
+
+        if (!discovered.length) {
+          logger.warn(`[ModelCatalog] ${provider.id} returned no models; keeping last known catalog`);
           continue;
         }
-        if (modelsMatch(provider.models, next)) continue;
+        if (modelsMatch(provider.models, discovered)) continue;
+
         await saveCustomProvider({
           id: provider.id,
           name: provider.name,
-          baseURL: config.apiUrl,
-          apiKey: config.apiKey,
-          models: next,
-          capability: config.capability,
+          baseURL: providerConfig.apiUrl,
+          apiKey: providerConfig.apiKey,
+          models: discovered,
+          capability: providerConfig.capability,
         });
         changed = true;
-        logger.info(`[ModelCatalog] Updated ${provider.id}: ${provider.models.length} -> ${next.length} models`);
+        logger.info(`[ModelCatalog] Updated ${provider.id}: ${provider.models.length} -> ${discovered.length} models`);
       } catch (error) {
         logger.warn(`[ModelCatalog] Failed to refresh provider ${provider.id}; keeping last known catalog`, error);
       }
     }
-    if (changed) await syncOpenCodeCustomConfig();
+
+    if (changed) {
+      const configPath = await syncOpenCodeCustomConfig();
+      process.env.OPENCODE_CONFIG = configPath;
+      try {
+        if (await reloadLocalOpenCodeConfig()) {
+          logger.info("[ModelCatalog] Reloaded local OpenCode after custom provider catalog change");
+          return;
+        }
+      } catch (error) {
+        logger.warn("[ModelCatalog] Custom provider catalog changed but OpenCode reload failed", error);
+      }
+    }
+
     if (await isOpenCodeReady()) {
       await refreshModelCatalog();
     } else {
       logger.debug("[ModelCatalog] OpenCode is not ready; deferring model catalog refresh until readiness callback");
     }
-  })().finally(() => { refreshInFlight = null; });
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
   return refreshInFlight;
 }
 
