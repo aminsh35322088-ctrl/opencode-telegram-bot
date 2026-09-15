@@ -91,26 +91,23 @@ async function consumeReplyKeyboardMessage(ctx: Context): Promise<void> {
   catch (error) { logger.debug?.(`[Bot] Could not delete Reply Keyboard control message: chat=${chatId} message=${messageId}`, error); }
 }
 
-// Telegram ReplyKeyboardMarkup is chat-scoped, not forum-topic-scoped. Keep a
-// tiny per-chat latch so stale AI Topic controls are replaced by the Main
-// controls keyboard once the user acts in Main/General, and the latch clears
-// again when an AI Topic keyboard is used.
-const mainKeyboardAppliedChats = new Set<number>();
+// Telegram ReplyKeyboardMarkup is chat-scoped, not forum-topic-scoped. The
+// keyboard manager keeps the per-chat latch: stale AI Topic controls are
+// replaced by the Main controls keyboard once the user acts in Main/General,
+// and the latch clears again when an AI Topic keyboard is used.
 async function applyMainScopeReplyKeyboard(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
-  if (typeof chatId !== "number" || mainKeyboardAppliedChats.has(chatId)) return;
-  mainKeyboardAppliedChats.add(chatId);
+  if (typeof chatId !== "number") return;
   try {
-    await keyboardManager.sendMainScopeReplyKeyboard(chatId);
+    await keyboardManager.applyMainScopeReplyKeyboardOnce(chatId);
   } catch (error) {
-    mainKeyboardAppliedChats.delete(chatId);
     logger.warn(`[Bot] Failed to apply Main controls Reply Keyboard in Main/General: chat=${chatId}`, error);
   }
 }
 
 function markAiTopicKeyboardVisible(ctx: Context): void {
   const chatId = ctx.chat?.id;
-  if (typeof chatId === "number") mainKeyboardAppliedChats.delete(chatId);
+  if (typeof chatId === "number") keyboardManager.markTopicKeyboardActive(chatId);
 }
 
 function getRenderedReplyKeyboardTexts(scope: { topicMode: boolean; aiTopic: boolean }, runtime: ReturnType<typeof getTopicRuntimeContext>): Set<string> {

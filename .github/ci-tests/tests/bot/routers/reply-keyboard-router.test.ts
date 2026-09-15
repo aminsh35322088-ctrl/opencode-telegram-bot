@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   getStoredModel: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn(), hasActiveRuns: vi.fn() },
   interactionManager: { getSnapshot: vi.fn(), clear: vi.fn(), clearAll: vi.fn(), start: vi.fn(), isActive: vi.fn(), clearSession: vi.fn() },
-  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn(), sendMainScopeReplyKeyboard: vi.fn().mockResolvedValue(undefined) },
+  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn(), applyMainScopeReplyKeyboardOnce: vi.fn().mockResolvedValue(undefined), markTopicKeyboardActive: vi.fn() },
   showModelCenterMenu: vi.fn(),
   showAgentSelectionMenu: vi.fn(),
   showVariantSelectionMenu: vi.fn(),
@@ -115,12 +115,12 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     const { handler, next } = registerHandler();
     await handler(makeMainScopeContext(mainChat, "💬 New Chat"), next);
 
-    expect(mocks.keyboardManager.sendMainScopeReplyKeyboard).toHaveBeenCalledWith(mainChat);
+    expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).toHaveBeenCalledWith(mainChat);
     expect(mocks.newCommand).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("applies the Main controls keyboard once per chat and still lets prompts through", async () => {
+  it("delegates keyboard sync to the manager on every All message and lets prompts through", async () => {
     const mainChat = -9000000002;
     mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
     mocks.getTopicRuntimeContext.mockReturnValue(null);
@@ -131,8 +131,9 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     await handler(makeMainScopeContext(mainChat, "and another one"), next);
 
     expect(next).toHaveBeenCalledTimes(2);
-    const appliedForChat = mocks.keyboardManager.sendMainScopeReplyKeyboard.mock.calls.filter((call) => call[0] === mainChat);
-    expect(appliedForChat).toHaveLength(1);
+    // The router delegates once per message; the manager owns the latch.
+    const appliedForChat = mocks.keyboardManager.applyMainScopeReplyKeyboardOnce.mock.calls.filter((call) => call[0] === mainChat);
+    expect(appliedForChat).toHaveLength(2);
   });
 
   const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "🎨 Image AI", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
