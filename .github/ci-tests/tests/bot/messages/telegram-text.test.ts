@@ -23,6 +23,28 @@ const plainPart: TelegramRenderedPart = {
   source: "plain",
 };
 
+const thinkingPart: TelegramRenderedPart = {
+  blocks: [{ type: "thinking", text: "Thinking\nstep one" }],
+  fallbackText: "Thinking\nstep one",
+  source: "blocks",
+};
+
+const finalThinkingPart: TelegramRenderedPart = {
+  blocks: [
+    {
+      type: "expandable_blockquote",
+      text: [{ type: "bold", text: "Thinking" }, "\n", "step one"],
+    },
+  ],
+  fallbackText: "Thinking\nstep one",
+  source: "blocks",
+};
+
+const generationDraftOptions = {
+  can_stop: true,
+  keep_on_stop: true,
+};
+
 function plainSignature(text: string): string {
   return getTelegramRenderedPartSignature({ blocks: [], fallbackText: text, source: "plain" });
 }
@@ -122,6 +144,72 @@ describe("bot/messages/telegram-text", () => {
         { blocks: richPart.blocks },
         { reply_markup: { keyboard: [] } },
       );
+    });
+
+    it("streams native thinking as a stoppable rich draft and persists its final quote", async () => {
+      const sendMessage = vi.fn();
+      const sendRichMessage = vi.fn().mockResolvedValue({ message_id: 901 });
+      const sendMessageDraft = vi.fn();
+      const sendRichMessageDraft = vi.fn().mockResolvedValue(true);
+      const editMessageText = vi.fn();
+      const api = {
+        sendMessage,
+        sendRichMessage,
+        sendMessageDraft,
+        sendRichMessageDraft,
+        editMessageText,
+      };
+
+      const initial = await sendRenderedBotPart({
+        api,
+        chatId: 100,
+        part: thinkingPart,
+      });
+
+      expect(initial.messageId).toBeGreaterThanOrEqual(1_500_000_000);
+      expect(sendRichMessageDraft).toHaveBeenNthCalledWith(
+        1,
+        100,
+        initial.messageId,
+        { blocks: thinkingPart.blocks },
+        generationDraftOptions,
+      );
+      expect(sendRichMessage).not.toHaveBeenCalled();
+
+      await expect(
+        editRenderedBotPart({
+          api,
+          chatId: 100,
+          messageId: initial.messageId,
+          part: thinkingPart,
+        }),
+      ).resolves.toEqual({ deliveredSignature: getTelegramRenderedPartSignature(thinkingPart) });
+
+      expect(sendRichMessageDraft).toHaveBeenNthCalledWith(
+        2,
+        100,
+        initial.messageId,
+        { blocks: thinkingPart.blocks },
+        generationDraftOptions,
+      );
+
+      await expect(
+        editRenderedBotPart({
+          api,
+          chatId: 100,
+          messageId: initial.messageId,
+          part: finalThinkingPart,
+        }),
+      ).resolves.toEqual({
+        deliveredSignature: getTelegramRenderedPartSignature(finalThinkingPart),
+      });
+
+      expect(sendRichMessage).toHaveBeenCalledWith(
+        100,
+        { blocks: finalThinkingPart.blocks },
+        undefined,
+      );
+      expect(editMessageText).not.toHaveBeenCalled();
     });
 
     it("sends plain parts as text without touching the rich API", async () => {
@@ -335,7 +423,7 @@ describe("bot/messages/telegram-text", () => {
   });
 
   describe("draft transports", () => {
-    it("streams native blocks as a rich draft", async () => {
+    it("streams native blocks as a stoppable rich draft", async () => {
       const sendMessageDraft = vi.fn();
       const sendRichMessageDraft = vi.fn().mockResolvedValue(true);
 
@@ -349,10 +437,15 @@ describe("bot/messages/telegram-text", () => {
       ).resolves.toEqual({ deliveredSignature: getTelegramRenderedPartSignature(richPart) });
 
       expect(sendMessageDraft).not.toHaveBeenCalled();
-      expect(sendRichMessageDraft).toHaveBeenCalledWith(100, 7, { blocks: richPart.blocks });
+      expect(sendRichMessageDraft).toHaveBeenCalledWith(
+        100,
+        7,
+        { blocks: richPart.blocks },
+        generationDraftOptions,
+      );
     });
 
-    it("streams plain parts as a text draft", async () => {
+    it("streams plain parts as a stoppable text draft", async () => {
       const sendMessageDraft = vi.fn().mockResolvedValue(true);
       const sendRichMessageDraft = vi.fn();
 
@@ -366,7 +459,12 @@ describe("bot/messages/telegram-text", () => {
       ).resolves.toEqual({ deliveredSignature: plainSignature("plain text") });
 
       expect(sendRichMessageDraft).not.toHaveBeenCalled();
-      expect(sendMessageDraft).toHaveBeenCalledWith(100, 7, "plain text");
+      expect(sendMessageDraft).toHaveBeenCalledWith(
+        100,
+        7,
+        "plain text",
+        generationDraftOptions,
+      );
     });
 
     it("propagates draft failures instead of degrading", async () => {
