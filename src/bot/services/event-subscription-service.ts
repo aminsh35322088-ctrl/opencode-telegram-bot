@@ -819,13 +819,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             messageId,
             messageText,
             responseStreamer: {
-              complete: (completeSessionId, completeMessageId, payload, options) =>
-                this.completeAssistantResponse(
+              complete: async (completeSessionId, completeMessageId, payload, options) => {
+                const result = await this.completeAssistantResponse(
                   completeSessionId,
                   completeMessageId,
                   payload,
                   options,
-                ),
+                );
+                for (const telegramMessageId of result.telegramMessageIds) {
+                  registerBotMessage({ chatId, messageId: telegramMessageId, sessionId });
+                }
+                return result;
+              },
             },
             flushPendingServiceMessages: () => {
               this.clearToolElapsedState(sessionId, "assistant_message_completed");
@@ -841,12 +846,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             notifyFirstFinalPart:
               assistantResponseMode === "draft" && !getShowAssistantRunFooter(),
             sendRenderedPart: async (part, options) => {
-              await sendRenderedBotPart({
+              const sent = await sendRenderedBotPart({
                 api: botApi,
                 chatId,
                 part,
                 options: options as Parameters<typeof sendBotText>[0]["options"],
               });
+              registerBotMessage({ chatId, messageId: sent.messageId, sessionId });
             },
           });
         } catch (err) {
