@@ -414,6 +414,7 @@ export const en = {
   "skills.button.execute": "✅ Execute",
   "skills.confirm":
     "Confirm execution of skill {skill}. To run it with arguments, send the arguments as a message.",
+  "skills.confirm_detail": "Confirm execution of skill {skill}.\n\n{description}\n📍 Source: {location}\n\nTo run it with arguments, send the arguments as a message.",
   "skills.inactive_callback": "This skill menu is inactive",
   "skills.execute_callback": "Using skill...",
   "skills.executing_prefix": "⚡ Using skill:",

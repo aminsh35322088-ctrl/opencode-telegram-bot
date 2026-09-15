@@ -420,6 +420,7 @@ export const ru: I18nDictionary = {
   "skills.button.execute": "✅ Выполнить",
   "skills.confirm":
     "Подтвердите запуск скилла {skill}. Чтобы запустить его с аргументами, отправьте аргументы следующим сообщением.",
+  "skills.confirm_detail": "Подтвердите выполнение скилла {skill}.\n\n{description}\n📍 Источник: {location}\n\nЧтобы запустить с аргументами, отправьте аргументы сообщением.",
   "skills.inactive_callback": "Это меню скиллов уже неактивно",
   "skills.execute_callback": "Использую скилл...",
   "skills.executing_prefix": "⚡ Использую скилл:",

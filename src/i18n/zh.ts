@@ -375,6 +375,7 @@ export const zh: I18nDictionary = {
   "skills.no_description": "无描述",
   "skills.button.execute": "✅ 执行",
   "skills.confirm": "请确认执行技能 {skill}。若需带参数执行，请发送一条包含参数的消息。",
+  "skills.confirm_detail": "确认执行技能 {skill}。\n\n{description}\n📍 来源：{location}\n\n如需带参数运行，请将参数作为消息发送。",
   "skills.inactive_callback": "该技能菜单已失效",
   "skills.execute_callback": "正在使用技能...",
   "skills.executing_prefix": "⚡ 使用技能:",

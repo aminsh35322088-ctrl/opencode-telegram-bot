@@ -436,6 +436,7 @@ export const fr: I18nDictionary = {
   "skills.button.execute": "✅ Exécuter",
   "skills.confirm":
     "Confirmez l'exécution du skill {skill}. Pour l'exécuter avec des arguments, envoyez-les dans un message.",
+  "skills.confirm_detail": "Confirmer l'exécution du skill {skill}.\n\n{description}\n📍 Source : {location}\n\nPour l'exécuter avec des arguments, envoie les arguments en message.",
   "skills.inactive_callback": "Ce menu de skills est inactif",
   "skills.execute_callback": "Utilisation du skill...",
   "skills.executing_prefix": "⚡ Utilisation du skill :",

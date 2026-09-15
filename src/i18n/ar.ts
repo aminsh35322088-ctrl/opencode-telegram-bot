@@ -400,6 +400,7 @@ export const ar: I18nDictionary = {
   "skills.no_description": "لا يوجد وصف",
   "skills.button.execute": "✅ تشغيل",
   "skills.confirm": "أكد تشغيل المهارة {skill}. لتشغيلها مع وسيطات، أرسل الوسيطات كرسالة.",
+  "skills.confirm_detail": "تأكيد تنفيذ المهارة {skill}.\n\n{description}\n📍 المصدر: {location}\n\nلتنفيذها مع وسائط، أرسل الوسائط كرسالة.",
   "skills.inactive_callback": "انتهت صلاحية قائمة المهارات",
   "skills.execute_callback": "جارٍ تشغيل المهارة...",
   "skills.executing_prefix": "⚡ جارٍ تشغيل المهارة:",
