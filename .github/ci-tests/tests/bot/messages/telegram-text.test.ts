@@ -385,27 +385,31 @@ describe("bot/messages/telegram-text", () => {
       expect(sendMessageDraft).not.toHaveBeenCalled();
     });
 
-    it("persists a draft as a native message", async () => {
+    it("persists a draft as a native message and exposes rollback", async () => {
       const sendMessage = vi.fn();
       const sendRichMessage = vi.fn().mockResolvedValue({ message_id: 900 });
+      const deleteMessage = vi.fn().mockResolvedValue(true);
 
-      await expect(
-        completeDraftPart({
-          api: { sendMessage, sendRichMessage },
-          chatId: 100,
-          part: richPart,
-          options: { disable_notification: true },
-        }),
-      ).resolves.toEqual({
-        messageId: 900,
-        deliveredSignature: getTelegramRenderedPartSignature(richPart),
+      const result = await completeDraftPart({
+        api: { sendMessage, sendRichMessage, deleteMessage },
+        chatId: 100,
+        part: richPart,
+        options: { disable_notification: true },
       });
 
+      expect(result).toEqual({
+        messageId: 900,
+        deliveredSignature: getTelegramRenderedPartSignature(richPart),
+        rollback: expect.any(Function),
+      });
       expect(sendRichMessage).toHaveBeenCalledWith(
         100,
         { blocks: richPart.blocks },
         { disable_notification: true },
       );
+
+      await result.rollback();
+      expect(deleteMessage).toHaveBeenCalledWith(100, 900);
     });
 
     it("propagates completion failures so the caller can resend", async () => {
