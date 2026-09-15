@@ -61,6 +61,7 @@ export const ar: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ الجلسة النشطة مرتبطة بمشروع مختلف، لذلك تمت إعادة ضبطها. استخدم /sessions لاختيار جلسة أو /new لبدء جلسة جديدة.",
   "bot.prompt_send_error": "تعذر إرسال الطلب إلى OpenCode.",
+  "bot.empty_prompt": "⚠️ لا يوجد ما يُرسل: الرسالة فارغة بعد معالجة المرفق.",
   "bot.session_error": "🔴 أعاد OpenCode الخطأ التالي: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nاستمر مزوّد الخدمة في إرجاع الخطأ نفسه بعد عدة محاولات. استخدم /abort لإيقاف المهمة.",

@@ -63,6 +63,7 @@ export const pt: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ A sessão ativa não corresponde ao projeto selecionado, então ela foi redefinida. Use /sessions para escolher uma ou /new para criar uma nova sessão.",
   "bot.prompt_send_error": "Não foi possível enviar a solicitação ao OpenCode.",
+  "bot.empty_prompt": "⚠️ Nada para enviar: a mensagem fica vazia após o processamento do anexo.",
   "bot.session_error": "🔴 O OpenCode retornou um erro: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nO provedor continua retornando o mesmo erro nas novas tentativas. Use /abort para abortar.",

@@ -5,6 +5,8 @@ import {
 } from "./stream-throttle.js";
 
 const TELEGRAM_MESSAGE_SAFE_LENGTH = 4000;
+const MAX_STREAM_SYNC_RATE_LIMIT_RETRIES = 3;
+
 const DEFAULT_STREAM_KEY = "default";
 
 export type ToolStreamKey = "default" | "subagent" | "todo";
@@ -353,6 +355,7 @@ export class ToolCallStreamer {
       return false;
     }
 
+    let rateLimitRetries = 0;
     while (!state.isBroken && !state.cancelled) {
       const parts = state.latestParts;
       const unchanged =
@@ -381,6 +384,16 @@ export class ToolCallStreamer {
         const retryAfterMs = getRetryAfterMs(error);
         if (retryAfterMs === null) {
           this.markStreamBroken(state, error, reason);
+          return false;
+        }
+
+        rateLimitRetries += 1;
+        if (rateLimitRetries > MAX_STREAM_SYNC_RATE_LIMIT_RETRIES) {
+          logger.error(
+            `[ToolCallStreamer] Rate-limit retries exhausted, breaking stream: session=${state.sessionId}, reason=${reason}`,
+            error,
+          );
+          this.markStreamBroken(state, error, `${reason}:rate_limit_retries_exhausted`);
           return false;
         }
 

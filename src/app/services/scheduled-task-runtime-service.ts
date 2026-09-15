@@ -97,6 +97,7 @@ export class ScheduledTaskRuntime {
   private runningTaskIds = new Set<string>();
   private deliveryQueue: QueuedScheduledTaskDelivery[] = [];
   private flushInProgress = false;
+  private directDeliveryInFlight = false;
 
   async initialize(bot: Bot<Context>, deliverySender?: ScheduledTaskDeliverySender): Promise<void> {
     this.botApi = bot.api;
@@ -366,8 +367,32 @@ export class ScheduledTaskRuntime {
           result.errorMessage || "Unknown error",
         );
       }
+    } catch (error) {
+      // Without this, a throwing executor or failing post-execution bookkeeping
+      // would leave the task stuck in "running" with no timer until restart.
+      logger.error(
+        `[ScheduledTaskRuntime] Task execution or bookkeeping failed; re-arming schedule: id=${taskId}`,
+        error,
+      );
+      this.rearmTaskSchedule(taskId);
     } finally {
       this.runningTaskIds.delete(taskId);
+    }
+  }
+
+  private rearmTaskSchedule(taskId: string): void {
+    const current = getScheduledTask(taskId);
+    if (!current) {
+      return;
+    }
+
+    try {
+      this.scheduleTask(current);
+    } catch (error) {
+      logger.error(
+        `[ScheduledTaskRuntime] Failed to re-arm schedule after execution error: id=${taskId}`,
+        error,
+      );
     }
   }
 
@@ -446,14 +471,22 @@ export class ScheduledTaskRuntime {
 
   private async enqueueDelivery(delivery: QueuedScheduledTaskDelivery): Promise<void> {
     if (
+      !this.directDeliveryInFlight &&
       this.deliveryQueue.length === 0 &&
       !this.flushInProgress &&
-      !foregroundSessionState.isBusy() &&
-      (await this.sendDelivery(delivery))
+      !foregroundSessionState.isBusy()
     ) {
-      return;
+      this.directDeliveryInFlight = true;
+      try {
+        if (await this.sendDelivery(delivery)) {
+          return;
+        }
+      } finally {
+        this.directDeliveryInFlight = false;
+      }
     }
 
+    // Concurrent completions queue up here so deliveries keep chronological order.
     this.deliveryQueue.push(delivery);
   }
 

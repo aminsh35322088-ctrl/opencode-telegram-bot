@@ -149,6 +149,8 @@ function getRetryAfterMs(error: unknown): number | null {
   return seconds * 1000;
 }
 
+const MAX_STREAM_SYNC_RATE_LIMIT_RETRIES = 3;
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -281,6 +283,16 @@ export class ResponseStreamer {
         );
         synced = false;
       }
+    }
+
+    if (!synced) {
+      // The final flush (or draft persistence) failed after partial messages
+      // were already visible. Delete them so the finalize path can resend the
+      // complete answer exactly once instead of leaving a duplicated reply.
+      await this.cleanupBrokenStream(state, "complete_flush_failed");
+      this.cancelState(state);
+      this.states.delete(state.key);
+      return notStreamed;
     }
 
     const messageIds = [...state.telegramMessageIds];
@@ -425,6 +437,7 @@ export class ResponseStreamer {
       return false;
     }
 
+    let rateLimitRetries = 0;
     while (!state.cancelled) {
       const latestPayload = state.latestPayload;
       if (!latestPayload) {
@@ -457,6 +470,16 @@ export class ResponseStreamer {
       } catch (error) {
         const retryAfterMs = getRetryAfterMs(error);
         if (retryAfterMs !== null) {
+          rateLimitRetries += 1;
+          if (rateLimitRetries > MAX_STREAM_SYNC_RATE_LIMIT_RETRIES) {
+            logger.error(
+              `[ResponseStreamer] Rate-limit retries exhausted, breaking stream: session=${state.sessionId}, message=${state.messageId}, reason=${reason}`,
+              error,
+            );
+            this.markStreamBroken(state, error, `${reason}:rate_limit_retries_exhausted`);
+            return false;
+          }
+
           const delayMs = Math.max(this.resolveThrottleMs(state.sessionId), retryAfterMs);
           logger.warn(
             `[ResponseStreamer] Stream sync rate-limited, retrying in ${delayMs}ms: session=${state.sessionId}, message=${state.messageId}, reason=${reason}`,

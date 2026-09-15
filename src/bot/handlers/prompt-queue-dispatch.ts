@@ -43,7 +43,8 @@ export async function dispatchNextQueuedPrompt(sessionId?: string): Promise<void
     if (notification && ctx.chat) { try { const keyboard = keyboardManager.getKeyboard(); await sendBotText({ api: ctx.api, chatId: ctx.chat.id, text: notification.text, rawFallbackText: notification.rawFallbackText, format: "markdown_v2", options: keyboard ? { reply_markup: keyboard } : {} }); } catch (err) { logger.error(`[PromptQueue] Failed to echo queued prompt: session=${key}`, err); } }
     logger.info(`[PromptQueue] Dispatching queued prompt: id=${item.id}, session=${key}, left=${promptQueue.size(key)}`);
     try { const dispatched = await processUserPrompt(ctx, item.text, deps); if (!dispatched) logger.warn(`[PromptQueue] Queued prompt was not dispatched: id=${item.id}, session=${key}`); } catch (err) { logger.error(`[PromptQueue] Failed to dispatch queued prompt: id=${item.id}, session=${key}`, err); }
-  } finally { dispatchInFlight.delete(key); }
+  } finally { dispatchInFlight.delete(key); if (promptQueue.size(key) === 0) queuedPromptContexts.delete(key); }
 }
+export function clearQueuedPromptContext(sessionId: string): void { queuedPromptContexts.delete(sessionId); }
 async function replyWithKeyboard(ctx: Context, text: string): Promise<void> { const keyboard = keyboardManager.getKeyboard(); await ctx.reply(text, keyboard ? { reply_markup: keyboard } : {}).catch((err) => logger.error("[PromptQueue] Failed to send queue reply:", err)); }
 export function __resetPromptQueueDispatchForTests(): void { promptDeps = null; queuedPromptContexts.clear(); dispatchInFlight.clear(); }

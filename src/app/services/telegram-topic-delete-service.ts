@@ -7,8 +7,15 @@ import { removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js"
 import { promptQueue } from "../managers/prompt-queue-manager.js";
 import { promptAttachment } from "../managers/prompt-attachment-manager.js";
 import { interactionManager } from "../managers/interaction-manager.js";
+import { questionManager } from "../managers/question-manager.js";
+import { permissionManager } from "../managers/permission-manager.js";
+import { renameManager } from "../managers/rename-manager.js";
+import { taskCreationManager } from "../managers/scheduled-task-creation-manager.js";
+import { summaryAggregator } from "../managers/summary-aggregation-manager.js";
+import { dropTopicScopedInstance } from "./topic-scoped-singleton.js";
 import { keyboardManager } from "../../bot/keyboards/keyboard-manager.js";
 import { stopTopicEventSubscription } from "../../opencode/events.js";
+import { clearQueuedPromptContext } from "../../bot/handlers/prompt-queue-dispatch.js";
 import { logger } from "../../utils/logger.js";
 import { topicTelemetry } from "../../utils/topic-observability.js";
 import { getTelegramTopicRuntimeDependencies } from "../../bot/services/telegram-topic-runtime.js";
@@ -120,9 +127,16 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
   }
 
   promptQueue.clearSession(binding.sessionId, "telegram_topic_deleted");
+  clearQueuedPromptContext(binding.sessionId);
   promptAttachment.clearSession(binding.sessionId, "telegram_topic_deleted");
   keyboardManager.clearSession(binding.sessionId);
-  interactionManager.clearSession(`${binding.chatId}:${binding.threadId}`);
+  const topicScopeKey = `${binding.chatId}:${binding.threadId}`;
+  interactionManager.clearSession(topicScopeKey);
+  questionManager.clearSession(topicScopeKey);
+  permissionManager.clearSession(topicScopeKey);
+  renameManager.clearSession(topicScopeKey);
+  taskCreationManager.clearSession(topicScopeKey);
+  dropTopicScopedInstance(summaryAggregator, topicScopeKey);
   topicTelemetry("ephemeral_state_cleared", context);
 
   try {

@@ -59,6 +59,7 @@ export const ru: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ Активная сессия не соответствует выбранному проекту, поэтому была сброшена. Используйте /sessions для выбора или /new для создания новой сессии.",
   "bot.prompt_send_error": "Не удалось отправить запрос в OpenCode.",
+  "bot.empty_prompt": "⚠️ Нечего отправлять: сообщение пусто после обработки вложения.",
   "bot.session_error": "🔴 OpenCode вернул ошибку: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nПровайдер возвращает одну и ту же ошибку при повторных запросах. Используйте /abort для остановки.",
