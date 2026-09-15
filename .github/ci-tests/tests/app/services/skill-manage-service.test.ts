@@ -13,6 +13,7 @@ import {
   deleteGlobalSkill,
   isManagedSkillLocation,
   isValidSkillName,
+  updateGlobalSkill,
   writeGlobalSkill,
 } from "../../../src/app/services/skill-manage-service.js";
 
@@ -54,6 +55,35 @@ describe("app/services/skill-manage-service", () => {
     await writeGlobalSkill({ name: "solo", description: "d", body: "b" });
     await expect(writeGlobalSkill({ name: "solo", description: "d", body: "b" })).rejects.toThrow("already exists");
     await expect(writeGlobalSkill({ name: "solo2", description: "d", body: "   " })).rejects.toThrow("empty");
+  });
+
+  it("overwrites an existing managed skill in place", async () => {
+    await writeGlobalSkill({ name: "deploy-check", description: "old desc", body: "# Old" });
+    const file = await updateGlobalSkill({
+      name: "deploy-check",
+      description: "new desc",
+      body: "# New body",
+    });
+    expect(file).toBe(path.join(tmpHome, ".config", "opencode", "skills", "deploy-check", "SKILL.md"));
+    const content = await fs.readFile(file, "utf8");
+    expect(content.startsWith('---\nname: deploy-check\ndescription: "new desc"\n---')).toBe(true);
+    expect(content).toContain("# New body");
+    expect(content).not.toContain("# Old");
+  });
+
+  it("refuses to update a skill that does not exist", async () => {
+    await expect(
+      updateGlobalSkill({ name: "ghost", description: "d", body: "b" }),
+    ).rejects.toThrow("does not exist");
+  });
+
+  it("validates name and content when updating", async () => {
+    await writeGlobalSkill({ name: "solo", description: "d", body: "b" });
+    await expect(updateGlobalSkill({ name: "Bad Name", description: "d", body: "b" })).rejects.toThrow(
+      "Invalid skill name",
+    );
+    await expect(updateGlobalSkill({ name: "solo", description: "   ", body: "b" })).rejects.toThrow("empty");
+    await expect(updateGlobalSkill({ name: "solo", description: "d", body: "   " })).rejects.toThrow("empty");
   });
 
   it("deletes only managed skills", async () => {
