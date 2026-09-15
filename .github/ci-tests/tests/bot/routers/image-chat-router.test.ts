@@ -59,7 +59,7 @@ describe("Image Chat Telegram routing", () => {
     expect(queued.mock.calls[0]?.[0]).toMatchObject({ replyImage: undefined });
   });
 it("attaches the image reply keyboard to the welcome message", async () => {
-    await setDefaultImageChatProfile(profile); const context = ctx();
+    await setDefaultImageChatProfile(profile); await setImageChatDefaultMode("manual"); const context = ctx();
     await createNewImageChat(context);
     const calls = (context.api.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
     const rows = (calls[0]?.[2] as { reply_markup: { keyboard: Array<Array<{ text: string }>> } }).reply_markup.keyboard.filter(row => row.length > 0);
