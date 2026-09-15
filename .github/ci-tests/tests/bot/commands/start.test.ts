@@ -23,6 +23,7 @@ const mocked = vi.hoisted(() => ({
   keyboardIsTopicModeMock: vi.fn(() => false),
   replaceMainInlineKeyboardMock: vi.fn().mockResolvedValue(true),
   sendMainInlineKeyboardMock: vi.fn().mockResolvedValue(undefined),
+  sendMainScopeReplyKeyboardMock: vi.fn().mockResolvedValue(undefined),
   findTelegramTopicBindingByThreadMock: vi.fn(),
 }));
 
@@ -81,6 +82,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     isTopicMode: mocked.keyboardIsTopicModeMock,
     replaceMainInlineKeyboard: mocked.replaceMainInlineKeyboardMock,
     sendMainInlineKeyboard: mocked.sendMainInlineKeyboardMock,
+    sendMainScopeReplyKeyboard: mocked.sendMainScopeReplyKeyboardMock,
   },
 }));
 
@@ -119,6 +121,7 @@ describe("bot/commands/start-command", () => {
     mocked.keyboardIsTopicModeMock.mockReset().mockReturnValue(false);
     mocked.replaceMainInlineKeyboardMock.mockReset().mockResolvedValue(true);
     mocked.sendMainInlineKeyboardMock.mockReset().mockResolvedValue(undefined);
+    mocked.sendMainScopeReplyKeyboardMock.mockReset().mockResolvedValue(undefined);
     mocked.findTelegramTopicBindingByThreadMock.mockReset().mockResolvedValue(null);
   });
 
@@ -142,6 +145,8 @@ describe("bot/commands/start-command", () => {
     expect(mocked.pinnedRefreshContextLimitMock).toHaveBeenCalledTimes(1);
     expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
     expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
+    // Non-topic (private) start must not force a chat-scoped keyboard.
+    expect(mocked.sendMainScopeReplyKeyboardMock).not.toHaveBeenCalled();
     // /start must never spawn Telegram topics on its own.
     expect(mocked.findTelegramTopicBindingByThreadMock).not.toHaveBeenCalled();
   });
@@ -154,6 +159,9 @@ describe("bot/commands/start-command", () => {
 
     expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
     expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
+    // In topic mode the root /start must re-apply the Main controls keyboard
+    // because it retired the AI Topic keyboard at chat scope.
+    expect(mocked.sendMainScopeReplyKeyboardMock).toHaveBeenCalledWith(100);
     expect(mocked.abortCurrentOperationMock).not.toHaveBeenCalled();
   });
 

@@ -77,6 +77,14 @@ export async function startCommand(ctx: Context): Promise<void> {
   // If any creation/pin/persistence step fails, the previous good panel remains.
   if (!isInTopic) {
     const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId);
+    // In Topic Mode the All/root input area must show the Main controls
+    // keyboard (Telegram reply keyboards are chat-scoped and the AI Topic
+    // controls were just retired by this root /start).
+    if (isTopicMode) {
+      await keyboardManager.sendMainScopeReplyKeyboard(chatId).catch((error) => {
+        logger.warn(`[TelegramKeyboard] /start failed to apply Main controls Reply Keyboard in All/root: chat=${chatId}`, error);
+      });
+    }
     logger.info(`[TelegramKeyboard] /start root Main replacement finished: chat=${chatId}, success=${replaced}, mode=${isTopicMode ? "topic-aware" : "normal"}`);
     return;
   }
