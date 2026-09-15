@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   getStoredModel: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn(), hasActiveRuns: vi.fn() },
   interactionManager: { getSnapshot: vi.fn(), clear: vi.fn(), clearAll: vi.fn(), start: vi.fn(), isActive: vi.fn(), clearSession: vi.fn() },
-  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn() },
+  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn(), sendMainScopeReplyKeyboard: vi.fn().mockResolvedValue(undefined) },
   showModelCenterMenu: vi.fn(),
   showAgentSelectionMenu: vi.fn(),
   showVariantSelectionMenu: vi.fn(),
@@ -96,6 +96,43 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     mocks.isProviderWizardActive.mockReturnValue(false);
     mocks.isIntegrationWizardActive.mockReturnValue(false);
     mocks.findQueuedPromptByButtonLabel.mockReturnValue(null);
+  });
+
+  function makeMainScopeContext(chatId: number, text: string) {
+    return {
+      chat: { id: chatId },
+      message: { text, message_thread_id: 1 },
+      reply: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it("applies the Main controls keyboard in All and dispatches a Main button", async () => {
+    const mainChat = -9000000001;
+    mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
+    mocks.getTopicRuntimeContext.mockReturnValue(null);
+    mocks.keyboardManager.isTopicMode.mockReturnValue(true);
+
+    const { handler, next } = registerHandler();
+    await handler(makeMainScopeContext(mainChat, "💬 New Chat"), next);
+
+    expect(mocks.keyboardManager.sendMainScopeReplyKeyboard).toHaveBeenCalledWith(mainChat);
+    expect(mocks.newCommand).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("applies the Main controls keyboard once per chat and still lets prompts through", async () => {
+    const mainChat = -9000000002;
+    mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
+    mocks.getTopicRuntimeContext.mockReturnValue(null);
+    mocks.keyboardManager.isTopicMode.mockReturnValue(true);
+
+    const { handler, next } = registerHandler();
+    await handler(makeMainScopeContext(mainChat, "write me a haiku"), next);
+    await handler(makeMainScopeContext(mainChat, "and another one"), next);
+
+    expect(next).toHaveBeenCalledTimes(2);
+    const appliedForChat = mocks.keyboardManager.sendMainScopeReplyKeyboard.mock.calls.filter((call) => call[0] === mainChat);
+    expect(appliedForChat).toHaveLength(1);
   });
 
   const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "🎨 Image AI", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];

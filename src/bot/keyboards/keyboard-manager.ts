@@ -279,6 +279,27 @@ class KeyboardManager {
 
   public isTopicMode(chatId: number): boolean { return this.topicModeChats.has(chatId); }
   public async enterTopicMode(chatId: number): Promise<void> { this.topicModeChats.add(chatId); logger.info(`[TopicMode] Entered Topic Mode without replacing General InlineKeyboard: chat=${chatId}`); }
+
+  /**
+   * General/All uses a chat-scoped Reply Keyboard with the Main controls so
+   * the navigation buttons are always visible; Topic controls are re-applied
+   * by the router when an AI Topic is used again.
+   */
+  public async sendMainScopeReplyKeyboard(chatId: number): Promise<void> {
+    if (!this.api) {
+      return;
+    }
+
+    const notice = await this.api.sendMessage(chatId, "⌨️", {
+      reply_markup: createMainKeyboard(getStoredModel(), { isTopic: false }),
+    });
+    try {
+      await this.api.deleteMessage(chatId, notice.message_id);
+    } catch (error) {
+      logger.debug(`[TelegramKeyboard] Could not delete Main Reply Keyboard notice: chat=${chatId}`, error);
+    }
+    logger.info(`[TelegramKeyboard] Applied Main controls Reply Keyboard in All/root: chat=${chatId}`);
+  }
   public async activateTopicMode(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<void> { await this.enterTopicMode(chatId); await this.sendTopicMainKeyboard(chatId, currentModel, true); }
   public async hideMainInlineKeyboard(chatId: number): Promise<void> { logger.debug(`[TopicMode] Ignoring request to hide General InlineKeyboard: chat=${chatId}`); }
   public async clearMainInlineKeyboard(chatId: number): Promise<void> { logger.debug(`[TelegramKeyboard] Keeping persistent pinned Main status + InlineKeyboard message in All/root: chat=${chatId}`); }
