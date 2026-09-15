@@ -135,7 +135,8 @@ describe("bot/commands/skills", () => {
     ];
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("skills:select:0");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("skills:select:1");
-    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("skills:back");
+    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("skills:new");
+    expect(options.reply_markup.inline_keyboard[3]?.[0]?.callback_data).toBe("skills:back");
 
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");

@@ -32,6 +32,7 @@ export const fr: I18nDictionary = {
   "question.blocked.command_not_allowed":
     "⚠️ Cette commande n'est pas disponible tant que le flux de question actuel n'est pas terminé.",
 
+  "inline.button.cancel": "❌ Annuler",
   "inline.inactive_callback": "Ce menu est inactif",
 
   "common.cancelled": "Annulé",
@@ -437,6 +438,22 @@ export const fr: I18nDictionary = {
   "skills.confirm":
     "Confirmez l'exécution du skill {skill}. Pour l'exécuter avec des arguments, envoyez-les dans un message.",
   "skills.confirm_detail": "Confirmer l'exécution du skill {skill}.\n\n{description}\n📍 Source : {location}\n\nPour l'exécuter avec des arguments, envoie les arguments en message.",
+  "skills.button.new": "➕ Nouvelle skill",
+  "skills.button.delete": "🗑 Supprimer la skill",
+  "skills.button.delete_confirm": "🗑 Supprimer définitivement",
+  "skills.button.delete_cancel": "Annuler",
+  "skills.wizard.ask_name": "Envoyez le nom de la skill (minuscules, chiffres, tirets — ex. deploy-check).",
+  "skills.wizard.invalid_name": "⚠️ Nom de skill invalide. Utilisez minuscules, chiffres et tirets simples (1-64 caractères), ex. deploy-check.",
+  "skills.wizard.ask_description": "Envoyez maintenant la description en une ligne : quand l’agent doit-il utiliser cette skill ?",
+  "skills.wizard.ask_body": "Envoyez maintenant le corps de la skill (instructions Markdown). Conseil : restez précis et actionnable.",
+  "skills.wizard.saved": "✅ Skill "{name}" enregistrée dans le répertoire global des skills.",
+  "skills.wizard.write_error": "🔴 Impossible d'enregistrer la skill : {error}",
+  "skills.wizard.cancelled": "Assistant de skill annulé.",
+  "skills.restart_hint": "Redémarrez OpenCode (/opencode_stop + /opencode_start) pour charger le changement.",
+  "skills.delete_not_managed": "Seules les skills du répertoire global peuvent être supprimées.",
+  "skills.delete_confirm": "Supprimer la skill {skill} ? Son dossier sera retiré du répertoire global.",
+  "skills.deleted": "🗑 Skill "{name}" supprimée.",
+  "skills.delete_failed": "🔴 Impossible de supprimer la skill.",
   "skills.inactive_callback": "Ce menu de skills est inactif",
   "skills.execute_callback": "Utilisation du skill...",
   "skills.executing_prefix": "⚡ Utilisation du skill :",

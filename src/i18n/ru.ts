@@ -29,6 +29,7 @@ export const ru: I18nDictionary = {
   "question.blocked.command_not_allowed":
     "⚠️ Эта команда недоступна, пока не завершен текущий опрос.",
 
+  "inline.button.cancel": "❌ Отмена",
   "inline.inactive_callback": "Это меню уже неактивно",
 
   "common.cancelled": "Отменено",
@@ -421,6 +422,22 @@ export const ru: I18nDictionary = {
   "skills.confirm":
     "Подтвердите запуск скилла {skill}. Чтобы запустить его с аргументами, отправьте аргументы следующим сообщением.",
   "skills.confirm_detail": "Подтвердите выполнение скилла {skill}.\n\n{description}\n📍 Источник: {location}\n\nЧтобы запустить с аргументами, отправьте аргументы сообщением.",
+  "skills.button.new": "➕ Новый скилл",
+  "skills.button.delete": "🗑 Удалить скилл",
+  "skills.button.delete_confirm": "🗑 Удалить навсегда",
+  "skills.button.delete_cancel": "Отмена",
+  "skills.wizard.ask_name": "Отправьте название скилла (строчные буквы, цифры, дефисы — например deploy-check).",
+  "skills.wizard.invalid_name": "⚠️ Недопустимое название. Используйте строчные буквы, цифры и одиночные дефисы (1-64 символа), например deploy-check.",
+  "skills.wizard.ask_description": "Теперь отправьте однострочное описание: когда агенту использовать этот скилл?",
+  "skills.wizard.ask_body": "Теперь отправьте тело скилла (инструкции в Markdown). Совет: держите сфокусированно и практично.",
+  "skills.wizard.saved": "✅ Скилл "{name}" сохранён в глобальной папке скиллов.",
+  "skills.wizard.write_error": "🔴 Не удалось сохранить скилл: {error}",
+  "skills.wizard.cancelled": "Мастер скиллов отменён.",
+  "skills.restart_hint": "Перезапустите OpenCode (/opencode_stop + /opencode_start), чтобы загрузить изменение.",
+  "skills.delete_not_managed": "Удалять можно только скиллы из глобальной папки скиллов.",
+  "skills.delete_confirm": "Удалить скилл {skill}? Папка будет удалена из глобальной папки скиллов.",
+  "skills.deleted": "🗑 Скилл "{name}" удалён.",
+  "skills.delete_failed": "🔴 Не удалось удалить скилл.",
   "skills.inactive_callback": "Это меню скиллов уже неактивно",
   "skills.execute_callback": "Использую скилл...",
   "skills.executing_prefix": "⚡ Использую скилл:",

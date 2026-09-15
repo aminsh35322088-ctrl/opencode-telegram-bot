@@ -33,6 +33,7 @@ export const it: I18nDictionary = {
   "question.blocked.command_not_allowed":
     "⚠️ Questo comando non è disponibile finché il flusso della domanda corrente non è completato.",
 
+  "inline.button.cancel": "❌ Annulla",
   "inline.inactive_callback": "Questo menu non è attivo",
 
   "common.cancelled": "Annullato",
@@ -428,6 +429,22 @@ export const it: I18nDictionary = {
   "skills.confirm":
     "Conferma l'uso della skill {skill}. Per usarla con argomenti, invia gli argomenti come messaggio.",
   "skills.confirm_detail": "Conferma l'esecuzione della skill {skill}.\n\n{description}\n📍 Fonte: {location}\n\nPer eseguirla con argomenti, invia gli argomenti come messaggio.",
+  "skills.button.new": "➕ Nuova skill",
+  "skills.button.delete": "🗑 Elimina skill",
+  "skills.button.delete_confirm": "🗑 Elimina definitivamente",
+  "skills.button.delete_cancel": "Annulla",
+  "skills.wizard.ask_name": "Invia il nome della skill (minuscole, cifre, trattini — es. deploy-check).",
+  "skills.wizard.invalid_name": "⚠️ Nome skill non valido. Usa minuscole, cifre e trattini singoli (1-64 caratteri), es. deploy-check.",
+  "skills.wizard.ask_description": "Ora invia la descrizione su una riga: quando l’agente dovrebbe usare questa skill?",
+  "skills.wizard.ask_body": "Ora invia il corpo della skill (istruzioni Markdown). Suggerimento: mantienilo focalizzato e azionabile.",
+  "skills.wizard.saved": "✅ Skill "{name}" salvata nella directory globale delle skill.",
+  "skills.wizard.write_error": "🔴 Impossibile salvare la skill: {error}",
+  "skills.wizard.cancelled": "Procedura skill annullata.",
+  "skills.restart_hint": "Riavvia OpenCode (/opencode_stop + /opencode_start) per caricare la modifica.",
+  "skills.delete_not_managed": "Solo le skill nella directory globale possono essere eliminate.",
+  "skills.delete_confirm": "Eliminare la skill {skill}? La cartella verrà rimossa dalla directory globale.",
+  "skills.deleted": "🗑 Skill "{name}" eliminata.",
+  "skills.delete_failed": "🔴 Impossibile eliminare la skill.",
   "skills.inactive_callback": "Questo menu delle skill non è attivo",
   "skills.execute_callback": "Uso della skill...",
   "skills.executing_prefix": "⚡ Uso della skill:",

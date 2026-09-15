@@ -29,6 +29,7 @@ export const en = {
   "question.blocked.command_not_allowed":
     "⚠️ This command is not available until current question flow is completed.",
 
+  "inline.button.cancel": "❌ Cancel",
   "inline.inactive_callback": "This menu is inactive",
 
   "common.cancelled": "Cancelled",
@@ -415,6 +416,22 @@ export const en = {
   "skills.confirm":
     "Confirm execution of skill {skill}. To run it with arguments, send the arguments as a message.",
   "skills.confirm_detail": "Confirm execution of skill {skill}.\n\n{description}\n📍 Source: {location}\n\nTo run it with arguments, send the arguments as a message.",
+  "skills.button.new": "➕ New skill",
+  "skills.button.delete": "🗑 Delete skill",
+  "skills.button.delete_confirm": "🗑 Delete permanently",
+  "skills.button.delete_cancel": "Cancel",
+  "skills.wizard.ask_name": "Send the skill name (lowercase letters, digits, hyphens — e.g. deploy-check).",
+  "skills.wizard.invalid_name": "⚠️ Invalid skill name. Use lowercase letters, digits and single hyphens (1-64 chars), e.g. deploy-check.",
+  "skills.wizard.ask_description": "Now send the one-line description: when should the agent use this skill?",
+  "skills.wizard.ask_body": "Now send the skill body (Markdown instructions). Tip: keep it focused and actionable.",
+  "skills.wizard.saved": "✅ Skill "{name}" saved to the global skills directory.",
+  "skills.wizard.write_error": "🔴 Could not save skill: {error}",
+  "skills.wizard.cancelled": "Skill wizard cancelled.",
+  "skills.restart_hint": "Restart OpenCode (/opencode_stop + /opencode_start) to load the change.",
+  "skills.delete_not_managed": "Only skills from the global skills directory can be deleted.",
+  "skills.delete_confirm": "Delete skill {skill}? Its folder will be removed from the global skills directory.",
+  "skills.deleted": "🗑 Skill "{name}" deleted.",
+  "skills.delete_failed": "🔴 Could not delete the skill.",
   "skills.inactive_callback": "This skill menu is inactive",
   "skills.execute_callback": "Using skill...",
   "skills.executing_prefix": "⚡ Using skill:",

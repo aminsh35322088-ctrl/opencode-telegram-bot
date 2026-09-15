@@ -1,4 +1,4 @@
-import type { Context } from "grammy";
+import { InlineKeyboard, type Context } from "grammy";
 import { config } from "../../config.js";
 import type { SkillCatalogItem } from "../../app/services/skills-catalog-service.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
@@ -8,6 +8,8 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import { processUserPrompt, type ProcessPromptDeps } from "../handlers/prompt.js";
+import { clearSkillWizard, startSkillWizard } from "../commands/skills-wizard.js";
+import { deleteGlobalSkill, isManagedSkillLocation } from "../../app/services/skill-manage-service.js";
 import {
   buildSkillsConfirmKeyboard,
   buildSkillsListKeyboard,
@@ -17,8 +19,13 @@ import {
   parseSkillPageCallback,
   parseSkillSelectCallback,
   SKILLS_CALLBACK_CANCEL,
+  SKILLS_CALLBACK_DELETE,
+  SKILLS_CALLBACK_DELETE_CANCEL,
+  SKILLS_CALLBACK_DELETE_CONFIRM,
   SKILLS_CALLBACK_EXECUTE,
+  SKILLS_CALLBACK_NEW,
   SKILLS_CALLBACK_PREFIX,
+  SKILLS_CALLBACK_WIZARD_CANCEL,
 } from "../menus/skills-catalog-menu.js";
 
 interface SkillsListMetadata {
@@ -36,6 +43,7 @@ interface SkillsConfirmMetadata {
   messageId: number;
   projectDirectory: string;
   skillName: string;
+  skillLocation?: string | undefined;
 }
 
 export type SkillsMetadata = SkillsListMetadata | SkillsConfirmMetadata;
@@ -73,9 +81,11 @@ function parseSkillItems(value: unknown): SkillCatalogItem[] | null {
     }
 
     const description = (item as { description?: unknown }).description;
+    const location = (item as { location?: unknown }).location;
     skills.push({
       name: skillName,
       description: typeof description === "string" ? description : undefined,
+      location: typeof location === "string" ? location : undefined,
     });
   }
 
@@ -123,12 +133,14 @@ export function parseSkillsMetadata(state: InteractionState | null): SkillsMetad
       return null;
     }
 
+    const skillLocation = typeof state.metadata.skillLocation === "string" ? state.metadata.skillLocation : undefined;
     return {
       flow,
       stage,
       messageId,
       projectDirectory,
       skillName,
+      skillLocation,
     };
   }
 
@@ -209,6 +221,55 @@ export async function handleSkillsCallback(
       return true;
     }
 
+    if (data === SKILLS_CALLBACK_NEW) {
+      clearSkillsInteraction("skills_wizard_start");
+      await ctx.answerCallbackQuery();
+      await startSkillWizard(ctx);
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_WIZARD_CANCEL) {
+      clearSkillWizard();
+      await ctx.answerCallbackQuery({ text: t("common.cancelled") });
+      await ctx.editMessageText(t("skills.wizard.cancelled")).catch(() => {});
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_DELETE) {
+      if (metadata.stage !== "confirm" || !isManagedSkillLocation(metadata.skillLocation)) {
+        await ctx.answerCallbackQuery({ text: t("skills.delete_not_managed"), show_alert: true });
+        return true;
+      }
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(t("skills.delete_confirm", { skill: metadata.skillName }), {
+        reply_markup: new InlineKeyboard()
+          .text(t("skills.button.delete_confirm"), SKILLS_CALLBACK_DELETE_CONFIRM)
+          .text(t("skills.button.delete_cancel"), SKILLS_CALLBACK_DELETE_CANCEL),
+      });
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_DELETE_CONFIRM) {
+      if (metadata.stage !== "confirm") {
+        await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+        return true;
+      }
+      clearSkillsInteraction("skills_delete_confirmed");
+      await ctx.answerCallbackQuery();
+      const deleted = await deleteGlobalSkill(metadata.skillName);
+      await ctx.editMessageText(
+        deleted
+          ? `${t("skills.deleted", { name: metadata.skillName })}\n\n${t("skills.restart_hint")}`
+          : t("skills.delete_failed"),
+      ).catch(() => {});
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_DELETE_CANCEL) {
+      await ctx.answerCallbackQuery({ text: t("common.cancelled") });
+      return true;
+    }
+
     const page = parseSkillPageCallback(data);
     if (page !== null) {
       if (metadata.stage !== "list") {
@@ -262,6 +323,7 @@ export async function handleSkillsCallback(
     }
 
     await ctx.answerCallbackQuery();
+    const canDelete = isManagedSkillLocation(selectedSkill.location);
     const confirmText = selectedSkill.location
       ? t("skills.confirm_detail", {
           skill: `/${selectedSkill.name}`,
@@ -270,7 +332,7 @@ export async function handleSkillsCallback(
         })
       : t("skills.confirm", { skill: `/${selectedSkill.name}` });
     await ctx.editMessageText(confirmText, {
-      reply_markup: buildSkillsConfirmKeyboard(),
+      reply_markup: buildSkillsConfirmKeyboard(canDelete),
     });
 
     interactionManager.transition({
@@ -281,6 +343,7 @@ export async function handleSkillsCallback(
         messageId: metadata.messageId,
         projectDirectory: metadata.projectDirectory,
         skillName: selectedSkill.name,
+        skillLocation: selectedSkill.location,
       },
     });
 
