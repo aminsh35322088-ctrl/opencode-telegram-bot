@@ -153,13 +153,15 @@ class KeyboardManager {
     return persisted;
   }
 
-  private async pinMainAnchor(chatId: number, messageId: number): Promise<void> {
-    if (!this.api) return;
+  private async pinMainAnchor(chatId: number, messageId: number): Promise<boolean> {
+    if (!this.api) return false;
     try {
       await this.api.pinChatMessage(chatId, messageId, { disable_notification: true });
       logger.info(`[TelegramKeyboard] Main navigation pinned in All/root: chat=${chatId}, message=${messageId}`);
+      return true;
     } catch (error) {
       logger.error(`[TelegramKeyboard] Failed to pin Main navigation in All/root: chat=${chatId}, message=${messageId}`, error);
+      return false;
     }
   }
 
@@ -184,12 +186,94 @@ class KeyboardManager {
     }
   }
 
+  private async rollbackMainAnchorCandidate(chatId: number, messageId: number): Promise<void> {
+    if (!this.api) return;
+    await this.unpinMainAnchor(chatId, messageId);
+    try {
+      await this.api.deleteMessage(chatId, messageId);
+    } catch (error) {
+      logger.debug(`[TelegramKeyboard] Failed to remove rejected Main navigation candidate: chat=${chatId}, message=${messageId}`, error);
+    }
+  }
+
+  private async restorePersistedMainAnchor(chatId: number, previousMessageId?: number): Promise<void> {
+    try {
+      if (previousMessageId) await setMainNavigationMessageId(chatId, previousMessageId);
+      else await clearMainNavigationMessageId(chatId);
+    } catch (error) {
+      logger.error(`[TelegramKeyboard] Failed to restore previous Main navigation state after replacement rollback: chat=${chatId}, previous=${previousMessageId ?? "none"}`, error);
+    }
+  }
+
   /** Backwards-compatible entrypoint for callers that explicitly refresh the Main pin. */
   public async pinMainInlineMessage(chatId: number, messageId?: number): Promise<void> {
     await this.withMainAnchorLock(chatId, async () => {
       const targetMessageId = messageId ?? this.getPersistedMainInlineMessageId(chatId);
       if (!targetMessageId) return;
       await this.pinMainAnchor(chatId, targetMessageId);
+    });
+  }
+
+  /**
+   * /start in All/root is a replacement operation, not a refresh. A fresh root
+   * panel is created first and must be pinnable + persistable before the old
+   * canonical anchor is unpinned/deleted. This prevents a failed /start from
+   * destroying the last good Main panel, while still guaranteeing one canonical
+   * bot-owned pin after a successful replacement.
+   */
+  public async replaceMainInlineKeyboard(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<boolean> {
+    return this.withMainAnchorLock(chatId, async () => {
+      if (!this.api) return false;
+
+      const previousMessageId = this.getPersistedMainInlineMessageId(chatId);
+      const text = await buildMainStatusText(currentModel);
+      const replyMarkup = createMainInlineKeyboard(currentModel);
+      let replacementMessageId: number | undefined;
+
+      try {
+        const response = await this.api.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: replyMarkup });
+        replacementMessageId = response.message_id;
+
+        // Main/root navigation must never carry a real Topic id. Reject and
+        // remove any candidate that a scoped API regression routes into a Topic.
+        if (typeof response.message_thread_id === "number" && response.message_thread_id > 1) {
+          await this.api.deleteMessage(chatId, response.message_id).catch(() => {});
+          logger.error(`[TelegramKeyboard] Refused Topic-scoped replacement Main navigation message: chat=${chatId}, message=${response.message_id}, thread=${response.message_thread_id}`);
+          return false;
+        }
+
+        if (!(await this.pinMainAnchor(chatId, response.message_id))) {
+          await this.rollbackMainAnchorCandidate(chatId, response.message_id);
+          if (previousMessageId) await this.pinMainAnchor(chatId, previousMessageId);
+          logger.error(`[TelegramKeyboard] /start replacement aborted because new Main navigation could not be pinned: chat=${chatId}, message=${response.message_id}`);
+          return false;
+        }
+
+        try {
+          await setMainNavigationMessageId(chatId, response.message_id);
+        } catch (persistError) {
+          await this.restorePersistedMainAnchor(chatId, previousMessageId);
+          await this.rollbackMainAnchorCandidate(chatId, response.message_id);
+          if (previousMessageId) await this.pinMainAnchor(chatId, previousMessageId);
+          logger.error(`[TelegramKeyboard] /start replacement rolled back because new Main navigation could not be persisted: chat=${chatId}, message=${response.message_id}`, persistError);
+          return false;
+        }
+
+        this.mainInlineMessageIds.set(chatId, response.message_id);
+        this.lastUpdateTimes.set(`${MAIN_KEY}:${chatId}`, Date.now());
+
+        if (previousMessageId && previousMessageId !== response.message_id) {
+          await this.retireMainAnchor(chatId, previousMessageId);
+        }
+
+        logger.info(`[TelegramKeyboard] /start replaced Main navigation anchor in All/root: chat=${chatId}, previous=${previousMessageId ?? "none"}, current=${response.message_id}`);
+        return true;
+      } catch (error) {
+        if (replacementMessageId) await this.rollbackMainAnchorCandidate(chatId, replacementMessageId);
+        if (previousMessageId) await this.pinMainAnchor(chatId, previousMessageId);
+        logger.error(`[TelegramKeyboard] Failed to replace Main navigation anchor from /start: chat=${chatId}`, error);
+        return false;
+      }
     });
   }
 
