@@ -40,6 +40,8 @@ describe("bot/routers/message-router", () => {
       "message:audio",
       "message",
       "message:photo",
+      "message:video",
+      "message:video_note",
       "message:document",
     ]);
   });

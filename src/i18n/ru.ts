@@ -74,6 +74,9 @@ export const ru: I18nDictionary = {
   "bot.photo_model_no_image":
     "⚠️ Текущая модель не поддерживает изображения. Отправляю только текст.",
   "bot.photo_download_error": "🔴 Не удалось скачать фото",
+  "bot.video_downloading": "⏳ Загружаю видео...",
+  "bot.video_too_large": "⚠️ Видео слишком большое (макс. {maxSizeMb}МБ)",
+  "bot.video_error": "🔴 Не удалось обработать видео",
   "bot.file_downloading": "⏳ Скачиваю файл...",
   "bot.files_downloading": "⏳ Скачиваю файлы...",
   "bot.file_download_error": "🔴 Не удалось скачать файл",

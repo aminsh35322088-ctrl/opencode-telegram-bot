@@ -30,6 +30,7 @@ import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button
 import { handleDocumentMessage } from "../handlers/document-handler.js";
 import { createMediaGroupAttachmentMiddleware } from "../handlers/media-group-handler.js";
 import { handlePhotoMessage } from "../handlers/photo-handler.js";
+import { handleVideoMessage } from "../handlers/video-handler.js";
 import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
@@ -392,6 +393,32 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
 
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message:video", async (ctx) => {
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
+    await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message:video_note", async (ctx) => {
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
+    await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
   bot.on("message:document", async (ctx) => {
