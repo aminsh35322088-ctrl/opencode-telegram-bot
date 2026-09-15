@@ -5,7 +5,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ## [Unreleased]
 
 ### Added
-- All/General chats now show the Main controls Reply Keyboard (New Chat, New Image Chat, History, Main Settings): the router re-applies it when stale AI Topic controls are detected, and root `/start` re-applies it in Topic Mode, so no input area is ever keyboardless.
+- All/General chats now show the Main controls Reply Keyboard (New Chat, New Image Chat, History, Main Settings): the keyboard manager owns a per-chat latch, the router re-applies it when stale AI Topic controls are detected, root `/start` re-applies it in Topic Mode, and the lobby rejection reply itself carries the keyboard so every bot message in All keeps the input area in sync.
 - `github-ci` tool accepts an explicit `repo` argument so it works from any workspace, not only inside a git checkout.
 - Startup orphan reconciliation: every boot deletes topic workspace directories and Topic runtime states that no live binding owns, converging state left behind by interrupted or partial deletes (previously these leaked forever on the persistent volume).
 - `github-ci` OpenCode tool: bounded GitHub Actions companion (`status`/`watch`/`logs`/`verify`) that reads CI run state and failed-test logs through `gh` with hard per-call timeouts, so test validation always returns output and never hangs or goes silent on constrained runtimes. `verify` combines waiting and auto-fetching failure logs in one bounded call.

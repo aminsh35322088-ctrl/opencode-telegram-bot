@@ -82,7 +82,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     isTopicMode: mocked.keyboardIsTopicModeMock,
     replaceMainInlineKeyboard: mocked.replaceMainInlineKeyboardMock,
     sendMainInlineKeyboard: mocked.sendMainInlineKeyboardMock,
-    sendMainScopeReplyKeyboard: mocked.sendMainScopeReplyKeyboardMock,
+    applyMainScopeReplyKeyboardOnce: mocked.sendMainScopeReplyKeyboardMock,
   },
 }));
 

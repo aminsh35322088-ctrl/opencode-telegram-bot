@@ -81,7 +81,7 @@ export async function startCommand(ctx: Context): Promise<void> {
     // keyboard (Telegram reply keyboards are chat-scoped and the AI Topic
     // controls were just retired by this root /start).
     if (isTopicMode) {
-      await keyboardManager.sendMainScopeReplyKeyboard(chatId).catch((error) => {
+      await keyboardManager.applyMainScopeReplyKeyboardOnce(chatId).catch((error) => {
         logger.warn(`[TelegramKeyboard] /start failed to apply Main controls Reply Keyboard in All/root: chat=${chatId}`, error);
       });
     }
