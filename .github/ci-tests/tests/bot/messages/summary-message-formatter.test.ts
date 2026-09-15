@@ -9,6 +9,7 @@ import {
   prepareCodeFile,
 } from "../../../src/app/formatters/summary-formatter.js";
 import { defined } from "../../helpers/defined.js";
+import { config } from "../../../src/config.js";
 
 const mocked = vi.hoisted(() => ({
   getCurrentProjectMock: vi.fn(),
@@ -345,7 +346,11 @@ describe("bot/messages/summary-message-formatter", () => {
     expect(editBody).toContain("- line2");
     expect(editBody).toContain("+ line2-updated");
 
-    const oversized = prepareCodeFile("a".repeat(101 * 1024), "src/large.ts", "write");
+    const oversized = prepareCodeFile(
+      "a".repeat((config.files.maxFileSizeKb + 1) * 1024),
+      "src/large.ts",
+      "write",
+    );
     expect(oversized).toBeNull();
   });
 

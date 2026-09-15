@@ -92,11 +92,10 @@ No public inbound ports are required for normal usage.
 - Configurable scheduled task limit (default: 10)
 - Configurable bot locale
 - Configurable visibility for thinking content and diff-file attachments
-- Configurable compact output, assistant footer, message queue, and TTS modes (`/settings`)
+- Configurable compact output, assistant footer, and message queue modes (`/settings`)
 - Configurable opt-in display of full thinking/reasoning content
 - Configurable max code file size in KB (default: 100)
-- Optional STT settings for voice transcription (`STT_API_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`)
-- Optional TTS settings for global audio replies (`TTS_PROVIDER`, `TTS_API_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`); supported providers: OpenAI-compatible, ElevenLabs, Google Cloud TTS, and Microsoft Edge TTS (no API key required)
+- Speech-to-text for voice transcription is configured through the in-app custom providers (for example Groq Whisper); no STT/TTS environment variables are read
 - Optional IPv4-only mode for Telegram connectivity (`TELEGRAM_FORCE_IPV4`)
 
 ## Current Product Scope
@@ -126,7 +125,7 @@ Current command set:
 
 Model, agent, variant, and context actions are available from the persistent bottom keyboard.
 
-Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When TTS mode in `/settings` is set to `all`, completed assistant replies include a generated audio file if TTS is configured. When it is set to `auto`, audio replies are sent only after voice/audio prompts.
+Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.
 
 Interaction routing rules:
 

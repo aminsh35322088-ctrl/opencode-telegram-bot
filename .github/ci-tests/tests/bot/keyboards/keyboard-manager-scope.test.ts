@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   getQueuedPromptButtonLabels: vi.fn(),
   isChatPaused: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn() },
-  getMainTelegramThreadIdSync: vi.fn(),
   getTopicRuntimeStateSync: vi.fn(),
 }));
 
@@ -19,7 +18,6 @@ vi.mock("../../../src/app/services/variant-selection-service.js", () => ({ forma
 vi.mock("../../../src/bot/keyboards/queued-prompt-button.js", () => ({ getQueuedPromptButtonLabels: mocks.getQueuedPromptButtonLabels }));
 vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({ isChatPaused: mocks.isChatPaused }));
 vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: mocks.assistantRunState }));
-vi.mock("../../../src/app/services/telegram-main-topic-store.js", () => ({ getMainTelegramThreadIdSync: mocks.getMainTelegramThreadIdSync }));
 vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({ getTopicRuntimeStateSync: mocks.getTopicRuntimeStateSync }));
 vi.mock("../../../src/i18n/index.js", () => ({ t: (key: string) => key, normalizeLocale: vi.fn(() => "en") }));
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -45,7 +43,6 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     mocks.getQueuedPromptButtonLabels.mockReturnValue([]);
     mocks.isChatPaused.mockReturnValue(false);
     mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
-    mocks.getMainTelegramThreadIdSync.mockReturnValue(null);
     mocks.getTopicRuntimeStateSync.mockReturnValue(null);
     mocks.getCompactOutputMode.mockReturnValue(false);
   });
@@ -82,7 +79,9 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const keyboard = keyboardManager.getKeyboard();
     const texts = keyboardTexts(keyboard);
     expect(texts).toContain("💬 New Chat");
-    expect(texts).toContain("🧠 Global Model");
+    // Model choices live under Settings → Default Models; Main must not expose a model button.
+    expect(texts).toContain("⚙️ Main Settings");
+    expect(texts.some((text) => text.includes("🧠"))).toBe(false);
   });
 
   it("returns the Topic keyboard when called inside the topic runtime context", () => {

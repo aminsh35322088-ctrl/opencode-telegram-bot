@@ -282,7 +282,7 @@ describe("bot/commands/sessions", () => {
     expect(keyboardRows[0]?.[0]?.callback_data).toBe("session:preview:session-11");
     expect(keyboardRows[9]?.[0]?.callback_data).toBe("session:preview:session-2");
     expect(keyboardRows[10]?.[0]?.callback_data).toBe("session:page:1");
-    expect(keyboardRows[11]?.[0]?.callback_data).toBe("inline:cancel:session");
+    expect(keyboardRows[11]?.[0]?.callback_data).toBe("main:home");
   });
 
   it("blocks sessions command while foreground session is busy", async () => {
@@ -329,7 +329,7 @@ describe("bot/commands/sessions", () => {
     expect(inlineRows[0]?.[0]?.callback_data).toBe("session:preview:session-11");
     expect(inlineRows[1]?.[0]?.callback_data).toBe("session:preview:session-12");
     expect(inlineRows[2]?.[0]?.callback_data).toBe("session:page:0");
-    expect(inlineRows[3]?.[0]?.callback_data).toBe("inline:cancel:session");
+    expect(inlineRows[3]?.[0]?.callback_data).toBe("main:home");
   });
 
   it("returns page-empty callback message when requested page has no sessions", async () => {

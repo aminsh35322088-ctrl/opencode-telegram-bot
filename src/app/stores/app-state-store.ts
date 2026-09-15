@@ -18,7 +18,6 @@ const APP_STATE_FILENAME = "app-state.json";
 const APP_STATE_BACKUP_FILENAME = "app-state.json.bak";
 const APP_STATE_TEMP_SUFFIX = ".tmp";
 let writeQueue: Promise<void> = Promise.resolve();
-let initialized = false;
 
 function getStatePath(): string { return path.join(getRuntimePaths().appHome, APP_STATE_FILENAME); }
 function getBackupPath(): string { return path.join(getRuntimePaths().appHome, APP_STATE_BACKUP_FILENAME); }
@@ -41,7 +40,7 @@ async function readCurrentState(): Promise<AppState> {
     }
   }
 }
-export async function readAppState(): Promise<AppState> { const state = await readCurrentState(); initialized = true; return state; }
+export async function readAppState(): Promise<AppState> { await writeQueue.catch(() => {}); return await readCurrentState(); }
 async function writeAppStateAtomically(state: AppState): Promise<void> {
   const appHome = getRuntimePaths().appHome;
   const statePath = getStatePath();
@@ -50,16 +49,15 @@ async function writeAppStateAtomically(state: AppState): Promise<void> {
   await fs.mkdir(appHome, { recursive: true });
   try {
     await fs.writeFile(tempPath, `${JSON.stringify(normalizeState(state), null, 2)}\n`, { mode: 0o600 });
-    try { await fs.rename(statePath, backupPath); } catch (error) { if (!isNotFound(error)) throw error; }
+    try { await fs.copyFile(statePath, backupPath); } catch (error) { if (!isNotFound(error)) throw error; }
     await fs.rename(tempPath, statePath);
     await fs.chmod(statePath, 0o600).catch(() => {});
-    initialized = true;
   } finally { await fs.rm(tempPath, { force: true }).catch(() => {}); }
 }
-export function updateAppState(patch: Record<string, unknown>): Promise<void> {
+export function updateAppState(patch: Record<string, unknown> | ((state: AppState) => Record<string, unknown>)): Promise<void> {
   writeQueue = writeQueue.catch(() => {}).then(async () => {
     const previous = await readCurrentState();
-    try { await writeAppStateAtomically({ ...previous, ...patch } as AppState); }
+    try { await writeAppStateAtomically({ ...previous, ...(typeof patch === "function" ? patch(previous) : patch) } as AppState); }
     catch (error) { logger.error("[AppState] Failed to persist application state:", error); throw error; }
   });
   return writeQueue;
@@ -71,7 +69,5 @@ export function writeAppState(nextState: AppState): Promise<void> {
   });
   return writeQueue;
 }
-export function clearAppState(): Promise<void> { return writeAppState({ version: 2 }); }
 export function flushAppState(): Promise<void> { return writeQueue; }
 export function getAppStatePath(): string { return getStatePath(); }
-export function hasAppStateFile(): boolean { return initialized; }

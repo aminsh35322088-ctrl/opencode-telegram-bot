@@ -4,6 +4,7 @@ import { assistantRunState } from "../managers/assistant-run-state-manager.js";
 import { markAttachedSessionIdle } from "./attach-service.js";
 import { logger } from "../../utils/logger.js";
 import { markAbortExpected } from "../managers/abort-suppression-manager.js";
+import { hasActiveToolCall } from "../managers/tool-activity-manager.js";
 
 const POLL_INTERVAL_MS = 5000;
 const STALL_AFTER_MS = 4 * 60 * 1000;
@@ -186,6 +187,13 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         if (!status) continue;
         if (status.type === "idle" || status.type === "error") return;
         if (status.type !== "busy" && status.type !== "retry") continue;
+        if (hasActiveToolCall(options.sessionId)) {
+          // A tool is executing right now. OpenCode only emits tool events on
+          // output changes, so a silent blocking tool (test runner, CI wait)
+          // never refreshes the REST fingerprint and must never look stalled.
+          lastMeaningfulProgressAt = Date.now();
+          continue;
+        }
         const messages = await getMessages(options.sessionId, options.directory, controller.signal);
         if (controller.signal.aborted) return;
         if (!messages) continue;

@@ -93,6 +93,9 @@ fi
 ln -sfn "$OPENCODE_RUNTIME_NODE_DEPS" /data/workspace/node_modules
 
 if [ -d /app/.opencode/tools ]; then
+  # Mirror the baked tools; a merge copy would leave tools removed or renamed
+  # in the repo active forever as stale global definitions.
+  find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name "*.ts" -type f -delete
   cp -a /app/.opencode/tools/. "$GLOBAL_TOOLS_DIR/"
   chown -R node:node "$GLOBAL_TOOLS_DIR"
 fi

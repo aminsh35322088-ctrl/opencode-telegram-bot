@@ -5,6 +5,8 @@ import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
+export const SETTINGS_DEFAULT_MODELS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_models`;
+export const SETTINGS_CHAT_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}chat_model`;
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
@@ -95,20 +97,39 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "",
       "Global configuration and defaults for the bot.",
       "",
-      "🤖 <b>Default Model</b> · Used when a new Topic has no explicit model.",
+      "🧠 <b>Default Models</b> · Chat/Coding and Image Chat defaults in one place.",
       "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
-      "🔌 <b>Providers & Models</b> · Discover available coding providers.",
+      "🔌 <b>AI Providers</b> · Manage API connections only.",
       "🔗 <b>Integrations</b> · Manage connected services.",
       "🧪 <b>Experimental</b> · Optional features under evaluation.",
       "🧰 <b>Advanced</b> · OpenCode tools and destructive data controls.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("🤖 Default Model", SETTINGS_MODEL_CALLBACK).row()
+      .text("🧠 Default Models", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
-      .text("🔌 Providers & Models", "provider:menu").row()
+      .text("🔌 AI Providers", "provider:menu").row()
       .text("🔗 Integrations", "integration:menu").row()
       .text("🧪 Experimental", SETTINGS_EXPERIMENTAL_CALLBACK).row()
       .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
+  };
+}
+
+export function buildDefaultModelsSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: [
+      "🧠 <b>Default Models</b>",
+      "",
+      "Choose the defaults used when a new conversation starts.",
+      "",
+      "💬 <b>Chat & Coding</b> · default OpenCode model for new AI Topics.",
+      "🎨 <b>Image Chat</b> · Auto free planner or manual chat model, plus an independent image generator/editor.",
+      "",
+      "Existing Topics keep their pinned model until you explicitly change them.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("💬 Chat & Coding", SETTINGS_CHAT_MODEL_CALLBACK).row()
+      .text("🎨 Image Chat", "icfg:root").row()
+      .text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
 

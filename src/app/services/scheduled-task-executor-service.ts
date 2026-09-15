@@ -583,7 +583,16 @@ export async function executeScheduledTask(
   } finally {
     if (sessionId && deleteTemporarySession) {
       try {
-        await opencodeClient.session.delete({ sessionID: sessionId });
+        const { data: deleted, error: deleteError } = await opencodeClient.session.delete({
+          sessionID: sessionId,
+          directory: task.projectWorktree,
+        });
+        if (deleteError || deleted !== true) {
+          logger.warn(
+            `[ScheduledTaskExecutor] Failed to delete temporary session: sessionId=${sessionId}`,
+            deleteError ?? new Error("OpenCode did not confirm session deletion"),
+          );
+        }
       } catch (error) {
         logger.warn(
           `[ScheduledTaskExecutor] Failed to delete temporary session: sessionId=${sessionId}`,

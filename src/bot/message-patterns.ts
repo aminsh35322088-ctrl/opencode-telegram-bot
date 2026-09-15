@@ -1,14 +1,13 @@
-export const MAIN_SETTINGS_BUTTON_TEXT = "⚙️ Main Settings";
-export const TOPIC_SETTINGS_BUTTON_TEXT = "⚙️ Topic Settings";
-export const LEGACY_SETTINGS_BUTTON_TEXT = "⚙️ Settings";
-export const MODEL_CENTER_BUTTON_TEXT = "🧠 Model Center";
 
 export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^(📋|🛠|💬|🔍|📝|📄|📦|🤖)\s.+\s(?:Mode|Agent)$/;
 export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s.+$/u;
 export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/u;
 export const CONTEXT_BUTTON_TEXT_PATTERN = /^📊(?:\s|$)/u;
 export const QUEUED_PROMPT_BUTTON_TEXT_PATTERN = /^❌\s\d+\.\s/;
-export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙️ Main Settings|⚙️ Topic Settings|⚙️ Settings|🎨 Image AI|🗑️ Delete Chat|📦 Compact: (?:ON|OFF)|⏸️ Pause|▶️ Resume|🛑 Abort|🧠 Model Center)$/u;
+// Patterns are matched against normalizeReplyKeyboardText() output, which strips
+// the U+FE0F variation selector. Pattern literals must stay selector-free or
+// labels like "⚙️ Settings" would silently stop matching their own keyboard.
+export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|🎨 New Image Chat|⚙ Main Settings|⚙ Topic Settings|⚙ Settings|🎨 Image AI|🗑 Delete Chat|📦 Compact: (?:ON|OFF)|⏸ Pause|▶ Resume|🛑 Abort|🧠 Model Center)$/u;
 
 const REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS = [
   AGENT_MODE_BUTTON_TEXT_PATTERN,

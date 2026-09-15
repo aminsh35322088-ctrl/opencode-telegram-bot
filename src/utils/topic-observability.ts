@@ -21,15 +21,23 @@ function formatContext(context: TopicTelemetryContext): string {
  * Emits low-cardinality, grep-friendly Topic lifecycle telemetry.
  * Never pass provider/API secrets in fields.
  */
+export type TopicTelemetryLevel = "debug" | "info";
+
 export function topicTelemetry(
   event: string,
   context: TopicTelemetryContext = {},
   fields: Record<string, string | number | boolean | undefined> = {},
+  level: TopicTelemetryLevel = "info",
 ): void {
   const extras = Object.entries(fields)
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `${key}=${String(value)}`)
     .join(" ");
   const suffix = [formatContext(context), extras].filter(Boolean).join(" ");
-  logger.info(`[TopicTelemetry] event=${event}${suffix ? ` ${suffix}` : ""}`);
+  const line = `[TopicTelemetry] event=${event}${suffix ? ` ${suffix}` : ""}`;
+  if (level === "debug") {
+    logger.debug(line);
+    return;
+  }
+  logger.info(line);
 }

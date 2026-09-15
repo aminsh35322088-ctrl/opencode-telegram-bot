@@ -66,7 +66,3 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
   const failures = results.filter((item) => !item.ok).map((item) => item.target);
   if (failures.length) throw new Error(`Could not remove obsolete bot configuration: ${failures.join(", ")}`);
 }
-
-export function getPersistentStateManifest(): Record<string, readonly string[]> {
-  return { application: PERSISTENT_STATE.application };
-}
