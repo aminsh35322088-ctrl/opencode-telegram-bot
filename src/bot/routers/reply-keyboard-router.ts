@@ -15,7 +15,7 @@ import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
-import { MAIN_BUTTONS, TOPIC_BUTTONS } from "../keyboards/main-reply-keyboard.js";
+import { MAIN_BUTTONS, TOPIC_BUTTONS, TOPIC_CONTROL_CALLBACKS } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
@@ -34,6 +34,11 @@ import { findTelegramTopicBindingByThread } from "../../app/services/telegram-to
 import { classifyReplyKeyboardInteraction, getRawReplyKeyboardText } from "../interaction-classifier.js";
 import { createNewImageChat } from "./image-chat-router.js";
 
+interface ReplyKeyboardRouterDeps {
+  bot: Bot<Context>;
+  ensureEventSubscription: (directory: string) => Promise<void>;
+}
+
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
 }
@@ -44,8 +49,12 @@ function currentModelButton(): string {
 }
 
 function keyboardButtonTexts(keyboard: unknown): string[] {
-  if (!Array.isArray(keyboard)) return [];
-  return keyboard.flatMap((row) => {
+  const rows = Array.isArray(keyboard)
+    ? keyboard
+    : typeof keyboard === "object" && keyboard !== null && Array.isArray(Reflect.get(keyboard, "inline_keyboard"))
+      ? Reflect.get(keyboard, "inline_keyboard") as unknown[]
+      : [];
+  return rows.flatMap((row) => {
     if (!Array.isArray(row)) return [];
     return row.flatMap((button) => {
       if (typeof button === "string") return [button];
@@ -93,9 +102,8 @@ async function consumeReplyKeyboardMessage(ctx: Context): Promise<void> {
 }
 
 // Telegram does not emit an update simply because the user switches a private
-// bot Topic. Keep converging the root keyboard whenever Main/All does produce an
-// update; the keyboard itself is persistent so clients can retain the correct
-// launcher between those updates.
+// bot Topic. Main/All therefore owns the only persistent Reply Keyboard. AI
+// Topic controls are inline and cannot mutate the chat input keyboard state.
 async function applyMainScopeReplyKeyboard(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return;
@@ -117,10 +125,64 @@ function getRenderedReplyKeyboardTexts(scope: { topicMode: boolean; aiTopic: boo
   return new Set(keyboardButtonTexts(built).map(normalized));
 }
 
+async function handleTopicInlineControl(ctx: Context, deps: ReplyKeyboardRouterDeps): Promise<void> {
+  const data = ctx.callbackQuery?.data;
+  if (!data?.startsWith("topicctl:")) return;
+
+  const message = ctx.callbackQuery?.message;
+  const chatId = message?.chat.id;
+  const threadId = message && "message_thread_id" in message ? message.message_thread_id : undefined;
+  const runtime = getTopicRuntimeContext();
+  if (
+    typeof chatId !== "number" ||
+    typeof threadId !== "number" ||
+    threadId <= 1 ||
+    !runtime ||
+    runtime.chatId !== chatId ||
+    runtime.threadId !== threadId
+  ) {
+    await ctx.answerCallbackQuery({ text: "This control belongs to an AI Topic.", show_alert: true }).catch(() => {});
+    logger.warn(`[Bot] Rejected Topic inline control without matching Topic runtime: data=${data}, chat=${chatId ?? "none"}, thread=${threadId ?? "none"}`);
+    return;
+  }
+
+  await ctx.answerCallbackQuery().catch(() => {});
+  logger.info(`[Bot] Consuming Topic inline control: session=${runtime.sessionId}, thread=${threadId}, data=${data}`);
+
+  try {
+    if (data === TOPIC_CONTROL_CALLBACKS.pause) { await pauseCurrentChat(ctx); return; }
+    if (data === TOPIC_CONTROL_CALLBACKS.resume) { await resumePausedChat(ctx, deps); return; }
+    if (data === TOPIC_CONTROL_CALLBACKS.abort) { await abortCurrentOperation(ctx); return; }
+    if (data === TOPIC_CONTROL_CALLBACKS.deleteChat) { await showTelegramTopicDeleteConfirmation(ctx); return; }
+
+    if (data === TOPIC_CONTROL_CALLBACKS.compact) {
+      if (!await menuAllowed(ctx)) return;
+      setCompactOutputMode(!getCompactOutputMode());
+      await keyboardManager.sendKeyboardUpdate(chatId, true, runtime.sessionId);
+      return;
+    }
+    if (data === TOPIC_CONTROL_CALLBACKS.modelCenter) {
+      if (await menuAllowed(ctx)) await showModelCenterMenu(ctx);
+      return;
+    }
+    if (data === TOPIC_CONTROL_CALLBACKS.topicSettings) {
+      if (await menuAllowed(ctx)) await settingsCommand(ctx as never);
+      return;
+    }
+    if (data === TOPIC_CONTROL_CALLBACKS.imageAi) {
+      if (await menuAllowed(ctx)) await createNewImageChat(ctx);
+      return;
+    }
+  } catch (error) {
+    logger.error(`[Bot] Topic inline control failed: session=${runtime.sessionId}, data=${data}`, error);
+    await ctx.answerCallbackQuery({ text: t("callback.processing_error"), show_alert: true }).catch(() => {});
+  }
+}
+
 async function handleReplyKeyboardInput(
   ctx: Context,
   next: NextFunction,
-  deps: { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void> },
+  deps: ReplyKeyboardRouterDeps,
 ): Promise<void> {
   const raw = ctx.message?.text;
   if (typeof raw !== "string") { await next(); return; }
@@ -136,10 +198,9 @@ async function handleReplyKeyboardInput(
   const classified = await classifyReplyKeyboardInteraction(ctx);
   if (!classified.isControl) { await next(); return; }
 
-  // The classifier matched the authentic, pre-enrichment button label. When a
-  // press is sent in Telegram reply mode, ctx.message.text carries a leading
-  // "Replying to ..." block; dispatch matching must use the real label so the
-  // recognized control is actually executed instead of being consumed silently.
+  // Keep stale Topic reply buttons safe during migration. Telegram may retain an
+  // old ReplyKeyboardMarkup locally until the persistent Main keyboard replaces
+  // it; those labels must be consumed as UI, never forwarded as model prompts.
   const controlRaw = getRawReplyKeyboardText(ctx) ?? raw;
   text = normalized(controlRaw);
 
@@ -191,7 +252,7 @@ async function handleReplyKeyboardInput(
   await consumeReplyKeyboardMessage(ctx);
   try {
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.pause)) { await pauseCurrentChat(ctx); return; }
-    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription }); return; }
+    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, deps); return; }
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.abort)) { await abortCurrentOperation(ctx); return; }
     if (isExact(text, "❌ Cancel")) {
       if (isProviderWizardActive()) { clearProviderWizard(); await providersCommand(ctx as never); return; }
@@ -228,6 +289,7 @@ async function handleReplyKeyboardInput(
   } catch (error) { logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error); }
 }
 
-export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void> }): void {
+export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboardRouterDeps): void {
+  bot.callbackQuery(/^topicctl:/, (ctx) => handleTopicInlineControl(ctx, deps));
   bot.use((ctx, next) => handleReplyKeyboardInput(ctx, next, deps));
 }
