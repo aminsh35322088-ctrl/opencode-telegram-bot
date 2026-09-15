@@ -14,6 +14,10 @@ import type { TelegramRenderedPart } from "../render/types.js";
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage" | "sendRichMessage">;
 type EditMessageApi = Pick<Api<RawApi>, "editMessageText">;
 type SendDraftApi = Pick<Api<RawApi>, "sendMessageDraft" | "sendRichMessageDraft">;
+type CompleteDraftApi = Pick<
+  Api<RawApi>,
+  "sendMessage" | "sendRichMessage" | "deleteMessage"
+>;
 
 type TelegramSendMessageOptions = Parameters<SendMessageApi["sendMessage"]>[2];
 type TelegramEditMessageOptions = Parameters<EditMessageApi["editMessageText"]>[3];
@@ -65,6 +69,10 @@ interface RenderedPartDeliveryResult {
 
 interface RenderedPartSendResult extends RenderedPartDeliveryResult {
   messageId: number;
+}
+
+interface RenderedPartCompleteResult extends RenderedPartSendResult {
+  rollback: () => Promise<void>;
 }
 
 export { getTelegramRenderedPartSignature };
@@ -272,8 +280,8 @@ interface SendDraftBotPartParams {
 }
 
 interface CompleteDraftPartParams {
-  api: SendMessageApi;
-  chatId: Parameters<SendMessageApi["sendMessage"]>[0];
+  api: CompleteDraftApi;
+  chatId: Parameters<CompleteDraftApi["sendMessage"]>[0];
   part: TelegramRenderedPart;
   options?: TelegramSendMessageOptions;
 }
@@ -303,12 +311,22 @@ export async function sendDraftBotPart({
   };
 }
 
+function createMessageRollback(
+  api: Pick<Api<RawApi>, "deleteMessage">,
+  chatId: Parameters<Api<RawApi>["deleteMessage"]>[0],
+  messageId: number,
+): () => Promise<void> {
+  return async () => {
+    await api.deleteMessage(chatId, messageId);
+  };
+}
+
 export async function completeDraftPart({
   api,
   chatId,
   part,
   options,
-}: CompleteDraftPartParams): Promise<RenderedPartSendResult> {
+}: CompleteDraftPartParams): Promise<RenderedPartCompleteResult> {
   const rawOptions = stripRichFormattingOptions(options);
 
   logger.debug("[Bot] Completing draft with real message", {
@@ -321,6 +339,7 @@ export async function completeDraftPart({
     return {
       messageId: sentMessage.message_id,
       deliveredSignature: plainSignature(part.fallbackText),
+      rollback: createMessageRollback(api, chatId, sentMessage.message_id),
     };
   }
 
@@ -332,6 +351,7 @@ export async function completeDraftPart({
   return {
     messageId: sentMessage.message_id,
     deliveredSignature: getTelegramRenderedPartSignature(part),
+    rollback: createMessageRollback(api, chatId, sentMessage.message_id),
   };
 }
 
