@@ -15,7 +15,7 @@ function buttonTextAt(
 }
 
 describe("bot/keyboards/main-reply-keyboard", () => {
-  it("creates a compact main keyboard without model controls", () => {
+  it("creates a compact persistent main keyboard without model controls", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: false },
@@ -27,10 +27,10 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     ]);
     expect(keyboard.keyboard.flat().map(getButtonText)).not.toContain("🧠 GPT 4o");
     expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBeUndefined();
+    expect(keyboard.is_persistent).toBe(true);
   });
 
-  it("shows model selection only inside an AI Topic", () => {
+  it("shows model selection only inside a persistent AI Topic keyboard", () => {
     const keyboard = createMainKeyboard({
       providerID: "very-long-provider-name-that-keeps-going-and-going",
       modelID: "vendor/very-long-model-name-that-keeps-going-and-going",
@@ -41,6 +41,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(labels).toContain("🧠 Custom Model 2026");
     expect(labels.join("\n")).not.toContain("very-long-provider-name");
     expect(labels.join("\n")).not.toContain(" · ");
+    expect(keyboard.is_persistent).toBe(true);
   });
 
   it("reflects compact mode state in an AI Topic", () => {
