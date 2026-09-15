@@ -70,6 +70,11 @@ function makeMessage(text: string): Context {
   } as unknown as Context;
 }
 
+async function sendText(ctx: Ctx, text: string): Promise<boolean> {
+  (ctx.context as { message?: { text: string } }).message = { text };
+  return handleSkillImportMessage(ctx.context);
+}
+
 function skill(name: string, description = "desc") {
   return { name, description, content: `---\nname: ${name}\ndescription: ${description}\n---\n\nBody`, sourceUrl: `https://github.com/o/r/tree/main/skills/${name}` };
 }
@@ -112,7 +117,7 @@ describe("bot/commands/skills-import-flow", () => {
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockResolvedValue({ kind: "single", skill: skill("deploy-check", "Check deploys") });
 
-    expect(await handleSkillImportMessage(makeMessage("https://github.com/o/r"))).toBe(true);
+    expect(await sendText(ctx, "https://github.com/o/r")).toBe(true);
     const confirm = ctx.replies[ctx.replies.length - 1];
     expect(confirm?.text).toContain("deploy-check");
     expect(confirm?.text).toContain("Check deploys");
@@ -131,12 +136,12 @@ describe("bot/commands/skills-import-flow", () => {
     const ctx = makeCtx();
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockRejectedValue(new Error("This is not a GitHub link"));
-    expect(await handleSkillImportMessage(makeMessage("https://example.com/x"))).toBe(true);
+    expect(await sendText(ctx, "https://example.com/x")).toBe(true);
     expect(isSkillImportActive()).toBe(true);
     expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.invalid_url"));
 
     serviceMock.resolveSkillSource.mockRejectedValue(new Error("No SKILL.md found in this location"));
-    expect(await handleSkillImportMessage(makeMessage("https://github.com/o/r/tree/main/nope"))).toBe(true);
+    expect(await sendText(ctx, "https://github.com/o/r/tree/main/nope")).toBe(true);
     expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.not_found"));
   });
 
@@ -151,7 +156,7 @@ describe("bot/commands/skills-import-flow", () => {
       ],
     });
 
-    expect(await handleSkillImportMessage(makeMessage("https://github.com/o/r"))).toBe(true);
+    expect(await sendText(ctx, "https://github.com/o/r")).toBe(true);
     expect(ctx.replies[ctx.replies.length - 1]?.text).toContain(t("skills.import.multiple_found"));
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual([
       "skills:imp_pick:0",
@@ -182,7 +187,7 @@ describe("bot/commands/skills-import-flow", () => {
     const ctx = makeCtx();
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockResolvedValue({ kind: "single", skill: skill("dupe") });
-    await handleSkillImportMessage(makeMessage("https://github.com/o/r"));
+    await sendText(ctx, "https://github.com/o/r");
 
     await fs.mkdir(path.join(tmpHome, ".config", "opencode", "skills", "dupe"), { recursive: true });
     await fs.writeFile(path.join(tmpHome, ".config", "opencode", "skills", "dupe", "SKILL.md"), "x", "utf8");

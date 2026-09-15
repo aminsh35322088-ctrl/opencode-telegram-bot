@@ -96,7 +96,7 @@ export function parseGitHubSkillUrl(url: string): ParsedGitHubSkillUrl | null {
   }
 
   if (!page[3]) {
-    return { owner, repo, isRaw: false };
+    return { owner, repo, ref: undefined, subpath: undefined, isRaw: false };
   }
 
   if ((page[3] !== "tree" && page[3] !== "blob") || !page[4]) {
