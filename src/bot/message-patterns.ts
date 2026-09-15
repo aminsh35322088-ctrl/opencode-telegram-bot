@@ -1,7 +1,3 @@
-export const MAIN_SETTINGS_BUTTON_TEXT = "⚙️ Main Settings";
-export const TOPIC_SETTINGS_BUTTON_TEXT = "⚙️ Topic Settings";
-export const LEGACY_SETTINGS_BUTTON_TEXT = "⚙️ Settings";
-export const MODEL_CENTER_BUTTON_TEXT = "🧠 Model Center";
 
 export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^(📋|🛠|💬|🔍|📝|📄|📦|🤖)\s.+\s(?:Mode|Agent)$/;
 export const MODEL_BUTTON_TEXT_PATTERN = /^🧠\s.+$/u;

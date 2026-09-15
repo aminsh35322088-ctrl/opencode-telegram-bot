@@ -21,6 +21,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
+const LOG_STREAM_RECOVERY_INTERVAL_MS = 60_000;
 let logStream: fs.WriteStream | null = null;
 let logFilePath: string | null = null;
 let initializePromise: Promise<void> | null = null;
@@ -388,8 +389,29 @@ function rotateLogBySizeIfNeeded(): void {
   }
 }
 
+let lastLogStreamRecoveryAt = 0;
+
+function tryRecoverLogStream(): void {
+  if (!logFilePath) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastLogStreamRecoveryAt < LOG_STREAM_RECOVERY_INTERVAL_MS) {
+    return;
+  }
+
+  lastLogStreamRecoveryAt = now;
+  try {
+    ensureLogStream(logFilePath);
+  } catch {
+    // The next write attempt may recover it again once the interval passes.
+  }
+}
+
 function writeToFile(line: string): void {
   if (!logStream) {
+    tryRecoverLogStream();
     return;
   }
 

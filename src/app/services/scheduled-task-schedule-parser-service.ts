@@ -214,7 +214,16 @@ export async function parseTaskSchedule(
   } finally {
     if (sessionId) {
       try {
-        await opencodeClient.session.delete({ sessionID: sessionId });
+        const { data: deleted, error: deleteError } = await opencodeClient.session.delete({
+          sessionID: sessionId,
+          directory: trimmedDirectory,
+        });
+        if (deleteError || deleted !== true) {
+          logger.warn(
+            `[ScheduledTaskScheduleParser] Failed to delete temporary session: sessionId=${sessionId}`,
+            deleteError ?? new Error("OpenCode did not confirm session deletion"),
+          );
+        }
       } catch (error) {
         logger.warn(
           `[ScheduledTaskScheduleParser] Failed to delete temporary session: sessionId=${sessionId}`,

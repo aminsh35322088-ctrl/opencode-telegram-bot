@@ -1,19 +1,10 @@
-import type { I18nKey } from "../../i18n/en.js";
-import { t } from "../../i18n/index.js";
-
 /** Public, user-facing Telegram commands. Advanced/internal handlers stay available without cluttering the command picker. */
 export interface BotCommandDefinition {
   command: string;
   description: string;
 }
 
-interface BotCommandI18nDefinition {
-  command: string;
-  descriptionKey?: I18nKey;
-  description?: string;
-}
-
-const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
+const COMMAND_DEFINITIONS: BotCommandDefinition[] = [
   { command: "start", description: "🚀 Start bot & show bot/OpenCode versions" },
   { command: "update", description: "🔄 Check for bot/OpenCode updates" },
   { command: "all", description: "🧰 All integrated versions (use /all version info)" },
@@ -38,10 +29,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
 ];
 
 export function getLocalizedBotCommands(): BotCommandDefinition[] {
-  return COMMAND_DEFINITIONS.map(({ command, descriptionKey, description }) => ({
-    command,
-    description: description ?? t(descriptionKey!),
-  }));
+  return COMMAND_DEFINITIONS.map(({ command, description }) => ({ command, description }));
 }
 
 export const BOT_COMMANDS: BotCommandDefinition[] = getLocalizedBotCommands();

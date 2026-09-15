@@ -78,9 +78,29 @@ function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void
   dispatchChains.set(key, current);
   void current.finally(() => { if (dispatchChains.get(key) === current) dispatchChains.delete(key); });
 }
+const MAX_RETIRED_SESSIONS = 500;
+
 function retireSession(sessionId: string): void {
-  retiredSessions.add(sessionId);
+  const wasRetired = retiredSessions.has(sessionId);
+  if (!wasRetired) {
+    retiredSessions.add(sessionId);
+    while (retiredSessions.size > MAX_RETIRED_SESSIONS) {
+      const oldest = retiredSessions.values().next().value;
+      if (oldest === undefined) break;
+      retiredSessions.delete(oldest);
+      sessionGenerations.delete(oldest);
+    }
+  }
   sessionGenerations.set(sessionId, {});
+  while (sessionGenerations.size > MAX_RETIRED_SESSIONS * 2) {
+    const oldest = sessionGenerations.keys().next().value;
+    if (oldest === undefined) break;
+    if (!retiredSessions.has(oldest)) { sessionGenerations.delete(oldest); continue; }
+    const dropped = retiredSessions.values().next().value;
+    if (dropped === undefined || dropped === oldest) break;
+    retiredSessions.delete(dropped);
+    sessionGenerations.delete(dropped);
+  }
 }
 // A server may accept TCP but never return SSE headers. The stream iterator's
 // idle timeout does not cover that phase, so bound connection establishment too.

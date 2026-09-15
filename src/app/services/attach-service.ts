@@ -72,7 +72,13 @@ async function syncPinnedAttachState(): Promise<void> {
   }
 
   const attached = attachManager.getSnapshot();
-  await attachPresentation.syncAttachState(attached !== null, attached?.busy ?? false);
+  try {
+    await attachPresentation.syncAttachState(attached !== null, attached?.busy ?? false);
+  } catch (err) {
+    // The pinned presentation line is cosmetic; never let it break the
+    // session lifecycle (idle/error handling) or float an unhandled rejection.
+    logger.warn("[Attach] Failed to sync pinned attach state:", err);
+  }
 }
 
 async function getLastUserTurnModel(

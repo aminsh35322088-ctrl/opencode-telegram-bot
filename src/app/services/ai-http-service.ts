@@ -12,7 +12,12 @@ export async function readBoundedJson(response: Response, maxBytes = 32 * 1024 *
       chunks.push(value);
     }
   } finally { await reader.cancel().catch(() => {}); }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const raw = Buffer.concat(chunks).toString("utf8");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("Provider returned an invalid JSON response");
+  }
 }
 export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

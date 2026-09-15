@@ -19,13 +19,6 @@ function withTopicContextPreserved<TArgs extends unknown[], TResult>(
   return (...args: TArgs) => runInTopicRuntimeContext(context, () => fn(...args));
 }
 
-export interface SummaryInfo {
-  sessionId: string;
-  text: string;
-  messageCount: number;
-  lastUpdated: number;
-}
-
 export interface MessageCompletionInfo {
   agent?: string | undefined;
   providerID?: string | undefined;
@@ -290,6 +283,9 @@ function normalizeSnapshotValue(value: unknown): unknown {
   return value;
 }
 
+const MAX_TRACKED_PROCESSED_TOOL_STATES = 2000;
+const MAX_TRACKED_DELIVERED_EXTERNAL_MESSAGES = 2000;
+
 class SummaryAggregator {
   private currentSessionId: string | null = null;
   private textMessageStates: Map<string, TextMessageState> = new Map();
@@ -404,6 +400,21 @@ class SummaryAggregator {
 
   setOnSessionError(callback: SessionErrorCallback): void {
     this.onSessionErrorCallback = callback;
+  }
+
+  private dispatchCallback(label: string, invoke: () => unknown): void {
+    setImmediate(() => {
+      try {
+        const result = invoke();
+        if (result instanceof Promise) {
+          result.catch((err) => {
+            logger.error(`[Aggregator] Unhandled error in ${label} callback:`, err);
+          });
+        }
+      } catch (err) {
+        logger.error(`[Aggregator] Error in ${label} callback:`, err);
+      }
+    });
   }
 
   setOnSessionRetry(callback: SessionRetryCallback): void {
@@ -1447,9 +1458,7 @@ class SummaryAggregator {
           );
           if (this.onQuestionErrorCallback) {
             const callback = withTopicContextPreserved(this.onQuestionErrorCallback);
-            setImmediate(() => {
-              callback();
-            });
+            this.dispatchCallback("question error", callback);
           }
           return;
         }
@@ -1467,7 +1476,7 @@ class SummaryAggregator {
         const completedKey = `completed-${part.callID}`;
 
         if (!this.processedToolStates.has(completedKey)) {
-          this.processedToolStates.add(completedKey);
+          this.rememberBounded(this.processedToolStates, completedKey, MAX_TRACKED_PROCESSED_TOOL_STATES);
 
           const preparedFileContext = this.prepareToolFileContext(
             part.tool,
@@ -1747,9 +1756,7 @@ class SummaryAggregator {
     }
 
     const callback = withTopicContextPreserved(this.onThinkingCallback);
-    setImmediate(() => {
-      callback({ sessionId, messageId, sections, isFirstUpdate });
-    });
+    this.dispatchCallback("thinking", () => callback({ sessionId, messageId, sections, isFirstUpdate }));
   }
 
   private emitThinkingFinishedOnce(sessionId: string, messageId: string): void {
@@ -1763,9 +1770,7 @@ class SummaryAggregator {
 
     this.thinkingFinishedForMessages.add(messageId);
     const callback = withTopicContextPreserved(this.onThinkingFinishedCallback);
-    setImmediate(() => {
-      callback(sessionId, messageId);
-    });
+    this.dispatchCallback("thinking finished", () => callback(sessionId, messageId));
   }
 
   private emitExternalUserInputIfReady(sessionId: string, messageId: string): void {
@@ -1783,7 +1788,7 @@ class SummaryAggregator {
       return;
     }
 
-    this.deliveredExternalUserMessageIds.add(messageId);
+    this.rememberBounded(this.deliveredExternalUserMessageIds, messageId, MAX_TRACKED_DELIVERED_EXTERNAL_MESSAGES);
     this.cleanupCompletedMessage(messageId);
 
     if (!this.onExternalUserInputCallback) {
@@ -1796,6 +1801,22 @@ class SummaryAggregator {
         logger.error("[Aggregator] Error in external user input callback:", err);
       });
     });
+  }
+
+  private rememberBounded(tracker: Set<string>, value: string, limit: number): void {
+    if (tracker.has(value)) {
+      return;
+    }
+
+    tracker.add(value);
+    while (tracker.size > limit) {
+      const oldest = tracker.values().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+
+      tracker.delete(oldest);
+    }
   }
 
   private cleanupCompletedMessage(messageId: string): void {
@@ -2046,14 +2067,12 @@ class SummaryAggregator {
       `[Aggregator] Session retry: session=${sessionID}, attempt=${status.attempt ?? "n/a"}, message=${message}`,
     );
 
-    setImmediate(() => {
-      callback({
-        sessionId: sessionID,
-        attempt: status.attempt,
-        message,
-        next: status.next,
-      });
-    });
+    this.dispatchCallback("session retry", () => callback({
+      sessionId: sessionID,
+      attempt: status.attempt,
+      message,
+      next: status.next,
+    }));
   }
 
   private handleSessionIdle(
@@ -2080,9 +2099,7 @@ class SummaryAggregator {
 
     if (this.onSessionIdleCallback) {
       const callback = withTopicContextPreserved(this.onSessionIdleCallback);
-      setImmediate(() => {
-        callback(sessionID);
-      });
+      this.dispatchCallback("session idle", () => callback(sessionID));
     }
   }
 
@@ -2103,7 +2120,7 @@ class SummaryAggregator {
     // Reload context from history after compaction
     if (this.onSessionCompactedCallback) {
       const callback = withTopicContextPreserved(this.onSessionCompactedCallback);
-      setImmediate(() => {
+      this.dispatchCallback("session compacted", () => {
         const project = getCurrentProject();
         if (project) {
           callback(sessionID, project.worktree);
@@ -2139,9 +2156,7 @@ class SummaryAggregator {
 
     if (this.onSessionErrorCallback) {
       const callback = withTopicContextPreserved(this.onSessionErrorCallback);
-      setImmediate(() => {
-        callback(sessionID, message);
-      });
+      this.dispatchCallback("session error", () => callback(sessionID, message));
     }
   }
 
@@ -2194,9 +2209,7 @@ class SummaryAggregator {
       }));
 
       const callback = withTopicContextPreserved(this.onSessionDiffCallback);
-      setImmediate(() => {
-        callback(properties.sessionID, diffs);
-      });
+      this.dispatchCallback("session diff", () => callback(properties.sessionID, diffs));
     }
   }
 

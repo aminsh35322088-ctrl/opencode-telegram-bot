@@ -8,23 +8,6 @@ import type { I18nDictionary } from "./en.js";
  * Keep this dictionary complete to avoid falling back to another locale.
  */
 export const ko: I18nDictionary = {
-  "cmd.description.status": "서버 및 세션 상태",
-  "cmd.description.new": "새 세션 만들기",
-  "cmd.description.stop": "현재 작업 중지",
-  "cmd.description.detach": "현재 세션에서 분리",
-  "cmd.description.sessions": "세션 목록 보기",
-  "cmd.description.messages": "세션 메시지 탐색",
-  "cmd.description.settings": "봇 설정 변경",
-  "cmd.description.projects": "프로젝트 목록 보기",
-  "cmd.description.worktree": "git 워크트리 전환",
-  "cmd.description.task": "예약 작업 만들기",
-  "cmd.description.tasklist": "예약 작업 목록 보기",
-  "cmd.description.commands": "사용자 지정 명령어",
-  "cmd.description.skills": "스킬 카탈로그",
-  "cmd.description.mcps": "MCP 서버",
-  "cmd.description.opencode_start": "OpenCode 서버 시작",
-  "cmd.description.opencode_stop": "OpenCode 서버 중지",
-  "cmd.description.ls": "디렉터리 내용 보기",
   "cmd.description.help": "도움말",
 
   "callback.unknown_command": "알 수 없는 명령어",
@@ -55,20 +38,14 @@ export const ko: I18nDictionary = {
   "question.blocked.command_not_allowed":
     "⚠️ 현재 질문 흐름이 끝날 때까지는 이 명령어를 사용할 수 없습니다.",
 
-  "inline.button.cancel": "❌ 취소",
-  "inline.button.close": "❌ 닫기",
   "inline.inactive_callback": "이 메뉴는 비활성 상태입니다",
 
   "common.cancelled": "취소됨",
   "common.unknown": "알 수 없음",
   "common.unknown_error": "알 수 없는 오류",
 
-  "start.welcome":
-    "👋 OpenCode Telegram Bot에 오신 것을 환영합니다!\n\n사용 가능한 명령어:\n/projects — 프로젝트 선택\n/sessions — 세션 목록\n/new — 새 세션\n/commands — 사용자 지정 명령어\n/skills — 스킬 카탈로그\n/task — 예약 작업\n/tasklist — 예약 작업 목록\n/status — 상태\n/help — 도움말\n\n아래 버튼으로 에이전트, 모델, 변형을 선택하세요.",
   "help.keyboard_hint":
     "💡 아래 키보드 버튼으로 에이전트, 모델, 변형 및 컨텍스트 작업을 사용할 수 있습니다.",
-  "help.text":
-    "📖 **도움말**\n\n/status - 서버 상태 확인\n/sessions - 세션 목록\n/new - 새 세션 만들기\n/help - 도움말",
 
   "bot.thinking": "💭 생각하는 중...",
   "progress.compact.activity": "{header}\n{activity}",
@@ -92,6 +69,7 @@ export const ko: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ 활성 세션이 선택한 프로젝트와 일치하지 않아 초기화되었습니다. /sessions에서 세션을 선택하거나 /new로 새 세션을 만들어 주세요.",
   "bot.prompt_send_error": "OpenCode에 요청을 보내지 못했습니다.",
+  "bot.empty_prompt": "⚠️ 보낼 내용이 없습니다: 첨부는 처리된 뒤 메시지가 비어 있습니다.",
   "bot.session_error": "🔴 OpenCode 오류가 발생했습니다: {message}",
   "bot.session_retry":
     "🔁 {message}\n\n재시도할 때마다 동일한 오류가 반복됩니다. /abort로 중단하세요.",
@@ -103,13 +81,10 @@ export const ko: I18nDictionary = {
   "background.open_session_button": "세션 열기",
   "bot.unknown_command": "⚠️ 알 수 없는 명령어입니다: {command}. /help로 사용 가능한 명령어를 확인하세요.",
   "bot.photo_downloading": "⏳ 사진을 다운로드하는 중...",
-  "bot.photo_too_large": "⚠️ 사진이 너무 큽니다 (최대 {maxSizeMb}MB)",
   "bot.photo_model_no_image": "⚠️ 현재 모델은 이미지 입력을 지원하지 않습니다. 텍스트만 전송합니다.",
   "bot.photo_download_error": "🔴 사진 다운로드에 실패했습니다",
-  "bot.photo_no_caption": "💡 팁: 이 사진으로 무엇을 할지 설명하는 캡션을 추가해 보세요.",
   "bot.file_downloading": "⏳ 파일을 다운로드하는 중...",
   "bot.files_downloading": "⏳ 파일들을 다운로드하는 중...",
-  "bot.file_too_large": "⚠️ 파일이 너무 큽니다 (최대 {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 파일 다운로드에 실패했습니다",
   "bot.file_type_unsupported":
     "⚠️ 지원되지 않는 파일 형식입니다. 이미지, 문서(PDF, DOCX, PPTX) 또는 텍스트/코드 파일을 보내 주세요.",
@@ -126,74 +101,33 @@ export const ko: I18nDictionary = {
   "status.health.unhealthy": "비정상",
   "status.line.health": "상태: {health}",
   "status.line.version": "버전: {version}",
-  "status.line.managed_yes": "봇이 시작함: 예",
-  "status.line.managed_no": "봇이 시작함: 아니요",
-  "status.line.pid": "PID: {pid}",
-  "status.line.uptime_sec": "가동 시간: {seconds}초",
   "status.line.mode": "에이전트: {mode}",
   "status.line.model": "모델: {model}",
-  "status.line.tts": "음성 답변: {tts}",
-  "status.tts.off": "꺼짐",
-  "status.tts.all": "전체",
-  "status.tts.auto": "자동",
   "status.agent_not_set": "설정 안 됨",
   "status.project_selected": "프로젝트: {project}",
   "status.worktree_selected": "워크트리: {worktree}",
-  "status.project_not_selected": "프로젝트: 선택 안 됨",
-  "status.project_hint": "/projects로 프로젝트를 선택해 주세요",
   "status.session_selected": "현재 세션: {title}",
   "status.session_not_selected": "현재 세션: 선택 안 됨",
   "status.session_hint": "/sessions에서 선택하거나 /new로 새로 만들어 주세요",
   "status.server_unavailable":
     "🔴 OpenCode 서버에 연결할 수 없습니다\n\n/opencode_start로 서버를 시작해 주세요.",
 
-  "tts.off": "🔇 음성 답변이 비활성화되었습니다.",
-  "tts.all": "🔊 모든 메시지에 음성 답변이 활성화되었습니다.",
-  "tts.auto": "🎤 음성/오디오 메시지에만 음성 답변이 활성화되었습니다.",
-  "tts.not_configured":
-    "⚠️ 음성 답변을 사용할 수 없습니다. 먼저 `TTS_API_URL`과 `TTS_API_KEY`를 설정해 주세요.",
-  "tts.failed": "⚠️ 음성 답변 생성에 실패했습니다.",
 
-  "settings.menu.title": "⚙️ 봇 설정\n항목을 탭하여 값을 전환하세요:",
-  "settings.compact_output.label": "간결 출력 모드",
-  "settings.thinking_content.label": "생각 내용",
-  "settings.response_streaming.label": "응답 스트리밍",
-  "settings.response_streaming.edit": "편집",
-  "settings.response_streaming.draft": "초안 (실험적)",
-  "settings.diff_files.label": "Diff 파일",
-  "settings.assistant_footer.label": "어시스턴트 푸터",
-  "settings.tts.label": "음성 답변",
-  "settings.prompt_queue.label": "메시지 대기열",
-  "settings.value.on": "켜기",
-  "settings.value.off": "끄기",
   "settings.saved": "✅ 설정이 저장되었습니다.",
 
   "projects.empty":
     "📭 프로젝트가 없습니다.\n\nOpenCode에서 디렉터리를 열고 세션을 하나 이상 만들면 여기에 표시됩니다.",
-  "projects.select": "프로젝트를 선택하세요:",
-  "projects.select_with_current": "프로젝트를 선택하세요:\n\n현재: 🏗 {project}",
   "projects.page_indicator": "{current}/{total} 페이지",
   "projects.prev_page": "⬅️ 이전",
   "projects.next_page": "다음 ➡️",
-  "projects.fetch_error":
-    "🔴 OpenCode 서버에 연결할 수 없거나 프로젝트를 불러오는 중 오류가 발생했습니다.",
-  "projects.page_load_error": "이 페이지를 불러올 수 없습니다. 다시 시도해 주세요.",
-  "projects.selected":
-    "✅ 프로젝트 선택됨: {project}\n\n📋 세션이 초기화되었습니다. 이 프로젝트에서 /sessions 또는 /new를 사용해 주세요.",
   "projects.select_error": "🔴 프로젝트 선택에 실패했습니다.",
 
-  "sessions.project_not_selected":
-    "🏗 프로젝트가 선택되지 않았습니다.\n\n먼저 /projects로 프로젝트를 선택해 주세요.",
   "sessions.empty": "📭 세션이 없습니다.\n\n/new로 새 세션을 만들어 주세요.",
-  "sessions.select": "세션을 선택하세요:",
-  "sessions.select_page": "세션을 선택하세요 ({page} 페이지):",
   "sessions.fetch_error":
     "🔴 OpenCode 서버에 연결할 수 없거나 세션을 불러오는 중 오류가 발생했습니다.",
   "sessions.select_project_first": "🔴 프로젝트가 선택되지 않았습니다. /projects를 사용해 주세요.",
   "sessions.page_empty_callback": "이 페이지에는 세션이 없습니다",
   "sessions.page_load_error_callback": "이 페이지를 불러올 수 없습니다. 다시 시도해 주세요.",
-  "sessions.button.prev_page": "⬅️ 이전",
-  "sessions.button.next_page": "다음 ➡️",
   "sessions.loading_context": "⏳ 컨텍스트와 최근 메시지를 불러오는 중...",
   "sessions.selected": "✅ 세션 선택됨: {title}",
   "sessions.select_error": "🔴 세션 선택에 실패했습니다.",
@@ -226,20 +160,6 @@ export const ko: I18nDictionary = {
   "messages.fork_success": "🔀 이 메시지에서 포크를 만들었습니다:\n\n{text}",
   "messages.fork_error": "❌ 포크 생성에 실패했습니다. 다시 시도해 주세요.",
 
-  "attach.project_not_selected":
-    "🏗 프로젝트가 선택되지 않았습니다.\n\n먼저 /projects로 프로젝트를 선택해 주세요.",
-  "attach.session_not_selected":
-    "💬 세션이 선택되지 않았습니다.\n\n먼저 /sessions에서 세션을 선택해 주세요.",
-  "attach.session_project_mismatch":
-    "⚠️ 선택한 세션이 현재 프로젝트와 일치하지 않습니다. /sessions에서 세션을 다시 선택해 주세요.",
-  "attach.connected": "✅ 세션에 연결됨: {title}",
-  "attach.already_connected": "ℹ️ 이미 세션에 연결되어 있습니다: {title}",
-  "attach.status.idle_message": "상태: 대기 중. 새 이벤트를 기다리고 있습니다.",
-  "attach.status.busy_message": "상태: 작업 중. 새 요청은 일시적으로 차단됩니다.",
-  "attach.restored_question": "이 세션의 미응답 질문을 복구했습니다.",
-  "attach.restored_permissions": "대기 중이던 권한 요청을 복구했습니다: {count}건.",
-  "attach.disconnect_hint": "연결을 해제하려면 다른 세션이나 프로젝트로 전환하세요.",
-  "attach.error": "🔴 현재 세션에 연결하지 못했습니다.",
 
   "detach.project_not_selected":
     "🏗 프로젝트가 선택되지 않았습니다.\n\n먼저 /projects로 프로젝트를 선택해 주세요.",
@@ -248,8 +168,6 @@ export const ko: I18nDictionary = {
     "✅ 세션에서 분리됨: {title}\n\nOpenCode 세션은 중지되지 않았습니다. 아직 실행 중이라면 별도로 계속 진행됩니다. 나중에 확인하려면 /sessions에서 다시 선택하세요.",
   "detach.error": "🔴 현재 세션에서 분리하지 못했습니다.",
 
-  "new.project_not_selected":
-    "🏗 프로젝트가 선택되지 않았습니다.\n\n먼저 /projects로 프로젝트를 선택해 주세요.",
   "new.created": "✅ 새 세션이 생성되었습니다: {title}",
   "general.topic_only_prompt": "🚫 포럼의 일반 토픽입니다 — AI 프롬프트는 AI 토픽 안에서만 사용할 수 있습니다.\n\n💬 New Chat을 눌러 새 코딩 토픽을 시작하거나, History에서 기존 토픽을 여세요.\n\n여기서는 봇이 명시적으로 입력을 요청할 때만 텍스트가 허용됩니다.",
   "new.create_error":
@@ -270,10 +188,6 @@ export const ko: I18nDictionary = {
   "stop.warn_local_only": "⚠️ 로컬에서는 이벤트 스트림이 중지되었지만 서버 측 중단에는 실패했습니다.",
   "stop.error": "🔴 작업 중지에 실패했습니다.\n\n이벤트 스트림은 중지되었습니다. /abort를 다시 시도해 주세요.",
 
-  "opencode_start.already_running_managed":
-    "⚠️ OpenCode 서버가 이미 실행 중입니다\n\nPID: {pid}\n가동 시간: {seconds}초",
-  "opencode_start.already_running_external":
-    "✅ OpenCode 서버가 외부 프로세스로 이미 실행 중입니다\n\n버전: {version}\n\n이 서버는 봇이 시작한 것이 아니므로 /opencode-stop으로 중지할 수 없습니다.",
   "opencode_start.already_running": "✅ OpenCode 서버가 이미 실행 중입니다\n\n버전: {version}",
   "opencode_start.remote_configured": "⚠️ /opencode_start는 로컬 OpenCode 서버에서만 동작합니다.",
   "opencode_start.starting": "🔄 OpenCode 서버를 시작하는 중...",
@@ -285,62 +199,25 @@ export const ko: I18nDictionary = {
     "✅ OpenCode 서버가 성공적으로 시작되었습니다\n\nPID: {pid}\n버전: {version}",
   "opencode_start.error":
     "🔴 서버 시작 중 오류가 발생했습니다.\n\n자세한 내용은 애플리케이션 로그를 확인해 주세요.",
-  "opencode_stop.external_running":
-    "⚠️ OpenCode 서버가 외부 프로세스로 실행 중입니다\n\n이 서버는 /opencode-start로 시작된 것이 아닙니다.\n직접 중지하거나 /status로 상태를 확인해 주세요.",
   "opencode_stop.remote_configured": "⚠️ /opencode_stop은 로컬 OpenCode 서버에서만 동작합니다.",
   "opencode_stop.not_running": "⚠️ OpenCode 서버가 실행 중이지 않습니다",
-  "opencode_stop.pid_not_found":
-    "⚠️ OpenCode 서버가 포트 {port}에서 응답하고 있지만 중지할 로컬 프로세스를 찾을 수 없습니다.",
   "opencode_stop.stopping": "🛑 OpenCode 서버를 중지하는 중...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 OpenCode 서버 중지에 실패했습니다\n\n오류: {error}",
-  "opencode_stop.still_running": "중지 요청 후에도 서버가 응답하고 있습니다.",
   "opencode_stop.success": "✅ OpenCode 서버가 성공적으로 중지되었습니다",
   "opencode_stop.error":
     "🔴 서버 중지 중 오류가 발생했습니다.\n\n자세한 내용은 애플리케이션 로그를 확인해 주세요.",
 
   "agent.changed_message": "✅ 에이전트가 변경되었습니다: {name}",
   "agent.change_error_callback": "에이전트 변경 실패",
-  "agent.menu.current": "현재 에이전트: {name}\n\n에이전트를 선택하세요:",
-  "agent.menu.select": "에이전트를 선택하세요:",
   "agent.menu.empty": "⚠️ 사용 가능한 에이전트가 없습니다",
   "agent.menu.error": "🔴 에이전트 목록을 가져오지 못했습니다",
 
   "model.changed_message": "✅ 모델이 변경되었습니다: {name}",
-  "model.change_error_callback": "모델 변경 실패",
-  "model.menu.empty": "⚠️ 사용 가능한 모델이 없습니다",
-  "model.menu.select": "모델을 선택하세요:",
-  "model.menu.current": "현재 모델: {name}\n\n모델을 선택하세요:",
-  "model.menu.favorites_title": "⭐ 즐겨찾기 (OpenCode CLI에서 모델을 즐겨찾기에 추가하세요)",
-  "model.menu.favorites_empty": "— 비어 있음.",
-  "model.menu.recent_title": "🕘 최근 사용",
-  "model.menu.recent_empty": "— 비어 있음.",
-  "model.menu.favorites_hint":
-    "ℹ️ OpenCode CLI에서 모델을 즐겨찾기에 추가하면 목록 상단에 고정됩니다.",
-  "model.menu.error": "🔴 모델 목록을 가져오지 못했습니다",
-  "model.search.button": "🔍 검색",
-  "model.search.prompt": "🔍 검색할 모델 이름을 입력하세요:",
-  "model.search.results_title": '"{query}" 검색 결과:',
-  "model.search.no_results": '"{query}"에 대한 모델을 찾을 수 없습니다',
-  "model.search.search_again": "↩ 다시 검색",
-  "model.search.error": "검색에 실패했습니다",
-  "model.button.back": "⬅️ 뒤로",
-  "model.providers.button": "🗂 프로바이더",
-  "model.providers.title": "목록에서 프로바이더를 선택하세요:",
-  "model.providers.empty": "⚠️ 연결된 프로바이더가 없습니다",
-  "model.providers.error": "프로바이더 목록을 가져오지 못했습니다",
-  "model.providers.page_indicator": "{current}/{total} 페이지",
-  "model.providers.prev_page": "⬅️ 이전",
-  "model.providers.next_page": "다음 ➡️",
-  "model.provider_models.title": "{provider} — 모델을 선택하세요:",
-  "model.provider_models.empty": "⚠️ {provider}에서 사용 가능한 모델이 없습니다",
-  "model.provider_models.page_indicator": "{current}/{total} 페이지",
 
   "variant.model_not_selected_callback": "오류: 모델이 선택되지 않았습니다",
   "variant.changed_message": "✅ 변형이 변경되었습니다: {name}",
   "variant.change_error_callback": "변형 변경 실패",
   "variant.select_model_first": "⚠️ 먼저 모델을 선택해 주세요",
-  "variant.menu.empty": "⚠️ 사용 가능한 변형이 없습니다",
-  "variant.menu.current": "현재 변형: {name}\n\n변형을 선택하세요:",
   "variant.menu.error": "🔴 변형 목록을 가져오지 못했습니다",
 
   "context.button.confirm": "✅ 예, 컨텍스트를 압축합니다",
@@ -401,11 +278,6 @@ export const ko: I18nDictionary = {
   "question.summary.question": "질문 {index}:\n{question}\n\n",
   "question.summary.answer": "답변:\n{answer}\n\n",
 
-  "keyboard.agent_mode": "{emoji} {name} 에이전트",
-  "keyboard.context": "📊 {used} / {limit} ({percent}%)",
-  "keyboard.context_empty": "📊 0",
-  "keyboard.variant": "💭 {name}",
-  "keyboard.variant_default": "💡 기본값",
   "keyboard.queued_prompt": "❌ {index}. {text}",
   "queue.added": "📥 대기열에 추가되었습니다 ({count}/{max}). 현재 작업이 끝나면 전송됩니다.",
   "queue.full": "⚠️ 대기열이 가득 찼습니다 ({max}). 메시지를 삭제하거나 현재 작업이 끝날 때까지 기다려 주세요.",
@@ -416,29 +288,12 @@ export const ko: I18nDictionary = {
 
   "pinned.default_session_title": "새 세션",
   "pinned.unknown": "알 수 없음",
-  "pinned.line.project": "프로젝트: {project}",
-  "pinned.line.worktree": "워크트리: {worktree}",
   "pinned.line.model": "모델: {model}",
-  "pinned.line.attach": "추적: {status}",
-  "pinned.attach.status.idle": "활성, 대기 중",
-  "pinned.attach.status.busy": "활성, 작업 중",
-  "pinned.line.context": "컨텍스트: {used} / {limit} ({percent}%)",
-  "pinned.line.cost": "비용: {cost} 사용",
-  "subagent.header": "서브에이전트 {agent}: {description}",
-  "subagent.line.status": "상태: {status}",
   "subagent.line.task": "작업: {task}",
   "subagent.line.agent": "에이전트: {agent}",
   "subagent.working": "작업 중...",
-  "subagent.working_with_details": "작업 중: {details}",
   "subagent.completed": "완료됨",
   "subagent.failed": "작업 실패",
-  "subagent.status.pending": "대기 중",
-  "subagent.status.running": "실행 중",
-  "subagent.status.completed": "완료됨",
-  "subagent.status.error": "오류",
-  "pinned.files.title": "파일 ({count}):",
-  "pinned.files.item": "  {path}{diff}",
-  "pinned.files.more": "  ... 외 {count}개",
 
   "tool.todo.overflow": "*({count}개 작업 더 보기)*",
   "tool.file_header.write":
@@ -540,7 +395,6 @@ export const ko: I18nDictionary = {
   "commands.fetch_error": "🔴 OpenCode 명령어를 불러오지 못했습니다.",
   "commands.no_description": "설명 없음",
   "commands.button.execute": "✅ 실행",
-  "commands.button.cancel": "❌ 취소",
   "commands.confirm":
     "명령어 {command} 실행을 확인해 주세요. 인자와 함께 실행하려면 인자를 메시지로 보내주세요.",
   "commands.inactive_callback": "이 명령어 메뉴는 비활성 상태입니다",
@@ -552,8 +406,6 @@ export const ko: I18nDictionary = {
   "commands.button.prev_page": "⬅️ 이전",
   "commands.button.next_page": "다음 ➡️",
   "commands.page_empty_callback": "이 페이지에는 명령어가 없습니다",
-  "commands.page_load_error_callback": "이 페이지를 불러올 수 없습니다. 다시 시도해 주세요.",
-  "commands.download.no_roots": "허용된 탐색 루트가 설정되지 않았습니다.",
   "commands.download.downloading": "파일을 다운로드하는 중...",
   "commands.download.not_found": "파일을 찾을 수 없습니다",
   "commands.download.not_file": "경로가 파일이 아닙니다",
@@ -567,7 +419,6 @@ export const ko: I18nDictionary = {
   "skills.fetch_error": "🔴 OpenCode 스킬을 불러오지 못했습니다.",
   "skills.no_description": "설명 없음",
   "skills.button.execute": "✅ 실행",
-  "skills.button.cancel": "❌ 취소",
   "skills.confirm":
     "스킬 {skill} 실행을 확인해 주세요. 인자와 함께 실행하려면 인자를 메시지로 보내주세요.",
   "skills.inactive_callback": "이 스킬 메뉴는 비활성 상태입니다",
@@ -578,10 +429,8 @@ export const ko: I18nDictionary = {
   "skills.button.prev_page": "⬅️ 이전",
   "skills.button.next_page": "다음 ➡️",
   "skills.page_empty_callback": "이 페이지에는 스킬이 없습니다",
-  "skills.page_load_error_callback": "이 페이지를 불러올 수 없습니다. 다시 시도해 주세요.",
 
   "mcps.select": "MCP 서버:",
-  "mcps.empty": "📭 설정된 MCP 서버가 없습니다.",
   "mcps.fetch_error": "🔴 MCP 서버를 불러오지 못했습니다.",
   "mcps.toggle_error": "🔴 MCP 서버 전환에 실패했습니다.",
   "mcps.enabling": "활성화하는 중...",
@@ -599,14 +448,7 @@ export const ko: I18nDictionary = {
   "mcps.button.back": "⬅️ 뒤로",
   "mcps.auth_required": "이 서버는 인증이 필요하여 봇에서 활성화할 수 없습니다.",
 
-  "cmd.description.rename": "현재 세션 이름 변경",
 
-  "legacy.models.fetch_error": "🔴 모델 목록을 가져오지 못했습니다. /status로 서버 상태를 확인해 주세요.",
-  "legacy.models.empty": "📋 사용 가능한 모델이 없습니다. OpenCode에서 프로바이더를 설정해 주세요.",
-  "legacy.models.header": "📋 사용 가능한 모델:\n\n",
-  "legacy.models.no_provider_models": "  ⚠️ 사용 가능한 모델이 없습니다\n",
-  "legacy.models.env_hint": "💡 .env에서 이 모델을 사용하려면:\n",
-  "legacy.models.error": "🔴 모델 목록을 불러오는 중 오류가 발생했습니다.",
 
   "stt.uncertain": "🎤 일부 단어가 잘못 인식되었을 수 있습니다. 확인 후 수정한 텍스트를 보내세요:",
   "stt.recognizing": "🎤 오디오를 인식하는 중...",
@@ -616,7 +458,6 @@ export const ko: I18nDictionary = {
   "stt.error": "🔴 오디오 인식에 실패했습니다: {error}",
   "stt.empty_result": "🎤 오디오 메시지에서 음성을 감지하지 못했습니다.",
 
-  "cmd.description.open": "디렉터리를 탐색하여 프로젝트 추가",
   "worktree.branch_detached": "detached HEAD",
   "worktree.select_with_current": "워크트리를 선택하세요:",
   "worktree.project_not_selected":

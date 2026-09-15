@@ -39,7 +39,6 @@ export interface LocaleOption {
 type TranslationParams = Record<string, string | number | boolean | null | undefined>;
 
 const DEFAULT_LOCALE: Locale = "en";
-const RETIRED_STATUS_KEYS = new Set<I18nKey>(["pinned.line.project", "pinned.line.cost"]);
 
 export const SUPPORTED_LOCALES: readonly Locale[] = LOCALE_DEFINITIONS.map(
   (definition) => definition.code,
@@ -63,10 +62,6 @@ export function resolveSupportedLocale(locale: string | null | undefined): Local
 
 export function normalizeLocale(locale: string | null | undefined, fallback: Locale = DEFAULT_LOCALE): Locale {
   return resolveSupportedLocale(locale) ?? fallback;
-}
-
-export function isSupportedLocale(locale: string): locale is Locale {
-  return resolveSupportedLocale(locale) !== null;
 }
 
 export function getLocaleOptions(): LocaleOption[] {
@@ -99,8 +94,6 @@ export function resetRuntimeLocale(): void {
 }
 
 export function t(key: I18nKey, params?: TranslationParams, locale?: Locale): string {
-  if (RETIRED_STATUS_KEYS.has(key)) return "";
-
   const activeLocale = locale ?? getLocale();
   const dictionary = localeDefinitionByCode[activeLocale].dictionary;
   const template = dictionary[key] ?? en[key];

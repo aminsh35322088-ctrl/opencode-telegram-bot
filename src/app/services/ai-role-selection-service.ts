@@ -1,7 +1,4 @@
-import type { ModelInfo } from "../types/model.js";
-import { resolveCatalogModel } from "./model-selection-service.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
-import { logger } from "../../utils/logger.js";
 
 export type AiRole = "coding" | "image" | "stt";
 export interface AiRoleSelection {
@@ -38,12 +35,4 @@ export async function setAiRoleSelection(role: AiRole, providerID: string, model
   if (!normalizedProviderID || !normalizedModelID) throw new Error("AI role selection requires a provider and model.");
   const selections = await readSelections(); selections[role] = { providerID: normalizedProviderID, modelID: normalizedModelID }; await writeSelections(selections);
 }
-export async function getModelForRole(role: AiRole, fallback: ModelInfo): Promise<ModelInfo> {
-  const selection = await getAiRoleSelection(role);
-  if (!selection?.providerID || !selection.modelID) return fallback;
-  const resolved = await resolveCatalogModel(selection.providerID, selection.modelID);
-  if (!resolved) { logger.warn(`[AI Rules] Ignoring unavailable ${role} model ${selection.providerID}/${selection.modelID}; using fallback ${fallback.providerID}/${fallback.modelID}`); return fallback; }
-  return { ...fallback, providerID: resolved.providerID, modelID: resolved.modelID, variant: "default" };
-}
-export async function clearAiRoleSelection(role: AiRole): Promise<void> { const selections = await readSelections(); delete selections[role]; await writeSelections(selections); }
 export const AI_ROLE_LABELS: Record<AiRole, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", stt: "🎙️ Speech-to-Text" };

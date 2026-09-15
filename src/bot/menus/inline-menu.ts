@@ -1,6 +1,6 @@
 import { Context, InlineKeyboard } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
-import type { InteractionMetadata, InteractionState } from "../../app/types/interaction.js";
+import type { InteractionMetadata } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { buildMainStatusText } from "../keyboards/keyboard-manager.js";
@@ -32,13 +32,6 @@ function getTopicThreadId(ctx: Context): number | null {
   return typeof message?.message_thread_id === "number" ? message.message_thread_id : null;
 }
 function menuKey(chatId: number, threadId?: number): string { return `${chatId}:${threadId ?? 0}`; }
-function getActiveInlineMenuMetadata(state: InteractionState | null): ActiveInlineMenuMetadata | null {
-  if (!state || state.kind !== "inline") return null;
-  const menuKind = state.metadata.menuKind; const messageId = state.metadata.messageId; const threadId = state.metadata.threadId;
-  if (typeof menuKind !== "string" || !isInlineMenuKind(menuKind) || typeof messageId !== "number") return null;
-  return { menuKind, messageId, ...(typeof threadId === "number" ? { threadId } : {}) };
-}
-
 export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind, threadId?: number, navigation: InlineMenuNavigation = "auto"): InlineKeyboard {
   while (keyboard.inline_keyboard.length > 0) {
     const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1];
@@ -189,13 +182,6 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
   logger.debug(`[InlineMenu] Stale callback ignored: expectedKind=${menuKind}, callbackMessageId=${callbackMessageId || "none"}, chatId=${chatId ?? "none"}, threadId=${threadId ?? "main"}`);
   await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
   return false;
-}
-
-export function getActiveInlineMenu(chatId?: number): ActiveInlineMenuMetadata | null {
-  if (typeof chatId !== "number") return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
-  const activeEntries = [...activeInlineMenus.entries()].filter(([key]) => key.startsWith(`${chatId}:`));
-  const active = activeEntries.at(-1)?.[1];
-  return active ?? null;
 }
 
 export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {

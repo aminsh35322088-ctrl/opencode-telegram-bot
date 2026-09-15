@@ -31,7 +31,6 @@ export const TOPIC_BUTTONS = {
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
 
-export const TOPIC_SETTINGS_BUTTON = MAIN_BUTTONS.topicSettings;
 export interface MainKeyboardOptions {
   queuedPromptLabels?: string[];
   paused?: boolean;
@@ -86,16 +85,6 @@ export function createMainInlineKeyboard(_currentModel: ModelInfo): InlineKeyboa
     .row()
     .text(MAIN_BUTTONS.history, "main:history")
     .text(MAIN_BUTTONS.mainSettings, "main:settings");
-}
-
-/** Reply Keyboard used by General/All after Topic Mode is active. */
-export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLabels: string[] = []): Keyboard {
-  return buildMainKeyboard(currentModel, {
-    queuedPromptLabels,
-    paused: false,
-    running: false,
-    isTopic: false,
-  });
 }
 
 /** Keyboard used exclusively inside an AI Topic backed by an OpenCode session. */

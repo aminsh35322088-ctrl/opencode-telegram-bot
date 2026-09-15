@@ -208,10 +208,6 @@ export function getBrowserRoots(): string[] {
   return resolvedRoots!;
 }
 
-export function getBrowserRootPaths(): string[] {
-  return getBrowserRoots();
-}
-
 export function isWithinAllowedRoot(targetPath: string): boolean {
   const normalizedTarget = normalizePath(targetPath);
 
@@ -231,16 +227,6 @@ export function isWithinAllowedRoot(targetPath: string): boolean {
   }
 
   return false;
-}
-
-export async function isWithinAllowedRootSafe(targetPath: string): Promise<boolean> {
-  let resolved = targetPath;
-  try {
-    resolved = await realpath(targetPath);
-  } catch {
-    // Path doesn't exist yet or can't be resolved; use the original value.
-  }
-  return isWithinAllowedRoot(resolved);
 }
 
 export function isAllowedRoot(targetPath: string): boolean {
