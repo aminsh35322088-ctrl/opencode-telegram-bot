@@ -73,9 +73,14 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   } else {
     addMainControls(keyboard);
   }
-  // Reply keyboards are chat-scoped in Telegram. Do not make them persistent:
-  // the router actively removes stale Topic controls when Main/General is used.
-  return keyboard.resized();
+
+  // Telegram can hide a non-persistent custom keyboard when the user changes
+  // topic/input state, and the keyboard launcher may disappear with it. Private
+  // bot Topics do not emit an update merely because the user switched tabs, so
+  // the bot cannot repair that state at switch time. Request client persistence
+  // for both All/root and AI Topic keyboards; each scope is still delivered by
+  // the existing root/thread-specific send path.
+  return keyboard.resized().persistent();
 }
 
 /** Canonical Main/General navigation. Model choices live under Settings → Default Models. */
