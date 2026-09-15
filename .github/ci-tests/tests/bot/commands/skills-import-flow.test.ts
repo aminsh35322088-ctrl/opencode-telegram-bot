@@ -157,7 +157,7 @@ describe("bot/commands/skills-import-flow", () => {
     });
 
     expect(await sendText(ctx, "https://github.com/o/r")).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toContain(t("skills.import.multiple_found"));
+    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.multiple_found", { count: 2 }));
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual([
       "skills:imp_pick:0",
       "skills:imp_pick:1",
@@ -173,7 +173,7 @@ describe("bot/commands/skills-import-flow", () => {
 
     expect(await handleSkillImportCallback(ctx.context, "skills:imp_confirm")).toBe(true);
     expect(isSkillImportActive()).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toContain(t("skills.import.multiple_found"));
+    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.multiple_found", { count: 1 }));
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual([
       "skills:imp_pick:0",
       "skills:imp_cancel",
