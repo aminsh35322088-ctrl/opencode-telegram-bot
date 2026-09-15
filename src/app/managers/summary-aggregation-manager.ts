@@ -1933,17 +1933,20 @@ class SummaryAggregator {
       return "";
     }
 
+    // The placeholder is produced for model responses only, so user text is
+    // never filtered - it must reach the bot verbatim. The user path is also
+    // not memoized: the role can be registered after the text deltas arrive,
+    // and a cached filtered result would suppress external-user delivery.
+    if (this.messages.get(messageID)?.role === "user") {
+      return state.orderedPartIds.map((partID) => state.partTexts.get(partID) || "").join("");
+    }
+
     if (state.combinedMemo && state.combinedMemo.revision === state.revision && state.combinedMemo.isFinal === isFinal) {
       return state.combinedMemo.text;
     }
 
     const texts = state.orderedPartIds.map((partID) => state.partTexts.get(partID) || "");
-
-    // The placeholder is produced for model responses only, so user text is
-    // never filtered - it must reach the bot verbatim.
-    const combined = this.messages.get(messageID)?.role === "user"
-      ? texts.join("")
-      : texts.filter((text) => !isUpstreamEmptyResponseText(text, isFinal)).join("");
+    const combined = texts.filter((text) => !isUpstreamEmptyResponseText(text, isFinal)).join("");
 
     state.combinedMemo = { revision: state.revision, isFinal, text: combined };
     return combined;
