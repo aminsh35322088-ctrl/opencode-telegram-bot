@@ -50,6 +50,25 @@ For code changes:
 
 Do not create a second application dependency tree on the Railway volume. Do not add disposable build tooling to the production image.
 
+### Where to work
+
+The persistent repository checkout lives at `/data/opencode/opencode-telegram-bot` and tracks `main`.
+
+When a task needs a working copy on a branch, create a git worktree **inside the agent's own session workspace** and work there:
+
+```bash
+git -C /data/opencode/opencode-telegram-bot worktree add "$PWD/repo" -b <branch> origin/main
+ln -sfn /app/node_modules "$PWD/repo/node_modules"
+```
+
+Never create worktrees, clones, or repo copies under `/tmp`: container restarts wipe `/tmp`, which orphans in-progress work, leaves stale `.git/worktrees` metadata behind, and forces work to be redone. Only disposable build/test output may go to `/tmp`.
+
+Commit and push early — GitHub is the durable store, the worktree is not. After the branch is merged or abandoned, remove it:
+
+```bash
+git -C /data/opencode/opencode-telegram-bot worktree remove <path> && git worktree prune
+```
+
 ### Surgical changes
 
 Touch only what is necessary. Do not refactor unrelated code or delete unrelated dead code.
