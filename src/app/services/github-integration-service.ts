@@ -79,7 +79,6 @@ export async function addGithubAccount(name: string, tokenValue: string, usernam
 }
 export async function removeGithubAccount(id: string): Promise<boolean> { return withStoreLock(async () => { const index = await readIndex(); if (!index.accounts.some((item) => item.id === id)) return false; index.accounts = index.accounts.filter((item) => item.id !== id); if (index.activeId === id) index.activeId = index.accounts[0]?.id; await writeIndex(index); applyActiveToken(index); return true; }); }
 export async function setActiveGithubAccount(id: string): Promise<GithubAccount> { return withStoreLock(async () => { const index = await readIndex(); const account = index.accounts.find((item) => item.id === id); if (!account) throw new Error("GitHub account not found"); index.activeId = id; await writeIndex(index); applyActiveToken(index); return publicAccount(account); }); }
-export async function getGithubToken(): Promise<string> { return applyActiveToken(await readIndex()); }
 
 export async function initializeGithubIntegration(): Promise<boolean> {
   // GitHub credentials are owned by the bot's persistent Integrations store.
