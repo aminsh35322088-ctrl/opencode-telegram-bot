@@ -48,7 +48,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: true, isTopic: true },
     );
-    expect(buttonTextAt(keyboard, 0, 1)).toBe("📦 Compact: ON");
+    expect(buttonTextAt(keyboard, 0, 0)).toBe("📦 Compact: ON");
   });
 
   it("keeps queued prompts above the fixed main grid", () => {
