@@ -18,7 +18,6 @@ const APP_STATE_FILENAME = "app-state.json";
 const APP_STATE_BACKUP_FILENAME = "app-state.json.bak";
 const APP_STATE_TEMP_SUFFIX = ".tmp";
 let writeQueue: Promise<void> = Promise.resolve();
-let initialized = false;
 
 function getStatePath(): string { return path.join(getRuntimePaths().appHome, APP_STATE_FILENAME); }
 function getBackupPath(): string { return path.join(getRuntimePaths().appHome, APP_STATE_BACKUP_FILENAME); }
@@ -41,7 +40,7 @@ async function readCurrentState(): Promise<AppState> {
     }
   }
 }
-export async function readAppState(): Promise<AppState> { await writeQueue.catch(() => {}); const state = await readCurrentState(); initialized = true; return state; }
+export async function readAppState(): Promise<AppState> { await writeQueue.catch(() => {}); return await readCurrentState(); }
 async function writeAppStateAtomically(state: AppState): Promise<void> {
   const appHome = getRuntimePaths().appHome;
   const statePath = getStatePath();
@@ -53,7 +52,6 @@ async function writeAppStateAtomically(state: AppState): Promise<void> {
     try { await fs.copyFile(statePath, backupPath); } catch (error) { if (!isNotFound(error)) throw error; }
     await fs.rename(tempPath, statePath);
     await fs.chmod(statePath, 0o600).catch(() => {});
-    initialized = true;
   } finally { await fs.rm(tempPath, { force: true }).catch(() => {}); }
 }
 export function updateAppState(patch: Record<string, unknown> | ((state: AppState) => Record<string, unknown>)): Promise<void> {

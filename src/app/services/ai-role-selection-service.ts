@@ -1,5 +1,4 @@
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
-import { logger } from "../../utils/logger.js";
 
 export type AiRole = "coding" | "image" | "stt";
 export interface AiRoleSelection {

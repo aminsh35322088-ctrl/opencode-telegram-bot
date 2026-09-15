@@ -1,7 +1,6 @@
 import type { ImageChatProfile, MediaImage } from "../types/image-chat.js";
 import { readBoundedJson, detectImageMimeType } from "./ai-http-service.js";
 import crypto from "node:crypto";
-import { getAiRoleSelection } from "./ai-role-selection-service.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { logger } from "../../utils/logger.js";
 
@@ -65,8 +64,6 @@ export async function removeCloudflareCredentials(): Promise<void> { const store
 
 export async function listImageAiProviders(): Promise<ImageAiProviderStatus[]> { const store = await readStore(); const cloudflare = await cloudflareProvider(); const custom = store.providers; const providers = cloudflare ? [cloudflare, ...custom] : custom; const defaultId = providers.find((p) => p.active)?.id; return providers.map((p) => status(p, defaultId)); }
 export async function getActiveImageAiProviders(): Promise<StoredImageAiProvider[]> { const store = await readStore(); const cloudflare = await cloudflareProvider(); const custom = store.providers.filter((p) => p.active && Boolean(p.apiKey?.trim())); return cloudflare ? [cloudflare, ...custom] : custom; }
-async function getOrderedImageProviders(): Promise<StoredImageAiProvider[]> { const providers = await getActiveImageAiProviders(); try { const selected = await getAiRoleSelection("image"); if (!selected) return providers; const index = providers.findIndex((p) => p.id === selected.providerID && (p.model === selected.modelID || p.editModel === selected.modelID)); if (index > 0) { const chosen = providers[index]; if (chosen) { providers.splice(index, 1); providers.unshift(chosen); } } } catch (error) { logger.warn("[ImageAI] Could not resolve Image AI Rule; using active-provider order:", error); } return providers; }
-async function readKey(provider: StoredImageAiProvider): Promise<string | undefined> { const key = provider.apiKey?.trim(); return key || undefined; }
 function parseError(payload: unknown, httpStatus: number): string { if (payload && typeof payload === "object" && "error" in payload) { const value = (payload as Record<string, unknown>).error; return typeof value === "string" ? value : JSON.stringify(value); } return `HTTP ${httpStatus}`; }
 async function readBody(response: Response): Promise<unknown> { const text = await response.text(); if (!text) return null; try { return JSON.parse(text); } catch { return text; } }
 async function fetchRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> { let lastError: unknown; for (let i = 0; i < attempts; i += 1) { try { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) }); if (![429, 502, 503, 504].includes(response.status) || i === attempts - 1) return response; const retryAfter = Number(response.headers.get("retry-after") ?? ""); const delay = retryAfter > 0 && retryAfter < 30 ? retryAfter * 1000 : 1000 * (i + 1); await new Promise((resolve) => setTimeout(resolve, delay)); } catch (error) { lastError = error; if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1))); } } throw lastError instanceof Error ? lastError : new Error("Image provider request failed"); }

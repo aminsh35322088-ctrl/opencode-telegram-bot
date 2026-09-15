@@ -8,7 +8,7 @@ interface Bucket {
 const WINDOW_MS = 10_000;
 const MAX_UPDATES = 30;
 const NOTICE_COOLDOWN_MS = 15_000;
-let bucket: Bucket = { timestamps: [], lastNoticeAt: 0 };
+const bucket: Bucket = { timestamps: [], lastNoticeAt: 0 };
 
 export async function inboundRateLimitMiddleware(
   ctx: Context,
