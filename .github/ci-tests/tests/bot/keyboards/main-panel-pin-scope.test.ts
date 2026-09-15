@@ -48,6 +48,8 @@ describe("Main panel All/root pin isolation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getMainNavigationMessageId.mockReturnValue(undefined);
+    mocks.setMainNavigationMessageId.mockResolvedValue(undefined);
+    mocks.clearMainNavigationMessageId.mockResolvedValue(undefined);
     mocks.getStoredModel.mockReturnValue({ providerID: "p", modelID: "m", name: "Model" });
     mocks.getStoredAgent.mockReturnValue("code");
     mocks.getTopicRuntimeStateSync.mockReturnValue(null);
@@ -100,6 +102,84 @@ describe("Main panel All/root pin isolation", () => {
     expect(editMessageText).toHaveBeenCalledWith(chatId, 702, expect.any(String), expect.any(Object));
     expect(sendMessage).not.toHaveBeenCalled();
     expect(pinChatMessage).toHaveBeenCalledWith(chatId, 702, { disable_notification: true });
+  });
+
+  it("transactionally replaces the previous root panel and moves the pin to the fresh panel", async () => {
+    const chatId = 10105;
+    mocks.getMainNavigationMessageId.mockReturnValue(705);
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 706 });
+    const pinChatMessage = vi.fn().mockResolvedValue(true);
+    const unpinChatMessage = vi.fn().mockResolvedValue(true);
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+    const editMessageText = vi.fn();
+    const api = { sendMessage, pinChatMessage, unpinChatMessage, deleteMessage, editMessageText };
+
+    keyboardManager.initialize(api as never, chatId);
+    const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId, mocks.getStoredModel());
+
+    expect(replaced).toBe(true);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
+    expect(options).not.toHaveProperty("message_thread_id");
+    expect(editMessageText).not.toHaveBeenCalled();
+    expect(pinChatMessage).toHaveBeenCalledWith(chatId, 706, { disable_notification: true });
+    expect(mocks.setMainNavigationMessageId).toHaveBeenCalledWith(chatId, 706);
+    expect(unpinChatMessage).toHaveBeenCalledWith(chatId, 705);
+    expect(deleteMessage).toHaveBeenCalledWith(chatId, 705);
+    expect(pinChatMessage.mock.invocationCallOrder[0]).toBeLessThan(unpinChatMessage.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps the previous canonical panel when the fresh /start panel cannot be pinned", async () => {
+    const chatId = 10106;
+    mocks.getMainNavigationMessageId.mockReturnValue(707);
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 708 });
+    const pinChatMessage = vi.fn()
+      .mockRejectedValueOnce(new Error("pin failed"))
+      .mockResolvedValueOnce(true);
+    const unpinChatMessage = vi.fn().mockResolvedValue(true);
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+    const api = {
+      sendMessage,
+      pinChatMessage,
+      editMessageText: vi.fn(),
+      unpinChatMessage,
+      deleteMessage,
+    };
+
+    keyboardManager.initialize(api as never, chatId);
+    const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId, mocks.getStoredModel());
+
+    expect(replaced).toBe(false);
+    expect(mocks.setMainNavigationMessageId).not.toHaveBeenCalled();
+    expect(deleteMessage).toHaveBeenCalledWith(chatId, 708);
+    expect(deleteMessage).not.toHaveBeenCalledWith(chatId, 707);
+    expect(pinChatMessage).toHaveBeenNthCalledWith(2, chatId, 707, { disable_notification: true });
+  });
+
+  it("rejects a replacement candidate that leaks into a real Topic and leaves the old anchor alone", async () => {
+    const chatId = 10107;
+    mocks.getMainNavigationMessageId.mockReturnValue(709);
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 710, message_thread_id: 88 });
+    const pinChatMessage = vi.fn().mockResolvedValue(true);
+    const unpinChatMessage = vi.fn();
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+    const api = {
+      sendMessage,
+      pinChatMessage,
+      editMessageText: vi.fn(),
+      unpinChatMessage,
+      deleteMessage,
+    };
+
+    keyboardManager.initialize(api as never, chatId);
+    const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId, mocks.getStoredModel());
+
+    expect(replaced).toBe(false);
+    expect(deleteMessage).toHaveBeenCalledWith(chatId, 710);
+    expect(deleteMessage).not.toHaveBeenCalledWith(chatId, 709);
+    expect(mocks.setMainNavigationMessageId).not.toHaveBeenCalled();
+    expect(pinChatMessage).not.toHaveBeenCalled();
+    expect(unpinChatMessage).not.toHaveBeenCalled();
   });
 
   it("fails closed when a supposed Main message is returned inside a real Topic", async () => {
