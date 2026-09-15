@@ -45,7 +45,11 @@ interface ResponseStreamerOptions {
   completePart?: (
     part: TelegramRenderedPart,
     options?: TelegramSendMessageOptions,
-  ) => Promise<{ messageId: number; deliveredSignature: string }>;
+  ) => Promise<{
+    messageId: number;
+    deliveredSignature: string;
+    rollback?: () => Promise<void>;
+  }>;
 }
 
 interface StreamState {
@@ -256,6 +260,7 @@ export class ResponseStreamer {
     }
 
     if (synced && this.completePart && state.latestPayload) {
+      const completionRollbacks: Array<() => Promise<void>> = [];
       try {
         // The message this persists is the end of the same answer, so it
         // inherits the plain-text degradation the stream already fell back to.
@@ -274,6 +279,9 @@ export class ResponseStreamer {
           notifyNextCompletePart = false;
           const result = await this.completePart(part, completeOptions);
           realMessageIds.push(result.messageId);
+          if (result.rollback) {
+            completionRollbacks.push(result.rollback);
+          }
         }
         state.telegramMessageIds = realMessageIds;
       } catch (error) {
@@ -281,6 +289,20 @@ export class ResponseStreamer {
           `[ResponseStreamer] Failed to persist draft message: session=${sessionId}, message=${messageId}`,
           error,
         );
+        for (let index = completionRollbacks.length - 1; index >= 0; index--) {
+          const rollback = completionRollbacks[index];
+          if (!rollback) {
+            continue;
+          }
+          try {
+            await rollback();
+          } catch (rollbackError) {
+            logger.warn(
+              `[ResponseStreamer] Failed to roll back persisted draft part: session=${sessionId}, message=${messageId}`,
+              rollbackError,
+            );
+          }
+        }
         synced = false;
       }
     }
