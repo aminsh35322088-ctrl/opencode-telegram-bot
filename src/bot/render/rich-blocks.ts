@@ -277,10 +277,6 @@ export function toRichBlock(block: TelegramBlock): TelegramRichBlock {
   }
 }
 
-export function createParagraphBlock(text: string): TelegramRichBlock {
-  return { type: "paragraph", text };
-}
-
 function countRichTextChars(text: RichText): number {
   if (typeof text === "string") {
     return text.length;

@@ -117,3 +117,31 @@ The upstream bot already provides commands such as:
 - `/help`
 
 See the main README for the complete command reference.
+
+## Deploys interrupt live agent sessions
+
+This container runs both the bot and the OpenCode agent runtime. A Railway
+deployment is a hard replacement of the container, so:
+
+- Every push or merge to `main` triggers an auto-deploy and `SIGTERM`s the
+  running container.
+- Any in-flight OpenCode session, agent turn, or tool call is killed at that
+  moment. There is no draining of coding sessions; the Telegram reply for the
+  aborted turn is simply never sent.
+
+Two consequences when an agent works on tests or CI:
+
+1. **Waiting is invisible.** Long blocking tool calls (CI watchers, test
+   suites) emit no Telegram output while running, so a healthy wait can look
+   like a hang to chat observers. Agents should prefer short bounded polls
+   over one long wait and report between polls.
+2. **Pushing to `main` from inside a session kills that session.** If the
+   running agent pushes to `main` and then keeps waiting (for CI, for a test
+   run, or for user input), the deploy triggered by its own push will abort
+   the session mid-wait. Validate on a PR branch, wait for CI, merge last,
+   and do not block on long waits right after a direct push to `main`.
+
+The stall watchdog aborts busy sessions that show no progress for a fixed
+window, but active tool calls registered through the SSE stream pause that
+countdown, so silent long-running tools (test runners, CI waits) no longer
+trigger aborts.

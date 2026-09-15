@@ -2,7 +2,7 @@ import { getProviderPriceView } from "./provider-price-view.js";
 import { PRICE_COLOR, type ModelPrice } from "../../app/services/model-price-classifier.js";
 import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
-import { getFavoriteModels, getRecentModels } from "../../app/services/model-preferences-service.js";
+import { getFavoriteModels as readFavorites, getRecentModels as readRecent } from "../../app/services/model-preferences-service.js";
 import { fetchCurrentModel, getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
 import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo } from "../../app/types/model.js";
@@ -23,6 +23,16 @@ export const MODEL_CENTER_SETTINGS_BACK = "mc:settings_back";
 export const MODEL_CENTER_PROVIDER_PREFIX = "mc:provider:";
 export const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
 export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
+
+async function filterAvailable(models: FavoriteModel[]): Promise<FavoriteModel[]> {
+  const available = new Set<string>();
+  for (const providerID of new Set(models.map(m => m.providerID))) {
+    for (const model of await getProviderModels(providerID)) available.add(modelKey(model));
+  }
+  return models.filter(model => available.has(modelKey(model)));
+}
+async function getFavoriteModels() { return filterAvailable(await readFavorites()); }
+async function getRecentModels() { return filterAvailable(await readRecent()); }
 
 const MODELS_PER_PAGE = 8;
 const MAX_ACTION_MODELS = 4096;

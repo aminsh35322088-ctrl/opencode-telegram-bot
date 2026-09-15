@@ -230,7 +230,7 @@ describe("runtime/bootstrap installed configuration", () => {
     await ensureRuntimeConfigForStart();
 
     expect(fs.existsSync(path.join(tempHome, ".env"))).toBe(false);
-    await expect(readFile(path.join(tempHome, "settings.json"), "utf-8")).resolves.toBe("{}\n");
+    await expect(readFile(path.join(tempHome, "app-state.json"), "utf-8")).resolves.toBe("{}\n");
   });
 
   it("merges .env values with process.env taking precedence", async () => {
@@ -250,7 +250,7 @@ describe("runtime/bootstrap installed configuration", () => {
 
     await ensureRuntimeConfigForStart();
 
-    await expect(readFile(path.join(tempHome, "settings.json"), "utf-8")).resolves.toBe("{}\n");
+    await expect(readFile(path.join(tempHome, "app-state.json"), "utf-8")).resolves.toBe("{}\n");
   });
 
   it("rejects an invalid process.env value even when .env is valid", async () => {
@@ -270,6 +270,6 @@ describe("runtime/bootstrap installed configuration", () => {
     await expect(ensureRuntimeConfigForStart()).rejects.toThrow(
       "Interactive wizard requires a TTY terminal",
     );
-    expect(fs.existsSync(path.join(tempHome, "settings.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, "app-state.json"))).toBe(false);
   });
 });

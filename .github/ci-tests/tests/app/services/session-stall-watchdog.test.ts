@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ status: vi.fn(), messages: vi.fn(), abort: vi.fn() }));
 vi.mock("../../../src/opencode/client.js", () => ({ opencodeClient: { session: mocks } }));
 import { startSessionStallWatchdog as start, stopSessionStallWatchdog as stop, __resetSessionStallWatchdogsForTests as reset } from "../../../src/app/services/session-stall-watchdog.js";
+import { markToolCallStarted, markToolCallFinished } from "../../../src/app/managers/tool-activity-manager.js";
 
 const options = (sessionId: string, onStalled = vi.fn()) => ({ sessionId, directory: `/workspace/${sessionId}`, model: "test/model", onStalled });
 
@@ -41,6 +42,17 @@ describe("watchdog liveness and isolation", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mocks.messages).not.toHaveBeenCalled();
     expect(mocks.abort).not.toHaveBeenCalled();
+  });
+
+  it("does not abort a session while a tool call is active past the stall threshold", async () => {
+    markToolCallStarted("a", "call-1");
+    start(options("a"));
+    await vi.advanceTimersByTimeAsync(250_000);
+    expect(mocks.abort).not.toHaveBeenCalled();
+
+    markToolCallFinished("a", "call-1");
+    await vi.advanceTimersByTimeAsync(250_000);
+    expect(mocks.abort.mock.calls.some((call) => call[0].sessionID === "a")).toBe(true);
   });
 
   it("bounds a hanging status probe and lets another Topic continue", async () => {

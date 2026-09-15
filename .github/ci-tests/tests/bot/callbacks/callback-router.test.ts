@@ -15,7 +15,6 @@ const mocked = vi.hoisted(() => ({
   handleModelCenterCallback: vi.fn(),
   handleAiRoleCallback: vi.fn(),
   handlePermissionCallback: vi.fn(),
-  handleProjectSelect: vi.fn(),
   handlePromptAttachmentCancel: vi.fn(),
   handleQuestionCallback: vi.fn(),
   handleRenameCancel: vi.fn(),
@@ -73,9 +72,6 @@ vi.mock("../../../src/bot/callbacks/ai-role-selection-callback-handler.js", () =
 vi.mock("../../../src/bot/callbacks/permission-callback-handler.js", () => ({
   handlePermissionCallback: mocked.handlePermissionCallback,
 }));
-vi.mock("../../../src/bot/callbacks/project-callback-handler.js", () => ({
-  handleProjectSelect: mocked.handleProjectSelect,
-}));
 vi.mock("../../../src/bot/callbacks/prompt-attachment-callback-handler.js", () => ({
   handlePromptAttachmentCancel: mocked.handlePromptAttachmentCancel,
 }));
@@ -123,7 +119,6 @@ const tableHandlers = [
   mocked.handleModelCenterCallback,
   mocked.handleAiRoleCallback,
   mocked.handlePermissionCallback,
-  mocked.handleProjectSelect,
   mocked.handlePromptAttachmentCancel,
   mocked.handleQuestionCallback,
   mocked.handleRenameCancel,
@@ -168,7 +163,7 @@ describe("bot/callbacks/callback-router", () => {
     mocked.handleSettingsCallback.mockResolvedValue(true);
     const callback = registerAndGetCallback();
 
-    await callback(createCallbackContext("settings:tts"));
+    await callback(createCallbackContext("settings:prompt_queue"));
 
     const calledHandlers = tableHandlers.filter((handler) => handler.mock.calls.length > 0);
     expect(calledHandlers).toEqual([mocked.handleSettingsCallback]);

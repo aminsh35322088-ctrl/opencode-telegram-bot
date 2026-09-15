@@ -90,7 +90,10 @@ describe("bot/commands/mcps", () => {
     expect(mocked.mcpStatusMock).toHaveBeenCalledWith({
       directory: process.cwd().replace(/\\/g, "/"),
     });
-    expect(ctx.reply).toHaveBeenCalledWith(t("mcps.empty"));
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("No MCP servers are configured for this workspace yet."),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
   });
 
   it("shows empty message when no MCP servers configured", async () => {
@@ -99,9 +102,11 @@ describe("bot/commands/mcps", () => {
     const ctx = createCommandContext(101);
     await mcpsCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("mcps.empty"));
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("No MCP servers are configured for this workspace yet."),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
   });
-
   it("shows MCP servers list and starts custom interaction", async () => {
     mocked.mcpStatusMock.mockResolvedValue({
       data: {
@@ -124,8 +129,9 @@ describe("bot/commands/mcps", () => {
 
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("mcps:select:0");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("mcps:select:1");
-    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("mcps:parent_back");
-    expect(options.reply_markup.inline_keyboard[2]?.[1]?.callback_data).toBe("mcps:cancel");
+    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("mcps:add");
+    expect(options.reply_markup.inline_keyboard[3]?.[0]?.callback_data).toBe("mcps:parent_back");
+    expect(options.reply_markup.inline_keyboard[3]?.[1]?.callback_data).toBe("main:home");
 
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");
@@ -303,7 +309,7 @@ describe("bot/commands/mcps", () => {
     expect(interactionManager.getSnapshot()).toBeNull();
   });
 
-  it("handles stale callback as inactive", async () => {
+  it("handles cancel callback as always-active cleanup", async () => {
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
@@ -320,11 +326,9 @@ describe("bot/commands/mcps", () => {
     const handled = await handleMcpsCallback(ctx);
 
     expect(handled).toBe(true);
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
-      text: t("inline.inactive_callback"),
-      show_alert: true,
-    });
-    expect(interactionManager.getSnapshot()?.kind).toBe("custom");
+    expect(ctx.answerCallbackQuery).toHaveBeenNthCalledWith(1);
+    expect(ctx.answerCallbackQuery).toHaveBeenNthCalledWith(2, { text: t("common.cancelled") });
+    expect(interactionManager.getSnapshot()).toBeNull();
   });
 
   it("does not show enable button for needs_auth status", async () => {

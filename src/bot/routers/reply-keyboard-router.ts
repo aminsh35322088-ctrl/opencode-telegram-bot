@@ -1,5 +1,4 @@
 import type { Bot, Context, NextFunction } from "grammy";
-import { InlineKeyboard } from "grammy";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
@@ -22,7 +21,6 @@ import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
 import { isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
-import { clearImageMode } from "../../app/services/image-mode-service.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
@@ -178,7 +176,6 @@ async function handleReplyKeyboardInput(
     return;
   }
 
-  clearImageMode();
   const mainOnly = new Set([normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings), mainModelButton]);
   const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
   const allowedInRoute = scope.aiTopic ? topicOnly.has(text) || dynamicTopicControl : mainOnly.has(text);
@@ -191,7 +188,6 @@ async function handleReplyKeyboardInput(
   logger.info(`[Bot] Consuming Reply Keyboard control: scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"} thread=${ctx.message?.message_thread_id ?? 0} text=${text}`);
   await consumeReplyKeyboardMessage(ctx);
   try {
-    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.imageAi)) { await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🖼️ Generate Image", "imageai:generate").text("🖌️ Edit Image", "imageai:edit") }); return; }
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.pause)) { await pauseCurrentChat(ctx); return; }
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription }); return; }
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.abort)) { await abortCurrentOperation(ctx); return; }

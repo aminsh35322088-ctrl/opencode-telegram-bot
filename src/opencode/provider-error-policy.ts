@@ -3,6 +3,10 @@ const DETERMINISTIC_PROVIDER_ERROR_PATTERNS: readonly RegExp[] = [
   /free tier allows for a single request/i,
   /insufficient balance/i,
   /credit insufficient balance/i,
+  /input tokens exceed the configured limit/i,
+  /messages resulted in \d+ tokens/i,
+  /maximum context length/i,
+  /context length exceeded/i,
 ];
 
 const RATE_LIMIT_PROVIDER_ERROR_PATTERNS: readonly RegExp[] = [

@@ -16,7 +16,7 @@ import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handl
 import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
-import { handleProviderCallback } from "../commands/providers-command.js";
+import { clearProviderWizard, handleProviderCallback } from "../commands/providers-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
@@ -31,8 +31,6 @@ import { buildAdvancedSettingsView, buildSettingsMenuView } from "../menus/setti
 import { clearActiveInlineMenu, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { MODEL_CENTER_SETTINGS_BACK } from "../menus/model-center-menu.js";
 import { markGeminiWizard, clearGeminiWizard } from "../services/gemini-wizard-state.js";
-import { activateImageMode } from "../../app/services/image-mode-service.js";
-import { hasActiveImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 import { getCurrentSession, setCurrentSession } from "../../app/services/session-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { handleTelegramTopicDeleteCallback, registerTelegramTopicDeleteHandlers } from "../services/telegram-topic-delete-handler.js";
@@ -108,39 +106,12 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
 }
 
 async function handleSettingsChildNavigation(ctx: Context, data: string): Promise<boolean> {
-  const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "mcps:parent_back" || data === "provider:advanced" || data === "integration:advanced";
+  const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "mcps:parent_back" || data === "integration:advanced";
   if (isAdvancedBack) { await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); logger.debug(`[Navigation] Restored Advanced settings from child menu: ${data}`); return true; }
   if (data === MODEL_CENTER_SETTINGS_BACK) { await ctx.answerCallbackQuery().catch(() => {}); const view = buildSettingsMenuView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); logger.debug("[Navigation] Restored Settings from Model Center"); return true; }
   return false;
 }
 async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> { if (data !== "commands:list_back" && data !== "skills:list_back") return false; await ctx.answerCallbackQuery().catch(() => {}); if (data === "commands:list_back") await commandsCommand(ctx as never); else await skillsCommand(ctx as never); logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`); return true; }
-async function handleImageAiCallback(ctx: Context, data: string): Promise<boolean> {
-  const sessionId = await resolveCallbackTopicSession(ctx) ?? getCurrentSession()?.id;
-  if (data === "imageai:generate") {
-    if (!(await hasActiveImageAiProvider("generate"))) {
-      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
-      return true;
-    }
-    activateImageMode("generate", sessionId);
-    clearInteractionErrorState("interaction", "image_ai_mode_selected");
-    await ctx.answerCallbackQuery().catch(() => {});
-    await ctx.editMessageText("🎨 <b>Image AI · Generate</b>\n\nSend a text or voice prompt and I’ll generate a new image.", { parse_mode: "HTML" }).catch(() => {});
-    return true;
-  }
-  if (data === "imageai:edit") {
-    if (!(await hasActiveImageAiProvider("edit"))) {
-      await ctx.answerCallbackQuery({ text: "image ai not configured", show_alert: true }).catch(() => {});
-      return true;
-    }
-    activateImageMode("edit", sessionId);
-    clearInteractionErrorState("interaction", "image_ai_mode_selected");
-    await ctx.answerCallbackQuery().catch(() => {});
-    await ctx.editMessageText("🖌️ <b>Image AI · Edit</b>\n\nSend a photo with a caption/instruction, or send a photo first and then the edit instruction.", { parse_mode: "HTML" }).catch(() => {});
-    return true;
-  }
-  return false;
-}
-
 export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDeps): void {
   registerTelegramTopicDeleteHandlers(bot);
   const routes = new Map<string, CallbackRoute>([
@@ -172,12 +143,12 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     let topicSessionId: string | null = null;
     let errorScope: InteractionErrorScope = "interaction";
     try {
+      clearProviderWizard();
       topicSessionId = await resolveCallbackTopicSession(ctx);
       if (ctx.chat) deps.setTelegramContext(bot, ctx.chat.id, topicSessionId ?? getCurrentSession()?.id);
       if (data === "provider:gemini:configure") markGeminiWizard();
       if (data === "provider:cancel" || data === "provider:menu" || data === "provider:close") clearGeminiWizard();
       if (await handleMainNavigationCallback(ctx, data, bot, deps)) return;
-      if (await handleImageAiCallback(ctx, data)) return;
       if (await handleTelegramTopicDeleteCallback(ctx)) return;
       if (await handleBackgroundSessionOpen(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })) return;
       if (await handleInlineMenuCancel(ctx)) { clearOpenPathIndex(); clearLsPathIndex(); return; }

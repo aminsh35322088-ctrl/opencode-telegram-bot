@@ -15,6 +15,7 @@ function setPlatform(platform: NodeJS.Platform): () => void {
 describe("runtime/paths", () => {
   beforeEach(() => {
     delete process.env.OPENCODE_TELEGRAM_HOME;
+    delete process.env.OPENCODE_TELEGRAM_WORKSPACE;
     delete process.env.APPDATA;
     setRuntimeMode("sources");
   });
@@ -32,7 +33,7 @@ describe("runtime/paths", () => {
     expect(runtimePaths.mode).toBe("sources");
     expect(runtimePaths.appHome).toBe(process.cwd());
     expect(runtimePaths.envFilePath).toBe(path.join(process.cwd(), ".env"));
-    expect(runtimePaths.settingsFilePath).toBe(path.join(process.cwd(), "settings.json"));
+    expect(runtimePaths.settingsFilePath).toBe(path.join(process.cwd(), "app-state.json"));
     expect(runtimePaths.logsDirPath).toBe(path.join(process.cwd(), "logs"));
   });
 

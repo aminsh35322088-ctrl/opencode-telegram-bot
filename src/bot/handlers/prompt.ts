@@ -35,8 +35,6 @@ export function clearPromptResponseMode(_sessionId: string): void {}
 let botInstance: Bot<Context> | null = null;
 let telegramChatId: number | null = null;
 const autoRecoveryInFlight = new Set<string>();
-export function getPromptBotInstance(): Bot<Context> | null { return botInstance; }
-export function getPromptChatId(): number | null { return telegramChatId; }
 export function __resetPromptRecoveryStateForTests(): void { autoRecoveryInFlight.clear(); }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
@@ -234,6 +232,10 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     if (attachmentPart) parts.push(attachmentPart); else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
     if (pendingAttachment) { promptAttachment.clear("consumed"); interactionManager.clear("attachment_consumed"); await retireAttachmentConfirmation(ctx, pendingAttachment.confirmationMessageId); }
     if (parts.length === 0 || parts.every((p) => p.type === "file")) if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
+    if (parts.length === 0) {
+      await ctx.reply(t("bot.empty_prompt"));
+      return false;
+    }
     const promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string } = { sessionID: currentSession.id, directory: currentSession.directory, parts, agent: currentAgent };
     if (storedModel.providerID && storedModel.modelID) { promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID }; promptOptions.variant = storedModel.variant; }
     const promptErrorLogContext = { sessionId: currentSession.id, telegramChatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel.providerID || "OpenCode/default", modelId: storedModel.modelID || "default", variant: storedModel.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };

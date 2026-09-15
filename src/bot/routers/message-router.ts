@@ -1,5 +1,4 @@
 import type { Bot, Context } from "grammy";
-import { InputFile, InlineKeyboard } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
@@ -31,7 +30,7 @@ import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button
 import { handleDocumentMessage } from "../handlers/document-handler.js";
 import { createMediaGroupAttachmentMiddleware } from "../handlers/media-group-handler.js";
 import { handlePhotoMessage } from "../handlers/photo-handler.js";
-import { downloadPhoto, editImage, editPhotoMessage, handleImageTextPrompt, isMediaAiConfigured } from "../commands/media-command.js";
+import { handleVideoMessage } from "../handlers/video-handler.js";
 import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
@@ -48,20 +47,12 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
-import { clearImageMode, getImageMode, isImageModeActive } from "../../app/services/image-mode-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
   setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void;
 }
 
-interface PendingImage {
-  buffer: Buffer;
-  mimeType: string;
-  expiresAt: number;
-}
-
-const PENDING_IMAGE_TTL_MS = 10 * 60 * 1000;
 const CONTROL_TEXT = {
   cancel: "❌ Cancel",
   pause: MAIN_BUTTONS.pause,
@@ -69,7 +60,6 @@ const CONTROL_TEXT = {
   resume: MAIN_BUTTONS.resume,
 } as const;
 
-let pendingImage: PendingImage | null = null;
 let botInstance: Bot<Context> | null = null;
 let currentEnsureEventSubscription: ((directory: string) => Promise<void>) | null = null;
 
@@ -86,57 +76,6 @@ function getCurrentModelButtonText(): string {
   const model = getStoredModel();
   if (!model.providerID || !model.modelID) return "🧠 Model";
   return formatModelForButton(model.providerID, model.modelID, model.name);
-}
-
-function resetImageInteraction(): void {
-  pendingImage = null;
-  clearImageMode();
-}
-
-function rememberPendingImage(image: PendingImage): void {
-  pendingImage = image;
-  setTimeout(() => {
-    if (pendingImage !== image) return;
-    resetImageInteraction();
-    logger.debug("[Bot] Pending Image AI edit expired and was cleared");
-  }, PENDING_IMAGE_TTL_MS).unref?.();
-}
-
-async function handleImageModeText(ctx: Context, text: string): Promise<boolean> {
-  const mode = getImageMode();
-  if (!mode) return false;
-
-  const image = pendingImage;
-  pendingImage = null;
-  clearImageMode();
-
-  if (mode === "edit") {
-    if (!image || image.expiresAt <= Date.now()) {
-      await ctx.reply("🖌️ Edit mode is active. Send a photo first, then send the edit instruction.");
-      return true;
-    }
-
-    if (!(await isMediaAiConfigured())) {
-      await ctx.reply("🎨 Image AI is not configured. Open /providers and add the image provider.");
-      return true;
-    }
-
-    try {
-      await ctx.replyWithChatAction("upload_photo");
-      const result = await editImage(image.buffer, image.mimeType, text);
-      await ctx.replyWithPhoto(new InputFile(result.buffer, `edited.${result.mimeType.split("/")[1] ?? "png"}`), {
-        caption: "✨ Edited with Image AI",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("[Bot] Image editing failed:", error);
-      await ctx.reply(`❌ Image editing failed: ${message}`);
-    }
-    return true;
-  }
-
-  await handleImageTextPrompt(ctx, text);
-  return true;
 }
 
 async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
@@ -163,7 +102,6 @@ async function handleCompactModeButton(ctx: Context): Promise<boolean> {
   const buttonText = ctx.message?.text;
   if (!buttonText || buttonText !== MAIN_BUTTONS.compact(getCompactOutputMode())) return false;
 
-  resetImageInteraction();
   if (await blockMenuWhileInteractionActive(ctx)) return true;
 
   const enabled = !getCompactOutputMode();
@@ -180,24 +118,13 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
 
   const text = normalizeControlText(rawText);
 
-  if (text === normalizeControlText(MAIN_BUTTONS.imageAi)) {
-    resetImageInteraction();
-    const keyboard = new InlineKeyboard()
-      .text("🖼️ Generate Image", "imageai:generate")
-      .text("🖌️ Edit Image", "imageai:edit");
-    await ctx.reply("🎨 <b>Image AI</b>\nChoose an action:", { parse_mode: "HTML", reply_markup: keyboard });
-    return true;
-  }
-
   if (text === normalizeControlText(CONTROL_TEXT.pause)) {
-    resetImageInteraction();
     logger.info(`[Bot] Control button received: Pause chatId=${ctx.chat.id}`);
     await pauseCurrentChat(ctx);
     return true;
   }
 
   if (text === normalizeControlText(CONTROL_TEXT.resume)) {
-    resetImageInteraction();
     logger.info(`[Bot] Control button received: Resume chatId=${ctx.chat.id}`);
     if (botInstance && currentEnsureEventSubscription) {
       await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription });
@@ -206,14 +133,12 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   }
 
   if (text === normalizeControlText(CONTROL_TEXT.abort)) {
-    resetImageInteraction();
     logger.info(`[Bot] Control button received: Abort chatId=${ctx.chat.id}`);
     await abortCurrentOperation(ctx);
     return true;
   }
 
   if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
-    resetImageInteraction();
     logger.info(`[Bot] Control button received: Cancel chatId=${ctx.chat.id}`);
 
     if (isProviderWizardActive()) {
@@ -235,16 +160,21 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
 }
 
 /**
- * In a forum group, the General ("All") topic is a lobby, not a chat surface:
- * AI conversations live in their own Topics. Free-form text there is accepted
- * only while the bot explicitly waits for input (a wizard step, a question,
- * rename, task creation, model search, Image AI prompt, …); everything else
- * would silently start a prompt against whatever session the General chat
- * happens to follow.
+ * Main/General is a navigation lobby, not an AI conversation surface. Telegram
+ * exposes forum mode differently for supergroups (`chat.is_forum`) and private
+ * bot chats (`ctx.me.has_topics_enabled`), so both capabilities must be handled.
+ * Free-form input is allowed here only while the bot explicitly awaits text for
+ * a wizard/question/etc.; actual AI prompts belong in conversation Topics.
  */
-function isForumGeneralTopic(ctx: Context): boolean {
+function isMainNavigationTopic(ctx: Context): boolean {
   const chat = ctx.chat as { type?: string; is_forum?: boolean } | undefined;
-  if (!chat || chat.type === "private" || chat.is_forum !== true) return false;
+  if (!chat) return false;
+
+  const botInfo = ctx.me as { has_topics_enabled?: boolean } | undefined;
+  const isSupergroupForum = chat.type !== "private" && chat.is_forum === true;
+  const isPrivateBotForum = chat.type === "private" && botInfo?.has_topics_enabled === true;
+  if (!isSupergroupForum && !isPrivateBotForum) return false;
+
   const threadId = (ctx.message as { message_thread_id?: number } | undefined)?.message_thread_id;
   return typeof threadId !== "number" || threadId <= 1;
 }
@@ -252,11 +182,11 @@ function isForumGeneralTopic(ctx: Context): boolean {
 function isBotAwaitingTextInput(): boolean {
   const state = interactionManager.getSnapshot();
   if (state && (state.expectedInput === "text" || state.expectedInput === "mixed")) return true;
-  return isImageModeActive() || isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive();
+  return isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive();
 }
 
 function isGeneralTopicPromptBlocked(ctx: Context): boolean {
-  return isForumGeneralTopic(ctx) && !isBotAwaitingTextInput();
+  return isMainNavigationTopic(ctx) && !isBotAwaitingTextInput();
 }
 
 async function rejectGeneralTopicPrompt(ctx: Context): Promise<void> {
@@ -278,7 +208,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
     if (await handlePriorityControlButton(ctx)) return;
 
     if (text.startsWith("/")) {
-      if (!/^\/(?:image|edit)(?:@\w+)?(?:\s|$)/u.test(text)) resetImageInteraction();
       await next();
       return;
     }
@@ -288,7 +217,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
     // this prevents ordinary prompts such as "🧠 Explain this architecture 2026" from being controls.
     const knownReplyKeyboardButtonTexts = new Set<string>([getCurrentModelButtonText()]);
     if (isReplyKeyboardButtonText(text, knownReplyKeyboardButtonTexts)) {
-      if (text !== MAIN_BUTTONS.imageAi) resetImageInteraction();
       await next();
       return;
     }
@@ -299,7 +227,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
       await handleQuestionTextAnswer(ctx);
       return;
     }
-    if (await handleImageModeText(ctx, text)) return;
     if (await handleTaskTextInput(ctx)) return;
     if (await handleModelSearchTextInput(ctx)) return;
     if (await handleRenameTextAnswer(ctx)) return;
@@ -333,7 +260,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.on("message:text", unknownCommandMiddleware);
 
   bot.hears(/^❌ Cancel$/, async (ctx) => {
-    resetImageInteraction();
     if (isProviderWizardActive()) {
       clearProviderWizard();
       clearIntegrationWizard();
@@ -348,19 +274,16 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   });
 
   bot.hears(/^⚙️ Settings$/, async (ctx) => {
-    resetImageInteraction();
     if (await blockMenuWhileInteractionActive(ctx)) return;
     await settingsCommand(ctx as never);
   });
 
   bot.hears(/^🕘 History$/, async (ctx) => {
-    resetImageInteraction();
     if (await blockMenuWhileInteractionActive(ctx)) return;
     await sessionsCommand(ctx as never);
   });
 
   bot.hears(/^💬 New Chat$/, async (ctx) => {
-    resetImageInteraction();
     if (await blockMenuWhileInteractionActive(ctx)) return;
     await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
@@ -368,7 +291,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   bot.hears(/^📦 Compact: (?:ON|OFF)$/, handleCompactModeButton);
 
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => {
-    resetImageInteraction();
     if (await blockMenuWhileInteractionActive(ctx)) return;
 
     const label = ctx.message?.text;
@@ -385,7 +307,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
   bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN, async (ctx) => {
     try {
-      resetImageInteraction();
       if (await blockMenuWhileInteractionActive(ctx)) return;
       await showAgentSelectionMenu(ctx);
     } catch (err) {
@@ -401,7 +322,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
 
     try {
-      resetImageInteraction();
       if (await blockMenuWhileInteractionActive(ctx)) return;
       await showModelCenterMenu(ctx);
     } catch (err) {
@@ -412,7 +332,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
   bot.hears(CONTEXT_BUTTON_TEXT_PATTERN, async (ctx) => {
     try {
-      resetImageInteraction();
       if (await blockMenuWhileInteractionActive(ctx)) return;
       await handleContextButtonPress(ctx);
     } catch (err) {
@@ -423,7 +342,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
   bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => {
     try {
-      resetImageInteraction();
       if (await blockMenuWhileInteractionActive(ctx)) return;
       await showVariantSelectionMenu(ctx);
     } catch (err) {
@@ -455,37 +373,19 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
-  bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
+  const mediaGroupMiddleware = createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription });
+  bot.on("message", async (ctx, next) => {
+    if (ctx.message?.media_group_id && isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+    await mediaGroupMiddleware(ctx, next);
+  });
 
   bot.on("message:photo", async (ctx) => {
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
-
-    const caption = ctx.message.caption?.trim() ?? "";
-    if (/^\/edit(?:@\w+)?(?:\s|$)/u.test(caption)) {
-      resetImageInteraction();
-      await editPhotoMessage(ctx, caption.replace(/^\/edit(?:@\w+)?\s*/u, "").trim());
-      return;
-    }
-
-    const mode = getImageMode();
-    if (mode === "generate") {
-      resetImageInteraction();
-      await ctx.reply("🖼️ Generate mode is active. Send a text or voice prompt to create a new image.");
-      return;
-    }
-
-    if (mode === "edit") {
-      const source = await downloadPhoto(ctx);
-      rememberPendingImage({ ...source, expiresAt: Date.now() + PENDING_IMAGE_TTL_MS });
-      if (caption) {
-        await handleImageModeText(ctx, caption);
-      } else {
-        await ctx.reply("🖼️ Photo received. Now send the edit instruction as text or voice.");
-      }
-      return;
-    }
 
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
@@ -493,6 +393,32 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
 
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message:video", async (ctx) => {
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
+    await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message:video_note", async (ctx) => {
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
+    await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
   bot.on("message:document", async (ctx) => {

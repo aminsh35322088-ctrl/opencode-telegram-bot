@@ -11,8 +11,68 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
-import { buildExperimentalSettingsView, SETTINGS_EXPERIMENTAL_CALLBACK, SETTINGS_FREE_DETECTION_CALLBACK, buildAdvancedSettingsView, buildAppearanceSettingsView, buildContextSettingsView, buildFactoryResetConfirmationView, buildFactoryResetFinalView, buildNotificationsSettingsView, buildResetHistoryConfirmationView, buildSettingsMenuView, buildTopicDefaultsSettingsView, SETTINGS_AGENT_CALLBACK, SETTINGS_ADVANCED_CALLBACK, SETTINGS_APPEARANCE_CALLBACK, SETTINGS_ASSISTANT_FOOTER_CALLBACK, SETTINGS_BACK_CALLBACK, SETTINGS_COMMANDS_CALLBACK, SETTINGS_COMPACT_OUTPUT_CALLBACK, SETTINGS_CONTEXT_CALLBACK, SETTINGS_DEFAULT_COMPACT_CALLBACK, SETTINGS_DEFAULT_DIFF_CALLBACK, SETTINGS_DEFAULT_FOOTER_CALLBACK, SETTINGS_DEFAULT_FORMAT_CALLBACK, SETTINGS_DEFAULT_QUEUE_CALLBACK, SETTINGS_DEFAULT_STREAMING_CALLBACK, SETTINGS_DEFAULT_THINKING_CALLBACK, SETTINGS_DIFF_FILES_CALLBACK, SETTINGS_FACTORY_RESET_CALLBACK, SETTINGS_FACTORY_RESET_CANCEL_CALLBACK, SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK, SETTINGS_FACTORY_RESET_FINAL_CALLBACK, SETTINGS_MESSAGE_FORMAT_CALLBACK, SETTINGS_MCP_CALLBACK, SETTINGS_MODEL_CALLBACK, SETTINGS_NOTIFICATIONS_CALLBACK, SETTINGS_PROMPT_QUEUE_CALLBACK, SETTINGS_RESET_HISTORY_CALLBACK, SETTINGS_RESET_HISTORY_CANCEL_CALLBACK, SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK, SETTINGS_RESPONSE_STREAMING_CALLBACK, SETTINGS_SKILLS_CALLBACK, SETTINGS_THINKING_CONTENT_CALLBACK, SETTINGS_TOPIC_DEFAULTS_CALLBACK, SETTINGS_VARIANT_CALLBACK, SETTINGS_CALLBACK_PREFIX } from "../menus/settings-menu.js";
+
+import {
+  buildDefaultModelsSettingsView,
+  buildExperimentalSettingsView,
+  SETTINGS_EXPERIMENTAL_CALLBACK,
+  SETTINGS_FREE_DETECTION_CALLBACK,
+  buildAdvancedSettingsView,
+  buildAppearanceSettingsView,
+  buildContextSettingsView,
+  buildFactoryResetConfirmationView,
+  buildFactoryResetFinalView,
+  buildNotificationsSettingsView,
+  buildResetHistoryConfirmationView,
+  buildSettingsMenuView,
+  buildTopicDefaultsSettingsView,
+  SETTINGS_AGENT_CALLBACK,
+  SETTINGS_ADVANCED_CALLBACK,
+  SETTINGS_APPEARANCE_CALLBACK,
+  SETTINGS_ASSISTANT_FOOTER_CALLBACK,
+  SETTINGS_BACK_CALLBACK,
+  SETTINGS_CHAT_MODEL_CALLBACK,
+  SETTINGS_COMMANDS_CALLBACK,
+  SETTINGS_COMPACT_OUTPUT_CALLBACK,
+  SETTINGS_CONTEXT_CALLBACK,
+  SETTINGS_DEFAULT_COMPACT_CALLBACK,
+  SETTINGS_DEFAULT_DIFF_CALLBACK,
+  SETTINGS_DEFAULT_FOOTER_CALLBACK,
+  SETTINGS_DEFAULT_FORMAT_CALLBACK,
+  SETTINGS_DEFAULT_MODELS_CALLBACK,
+  SETTINGS_DEFAULT_QUEUE_CALLBACK,
+  SETTINGS_DEFAULT_STREAMING_CALLBACK,
+  SETTINGS_DEFAULT_THINKING_CALLBACK,
+  SETTINGS_DIFF_FILES_CALLBACK,
+  SETTINGS_FACTORY_RESET_CALLBACK,
+  SETTINGS_FACTORY_RESET_CANCEL_CALLBACK,
+  SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK,
+  SETTINGS_FACTORY_RESET_FINAL_CALLBACK,
+  SETTINGS_MESSAGE_FORMAT_CALLBACK,
+  SETTINGS_MCP_CALLBACK,
+  SETTINGS_MODEL_CALLBACK,
+  SETTINGS_NOTIFICATIONS_CALLBACK,
+  SETTINGS_PROMPT_QUEUE_CALLBACK,
+  SETTINGS_RESET_HISTORY_CALLBACK,
+  SETTINGS_RESET_HISTORY_CANCEL_CALLBACK,
+  SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK,
+  SETTINGS_RESPONSE_STREAMING_CALLBACK,
+  SETTINGS_SKILLS_CALLBACK,
+  SETTINGS_THINKING_CONTENT_CALLBACK,
+  SETTINGS_TOPIC_DEFAULTS_CALLBACK,
+  SETTINGS_VARIANT_CALLBACK,
+  SETTINGS_CALLBACK_PREFIX,
+  SETTINGS_MEMORY_CALLBACK,
+  SETTINGS_MEMORY_CLEAR_CALLBACK,
+  SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK,
+  SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK,
+  SETTINGS_MEMORY_DELETE_PREFIX,
+  buildMemoryClearConfirmationView,
+  buildMemorySettingsView,
+} from "../menus/settings-menu.js";
+
 import { factoryReset, resetHistory } from "../../app/services/telegram-reset-service.js";
+import { clearAllMemories, listMemories, removeMemory } from "../../app/services/memory-service.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import type { InlineMenuNavigation } from "../menus/inline-menu.js";
@@ -39,8 +99,18 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) return false;
   if (!(await ensureActiveInlineMenu(ctx, "settings"))) return true;
   try {
+    if (callbackData.startsWith(SETTINGS_MEMORY_DELETE_PREFIX)) {
+      const memoryId = callbackData.slice(SETTINGS_MEMORY_DELETE_PREFIX.length);
+      const removed = await removeMemory(memoryId);
+      await ctx.answerCallbackQuery({ text: removed ? "Memory deleted" : "Memory not found" });
+      await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
+      return true;
+    }
     switch (callbackData) {
+      // Topic Settings keeps its per-topic model selector. Global Settings uses the unified Default Models hub.
       case SETTINGS_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
+      case SETTINGS_DEFAULT_MODELS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildDefaultModelsSettingsView(), "back"); return true;
+      case SETTINGS_CHAT_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
       case SETTINGS_AGENT_CALLBACK: await ctx.answerCallbackQuery(); await showAgentSelectionMenu(ctx); return true;
       case SETTINGS_VARIANT_CALLBACK: await ctx.answerCallbackQuery(); await showVariantSelectionMenu(ctx); return true;
       case SETTINGS_APPEARANCE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAppearanceSettingsView(), "both"); return true;
@@ -58,6 +128,24 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx as never); return true;
       case SETTINGS_SKILLS_CALLBACK: await ctx.answerCallbackQuery(); await skillsCommand(ctx as never); return true;
       case SETTINGS_COMMANDS_CALLBACK: await ctx.answerCallbackQuery(); await commandsCommand(ctx as never); return true;
+      case SETTINGS_MEMORY_CALLBACK: {
+        await ctx.answerCallbackQuery();
+        const memories = await listMemories();
+        await renderSettingsView(ctx, buildMemorySettingsView(memories), "both");
+        return true;
+      }
+      case SETTINGS_MEMORY_CLEAR_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMemoryClearConfirmationView(), "back"); return true;
+      case SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK: {
+        await ctx.answerCallbackQuery({ text: "Memory clear cancelled" });
+        await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
+        return true;
+      }
+      case SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK: {
+        const removed = await clearAllMemories();
+        await ctx.answerCallbackQuery({ text: `Removed ${removed} memories` });
+        await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
+        return true;
+      }
       case SETTINGS_BACK_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildSettingsMenuView(), "close"); return true;
       case SETTINGS_RESET_HISTORY_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildResetHistoryConfirmationView(), "back"); return true;
       case SETTINGS_RESET_HISTORY_CANCEL_CALLBACK: await ctx.answerCallbackQuery({ text: "History reset cancelled" }); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;

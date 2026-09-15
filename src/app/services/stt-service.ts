@@ -1,5 +1,6 @@
 import { config } from "../../config.js";
-import { getGroqSttConfig } from "./custom-provider-service.js";
+import { getGroqSttConfig, getCustomProviderConfig } from "./custom-provider-service.js";
+import { getAiRoleSelection } from "./ai-role-selection-service.js";
 import { assessTranscription } from "./stt-quality.js";
 import { logger } from "../../utils/logger.js";
 
@@ -20,7 +21,17 @@ const AUDIO_FORMAT_BY_EXTENSION: Record<string, string> = {
 };
 /** STT can be configured by env for backwards compatibility or via Custom Providers > Groq Voice STT. */
 export async function isSttConfigured(): Promise<boolean> {
+  const selected = await getAiRoleSelection("stt");
+  if (selected) return Boolean(await selectedSttConnection());
   return Boolean(config.stt.apiUrl && config.stt.apiKey) || Boolean(await getGroqSttConfig());
+}
+async function selectedSttConnection() {
+  const selected = await getAiRoleSelection("stt");
+  if (!selected) return getGroqSttConfig();
+  if (selected.providerID === "groq") return getGroqSttConfig();
+  const connection = await getCustomProviderConfig(selected.providerID);
+  if (!connection || connection.capability !== "stt" || !connection.models.some(m => m.id === selected.modelID)) return undefined;
+  return { apiUrl: connection.apiUrl, apiKey: connection.apiKey, model: selected.modelID };
 }
 function getAudioFormat(filename: string): string {
   const extension = (filename.split(".").pop() || "").toLowerCase();
@@ -28,7 +39,8 @@ function getAudioFormat(filename: string): string {
 }
 
 export async function transcribeAudio(audioBuffer: Buffer, filename: string): Promise<SttResult> {
-  const custom = await getGroqSttConfig();
+  const custom = await selectedSttConnection();
+  if (!custom && await getAiRoleSelection("stt")) throw new Error("The selected transcription connection is unavailable. Open AI Providers → Transcription.");
   const apiUrl = custom?.apiUrl || config.stt.apiUrl;
   const apiKey = custom?.apiKey || config.stt.apiKey;
   const model = custom?.model || config.stt.model;

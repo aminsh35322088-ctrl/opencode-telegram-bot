@@ -61,19 +61,19 @@ describe("app/stores/scheduled-task-store", () => {
     await rm(tempHome, { recursive: true, force: true });
   });
 
-  it("persists scheduled tasks to settings.json", async () => {
+  it("persists scheduled tasks to app state", async () => {
     const task = createScheduledTask();
 
     await addScheduledTask(task);
 
     expect(listScheduledTasks()).toEqual([task]);
 
-    const settingsPath = path.join(tempHome, "settings.json");
+    const settingsPath = path.join(tempHome, "app-state.json");
     const settingsFile = JSON.parse(await readFile(settingsPath, "utf-8")) as {
-      scheduledTasks?: ScheduledTask[];
+      settings?: { scheduledTasks?: ScheduledTask[] };
     };
 
-    expect(settingsFile.scheduledTasks).toEqual([task]);
+    expect(settingsFile.settings?.scheduledTasks).toEqual([task]);
   });
 
   it("backfills the agent for legacy tasks persisted without it", async () => {
@@ -123,11 +123,11 @@ describe("app/stores/scheduled-task-store", () => {
 
     expect(removed).toBe(1);
 
-    const settingsPath = path.join(tempHome, "settings.json");
+    const settingsPath = path.join(tempHome, "app-state.json");
     const settingsFile = JSON.parse(await readFile(settingsPath, "utf-8")) as {
-      scheduledTaskSessionIgnores?: Array<{ sessionId: string; createdAt: string }>;
+      settings?: { scheduledTaskSessionIgnores?: Array<{ sessionId: string; createdAt: string }> };
     };
-    expect(settingsFile.scheduledTaskSessionIgnores).toEqual([
+    expect(settingsFile.settings?.scheduledTaskSessionIgnores).toEqual([
       { sessionId: "fresh-session", createdAt: "2026-03-16T10:00:00.000Z" },
     ]);
 

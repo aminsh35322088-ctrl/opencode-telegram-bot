@@ -45,7 +45,11 @@ interface ResponseStreamerOptions {
   completePart?: (
     part: TelegramRenderedPart,
     options?: TelegramSendMessageOptions,
-  ) => Promise<{ messageId: number; deliveredSignature: string }>;
+  ) => Promise<{
+    messageId: number;
+    deliveredSignature: string;
+    rollback?: () => Promise<void>;
+  }>;
 }
 
 interface StreamState {
@@ -149,9 +153,13 @@ function getRetryAfterMs(error: unknown): number | null {
   return seconds * 1000;
 }
 
+const MAX_STREAM_SYNC_RATE_LIMIT_RETRIES = 3;
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    const timer = setTimeout(resolve, ms);
+    // Never keep the process alive for a flood-wait retry.
+    timer.unref?.();
   });
 }
 
@@ -254,6 +262,7 @@ export class ResponseStreamer {
     }
 
     if (synced && this.completePart && state.latestPayload) {
+      const completionRollbacks: Array<() => Promise<void>> = [];
       try {
         // The message this persists is the end of the same answer, so it
         // inherits the plain-text degradation the stream already fell back to.
@@ -272,6 +281,9 @@ export class ResponseStreamer {
           notifyNextCompletePart = false;
           const result = await this.completePart(part, completeOptions);
           realMessageIds.push(result.messageId);
+          if (result.rollback) {
+            completionRollbacks.push(result.rollback);
+          }
         }
         state.telegramMessageIds = realMessageIds;
       } catch (error) {
@@ -279,8 +291,32 @@ export class ResponseStreamer {
           `[ResponseStreamer] Failed to persist draft message: session=${sessionId}, message=${messageId}`,
           error,
         );
+        for (let index = completionRollbacks.length - 1; index >= 0; index--) {
+          const rollback = completionRollbacks[index];
+          if (!rollback) {
+            continue;
+          }
+          try {
+            await rollback();
+          } catch (rollbackError) {
+            logger.warn(
+              `[ResponseStreamer] Failed to roll back persisted draft part: session=${sessionId}, message=${messageId}`,
+              rollbackError,
+            );
+          }
+        }
         synced = false;
       }
+    }
+
+    if (!synced) {
+      // The final flush (or draft persistence) failed after partial messages
+      // were already visible. Delete them so the finalize path can resend the
+      // complete answer exactly once instead of leaving a duplicated reply.
+      await this.cleanupBrokenStream(state, "complete_flush_failed");
+      this.cancelState(state);
+      this.states.delete(state.key);
+      return notStreamed;
     }
 
     const messageIds = [...state.telegramMessageIds];
@@ -425,6 +461,7 @@ export class ResponseStreamer {
       return false;
     }
 
+    let rateLimitRetries = 0;
     while (!state.cancelled) {
       const latestPayload = state.latestPayload;
       if (!latestPayload) {
@@ -457,6 +494,16 @@ export class ResponseStreamer {
       } catch (error) {
         const retryAfterMs = getRetryAfterMs(error);
         if (retryAfterMs !== null) {
+          rateLimitRetries += 1;
+          if (rateLimitRetries > MAX_STREAM_SYNC_RATE_LIMIT_RETRIES) {
+            logger.error(
+              `[ResponseStreamer] Rate-limit retries exhausted, breaking stream: session=${state.sessionId}, message=${state.messageId}, reason=${reason}`,
+              error,
+            );
+            this.markStreamBroken(state, error, `${reason}:rate_limit_retries_exhausted`);
+            return false;
+          }
+
           const delayMs = Math.max(this.resolveThrottleMs(state.sessionId), retryAfterMs);
           logger.warn(
             `[ResponseStreamer] Stream sync rate-limited, retrying in ${delayMs}ms: session=${state.sessionId}, message=${state.messageId}, reason=${reason}`,

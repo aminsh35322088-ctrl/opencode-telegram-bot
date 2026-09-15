@@ -44,6 +44,10 @@ function copySharedConfiguration<T extends object>(source: T, target: T): void {
   }
 }
 
+export function dropTopicScopedInstance(target: object, key: string): boolean {
+  return instances.get(target)?.delete(key) ?? false;
+}
+
 export function installTopicScopedSingleton<T extends object>(target: T): T {
   if (installedTargets.has(target)) return target;
   installedTargets.add(target);
