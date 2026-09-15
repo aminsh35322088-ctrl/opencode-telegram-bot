@@ -128,15 +128,6 @@ export async function getProjects(): Promise<ProjectInfo[]> {
   return projects.map(({ id, worktree, name }) => ({ id, worktree, name }));
 }
 
-export async function getProjectById(id: string): Promise<ProjectInfo> {
-  const projects = await getProjects();
-  const project = projects.find((p) => p.id === id);
-  if (!project) {
-    throw new Error(`Project with id ${id} not found`);
-  }
-  return project;
-}
-
 export async function getProjectByWorktree(worktree: string): Promise<ProjectInfo> {
   const projects = await getResolvedProjects({ includeLinkedWorktrees: true });
   const key = worktreeKey(worktree);

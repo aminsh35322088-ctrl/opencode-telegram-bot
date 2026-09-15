@@ -191,13 +191,6 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
   return false;
 }
 
-export function getActiveInlineMenu(chatId?: number): ActiveInlineMenuMetadata | null {
-  if (typeof chatId !== "number") return getActiveInlineMenuMetadata(interactionManager.getSnapshot());
-  const activeEntries = [...activeInlineMenus.entries()].filter(([key]) => key.startsWith(`${chatId}:`));
-  const active = activeEntries.at(-1)?.[1];
-  return active ?? null;
-}
-
 export async function closeActiveInlineMenu(ctx: Context, reason = "navigation"): Promise<void> {
   const chatId = getChatId(ctx);
   const threadId = getTopicThreadId(ctx);

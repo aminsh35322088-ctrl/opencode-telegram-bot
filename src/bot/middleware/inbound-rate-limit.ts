@@ -32,7 +32,3 @@ export async function inboundRateLimitMiddleware(
   bucket.timestamps.push(now);
   return next();
 }
-
-export function clearInboundRateLimitState(): void {
-  bucket = { timestamps: [], lastNoticeAt: 0 };
-}

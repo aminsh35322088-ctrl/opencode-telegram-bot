@@ -65,10 +65,6 @@ export function normalizeLocale(locale: string | null | undefined, fallback: Loc
   return resolveSupportedLocale(locale) ?? fallback;
 }
 
-export function isSupportedLocale(locale: string): locale is Locale {
-  return resolveSupportedLocale(locale) !== null;
-}
-
 export function getLocaleOptions(): LocaleOption[] {
   return LOCALE_DEFINITIONS.map(({ code, label }) => ({ code, label }));
 }

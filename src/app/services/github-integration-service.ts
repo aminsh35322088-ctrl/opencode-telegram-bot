@@ -1,4 +1,4 @@
-import { getAppStatePath, readAppState, updateAppState } from "../stores/app-state-store.js";
+import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
 const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -80,17 +80,6 @@ export async function addGithubAccount(name: string, tokenValue: string, usernam
 export async function removeGithubAccount(id: string): Promise<boolean> { return withStoreLock(async () => { const index = await readIndex(); if (!index.accounts.some((item) => item.id === id)) return false; index.accounts = index.accounts.filter((item) => item.id !== id); if (index.activeId === id) index.activeId = index.accounts[0]?.id; await writeIndex(index); applyActiveToken(index); return true; }); }
 export async function setActiveGithubAccount(id: string): Promise<GithubAccount> { return withStoreLock(async () => { const index = await readIndex(); const account = index.accounts.find((item) => item.id === id); if (!account) throw new Error("GitHub account not found"); index.activeId = id; await writeIndex(index); applyActiveToken(index); return publicAccount(account); }); }
 export async function getGithubToken(): Promise<string> { return applyActiveToken(await readIndex()); }
-export async function hasGithubToken(): Promise<boolean> { return Boolean(await getGithubToken()); }
-export async function saveGithubToken(value: string): Promise<void> {
-  const token = normalizeToken(value); const validation = await validateGithubToken(token); if (!validation.valid) throw new Error("GitHub token verification failed. The token was not saved.");
-  await withStoreLock(async () => {
-    const index = await readIndex(); const active = getActiveAccount(index);
-    if (active) { active.token = token; active.username = validation.username ?? active.username; await writeIndex(index); applyActiveToken(index); return; }
-    const account: StoredGithubAccount = { id: "github", name: "GitHub", username: validation.username, tokenFile: "", createdAt: new Date().toISOString(), token };
-    index.accounts.push(account); index.activeId = account.id; await writeIndex(index); applyActiveToken(index);
-  });
-}
-export async function clearGithubToken(): Promise<void> { await withStoreLock(async () => { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), github: { accounts: [], activeId: undefined } } }); delete process.env.GITHUB_TOKEN; delete process.env.GH_TOKEN; }); }
 
 export async function initializeGithubIntegration(): Promise<boolean> {
   // GitHub credentials are owned by the bot's persistent Integrations store.
@@ -102,5 +91,3 @@ export async function initializeGithubIntegration(): Promise<boolean> {
   applyActiveToken(index);
   return Boolean(getActiveAccount(index));
 }
-
-export function getGithubTokenPath(): string { return getAppStatePath(); }

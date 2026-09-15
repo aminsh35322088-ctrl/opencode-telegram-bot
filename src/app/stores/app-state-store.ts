@@ -71,7 +71,5 @@ export function writeAppState(nextState: AppState): Promise<void> {
   });
   return writeQueue;
 }
-export function clearAppState(): Promise<void> { return writeAppState({ version: 2 }); }
 export function flushAppState(): Promise<void> { return writeQueue; }
 export function getAppStatePath(): string { return getStatePath(); }
-export function hasAppStateFile(): boolean { return initialized; }

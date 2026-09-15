@@ -273,10 +273,6 @@ export async function discoverModels(baseURL: string, apiKey: string): Promise<C
   return models;
 }
 
-export async function testProvider(baseURL: string, apiKey: string): Promise<void> {
-  await discoverModels(baseURL, apiKey);
-}
-
 export async function configureGroqStt(apiKey: string, beforeSave: () => void = () => {}): Promise<void> {
   const key = apiKey.trim();
   if (!key) throw new Error("API key is empty");

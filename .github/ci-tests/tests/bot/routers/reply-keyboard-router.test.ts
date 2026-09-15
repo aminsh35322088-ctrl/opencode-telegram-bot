@@ -22,7 +22,6 @@ const mocks = vi.hoisted(() => ({
   showTelegramTopicDeleteConfirmation: vi.fn(),
   findQueuedPromptByButtonLabel: vi.fn(),
   promptQueue: { removeById: vi.fn(), __resetForTests: vi.fn() },
-  clearImageMode: vi.fn(),
   isProviderWizardActive: vi.fn(),
   isIntegrationWizardActive: vi.fn(),
   getCompactOutputMode: vi.fn(),
@@ -37,7 +36,6 @@ vi.mock("../../../src/app/services/model-selection-service.js", () => ({ getStor
 vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: mocks.assistantRunState }));
 vi.mock("../../../src/app/managers/interaction-manager.js", () => ({ interactionManager: mocks.interactionManager }));
 vi.mock("../../../src/app/managers/prompt-queue-manager.js", () => ({ promptQueue: mocks.promptQueue }));
-vi.mock("../../../src/app/services/image-mode-service.js", () => ({ clearImageMode: mocks.clearImageMode }));
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({ getStoredAgent: vi.fn() }));
 vi.mock("../../../src/app/stores/settings-store.js", () => ({ getCompactOutputMode: mocks.getCompactOutputMode, setCompactOutputMode: mocks.setCompactOutputMode }));
 vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({ keyboardManager: mocks.keyboardManager }));

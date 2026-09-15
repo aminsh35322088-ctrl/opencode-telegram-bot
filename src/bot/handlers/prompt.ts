@@ -35,8 +35,6 @@ export function clearPromptResponseMode(_sessionId: string): void {}
 let botInstance: Bot<Context> | null = null;
 let telegramChatId: number | null = null;
 const autoRecoveryInFlight = new Set<string>();
-export function getPromptBotInstance(): Bot<Context> | null { return botInstance; }
-export function getPromptChatId(): number | null { return telegramChatId; }
 export function __resetPromptRecoveryStateForTests(): void { autoRecoveryInFlight.clear(); }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {

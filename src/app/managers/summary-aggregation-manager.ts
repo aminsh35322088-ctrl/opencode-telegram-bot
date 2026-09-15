@@ -19,13 +19,6 @@ function withTopicContextPreserved<TArgs extends unknown[], TResult>(
   return (...args: TArgs) => runInTopicRuntimeContext(context, () => fn(...args));
 }
 
-export interface SummaryInfo {
-  sessionId: string;
-  text: string;
-  messageCount: number;
-  lastUpdated: number;
-}
-
 export interface MessageCompletionInfo {
   agent?: string | undefined;
   providerID?: string | undefined;
