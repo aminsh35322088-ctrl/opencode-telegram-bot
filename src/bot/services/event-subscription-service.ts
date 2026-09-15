@@ -42,7 +42,6 @@ import {
   setResponseStreamerForReconciliation,
 } from "../../app/services/busy-reconciliation-service.js";
 import { finalizeAssistantResponse } from "../streaming/finalize-assistant-response.js";
-import { sendTtsResponseForSession } from "../handlers/tts-response-handler.js";
 import { deliverThinkingMessage } from "../messages/thinking-message.js";
 import { shouldSuppressUserAbortSessionError } from "../../app/managers/abort-suppression-manager.js";
 import {
@@ -716,13 +715,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
                 options: options as Parameters<typeof sendBotText>[0]["options"],
               });
             },
-          });
-
-          await sendTtsResponseForSession({
-            api: botApi,
-            sessionId,
-            chatId,
-            text: messageText,
           });
         } catch (err) {
           clearPromptResponseMode(sessionId);

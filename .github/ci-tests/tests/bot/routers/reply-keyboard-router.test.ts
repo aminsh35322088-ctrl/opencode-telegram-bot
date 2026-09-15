@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  isMainTelegramTopic: vi.fn(),
   findTelegramTopicBindingByThread: vi.fn(),
   getTopicRuntimeContext: vi.fn(),
   getCurrentSession: vi.fn(),
@@ -28,7 +27,6 @@ const mocks = vi.hoisted(() => ({
   setCompactOutputMode: vi.fn(),
 }));
 
-vi.mock("../../../src/app/services/telegram-main-topic-store.js", () => ({ isMainTelegramTopic: mocks.isMainTelegramTopic }));
 vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({ findTelegramTopicBindingByThread: mocks.findTelegramTopicBindingByThread }));
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({ getTopicRuntimeContext: mocks.getTopicRuntimeContext }));
 vi.mock("../../../src/app/services/session-service.js", () => ({ getCurrentSession: mocks.getCurrentSession }));
@@ -79,7 +77,6 @@ function registerHandler(): { handler: (ctx: unknown, next: () => Promise<void>)
 describe("bot/routers/reply-keyboard-router topic scope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.isMainTelegramTopic.mockResolvedValue(false);
     mocks.findTelegramTopicBindingByThread.mockResolvedValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID, directory: "/proj", createdAt: "", updatedAt: "" });
     mocks.getTopicRuntimeContext.mockReturnValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID });
     mocks.getCurrentSession.mockReturnValue({ id: SESSION_ID, directory: "/proj" });
