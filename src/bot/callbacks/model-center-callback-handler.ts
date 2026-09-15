@@ -42,6 +42,7 @@ import { summaryAggregator } from "../../app/managers/summary-aggregation-manage
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { rotateTelegramTopicSessionForModel } from "../../app/services/topic-session-rotation-service.js";
 import { getTelegramTopicRuntimeDependencies } from "../services/telegram-topic-runtime.js";
 
 const SEARCH_FLOW = "model-search";
@@ -167,43 +168,51 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
     ? { id: topicSessionId, title: topicBinding?.title ?? "Telegram Topic", directory: topicBinding.directory }
     : getCurrentSession();
   const isTopic = Boolean(topicBinding && topicSessionId);
+  let activeSessionId = topicSessionId;
 
   if (chatId) keyboardManager.initialize(ctx.api, chatId, currentSession?.id, threadId);
   const previousModel = fetchCurrentModel();
   const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
   if (modelChanged && currentSession && getCurrentTopicSettings()) {
-    if (isTopic && topicSessionId && topicBinding?.directory) {
-      // Retire only this Topic's session subscription. A global
-      // stopEventListening() here would tear down the event streams of every
-      // other concurrently streaming Topic and freeze their chats.
+    if (isTopic && topicSessionId && topicBinding && chatId && typeof threadId === "number") {
+      // Create + persist the replacement before retiring the old runtime. If
+      // creation/persistence fails, the old Topic remains fully usable.
+      const rotation = await rotateTelegramTopicSessionForModel(topicBinding, modelInfo);
+      activeSessionId = rotation.session.id;
+
       detachAttachedSession("model_switch");
       stopTopicEventSubscription(topicBinding.directory, topicSessionId);
       getTelegramTopicRuntimeDependencies()?.retireSessionRuntime(topicSessionId, "model_switch");
+      summaryAggregator.clear();
+      keyboardManager.clearContext(topicSessionId);
+      keyboardManager.bindTopic(ctx.api, chatId, threadId, activeSessionId);
+      try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
+      logger.info(`[ModelCenter] Rotated Topic session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}, old=${topicSessionId}, new=${activeSessionId}`);
     } else {
       stopEventListening();
+      summaryAggregator.clear();
+      clearSession();
+      keyboardManager.clearContext(topicSessionId);
+      try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
+      logger.info(`[ModelCenter] Retired global session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
     }
-    summaryAggregator.clear();
-    clearSession();
-    keyboardManager.clearContext(topicSessionId);
-    try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
-    logger.info(`[ModelCenter] Retired current Topic session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}, topic=${topicSessionId ?? "global"}`);
   }
 
   interactionManager.clear("model_selected");
   selectModel(modelInfo);
   if (!getCurrentTopicSettings()) updateTopicDefaults({ model: modelInfo });
   await recordRecentModel(modelInfo);
-  keyboardManager.updateModel(modelInfo, topicSessionId);
+  keyboardManager.updateModel(modelInfo, activeSessionId);
   await pinnedMessageManager.refreshContextLimit();
   const currentAgent = await resolveProjectAgent(getStoredAgent());
   const contextInfo = pinnedMessageManager.getContextInfo() ?? (pinnedMessageManager.getContextLimit() > 0 ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() } : null);
-  keyboardManager.updateAgent(currentAgent, topicSessionId);
-  if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, topicSessionId);
+  keyboardManager.updateAgent(currentAgent, activeSessionId);
+  if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, activeSessionId);
 
   if (isTopic) {
-    const topicKeyboard = keyboardManager.getKeyboard(topicSessionId);
-    if (!topicKeyboard) throw new Error(`No Topic keyboard state available after model selection: session=${topicSessionId}`);
+    const topicKeyboard = keyboardManager.getKeyboard(activeSessionId);
+    if (!topicKeyboard) throw new Error(`No Topic keyboard state available after model selection: session=${activeSessionId}`);
     await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}`, topicKeyboard);
     return;
   }

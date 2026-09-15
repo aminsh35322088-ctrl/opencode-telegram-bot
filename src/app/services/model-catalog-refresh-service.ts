@@ -10,8 +10,6 @@ import {
 import { refreshModelCatalog } from "./model-selection-service.js";
 import { logger } from "../../utils/logger.js";
 import { opencodeClient } from "../../opencode/client.js";
-import { config } from "../../config.js";
-import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -43,17 +41,6 @@ function modelsMatch(previous: CustomProviderModel[], next: CustomProviderModel[
   return left.every((value, index) => value === right[index]);
 }
 
-async function reloadLocalOpenCodeConfig(): Promise<boolean> {
-  const target = resolveLocalOpencodeTarget(config.opencode.apiUrl);
-  if (!target) return false;
-
-  const pid = await findServerPid(target.port);
-  if (pid) await killServerProcess(pid);
-  await new Promise<void>((resolve) => setTimeout(resolve, 500));
-  startLocalOpencodeServer(target).unref();
-  return true;
-}
-
 export async function refreshAllCustomProviderModels(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
 
@@ -69,10 +56,6 @@ export async function refreshAllCustomProviderModels(): Promise<void> {
           continue;
         }
 
-        // This is a real refresh, not a cached read. Custom providers can add or
-        // remove short-lived/free models at any time, so the complete /models
-        // response becomes the next catalog instead of intersecting it with the
-        // models that happened to exist when the provider was first configured.
         const catalog = await fetchProviderCatalog(providerConfig.apiUrl, providerConfig.apiKey, { force: true });
         const discovered = catalog.records
           .map(normalizeDiscoveredModel)
@@ -102,14 +85,14 @@ export async function refreshAllCustomProviderModels(): Promise<void> {
     if (changed) {
       const configPath = await syncOpenCodeCustomConfig();
       process.env.OPENCODE_CONFIG = configPath;
-      try {
-        if (await reloadLocalOpenCodeConfig()) {
-          logger.info("[ModelCatalog] Reloaded local OpenCode after custom provider catalog change");
-          return;
-        }
-      } catch (error) {
-        logger.warn("[ModelCatalog] Custom provider catalog changed but OpenCode reload failed", error);
-      }
+      // Never kill the inference server from a periodic catalog refresh. Some
+      // upstream catalogs legitimately add/remove transient models every few
+      // minutes; restarting OpenCode for that metadata churn can terminate an
+      // in-flight prompt and surface transport errors such as
+      // "read request body failed". The bot catalog is refreshed immediately;
+      // the generated OpenCode config is staged for the next normal server
+      // restart rather than forcing one in the middle of user work.
+      logger.info("[ModelCatalog] Custom provider config updated without restarting active OpenCode server");
     }
 
     if (await isOpenCodeReady()) {
