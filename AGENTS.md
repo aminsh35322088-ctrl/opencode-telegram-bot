@@ -73,6 +73,8 @@ git -C /data/opencode/opencode-telegram-bot worktree remove <path> && git worktr
 
 Touch only what is necessary. Do not refactor unrelated code or delete unrelated dead code.
 
+Before removing an exported app-service function, grep `.opencode/tools/` as well: custom runtime tools load compiled services dynamically (for example the railway tool's store contract against `/app/dist/app/services/railway-integration-service.js`), which static import scans cannot see.
+
 ### Goal-driven execution
 
 For bugs, identify the root cause, implement the fix, verify the affected path, then verify the repository build and deployment behavior.
