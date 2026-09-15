@@ -1,4 +1,4 @@
-import type { Api, Keyboard } from "grammy";
+import type { Api } from "grammy";
 import { createMainInlineKeyboard, createMainKeyboard, createTopicKeyboard } from "./main-reply-keyboard.js";
 import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
@@ -51,7 +51,6 @@ class KeyboardManager {
   private readonly mainInlineMessageIds = new Map<number, number>();
   private readonly mainAnchorLocks = new Map<number, Promise<void>>();
   private readonly topicModeChats = new Set<number>();
-  private readonly mainKeyboardAppliedChats = new Set<number>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
@@ -280,59 +279,6 @@ class KeyboardManager {
 
   public isTopicMode(chatId: number): boolean { return this.topicModeChats.has(chatId); }
   public async enterTopicMode(chatId: number): Promise<void> { this.topicModeChats.add(chatId); logger.info(`[TopicMode] Entered Topic Mode without replacing General InlineKeyboard: chat=${chatId}`); }
-
-  /**
-   * General/All uses a chat-scoped Reply Keyboard with the Main controls so
-   * the navigation buttons are always visible; Topic controls are re-applied
-   * by the router when an AI Topic is used again.
-   */
-  public mainScopeReplyKeyboard(): Keyboard {
-    return createMainKeyboard(getStoredModel(), { isTopic: false });
-  }
-
-  public async sendMainScopeReplyKeyboard(chatId: number): Promise<void> {
-    if (!this.api) {
-      return;
-    }
-
-    const notice = await this.api.sendMessage(chatId, "⌨️", {
-      reply_markup: this.mainScopeReplyKeyboard(),
-    });
-    try {
-      await this.api.deleteMessage(chatId, notice.message_id);
-    } catch (error) {
-      logger.debug(`[TelegramKeyboard] Could not delete Main Reply Keyboard notice: chat=${chatId}`, error);
-    }
-    logger.info(`[TelegramKeyboard] Applied Main controls Reply Keyboard in All/root: chat=${chatId}`);
-  }
-
-  /**
-   * Latched variant: applies the Main controls keyboard once per chat. The
-   * latch is dropped whenever an AI Topic keyboard becomes active again, so
-   * stale Topic controls in All are always replaced, without re-sending on
-   * every General-chat message.
-   */
-  public async applyMainScopeReplyKeyboardOnce(chatId: number): Promise<void> {
-    if (this.mainKeyboardAppliedChats.has(chatId)) {
-      return;
-    }
-
-    this.mainKeyboardAppliedChats.add(chatId);
-    try {
-      await this.sendMainScopeReplyKeyboard(chatId);
-    } catch (error) {
-      this.mainKeyboardAppliedChats.delete(chatId);
-      throw error;
-    }
-  }
-
-  public noteMainScopeKeyboardApplied(chatId: number): void {
-    this.mainKeyboardAppliedChats.add(chatId);
-  }
-
-  public markTopicKeyboardActive(chatId: number): void {
-    this.mainKeyboardAppliedChats.delete(chatId);
-  }
   public async activateTopicMode(chatId: number, currentModel: ModelInfo = getStoredModel()): Promise<void> { await this.enterTopicMode(chatId); await this.sendTopicMainKeyboard(chatId, currentModel, true); }
   public async hideMainInlineKeyboard(chatId: number): Promise<void> { logger.debug(`[TopicMode] Ignoring request to hide General InlineKeyboard: chat=${chatId}`); }
   public async clearMainInlineKeyboard(chatId: number): Promise<void> { logger.debug(`[TelegramKeyboard] Keeping persistent pinned Main status + InlineKeyboard message in All/root: chat=${chatId}`); }

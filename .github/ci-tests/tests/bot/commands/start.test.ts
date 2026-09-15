@@ -23,23 +23,46 @@ const mocked = vi.hoisted(() => ({
   keyboardIsTopicModeMock: vi.fn(() => false),
   replaceMainInlineKeyboardMock: vi.fn().mockResolvedValue(true),
   sendMainInlineKeyboardMock: vi.fn().mockResolvedValue(undefined),
-  syncMainReplyKeyboardMock: vi.fn().mockResolvedValue(undefined),
   findTelegramTopicBindingByThreadMock: vi.fn(),
 }));
 
-vi.mock("../../../src/bot/commands/abort-command.js", () => ({ abortCurrentOperation: mocked.abortCurrentOperationMock }));
-vi.mock("../../../src/app/services/session-service.js", () => ({ clearSession: mocked.clearSessionMock }));
-vi.mock("../../../src/app/stores/settings-store.js", () => ({ clearProject: mocked.clearProjectMock }));
-vi.mock("../../../src/app/services/attach-service.js", () => ({ detachAttachedSession: mocked.detachAttachedSessionMock }));
-vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({ clearPausedSession: mocked.clearPausedSessionMock }));
-vi.mock("../../../src/app/managers/foreground-session-state-manager.js", () => ({ foregroundSessionState: { clearAll: mocked.foregroundClearAllMock } }));
-vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: { clearAll: mocked.assistantRunClearAllMock } }));
+vi.mock("../../../src/bot/commands/abort-command.js", () => ({
+  abortCurrentOperation: mocked.abortCurrentOperationMock,
+}));
+
+vi.mock("../../../src/app/services/session-service.js", () => ({
+  clearSession: mocked.clearSessionMock,
+}));
+
+vi.mock("../../../src/app/stores/settings-store.js", () => ({
+  clearProject: mocked.clearProjectMock,
+}));
+
+vi.mock("../../../src/app/services/attach-service.js", () => ({
+  detachAttachedSession: mocked.detachAttachedSessionMock,
+}));
+
+vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
+  clearPausedSession: mocked.clearPausedSessionMock,
+}));
+
+vi.mock("../../../src/app/managers/foreground-session-state-manager.js", () => ({
+  foregroundSessionState: { clearAll: mocked.foregroundClearAllMock },
+}));
+
+vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({
+  assistantRunState: { clearAll: mocked.assistantRunClearAllMock },
+}));
+
 vi.mock("../../../src/app/services/version-info-service.js", () => ({
   getBotUpdateNotice: mocked.getBotUpdateNoticeMock,
   markBotVersionNotified: mocked.markBotVersionNotifiedMock,
 }));
-vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({ findTelegramTopicBindingByThread: mocked.findTelegramTopicBindingByThreadMock }));
-vi.mock("../../../src/bot/keyboards/main-reply-keyboard-sync.js", () => ({ syncMainReplyKeyboard: mocked.syncMainReplyKeyboardMock }));
+
+vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
+  findTelegramTopicBindingByThread: mocked.findTelegramTopicBindingByThreadMock,
+}));
+
 vi.mock("../../../src/bot/pinned/pinned-message-manager.js", () => ({
   pinnedMessageManager: {
     isInitialized: mocked.pinnedIsInitializedMock,
@@ -49,6 +72,7 @@ vi.mock("../../../src/bot/pinned/pinned-message-manager.js", () => ({
     clear: mocked.pinnedClearMock,
   },
 }));
+
 vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
   keyboardManager: {
     initialize: mocked.keyboardInitializeMock,
@@ -59,14 +83,17 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     sendMainInlineKeyboard: mocked.sendMainInlineKeyboardMock,
   },
 }));
-vi.mock("../../../src/utils/logger.js", () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+
+vi.mock("../../../src/utils/logger.js", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 function createStartContext(threadId?: number): Context {
   return {
     chat: { id: 100 },
     message: threadId ? { message_thread_id: threadId } : undefined,
-    api: { sendMessage: vi.fn(), deleteMessage: vi.fn() },
-    reply: vi.fn(),
+    api: { sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }) },
+    reply: vi.fn().mockResolvedValue({ message_id: 1 }),
   } as unknown as Context;
 }
 
@@ -92,12 +119,12 @@ describe("bot/commands/start-command", () => {
     mocked.keyboardIsTopicModeMock.mockReset().mockReturnValue(false);
     mocked.replaceMainInlineKeyboardMock.mockReset().mockResolvedValue(true);
     mocked.sendMainInlineKeyboardMock.mockReset().mockResolvedValue(undefined);
-    mocked.syncMainReplyKeyboardMock.mockReset().mockResolvedValue(undefined);
     mocked.findTelegramTopicBindingByThreadMock.mockReset().mockResolvedValue(null);
   });
 
-  it("resets a normal root session, restores the Main Reply Keyboard, then replaces the pinned Main panel", async () => {
+  it("stops active flow, resets project/session, and replaces the root Main panel", async () => {
     const ctx = createStartContext();
+
     await startCommand(ctx);
 
     expect(mocked.abortCurrentOperationMock).toHaveBeenCalledWith(ctx, { notifyUser: false });
@@ -113,34 +140,31 @@ describe("bot/commands/start-command", () => {
     expect(mocked.pinnedInitializeMock).toHaveBeenCalledWith(ctx.api, 100);
     expect(mocked.keyboardInitializeMock).toHaveBeenCalledWith(ctx.api, 100);
     expect(mocked.pinnedRefreshContextLimitMock).toHaveBeenCalledTimes(1);
-    expect(mocked.syncMainReplyKeyboardMock).toHaveBeenCalledWith(ctx.api, 100, true);
     expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
     expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
+    // /start must never spawn Telegram topics on its own.
+    expect(mocked.findTelegramTopicBindingByThreadMock).not.toHaveBeenCalled();
   });
 
-  it("force-restores the Main Reply Keyboard in All when Topic mode is active without resetting the Topic session", async () => {
+  it("also replaces the root Main panel when topic mode is already active", async () => {
     mocked.keyboardIsTopicModeMock.mockReturnValue(true);
     const ctx = createStartContext();
-    await startCommand(ctx);
 
-    expect(mocked.syncMainReplyKeyboardMock).toHaveBeenCalledWith(ctx.api, 100, true);
-    expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
-    expect(mocked.abortCurrentOperationMock).not.toHaveBeenCalled();
-    expect(mocked.clearSessionMock).not.toHaveBeenCalled();
-  });
-
-  it("still replaces the Main panel if Reply Keyboard synchronization fails", async () => {
-    mocked.syncMainReplyKeyboardMock.mockRejectedValueOnce(new Error("telegram keyboard sync failed"));
-    const ctx = createStartContext();
     await startCommand(ctx);
 
     expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
     expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
+    expect(mocked.abortCurrentOperationMock).not.toHaveBeenCalled();
   });
 
-  it("treats /start inside a Telegram Topic as navigation without replacing root input state", async () => {
-    mocked.findTelegramTopicBindingByThreadMock.mockResolvedValue({ chatId: 100, threadId: 731925, sessionId: "session-1" });
+  it("treats /start inside a Telegram Topic as navigation without replacing the root anchor", async () => {
+    mocked.findTelegramTopicBindingByThreadMock.mockResolvedValue({
+      chatId: 100,
+      threadId: 731925,
+      sessionId: "session-1",
+    });
     const ctx = createStartContext(731925);
+
     await startCommand(ctx);
 
     expect(mocked.findTelegramTopicBindingByThreadMock).toHaveBeenCalledWith(100, 731925);
@@ -148,7 +172,6 @@ describe("bot/commands/start-command", () => {
     expect(mocked.clearSessionMock).not.toHaveBeenCalled();
     expect(mocked.clearProjectMock).not.toHaveBeenCalled();
     expect(mocked.pinnedClearMock).not.toHaveBeenCalled();
-    expect(mocked.syncMainReplyKeyboardMock).not.toHaveBeenCalled();
     expect(mocked.replaceMainInlineKeyboardMock).not.toHaveBeenCalled();
     expect(mocked.sendMainInlineKeyboardMock).toHaveBeenCalledWith(100, undefined, true);
   });

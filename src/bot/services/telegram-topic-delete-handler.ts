@@ -39,7 +39,7 @@ function getTopicFromCallback(ctx: Context): { chatId: number; threadId: number 
 }
 
 export async function showTelegramTopicDeleteConfirmation(ctx: Context): Promise<void> {
-  const topic = getTopicFromMessage(ctx) ?? getTopicFromCallback(ctx);
+  const topic = getTopicFromMessage(ctx);
   if (!topic) return;
 
   const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);

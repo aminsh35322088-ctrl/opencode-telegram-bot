@@ -15,7 +15,7 @@ import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
-import { MAIN_BUTTONS, TOPIC_BUTTONS, TOPIC_CONTROL_CALLBACKS } from "../keyboards/main-reply-keyboard.js";
+import { MAIN_BUTTONS, TOPIC_BUTTONS } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
@@ -32,12 +32,6 @@ import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { classifyReplyKeyboardInteraction, getRawReplyKeyboardText } from "../interaction-classifier.js";
-import { createNewImageChat } from "./image-chat-router.js";
-
-interface ReplyKeyboardRouterDeps {
-  bot: Bot<Context>;
-  ensureEventSubscription: (directory: string) => Promise<void>;
-}
 
 function normalized(text: string): string {
   return text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\uFE0F/g, "").replace(/\s+/g, " ").trim();
@@ -49,12 +43,8 @@ function currentModelButton(): string {
 }
 
 function keyboardButtonTexts(keyboard: unknown): string[] {
-  const rows = Array.isArray(keyboard)
-    ? keyboard
-    : typeof keyboard === "object" && keyboard !== null && Array.isArray(Reflect.get(keyboard, "inline_keyboard"))
-      ? Reflect.get(keyboard, "inline_keyboard") as unknown[]
-      : [];
-  return rows.flatMap((row) => {
+  if (!Array.isArray(keyboard)) return [];
+  return keyboard.flatMap((row) => {
     if (!Array.isArray(row)) return [];
     return row.flatMap((button) => {
       if (typeof button === "string") return [button];
@@ -101,22 +91,28 @@ async function consumeReplyKeyboardMessage(ctx: Context): Promise<void> {
   catch (error) { logger.debug?.(`[Bot] Could not delete Reply Keyboard control message: chat=${chatId} message=${messageId}`, error); }
 }
 
-// Telegram does not emit an update simply because the user switches a private
-// bot Topic. Main/All therefore owns the only persistent Reply Keyboard. AI
-// Topic controls are inline and cannot mutate the chat input keyboard state.
-async function applyMainScopeReplyKeyboard(ctx: Context): Promise<void> {
+// Telegram ReplyKeyboardMarkup is chat-scoped, not forum-topic-scoped. Keep a
+// tiny per-chat latch so stale AI controls are actively removed once the user
+// sends a message in Main/General, and can be recreated when an AI Topic is used.
+const mainKeyboardRemovedChats = new Set<number>();
+async function removeReplyKeyboardFromMainChat(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
-  if (typeof chatId !== "number") return;
+  if (typeof chatId !== "number" || mainKeyboardRemovedChats.has(chatId)) return;
+  mainKeyboardRemovedChats.add(chatId);
   try {
-    await keyboardManager.applyMainScopeReplyKeyboardOnce(chatId);
+    const notice = await ctx.api.sendMessage(chatId, "⌨️", { reply_markup: { remove_keyboard: true } });
+    try { await ctx.api.deleteMessage(chatId, notice.message_id); }
+    catch (error) { logger.debug(`[Bot] Could not delete temporary Reply Keyboard removal notice: chat=${chatId}`, error); }
+    logger.info(`[Bot] Removed AI Topic ReplyKeyboard from Main/General chat scope: chat=${chatId}`);
   } catch (error) {
-    logger.warn(`[Bot] Failed to apply Main controls Reply Keyboard in Main/General: chat=${chatId}`, error);
+    mainKeyboardRemovedChats.delete(chatId);
+    logger.warn(`[Bot] Failed to remove stale AI Topic ReplyKeyboard from Main/General: chat=${chatId}`, error);
   }
 }
 
 function markAiTopicKeyboardVisible(ctx: Context): void {
   const chatId = ctx.chat?.id;
-  if (typeof chatId === "number") keyboardManager.markTopicKeyboardActive(chatId);
+  if (typeof chatId === "number") mainKeyboardRemovedChats.delete(chatId);
 }
 
 function getRenderedReplyKeyboardTexts(scope: { topicMode: boolean; aiTopic: boolean }, runtime: ReturnType<typeof getTopicRuntimeContext>): Set<string> {
@@ -125,64 +121,10 @@ function getRenderedReplyKeyboardTexts(scope: { topicMode: boolean; aiTopic: boo
   return new Set(keyboardButtonTexts(built).map(normalized));
 }
 
-async function handleTopicInlineControl(ctx: Context, deps: ReplyKeyboardRouterDeps): Promise<void> {
-  const data = ctx.callbackQuery?.data;
-  if (!data?.startsWith("topicctl:")) return;
-
-  const message = ctx.callbackQuery?.message;
-  const chatId = message?.chat.id;
-  const threadId = message && "message_thread_id" in message ? message.message_thread_id : undefined;
-  const runtime = getTopicRuntimeContext();
-  if (
-    typeof chatId !== "number" ||
-    typeof threadId !== "number" ||
-    threadId <= 1 ||
-    !runtime ||
-    runtime.chatId !== chatId ||
-    runtime.threadId !== threadId
-  ) {
-    await ctx.answerCallbackQuery({ text: "This control belongs to an AI Topic.", show_alert: true }).catch(() => {});
-    logger.warn(`[Bot] Rejected Topic inline control without matching Topic runtime: data=${data}, chat=${chatId ?? "none"}, thread=${threadId ?? "none"}`);
-    return;
-  }
-
-  await ctx.answerCallbackQuery().catch(() => {});
-  logger.info(`[Bot] Consuming Topic inline control: session=${runtime.sessionId}, thread=${threadId}, data=${data}`);
-
-  try {
-    if (data === TOPIC_CONTROL_CALLBACKS.pause) { await pauseCurrentChat(ctx); return; }
-    if (data === TOPIC_CONTROL_CALLBACKS.resume) { await resumePausedChat(ctx, deps); return; }
-    if (data === TOPIC_CONTROL_CALLBACKS.abort) { await abortCurrentOperation(ctx); return; }
-    if (data === TOPIC_CONTROL_CALLBACKS.deleteChat) { await showTelegramTopicDeleteConfirmation(ctx); return; }
-
-    if (data === TOPIC_CONTROL_CALLBACKS.compact) {
-      if (!await menuAllowed(ctx)) return;
-      setCompactOutputMode(!getCompactOutputMode());
-      await keyboardManager.sendKeyboardUpdate(chatId, true, runtime.sessionId);
-      return;
-    }
-    if (data === TOPIC_CONTROL_CALLBACKS.modelCenter) {
-      if (await menuAllowed(ctx)) await showModelCenterMenu(ctx);
-      return;
-    }
-    if (data === TOPIC_CONTROL_CALLBACKS.topicSettings) {
-      if (await menuAllowed(ctx)) await settingsCommand(ctx as never);
-      return;
-    }
-    if (data === TOPIC_CONTROL_CALLBACKS.imageAi) {
-      if (await menuAllowed(ctx)) await createNewImageChat(ctx);
-      return;
-    }
-  } catch (error) {
-    logger.error(`[Bot] Topic inline control failed: session=${runtime.sessionId}, data=${data}`, error);
-    await ctx.answerCallbackQuery({ text: t("callback.processing_error"), show_alert: true }).catch(() => {});
-  }
-}
-
 async function handleReplyKeyboardInput(
   ctx: Context,
   next: NextFunction,
-  deps: ReplyKeyboardRouterDeps,
+  deps: { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void> },
 ): Promise<void> {
   const raw = ctx.message?.text;
   if (typeof raw !== "string") { await next(); return; }
@@ -191,16 +133,17 @@ async function handleReplyKeyboardInput(
 
   const scope = await getTopicScope(ctx);
   if (scope.aiTopic) markAiTopicKeyboardVisible(ctx);
-  else await applyMainScopeReplyKeyboard(ctx);
+  else await removeReplyKeyboardFromMainChat(ctx);
 
   // The classifier is the authoritative prompt/UI boundary. Nothing below is
   // allowed to turn arbitrary text into a Reply Keyboard control.
   const classified = await classifyReplyKeyboardInteraction(ctx);
   if (!classified.isControl) { await next(); return; }
 
-  // Keep stale Topic reply buttons safe during migration. Telegram may retain an
-  // old ReplyKeyboardMarkup locally until the persistent Main keyboard replaces
-  // it; those labels must be consumed as UI, never forwarded as model prompts.
+  // The classifier matched the authentic, pre-enrichment button label. When a
+  // press is sent in Telegram reply mode, ctx.message.text carries a leading
+  // "Replying to ..." block; dispatch matching must use the real label so the
+  // recognized control is actually executed instead of being consumed silently.
   const controlRaw = getRawReplyKeyboardText(ctx) ?? raw;
   text = normalized(controlRaw);
 
@@ -214,7 +157,7 @@ async function handleReplyKeyboardInput(
 
   const exactControls = new Set<string>([
     ...renderedButtonTexts,
-    normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.newImageChat), normalized(MAIN_BUTTONS.mainSettings),
+    normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings),
     normalized(MAIN_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.deleteChat),
     normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort),
     normalized("🧠 Model Center"), normalized("❌ Cancel"), compactOn, compactOff, mainModelButton, topicModelButton,
@@ -233,13 +176,7 @@ async function handleReplyKeyboardInput(
     return;
   }
 
-  const mainOnly = new Set([
-    normalized(MAIN_BUTTONS.history),
-    normalized(MAIN_BUTTONS.newChat),
-    normalized(MAIN_BUTTONS.newImageChat),
-    normalized(MAIN_BUTTONS.mainSettings),
-    mainModelButton,
-  ]);
+  const mainOnly = new Set([normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings), mainModelButton]);
   const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
   const allowedInRoute = scope.aiTopic ? topicOnly.has(text) || dynamicTopicControl : mainOnly.has(text);
   if (!allowedInRoute) {
@@ -252,7 +189,7 @@ async function handleReplyKeyboardInput(
   await consumeReplyKeyboardMessage(ctx);
   try {
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.pause)) { await pauseCurrentChat(ctx); return; }
-    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, deps); return; }
+    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription }); return; }
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.abort)) { await abortCurrentOperation(ctx); return; }
     if (isExact(text, "❌ Cancel")) {
       if (isProviderWizardActive()) { clearProviderWizard(); await providersCommand(ctx as never); return; }
@@ -284,12 +221,10 @@ async function handleReplyKeyboardInput(
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.deleteChat)) { await showTelegramTopicDeleteConfirmation(ctx); return; }
     if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.history)) { if (await menuAllowed(ctx)) await sessionsCommand(ctx as never); return; }
     if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.newChat)) { if (await menuAllowed(ctx)) await newCommand(ctx as never, deps); return; }
-    if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.newImageChat)) { if (await menuAllowed(ctx)) await createNewImageChat(ctx); return; }
     if (!scope.aiTopic && isExact(text, MAIN_BUTTONS.mainSettings)) { if (await menuAllowed(ctx)) await settingsCommand(ctx as never); return; }
   } catch (error) { logger.error(`[Bot] Reply Keyboard dispatch failed: ${raw}`, error); }
 }
 
-export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: ReplyKeyboardRouterDeps): void {
-  bot.callbackQuery(/^topicctl:/, (ctx) => handleTopicInlineControl(ctx, deps));
+export function registerReplyKeyboardRouter(bot: Bot<Context>, deps: { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void> }): void {
   bot.use((ctx, next) => handleReplyKeyboardInput(ctx, next, deps));
 }

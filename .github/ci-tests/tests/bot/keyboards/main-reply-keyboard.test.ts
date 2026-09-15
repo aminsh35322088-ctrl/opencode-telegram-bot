@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentKeyboard, createMainKeyboard, createTopicKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
+import { createAgentKeyboard, createMainKeyboard } from "../../../src/bot/keyboards/main-reply-keyboard.js";
 import { defined } from "../../helpers/defined.js";
 
 function getButtonText(button: string | { text: string }): string {
@@ -15,7 +15,7 @@ function buttonTextAt(
 }
 
 describe("bot/keyboards/main-reply-keyboard", () => {
-  it("creates a compact persistent main keyboard without model controls", () => {
+  it("creates a compact main keyboard without model controls", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: false },
@@ -27,10 +27,10 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     ]);
     expect(keyboard.keyboard.flat().map(getButtonText)).not.toContain("🧠 GPT 4o");
     expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBe(true);
+    expect(keyboard.is_persistent).toBeUndefined();
   });
 
-  it("keeps the AI Topic reply shape non-persistent", () => {
+  it("shows model selection only inside an AI Topic", () => {
     const keyboard = createMainKeyboard({
       providerID: "very-long-provider-name-that-keeps-going-and-going",
       modelID: "vendor/very-long-model-name-that-keeps-going-and-going",
@@ -41,28 +41,9 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(labels).toContain("🧠 Custom Model 2026");
     expect(labels.join("\n")).not.toContain("very-long-provider-name");
     expect(labels.join("\n")).not.toContain(" · ");
-    expect(keyboard.is_persistent).toBeUndefined();
   });
 
-  it("renders active AI Topic controls as the original Reply Keyboard", () => {
-    const keyboard = createTopicKeyboard({
-      running: true,
-      compactOutputMode: true,
-      currentModel: { providerID: "openrouter", modelID: "openai/gpt-4o", name: "GPT 4o" },
-    });
-
-    expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
-      [{ text: "🎨 Image AI" }, { text: "📦 Compact: ON" }],
-      [{ text: "🧠 GPT 4o" }],
-      [{ text: "🗑️ Delete Chat" }, { text: "⚙️ Topic Settings" }],
-    ]);
-    expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBeUndefined();
-    expect((keyboard as unknown as { inline_keyboard?: unknown }).inline_keyboard).toBeUndefined();
-  });
-
-  it("reflects compact mode state in the AI Topic shape", () => {
+  it("reflects compact mode state in an AI Topic", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { compactOutputMode: true, isTopic: true },

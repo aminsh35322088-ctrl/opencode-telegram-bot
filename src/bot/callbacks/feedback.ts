@@ -1,4 +1,4 @@
-import type { Context, InlineKeyboard, Keyboard } from "grammy";
+import type { Context, Keyboard } from "grammy";
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
@@ -25,8 +25,8 @@ export async function failure(ctx: Context, key: I18nKey, params?: FeedbackParam
   await ctx.answerCallbackQuery({ text: resolveAnswerText(key, params) }).catch(() => {});
 }
 
-/** Send fresh controls in the same Telegram Topic as the triggering callback. */
-export async function switched(ctx: Context, text: string, keyboard: Keyboard | InlineKeyboard): Promise<void> {
+/** Send a new reply-keyboard message in the same Telegram Topic as the triggering callback. */
+export async function switched(ctx: Context, text: string, keyboard: Keyboard): Promise<void> {
   await ctx.answerCallbackQuery();
   const callbackMessage = ctx.callbackQuery?.message;
   const threadId = callbackMessage && "message_thread_id" in callbackMessage

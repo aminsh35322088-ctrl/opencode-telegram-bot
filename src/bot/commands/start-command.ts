@@ -1,7 +1,6 @@
 import { Context } from "grammy";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
-import { syncMainReplyKeyboard } from "../keyboards/main-reply-keyboard-sync.js";
 import { clearSession } from "../../app/services/session-service.js";
 import * as settingsStore from "../../app/stores/settings-store.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
@@ -72,16 +71,11 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   await sendBotUpdateNotice(ctx);
 
+  // /start in All/root is intentionally a replacement, not an edit/refresh.
+  // The keyboard manager creates and pins the new root panel first, persists it
+  // as the canonical Main anchor, then retires the previous bot-owned anchor.
+  // If any creation/pin/persistence step fails, the previous good panel remains.
   if (!isInTopic) {
-    // Restore the chat-input Reply Keyboard first, then create the canonical
-    // pinned Main panel. The tiny root carrier is deliberately kept alive so a
-    // Telegram client cannot miss the keyboard because the carrier vanished in
-    // the same update burst. The Main panel is sent second, so it remains the
-    // newest visible navigation message.
-    await syncMainReplyKeyboard(ctx.api, chatId, true).catch((error) => {
-      logger.warn(`[TelegramKeyboard] /start failed to synchronize Main Reply Keyboard: chat=${chatId}`, error);
-    });
-
     const replaced = await keyboardManager.replaceMainInlineKeyboard(chatId);
     logger.info(`[TelegramKeyboard] /start root Main replacement finished: chat=${chatId}, success=${replaced}, mode=${isTopicMode ? "topic-aware" : "normal"}`);
     return;

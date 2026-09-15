@@ -44,7 +44,7 @@ describe("private bot Main Topic routing", () => {
 
     await handler(ctx, vi.fn());
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"), expect.objectContaining({ reply_markup: expect.anything() }));
+    expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"));
     expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
   });
 

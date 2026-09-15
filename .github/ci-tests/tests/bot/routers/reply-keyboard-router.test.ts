@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   getStoredModel: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn(), hasActiveRuns: vi.fn() },
   interactionManager: { getSnapshot: vi.fn(), clear: vi.fn(), clearAll: vi.fn(), start: vi.fn(), isActive: vi.fn(), clearSession: vi.fn() },
-  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn(), applyMainScopeReplyKeyboardOnce: vi.fn().mockResolvedValue(undefined), markTopicKeyboardActive: vi.fn() },
+  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn() },
   showModelCenterMenu: vi.fn(),
   showAgentSelectionMenu: vi.fn(),
   showVariantSelectionMenu: vi.fn(),
@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   settingsCommand: vi.fn(),
   sessionsCommand: vi.fn(),
   newCommand: vi.fn(),
-  createNewImageChat: vi.fn(),
   abortCurrentOperation: vi.fn(),
   pauseCurrentChat: vi.fn(),
   resumePausedChat: vi.fn(),
@@ -50,7 +49,6 @@ vi.mock("../../../src/bot/menus/context-control-menu.js", () => ({ handleContext
 vi.mock("../../../src/bot/commands/settings-command.js", () => ({ settingsCommand: mocks.settingsCommand }));
 vi.mock("../../../src/bot/commands/sessions-command.js", () => ({ sessionsCommand: mocks.sessionsCommand }));
 vi.mock("../../../src/bot/commands/new-command.js", () => ({ newCommand: mocks.newCommand }));
-vi.mock("../../../src/bot/routers/image-chat-router.js", () => ({ createNewImageChat: mocks.createNewImageChat }));
 vi.mock("../../../src/bot/commands/abort-command.js", () => ({ abortCurrentOperation: mocks.abortCurrentOperation }));
 vi.mock("../../../src/bot/commands/pause-command.js", () => ({ pauseCurrentChat: mocks.pauseCurrentChat, resumePausedChat: mocks.resumePausedChat }));
 vi.mock("../../../src/bot/services/telegram-topic-delete-handler.js", () => ({ showTelegramTopicDeleteConfirmation: mocks.showTelegramTopicDeleteConfirmation }));
@@ -73,33 +71,11 @@ function makeTopicContext(text: string) {
   };
 }
 
-function makeTopicCallbackContext(data: string) {
-  return {
-    chat: { id: CHAT_ID },
-    callbackQuery: {
-      data,
-      message: { chat: { id: CHAT_ID }, message_id: 99, message_thread_id: THREAD_ID },
-    },
-    answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
-    reply: vi.fn().mockResolvedValue(undefined),
-  };
-}
-
-function registerHandlers(): {
-  handler: (ctx: unknown, next: () => Promise<void>) => Promise<void>;
-  callback: (ctx: unknown) => Promise<void>;
-  next: ReturnType<typeof vi.fn>;
-} {
-  const bot = { on: vi.fn(), hears: vi.fn(), use: vi.fn(), callbackQuery: vi.fn() };
+function registerHandler(): { handler: (ctx: unknown, next: () => Promise<void>) => Promise<void>; next: ReturnType<typeof vi.fn> } {
+  const bot = { on: vi.fn(), hears: vi.fn(), use: vi.fn() };
   registerReplyKeyboardRouter(bot as never, { bot: bot as never, ensureEventSubscription: vi.fn() });
   const handler = bot.use.mock.calls[0]?.[0] as (ctx: unknown, next: () => Promise<void>) => Promise<void>;
-  const callback = bot.callbackQuery.mock.calls[0]?.[1] as (ctx: unknown) => Promise<void>;
-  return { handler, callback, next: vi.fn() };
-}
-
-function registerHandler(): { handler: (ctx: unknown, next: () => Promise<void>) => Promise<void>; next: ReturnType<typeof vi.fn> } {
-  const { handler, next } = registerHandlers();
-  return { handler, next };
+  return { handler, next: vi.fn() };
 }
 
 describe("bot/routers/reply-keyboard-router topic scope", () => {
@@ -116,116 +92,41 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     mocks.keyboardManager.getState.mockReturnValue(undefined);
     mocks.keyboardManager.getKeyboard.mockReturnValue(undefined);
     mocks.keyboardManager.isTopicMode.mockReturnValue(false);
-    mocks.keyboardManager.sendKeyboardUpdate.mockResolvedValue(undefined);
     mocks.getCompactOutputMode.mockReturnValue(false);
     mocks.isProviderWizardActive.mockReturnValue(false);
     mocks.isIntegrationWizardActive.mockReturnValue(false);
     mocks.findQueuedPromptByButtonLabel.mockReturnValue(null);
   });
 
-  function makeMainScopeContext(chatId: number, text: string) {
-    return {
-      chat: { id: chatId },
-      message: { text, message_thread_id: 1 },
-      reply: vi.fn().mockResolvedValue(undefined),
-    };
-  }
-
-  it("applies the Main controls keyboard in All and dispatches a Main button", async () => {
-    const mainChat = -9000000001;
-    mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
-    mocks.getTopicRuntimeContext.mockReturnValue(null);
-    mocks.keyboardManager.isTopicMode.mockReturnValue(true);
-
-    const { handler, next } = registerHandler();
-    await handler(makeMainScopeContext(mainChat, "💬 New Chat"), next);
-
-    expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).toHaveBeenCalledWith(mainChat);
-    expect(mocks.newCommand).toHaveBeenCalledTimes(1);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("dispatches New Image Chat from the Main Reply Keyboard", async () => {
-    const mainChat = -9000000003;
-    mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
-    mocks.getTopicRuntimeContext.mockReturnValue(null);
-    mocks.keyboardManager.isTopicMode.mockReturnValue(true);
-
-    const { handler, next } = registerHandler();
-    const ctx = makeMainScopeContext(mainChat, "🎨 New Image Chat");
-    await handler(ctx, next);
-
-    expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).toHaveBeenCalledWith(mainChat);
-    expect(mocks.createNewImageChat).toHaveBeenCalledWith(ctx);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("delegates keyboard sync to the manager on every All message and lets prompts through", async () => {
-    const mainChat = -9000000002;
-    mocks.findTelegramTopicBindingByThread.mockResolvedValue(null);
-    mocks.getTopicRuntimeContext.mockReturnValue(null);
-    mocks.keyboardManager.isTopicMode.mockReturnValue(true);
-
-    const { handler, next } = registerHandler();
-    await handler(makeMainScopeContext(mainChat, "write me a haiku"), next);
-    await handler(makeMainScopeContext(mainChat, "and another one"), next);
-
-    expect(next).toHaveBeenCalledTimes(2);
-    const appliedForChat = mocks.keyboardManager.applyMainScopeReplyKeyboardOnce.mock.calls.filter((call) => call[0] === mainChat);
-    expect(appliedForChat).toHaveLength(2);
-  });
-
-  it("routes Topic inline Abort without touching the Main Reply Keyboard", async () => {
-    const { callback } = registerHandlers();
-    const ctx = makeTopicCallbackContext("topicctl:abort");
-    await callback(ctx);
-    expect(mocks.abortCurrentOperation).toHaveBeenCalledWith(ctx);
-    expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).not.toHaveBeenCalled();
-  });
-
-  it("updates Compact through Topic inline controls and refreshes only that Topic", async () => {
-    const { callback } = registerHandlers();
-    const ctx = makeTopicCallbackContext("topicctl:compact");
-    await callback(ctx);
-    expect(mocks.setCompactOutputMode).toHaveBeenCalledWith(true);
-    expect(mocks.keyboardManager.sendKeyboardUpdate).toHaveBeenCalledWith(CHAT_ID, true, SESSION_ID);
-    expect(mocks.keyboardManager.applyMainScopeReplyKeyboardOnce).not.toHaveBeenCalled();
-  });
-
-  it("routes Topic inline Delete to the existing safe confirmation", async () => {
-    const { callback } = registerHandlers();
-    const ctx = makeTopicCallbackContext("topicctl:delete");
-    await callback(ctx);
-    expect(mocks.showTelegramTopicDeleteConfirmation).toHaveBeenCalledWith(ctx);
-  });
-
   const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "🎨 Image AI", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
 
   for (const button of topicButtons) {
-    it(`consumes stale "${button}" Reply Keyboard text inside a topic without forwarding it as a prompt`, async () => {
+    it(`consumes "${button}" inside a topic without forwarding it as a prompt`, async () => {
       const { handler, next } = registerHandler();
       const ctx = makeTopicContext(button);
+
       await handler(ctx, next);
+
       expect(next).not.toHaveBeenCalled();
     });
   }
 
-  it("dispatches legacy Abort text inside a topic", async () => {
+  it("dispatches Abort inside a topic", async () => {
     const { handler, next } = registerHandler();
     await handler(makeTopicContext("🛑 Abort"), next);
     expect(mocks.abortCurrentOperation).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("dispatches legacy Model Center text inside a topic", async () => {
-    const { handler } = registerHandler();
-    await handler(makeTopicContext("🧠 Model Center"), vi.fn());
+  it("dispatches Model Center inside a topic", async () => {
+    const { handler, next } = registerHandler();
+    await handler(makeTopicContext("🧠 Model Center"), next);
     expect(mocks.showModelCenterMenu).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches legacy Topic Settings text inside a topic", async () => {
-    const { handler } = registerHandler();
-    await handler(makeTopicContext("⚙️ Topic Settings"), vi.fn());
+  it("dispatches Topic Settings inside a topic", async () => {
+    const { handler, next } = registerHandler();
+    await handler(makeTopicContext("⚙️ Topic Settings"), next);
     expect(mocks.settingsCommand).toHaveBeenCalledTimes(1);
   });
 
@@ -233,7 +134,9 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     const { handler, next } = registerHandler();
     const ctx = makeTopicContext("Replying to @Chat Bot.\n\n🗑️ Delete Chat");
     stashRawReplyKeyboardText(ctx, "🗑️ Delete Chat");
+
     await handler(ctx, next);
+
     expect(mocks.showTelegramTopicDeleteConfirmation).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
   });
@@ -242,7 +145,9 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     const { handler, next } = registerHandler();
     const ctx = makeTopicContext("Replying to @Chat Bot.\n\n🛑 Abort");
     stashRawReplyKeyboardText(ctx, "🛑 Abort");
+
     await handler(ctx, next);
+
     expect(mocks.abortCurrentOperation).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
   });

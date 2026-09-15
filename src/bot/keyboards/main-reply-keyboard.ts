@@ -31,19 +31,6 @@ export const TOPIC_BUTTONS = {
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
 
-// Kept for compatibility with already-sent inline Topic controls from the
-// short-lived migration. New Topic controls are ReplyKeyboardMarkup again.
-export const TOPIC_CONTROL_CALLBACKS = {
-  pause: "topicctl:pause",
-  resume: "topicctl:resume",
-  abort: "topicctl:abort",
-  imageAi: "topicctl:image",
-  compact: "topicctl:compact",
-  modelCenter: "topicctl:model",
-  deleteChat: "topicctl:delete",
-  topicSettings: "topicctl:settings",
-} as const;
-
 export const TOPIC_SETTINGS_BUTTON = MAIN_BUTTONS.topicSettings;
 export interface MainKeyboardOptions {
   queuedPromptLabels?: string[];
@@ -83,18 +70,12 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
       options.compactOutputMode ?? false,
       options.currentModel ?? currentModel,
     );
-    // AI Topic controls intentionally remain the original Reply Keyboard UX.
-    // They are not persistent because Telegram can carry reply-keyboard state
-    // across private bot Topics; Main re-applies its own grid when it receives
-    // a root interaction.
-    return keyboard.resized();
+  } else {
+    addMainControls(keyboard);
   }
-
-  addMainControls(keyboard);
-  // Main/All uses a persistent 2x2 launcher. Topic controls are still Reply
-  // Keyboards by product design, so Main must explicitly restore this grid when
-  // the user interacts with All/root.
-  return keyboard.resized().persistent();
+  // Reply keyboards are chat-scoped in Telegram. Do not make them persistent:
+  // the router actively removes stale Topic controls when Main/General is used.
+  return keyboard.resized();
 }
 
 /** Canonical Main/General navigation. Model choices live under Settings → Default Models. */
@@ -107,7 +88,7 @@ export function createMainInlineKeyboard(_currentModel: ModelInfo): InlineKeyboa
     .text(MAIN_BUTTONS.mainSettings, "main:settings");
 }
 
-/** Persistent Reply Keyboard owned by General/All. */
+/** Reply Keyboard used by General/All after Topic Mode is active. */
 export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLabels: string[] = []): Keyboard {
   return buildMainKeyboard(currentModel, {
     queuedPromptLabels,
@@ -117,16 +98,13 @@ export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLab
   });
 }
 
-/** Original AI Topic Reply Keyboard controls. */
+/** Keyboard used exclusively inside an AI Topic backed by an OpenCode session. */
 export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): Keyboard {
   return buildMainKeyboard(
     options.currentModel ?? { providerID: "", modelID: "" },
     { ...options, isTopic: true },
   );
 }
-
-/** Compatibility alias for callers from the temporary inline migration. */
-export const createTopicInlineKeyboard = createTopicKeyboard;
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
 export function createMainKeyboard(_currentAgent: string, currentModel: ModelInfo, _contextInfo?: ContextInfo, _variantName?: string, queuedPromptLabels?: string[], paused?: boolean, running?: boolean): Keyboard;

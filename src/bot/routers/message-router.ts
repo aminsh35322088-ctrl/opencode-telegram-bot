@@ -189,10 +189,7 @@ function isGeneralTopicPromptBlocked(ctx: Context): boolean {
 }
 
 async function rejectGeneralTopicPrompt(ctx: Context): Promise<void> {
-  // The rejection reply doubles as the keyboard sync: every bot message in
-  // All carries the Main controls keyboard so the input area converges even
-  // when the chat-scoped keyboard still shows stale Topic controls.
-  await ctx.reply(t("general.topic_only_prompt"), { reply_markup: keyboardManager.mainScopeReplyKeyboard() });
+  await ctx.reply(t("general.topic_only_prompt"));
 }
 
 function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
