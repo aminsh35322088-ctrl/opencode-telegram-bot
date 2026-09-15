@@ -36,7 +36,10 @@ vi.mock("../../../src/bot/keyboards/main-reply-keyboard.js", () => ({
   createTopicKeyboard: vi.fn(() => ({ keyboard: [[{ text: "Topic" }]] })),
 }));
 vi.mock("../../../src/bot/services/telegram-topic-runtime.js", () => ({ getUnscopedTelegramApi: (api: unknown) => api }));
-vi.mock("../../../src/i18n/index.js", () => ({ t: (key: string) => key }));
+vi.mock("../../../src/i18n/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/i18n/index.js")>();
+  return { ...actual, t: (key: string) => key };
+});
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { keyboardManager } from "../../../src/bot/keyboards/keyboard-manager.js";
