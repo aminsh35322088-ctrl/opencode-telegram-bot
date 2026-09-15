@@ -7,7 +7,7 @@ import {
   buildSettingsMenuView,
   SETTINGS_ADVANCED_CALLBACK,
   SETTINGS_BACK_CALLBACK,
-  SETTINGS_MODEL_CALLBACK,
+  SETTINGS_DEFAULT_MODELS_CALLBACK,
   SETTINGS_TOPIC_DEFAULTS_CALLBACK,
 } from "../../../src/bot/menus/settings-menu.js";
 
@@ -19,16 +19,16 @@ describe("settings top-level routing contracts", () => {
       ),
     );
 
-    expect(callbacks).toContain(SETTINGS_MODEL_CALLBACK);
+    expect(callbacks).toContain(SETTINGS_DEFAULT_MODELS_CALLBACK);
     expect(callbacks).toContain(SETTINGS_TOPIC_DEFAULTS_CALLBACK);
     expect(callbacks).toContain(SETTINGS_ADVANCED_CALLBACK);
   });
 
-  it("routes the model entry to the model selection callback", () => {
+  it("routes the model entry to the default model selection callback", () => {
     const view = buildSettingsMenuView();
     const buttons = view.keyboard.inline_keyboard.flatMap((row) => row);
     const modelButtons = buttons.flatMap((button) =>
-      "callback_data" in button && button.callback_data === SETTINGS_MODEL_CALLBACK && "text" in button && typeof button.text === "string"
+      "callback_data" in button && button.callback_data === SETTINGS_DEFAULT_MODELS_CALLBACK && "text" in button && typeof button.text === "string"
         ? [button.text]
         : [],
     );

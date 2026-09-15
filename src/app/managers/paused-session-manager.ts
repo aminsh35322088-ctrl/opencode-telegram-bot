@@ -42,6 +42,3 @@ export function isChatPaused(sessionId?: string): boolean {
   if (scopedId !== undefined) return pausedSessions.has(scopedId);
   return pausedSessions.size > 0;
 }
-
-export function getPausedSessionIds(): string[] { return [...pausedSessions.keys()]; }
-export function clearAllPausedSessions(): void { pausedSessions.clear(); }

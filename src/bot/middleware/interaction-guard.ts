@@ -5,7 +5,6 @@ import { reconcileForegroundBusyState } from "../../app/services/run-control-ser
 import { shouldSuggestPromptQueue, tryEnqueuePrompt } from "../handlers/prompt-queue-dispatch.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
-import { isImageAiOperationActive } from "../../app/services/image-mode-service.js";
 import { isReplyKeyboardControl } from "../interaction-classifier.js";
 import { handleMcpsMessage, isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
 
@@ -74,11 +73,6 @@ export async function interactionGuardMiddleware(ctx: Context, next: NextFunctio
   // them before busy/queue handling so a button can never be enqueued as text.
   if (ctx.message?.text && await isReplyKeyboardControl(ctx)) {
     await next();
-    return;
-  }
-
-  if (ctx.message?.text && isImageAiOperationActive()) {
-    await ctx.reply("⏳ Image AI is still working on the current request. Please wait for the image to be delivered.").catch(() => {});
     return;
   }
 

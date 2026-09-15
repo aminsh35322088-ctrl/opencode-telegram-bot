@@ -14,6 +14,10 @@ function cloneState(state: TaskCreationState): TaskCreationState {
 class TaskCreationManager {
   private readonly states = new Map<string, TaskCreationState | null>();
 
+  clearSession(scopeKey: string): void {
+    this.states.delete(scopeKey);
+  }
+
   private key(): string {
     const topic = getTopicRuntimeContext();
     return topic ? `${topic.chatId}:${topic.threadId}` : "__main__";

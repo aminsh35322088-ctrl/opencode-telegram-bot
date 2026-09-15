@@ -42,6 +42,7 @@ export async function resetSingletonState(): Promise<void> {
     { __resetStreamThrottleForTests },
     { __resetSessionStallWatchdogsForTests },
     { __resetPromptRecoveryStateForTests },
+    { __resetToolActivityForTests },
     loggerModule,
   ] = await Promise.all([
     import("../../src/app/managers/question-manager.js"),
@@ -60,6 +61,7 @@ export async function resetSingletonState(): Promise<void> {
     import("../../src/bot/streaming/stream-throttle.js"),
     import("../../src/app/services/session-stall-watchdog.js"),
     import("../../src/bot/handlers/prompt.js"),
+    import("../../src/app/managers/tool-activity-manager.js"),
     import("../../src/utils/logger.js"),
   ]);
 
@@ -67,6 +69,7 @@ export async function resetSingletonState(): Promise<void> {
   __resetStreamThrottleForTests();
   __resetSessionStallWatchdogsForTests();
   __resetPromptRecoveryStateForTests();
+  __resetToolActivityForTests();
   questionManager.clear();
   permissionManager.clear();
   renameManager.clear();

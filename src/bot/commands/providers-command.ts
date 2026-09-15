@@ -1,113 +1,208 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { configureGroqStt, deleteCustomProvider, discoverModels, getGroqSttConfig, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
-import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider, validateConfiguredCloudflareCredentials } from "../../app/services/image-ai-provider-service.js";
+import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
+import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
+import { configureOpenRouterCodingProvider, OPENROUTER_PROVIDER_ID } from "../../app/services/openrouter-provider-service.js";
+import { imageConnectionUsage } from "../../app/services/image-chat-profile-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
 import { logger } from "../../utils/logger.js";
 import { clearIntegrationWizard } from "./integrations-command.js";
-import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
-import { replyWithInlineMenu } from "../menus/inline-menu.js";
+import { buildSettingsMenuView } from "../menus/settings-menu.js";
+import { showImageChatSettings } from "../menus/image-chat-settings.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
+import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 
-const CAPABILITIES: AiCapability[] = ["coding", "image", "video", "stt"];
-const LABEL: Record<AiCapability, string> = { coding: "💻 Coding AI", image: "🎨 Image AI", video: "🎬 Video AI", stt: "🎙️ Speech-to-Text" };
-type ImageStep = "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
-interface PendingProvider { step: "slot" | "name" | "url" | "key" | "groq-stt-key" | ImageStep; capability?: AiCapability; name?: string; baseURL?: string; apiKey?: string; model?: string; editModel?: string; accountId?: string; messageId: number; }
+const CAPABILITIES: AiCapability[] = ["coding", "image", "stt"];
+const LABEL: Record<AiCapability, string> = { coding: "💬 Chat & Coding", image: "🎨 Image", stt: "🎙️ Transcription" };
+type Step = "name" | "url" | "key" | "openrouter-key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
+interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
-function messageId(ctx: Context): number | null { const m = ctx.callbackQuery?.message; return m && "message_id" in m && typeof m.message_id === "number" ? m.message_id : null; }
-function wizardKeyboard(back = "provider:menu") { return new InlineKeyboard().text("❌ Cancel", "provider:cancel").text("← Back", back); }
+function messageId(ctx: Context): number | undefined { return ctx.callbackQuery?.message?.message_id; }
+function wizardKeyboard() { return new InlineKeyboard().text("❌ Cancel", "provider:cancel").text("← Connections", "provider:connections"); }
 export function isProviderWizardActive(): boolean { return providerWizard.isActive(); }
 export function clearProviderWizard(): void { providerWizard.clear(); }
-async function deleteInput(ctx: Context) { const id = ctx.message?.message_id; if (ctx.chat?.id && id) await ctx.api.deleteMessage(ctx.chat.id, id).catch(() => {}); }
-async function editWizard(ctx: Context, id: number, text: string, back = "provider:menu") { if (ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: wizardKeyboard(back) }); }
-async function restartOpenCodeAfterProviderChange() { const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath; const target = resolveLocalOpencodeTarget(config.opencode.apiUrl); if (target) { const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid); await new Promise((r) => setTimeout(r, 500)); startLocalOpencodeServer(target).unref(); } await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch((e) => logger.warn("[Providers] Model refresh failed:", e)); }
-async function getProviderCapabilitySummary(customProviders: Awaited<ReturnType<typeof listCustomProviders>>) {
-  const [imageProviders, groq] = await Promise.all([listImageAiProviders(), getGroqSttConfig()]);
-  const lines: string[] = [];
-  for (const capability of CAPABILITIES) {
-    if (capability === "image") {
-      const cloudflare = imageProviders.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
-      const custom = imageProviders.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID && provider.active);
-      const configured = Boolean(custom) || Boolean(cloudflare && (await validateConfiguredCloudflareCredentials()).valid);
-      lines.push(`${LABEL[capability]}: ${configured ? "✅" : "⚪ Not configured"}`);
-      continue;
-    }
-    const configured = capability === "stt" ? Boolean(groq) || customProviders.some((provider) => provider.capability === capability) : customProviders.some((provider) => provider.capability === capability);
-    lines.push(`${LABEL[capability]}: ${configured ? "✅" : "⚪ Not configured"}`);
+async function deleteInput(ctx: Context) { if (ctx.chat && ctx.message) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
+async function render(ctx: Context, text: string, keyboard: InlineKeyboard, id?: number) {
+  const options = { reply_markup: keyboard };
+  if (id !== undefined && ctx.chat) await ctx.api.editMessageText(ctx.chat.id, id, text.slice(0, 4000), options);
+  else await ctx.reply(text.slice(0, 4000), options);
+}
+async function editWizard(ctx: Context, id: number, text: string) { await render(ctx, text, wizardKeyboard(), id); }
+async function start(ctx: Context, step: Step, text: string, capability?: AiCapability): Promise<void> {
+  const id = messageId(ctx); if (id === undefined) return;
+  providerWizard.set({ step, capability, messageId: id, expires: Date.now() + 15 * 60_000 });
+  await editWizard(ctx, id, text);
+}
+async function restartOpenCodeAfterProviderChange(): Promise<void> {
+  const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath;
+  const target = resolveLocalOpencodeTarget(config.opencode.apiUrl);
+  if (target) {
+    const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid);
+    await new Promise(r => setTimeout(r, 500)); startLocalOpencodeServer(target).unref();
   }
-  return lines;
+  await reconcileStoredModelSelection({ forceCatalogRefresh: true });
 }
-
-async function renderImage(ctx: Context, id?: number, notice?: string) {
-  const providers = await listImageAiProviders();
-  const cloudflare = providers.find((p) => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
-  const custom = providers.find((p) => p.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
-  const cloudflareValidation = cloudflare ? await validateConfiguredCloudflareCredentials() : { valid: false };
-  const k = new InlineKeyboard();
-  k.row().text(cloudflare ? "☁️ Cloudflare Workers AI · Active ✅" : "☁️ Cloudflare Workers AI", "provider:image:cloudflare:configure");
-  k.row().text(custom ? "🔌 Custom API · Active ✅" : "🔌 Custom API", "provider:image:custom:configure");
-  if (cloudflare && cloudflareValidation.valid) k.row().text("🗑️ Remove Cloudflare", "provider:image:cloudflare:remove");
-  if (custom) k.row().text("🗑️ Remove Custom API", "provider:image:custom:remove");
-  k.row().text("← Custom Provider API", "provider:menu").text("🏠 Home", "main:home");
-  const status = cloudflare ? (cloudflareValidation.valid ? "✅ Verified" : "⚠️ Needs verification") : "⚪ Not configured";
-  const lines = [`☁️ Cloudflare Workers AI: ${status}`, cloudflare ? `Model: ${cloudflare.model}` : "", `🔌 Custom API: ${custom ? `✅ ${custom.model}${custom.editModel ? ` / edit: ${custom.editModel}` : ""}` : "⚪ Not configured"}`].filter(Boolean);
-  const text = `${notice ? `${notice}\n\n` : ""}🎨 Image AI\n\n${lines.join("\n")}\n\nChoose one provider. Cloudflare supports generation + editing with FLUX.2 Klein 4B.`;
-  if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
+async function applyCodingChanges(): Promise<string> {
+  try { await restartOpenCodeAfterProviderChange(); return ""; }
+  catch { logger.warn("[Providers] Settings saved, but OpenCode refresh failed"); return "\n⚠️ Settings are saved. OpenCode could not reload them; restart the bot to apply."; }
 }
-async function renderSlot(ctx: Context, c: AiCapability, id?: number, notice?: string) {
-  if (c === "image") { await renderImage(ctx, id, notice); return; }
-  const ps = await listCustomProviders(); const list = ps.filter((p) => p.capability === c); const k = new InlineKeyboard();
-  for (const p of list) k.row().text(`🧠 ${p.name} · Active ✅`, `provider:view:${p.id}`).text("🗑️", `provider:delete:${p.id}`);
-  k.row().text("➕ Add provider", `provider:add:${c}`); if (c === "stt") k.row().text(await isGroqSttConfigured() ? "🎤 Groq · Active ✅" : "🎤 Groq Voice STT", "provider:stt:groq:add");
-  k.row().text("← Providers", "provider:menu").text("🏠 Home", "main:home"); const body = list.length ? list.map((p) => `✅ ${p.name}\n${p.models.length} verified model${p.models.length === 1 ? "" : "s"}`).join("\n\n") : "⚪ No verified custom provider in this slot."; const text = `${notice ? `${notice}\n\n` : ""}${LABEL[c]}\n\n${body}`;
-  if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
+async function renderImage(ctx: Context, id?: number, notice = "", backCallback = "icfg:root") {
+  const ps = await listImageAiProviders();
+  const cf = ps.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID), custom = ps.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+  const keyboard = new InlineKeyboard()
+    .text(`☁️ Cloudflare Workers AI${cf ? " · Configured" : ""}`, "provider:image:cloudflare:configure").row()
+    .text(`🔌 Custom API${custom ? " · Configured" : ""}`, "provider:image:custom:configure").row();
+  if (cf) keyboard.text("Remove Cloudflare", "provider:remove-image:cloudflare").row();
+  if (custom) keyboard.text("Remove Custom API", "provider:remove-image:custom").row();
+  keyboard.text(backCallback === "icfg:root" ? "← Image Chat" : "← Connections", backCallback);
+  await render(ctx, `${notice}🎨 Image connections\n\n${ps.map(p => `${p.name}: ${p.model}${p.editModel ? ` / edit: ${p.editModel}` : ""}`).join("\n") || "No generator configured."}\n\nThis screen manages API connections only. Choose the default image model under Settings → Default Models → Image Chat.`, keyboard, id);
 }
-async function renderProviders(ctx: Context, id?: number, notice?: string) {
-  const ps = await listCustomProviders();
-  const lines = await getProviderCapabilitySummary(ps);
-  const k = new InlineKeyboard();
-  for (const c of CAPABILITIES) k.row().text(LABEL[c], `provider:slot:${c}`);
-  k.row().text("← Advanced", "provider:advanced").text("🏠 Home", "main:home");
-  const text = `${notice ? `${notice}\n\n` : ""}🔌 Custom Provider API\n\n${lines.join("\n")}\n\nImage AI has only two provider types: Cloudflare Workers AI and Custom API.`;
-  if (id !== undefined && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, text, { reply_markup: k }); else await ctx.reply(text, { reply_markup: k });
+async function renderSlot(ctx: Context, capability: AiCapability, id?: number, notice = "") {
+  if (capability === "image") { await renderImage(ctx, id, notice, "provider:connections"); return; }
+  const ps = (await listCustomProviders()).filter(p => p.capability === capability);
+  const keyboard = new InlineKeyboard();
+  if (capability === "coding") keyboard.text(ps.some(p => p.id === OPENROUTER_PROVIDER_ID) ? "OpenRouter · Configure key" : "OpenRouter · Connect", "provider:openrouter:configure").row();
+  for (const p of ps) keyboard.text(`🔌 ${p.name}`, `provider:view:${p.id}`).row();
+  keyboard.text("➕ Add Custom API", `provider:add:${capability}`).row();
+  if (capability === "stt") {
+    keyboard.text("🎤 Groq · Configure key", "provider:stt:groq:add").row();
+    if (await isGroqSttConfigured()) keyboard.text("Remove Groq", "provider:stt:groq:remove").row();
+  }
+  keyboard.text("← Connections", "provider:connections");
+  await render(ctx, `${notice}${LABEL[capability]} connections\n\n${capability === "coding" ? "Connect chat/coding APIs here. Model defaults are selected under Settings → Default Models." : "Connect a transcription provider. Voice messages in coding Topics use this selection."}`, keyboard, id);
 }
-export async function providersCommand(ctx: CommandContext<Context>) { clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx as Context); }
+async function renderConnections(ctx: Context, id?: number, notice = "") {
+  const keyboard = new InlineKeyboard();
+  for (const capability of CAPABILITIES) keyboard.text(LABEL[capability], `provider:slot:${capability}`).row();
+  keyboard.text("← AI Providers", "provider:menu");
+  await render(ctx, `${notice}🔌 Manage Connections\n\nChoose which API connection type you want to manage. These controls no longer choose default models.`, keyboard, id);
+}
+async function renderProviders(ctx: Context, id?: number, notice = "") {
+  const [ps, imageProviders, groq] = await Promise.all([listCustomProviders(), listImageAiProviders(), isGroqSttConfigured()]);
+  const coding = ps.filter(p => p.capability === "coding").length;
+  const transcription = groq || ps.some(p => p.capability === "stt");
+  const keyboard = new InlineKeyboard()
+    .text("🔌 Manage Connections", "provider:connections").row()
+    .text("← Settings", "provider:settings");
+  await render(ctx, `${notice}🔌 AI Providers\n\n${coding} chat/coding connection${coding === 1 ? "" : "s"}\n${imageProviders.length} image connection${imageProviders.length === 1 ? "" : "s"}\nTranscription: ${transcription ? "Configured" : "Not configured"}\n\nProvider setup lives here. Default model selection now lives under Settings → Default Models.`, keyboard, id);
+}
+export async function providersCommand(ctx: CommandContext<Context>) {
+  clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx);
+}
 export async function handleProviderCallback(ctx: Context): Promise<boolean> {
-  const d = ctx.callbackQuery?.data ?? ""; if (!d.startsWith("provider:")) return false; const chat = ctx.chat?.id; if (!chat) return true;
-  if (d === "provider:close") { clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Deprecated: use Home" }).catch(() => {}); await replyWithInlineMenu(ctx, { menuKind: "settings", text: "⚙️ Settings\n\nManage your model, Topic defaults, providers, integrations, and advanced OpenCode controls.", keyboard: new InlineKeyboard().text("🏠 Home", "main:home") }); return true; }
-  if (d === "provider:advanced") { await ctx.answerCallbackQuery().catch(() => {}); const v = buildAdvancedSettingsView(); const id = messageId(ctx); if (id !== null) await ctx.api.editMessageText(chat, id, v.text, { reply_markup: v.keyboard }); else await replyWithInlineMenu(ctx, { menuKind: "settings", text: v.text, keyboard: v.keyboard }); return true; }
+  const data = ctx.callbackQuery?.data ?? ""; if (!data.startsWith("provider:") || !ctx.chat) return false;
+  clearProviderWizard(); clearIntegrationWizard();
   await ctx.answerCallbackQuery().catch(() => {});
-  if (d === "provider:cancel") { clearProviderWizard(); const id = messageId(ctx); await renderProviders(ctx, id ?? undefined, "❌ Setup cancelled."); return true; }
-  if (d === "provider:add") { const id = messageId(ctx); if (id === null) return true; providerWizard.set({ step: "slot", messageId: id }); const k = new InlineKeyboard(); for (const c of CAPABILITIES.filter((x) => x !== "image")) k.row().text(LABEL[c], `provider:add:${c}`); k.row().text("🎨 Image AI", "provider:image:menu").row().text("❌ Cancel", "provider:cancel"); await ctx.api.editMessageText(chat, id, "➕ Add Provider\n\nChoose the capability first.", { reply_markup: k }); return true; }
-  if (d.startsWith("provider:add:")) { const c = d.slice("provider:add:".length) as AiCapability; if (!CAPABILITIES.includes(c) || c === "image") return true; const id = messageId(ctx); if (id === null) return true; providerWizard.set({ step: "name", capability: c, messageId: id }); await editWizard(ctx, id, `➕ Add ${LABEL[c]} Provider\n\n1/3 · Provider name`); return true; }
-  if (d.startsWith("provider:slot:")) { const c = d.slice("provider:slot:".length) as AiCapability; const id = messageId(ctx); if (CAPABILITIES.includes(c)) await renderSlot(ctx, c, id ?? undefined); return true; }
-  if (d === "provider:image:menu") { const id = messageId(ctx); await renderImage(ctx, id ?? undefined); return true; }
-  if (d === "provider:image:cloudflare:configure") { const id = messageId(ctx); if (id === null) return true; providerWizard.set({ step: "image-cloudflare-account", messageId: id }); await editWizard(ctx, id, "☁️ Cloudflare Workers AI\n\n1/2 · Send your Cloudflare Account ID\n\nIt must be the 32-character Account ID.\n🔐 It will be verified before storage.", "provider:image:menu"); return true; }
-  if (d === "provider:image:cloudflare:remove") { clearProviderWizard(); await removeCloudflareCredentials(); const id = messageId(ctx); await renderImage(ctx, id ?? undefined, "🗑️ Cloudflare Workers AI credentials removed."); return true; }
-  if (d === "provider:image:custom:configure") { const id = messageId(ctx); if (id === null) return true; providerWizard.set({ step: "image-custom-base-url", messageId: id }); await editWizard(ctx, id, "🔌 Custom API\n\n1/4 · Base URL", "provider:image:menu"); return true; }
-  if (d === "provider:image:custom:remove") { clearProviderWizard(); await removeImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID); const id = messageId(ctx); await renderImage(ctx, id ?? undefined, "🗑️ Custom API removed."); return true; }
-  if (d === "provider:stt:groq:add") { const id = messageId(ctx); if (id !== null) { providerWizard.set({ step: "groq-stt-key", messageId: id }); await editWizard(ctx, id, "🎤 Configure Groq Voice STT\n\nSend API key to verify."); } return true; }
-  if (d === "provider:stt:groq:remove") { await removeGroqStt(); const id = messageId(ctx); await renderSlot(ctx, "stt", id ?? undefined, "🎤 Groq Voice STT disabled."); return true; }
-  if (d.startsWith("provider:delete:")) { const deleted = await deleteCustomProvider(d.slice("provider:delete:".length)); if (deleted) { await restartOpenCodeAfterProviderChange(); const id = messageId(ctx); await renderProviders(ctx, id ?? undefined); } return true; }
-  if (d.startsWith("provider:view:")) { const p = (await listCustomProviders()).find((x) => x.id === d.slice("provider:view:".length)); if (p) { const id = messageId(ctx); if (id !== null) await ctx.api.editMessageText(chat, id, `🔌 ${p.name}\n\nSlot: ${LABEL[p.capability]}\nBase URL: ${p.baseURL}\nModels:\n${p.models.map((m) => `• ${m.name} (${m.id})`).join("\n")}\n\n🔐 API key is never displayed.`, { reply_markup: new InlineKeyboard().text("← Slot", `provider:slot:${p.capability}`).text("🏠 Home", "main:home") }); } return true; }
-  if (d === "provider:menu") { const id = messageId(ctx); await renderProviders(ctx, id ?? undefined); return true; }
-  return true;
+  const id = messageId(ctx);
+  if (["provider:menu", "provider:cancel", "provider:add"].includes(data)) { await renderProviders(ctx, id); return true; }
+  if (data === "provider:connections") { await renderConnections(ctx, id); return true; }
+  if (["provider:settings", "provider:advanced", "provider:close"].includes(data)) {
+    const view = buildSettingsMenuView(); await render(ctx, view.text.replace(/<[^>]*>/g, ""), view.keyboard, id); return true;
+  }
+  if (data.startsWith("provider:slot:")) {
+    const capability = data.slice("provider:slot:".length) as AiCapability;
+    if (CAPABILITIES.includes(capability)) await renderSlot(ctx, capability, id); return true;
+  }
+  if (data === "provider:image:menu") { await showImageChatSettings(ctx); return true; }
+  if (data === "provider:image:engines") { await renderImage(ctx, id); return true; }
+  if (data === "provider:openrouter:configure") { await start(ctx, "openrouter-key", "OpenRouter\n\nSend an inference API key. It will be verified before saving.", "coding"); return true; }
+  if (data.startsWith("provider:add:")) {
+    const capability = data.slice("provider:add:".length) as AiCapability;
+    if (capability === "coding" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
+  }
+  if (data === "provider:image:cloudflare:configure") { await start(ctx, "image-cloudflare-account", "Cloudflare Workers AI\n\n1/2 · Send the 32-character Account ID"); return true; }
+  if (data === "provider:image:custom:configure") { await start(ctx, "image-custom-base-url", "Custom image API\n\n1/4 · Base URL"); return true; }
+  if (data === "provider:stt:groq:add") { await start(ctx, "groq-stt-key", "Groq transcription\n\nSend the API key to verify.", "stt"); return true; }
+  if (data === "provider:stt:groq:remove") { await removeGroqStt(); await renderSlot(ctx, "stt", id, "✅ Groq removed.\n\n"); return true; }
+  if (data.startsWith("provider:stt:")) {
+    const p = (await listCustomProviders()).find(p => p.id === data.slice("provider:stt:".length) && p.capability === "stt");
+    if (p) { await start(ctx, "stt-select", `Send the exact transcription model ID from ${p.name}.\n\n${p.models.slice(0, 20).map(m => m.id).join("\n")}`, "stt"); const wizard = providerWizard.get(); if (wizard) wizard.providerID = p.id; }
+    return true;
+  }
+  if (data.startsWith("provider:remove-image:") || data === "provider:image:cloudflare:remove" || data === "provider:image:custom:remove") {
+    const type = data.includes("cloudflare") ? "cloudflare" : "custom";
+    const usage = await imageConnectionUsage(type === "cloudflare" ? IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID : IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+    await render(ctx, `Remove this image connection?\n\n${usage} Image Chat/default selections depend on it and will become unavailable.`, new InlineKeyboard().text("Remove", `provider:confirm-image:${type}`).text("Cancel", "provider:image:engines"), id); return true;
+  }
+  if (data === "provider:confirm-image:cloudflare" || data === "provider:confirm-image:custom") {
+    if (data.endsWith(":cloudflare")) await removeCloudflareCredentials(); else await removeImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+    await renderImage(ctx, id, "✅ Connection removed.\n\n"); return true;
+  }
+  if (data.startsWith("provider:delete:")) {
+    const providerID = data.slice("provider:delete:".length), usage = await imageConnectionUsage(providerID);
+    await render(ctx, `Remove this provider?\n\n${usage} Image Chat/default selections also depend on it.`, new InlineKeyboard().text("Remove", `provider:rm:${providerID}`).text("Cancel", "provider:connections"), id); return true;
+  }
+  if (data.startsWith("provider:rm:")) {
+    const providerID = data.slice("provider:rm:".length);
+    const p = (await listCustomProviders()).find(p => p.id === providerID);
+    if (p && await deleteCustomProvider(providerID)) {
+      const notice = p.capability === "coding" ? await applyCodingChanges() : "";
+      await renderConnections(ctx, id, `✅ Connection removed.${notice}\n\n`);
+    }
+    return true;
+  }
+  if (data.startsWith("provider:view:")) {
+    const p = (await listCustomProviders()).find(p => p.id === data.slice("provider:view:".length));
+    if (p?.capability === "stt") {
+      await render(ctx, `${p.name}\n\nSelect the transcription model used by voice messages.`, new InlineKeyboard().text("Choose model", `provider:stt:${p.id}`).row().text("Remove", `provider:delete:${p.id}`).text("← Back", "provider:slot:stt"), id); return true;
+    }
+    if (p) await render(ctx, `🔌 ${p.name}\n\n${LABEL[p.capability]}\n${p.baseURL}\n${p.models.length} discovered models\n\n${p.models.slice(0, 20).map(m => m.id).join("\n")}`, new InlineKeyboard().text("Remove", `provider:delete:${p.id}`).text("← Back", `provider:slot:${p.capability}`), id);
+    return true;
+  }
+  await renderProviders(ctx, id); return true;
 }
 export async function handleProviderWizardMessage(ctx: Context): Promise<boolean> {
-  const text = ctx.message?.text?.trim(); const s = providerWizard.get(); if (!ctx.chat?.id || !text || !s) return false;
+  const text = ctx.message?.text?.trim(), s = providerWizard.get();
+  if (!ctx.chat || !text || !s) return false;
+  if (text.startsWith("/") || text === "❌ Cancel") { clearProviderWizard(); return false; }
+  if (Date.now() > s.expires) { clearProviderWizard(); await ctx.reply("Setup expired. Reopen AI Providers."); return true; }
+  if (s.busy) { await deleteInput(ctx); await ctx.reply("Verification is running. Wait or press Back."); return true; }
+  await deleteInput(ctx);
+  let saved = false;
+  const guard = () => { if (providerWizard.get() !== s || Date.now() > s.expires) throw new DOMException("Setup cancelled", "AbortError"); };
   try {
-    if (s.step === "image-cloudflare-account") { if (!/^[a-f0-9]{32}$/i.test(text)) { await deleteInput(ctx); await editWizard(ctx, s.messageId, "❌ Invalid Cloudflare Account ID. Send the 32-character Account ID again.", "provider:image:menu"); return true; } s.accountId = text; s.step = "image-cloudflare-token"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "☁️ Cloudflare Workers AI\n\n2/2 · Send your API Token\n\n🔐 Token is never displayed or logged and is stored only after verification.", "provider:image:menu"); return true; }
-    if (s.step === "image-cloudflare-token") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "☁️ Verifying Cloudflare token + Account ID…", "provider:image:menu"); const result = await configureCloudflareCredentials(s.accountId!, text); if (!result.valid) throw new Error(`Cloudflare verification failed: ${result.reason}`); clearProviderWizard(); await renderImage(ctx, s.messageId, "✅ Cloudflare Workers AI verified and activated."); return true; }
-    if (s.step === "image-custom-base-url") { s.baseURL = text.replace(/\/+$/g, ""); try { const u = new URL(s.baseURL); if (!["http:", "https:"].includes(u.protocol)) throw 0; } catch { await editWizard(ctx, s.messageId, "🔌 Invalid Base URL. Try again.", "provider:image:menu"); return true; } s.step = "image-custom-model"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Custom API\n\n2/4 · Generation model", "provider:image:menu"); return true; }
-    if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Custom API\n\n3/4 · Edit model or `none`", "provider:image:menu"); return true; }
-    if (s.step === "image-custom-edit-model") { if (text.toLowerCase() !== "none") s.editModel = text; s.step = "image-custom-key"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Custom API\n\n4/4 · API key", "provider:image:menu"); return true; }
-    if (s.step === "image-custom-key") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔌 Verifying Custom API…", "provider:image:menu"); const options: { baseURL: string; model: string; editModel?: string } = { baseURL: s.baseURL!, model: s.model! }; if (s.editModel) options.editModel = s.editModel; await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, options); clearProviderWizard(); await renderImage(ctx, s.messageId, "✅ Custom API verified and activated."); return true; }
-    if (s.step === "groq-stt-key") { await deleteInput(ctx); await editWizard(ctx, s.messageId, "🎤 Verifying Groq…"); await configureGroqStt(text); clearProviderWizard(); await renderSlot(ctx, "stt", s.messageId, "✅ Groq Voice STT verified and activated."); return true; }
-    if (s.step === "slot") return true;
-    if (s.step === "name") { s.name = text; s.step = "url"; await deleteInput(ctx); await editWizard(ctx, s.messageId, `➕ Add ${LABEL[s.capability!]} Provider\n\n2/3 · Base URL`); return true; }
-    if (s.step === "url") { const url = text.replace(/\/+$/g, ""); try { const u = new URL(url); if (!["http:", "https:"].includes(u.protocol)) throw 0; s.baseURL = url; } catch { await deleteInput(ctx); await editWizard(ctx, s.messageId, "⚠️ Invalid URL. Try again."); return true; } s.step = "key"; await deleteInput(ctx); await editWizard(ctx, s.messageId, "➕ Add Provider\n\n3/3 · API key"); return true; }
-    await deleteInput(ctx); await editWizard(ctx, s.messageId, "🔎 Verifying provider and discovering models…"); const models = await discoverModels(s.baseURL!, text); const saved = await saveCustomProvider({ name: s.name!, baseURL: s.baseURL!, apiKey: text, models, capability: s.capability! }); clearProviderWizard(); await restartOpenCodeAfterProviderChange(); await renderSlot(ctx, s.capability!, s.messageId, `✅ ${saved.name} verified and activated in ${LABEL[s.capability!]}.\n${models.length} verified model${models.length === 1 ? "" : "s"}.`); return true;
-  } catch (error) { logger.error("[Providers] Provider wizard failed:", error); const msg = error instanceof Error ? error.message : "Unknown error"; await editWizard(ctx, s.messageId, `❌ ${msg}\n\nThe credential was NOT saved. Try again or Cancel.`, s.step.startsWith("image-") ? "provider:image:menu" : "provider:menu").catch(() => {}); return true; }
+    if (s.step === "stt-select") {
+      const p = (await listCustomProviders()).find(p => p.id === s.providerID && p.capability === "stt");
+      if (!p?.models.some(m => m.id === text)) throw new Error("Choose a model returned by this transcription provider");
+      guard(); await setAiRoleSelection("stt", p.id, text); clearProviderWizard(); await renderSlot(ctx, "stt", s.messageId, `✅ Transcription model: ${text}\n\n`); return true;
+    }
+    if (s.step === "name") { s.name = text; s.step = "url"; await editWizard(ctx, s.messageId, "2/3 · Base URL"); return true; }
+    if (s.step === "url" || s.step === "image-custom-base-url") {
+      const url = new URL(text); if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("Enter an HTTP(S) base URL without embedded credentials, query or fragment");
+      s.baseURL = text.replace(/\/+$/g, ""); s.step = s.step === "url" ? "key" : "image-custom-model";
+      await editWizard(ctx, s.messageId, s.step === "key" ? "3/3 · API key" : "2/4 · Generation model ID"); return true;
+    }
+    if (s.step === "image-cloudflare-account") {
+      if (!/^[a-f0-9]{32}$/i.test(text)) throw new Error("Account ID must contain 32 hexadecimal characters");
+      s.accountId = text; s.step = "image-cloudflare-token"; await editWizard(ctx, s.messageId, "2/2 · Cloudflare API token"); return true;
+    }
+    if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await editWizard(ctx, s.messageId, "3/4 · Edit model ID (required for Image Chat)"); return true; }
+    if (s.step === "image-custom-edit-model") { s.editModel = text; s.step = "image-custom-key"; await editWizard(ctx, s.messageId, "4/4 · API key"); return true; }
+    s.busy = true; await editWizard(ctx, s.messageId, "🔎 Verifying credentials and model access…");
+    if (s.step === "openrouter-key") await configureOpenRouterCodingProvider(text, guard);
+    else if (s.step === "image-cloudflare-token") {
+      const validation = await configureCloudflareCredentials(s.accountId!, text, guard);
+      if (!validation.valid) throw new Error(`Cloudflare verification failed: ${validation.reason}`);
+    } else if (s.step === "image-custom-key") await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, { baseURL: s.baseURL!, model: s.model!, editModel: s.editModel! }, guard);
+    else if (s.step === "groq-stt-key") { await configureGroqStt(text, guard); saved = true; await setAiRoleSelection("stt", "groq", "whisper-large-v3"); }
+    else {
+      const models = await discoverModels(s.baseURL!, text); guard();
+      await saveCustomProvider({ name: s.name!, baseURL: s.baseURL!, apiKey: text, models, capability: s.capability!, beforeSave: guard });
+    }
+    saved = true;
+    const notice = s.capability === "coding" ? await applyCodingChanges() : "";
+    if (providerWizard.get() !== s) return true;
+    clearProviderWizard();
+    if (s.step.startsWith("image-")) await renderImage(ctx, s.messageId, "✅ Credentials and model access verified.\n\n");
+    else await renderSlot(ctx, s.capability ?? "stt", s.messageId, `✅ Provider saved.${notice}\n\n`);
+  } catch (error) {
+    if (providerWizard.get() !== s) return true;
+    s.busy = false;
+    logger.warn(`[Providers] Setup failed at ${s.step}; saved=${saved}`);
+    const message = error instanceof Error && error.name !== "TypeError" ? error.message : "Connection verification failed";
+    await editWizard(ctx, s.messageId, `❌ ${message}\n\n${saved ? "The credential is saved. Reopen AI Providers." : "The credential was not saved. Try again or Cancel."}`).catch(() => {});
+  }
+  return true;
 }

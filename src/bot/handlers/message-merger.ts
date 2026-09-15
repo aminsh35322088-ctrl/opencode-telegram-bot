@@ -146,9 +146,10 @@ export async function queuePromptForMerging(
 
 /** Immediately flush any buffered prompt for the chat and optional Topic. */
 export function flushPendingPrompt(chatId: number, threadId?: number): void {
-  if (typeof threadId === "number") {
+  const resolvedThreadId = threadId ?? getTopicRuntimeContext()?.threadId;
+  if (typeof resolvedThreadId === "number") {
     for (const [routeKey, pending] of pendingByRoute) {
-      if (pending.topicContext?.chatId === chatId && pending.topicContext.threadId === threadId) flushPending(routeKey);
+      if (pending.topicContext?.chatId === chatId && pending.topicContext.threadId === resolvedThreadId) flushPending(routeKey);
     }
     return;
   }

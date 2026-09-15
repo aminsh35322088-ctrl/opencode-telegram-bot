@@ -23,6 +23,8 @@ This repository ships a focused agent toolbelt for the Railway runtime. OpenCode
 | `safe-download` | Bounded file retrieval for supported user-requested downloads | allow |
 | `session-recovery` | Diagnose and recover stalled OpenCode sessions | allow |
 | `full-diagnostics` | Combined runtime/session diagnostics | allow |
+| `github-ci` | Inspect, watch, and fetch logs for GitHub Actions runs | allow |
+| `storage-health` | Inspect and safely reclaim persistent `/data` volume space | allow |
 
 ## Browser runtime
 

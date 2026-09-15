@@ -9,6 +9,8 @@ type LogLevel = "debug" | "info" | "warn" | "error";
 
 const DEFAULT_LOG_LEVEL: LogLevel = "info";
 const DEFAULT_LOG_RETENTION = 10;
+const DEFAULT_LOG_MAX_MB = 12;
+const DEFAULT_LOG_TOTAL_MAX_MB = 80;
 const LOGGER_ERROR_PREFIX = "[LOGGER]";
 const SESSION_DELTA_TRACE_MIN_INTERVAL_MS = 1000;
 
@@ -19,11 +21,13 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
+const LOG_STREAM_RECOVERY_INTERVAL_MS = 60_000;
 let logStream: fs.WriteStream | null = null;
 let logFilePath: string | null = null;
 let initializePromise: Promise<void> | null = null;
 let cleanupPromise: Promise<void> | null = null;
 let streamErrorReported = false;
+let logBytesWritten = 0;
 let lastSessionDeltaTraceAt = 0;
 let suppressedSessionDeltaTraceCount = 0;
 const CONSOLE_BROKEN_KEY = "__opencodeTelegramBotConsoleOutputBroken";
@@ -55,6 +59,14 @@ function getConfiguredLogLevel(): LogLevel {
 
 function getConfiguredLogRetention(): number {
   return parsePositiveInteger(process.env.LOG_RETENTION, DEFAULT_LOG_RETENTION);
+}
+
+function getConfiguredLogMaxBytes(): number {
+  return parsePositiveInteger(process.env.LOG_MAX_MB, DEFAULT_LOG_MAX_MB) * 1024 * 1024;
+}
+
+function getConfiguredLogTotalMaxBytes(): number {
+  return parsePositiveInteger(process.env.LOG_MAX_TOTAL_MB, DEFAULT_LOG_TOTAL_MAX_MB) * 1024 * 1024;
 }
 
 function formatPrefix(level: LogLevel): string {
@@ -165,11 +177,13 @@ function getLogFilePathForMode(logsDirPath: string, mode: RuntimeMode): string {
 }
 
 function getLogFilePattern(mode: RuntimeMode): RegExp {
+  // Retention also matches size-rotated "bot-<date>_<time>_<pid>[_n].log"
+  // siblings and gzip-compressed archives so nothing can orphan on the volume.
   if (mode === "installed") {
-    return /^bot-\d{4}-\d{2}-\d{2}\.log$/;
+    return /^bot-\d{4}-\d{2}-\d{2}(?:\.log|_\d{2}-\d{2}-\d{2}_\d+(?:_\d+)?\.log)(?:\.gz)?$/;
   }
 
-  return /^bot-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d+\.log$/;
+  return /^bot-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d+(?:_\d+)?\.log(?:\.gz)?$/;
 }
 
 function reportLoggerInternalError(message: string, error?: unknown): void {
@@ -246,6 +260,11 @@ function ensureLogStream(filePath: string): void {
 
   const stream = fs.createWriteStream(filePath, { flags: "a" });
   stream.on("error", handleLogStreamError);
+  try {
+    logBytesWritten = fs.statSync(filePath).size;
+  } catch {
+    logBytesWritten = 0;
+  }
 
   logStream = stream;
   logFilePath = filePath;
@@ -266,6 +285,24 @@ async function cleanupOldLogs(logsDirPath: string, mode: RuntimeMode): Promise<v
 
   const matchingFiles = fileNames.filter((fileName) => filePattern.test(fileName)).sort();
   const filesToDelete = matchingFiles.slice(0, Math.max(0, matchingFiles.length - retention));
+
+  // Second pass: even within the retention count, enforce a total-size budget
+  // so long-lived deployments can never fill the persistent volume with logs.
+  const totalMaxBytes = getConfiguredLogTotalMaxBytes();
+  let retainedBytes = 0;
+  const budgetRemovable: string[] = [];
+  for (const fileName of matchingFiles.slice(Math.max(0, matchingFiles.length - retention))) {
+    try {
+      const stats = await fsPromises.stat(path.join(logsDirPath, fileName));
+      retainedBytes += stats.size;
+      if (retainedBytes > totalMaxBytes && fileName !== (logFilePath ? path.basename(logFilePath) : null)) {
+        budgetRemovable.push(fileName);
+      }
+    } catch {
+      // Missing or unreadable file: nothing to account for.
+    }
+  }
+  filesToDelete.push(...budgetRemovable);
 
   await Promise.all(
     filesToDelete.map(async (fileName) => {
@@ -319,8 +356,62 @@ function rotateInstalledLogIfNeeded(): void {
   }
 }
 
+function rotateLogBySizeIfNeeded(): void {
+  if (!logStream || !logFilePath) {
+    return;
+  }
+
+  if (logBytesWritten < getConfiguredLogMaxBytes()) {
+    return;
+  }
+
+  const mode = getRuntimeMode();
+  const logsDirPath = path.dirname(logFilePath);
+  const stamp = sanitizeTimestampForFile(new Date().toISOString().slice(0, 19));
+  let rotatedPath = path.join(logsDirPath, `bot-${stamp}_${process.pid}.log`);
+  let suffix = 1;
+  while (fs.existsSync(rotatedPath)) {
+    rotatedPath = path.join(logsDirPath, `bot-${stamp}_${process.pid}_${suffix}.log`);
+    suffix += 1;
+  }
+
+  try {
+    closeLogStream();
+    fs.renameSync(logFilePath, rotatedPath);
+    const nextLogFilePath = getLogFilePathForMode(logsDirPath, mode);
+    fs.appendFileSync(nextLogFilePath, "");
+    ensureLogStream(nextLogFilePath);
+    cleanupOldLogsInBackground(logsDirPath, mode);
+  } catch (error) {
+    reportLoggerInternalError(`Failed to rotate oversized log ${logFilePath}.`, error);
+    closeLogStream();
+    logFilePath = null;
+  }
+}
+
+let lastLogStreamRecoveryAt = 0;
+
+function tryRecoverLogStream(): void {
+  if (!logFilePath) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastLogStreamRecoveryAt < LOG_STREAM_RECOVERY_INTERVAL_MS) {
+    return;
+  }
+
+  lastLogStreamRecoveryAt = now;
+  try {
+    ensureLogStream(logFilePath);
+  } catch {
+    // The next write attempt may recover it again once the interval passes.
+  }
+}
+
 function writeToFile(line: string): void {
   if (!logStream) {
+    tryRecoverLogStream();
     return;
   }
 
@@ -330,6 +421,12 @@ function writeToFile(line: string): void {
       return;
     }
 
+    rotateLogBySizeIfNeeded();
+    if (!logStream) {
+      return;
+    }
+
+    logBytesWritten += Buffer.byteLength(line) + 1;
     logStream.write(`${line}\n`);
   } catch (error) {
     handleLogStreamError(error);

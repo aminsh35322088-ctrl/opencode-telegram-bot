@@ -6,7 +6,7 @@ describe("current config", () => {
   it("uses current hardcoded defaults", () => {
     expect(config.opencode.apiUrl).toBe("http://127.0.0.1:4096");
     expect(config.opencode.autoRestartEnabled).toBe(true);
-    expect(config.opencode.monitorIntervalSec).toBe(60);
+    expect(config.opencode.monitorIntervalSec).toBe(20);
     expect(config.opencode.model).toEqual({ provider: "opencode", modelId: "big-pickle" });
     expect(config.bot.trackBackgroundSessions).toBe(true);
     expect(config.bot.messageFormatMode).toBe("markdown");
@@ -23,7 +23,7 @@ describe("current config", () => {
   });
 
   it("exposes helper sections with defaults", () => {
-    expect(config.files.maxFileSizeKb).toBe(100);
+    expect(config.files.maxFileSizeKb).toBe(20 * 1024);
     expect(config.stt.model).toBe("whisper-large-v3-turbo");
     expect(config.server.logLevel).toBe("info");
   });

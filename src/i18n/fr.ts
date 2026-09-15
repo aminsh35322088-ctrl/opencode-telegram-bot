@@ -1,23 +1,6 @@
 import type { I18nDictionary } from "./en.js";
 
 export const fr: I18nDictionary = {
-  "cmd.description.status": "Statut du serveur et de la session",
-  "cmd.description.new": "Créer une nouvelle session",
-  "cmd.description.stop": "Arrêter l'action en cours",
-  "cmd.description.detach": "Se détacher de la session actuelle",
-  "cmd.description.sessions": "Lister les sessions",
-  "cmd.description.messages": "Parcourir les messages de session",
-  "cmd.description.settings": "Modifier les paramètres du bot",
-  "cmd.description.projects": "Lister les projets",
-  "cmd.description.worktree": "Changer de worktree git",
-  "cmd.description.task": "Créer une tâche planifiée",
-  "cmd.description.tasklist": "Afficher les tâches planifiées",
-  "cmd.description.commands": "Commandes personnalisées",
-  "cmd.description.skills": "Catalogue de skills",
-  "cmd.description.mcps": "MCP servers",
-  "cmd.description.opencode_start": "Démarrer le serveur OpenCode",
-  "cmd.description.opencode_stop": "Arrêter le serveur OpenCode",
-  "cmd.description.ls": "Lister le contenu du répertoire",
   "cmd.description.help": "Aide",
 
   "callback.unknown_command": "Commande inconnue",
@@ -49,20 +32,14 @@ export const fr: I18nDictionary = {
   "question.blocked.command_not_allowed":
     "⚠️ Cette commande n'est pas disponible tant que le flux de question actuel n'est pas terminé.",
 
-  "inline.button.cancel": "❌ Annuler",
-  "inline.button.close": "❌ Fermer",
   "inline.inactive_callback": "Ce menu est inactif",
 
   "common.cancelled": "Annulé",
   "common.unknown": "inconnu",
   "common.unknown_error": "erreur inconnue",
 
-  "start.welcome":
-    "👋 Bienvenue dans OpenCode Telegram Bot !\n\nUtilisez les commandes :\n/projects — sélectionner un projet\n/sessions — liste des sessions\n/new — nouvelle session\n/commands — commandes personnalisées\n/skills — catalogue de skills\n/task — tâche planifiée\n/tasklist — tâches planifiées\n/status — statut\n/help — aide\n\nUtilisez les boutons du bas pour choisir l'agent, le modèle et la variante.",
   "help.keyboard_hint":
     "💡 Utilisez les boutons du bas pour l'agent, le modèle, la variante et les actions de contexte.",
-  "help.text":
-    "📖 **Aide**\n\n/status - Vérifier l'état du serveur\n/sessions - Liste des sessions\n/new - Créer une nouvelle session\n/help - Aide",
 
   "bot.thinking": "💭 Réflexion en cours...",
   "progress.compact.activity": "{header}\n{activity}",
@@ -86,6 +63,7 @@ export const fr: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ La session active ne correspond pas au projet sélectionné, elle a donc été réinitialisée. Utilisez /sessions pour en choisir une ou /new pour créer une nouvelle session.",
   "bot.prompt_send_error": "Impossible d'envoyer la requête à OpenCode.",
+  "bot.empty_prompt": "⚠️ Rien à envoyer : le message est vide après le traitement de la pièce jointe.",
   "bot.session_error": "🔴 OpenCode a renvoyé une erreur : {message}",
   "bot.session_retry":
     "🔁 {message}\n\nLe fournisseur renvoie la même erreur à chaque nouvelle tentative. Utilisez /abort pour arrêter.",
@@ -100,15 +78,14 @@ export const fr: I18nDictionary = {
   "bot.unknown_command":
     "⚠️ Commande inconnue : {command}. Utilisez /help pour voir les commandes disponibles.",
   "bot.photo_downloading": "⏳ Téléchargement de la photo...",
-  "bot.photo_too_large": "⚠️ La photo est trop volumineuse (max {maxSizeMb}MB)",
   "bot.photo_model_no_image":
     "⚠️ Le modèle actuel ne prend pas en charge les images. Envoi du texte uniquement.",
   "bot.photo_download_error": "🔴 Impossible de télécharger la photo",
-  "bot.photo_no_caption":
-    "💡 Conseil : ajoutez une légende pour décrire ce que vous voulez faire avec cette photo.",
+  "bot.video_downloading": "⏳ Téléchargement de la vidéo...",
+  "bot.video_too_large": "⚠️ La vidéo est trop volumineuse (max {maxSizeMb} Mo)",
+  "bot.video_error": "🔴 Échec du traitement de la vidéo",
   "bot.file_downloading": "⏳ Téléchargement du fichier...",
   "bot.files_downloading": "⏳ Téléchargement des fichiers...",
-  "bot.file_too_large": "⚠️ Le fichier est trop volumineux (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Impossible de télécharger le fichier",
   "bot.file_type_unsupported":
     "⚠️ Ce type de fichier n'est pas pris en charge. Envoyez une image, un document (PDF, DOCX, PPTX) ou un fichier texte/code.",
@@ -127,74 +104,33 @@ export const fr: I18nDictionary = {
   "status.health.unhealthy": "Dégradé",
   "status.line.health": "Statut : {health}",
   "status.line.version": "Version : {version}",
-  "status.line.managed_yes": "Démarré par le bot : Oui",
-  "status.line.managed_no": "Démarré par le bot : Non",
-  "status.line.pid": "PID : {pid}",
-  "status.line.uptime_sec": "Temps de fonctionnement : {seconds} sec",
   "status.line.mode": "Agent : {mode}",
   "status.line.model": "Modèle : {model}",
-  "status.line.tts": "Réponses audio : {tts}",
-  "status.tts.off": "Désactivées",
-  "status.tts.all": "Tout",
-  "status.tts.auto": "Auto",
   "status.agent_not_set": "non défini",
   "status.project_selected": "Projet : {project}",
   "status.worktree_selected": "Worktree : {worktree}",
-  "status.project_not_selected": "Projet : non sélectionné",
-  "status.project_hint": "Utilisez /projects pour sélectionner un projet",
   "status.session_selected": "Session actuelle : {title}",
   "status.session_not_selected": "Session actuelle : non sélectionnée",
   "status.session_hint": "Utilisez /sessions pour en sélectionner une ou /new pour en créer une",
   "status.server_unavailable":
     "🔴 Le serveur OpenCode est indisponible\n\nUtilisez /opencode_start pour démarrer le serveur.",
 
-  "tts.off": "🔇 Réponses audio désactivées.",
-  "tts.all": "🔊 Réponses audio activées pour tous les messages.",
-  "tts.auto": "🎤 Réponses audio activées pour les messages vocaux uniquement.",
-  "tts.not_configured":
-    "⚠️ Les réponses audio ne sont pas disponibles. Définissez d'abord `TTS_API_URL` et `TTS_API_KEY`.",
-  "tts.failed": "⚠️ Impossible de générer la réponse audio.",
 
-  "settings.menu.title": "⚙️ Paramètres du bot\nTouchez un paramètre pour basculer sa valeur :",
-  "settings.compact_output.label": "Sortie compacte",
-  "settings.thinking_content.label": "Contenu thinking",
-  "settings.response_streaming.label": "Streaming de réponse",
-  "settings.response_streaming.edit": "edit",
-  "settings.response_streaming.draft": "draft (experimental)",
-  "settings.diff_files.label": "Fichiers diff",
-  "settings.assistant_footer.label": "Pied de réponse",
-  "settings.tts.label": "Réponses audio",
-  "settings.prompt_queue.label": "File d'attente des messages",
-  "settings.value.on": "Activé",
-  "settings.value.off": "Désactivé",
   "settings.saved": "✅ Paramètre enregistré.",
 
   "projects.empty":
     "📭 Aucun projet trouvé.\n\nOuvrez un répertoire dans OpenCode et créez au moins une session, il apparaîtra ensuite ici.",
-  "projects.select": "Sélectionnez un projet :",
-  "projects.select_with_current": "Sélectionnez un projet :\n\nActuel : 🏗 {project}",
   "projects.page_indicator": "Page {current}/{total}",
   "projects.prev_page": "⬅️ Précédent",
   "projects.next_page": "Suivant ➡️",
-  "projects.fetch_error":
-    "🔴 Le serveur OpenCode est indisponible ou une erreur s'est produite lors du chargement des projets.",
-  "projects.page_load_error": "Impossible de charger cette page. Veuillez réessayer.",
-  "projects.selected":
-    "✅ Projet sélectionné : {project}\n\n📋 La session a été réinitialisée. Utilisez /sessions ou /new pour ce projet.",
   "projects.select_error": "🔴 Impossible de sélectionner le projet.",
 
-  "sessions.project_not_selected":
-    "🏗 Aucun projet n'est sélectionné.\n\nSélectionnez d'abord un projet avec /projects.",
   "sessions.empty": "📭 Aucune session trouvée.\n\nCréez une nouvelle session avec /new.",
-  "sessions.select": "Sélectionnez une session :",
-  "sessions.select_page": "Sélectionnez une session (page {page}) :",
   "sessions.fetch_error":
     "🔴 Le serveur OpenCode est indisponible ou une erreur s'est produite lors du chargement des sessions.",
   "sessions.select_project_first": "🔴 Aucun projet n'est sélectionné. Utilisez /projects.",
   "sessions.page_empty_callback": "Aucune session sur cette page",
   "sessions.page_load_error_callback": "Impossible de charger cette page. Veuillez réessayer.",
-  "sessions.button.prev_page": "⬅️ Préc.",
-  "sessions.button.next_page": "Suiv. ➡️",
   "sessions.loading_context": "⏳ Chargement du contexte et des derniers messages...",
   "sessions.selected": "✅ Session sélectionnée : {title}",
   "sessions.select_error": "🔴 Impossible de sélectionner la session.",
@@ -227,21 +163,6 @@ export const fr: I18nDictionary = {
   "messages.fork_success": "🔀 Fork créé à partir du message :\n\n{text}",
   "messages.fork_error": "❌ Échec de la création du fork. Veuillez réessayer.",
 
-  "attach.project_not_selected":
-    "🏗 Aucun projet sélectionné.\n\nSélectionnez d'abord un projet avec /projects.",
-  "attach.session_not_selected":
-    "💬 Aucune session sélectionnée.\n\nSélectionnez d'abord une session avec /sessions.",
-  "attach.session_project_mismatch":
-    "⚠️ La session sélectionnée ne correspond pas au projet actuel. Sélectionnez-la de nouveau via /sessions.",
-  "attach.connected": "✅ Connecté à la session : {title}",
-  "attach.already_connected": "ℹ️ Déjà connecté à la session : {title}",
-  "attach.status.idle_message": "Statut : idle. En attente de nouveaux événements.",
-  "attach.status.busy_message": "Statut : busy. Les nouveaux prompts sont temporairement bloqués.",
-  "attach.restored_question": "Une question en attente a été restaurée pour cette session.",
-  "attach.restored_permissions": "Demandes de permission en attente restaurées : {count}.",
-  "attach.disconnect_hint":
-    "Pour vous déconnecter, passez simplement à une autre session ou à un autre projet.",
-  "attach.error": "🔴 Impossible de se connecter à la session actuelle.",
 
   "detach.project_not_selected":
     "🏗 Aucun projet n'est sélectionné.\n\nSélectionnez d'abord un projet avec /projects.",
@@ -250,8 +171,6 @@ export const fr: I18nDictionary = {
     "✅ Détaché de la session : {title}\n\nLa session OpenCode n'a pas été arrêtée. Si elle est toujours en cours, elle continuera séparément. Pour la consulter plus tard, sélectionnez-la à nouveau via /sessions.",
   "detach.error": "🔴 Impossible de se détacher de la session actuelle.",
 
-  "new.project_not_selected":
-    "🏗 Aucun projet n'est sélectionné.\n\nSélectionnez d'abord un projet avec /projects.",
   "new.created": "✅ Nouvelle session créée : {title}",
   "general.topic_only_prompt": "🚫 Ceci est le sujet Général du forum — les prompts IA sont uniquement autorisés dans les sujets IA.\n\n💬 Appuyez sur New Chat pour démarrer un nouveau sujet de code, ou ouvrez un sujet existant depuis History.\n\nLe texte n'est accepté ici que lorsque le bot demande explicitement une saisie.",
   "new.create_error":
@@ -276,10 +195,6 @@ export const fr: I18nDictionary = {
   "stop.error":
     "🔴 Impossible d'arrêter l'action.\n\nLe flux d'événements est arrêté, essayez /abort à nouveau.",
 
-  "opencode_start.already_running_managed":
-    "⚠️ Le serveur OpenCode est déjà en cours d'exécution\n\nPID : {pid}\nTemps de fonctionnement : {seconds} secondes",
-  "opencode_start.already_running_external":
-    "✅ Le serveur OpenCode est déjà en cours d'exécution en tant que processus externe\n\nVersion : {version}\n\nCe serveur n'a pas été démarré par le bot, donc /opencode-stop ne peut pas l'arrêter.",
   "opencode_start.already_running":
     "✅ Le serveur OpenCode est déjà en cours d'exécution\n\nVersion : {version}",
   "opencode_start.remote_configured":
@@ -293,64 +208,26 @@ export const fr: I18nDictionary = {
     "✅ Serveur OpenCode démarré avec succès\n\nPID : {pid}\nVersion : {version}",
   "opencode_start.error":
     "🔴 Une erreur s'est produite lors du démarrage du serveur.\n\nConsultez les logs de l'application pour plus de détails.",
-  "opencode_stop.external_running":
-    "⚠️ Le serveur OpenCode s'exécute comme processus externe\n\nCe serveur n'a pas été démarré via /opencode-start.\nArrêtez-le manuellement ou utilisez /status pour vérifier son état.",
   "opencode_stop.remote_configured":
     "⚠️ /opencode_stop fonctionne uniquement avec un serveur OpenCode local.",
   "opencode_stop.not_running": "⚠️ Le serveur OpenCode n'est pas en cours d'exécution",
-  "opencode_stop.pid_not_found":
-    "⚠️ Le serveur OpenCode répond sur le port {port}, mais aucun processus local à arrêter n'a été trouvé.",
   "opencode_stop.stopping": "🛑 Arrêt du serveur OpenCode...\n\nPID : {pid}",
   "opencode_stop.stop_error": "🔴 Impossible d'arrêter le serveur OpenCode\n\nErreur : {error}",
-  "opencode_stop.still_running": "Le serveur répond toujours après la demande d'arrêt.",
   "opencode_stop.success": "✅ Serveur OpenCode arrêté avec succès",
   "opencode_stop.error":
     "🔴 Une erreur s'est produite lors de l'arrêt du serveur.\n\nConsultez les logs de l'application pour plus de détails.",
 
   "agent.changed_message": "✅ Agent défini sur : {name}",
   "agent.change_error_callback": "Impossible de modifier l'agent",
-  "agent.menu.current": "Agent actuel : {name}\n\nSélectionnez un agent :",
-  "agent.menu.select": "Sélectionnez un agent :",
   "agent.menu.empty": "⚠️ Aucun mode disponible",
   "agent.menu.error": "🔴 Impossible de récupérer la liste des modes",
 
   "model.changed_message": "✅ Modèle défini sur : {name}",
-  "model.change_error_callback": "Impossible de modifier le modèle",
-  "model.menu.empty": "⚠️ Aucun modèle disponible",
-  "model.menu.select": "Sélectionnez un modèle :",
-  "model.menu.current": "Modèle actuel : {name}\n\nSélectionnez un modèle :",
-  "model.menu.favorites_title":
-    "⭐ Favoris (ajoutez des modèles aux favoris dans l'interface OpenCode)",
-  "model.menu.favorites_empty": "— Vide.",
-  "model.menu.recent_title": "🕘 Récents",
-  "model.menu.recent_empty": "— Vide.",
-  "model.menu.favorites_hint":
-    "ℹ️ Ajoutez des modèles aux favoris dans l'interface OpenCode pour les garder en tête de liste.",
-  "model.menu.error": "🔴 Impossible de récupérer la liste des modèles",
-  "model.search.button": "🔍 Rechercher",
-  "model.search.prompt": "🔍 Entrez le nom du modèle à rechercher :",
-  "model.search.results_title": 'Résultats de recherche pour "{query}" :',
-  "model.search.no_results": 'Aucun modèle trouvé pour "{query}"',
-  "model.search.search_again": "↩ Rechercher à nouveau",
-  "model.search.error": "Échec de la recherche",
-  "model.button.back": "⬅️ Retour",
-  "model.providers.button": "🗂 Fournisseurs",
-  "model.providers.title": "Choisissez un fournisseur dans la liste :",
-  "model.providers.empty": "⚠️ Aucun fournisseur connecté",
-  "model.providers.error": "Impossible de récupérer la liste des fournisseurs",
-  "model.providers.page_indicator": "Page {current}/{total}",
-  "model.providers.prev_page": "⬅️ Précédent",
-  "model.providers.next_page": "Suivant ➡️",
-  "model.provider_models.title": "{provider} — choisissez un modèle :",
-  "model.provider_models.empty": "⚠️ Aucun modèle disponible pour {provider}",
-  "model.provider_models.page_indicator": "Page {current}/{total}",
 
   "variant.model_not_selected_callback": "Erreur : aucun modèle sélectionné",
   "variant.changed_message": "✅ Variante définie sur : {name}",
   "variant.change_error_callback": "Impossible de modifier la variante",
   "variant.select_model_first": "⚠️ Sélectionnez d'abord un modèle",
-  "variant.menu.empty": "⚠️ Aucune variante disponible",
-  "variant.menu.current": "Variante actuelle : {name}\n\nSélectionnez une variante :",
   "variant.menu.error": "🔴 Impossible de récupérer la liste des variantes",
 
   "context.button.confirm": "✅ Oui, compacter le contexte",
@@ -411,11 +288,6 @@ export const fr: I18nDictionary = {
   "question.summary.question": "Question {index} :\n{question}\n\n",
   "question.summary.answer": "Réponse :\n{answer}\n\n",
 
-  "keyboard.agent_mode": "{emoji} {name} Agent",
-  "keyboard.context": "📊 {used} / {limit} ({percent}%)",
-  "keyboard.context_empty": "📊 0",
-  "keyboard.variant": "💭 {name}",
-  "keyboard.variant_default": "💡 Par défaut",
   "keyboard.queued_prompt": "❌ {index}. {text}",
   "queue.added":
     "📥 Ajouté à la file d'attente ({count}/{max}). Le message sera envoyé à la fin de la tâche en cours.",
@@ -428,29 +300,12 @@ export const fr: I18nDictionary = {
 
   "pinned.default_session_title": "nouvelle session",
   "pinned.unknown": "Inconnu",
-  "pinned.line.project": "Projet : {project}",
-  "pinned.line.worktree": "Worktree : {worktree}",
   "pinned.line.model": "Modèle : {model}",
-  "pinned.line.attach": "Tracking : {status}",
-  "pinned.attach.status.idle": "actif, idle",
-  "pinned.attach.status.busy": "actif, busy",
-  "pinned.line.context": "Contexte : {used} / {limit} ({percent}%)",
-  "pinned.line.cost": "Coût : {cost} dépensé",
-  "subagent.header": "Sous-agent {agent} : {description}",
-  "subagent.line.status": "Statut : {status}",
   "subagent.line.task": "Tache : {task}",
   "subagent.line.agent": "Agent : {agent}",
   "subagent.working": "En cours...",
-  "subagent.working_with_details": "En cours : {details}",
   "subagent.completed": "Terminee",
   "subagent.failed": "Echec de la tache",
-  "subagent.status.pending": "en attente",
-  "subagent.status.running": "en cours",
-  "subagent.status.completed": "termine",
-  "subagent.status.error": "erreur",
-  "pinned.files.title": "Fichiers ({count}) :",
-  "pinned.files.item": "  {path}{diff}",
-  "pinned.files.more": "  ... et encore {count}",
 
   "tool.todo.overflow": "*({count} tâches supplémentaires)*",
   "tool.file_header.write":
@@ -554,7 +409,6 @@ export const fr: I18nDictionary = {
   "commands.fetch_error": "🔴 Impossible de charger les commandes OpenCode.",
   "commands.no_description": "Aucune description",
   "commands.button.execute": "✅ Exécuter",
-  "commands.button.cancel": "❌ Annuler",
   "commands.confirm":
     "Confirmez l'exécution de la commande {command}. Pour l'exécuter avec des arguments, envoyez-les dans un message.",
   "commands.inactive_callback": "Ce menu de commandes est inactif",
@@ -567,8 +421,6 @@ export const fr: I18nDictionary = {
   "commands.button.prev_page": "⬅️ Précédent",
   "commands.button.next_page": "Suivant ➡️",
   "commands.page_empty_callback": "Aucune commande sur cette page",
-  "commands.page_load_error_callback": "Impossible de charger cette page. Veuillez réessayer.",
-  "commands.download.no_roots": "Aucune racine de navigation autorisée n'est configurée.",
   "commands.download.downloading": "Téléchargement du fichier...",
   "commands.download.not_found": "Fichier introuvable",
   "commands.download.not_file": "Le chemin n'est pas un fichier",
@@ -582,9 +434,9 @@ export const fr: I18nDictionary = {
   "skills.fetch_error": "🔴 Impossible de charger les skills OpenCode.",
   "skills.no_description": "Aucune description",
   "skills.button.execute": "✅ Exécuter",
-  "skills.button.cancel": "❌ Annuler",
   "skills.confirm":
     "Confirmez l'exécution du skill {skill}. Pour l'exécuter avec des arguments, envoyez-les dans un message.",
+  "skills.confirm_detail": "Confirmer l'exécution du skill {skill}.\n\n{description}\n📍 Source : {location}\n\nPour l'exécuter avec des arguments, envoie les arguments en message.",
   "skills.inactive_callback": "Ce menu de skills est inactif",
   "skills.execute_callback": "Utilisation du skill...",
   "skills.executing_prefix": "⚡ Utilisation du skill :",
@@ -594,10 +446,8 @@ export const fr: I18nDictionary = {
   "skills.button.prev_page": "⬅️ Précédent",
   "skills.button.next_page": "Suivant ➡️",
   "skills.page_empty_callback": "Aucun skill sur cette page",
-  "skills.page_load_error_callback": "Impossible de charger cette page. Veuillez réessayer.",
 
   "mcps.select": "MCP servers:",
-  "mcps.empty": "📭 No MCP servers configured.",
   "mcps.fetch_error": "🔴 Failed to load MCP servers.",
   "mcps.toggle_error": "🔴 Failed to toggle MCP server.",
   "mcps.enabling": "Enabling...",
@@ -615,15 +465,7 @@ export const fr: I18nDictionary = {
   "mcps.button.back": "⬅️ Back",
   "mcps.auth_required": "This server requires authorization and cannot be enabled from the bot.",
 
-  "cmd.description.rename": "Renommer la session actuelle",
 
-  "legacy.models.fetch_error":
-    "🔴 Impossible de récupérer la liste des modèles. Vérifiez l'état du serveur avec /status.",
-  "legacy.models.empty": "📋 Aucun modèle disponible. Configurez les fournisseurs dans OpenCode.",
-  "legacy.models.header": "📋 Modèles disponibles :\n\n",
-  "legacy.models.no_provider_models": "  ⚠️ Aucun modèle disponible\n",
-  "legacy.models.env_hint": "💡 Pour utiliser le modèle dans .env :\n",
-  "legacy.models.error": "🔴 Une erreur s'est produite lors du chargement de la liste des modèles.",
 
   "stt.uncertain": "🎤 Certains mots peuvent être incorrects. Vérifiez et envoyez le texte corrigé :",
   "stt.recognizing": "🎤 Reconnaissance audio en cours...",
@@ -633,7 +475,6 @@ export const fr: I18nDictionary = {
   "stt.error": "🔴 Impossible de reconnaître l'audio : {error}",
   "stt.empty_result": "🎤 Aucune parole détectée dans le message audio.",
 
-  "cmd.description.open": "Ajouter un projet en parcourant les dossiers",
   "worktree.branch_detached": "detached HEAD",
   "worktree.select_with_current": "Sélectionnez un worktree :",
   "worktree.project_not_selected":

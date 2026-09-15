@@ -78,10 +78,6 @@ const HARDCODED = {
   },
 };
 
-export function parseInitialSettingsPreset(): Record<string, unknown> {
-  return { ...HARDCODED.bot.initialSettingsPreset };
-}
-
 export function buildTelegramConfig(): {
   token: string;
   allowedUserId: number;

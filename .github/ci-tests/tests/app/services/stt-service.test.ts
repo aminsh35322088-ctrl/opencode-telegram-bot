@@ -122,7 +122,7 @@ describe("transcribeAudio", () => {
     const audioBuffer = Buffer.from("fake-audio-data");
     const result = await transcribeAudio(audioBuffer, "voice.oga");
 
-    expect(result).toEqual({ text: "Hello world" });
+    expect(result).toEqual({ text: "Hello world", uncertain: true });
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     const call = defined(fetchSpy.mock.calls[0]);
@@ -151,7 +151,7 @@ describe("transcribeAudio", () => {
     const formData = defined(fetchSpy.mock.calls[0]?.[1])?.body as FormData;
     expect(formData.get("language")).toBe("en");
     expect(formData.get("model")).toBe("whisper-large-v3-turbo");
-    expect(formData.get("response_format")).toBe("json");
+    expect(formData.get("response_format")).toBe("verbose_json");
   });
 
   it("does not include language when not configured", async () => {
@@ -181,7 +181,7 @@ describe("transcribeAudio", () => {
 
     const audioBuffer = Buffer.from("fake-audio-data");
     await expect(transcribeAudio(audioBuffer, "voice.oga")).rejects.toThrow(
-      "STT API returned HTTP 429: Rate limit exceeded",
+      "STT API returned HTTP 429",
     );
   });
 
@@ -212,7 +212,7 @@ describe("transcribeAudio", () => {
     const audioBuffer = Buffer.from("fake-audio-data");
     const result = await transcribeAudio(audioBuffer, "voice.oga");
 
-    expect(result).toEqual({ text: "Hello world" });
+    expect(result).toEqual({ text: "Hello world", uncertain: true });
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     const call = defined(fetchSpy.mock.calls[0]);

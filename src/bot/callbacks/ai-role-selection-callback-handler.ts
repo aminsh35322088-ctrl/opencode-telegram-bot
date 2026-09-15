@@ -3,7 +3,6 @@ import { AI_ROLE_LABELS, type AiRole, getAiRoleSelections, setAiRoleSelection } 
 import { getProvidersForCapability, getProviderModelsForCapability } from "../../app/services/model-selection-service.js";
 import { listImageAiProviders } from "../../app/services/image-ai-provider-service.js";
 import { getGroqSttConfig } from "../../app/services/custom-provider-service.js";
-import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { InlineKeyboard } from "grammy";
 
@@ -12,7 +11,7 @@ const ROLE_PREFIX = "role:select:";
 const PROVIDER_PREFIX = "role:provider:";
 const PICK_PREFIX = "role:pick:";
 const BACK = "role:back";
-const ROLES: AiRole[] = ["coding", "image", "video", "stt"];
+const ROLES: AiRole[] = ["coding", "stt"];
 
 function roleFromData(data: string): AiRole | null {
   const value = data.slice(ROLE_PREFIX.length) as AiRole;
@@ -57,11 +56,6 @@ function selectedModelLabel(role: AiRole, selected: Awaited<ReturnType<typeof ge
   return item ? ` · ${item.modelID}` : "";
 }
 
-// Compatibility entry point for the existing reply-keyboard handler.
-// The canonical user-facing model selector is now Model Center.
-export async function showAiRulesMenu(ctx: Context, _notice?: string): Promise<void> {
-  await showModelCenterMenu(ctx);
-}
 
 export async function handleAiRoleCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data ?? "";
