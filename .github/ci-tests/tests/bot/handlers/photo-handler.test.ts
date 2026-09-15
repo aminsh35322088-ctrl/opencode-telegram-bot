@@ -2,15 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 
 const flushPendingPromptMock = vi.hoisted(() => vi.fn());
-const handlePhotoCaptionMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("../../../src/bot/handlers/message-merger.js", () => ({
   flushPendingPrompt: flushPendingPromptMock,
   __resetMessageMergerForTests: vi.fn(),
-}));
-
-vi.mock("../../../src/bot/commands/media-command.js", () => ({
-  handlePhotoCaptionMessage: handlePhotoCaptionMessageMock,
 }));
 
 import { handlePhotoMessage, type PhotoHandlerDeps } from "../../../src/bot/handlers/photo-handler.js";
@@ -63,7 +58,6 @@ describe("bot/handlers/photo-handler", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     flushPendingPromptMock.mockClear();
-    handlePhotoCaptionMessageMock.mockClear();
   });
 
   it("downloads the largest photo and sends it as a file part", async () => {
@@ -96,7 +90,6 @@ describe("bot/handlers/photo-handler", () => {
 
     await handlePhotoMessage(ctx, deps);
 
-    expect(handlePhotoCaptionMessageMock).not.toHaveBeenCalled();
     expect(downloadMock).toHaveBeenCalledWith(ctx.api, "large-photo");
     expect(processPromptMock).toHaveBeenCalledWith(ctx, "Use this caption", deps, [expect.objectContaining({ type: "file", mime: "image/jpeg" })]);
   });

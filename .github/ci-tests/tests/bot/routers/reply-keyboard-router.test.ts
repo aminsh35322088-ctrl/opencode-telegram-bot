@@ -93,7 +93,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     mocks.findQueuedPromptByButtonLabel.mockReturnValue(null);
   });
 
-  const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "🎨 Image AI", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
+  const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
 
   for (const button of topicButtons) {
     it(`consumes "${button}" inside a topic without forwarding it as a prompt`, async () => {

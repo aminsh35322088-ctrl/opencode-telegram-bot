@@ -68,8 +68,6 @@ describe("bot/routers/command-router", () => {
       "memory",
       "remember",
       "forget",
-      "image",
-      "edit",
     ]);
   });
 

@@ -158,7 +158,7 @@ async function handleReplyKeyboardInput(
   const exactControls = new Set<string>([
     ...renderedButtonTexts,
     normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings),
-    normalized(MAIN_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.deleteChat),
+    normalized(MAIN_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.deleteChat),
     normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort),
     normalized("🧠 Model Center"), normalized("❌ Cancel"), compactOn, compactOff, mainModelButton, topicModelButton,
   ]);
@@ -177,7 +177,7 @@ async function handleReplyKeyboardInput(
   }
 
   const mainOnly = new Set([normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings), mainModelButton]);
-  const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.imageAi), normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
+  const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
   const allowedInRoute = scope.aiTopic ? topicOnly.has(text) || dynamicTopicControl : mainOnly.has(text);
   if (!allowedInRoute) {
     logger.info(`[Bot] Consuming stale/wrong-scope Reply Keyboard control instead of falling through to prompt: scope=${scope.topicMode ? "topic" : "main"}${scope.topicMode && !scope.aiTopic ? "/general" : ""} thread=${ctx.message?.message_thread_id ?? 0} text=${text}`);

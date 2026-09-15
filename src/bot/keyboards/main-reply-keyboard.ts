@@ -10,7 +10,6 @@ export const MAIN_BUTTONS = {
   mainSettings: "⚙️ Main Settings",
   topicSettings: "⚙️ Topic Settings",
   settings: "⚙️ Main Settings",
-  imageAi: "🎨 Image AI",
   deleteChat: "🗑️ Delete Chat",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
   pause: "⏸️ Pause",
@@ -22,7 +21,6 @@ export const TOPIC_BUTTONS = {
   abort: MAIN_BUTTONS.abort,
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
-  imageAi: MAIN_BUTTONS.imageAi,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   modelCenter: (model?: ModelInfo) => model?.providerID && model.modelID
     ? formatModelForButton(model.providerID, model.modelID, model.name)
@@ -53,7 +51,7 @@ function addTopicControls(keyboard: Keyboard, paused: boolean, running: boolean,
   if (running || paused) {
     keyboard.text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause).text(MAIN_BUTTONS.abort).row();
   }
-  keyboard.text(MAIN_BUTTONS.imageAi).text(MAIN_BUTTONS.compact(compactOutputMode)).row();
+  keyboard.text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter(currentModel)).row();
   keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.topicSettings).row();
 }
