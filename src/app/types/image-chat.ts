@@ -26,6 +26,17 @@ export interface ImageChatTurn {
   role: "user" | "model";
   parts: ImageChatPart[];
 }
+export interface ImageChatSettings {
+  silentDelivery?: boolean;
+  messageFormat?: "raw" | "markdown";
+}
+
+export interface ImageChatLastRequest {
+  text: string;
+  images: ImageReference[];
+  replyImage?: ImageReference;
+}
+
 export interface ImageChatState {
   kind: "image";
   chatID: number;
@@ -36,6 +47,8 @@ export interface ImageChatState {
   turns: ImageChatTurn[];
   currentImage?: ImageReference;
   updatedAt: number;
+  settings?: ImageChatSettings;
+  lastRequest?: ImageChatLastRequest;
   /** Bounded durable deduplication: a timed out operation is never replayed after restart. */
   handledMessageIDs: number[];
 }
