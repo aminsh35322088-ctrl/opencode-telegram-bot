@@ -31,6 +31,17 @@ export const TOPIC_BUTTONS = {
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
 
+export const TOPIC_CONTROL_CALLBACKS = {
+  pause: "topicctl:pause",
+  resume: "topicctl:resume",
+  abort: "topicctl:abort",
+  imageAi: "topicctl:image",
+  compact: "topicctl:compact",
+  modelCenter: "topicctl:model",
+  deleteChat: "topicctl:delete",
+  topicSettings: "topicctl:settings",
+} as const;
+
 export const TOPIC_SETTINGS_BUTTON = MAIN_BUTTONS.topicSettings;
 export interface MainKeyboardOptions {
   queuedPromptLabels?: string[];
@@ -70,16 +81,16 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
       options.compactOutputMode ?? false,
       options.currentModel ?? currentModel,
     );
-  } else {
-    addMainControls(keyboard);
+    // Legacy Topic reply keyboards are intentionally non-persistent. Telegram
+    // clients can treat ReplyKeyboardMarkup as chat input state across private
+    // bot Topics, so a persistent Topic keyboard can overwrite Main/All.
+    return keyboard.resized();
   }
 
-  // Telegram can hide a non-persistent custom keyboard when the user changes
-  // topic/input state, and the keyboard launcher may disappear with it. Private
-  // bot Topics do not emit an update merely because the user switched tabs, so
-  // the bot cannot repair that state at switch time. Request client persistence
-  // for both All/root and AI Topic keyboards; each scope is still delivered by
-  // the existing root/thread-specific send path.
+  addMainControls(keyboard);
+  // Main/All owns the one persistent ReplyKeyboardMarkup for the chat. Topic
+  // controls use InlineKeyboardMarkup instead, so switching Topics cannot replace
+  // this navigation keyboard or make Telegram's native keyboard launcher vanish.
   return keyboard.resized().persistent();
 }
 
@@ -93,7 +104,7 @@ export function createMainInlineKeyboard(_currentModel: ModelInfo): InlineKeyboa
     .text(MAIN_BUTTONS.mainSettings, "main:settings");
 }
 
-/** Reply Keyboard used by General/All after Topic Mode is active. */
+/** Persistent Reply Keyboard owned by General/All. */
 export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLabels: string[] = []): Keyboard {
   return buildMainKeyboard(currentModel, {
     queuedPromptLabels,
@@ -103,12 +114,36 @@ export function createTopicMainKeyboard(currentModel: ModelInfo, queuedPromptLab
   });
 }
 
-/** Keyboard used exclusively inside an AI Topic backed by an OpenCode session. */
+/** Legacy Reply Keyboard shape kept for compatibility and stale-button routing. */
 export function createTopicKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): Keyboard {
   return buildMainKeyboard(
     options.currentModel ?? { providerID: "", modelID: "" },
     { ...options, isTopic: true },
   );
+}
+
+/** Topic-local controls. Inline keyboards are attached to a Topic message and do not replace Main/All input state. */
+export function createTopicInlineKeyboard(options: { paused?: boolean; running?: boolean; compactOutputMode?: boolean; currentModel?: ModelInfo } = {}): InlineKeyboard {
+  const paused = options.paused ?? false;
+  const running = options.running ?? false;
+  const compactOutputMode = options.compactOutputMode ?? false;
+  const keyboard = new InlineKeyboard();
+
+  if (running || paused) {
+    keyboard
+      .text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause, paused ? TOPIC_CONTROL_CALLBACKS.resume : TOPIC_CONTROL_CALLBACKS.pause)
+      .text(MAIN_BUTTONS.abort, TOPIC_CONTROL_CALLBACKS.abort)
+      .row();
+  }
+
+  return keyboard
+    .text(MAIN_BUTTONS.imageAi, TOPIC_CONTROL_CALLBACKS.imageAi)
+    .text(MAIN_BUTTONS.compact(compactOutputMode), TOPIC_CONTROL_CALLBACKS.compact)
+    .row()
+    .text(TOPIC_BUTTONS.modelCenter(options.currentModel), TOPIC_CONTROL_CALLBACKS.modelCenter)
+    .row()
+    .text(MAIN_BUTTONS.deleteChat, TOPIC_CONTROL_CALLBACKS.deleteChat)
+    .text(MAIN_BUTTONS.topicSettings, TOPIC_CONTROL_CALLBACKS.topicSettings);
 }
 
 export function createMainKeyboard(currentModel: ModelInfo, options?: MainKeyboardOptions): Keyboard;
