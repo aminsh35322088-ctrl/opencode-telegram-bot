@@ -1,4 +1,4 @@
-import type { Api } from "grammy";
+import type { Api, Keyboard } from "grammy";
 import { createMainInlineKeyboard, createMainKeyboard, createTopicKeyboard } from "./main-reply-keyboard.js";
 import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";
 import { getStoredAgent } from "../../app/services/agent-selection-service.js";
