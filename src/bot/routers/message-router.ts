@@ -159,16 +159,21 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
 }
 
 /**
- * In a forum group, the General ("All") topic is a lobby, not a chat surface:
- * AI conversations live in their own Topics. Free-form text there is accepted
- * only while the bot explicitly waits for input (a wizard step, a question,
- * rename, task creation, model search, …); everything else
- * would silently start a prompt against whatever session the General chat
- * happens to follow.
+ * Main/General is a navigation lobby, not an AI conversation surface. Telegram
+ * exposes forum mode differently for supergroups (`chat.is_forum`) and private
+ * bot chats (`ctx.me.has_topics_enabled`), so both capabilities must be handled.
+ * Free-form input is allowed here only while the bot explicitly awaits text for
+ * a wizard/question/etc.; actual AI prompts belong in conversation Topics.
  */
-function isForumGeneralTopic(ctx: Context): boolean {
+function isMainNavigationTopic(ctx: Context): boolean {
   const chat = ctx.chat as { type?: string; is_forum?: boolean } | undefined;
-  if (!chat || chat.type === "private" || chat.is_forum !== true) return false;
+  if (!chat) return false;
+
+  const botInfo = ctx.me as { has_topics_enabled?: boolean } | undefined;
+  const isSupergroupForum = chat.type !== "private" && chat.is_forum === true;
+  const isPrivateBotForum = chat.type === "private" && botInfo?.has_topics_enabled === true;
+  if (!isSupergroupForum && !isPrivateBotForum) return false;
+
   const threadId = (ctx.message as { message_thread_id?: number } | undefined)?.message_thread_id;
   return typeof threadId !== "number" || threadId <= 1;
 }
@@ -180,7 +185,7 @@ function isBotAwaitingTextInput(): boolean {
 }
 
 function isGeneralTopicPromptBlocked(ctx: Context): boolean {
-  return isForumGeneralTopic(ctx) && !isBotAwaitingTextInput();
+  return isMainNavigationTopic(ctx) && !isBotAwaitingTextInput();
 }
 
 async function rejectGeneralTopicPrompt(ctx: Context): Promise<void> {
@@ -367,7 +372,14 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
-  bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
+  const mediaGroupMiddleware = createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription });
+  bot.on("message", async (ctx, next) => {
+    if (ctx.message?.media_group_id && isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+    await mediaGroupMiddleware(ctx, next);
+  });
 
   bot.on("message:photo", async (ctx) => {
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
