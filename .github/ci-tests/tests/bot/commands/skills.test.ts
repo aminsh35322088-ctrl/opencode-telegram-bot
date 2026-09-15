@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import type { Bot, Context } from "grammy";
 import { skillsCommand } from "../../../src/bot/commands/skills-catalog-command.js";
 import { handleSkillsCallback } from "../../../src/bot/callbacks/skills-catalog-callback-handler.js";
 import { handleSkillTextArguments } from "../../../src/bot/handlers/text-message-handler.js";
+import { getGlobalSkillsDir } from "../../../src/app/services/skill-manage-service.js";
+import { clearSkillWizard, isSkillWizardActive } from "../../../src/bot/commands/skills-wizard.js";
+import { clearSkillImportFlow, isSkillImportActive } from "../../../src/bot/commands/skills-import-flow.js";
 import {
   calculateSkillsPaginationRange,
   formatSkillsSelectText,
@@ -103,6 +107,8 @@ function createDeps(): ProcessPromptDeps {
 describe("bot/commands/skills", () => {
   beforeEach(() => {
     interactionManager.clear("test_setup");
+    clearSkillWizard();
+    clearSkillImportFlow();
 
     mocked.currentProject = {
       id: "project-1",
@@ -135,7 +141,9 @@ describe("bot/commands/skills", () => {
     ];
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("skills:select:0");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("skills:select:1");
-    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("skills:back");
+    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("skills:new");
+    expect(options.reply_markup.inline_keyboard[3]?.[0]?.callback_data).toBe("skills:import");
+    expect(options.reply_markup.inline_keyboard[4]?.[0]?.callback_data).toBe("skills:back");
 
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");
@@ -143,6 +151,48 @@ describe("bot/commands/skills", () => {
     expect(state?.metadata.flow).toBe("skills");
     expect(state?.metadata.stage).toBe("list");
     expect(state?.metadata.messageId).toBe(123);
+  });
+
+  it("derives missing descriptions from skill content", async () => {
+    mocked.skillListMock.mockResolvedValue({
+      data: [
+        { name: "plain", description: "", location: "", content: "# Plain\n\nAuto derived description." },
+        { name: "fm", description: undefined, location: "", content: '---\nname: fm\ndescription: "From frontmatter"\n---\n\nBody' },
+      ],
+      error: null,
+    });
+
+    const ctx = createCommandContext(129);
+    await skillsCommand(ctx as never);
+
+    const state = interactionManager.getSnapshot();
+    expect(state?.metadata.skills).toEqual([
+      { name: "fm", description: "From frontmatter", location: undefined },
+      { name: "plain", description: "Auto derived description.", location: undefined },
+    ]);
+  });
+
+  it("starts import flow from list and clears the catalog interaction", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 330,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [{ name: "borsch", description: "Cook borsch" }],
+      },
+    });
+
+    const ctx = createCallbackContext("skills:import", 330);
+    const handled = await handleSkillsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(interactionManager.getSnapshot()).toBeNull();
+    expect(isSkillImportActive()).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    clearSkillImportFlow();
   });
 
   it("normalizes skill entries and sorts them by name", async () => {
@@ -196,6 +246,109 @@ describe("bot/commands/skills", () => {
     expect(state?.expectedInput).toBe("mixed");
     expect(state?.metadata.stage).toBe("confirm");
     expect(state?.metadata.skillName).toBe("release");
+  });
+
+  it("offers edit and delete buttons for managed skills on the confirm step", async () => {
+    const managedLocation = path.join(getGlobalSkillsDir(), "borsch", "SKILL.md");
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 321,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [{ name: "borsch", description: "Cook borsch", location: managedLocation }],
+      },
+    });
+
+    const ctx = createCallbackContext("skills:select:0", 321);
+    await handleSkillsCallback(ctx, createDeps());
+
+    const calls = (ctx.editMessageText as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const options = calls[0]?.[1] as {
+      reply_markup: { inline_keyboard: Array<Array<{ callback_data?: string }>> };
+    };
+    const callbackData = options.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(callbackData).toContain("skills:edit");
+    expect(callbackData).toContain("skills:delete");
+    expect(callbackData).toContain("skills:execute");
+  });
+
+  it("hides edit and delete for skills outside the managed directory", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 321,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [{ name: "borsch", description: "Cook borsch", location: "/builtin/borsch/SKILL.md" }],
+      },
+    });
+
+    const ctx = createCallbackContext("skills:select:0", 321);
+    await handleSkillsCallback(ctx, createDeps());
+
+    const calls = (ctx.editMessageText as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const options = calls[0]?.[1] as {
+      reply_markup: { inline_keyboard: Array<Array<{ callback_data?: string }>> };
+    };
+    const callbackData = options.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(callbackData).not.toContain("skills:edit");
+    expect(callbackData).not.toContain("skills:delete");
+  });
+
+  it("starts the edit wizard from the confirm step for managed skills", async () => {
+    const managedLocation = path.join(getGlobalSkillsDir(), "borsch", "SKILL.md");
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "skills",
+        stage: "confirm",
+        messageId: 400,
+        projectDirectory: "D:\\Projects\\Repo",
+        skillName: "borsch",
+        skillLocation: managedLocation,
+      },
+    });
+
+    const ctx = createCallbackContext("skills:edit", 400);
+    const handled = await handleSkillsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(interactionManager.getSnapshot()).toBeNull();
+    expect(isSkillWizardActive()).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    clearSkillWizard();
+  });
+
+  it("refuses to start editing a non-managed skill", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "skills",
+        stage: "confirm",
+        messageId: 400,
+        projectDirectory: "D:\\Projects\\Repo",
+        skillName: "borsch",
+        skillLocation: "/builtin/borsch/SKILL.md",
+      },
+    });
+
+    const ctx = createCallbackContext("skills:edit", 400);
+    const handled = await handleSkillsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(isSkillWizardActive()).toBe(false);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("skills.edit_not_managed"),
+      show_alert: true,
+    });
+    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("confirm");
   });
 
   it("executes selected skill from callback via prompt flow", async () => {

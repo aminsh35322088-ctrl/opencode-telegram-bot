@@ -9,6 +9,13 @@ export const SKILLS_CALLBACK_CANCEL = `${SKILLS_CALLBACK_PREFIX}cancel`;
 export const SKILLS_CALLBACK_EXECUTE = `${SKILLS_CALLBACK_PREFIX}execute`;
 export const SKILLS_CALLBACK_BACK = `${SKILLS_CALLBACK_PREFIX}back`;
 export const SKILLS_CALLBACK_LIST_BACK = `${SKILLS_CALLBACK_PREFIX}list_back`;
+export const SKILLS_CALLBACK_NEW = `${SKILLS_CALLBACK_PREFIX}new`;
+export const SKILLS_CALLBACK_IMPORT = `${SKILLS_CALLBACK_PREFIX}import`;
+export const SKILLS_CALLBACK_WIZARD_CANCEL = `${SKILLS_CALLBACK_PREFIX}wizard_cancel`;
+export const SKILLS_CALLBACK_EDIT = `${SKILLS_CALLBACK_PREFIX}edit`;
+export const SKILLS_CALLBACK_DELETE = `${SKILLS_CALLBACK_PREFIX}delete`;
+export const SKILLS_CALLBACK_DELETE_CONFIRM = `${SKILLS_CALLBACK_PREFIX}delete_confirm`;
+export const SKILLS_CALLBACK_DELETE_CANCEL = `${SKILLS_CALLBACK_PREFIX}delete_cancel`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
@@ -145,15 +152,21 @@ export function buildSkillsListKeyboard(
     keyboard.row();
   }
 
+  keyboard.text(t("skills.button.new"), SKILLS_CALLBACK_NEW).row();
+  keyboard.text(t("skills.button.import"), SKILLS_CALLBACK_IMPORT).row();
   keyboard
     .text("← Back", SKILLS_CALLBACK_BACK)
     .text("✖ Close", SKILLS_CALLBACK_CANCEL);
   return keyboard;
 }
 
-export function buildSkillsConfirmKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text(t("skills.button.execute"), SKILLS_CALLBACK_EXECUTE)
+export function buildSkillsConfirmKeyboard(canManage: boolean): InlineKeyboard {
+  const keyboard = new InlineKeyboard().text(t("skills.button.execute"), SKILLS_CALLBACK_EXECUTE);
+  if (canManage) {
+    keyboard.text(t("skills.button.edit"), SKILLS_CALLBACK_EDIT);
+    keyboard.text(t("skills.button.delete"), SKILLS_CALLBACK_DELETE);
+  }
+  return keyboard
     .row()
     .text("← Skills", SKILLS_CALLBACK_LIST_BACK)
     .text("✖ Close", SKILLS_CALLBACK_CANCEL);
