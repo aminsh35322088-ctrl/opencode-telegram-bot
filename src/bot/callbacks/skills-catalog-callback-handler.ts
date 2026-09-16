@@ -166,6 +166,21 @@ export function clearSkillsInteraction(reason: string): void {
   }
 }
 
+function isMessageNotModifiedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /message is not modified/i.test(message);
+}
+
+async function editCatalogMessageIgnoringNoop(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
+  try {
+    await ctx.editMessageText(text, { reply_markup: keyboard });
+  } catch (error) {
+    if (!isMessageNotModifiedError(error)) {
+      throw error;
+    }
+  }
+}
+
 export async function executeSkill(
   ctx: Context,
   deps: ProcessPromptDeps,
@@ -328,7 +343,7 @@ export async function handleSkillsCallback(
       const pageSize = config.bot.commandsListLimit;
       const keyboard = buildSkillsListKeyboard(skills, 0, pageSize);
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(formatSkillsSelectText(0), { reply_markup: keyboard });
+      await editCatalogMessageIgnoringNoop(ctx, formatSkillsSelectText(0), keyboard);
       interactionManager.transition({
         expectedInput: "callback",
         metadata: {
@@ -364,9 +379,7 @@ export async function handleSkillsCallback(
 
       const keyboard = buildSkillsListKeyboard(metadata.skills, normalizedPage, pageSize);
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(formatSkillsSelectText(normalizedPage), {
-        reply_markup: keyboard,
-      });
+      await editCatalogMessageIgnoringNoop(ctx, formatSkillsSelectText(normalizedPage), keyboard);
 
       interactionManager.transition({
         expectedInput: "callback",
