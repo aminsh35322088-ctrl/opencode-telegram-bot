@@ -8,7 +8,7 @@ import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import { buildMcpsDetailKeyboard, buildMcpsDetailText, buildMcpsListKeyboard, MCPS_CALLBACK_ADD, MCPS_CALLBACK_ADD_LOCAL, MCPS_CALLBACK_ADD_REMOTE, MCPS_CALLBACK_BACK, MCPS_CALLBACK_CANCEL, MCPS_CALLBACK_PREFIX, MCPS_CALLBACK_SELECT_PREFIX, MCPS_CALLBACK_TOGGLE, parseMcpSelectCallback } from "../menus/mcp-catalog-menu.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
-import { startMcpAddWizard, selectMcpAddType, clearMcpAddWizard } from "../commands/mcp-catalog-command.js";
+import { startMcpAddWizard, selectMcpAddType, clearMcpAddWizard, dismissMcpAddWizard } from "../commands/mcp-catalog-command.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 
@@ -77,14 +77,20 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) return false;
 
   if (data === MCPS_CALLBACK_CANCEL) {
-    clearMcpAddWizard();
-    interactionManager.clear("mcps_cancelled");
-    await ctx.answerCallbackQuery().catch(() => {});
-    await cancelMenu(ctx);
+    const dismissed = await dismissMcpAddWizard(ctx, true);
+    if (!dismissed) {
+      clearMcpAddWizard();
+      interactionManager.clear("mcps_cancelled");
+      await ctx.answerCallbackQuery().catch(() => {});
+      await cancelMenu(ctx);
+      return true;
+    }
+    await ctx.answerCallbackQuery({ text: "MCP setup cancelled." }).catch(() => {});
     return true;
   }
 
   if (data === "mcps:parent_back") {
+    await dismissMcpAddWizard(ctx);
     clearMcpAddWizard();
     await ctx.answerCallbackQuery().catch(() => {});
     const view = buildAdvancedSettingsView();
