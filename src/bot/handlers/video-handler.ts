@@ -8,6 +8,7 @@ import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { downloadTelegramFile, toDataUri, type DownloadedFile } from "../../app/services/file-download-service.js";
 import { getModelCapabilities, supportsInput } from "../../app/services/model-capabilities-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
+import { isSttConfigured, transcribeAudio } from "../../app/services/stt-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "./message-merger.js";
@@ -66,9 +67,34 @@ export async function extractVideoFrames(videoBuffer: Buffer, sourceFilename: st
   }
 }
 
-export function buildVideoAnalysisPrompt(caption: string, frameCount: number): string {
-  if (caption) return caption;
-  return `Analyze this video frame by frame. ${frameCount} keyframes were sampled in chronological order from the video I sent. Describe what happens, the notable changes between frames, and transcribe any text visible in the frames.`;
+/** Extracts audio track from a video buffer and returns it as an OGG file. */
+export async function extractAudio(videoBuffer: Buffer, sourceFilename: string): Promise<{ buffer: Buffer; filename: string } | null> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "otb-video-audio-"));
+  try {
+    const extension = path.extname(sourceFilename) || ".mp4";
+    const inputPath = path.join(dir, `input${extension}`);
+    const outputPath = path.join(dir, "audio.ogg");
+    await fs.writeFile(inputPath, videoBuffer);
+
+    await execFileAsync("ffmpeg", ["-v", "error", "-i", inputPath, "-vn", "-acodec", "libvorbis", "-q:a", "4", outputPath], { timeout: FFMPEG_TIMEOUT_MS });
+
+    const buffer = await fs.readFile(outputPath);
+    if (!buffer.length) return null;
+    return { buffer, filename: "audio.ogg" };
+  } catch (err) {
+    logger.warn("[Video] Failed to extract audio from video:", err);
+    return null;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export function buildVideoAnalysisPrompt(caption: string, frameCount: number, transcription?: string): string {
+  const parts: string[] = [];
+  if (caption) parts.push(caption);
+  parts.push(`Analyze this video frame by frame. ${frameCount} keyframes were sampled in chronological order from the video I sent. Describe what happens, the notable changes between frames, and transcribe any text visible in the frames.`);
+  if (transcription) parts.push(`\n\nAudio transcription from the video:\n${transcription}`);
+  return parts.join("\n");
 }
 
 export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): Promise<void> {
@@ -104,8 +130,26 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
       filename: frame.filename,
       url: toDataUri(frame.buffer, "image/jpeg"),
     }));
+
+    let transcription: string | undefined;
+    if (await isSttConfigured()) {
+      try {
+        const audio = await extractAudio(downloaded.buffer, downloaded.filePath || "video.mp4");
+        if (audio) {
+          logger.debug(`[Video] Extracted audio: ${audio.buffer.length} bytes`);
+          const result = await transcribeAudio(audio.buffer, audio.filename);
+          if (result.text.trim()) {
+            transcription = result.text.trim();
+            logger.info(`[Video] Audio transcription: ${transcription.length} chars`);
+          }
+        }
+      } catch (err) {
+        logger.warn("[Video] Audio transcription failed, proceeding with frames only:", err);
+      }
+    }
+
     logger.info(`[Video] Sending ${fileParts.length} frames (${downloaded.buffer.length} byte source) to selected coding model`);
-    await processPrompt(ctx, buildVideoAnalysisPrompt(caption, fileParts.length), deps, fileParts);
+    await processPrompt(ctx, buildVideoAnalysisPrompt(caption, fileParts.length, transcription), deps, fileParts);
   } catch (err) {
     logger.error("[Video] Error handling video message:", err);
     await ctx.reply(t("bot.video_error"));
