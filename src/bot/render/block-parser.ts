@@ -149,6 +149,7 @@ function extractBlockPlainText(node: RootContent | ListItem): string {
 }
 
 type InlineHtmlWrapper = Exclude<InlineNode["type"], "text" | "link">;
+type InlineHtmlFrameWrapper = InlineHtmlWrapper | "link";
 
 /**
  * Inline HTML tags Telegram can express, mapped to the node that carries them.
@@ -175,6 +176,8 @@ const INLINE_HTML_WRAPPERS = new Map<string, InlineHtmlWrapper>([
 ]);
 
 const INLINE_HTML_TAG_PATTERN = /^<(\/?)([a-z][a-z0-9-]*)(?:\s[^>]*?)?\/?>$/i;
+const HTML_PRE_CODE_PATTERN = /^<pre(?:\s[^>]*)?>\s*<code((?:\s[^>]*)?)>([\s\S]*?)<\/code>\s*<\/pre>$/i;
+const HTML_PRE_PATTERN = /^<pre(?:\s[^>]*)?>([\s\S]*?)<\/pre>$/i;
 
 /** Telegram's rich markdown marks text with `==`; remark leaves it in the text. */
 const MARKED_TEXT_PATTERN = /==(?=\S)([\s\S]*?\S)==/g;
@@ -188,18 +191,65 @@ function parseInlineHtmlTag(value: string): { name: string; closing: boolean } |
   return { name: name.toLowerCase(), closing: match[1] === "/" };
 }
 
+function extractHtmlAttribute(tagValue: string, attrName: string): string | null {
+  const pattern = new RegExp(`\\b${attrName}\\s*=\\s*(["'])([^"']*)\\1`, "i");
+  const match = pattern.exec(tagValue);
+  return match?.[2] ?? null;
+}
+
+function extractCodeLanguage(attributes: string): string | undefined {
+  const className = extractHtmlAttribute(`<code${attributes}>`, "class");
+  if (!className) {
+    return undefined;
+  }
+
+  const languageClass = className
+    .split(/\s+/)
+    .find((token) => /^language-[a-z0-9_+#.-]+$/i.test(token));
+  return languageClass?.slice("language-".length) || undefined;
+}
+
+function parseHtmlPreBlock(value: string): TelegramBlock[] | null {
+  const normalized = value.trim();
+  const codeMatch = HTML_PRE_CODE_PATTERN.exec(normalized);
+  if (codeMatch) {
+    const language = extractCodeLanguage(codeMatch[1] ?? "");
+    return [
+      {
+        type: "code",
+        ...(language ? { language } : {}),
+        text: codeMatch[2] ?? "",
+      },
+    ];
+  }
+
+  const preMatch = HTML_PRE_PATTERN.exec(normalized);
+  if (!preMatch) {
+    return null;
+  }
+
+  return [{ type: "code", text: preMatch[1] ?? "" }];
+}
+
 /** An opened tag and the nodes it collects until its closing tag arrives. */
 interface InlineHtmlFrame {
   name: string;
-  wrapper: InlineHtmlWrapper;
+  wrapper: InlineHtmlFrameWrapper;
   /** The tag as written, shown verbatim when it turns out never to close. */
   raw: string;
   nodes: InlineNode[];
+  url?: string;
 }
 
 function closeInlineHtmlFrame(frame: InlineHtmlFrame, closed: boolean): InlineNode[] {
   if (!closed) {
     return [{ type: "text", text: frame.raw }, ...frame.nodes];
+  }
+
+  if (frame.wrapper === "link") {
+    return frame.url
+      ? [{ type: "link", text: frame.nodes, url: frame.url }]
+      : [{ type: "text", text: frame.raw }, ...frame.nodes];
   }
 
   return frame.wrapper === "code"
@@ -296,6 +346,16 @@ function parseInlineNodes(nodes: PhrasingContent[]): InlineNode[] | null {
         }
 
         if (!tag.closing) {
+          if (tag.name === "a") {
+            const href = extractHtmlAttribute(node.value, "href");
+            if (href) {
+              open.push({ name: tag.name, wrapper: "link", raw: node.value, nodes: [], url: href });
+            } else {
+              pushTextNode(target(), node.value);
+            }
+            break;
+          }
+
           const wrapper = INLINE_HTML_WRAPPERS.get(tag.name);
           if (wrapper) {
             open.push({ name: tag.name, wrapper, raw: node.value, nodes: [] });
@@ -436,6 +496,8 @@ function parseRootContent(node: RootContent, depth = 0): TelegramBlock[] {
       return parseTableBlock(node);
     case "thematicBreak":
       return [{ type: "rule" }];
+    case "html":
+      return parseHtmlPreBlock(node.value) ?? createPlainBlock(extractBlockPlainText(node));
     default:
       return createPlainBlock(extractBlockPlainText(node));
   }
