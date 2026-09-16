@@ -2,7 +2,6 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
 import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
-import { configureOpenRouterCodingProvider, OPENROUTER_PROVIDER_ID } from "../../app/services/openrouter-provider-service.js";
 import { imageConnectionUsage } from "../../app/services/image-chat-profile-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { config } from "../../config.js";
@@ -17,15 +16,7 @@ import { setAiRoleSelection } from "../../app/services/ai-role-selection-service
 
 const CAPABILITIES: AiCapability[] = ["coding", "image", "stt"];
 const LABEL: Record<AiCapability, string> = { coding: "💬 Chat & Coding", image: "🎨 Image", stt: "🎙️ Transcription" };
-const BUILTIN_CODING_CONNECTIONS = [
-  {
-    id: OPENROUTER_PROVIDER_ID,
-    connectedLabel: "OpenRouter · Configure key",
-    disconnectedLabel: "OpenRouter · Connect",
-    callback: "provider:openrouter:configure",
-  },
-] as const;
-type Step = "name" | "url" | "key" | "openrouter-key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
+type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
 function messageId(ctx: Context): number | undefined { return ctx.callbackQuery?.message?.message_id; }
@@ -43,13 +34,6 @@ async function start(ctx: Context, step: Step, text: string, capability?: AiCapa
   const id = messageId(ctx); if (id === undefined) return;
   providerWizard.set({ step, capability, messageId: id, expires: Date.now() + 15 * 60_000 });
   await editWizard(ctx, id, text);
-}
-function addBuiltinCodingConnections(keyboard: InlineKeyboard, connectedProviderIDs: ReadonlySet<string>): void {
-  for (const connection of BUILTIN_CODING_CONNECTIONS) {
-    keyboard
-      .text(connectedProviderIDs.has(connection.id) ? connection.connectedLabel : connection.disconnectedLabel, connection.callback)
-      .row();
-  }
 }
 async function restartOpenCodeAfterProviderChange(): Promise<void> {
   const configPath = await syncOpenCodeCustomConfig(); process.env.OPENCODE_CONFIG = configPath;
@@ -79,7 +63,6 @@ async function renderSlot(ctx: Context, capability: AiCapability, id?: number, n
   if (capability === "image") { await renderImage(ctx, id, notice, "provider:connections"); return; }
   const ps = (await listCustomProviders()).filter(p => p.capability === capability);
   const keyboard = new InlineKeyboard();
-  if (capability === "coding") addBuiltinCodingConnections(keyboard, new Set(ps.map(p => p.id)));
   for (const p of ps) keyboard.text(`🔌 ${p.name}`, `provider:view:${p.id}`).row();
   keyboard.text("➕ Add Custom API", `provider:add:${capability}`).row();
   if (capability === "stt") {
@@ -87,7 +70,7 @@ async function renderSlot(ctx: Context, capability: AiCapability, id?: number, n
     if (await isGroqSttConfigured()) keyboard.text("Remove Groq", "provider:stt:groq:remove").row();
   }
   keyboard.text("← Connections", "provider:connections");
-  await render(ctx, `${notice}${LABEL[capability]} connections\n\n${capability === "coding" ? "Connect chat/coding APIs here. Model defaults are selected under Settings → Default Models." : "Connect a transcription provider. Voice messages in coding Topics use this selection."}`, keyboard, id);
+  await render(ctx, `${notice}${LABEL[capability]} connections\n\n${capability === "coding" ? "Connect OpenAI-compatible chat/coding APIs here. Model defaults are selected under Settings → Default Models." : "Connect a transcription provider. Voice messages in coding Topics use this selection."}`, keyboard, id);
 }
 async function renderConnections(ctx: Context, id?: number, notice = "") {
   const keyboard = new InlineKeyboard();
@@ -123,7 +106,6 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   }
   if (data === "provider:image:menu") { await showImageChatSettings(ctx); return true; }
   if (data === "provider:image:engines") { await renderImage(ctx, id); return true; }
-  if (data === "provider:openrouter:configure") { await start(ctx, "openrouter-key", "OpenRouter\n\nSend an inference API key. It will be verified before saving.", "coding"); return true; }
   if (data.startsWith("provider:add:")) {
     const capability = data.slice("provider:add:".length) as AiCapability;
     if (capability === "coding" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
@@ -197,8 +179,7 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
     if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await editWizard(ctx, s.messageId, "3/4 · Edit model ID (required for Image Chat)"); return true; }
     if (s.step === "image-custom-edit-model") { s.editModel = text; s.step = "image-custom-key"; await editWizard(ctx, s.messageId, "4/4 · API key"); return true; }
     s.busy = true; await editWizard(ctx, s.messageId, "🔎 Verifying credentials and model access…");
-    if (s.step === "openrouter-key") await configureOpenRouterCodingProvider(text, guard);
-    else if (s.step === "image-cloudflare-token") {
+    if (s.step === "image-cloudflare-token") {
       const validation = await configureCloudflareCredentials(s.accountId!, text, guard);
       if (!validation.valid) throw new Error(`Cloudflare verification failed: ${validation.reason}`);
     } else if (s.step === "image-custom-key") await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, { baseURL: s.baseURL!, model: s.model!, editModel: s.editModel! }, guard);
