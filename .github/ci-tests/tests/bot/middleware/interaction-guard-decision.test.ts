@@ -428,3 +428,103 @@ describe("interaction guard", () => {
     expect(decision.busy).toBe(true);
   });
 });
+
+describe("interaction guard: menu callbacks while busy or expired", () => {
+  beforeEach(() => {
+    interactionManager.clear("test_setup");
+    foregroundSessionState.__resetForTests();
+    questionManager.clearAll();
+  });
+
+  it("allows inline menu callbacks while the session is busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: { menuKind: "settings", messageId: 42 },
+    });
+
+    const decision = resolveInteractionGuardDecision(
+      createContext({ callbackData: "settings:advanced" }),
+    );
+
+    expect(decision.allow).toBe(true);
+    expect(decision.busy).toBe(true);
+  });
+
+  it("allows custom catalog callbacks while the session is busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: { flow: "mcps", stage: "list", messageId: 42 },
+    });
+
+    const decision = resolveInteractionGuardDecision(
+      createContext({ callbackData: "mcps:select:0" }),
+    );
+
+    expect(decision.allow).toBe(true);
+    expect(decision.busy).toBe(true);
+  });
+
+  it("allows callbacks with no active interaction while the session is busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+
+    const decision = resolveInteractionGuardDecision(
+      createContext({ callbackData: "settings:advanced" }),
+    );
+
+    expect(decision.allow).toBe(true);
+  });
+
+  it("still blocks rename callbacks from bypassing busy state", () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+    interactionManager.start({ kind: "rename", expectedInput: "text" });
+
+    const decision = resolveInteractionGuardDecision(
+      createContext({ callbackData: "rename:cancel" }),
+    );
+
+    expect(decision.allow).toBe(false);
+    expect(decision.busy).toBe(true);
+  });
+
+  it("allows callbacks through expired inline interactions so menus can rehydrate", () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      interactionManager.start({
+        kind: "inline",
+        expectedInput: "callback",
+        metadata: { menuKind: "settings", messageId: 42 },
+      });
+      vi.setSystemTime(now + 16 * 60 * 1000);
+
+      const decision = resolveInteractionGuardDecision(
+        createContext({ callbackData: "settings:advanced" }),
+      );
+
+      expect(decision.allow).toBe(true);
+      expect(interactionManager.getSnapshot()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still blocks text input on expired inline interactions", () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      interactionManager.start({ kind: "inline", expectedInput: "callback" });
+      vi.setSystemTime(now + 16 * 60 * 1000);
+
+      const decision = resolveInteractionGuardDecision(createContext({ text: "hello" }));
+
+      expect(decision.allow).toBe(false);
+      expect(decision.reason).toBe("expired");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

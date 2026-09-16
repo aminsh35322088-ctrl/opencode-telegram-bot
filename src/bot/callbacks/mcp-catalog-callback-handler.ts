@@ -10,6 +10,7 @@ import { buildMcpsDetailKeyboard, buildMcpsDetailText, buildMcpsListKeyboard, MC
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { startMcpAddWizard, selectMcpAddType, clearMcpAddWizard } from "../commands/mcp-catalog-command.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
+import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 
 interface McpsListMetadata { flow: "mcps"; stage: "list"; messageId: number; projectDirectory: string; servers: McpCatalogServerItem[]; }
 interface McpsDetailMetadata { flow: "mcps"; stage: "detail"; messageId: number; projectDirectory: string; serverName: string; servers: McpCatalogServerItem[]; }
@@ -44,6 +45,33 @@ function clearMcpsInteraction(reason: string): void {
   if (parseMcpsMetadata(interactionManager.getSnapshot())) interactionManager.clear(reason);
 }
 
+function isMessageNotModifiedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /message is not modified/i.test(message);
+}
+
+async function recoverMcpsListInteraction(ctx: Context): Promise<boolean> {
+  const messageId = getCallbackMessageId(ctx);
+  if (messageId === null || !ctx.chat?.id) return false;
+  const projectDirectory = getCurrentSessionDirectory();
+  if (!projectDirectory) return false;
+  let servers: McpCatalogServerItem[];
+  try {
+    servers = await loadMcpCatalog(projectDirectory);
+  } catch (error) {
+    logger.warn("[Mcps] Failed to recover MCP list interaction:", error);
+    return false;
+  }
+  try {
+    await ctx.editMessageText(t("mcps.select"), { reply_markup: buildMcpsListKeyboard(servers) });
+  } catch (error) {
+    if (!isMessageNotModifiedError(error)) return false;
+  }
+  interactionManager.start({ kind: "custom", expectedInput: "callback", metadata: { flow: "mcps", stage: "list", messageId, projectDirectory, servers } });
+  await ctx.answerCallbackQuery().catch(() => {});
+  return true;
+}
+
 export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) return false;
@@ -56,21 +84,6 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     return true;
   }
 
-  if (data === MCPS_CALLBACK_ADD || data === MCPS_CALLBACK_ADD_LOCAL || data === MCPS_CALLBACK_ADD_REMOTE) {
-    if (data === MCPS_CALLBACK_ADD) {
-      const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
-      const callbackMessageId = getCallbackMessageId(ctx);
-      if (!metadata || metadata.stage !== "list" || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
-        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
-        return true;
-      }
-      await startMcpAddWizard(ctx);
-      return true;
-    }
-    await selectMcpAddType(ctx, data === MCPS_CALLBACK_ADD_LOCAL ? "local" : "remote");
-    return true;
-  }
-
   if (data === "mcps:parent_back") {
     clearMcpAddWizard();
     await ctx.answerCallbackQuery().catch(() => {});
@@ -79,10 +92,30 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     return true;
   }
 
-  const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
+  let metadata = parseMcpsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
-    await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
+    if (!(await recoverMcpsListInteraction(ctx))) {
+      await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
+      return true;
+    }
+    metadata = parseMcpsMetadata(interactionManager.getSnapshot());
+    if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
+      await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
+      return true;
+    }
+  }
+
+  if (data === MCPS_CALLBACK_ADD || data === MCPS_CALLBACK_ADD_LOCAL || data === MCPS_CALLBACK_ADD_REMOTE) {
+    if (data === MCPS_CALLBACK_ADD) {
+      if (!metadata || metadata.stage !== "list" || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
+        return true;
+      }
+      await startMcpAddWizard(ctx);
+      return true;
+    }
+    await selectMcpAddType(ctx, data === MCPS_CALLBACK_ADD_LOCAL ? "local" : "remote");
     return true;
   }
 

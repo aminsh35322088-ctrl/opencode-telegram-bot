@@ -88,4 +88,23 @@ describe("inline-menu", () => {
     } as never;
     await expect(ensureActiveInlineMenu(ctx, "session")).resolves.toBe(true);
   });
+
+  it("refreshes the interaction TTL while the menu is actively used", async () => {
+    vi.useFakeTimers();
+    try {
+      const start = Date.now();
+      interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { menuKind: "session", messageId: 42 } });
+      vi.setSystemTime(start + 14 * 60 * 1000);
+      const ctx = {
+        chat: { id: 100 },
+        callbackQuery: { data: "session:a", message: { message_id: 42 } },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      } as never;
+      await expect(ensureActiveInlineMenu(ctx, "session")).resolves.toBe(true);
+      vi.setSystemTime(start + 20 * 60 * 1000);
+      expect(interactionManager.isExpired()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

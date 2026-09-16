@@ -628,4 +628,31 @@ describe("skills pagination helpers", () => {
       });
     });
   });
+
+  it("self-heals a clobbered interaction by re-rendering the skills list", async () => {
+    mocked.skillListMock.mockResolvedValue({
+      data: [{ name: "borsch", description: "Cook borsch", location: "/proj/.opencode/skills/borsch/SKILL.md", content: "" }],
+      error: null,
+    });
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: { menuKind: "settings", messageId: 555 },
+    });
+
+    const ctx = createCallbackContext("skills:select:0", 777);
+    const deps = createDeps();
+    const handled = await handleSkillsCallback(ctx, deps);
+
+    expect(handled).toBe(true);
+    const answerMock = ctx.answerCallbackQuery as ReturnType<typeof vi.fn>;
+    const answerTexts = answerMock.mock.calls.map((call) => String((call[0] as { text?: string } | undefined)?.text ?? ""));
+    expect(answerTexts.some((text) => text.includes("inactive"))).toBe(false);
+    expect((ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    const state = interactionManager.getSnapshot();
+    expect(state?.kind).toBe("custom");
+    expect(state?.metadata.flow).toBe("skills");
+    expect(state?.metadata.messageId).toBe(777);
+  });
 });

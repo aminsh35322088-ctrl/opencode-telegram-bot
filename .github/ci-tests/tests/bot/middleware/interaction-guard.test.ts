@@ -340,7 +340,7 @@ describe("interactionGuardMiddleware", () => {
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining(t("bot.session_busy")));
   });
 
-  it("blocks callback while busy without active question or permission", async () => {
+  it("allows menu callbacks while busy without active question or permission", async () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
     const ctx = createCallbackContext("project:123");
@@ -348,11 +348,8 @@ describe("interactionGuardMiddleware", () => {
 
     await interactionGuardMiddleware(ctx, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
-      text: t("inline.inactive_callback"),
-      show_alert: false,
-    });
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
   });
 
   it("allows abort, detach, status, help, and opencode_stop while busy", async () => {
