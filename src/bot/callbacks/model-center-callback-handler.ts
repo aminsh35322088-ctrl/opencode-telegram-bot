@@ -35,15 +35,10 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
-import { clearSession, getCurrentSession } from "../../app/services/session-service.js";
-import { detachAttachedSession } from "../../app/services/attach-service.js";
-import { stopEventListening, stopTopicEventSubscription } from "../../opencode/events.js";
-import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
+import { getCurrentSession } from "../../app/services/session-service.js";
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
-import { rotateTelegramTopicSessionForModel } from "../../app/services/topic-session-rotation-service.js";
-import { getTelegramTopicRuntimeDependencies } from "../services/telegram-topic-runtime.js";
 
 const SEARCH_FLOW = "model-search";
 interface ModelCenterSearchState { stage: "input" | "results"; }
@@ -168,41 +163,29 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
     ? { id: topicSessionId, title: topicBinding?.title ?? "Telegram Topic", directory: topicBinding.directory }
     : getCurrentSession();
   const isTopic = Boolean(topicBinding && topicSessionId);
-  let activeSessionId = topicSessionId;
+  const activeSessionId = topicSessionId ?? currentSession?.id;
 
-  if (chatId) keyboardManager.initialize(ctx.api, chatId, currentSession?.id, threadId);
+  if (chatId) keyboardManager.initialize(ctx.api, chatId, activeSessionId, threadId);
   const previousModel = fetchCurrentModel();
-  const modelChanged = previousModel.providerID !== modelInfo.providerID || previousModel.modelID !== modelInfo.modelID;
 
-  if (modelChanged && currentSession && getCurrentTopicSettings()) {
-    if (isTopic && topicSessionId && topicBinding && chatId && typeof threadId === "number") {
-      // Create + persist the replacement before retiring the old runtime. If
-      // creation/persistence fails, the old Topic remains fully usable.
-      const rotation = await rotateTelegramTopicSessionForModel(topicBinding, modelInfo);
-      activeSessionId = rotation.session.id;
-
-      detachAttachedSession("model_switch");
-      stopTopicEventSubscription(topicBinding.directory, topicSessionId);
-      getTelegramTopicRuntimeDependencies()?.retireSessionRuntime(topicSessionId, "model_switch");
-      summaryAggregator.clear();
-      keyboardManager.clearContext(topicSessionId);
-      keyboardManager.bindTopic(ctx.api, chatId, threadId, activeSessionId);
-      try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
-      logger.info(`[ModelCenter] Rotated Topic session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}, old=${topicSessionId}, new=${activeSessionId}`);
-    } else {
-      stopEventListening();
-      summaryAggregator.clear();
-      clearSession();
-      keyboardManager.clearContext(topicSessionId);
-      try { await pinnedMessageManager.clear(); } catch (error) { logger.debug("[ModelCenter] Could not clear pinned message during model switch", error); }
-      logger.info(`[ModelCenter] Retired global session after model switch: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}`);
-    }
-  }
-
+  // A model switch changes only the model/provider used by subsequent prompts.
+  // Keeping the same OpenCode session is what preserves conversation history.
+  // Topic isolation remains intact because each Telegram Topic keeps its own
+  // binding/session and setCurrentModel() writes into that Topic's runtime state.
   interactionManager.clear("model_selected");
   selectModel(modelInfo);
   if (!getCurrentTopicSettings()) updateTopicDefaults({ model: modelInfo });
   await recordRecentModel(modelInfo);
+
+  if (
+    previousModel.providerID !== modelInfo.providerID ||
+    previousModel.modelID !== modelInfo.modelID
+  ) {
+    logger.info(
+      `[ModelCenter] Switched model without rotating session: ${previousModel.providerID}/${previousModel.modelID} -> ${modelInfo.providerID}/${modelInfo.modelID}, session=${activeSessionId ?? "none"}, topic=${isTopic ? `${chatId}:${threadId}` : "global"}`,
+    );
+  }
+
   keyboardManager.updateModel(modelInfo, activeSessionId);
   await pinnedMessageManager.refreshContextLimit();
   const currentAgent = await resolveProjectAgent(getStoredAgent());
