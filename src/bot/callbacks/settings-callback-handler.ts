@@ -9,7 +9,7 @@ import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
 import { getFreeModelDetectionEnabled, setFreeModelDetectionEnabled, getCompactOutputMode, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, getCurrentTopicSettings, setCompactOutputMode, setMessageFormatMode, setPromptQueueEnabled, setResponseStreamingMode, setSendDiffFileAttachments, setShowAssistantRunFooter, setShowThinkingContent, updateTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
-import { appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
+import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
 
 import {
@@ -92,7 +92,7 @@ async function renderSettingsView(ctx: Context, view: { text: string; keyboard: 
   });
 }
 function getCallbackChatId(ctx: Context): number | null { const id = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; return typeof id === "number" ? id : null; }
-function advancedBackKeyboard(): InlineKeyboard { return new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK); }
+function advancedBackKeyboard(): InlineKeyboard { return appendHomeNavigation(new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK)); }
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
@@ -170,7 +170,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: "Factory resetting…" });
         const result = await factoryReset(ctx.api, chatId);
         if (result.failed > 0) {
-          await ctx.editMessageText(`⚠️ <b>Factory reset stopped with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nSaved settings were not reset because cleanup was incomplete. Check the bot logs.`, { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK) });
+          await ctx.editMessageText(`⚠️ <b>Factory reset stopped with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nSaved settings were not reset because cleanup was incomplete. Check the bot logs.`, { parse_mode: "HTML", reply_markup: advancedBackKeyboard() });
           return true;
         }
         await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
