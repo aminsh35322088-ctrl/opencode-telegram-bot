@@ -9,6 +9,7 @@ import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo 
 import { logger } from "../../utils/logger.js";
 import type { Context } from "grammy";
 import { replyWithInlineMenu } from "./inline-menu.js";
+import { getModelCapabilities, formatCapabilitiesIcons } from "../../app/services/model-capabilities-service.js";
 
 export const MODEL_CENTER_PRICE_LEGEND = "mc:price_legend";
 export const MODEL_CENTER_PRICE_PAGE_PREFIX = "mc:priced:";
@@ -131,9 +132,15 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
   keyboard.text("🧩 Browse providers", MODEL_CENTER_PROVIDERS).row();
   keyboard.text("← Back", MODEL_CENTER_SETTINGS_BACK);
 
-  const currentBlock = current?.providerID && current.modelID
-    ? `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>`
-    : "🟢 <b>CURRENT MODEL</b>\nNo model selected";
+  let currentBlock: string;
+  if (current?.providerID && current.modelID) {
+    const capabilities = await getModelCapabilities(current.providerID, current.modelID);
+    const icons = formatCapabilitiesIcons(capabilities);
+    const iconsLine = icons ? `\n${icons}` : "";
+    currentBlock = `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>${iconsLine}`;
+  } else {
+    currentBlock = "🟢 <b>CURRENT MODEL</b>\nNo model selected";
+  }
 
   return {
     text: [

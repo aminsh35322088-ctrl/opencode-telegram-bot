@@ -84,3 +84,22 @@ export function supportsAttachment(capabilities: Model["capabilities"] | null): 
 
   return capabilities.attachment === true;
 }
+
+/**
+ * Format model capabilities as a compact icon string for UI display.
+ * Only icons for supported capabilities are included.
+ */
+export function formatCapabilitiesIcons(capabilities: Model["capabilities"] | null): string {
+  if (!capabilities) {
+    return "";
+  }
+
+  const icons: string[] = [];
+  if (capabilities.input.image) icons.push("📸");
+  if (capabilities.input.video) icons.push("🎥");
+  if (capabilities.input.audio) icons.push("🔊");
+  if (capabilities.input.pdf) icons.push("📄");
+  if (capabilities.toolcall) icons.push("🛠️");
+  if (capabilities.reasoning) icons.push("🧠");
+  return icons.join(" ");
+}
