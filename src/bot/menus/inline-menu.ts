@@ -39,6 +39,8 @@ function isCloseButton(button: CallbackNavigationButton): boolean {
   return button.text === INLINE_MENU_CLOSE_LABEL || button.callback_data.startsWith(INLINE_MENU_CANCEL_PREFIX);
 }
 function isBackButton(button: CallbackNavigationButton): boolean {
+  // Pagination arrows are not navigation Back buttons.
+  if (button.callback_data.startsWith("session:page:")) return false;
   return button.text?.startsWith("←") || button.callback_data === INLINE_MENU_SETTINGS_BACK_CALLBACK || (button.callback_data.startsWith("mc:") && button.callback_data.includes("back"));
 }
 function trimEmptyKeyboardRows(keyboard: InlineKeyboard): void {
@@ -49,15 +51,10 @@ function trimEmptyKeyboardRows(keyboard: InlineKeyboard): void {
   }
 }
 
-/**
- * Preserve every screen's own Back callback and make Home a universal escape hatch.
- * Any row containing a semantic Back button gets Home on that same row. Screens
- * without Back still receive one Home button so nested flows can always reach Main.
- */
-export function appendHomeNavigation(keyboard: InlineKeyboard): InlineKeyboard {
+/** Add Home beside every semantic Back button. Non-topic menus also get a fallback Home row. */
+export function appendHomeNavigation(keyboard: InlineKeyboard, addFallbackHome = true): InlineKeyboard {
   trimEmptyKeyboardRows(keyboard);
   let hasHome = false;
-  let closeRow: typeof keyboard.inline_keyboard[number] | undefined;
 
   for (const row of keyboard.inline_keyboard) {
     let hasBack = false;
@@ -70,7 +67,6 @@ export function appendHomeNavigation(keyboard: InlineKeyboard): InlineKeyboard {
         rowHasHome = true;
       }
       if (isBackButton(callbackButton)) hasBack = true;
-      if (isCloseButton(callbackButton)) closeRow = row;
     }
     if (hasBack && !rowHasHome) {
       row.push({ text: INLINE_MENU_HOME_LABEL, callback_data: INLINE_MENU_HOME_CALLBACK });
@@ -78,10 +74,7 @@ export function appendHomeNavigation(keyboard: InlineKeyboard): InlineKeyboard {
     }
   }
 
-  if (!hasHome) {
-    if (closeRow) closeRow.push({ text: INLINE_MENU_HOME_LABEL, callback_data: INLINE_MENU_HOME_CALLBACK });
-    else keyboard.row().text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
-  }
+  if (!hasHome && addFallbackHome) keyboard.row().text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
   return keyboard;
 }
 
@@ -94,28 +87,31 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
     ? (menuKind === "settings" ? "close" : "back")
     : navigation;
 
-  let hasBack = false;
+  let backButton: CallbackNavigationButton | undefined;
   let hasClose = false;
   for (const row of keyboard.inline_keyboard) {
     for (const button of row) {
       if (!("callback_data" in button)) continue;
       const callbackButton = button as CallbackNavigationButton;
-      if (isBackButton(callbackButton)) hasBack = true;
+      if (!backButton && isBackButton(callbackButton)) backButton = callbackButton;
       if (isCloseButton(callbackButton)) hasClose = true;
     }
   }
 
-  // Only synthesize Settings Back when a settings view explicitly requests one.
-  // Existing Back buttons are never rewritten: their destination is part of the view.
-  if ((mode === "back" || mode === "both") && !hasBack && menuKind === "settings") {
-    keyboard.row().text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
-    hasBack = true;
+  if (mode === "back" || mode === "both") {
+    if (!backButton) {
+      keyboard.row().text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
+    } else if (menuKind === "settings" && backButton.callback_data === INLINE_MENU_SETTINGS_BACK_CALLBACK) {
+      // Topic child Settings uses one stable parent callback and a uniform Back label.
+      backButton.text = INLINE_MENU_BACK_LABEL;
+    }
   }
   if ((mode === "close" || mode === "both") && !hasClose) {
     keyboard.row().text(INLINE_MENU_CLOSE_LABEL, `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`);
   }
 
-  return appendHomeNavigation(keyboard);
+  // Topic root Settings intentionally stays Close-only. Every actual Back row still gets Home.
+  return appendHomeNavigation(keyboard, false);
 }
 
 export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReplyOptions): Promise<number> {
