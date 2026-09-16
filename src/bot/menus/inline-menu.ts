@@ -32,97 +32,90 @@ function getTopicThreadId(ctx: Context): number | null {
   return typeof message?.message_thread_id === "number" ? message.message_thread_id : null;
 }
 function menuKey(chatId: number, threadId?: number): string { return `${chatId}:${threadId ?? 0}`; }
-export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind, threadId?: number, navigation: InlineMenuNavigation = "auto"): InlineKeyboard {
+function isHomeButton(button: CallbackNavigationButton): boolean {
+  return button.text === INLINE_MENU_HOME_LABEL && button.callback_data === INLINE_MENU_HOME_CALLBACK;
+}
+function isCloseButton(button: CallbackNavigationButton): boolean {
+  return button.text === INLINE_MENU_CLOSE_LABEL || button.callback_data.startsWith(INLINE_MENU_CANCEL_PREFIX);
+}
+function isBackButton(button: CallbackNavigationButton): boolean {
+  return button.text?.startsWith("←") || button.callback_data === INLINE_MENU_SETTINGS_BACK_CALLBACK || (button.callback_data.startsWith("mc:") && button.callback_data.includes("back"));
+}
+function trimEmptyKeyboardRows(keyboard: InlineKeyboard): void {
   while (keyboard.inline_keyboard.length > 0) {
     const lastRow = keyboard.inline_keyboard[keyboard.inline_keyboard.length - 1];
     if (!lastRow || lastRow.length > 0) break;
     keyboard.inline_keyboard.pop();
   }
+}
 
-  const isTopic = typeof threadId === "number" && threadId > 1;
-  if (!isTopic) {
-    const hasHome = keyboard.inline_keyboard.some((row) => row.some((button) => button.text === INLINE_MENU_HOME_LABEL && "callback_data" in button && button.callback_data === INLINE_MENU_HOME_CALLBACK));
-    if (!hasHome) {
-      keyboard.row();
-      keyboard.text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
+/**
+ * Preserve every screen's own Back callback and make Home a universal escape hatch.
+ * Any row containing a semantic Back button gets Home on that same row. Screens
+ * without Back still receive one Home button so nested flows can always reach Main.
+ */
+export function appendHomeNavigation(keyboard: InlineKeyboard): InlineKeyboard {
+  trimEmptyKeyboardRows(keyboard);
+  let hasHome = false;
+  let closeRow: typeof keyboard.inline_keyboard[number] | undefined;
+
+  for (const row of keyboard.inline_keyboard) {
+    let hasBack = false;
+    let rowHasHome = false;
+    for (const button of row) {
+      if (!("callback_data" in button)) continue;
+      const callbackButton = button as CallbackNavigationButton;
+      if (isHomeButton(callbackButton)) {
+        hasHome = true;
+        rowHasHome = true;
+      }
+      if (isBackButton(callbackButton)) hasBack = true;
+      if (isCloseButton(callbackButton)) closeRow = row;
     }
-    return keyboard;
+    if (hasBack && !rowHasHome) {
+      row.push({ text: INLINE_MENU_HOME_LABEL, callback_data: INLINE_MENU_HOME_CALLBACK });
+      hasHome = true;
+    }
   }
+
+  if (!hasHome) {
+    if (closeRow) closeRow.push({ text: INLINE_MENU_HOME_LABEL, callback_data: INLINE_MENU_HOME_CALLBACK });
+    else keyboard.row().text(INLINE_MENU_HOME_LABEL, INLINE_MENU_HOME_CALLBACK);
+  }
+  return keyboard;
+}
+
+export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind: InlineMenuKind, threadId?: number, navigation: InlineMenuNavigation = "auto"): InlineKeyboard {
+  trimEmptyKeyboardRows(keyboard);
+  const isTopic = typeof threadId === "number" && threadId > 1;
+  if (!isTopic) return appendHomeNavigation(keyboard);
 
   const mode: Exclude<InlineMenuNavigation, "auto"> = navigation === "auto"
     ? (menuKind === "settings" ? "close" : "back")
     : navigation;
-  let hasNavigationButton = false;
-  let hasCloseButton = false;
-  let lastBackRow: typeof keyboard.inline_keyboard[number] | undefined;
 
+  let hasBack = false;
+  let hasClose = false;
   for (const row of keyboard.inline_keyboard) {
-    let rowHasBack = false;
     for (const button of row) {
       if (!("callback_data" in button)) continue;
       const callbackButton = button as CallbackNavigationButton;
-      const callbackData = callbackButton.callback_data;
-      const isHome = callbackButton.text === INLINE_MENU_HOME_LABEL && callbackData === INLINE_MENU_HOME_CALLBACK;
-      const isClose = callbackButton.text === INLINE_MENU_CLOSE_LABEL;
-      const isSemanticBack = callbackButton.text?.startsWith("←") || callbackData === INLINE_MENU_SETTINGS_BACK_CALLBACK || (callbackData.startsWith("mc:") && callbackData.includes("back"));
-
-      if (isHome) {
-        if (mode === "close") {
-          callbackButton.text = INLINE_MENU_CLOSE_LABEL;
-          callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
-          hasCloseButton = true;
-        } else {
-          callbackButton.text = INLINE_MENU_BACK_LABEL;
-          callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
-          rowHasBack = true;
-        }
-        hasNavigationButton = true;
-        continue;
-      }
-
-      if (isClose) {
-        if (mode === "close" || mode === "both") {
-          callbackButton.callback_data = `${INLINE_MENU_CANCEL_PREFIX}settings`;
-          hasCloseButton = true;
-        } else {
-          callbackButton.text = INLINE_MENU_BACK_LABEL;
-          callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
-          rowHasBack = true;
-        }
-        hasNavigationButton = true;
-        continue;
-      }
-
-      if (isSemanticBack) {
-        hasNavigationButton = true;
-        rowHasBack = true;
-        if (menuKind === "settings" && (mode === "back" || mode === "both")) {
-          callbackButton.text = INLINE_MENU_BACK_LABEL;
-          callbackButton.callback_data = INLINE_MENU_SETTINGS_BACK_CALLBACK;
-        }
-      }
+      if (isBackButton(callbackButton)) hasBack = true;
+      if (isCloseButton(callbackButton)) hasClose = true;
     }
-    if (rowHasBack) lastBackRow = row;
   }
 
-  if (mode === "both") {
-    if (!lastBackRow) {
-      keyboard.row().text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
-      lastBackRow = keyboard.inline_keyboard.at(-1);
-      hasNavigationButton = true;
-    }
-    if (!hasCloseButton && lastBackRow) {
-      lastBackRow.push({ text: INLINE_MENU_CLOSE_LABEL, callback_data: `${INLINE_MENU_CANCEL_PREFIX}settings` });
-    }
-    return keyboard;
+  // Only synthesize Settings Back when a settings view explicitly requests one.
+  // Existing Back buttons are never rewritten: their destination is part of the view.
+  if ((mode === "back" || mode === "both") && !hasBack && menuKind === "settings") {
+    keyboard.row().text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
+    hasBack = true;
+  }
+  if ((mode === "close" || mode === "both") && !hasClose) {
+    keyboard.row().text(INLINE_MENU_CLOSE_LABEL, `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`);
   }
 
-  if (!hasNavigationButton) {
-    keyboard.row();
-    if (mode === "close") keyboard.text(INLINE_MENU_CLOSE_LABEL, `${INLINE_MENU_CANCEL_PREFIX}settings`);
-    else keyboard.text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
-  }
-  return keyboard;
+  return appendHomeNavigation(keyboard);
 }
 
 export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReplyOptions): Promise<number> {
