@@ -80,7 +80,11 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   if (inputType === "text" && isSetupWizardText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
   if (isBusy && inputType === "text" && isQueuedPromptButtonPress(ctx)) return createAllowDecision(inputType, scopedState, command, true);
   if (inputType === "text" && scopedState?.kind === "inline" && isRootNavigationText(ctx)) return createAllowDecision(inputType, scopedState, command, isBusy);
-  if (scopedState && interactionManager.isExpired()) { interactionManager.clear("expired"); return createBlockDecision(inputType, scopedState, "expired", command, isBusy); }
+  if (scopedState && interactionManager.isExpired()) {
+    interactionManager.clear("expired");
+    if (inputType === "callback" && scopedState.kind === "inline") return createAllowDecision(inputType, null, command, isBusy);
+    return createBlockDecision(inputType, scopedState, "expired", command, isBusy);
+  }
   if (isBusy) {
     if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "command_not_allowed", command); }
     if (scopedState && allowsBusyInteraction(scopedState.kind)) {
@@ -88,6 +92,7 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
       if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command, true);
       return createBusyBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);
     }
+    if (inputType === "callback" && (scopedState === null || scopedState.kind === "inline" || scopedState.kind === "custom")) return createAllowDecision(inputType, scopedState, command, true);
     return createBusyBlockDecision(inputType, scopedState, "expected_text", command);
   }
   if (!scopedState) return createAllowDecision(inputType, null, command);

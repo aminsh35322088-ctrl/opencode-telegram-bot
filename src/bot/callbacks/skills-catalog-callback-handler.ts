@@ -3,6 +3,7 @@ import { config } from "../../config.js";
 import type { SkillCatalogItem } from "../../app/services/skills-catalog-service.js";
 import { loadSkillsCatalog } from "../../app/services/skills-catalog-service.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
+import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
@@ -206,6 +207,31 @@ export async function executeSkill(
   await processUserPrompt(ctx, promptText, deps);
 }
 
+async function recoverSkillsListInteraction(ctx: Context): Promise<boolean> {
+  const messageId = getCallbackMessageId(ctx);
+  if (messageId === null) return false;
+  const projectDirectory = getCurrentSessionDirectory();
+  if (!projectDirectory) return false;
+  let skills: SkillCatalogItem[];
+  try {
+    skills = await loadSkillsCatalog(projectDirectory);
+  } catch (error) {
+    logger.warn("[Skills] Failed to recover skills list interaction:", error);
+    return false;
+  }
+  const pageSize = config.bot.commandsListLimit;
+  const keyboard = buildSkillsListKeyboard(skills, 0, pageSize);
+  try {
+    await editCatalogMessageIgnoringNoop(ctx, formatSkillsSelectText(0), keyboard);
+  } catch (error) {
+    logger.warn("[Skills] Failed to re-render skills list during recovery:", error);
+    return false;
+  }
+  interactionManager.start({ kind: "custom", expectedInput: "callback", metadata: { flow: "skills", stage: "list", messageId, projectDirectory, skills, page: 0 } });
+  await ctx.answerCallbackQuery().catch(() => {});
+  return true;
+}
+
 export async function handleSkillsCallback(
   ctx: Context,
   deps: ProcessPromptDeps,
@@ -219,12 +245,19 @@ export async function handleSkillsCallback(
     return handleSkillImportCallback(ctx, data);
   }
 
-  const metadata = parseSkillsMetadata(interactionManager.getSnapshot());
+  let metadata = parseSkillsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
 
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
-    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
-    return true;
+    if (!(await recoverSkillsListInteraction(ctx))) {
+      await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+      return true;
+    }
+    metadata = parseSkillsMetadata(interactionManager.getSnapshot());
+    if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
+      await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+      return true;
+    }
   }
 
   try {

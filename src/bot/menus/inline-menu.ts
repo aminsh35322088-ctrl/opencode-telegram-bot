@@ -1,5 +1,5 @@
 import { Context, InlineKeyboard } from "grammy";
-import { interactionManager } from "../../app/managers/interaction-manager.js";
+import { interactionManager, DEFAULT_INLINE_MENU_TTL_MS } from "../../app/managers/interaction-manager.js";
 import type { InteractionMetadata } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -160,7 +160,10 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
   const callbackMessageId = getCallbackMessageId(ctx);
   const callbackData = ctx.callbackQuery?.data ?? "";
   const isActive = !!activeMetadata && callbackMessageId !== null && activeMetadata.menuKind === menuKind && activeMetadata.messageId === callbackMessageId;
-  if (isActive) return true;
+  if (isActive) {
+    interactionManager.transition({ expiresInMs: DEFAULT_INLINE_MENU_TTL_MS });
+    return true;
+  }
 
   if (chatId !== null && callbackMessageId !== null && (callbackData.startsWith(`${menuKind}:`) || callbackData.startsWith(`${INLINE_MENU_CANCEL_PREFIX}${menuKind}`))) {
     activeInlineMenus.set(menuKey(chatId, threadId ?? undefined), { menuKind, messageId: callbackMessageId, ...(threadId !== null ? { threadId } : {}) });
