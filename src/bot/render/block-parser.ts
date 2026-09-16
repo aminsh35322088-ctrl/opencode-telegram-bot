@@ -178,6 +178,21 @@ const INLINE_HTML_WRAPPERS = new Map<string, InlineHtmlWrapper>([
 const INLINE_HTML_TAG_PATTERN = /^<(\/?)([a-z][a-z0-9-]*)(?:\s[^>]*?)?\/?>$/i;
 const HTML_PRE_CODE_PATTERN = /^<pre(?:\s[^>]*)?>\s*<code((?:\s[^>]*)?)>([\s\S]*?)<\/code>\s*<\/pre>$/i;
 const HTML_PRE_PATTERN = /^<pre(?:\s[^>]*)?>([\s\S]*?)<\/pre>$/i;
+const HTML_NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  hellip: "…",
+  ldquo: "“",
+  lsquo: "‘",
+  lt: "<",
+  mdash: "—",
+  nbsp: "\u00a0",
+  ndash: "–",
+  quot: '"',
+  rdquo: "”",
+  rsquo: "’",
+};
 
 /** Telegram's rich markdown marks text with `==`; remark leaves it in the text. */
 const MARKED_TEXT_PATTERN = /==(?=\S)([\s\S]*?\S)==/g;
@@ -191,10 +206,34 @@ function parseInlineHtmlTag(value: string): { name: string; closing: boolean } |
   return { name: name.toLowerCase(), closing: match[1] === "/" };
 }
 
+function decodeHtmlEntities(value: string): string {
+  return value.replace(
+    /&(?:#(\d+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));/gi,
+    (match, decimal: string | undefined, hex: string | undefined, named: string | undefined) => {
+      if (named) {
+        return HTML_NAMED_ENTITIES[named.toLowerCase()] ?? match;
+      }
+
+      const radix = decimal ? 10 : 16;
+      const codePoint = Number.parseInt(decimal ?? hex ?? "", radix);
+      if (
+        !Number.isInteger(codePoint) ||
+        codePoint <= 0 ||
+        codePoint > 0x10ffff ||
+        (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ) {
+        return match;
+      }
+
+      return String.fromCodePoint(codePoint);
+    },
+  );
+}
+
 function extractHtmlAttribute(tagValue: string, attrName: string): string | null {
   const pattern = new RegExp(`\\b${attrName}\\s*=\\s*(["'])([^"']*)\\1`, "i");
   const match = pattern.exec(tagValue);
-  return match?.[2] ?? null;
+  return match?.[2] === undefined ? null : decodeHtmlEntities(match[2]);
 }
 
 function extractCodeLanguage(attributes: string): string | undefined {
@@ -218,7 +257,7 @@ function parseHtmlPreBlock(value: string): TelegramBlock[] | null {
       {
         type: "code",
         ...(language ? { language } : {}),
-        text: codeMatch[2] ?? "",
+        text: decodeHtmlEntities(codeMatch[2] ?? ""),
       },
     ];
   }
@@ -228,7 +267,7 @@ function parseHtmlPreBlock(value: string): TelegramBlock[] | null {
     return null;
   }
 
-  return [{ type: "code", text: preMatch[1] ?? "" }];
+  return [{ type: "code", text: decodeHtmlEntities(preMatch[1] ?? "") }];
 }
 
 /** An opened tag and the nodes it collects until its closing tag arrives. */
