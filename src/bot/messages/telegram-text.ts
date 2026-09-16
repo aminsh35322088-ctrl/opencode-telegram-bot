@@ -1,5 +1,5 @@
 import type { Api, RawApi } from "grammy";
-import type { MessageEntity } from "grammy/types";
+import type { InputRichMessageWithoutUpload, MessageEntity } from "grammy/types";
 import { logger } from "../../utils/logger.js";
 import {
   editMessageWithMarkdownFallback,
@@ -9,6 +9,7 @@ import {
 import { chunkPlainText } from "../render/chunker.js";
 import { TELEGRAM_TEXT_MESSAGE_LIMIT } from "../render/limits.js";
 import { getTelegramRenderedPartSignature } from "../render/part-signature.js";
+import { shouldRenderRtl } from "../render/text-direction.js";
 import type { TelegramRenderedPart } from "../render/types.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage" | "sendRichMessage">;
@@ -115,6 +116,26 @@ function isPlainPart(part: TelegramRenderedPart): boolean {
 
 function isThinkingPart(part: TelegramRenderedPart): boolean {
   return part.blocks.some((block) => block.type === "thinking");
+}
+
+/**
+ * Code blocks stay LTR no matter what language their string literals quote:
+ * a part made solely of `pre` blocks must never take an RTL base, mirroring
+ * the "code is never flipped" invariant of RTL typography helpers.
+ */
+function isCodeOnlyPart(part: TelegramRenderedPart): boolean {
+  return part.blocks.length > 0 && part.blocks.every((block) => block.type === "pre");
+}
+
+function toInputRichMessage(part: TelegramRenderedPart): InputRichMessageWithoutUpload {
+  if (isCodeOnlyPart(part)) {
+    return { blocks: part.blocks };
+  }
+
+  return {
+    blocks: part.blocks,
+    ...(shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
+  };
 }
 
 function plainSignature(text: string, entities?: MessageEntity[]): string {
@@ -227,7 +248,7 @@ export async function sendRenderedBotPart({
       await api.sendRichMessageDraft(
         chatId,
         draftId,
-        { blocks: part.blocks },
+        toInputRichMessage(part),
         GENERATION_DRAFT_OPTIONS,
       );
       markThinkingDraft(chatId, draftId);
@@ -262,7 +283,7 @@ export async function sendRenderedBotPart({
   try {
     const sentMessage = await api.sendRichMessage(
       chatId,
-      { blocks: part.blocks },
+      toInputRichMessage(part),
       rawOptions as TelegramSendRichOptions,
     );
 
@@ -317,7 +338,7 @@ async function persistThinkingDraftFinal(
   try {
     await api.sendRichMessage(
       chatId,
-      { blocks: part.blocks },
+      toInputRichMessage(part),
       rawOptions as TelegramSendRichOptions,
     );
     return { deliveredSignature: getTelegramRenderedPartSignature(part) };
@@ -358,7 +379,7 @@ export async function editRenderedBotPart({
       await api.sendRichMessageDraft(
         chatId,
         messageId,
-        { blocks: part.blocks },
+        toInputRichMessage(part),
         GENERATION_DRAFT_OPTIONS,
       );
       markThinkingDraft(chatId, messageId);
@@ -396,7 +417,7 @@ export async function editRenderedBotPart({
   }
 
   try {
-    await api.editMessageText(chatId, messageId, { blocks: part.blocks }, rawOptions);
+    await api.editMessageText(chatId, messageId, toInputRichMessage(part), rawOptions);
 
     return {
       deliveredSignature: getTelegramRenderedPartSignature(part),
@@ -466,7 +487,7 @@ export async function sendDraftBotPart({
   await api.sendRichMessageDraft(
     chatId,
     draftId,
-    { blocks: part.blocks },
+    toInputRichMessage(part),
     GENERATION_DRAFT_OPTIONS,
   );
   return {
@@ -508,7 +529,7 @@ export async function completeDraftPart({
 
   const sentMessage = await api.sendRichMessage(
     chatId,
-    { blocks: part.blocks },
+    toInputRichMessage(part),
     rawOptions as TelegramSendRichOptions,
   );
   return {
