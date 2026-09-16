@@ -58,11 +58,17 @@ export function buildMcpsEmptyKeyboard(): InlineKeyboard {
     .text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row()
     .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("🏠 Home", "main:home");
 }
+export function buildMcpsWizardKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("← MCP Servers", MCPS_CALLBACK_CANCEL)
+    .text("🏠 Home", "main:home");
+}
 export function buildMcpsAddTypeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("💻 Local", MCPS_CALLBACK_ADD_LOCAL)
     .text("🌐 Remote", MCPS_CALLBACK_ADD_REMOTE).row()
-    .text("✖ Cancel", MCPS_CALLBACK_CANCEL);
+    .text("← MCP Servers", MCPS_CALLBACK_CANCEL)
+    .text("🏠 Home", "main:home");
 }
 export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKeyboard {
   const keyboard = new InlineKeyboard();
