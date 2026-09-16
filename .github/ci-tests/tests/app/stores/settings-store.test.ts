@@ -43,7 +43,7 @@ describe("settings-store", () => {
   });
 
   it("loads persisted current settings", async () => {
-    await writeFile(path.join(tempHome, "settings.json"), JSON.stringify({ compactOutputMode: true, promptQueueEnabled: true, responseStreamingMode: "draft", showThinkingContent: false, messageFormatMode: "raw" }));
+    await writeFile(path.join(tempHome, "app-state.json"), JSON.stringify({ version: 2, settings: { compactOutputMode: true, promptQueueEnabled: true, responseStreamingMode: "draft", showThinkingContent: false, messageFormatMode: "raw" } }));
     await loadSettings();
     expect(getCompactOutputMode()).toBe(true);
     expect(getPromptQueueEnabled()).toBe(true);
@@ -56,22 +56,22 @@ describe("settings-store", () => {
     await loadSettings();
     setCompactOutputMode(true);
     await flushSettings();
-    const settings = JSON.parse(await readFile(path.join(tempHome, "settings.json"), "utf8"));
-    expect(settings.compactOutputMode).toBe(true);
+    const state = JSON.parse(await readFile(path.join(tempHome, "app-state.json"), "utf8"));
+    expect(state.settings.compactOutputMode).toBe(true);
   });
 
   it("persists message format mode", async () => {
     await loadSettings();
     setMessageFormatMode("raw");
     await flushSettings();
-    const settings = JSON.parse(await readFile(path.join(tempHome, "settings.json"), "utf8"));
-    expect(settings.messageFormatMode).toBe("raw");
+    const state = JSON.parse(await readFile(path.join(tempHome, "app-state.json"), "utf8"));
+    expect(state.settings.messageFormatMode).toBe("raw");
     expect(getMessageFormatMode()).toBe("raw");
   });
 
   it("recovers from a corrupted settings file using the backup", async () => {
-    await writeFile(path.join(tempHome, "settings.json"), '{"compactOutputMode":');
-    await writeFile(path.join(tempHome, "settings.json.bak"), JSON.stringify({ compactOutputMode: true }));
+    await writeFile(path.join(tempHome, "app-state.json"), '{"version": 2, "settings": {');
+    await writeFile(path.join(tempHome, "app-state.json.bak"), JSON.stringify({ version: 2, settings: { compactOutputMode: true } }));
     await loadSettings();
     expect(getCompactOutputMode()).toBe(true);
   });

@@ -32,7 +32,6 @@ async function loadAssistantRendering(mode: "raw" | "markdown") {
       files: { maxFileSizeKb: 100 },
       open: { browserRoots: "" },
       stt: { apiUrl: "", apiKey: "", model: "", language: "" },
-      tts: { apiUrl: "", apiKey: "", model: "", voice: "" },
     },
   }));
   vi.doMock("../../../src/utils/logger.js", () => ({

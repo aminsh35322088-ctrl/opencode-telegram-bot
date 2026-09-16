@@ -50,7 +50,6 @@ export async function removeRailwayAccount(id: string): Promise<boolean> { retur
 export async function setActiveRailwayAccount(id: string): Promise<RailwayAccount> { return withStoreLock(async () => { const index = await readIndex(); const account = index.accounts.find((item) => item.id === id); if (!account) throw new Error("Railway account not found"); index.activeId = id; await writeIndex(index); await applyActiveRailwayToken(); return publicAccount(account); }); }
 export async function getRailwayToken(): Promise<string> { return withStoreLock(async () => { const index = await readIndex(); const account = index.accounts.find((item) => item.id === index.activeId) ?? index.accounts[0]; return account?.token ?? ""; }); }
 export async function getActiveRailwayTokenType(): Promise<RailwayTokenType | null> { return withStoreLock(async () => { const index = await readIndex(); return (index.accounts.find((item) => item.id === index.activeId) ?? index.accounts[0])?.tokenType ?? null; }); }
-export async function hasRailwayToken(): Promise<boolean> { try { return Boolean(await getRailwayToken()); } catch { return false; } }
 export async function clearRailwayToken(): Promise<void> { await withStoreLock(async () => { const state = await readAppState(); await updateAppState({ integrations: { ...getIntegrationState(state), railway: { accounts: [], activeId: undefined } } }); delete process.env.RAILWAY_TOKEN; delete process.env.RAILWAY_API_TOKEN; }); }
 
 export async function initializeRailwayIntegration(): Promise<boolean> {

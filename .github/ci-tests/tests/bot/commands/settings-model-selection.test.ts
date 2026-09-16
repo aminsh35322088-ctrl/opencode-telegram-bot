@@ -9,7 +9,8 @@ vi.mock("../../../src/bot/menus/model-center-menu.js", () => ({
   showModelCenterMenu,
 }));
 
-vi.mock("../../../src/bot/menus/inline-menu.js", () => ({
+vi.mock("../../../src/bot/menus/inline-menu.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../src/bot/menus/inline-menu.js")>(),
   replyWithInlineMenu: vi.fn(),
   appendInlineMenuCancelButton: vi.fn((keyboard: unknown) => keyboard),
   ensureActiveInlineMenu,

@@ -19,12 +19,40 @@ import { getServiceStateFilePathFromEnv, isServiceChildProcess } from "../../run
 import { flushLogger, getLogFilePath, initializeLogger, logger } from "../../utils/logger.js";
 import { RuntimeObservabilityWatchdog } from "../../utils/runtime-observability.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
+import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
+import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
+import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
 const LOG_FLUSH_TIMEOUT_MS = 1000;
 
 async function getBotVersion(): Promise<string> { try { const packageJsonPath = new URL("../../../package.json", import.meta.url); const packageJsonContent = await readFile(packageJsonPath, "utf-8"); const packageJson = JSON.parse(packageJsonContent) as { version?: string }; return packageJson.version ?? "unknown"; } catch (error) { logger.warn("[App] Failed to read bot version", error); return "unknown"; } }
+
+/**
+ * Deletes topic workspaces and Topic runtime states that no live binding owns.
+ * Interrupted or previously partial deletes leaked these orphans onto the
+ * persistent volume; startup reconcile guarantees every restart converges.
+ */
+async function reconcileOrphanedTopicState(): Promise<void> {
+  try {
+    const bindings = await listTelegramTopicBindings();
+    const referencedDirectories = new Set(bindings.map((binding) => binding.directory));
+    const removedWorkspaces = await reconcileTopicWorkspaces(referencedDirectories);
+    const liveTopicKeys = new Set(bindings.map((binding) => `${binding.chatId}:${binding.threadId}`));
+    let removedStates = 0;
+    for (const state of await listTopicRuntimeStates()) {
+      if (liveTopicKeys.has(`${state.chatId}:${state.threadId}`)) continue;
+      await removeTopicRuntimeState(state.chatId, state.threadId);
+      removedStates += 1;
+    }
+    if (removedWorkspaces.length > 0 || removedStates > 0) {
+      logger.info(`[TelegramTopics] Startup reconcile removed orphaned workspaces=${removedWorkspaces.length}, runtimeStates=${removedStates}`);
+    }
+  } catch (error) {
+    logger.warn("[TelegramTopics] Startup orphan reconciliation failed; continuing", error);
+  }
+}
 
 export async function startBotApp(): Promise<void> {
   await initializeLogger();
@@ -37,6 +65,7 @@ export async function startBotApp(): Promise<void> {
   const unhandledRejectionHandler = (reason: unknown): void => { logger.error("[App] Unhandled promise rejection", reason); }; const uncaughtExceptionHandler = (error: Error): void => { logger.error("[App] Uncaught exception", error); void clearManagedServiceState().catch(() => {}).then(() => flushSettingsWithTimeout()).then(() => flushLoggerWithTimeout()).finally(() => process.exit(1)); };
   process.on("unhandledRejection", unhandledRejectionHandler); process.on("uncaughtException", uncaughtExceptionHandler);
   await loadSettings();
+  await reconcileOrphanedTopicState();
   const githubConfigured = await initializeGithubIntegration().catch((error) => { logger.warn("[GithubIntegration] Could not initialize stored GitHub integration; continuing without GitHub integration", error); return false; }); logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
   const railwayConfigured = await initializeRailwayIntegration().catch((error) => { logger.warn("[RailwayIntegration] Could not initialize stored Railway integration; continuing without Railway integration", error); return false; }); logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
   try { process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig(); } catch (error) { logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error); }
@@ -44,17 +73,20 @@ export async function startBotApp(): Promise<void> {
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
 
-  // Older builds could pin Main at chat scope. Unpin only the exact persisted
-  // bot-owned Main anchor; do not delete messages or alter Topic contents.
+  // Re-pin only the exact bot-owned Main navigation anchors. These IDs are
+  // persisted exclusively by KeyboardManager's root/All path; real Topic
+  // messages are rejected before persistence, so coding Topic pins are never
+  // touched here. This also repairs an unpinned Main panel immediately after a
+  // restart instead of waiting for the user to run /start again.
   const mainNavigationMessageIds = getGlobalSettings().mainNavigationMessageIds ?? {};
   for (const [chatIdText, messageId] of Object.entries(mainNavigationMessageIds)) {
     const chatId = Number(chatIdText);
     if (!Number.isSafeInteger(chatId) || typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) continue;
     try {
-      await bot.api.unpinChatMessage(chatId, messageId);
-      logger.info(`[TelegramKeyboard] Startup migration unpinned Main navigation anchor: chat=${chatId}, message=${messageId}`);
+      await bot.api.pinChatMessage(chatId, messageId, { disable_notification: true });
+      logger.info(`[TelegramKeyboard] Startup restored Main navigation pin in All/root: chat=${chatId}, message=${messageId}`);
     } catch (error) {
-      logger.debug(`[TelegramKeyboard] Startup Main anchor was already unpinned or unavailable: chat=${chatId}, message=${messageId}`, error);
+      logger.warn(`[TelegramKeyboard] Startup could not restore Main navigation pin: chat=${chatId}, message=${messageId}`, error);
     }
   }
 

@@ -6,6 +6,15 @@ Instructions for AI agents working on this project.
 
 Always read `AGENTS.md` before changing code. It is the project's operating contract.
 
+## Skills — use them in every session
+
+The list of available skills appears in `<available_skills>` in the system prompt. This rule applies to every topic, every model, and every workspace.
+
+- Before answering any non-trivial request, scan the skill descriptions. If there is even a small chance a skill applies, load it with the `skill` tool and follow it — without waiting for the user to ask.
+- Typical mappings: new feature or behavior change → `brainstorming`; bug, failing test, unexpected behavior → `systematic-debugging`; implementing any feature or fix → `test-driven-development`; about to claim work complete → `verification-before-completion`; dense or structurally complex material that needs a map → `focus-friendly`.
+- Skills are the default workflow, not optional polish. Missing an applicable skill counts as an error.
+- When creating a skill (manually, via GitHub import, or through `writing-skills`), always give it a clear `description:` in the SKILL.md frontmatter so the bot's `/skills` catalog shows a meaningful, skill-specific description.
+
 ## About the project
 
 **opencode-telegram-bot** is a Telegram bot client for OpenCode.
@@ -50,9 +59,30 @@ For code changes:
 
 Do not create a second application dependency tree on the Railway volume. Do not add disposable build tooling to the production image.
 
+### Where to work
+
+The persistent repository checkout lives at `/data/opencode/opencode-telegram-bot` and tracks `main`.
+
+When a task needs a working copy on a branch, create a git worktree **inside the agent's own session workspace** and work there:
+
+```bash
+git -C /data/opencode/opencode-telegram-bot worktree add "$PWD/repo" -b <branch> origin/main
+ln -sfn /app/node_modules "$PWD/repo/node_modules"
+```
+
+Never create worktrees, clones, or repo copies under `/tmp`: container restarts wipe `/tmp`, which orphans in-progress work, leaves stale `.git/worktrees` metadata behind, and forces work to be redone. Only disposable build/test output may go to `/tmp`.
+
+Commit and push early — GitHub is the durable store, the worktree is not. After the branch is merged or abandoned, remove it:
+
+```bash
+git -C /data/opencode/opencode-telegram-bot worktree remove <path> && git worktree prune
+```
+
 ### Surgical changes
 
 Touch only what is necessary. Do not refactor unrelated code or delete unrelated dead code.
+
+Before removing an exported app-service function, grep `.opencode/tools/` as well: custom runtime tools load compiled services dynamically (for example the railway tool's store contract against `/app/dist/app/services/railway-integration-service.js`), which static import scans cannot see.
 
 ### Goal-driven execution
 

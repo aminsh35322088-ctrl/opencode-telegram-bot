@@ -151,7 +151,9 @@ describe("opencode/auto-restart", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(healthyResponse());
-    mocked.findServerPidMock.mockResolvedValueOnce(null).mockResolvedValueOnce(456);
+    // Startup health-check passes, so findServerPid is only consulted once:
+    // during recovery after the three consecutive interval failures.
+    mocked.findServerPidMock.mockResolvedValueOnce(456);
     const service = new OpencodeAutoRestartService();
 
     await service.start();

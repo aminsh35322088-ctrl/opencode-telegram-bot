@@ -11,6 +11,7 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
+
 import {
   buildDefaultModelsSettingsView,
   buildExperimentalSettingsView,
@@ -61,8 +62,17 @@ import {
   SETTINGS_TOPIC_DEFAULTS_CALLBACK,
   SETTINGS_VARIANT_CALLBACK,
   SETTINGS_CALLBACK_PREFIX,
+  SETTINGS_MEMORY_CALLBACK,
+  SETTINGS_MEMORY_CLEAR_CALLBACK,
+  SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK,
+  SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK,
+  SETTINGS_MEMORY_DELETE_PREFIX,
+  buildMemoryClearConfirmationView,
+  buildMemorySettingsView,
 } from "../menus/settings-menu.js";
+
 import { factoryReset, resetHistory } from "../../app/services/telegram-reset-service.js";
+import { clearAllMemories, listMemories, removeMemory } from "../../app/services/memory-service.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import type { InlineMenuNavigation } from "../menus/inline-menu.js";
@@ -89,6 +99,13 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   if (!callbackData?.startsWith(SETTINGS_CALLBACK_PREFIX)) return false;
   if (!(await ensureActiveInlineMenu(ctx, "settings"))) return true;
   try {
+    if (callbackData.startsWith(SETTINGS_MEMORY_DELETE_PREFIX)) {
+      const memoryId = callbackData.slice(SETTINGS_MEMORY_DELETE_PREFIX.length);
+      const removed = await removeMemory(memoryId);
+      await ctx.answerCallbackQuery({ text: removed ? "Memory deleted" : "Memory not found" });
+      await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
+      return true;
+    }
     switch (callbackData) {
       // Topic Settings keeps its per-topic model selector. Global Settings uses the unified Default Models hub.
       case SETTINGS_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
@@ -111,6 +128,24 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx as never); return true;
       case SETTINGS_SKILLS_CALLBACK: await ctx.answerCallbackQuery(); await skillsCommand(ctx as never); return true;
       case SETTINGS_COMMANDS_CALLBACK: await ctx.answerCallbackQuery(); await commandsCommand(ctx as never); return true;
+      case SETTINGS_MEMORY_CALLBACK: {
+        await ctx.answerCallbackQuery();
+        const memories = await listMemories();
+        await renderSettingsView(ctx, buildMemorySettingsView(memories), "both");
+        return true;
+      }
+      case SETTINGS_MEMORY_CLEAR_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMemoryClearConfirmationView(), "back"); return true;
+      case SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK: {
+        await ctx.answerCallbackQuery({ text: "Memory clear cancelled" });
+        await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
+        return true;
+      }
+      case SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK: {
+        const removed = await clearAllMemories();
+        await ctx.answerCallbackQuery({ text: `Removed ${removed} memories` });
+        await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
+        return true;
+      }
       case SETTINGS_BACK_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildSettingsMenuView(), "close"); return true;
       case SETTINGS_RESET_HISTORY_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildResetHistoryConfirmationView(), "back"); return true;
       case SETTINGS_RESET_HISTORY_CANCEL_CALLBACK: await ctx.answerCallbackQuery({ text: "History reset cancelled" }); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;

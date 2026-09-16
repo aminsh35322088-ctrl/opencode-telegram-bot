@@ -26,8 +26,15 @@ interface RailwayGraphqlResponse {
     } | null;
     deployments?: { edges?: Array<{ node?: { id?: string | null; status?: string | null; createdAt?: string | null } | null }> } | null;
     deploymentLogs?: Array<{ timestamp?: string | null; message?: string | null; severity?: string | null }> | null;
+    serviceInstanceDeploy?: boolean | null;
   };
   errors?: Array<{ message?: string; extensions?: { code?: string } }>;
+}
+
+interface ResolvedScope {
+  projectId: string;
+  serviceId: string;
+  environmentId: string;
 }
 
 const execFileAsync = promisify(execFile);
@@ -162,10 +169,58 @@ function stringifyResult(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+async function resolveDeployScope(
+  token: string,
+  tokenType: "account" | "workspace" | "project" | null,
+  project: string,
+  environment: string | undefined,
+  service: string | undefined,
+): Promise<ResolvedScope> {
+  const data = await railwayApi<RailwayGraphqlResponse>(
+    token,
+    tokenType,
+    `query project($id: String!) {
+      project(id: $id) {
+        id name
+        services { edges { node { id name } } }
+        environments { edges { node { id name } } }
+      }
+    }`,
+    { id: project },
+  );
+  const proj = data.data?.project;
+  if (!proj?.id) throw new Error(`Project "${project}" was not found via the API; pass the explicit project ID.`);
+  const services = (proj.services?.edges ?? []).map((edge) => edge.node).filter((node): node is { id?: string | null; name?: string | null } => Boolean(node));
+  const environments = (proj.environments?.edges ?? []).map((edge) => edge.node).filter((node): node is { id?: string | null; name?: string | null } => Boolean(node));
+  const wantedService = service?.trim();
+  const resolvedService = wantedService
+    ? services.find((item) => item.id === wantedService || item.name === wantedService)
+    : services.length === 1 ? services[0] : undefined;
+  if (!resolvedService?.id) throw new Error(wantedService ? `Service "${wantedService}" was not found in project "${proj.name ?? project}".` : "Specify the service when the project has multiple services.");
+  const wantedEnvironment = environment?.trim();
+  const resolvedEnvironment = wantedEnvironment
+    ? environments.find((item) => item.id === wantedEnvironment || item.name === wantedEnvironment)
+    : environments.length === 1 ? environments[0] : undefined;
+  if (!resolvedEnvironment?.id) throw new Error(wantedEnvironment ? `Environment "${wantedEnvironment}" was not found in project "${proj.name ?? project}".` : "Specify the environment when the project has multiple environments.");
+  return { projectId: proj.id, serviceId: resolvedService.id, environmentId: resolvedEnvironment.id };
+}
+
+async function deployLatestCommit(token: string, tokenType: "account" | "workspace" | "project" | null, scope: ResolvedScope): Promise<boolean> {
+  const data = await railwayApi<RailwayGraphqlResponse>(
+    token,
+    tokenType,
+    `mutation deployLatest($serviceId: String!, $environmentId: String!) {
+      serviceInstanceDeploy(serviceId: $serviceId, environmentId: $environmentId, latestCommit: true)
+    }`,
+    { serviceId: scope.serviceId, environmentId: scope.environmentId },
+  );
+  return data.data?.serviceInstanceDeploy === true;
+}
+
 export default tool({
-  description: "Railway operations tool. This is the single Railway interface for the model: use it instead of shelling out to railway. Strategy is automatic: CLI is the primary transport using the active Railway API token; for safe read-only operations (whoami/status/logs), the tool can transparently fall back to the Railway GraphQL API if the CLI fails. Never retry an identical failure indefinitely. Deploy uses CLI only to prevent duplicate deployments.",
+  description: "Railway operations tool. This is the single Railway interface for the model: use it instead of shelling out to railway. Strategy is automatic: CLI is the primary transport using the active Railway API token; for safe read-only operations (whoami/status/logs), the tool can transparently fall back to the Railway GraphQL API if the CLI fails. Never retry an identical failure indefinitely. For a service connected to GitHub, use deploy-latest to deploy the latest pushed commit (same mechanism as the dashboard's Trigger Deployment); deploy performs a local-directory upload build and is CLI-only to prevent duplicate deployments.",
   args: {
-    action: tool.schema.enum(["whoami", "status", "logs", "variables", "deploy"]).describe("One operation: whoami=verify auth; status=inspect project; logs=read finite logs; variables=list variable names; deploy=trigger a deployment."),
+    action: tool.schema.enum(["whoami", "status", "logs", "variables", "deploy", "deploy-latest"]).describe("One operation: whoami=verify auth; status=inspect project; logs=read finite logs; variables=list variable names; deploy-latest=deploy the latest commit of the connected repo; deploy=trigger a local-upload deployment."),
     project: tool.schema.string().optional().describe("Railway project name or ID. Prefer the explicit project ID for deterministic targeting."),
     environment: tool.schema.string().optional().describe("Railway environment name or ID."),
     service: tool.schema.string().optional().describe("Railway service name or ID. For direct API log fallback, use the service ID."),
@@ -192,6 +247,24 @@ export default tool({
       environment ??= scope?.environmentId;
       if (!project || !environment) {
         return stringifyResult({ ok: false, action: args.action, error: "PROJECT_SCOPE_UNRESOLVED", message: "The selected Railway project token is present, but its project/environment scope could not be resolved." });
+      }
+    }
+
+    if (args.action === "deploy-latest") {
+      if (!project) {
+        return stringifyResult({ ok: false, action: args.action, error: "PROJECT_REQUIRED", message: "deploy-latest needs an explicit project ID (and usually service/environment names or IDs)." });
+      }
+      const startedAt = Date.now();
+      console.info(`[RailwayTool] start transport=direct-api action=deploy-latest account=${account?.name ?? "Unknown"} tokenType=${tokenType ?? "unknown"} project=${project} environment=${environment ?? "-"} service=${args.service?.trim() ?? "-"}`);
+      try {
+        const scope = await resolveDeployScope(token, tokenType, project, environment, args.service?.trim());
+        const triggered = await deployLatestCommit(token, tokenType, scope);
+        console.info(`[RailwayTool] success transport=direct-api action=deploy-latest triggered=${triggered} durationMs=${Date.now() - startedAt}`);
+        return stringifyResult({ ok: triggered, transport: "direct-api", account: account?.name ?? "Unknown", tokenType: tokenType ?? "unknown", action: args.action, ...scope, triggered, durationMs: Date.now() - startedAt, output: triggered ? "Latest-commit deployment triggered for the connected repository." : "The API did not confirm the deployment trigger." });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[RailwayTool] failure transport=direct-api action=deploy-latest message=${message}`);
+        return stringifyResult({ ok: false, transport: "direct-api", account: account?.name ?? "Unknown", tokenType: tokenType ?? "unknown", action: args.action, project, environment: environment ?? null, service: args.service?.trim() ?? null, durationMs: Date.now() - startedAt, error: message, hint: "Check project/service/environment IDs via status; deploy-latest only works for services connected to a Git repository." });
       }
     }
 

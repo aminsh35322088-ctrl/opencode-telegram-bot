@@ -1,7 +1,5 @@
 import type { ModelInfo } from "./model.js";
 
-export type ScheduledTaskKind = "cron" | "once";
-
 export type ScheduledTaskStatus = "idle" | "running" | "success" | "error";
 
 export const DEFAULT_TASK_AGENT = "build";

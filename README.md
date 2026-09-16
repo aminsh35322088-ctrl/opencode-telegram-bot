@@ -11,7 +11,7 @@ A production-oriented Telegram client for [OpenCode](https://github.com/anomalyc
 - 🧠 **Model Center 3** as the single model-selection source of truth
 - 🔎 Live model search, provider browsing, favorites, and recent models
 - 🔌 OpenAI-compatible **Custom Providers** with API-key validation and live `/models` discovery
-- 🎙️ Audio/STT and TTS support, with configurable audio replies
+- 🎙️ Audio/STT support: voice notes are transcribed into prompts
 - 🖼️ Image-AI workflows and multimodal model routing
 - 🐙 GitHub integration for repository, issue, PR, and coding workflows
 - 🧰 MCP, skills, commands, worktrees, filesystem browsing, and coding/DevOps tools
@@ -158,8 +158,7 @@ The bot supports more than plain text coding sessions.
 ### Audio
 
 - Speech-to-text can turn Telegram voice/audio messages into prompts.
-- Optional text-to-speech can produce audio replies.
-- STT/TTS configuration is kept separate from the core Telegram/OpenCode runtime.
+- STT is configured through the in-app provider settings (custom providers such as Groq Whisper); no extra environment variables are required.
 
 ### Image Chat
 
@@ -243,17 +242,12 @@ Request telemetry tracks input, output, reasoning, cache, and total usage so exp
 | Variable | Default | Description |
 |---|---:|---|
 | `BOT_LOCALE` | `en` | Bot locale |
-| `SESSIONS_LIST_LIMIT` | `10` | Sessions shown per history page |
-| `MESSAGES_LIST_LIMIT` | `10` | Messages shown per message page |
-| `COMMANDS_LIST_LIMIT` | `10` | Commands/skills shown per page |
-| `MODELS_LIST_LIMIT` | `10` | Providers/models shown per page |
-| `TASK_LIMIT` | `10` | Maximum scheduled tasks |
-| `TRACK_BACKGROUND_SESSIONS` | `true` | Track background sessions |
-| `MESSAGE_FORMAT_MODE` | `markdown` | `markdown` or `raw` |
-| `MESSAGE_MERGE_WINDOW_MS` | `1500` | Merge near-limit Telegram chunks |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `LOG_RETENTION` | `10` | Number of rotated log files to keep |
+| `LOG_MAX_MB` | `12` | Size cap per log file in MB |
+| `LOG_MAX_TOTAL_MB` | `80` | Total cap for all log files in MB |
 
-Optional STT, document extraction, TTS, and related AI settings are documented in `.env.example`.
+List sizes, message formatting, merge windows, and AI provider settings (STT, document extraction, image models) are configured in-app via `/settings` and the provider menus, not via environment variables.
 
 ## Telegram commands
 

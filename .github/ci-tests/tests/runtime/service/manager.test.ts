@@ -46,10 +46,15 @@ const { getRuntimePathsMock, runtimePathsState } = vi.hoisted(() => {
   };
 });
 
-vi.mock("node:child_process", () => ({
-  spawn: spawnMock,
-  exec: execMock,
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: spawnMock,
+    exec: execMock,
+    execFile: vi.fn(),
+  };
+});
 
 vi.mock("../../../src/runtime/paths.js", () => ({
   getRuntimePaths: getRuntimePathsMock,

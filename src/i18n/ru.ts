@@ -1,23 +1,6 @@
 import type { I18nDictionary } from "./en.js";
 
 export const ru: I18nDictionary = {
-  "cmd.description.status": "Статус сервера и сессии",
-  "cmd.description.new": "Создать новую сессию",
-  "cmd.description.stop": "Прервать текущее действие",
-  "cmd.description.detach": "Отсоединиться от текущей сессии",
-  "cmd.description.sessions": "Список сессий",
-  "cmd.description.messages": "Сообщения текущей сессии",
-  "cmd.description.settings": "Изменить настройки бота",
-  "cmd.description.projects": "Список проектов",
-  "cmd.description.worktree": "Переключить git worktree",
-  "cmd.description.task": "Создать задачу по расписанию",
-  "cmd.description.tasklist": "Список задач по расписанию",
-  "cmd.description.commands": "Пользовательские команды",
-  "cmd.description.skills": "Каталог скиллов",
-  "cmd.description.mcps": "MCP серверы",
-  "cmd.description.opencode_start": "Запустить OpenCode сервер",
-  "cmd.description.opencode_stop": "Остановить OpenCode сервер",
-  "cmd.description.ls": "Список содержимого каталога",
   "cmd.description.help": "Справка",
 
   "callback.unknown_command": "Неизвестная команда",
@@ -47,19 +30,14 @@ export const ru: I18nDictionary = {
     "⚠️ Эта команда недоступна, пока не завершен текущий опрос.",
 
   "inline.button.cancel": "❌ Отмена",
-  "inline.button.close": "❌ Закрыть",
   "inline.inactive_callback": "Это меню уже неактивно",
 
   "common.cancelled": "Отменено",
   "common.unknown": "неизвестна",
   "common.unknown_error": "неизвестная ошибка",
 
-  "start.welcome":
-    "👋 Добро пожаловать в OpenCode Telegram Bot!\n\nИспользуйте команды:\n/projects — выбрать проект\n/sessions — список сессий\n/new — новая сессия\n/commands — пользовательские команды\n/skills — каталог скиллов\n/task — задача по расписанию\n/tasklist — список задач по расписанию\n/status — статус\n/help — справка\n\nАгент, модель и вариант выбираются кнопками внизу.",
   "help.keyboard_hint":
     "💡 Агент, модель, вариант и действия с контекстом доступны через нижние кнопки клавиатуры.",
-  "help.text":
-    "📖 **Справка**\n\n/status - Проверить статус сервера\n/sessions - Список сессий\n/new - Создать новую сессию\n/help - Справка",
 
   "bot.thinking": "💭 Думаю...",
   "progress.compact.activity": "{header}\n{activity}",
@@ -82,6 +60,7 @@ export const ru: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ Активная сессия не соответствует выбранному проекту, поэтому была сброшена. Используйте /sessions для выбора или /new для создания новой сессии.",
   "bot.prompt_send_error": "Не удалось отправить запрос в OpenCode.",
+  "bot.empty_prompt": "⚠️ Нечего отправлять: сообщение пусто после обработки вложения.",
   "bot.session_error": "🔴 OpenCode вернул ошибку: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nПровайдер возвращает одну и ту же ошибку при повторных запросах. Используйте /abort для остановки.",
@@ -93,14 +72,14 @@ export const ru: I18nDictionary = {
   "background.open_session_button": "Открыть сессию",
   "bot.unknown_command": "⚠️ Неизвестная команда: {command}. Используйте /help для списка команд.",
   "bot.photo_downloading": "⏳ Скачиваю фото...",
-  "bot.photo_too_large": "⚠️ Фото слишком большое (макс. {maxSizeMb}МБ)",
   "bot.photo_model_no_image":
     "⚠️ Текущая модель не поддерживает изображения. Отправляю только текст.",
   "bot.photo_download_error": "🔴 Не удалось скачать фото",
-  "bot.photo_no_caption": "💡 Совет: Добавьте подпись, чтобы описать, что делать с этим фото.",
+  "bot.video_downloading": "⏳ Загружаю видео...",
+  "bot.video_too_large": "⚠️ Видео слишком большое (макс. {maxSizeMb}МБ)",
+  "bot.video_error": "🔴 Не удалось обработать видео",
   "bot.file_downloading": "⏳ Скачиваю файл...",
   "bot.files_downloading": "⏳ Скачиваю файлы...",
-  "bot.file_too_large": "⚠️ Файл слишком большой (макс. {maxSizeMb}МБ)",
   "bot.file_download_error": "🔴 Не удалось скачать файл",
   "bot.file_type_unsupported":
     "⚠️ Этот тип файла не поддерживается. Отправьте изображение, документ (PDF, DOCX, PPTX) или текстовый/кодовый файл.",
@@ -117,74 +96,34 @@ export const ru: I18nDictionary = {
   "status.health.unhealthy": "Unhealthy",
   "status.line.health": "Статус: {health}",
   "status.line.version": "Версия: {version}",
-  "status.line.managed_yes": "Запущен ботом: Да",
-  "status.line.managed_no": "Запущен ботом: Нет",
-  "status.line.pid": "PID: {pid}",
-  "status.line.uptime_sec": "Uptime: {seconds} сек",
   "status.line.mode": "Агент: {mode}",
   "status.line.model": "Модель: {model}",
-  "status.line.tts": "Аудиоответы: {tts}",
-  "status.tts.off": "Выкл",
-  "status.tts.all": "Все",
-  "status.tts.auto": "Авто",
   "status.agent_not_set": "не установлен",
   "status.project_selected": "Проект: {project}",
   "status.worktree_selected": "Worktree: {worktree}",
-  "status.project_not_selected": "Проект: не выбран",
-  "status.project_hint": "Используйте /projects для выбора проекта",
   "status.session_selected": "Текущая сессия: {title}",
   "status.session_not_selected": "Текущая сессия: не выбрана",
   "status.session_hint": "Используйте /sessions для выбора или /new для создания",
   "status.server_unavailable":
     "🔴 OpenCode Server недоступен\n\nИспользуйте /opencode_start для запуска сервера.",
 
-  "tts.off": "🔇 Аудиоответы выключены.",
-  "tts.all": "🔊 Аудиоответы включены для всех сообщений.",
-  "tts.auto": "🎤 Аудиоответы включены только для голосовых сообщений.",
-  "tts.not_configured": "⚠️ Аудиоответы недоступны. Сначала укажите `TTS_API_URL` и `TTS_API_KEY`.",
-  "tts.failed": "⚠️ Не удалось создать аудиоответ.",
 
-  "settings.menu.title": "⚙️ Настройки бота\nНажмите на параметр, чтобы переключить его значение:",
-  "settings.compact_output.label": "Компактный вывод",
-  "settings.thinking_content.label": "Содержимое thinking",
-  "settings.response_streaming.label": "Стриминг ответа",
-  "settings.response_streaming.edit": "edit",
-  "settings.response_streaming.draft": "draft (experimental)",
-  "settings.diff_files.label": "Файлы с diff",
-  "settings.assistant_footer.label": "Футер ответа",
-  "settings.tts.label": "Аудиоответы",
-  "settings.prompt_queue.label": "Очередь сообщений",
-  "settings.value.on": "Вкл",
-  "settings.value.off": "Выкл",
   "settings.saved": "✅ Настройка сохранена.",
 
   "projects.empty":
     "📭 Проектов нет.\n\nОткройте директорию в OpenCode и создайте хотя бы одну сессию, после этого она появится здесь.",
-  "projects.select": "Выберите проект:",
-  "projects.select_with_current": "Выберите проект:\n\nТекущий: 🏗 {project}",
   "projects.page_indicator": "Страница {current}/{total}",
   "projects.prev_page": "⬅️ Назад",
   "projects.next_page": "Вперёд ➡️",
-  "projects.fetch_error":
-    "🔴 OpenCode Server недоступен или произошла ошибка при получении списка проектов.",
-  "projects.page_load_error": "Не удалось загрузить эту страницу. Попробуйте снова.",
-  "projects.selected":
-    "✅ Проект выбран: {project}\n\n📋 Сессия сброшена. Используйте /sessions или /new для работы с этим проектом.",
   "projects.select_error": "🔴 Ошибка при выборе проекта.",
 
-  "sessions.project_not_selected":
-    "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
   "sessions.empty": "📭 Сессий нет.\n\nСоздайте новую сессию командой /new.",
-  "sessions.select": "Выберите сессию:",
-  "sessions.select_page": "Выберите сессию (страница {page}):",
   "sessions.fetch_error":
     "🔴 OpenCode Server недоступен или произошла ошибка при получении списка сессий.",
   "sessions.select_project_first": "🔴 Проект не выбран. Используйте /projects.",
   "sessions.page_empty_callback": "На этой странице нет сессий",
   "sessions.page_load_error_callback":
     "Не удалось загрузить эту страницу. Пожалуйста, попробуйте снова.",
-  "sessions.button.prev_page": "⬅️ Назад",
-  "sessions.button.next_page": "Вперёд ➡️",
   "sessions.loading_context": "⏳ Загружаю контекст и последние сообщения...",
   "sessions.selected": "✅ Сессия выбрана: {title}",
   "sessions.select_error": "🔴 Ошибка при выборе сессии.",
@@ -217,20 +156,6 @@ export const ru: I18nDictionary = {
   "messages.fork_success": "🔀 Создан форк от сообщения:\n\n{text}",
   "messages.fork_error": "❌ Не удалось создать форк. Попробуйте ещё раз.",
 
-  "attach.project_not_selected":
-    "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
-  "attach.session_not_selected":
-    "💬 Сессия не выбрана.\n\nСначала выберите сессию через /sessions.",
-  "attach.session_project_mismatch":
-    "⚠️ Выбранная сессия не соответствует текущему проекту. Повторно выберите сессию через /sessions.",
-  "attach.connected": "✅ Подключился к сессии: {title}",
-  "attach.already_connected": "ℹ️ Уже подключен к сессии: {title}",
-  "attach.status.idle_message": "Статус: idle. Жду новые события.",
-  "attach.status.busy_message": "Статус: busy. Новые промты временно заблокированы.",
-  "attach.restored_question": "Восстановил ожидающий вопрос для этой сессии.",
-  "attach.restored_permissions": "Восстановил ожидающие запросы разрешений: {count}.",
-  "attach.disconnect_hint": "Чтобы отключиться, переключитесь на другую сессию или проект.",
-  "attach.error": "🔴 Не удалось подключиться к текущей сессии.",
 
   "detach.project_not_selected":
     "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
@@ -239,7 +164,6 @@ export const ru: I18nDictionary = {
     "✅ Отсоединился от сессии: {title}\n\nOpenCode-сессия не остановлена. Если она еще выполняется, выполнение продолжится отдельно. Чтобы проверить ее позже, снова выберите эту сессию через /sessions.",
   "detach.error": "🔴 Не удалось отсоединиться от текущей сессии.",
 
-  "new.project_not_selected": "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
   "new.created": "✅ Создана новая сессия: {title}",
   "general.topic_only_prompt": "🚫 Это общая тема форума — запросы к ИИ разрешены только внутри ИИ-топиков.\n\n💬 Нажмите New Chat, чтобы создать новую тему для кода, или откройте существующую через History.\n\nТекст принимается здесь только когда бот явно запрашивает ввод.",
   "new.create_error": "🔴 OpenCode Server недоступен или произошла ошибка при создании сессии.",
@@ -263,10 +187,6 @@ export const ru: I18nDictionary = {
   "stop.error":
     "🔴 Ошибка при прерывании действия.\n\nПоток событий остановлен, попробуйте /abort еще раз.",
 
-  "opencode_start.already_running_managed":
-    "⚠️ OpenCode Server уже запущен\n\nPID: {pid}\nUptime: {seconds} секунд",
-  "opencode_start.already_running_external":
-    "✅ OpenCode Server уже запущен внешним процессом\n\nВерсия: {version}\n\nЭтот сервер не был запущен через бота, поэтому команда /opencode-stop не сможет его остановить.",
   "opencode_start.already_running": "✅ OpenCode Server уже запущен\n\nВерсия: {version}",
   "opencode_start.remote_configured":
     "⚠️ /opencode_start работает только с локальным OpenCode Server.",
@@ -278,63 +198,26 @@ export const ru: I18nDictionary = {
   "opencode_start.success": "✅ OpenCode Server успешно запущен\n\nPID: {pid}\nВерсия: {version}",
   "opencode_start.error":
     "🔴 Произошла ошибка при запуске сервера.\n\nПроверьте логи приложения для подробностей.",
-  "opencode_stop.external_running":
-    "⚠️ OpenCode Server запущен внешним процессом\n\nЭтот сервер не был запущен через /opencode-start.\nОстановите его вручную или используйте /status для проверки состояния.",
   "opencode_stop.remote_configured":
     "⚠️ /opencode_stop работает только с локальным OpenCode Server.",
   "opencode_stop.not_running": "⚠️ OpenCode Server не запущен",
-  "opencode_stop.pid_not_found":
-    "⚠️ OpenCode Server отвечает на порту {port}, но локальный процесс для остановки найти не удалось.",
   "opencode_stop.stopping": "🛑 Останавливаю OpenCode Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 Не удалось остановить OpenCode Server\n\nОшибка: {error}",
-  "opencode_stop.still_running": "Сервер все еще отвечает после запроса на остановку.",
   "opencode_stop.success": "✅ OpenCode Server успешно остановлен",
   "opencode_stop.error":
     "🔴 Произошла ошибка при остановке сервера.\n\nПроверьте логи приложения для подробностей.",
 
   "agent.changed_message": "✅ Агент изменен на: {name}",
   "agent.change_error_callback": "Ошибка при смене агента",
-  "agent.menu.current": "Текущий агент: {name}\n\nВыберите агента:",
-  "agent.menu.select": "Выберите агента:",
   "agent.menu.empty": "⚠️ Нет доступных агентов",
   "agent.menu.error": "🔴 Не удалось получить список агентов",
 
   "model.changed_message": "✅ Модель изменена на: {name}",
-  "model.change_error_callback": "Ошибка при смене модели",
-  "model.menu.empty": "⚠️ Нет доступных моделей",
-  "model.menu.select": "Выберите модель:",
-  "model.menu.current": "Текущая модель: {name}\n\nВыберите модель:",
-  "model.menu.favorites_title": "⭐ Избранное (Добавляйте модели в избранное через OpenCode CLI)",
-  "model.menu.favorites_empty": "— Список пуст.",
-  "model.menu.recent_title": "🕘 Недавние",
-  "model.menu.recent_empty": "— Список пуст.",
-  "model.menu.favorites_hint":
-    "ℹ️ Добавляйте модели в избранное через OpenCode CLI, чтобы они были вверху списка.",
-  "model.menu.error": "🔴 Не удалось получить список моделей",
-  "model.search.button": "🔍 Поиск",
-  "model.search.prompt": "🔍 Введите название модели для поиска:",
-  "model.search.results_title": 'Результаты поиска для "{query}":',
-  "model.search.no_results": 'Модели не найдены для "{query}"',
-  "model.search.search_again": "↩ Искать снова",
-  "model.search.error": "Ошибка поиска",
-  "model.button.back": "⬅️ Назад",
-  "model.providers.button": "🗂 Провайдеры",
-  "model.providers.title": "Выберите провайдера из списка:",
-  "model.providers.empty": "⚠️ Нет подключённых провайдеров",
-  "model.providers.error": "Не удалось получить список провайдеров",
-  "model.providers.page_indicator": "Страница {current}/{total}",
-  "model.providers.prev_page": "⬅️ Назад",
-  "model.providers.next_page": "Вперёд ➡️",
-  "model.provider_models.title": "{provider} — выберите модель:",
-  "model.provider_models.empty": "⚠️ У провайдера {provider} нет доступных моделей",
-  "model.provider_models.page_indicator": "Страница {current}/{total}",
 
   "variant.model_not_selected_callback": "Ошибка: модель не выбрана",
   "variant.changed_message": "✅ Вариант изменен на: {name}",
   "variant.change_error_callback": "Ошибка при смене варианта",
   "variant.select_model_first": "⚠️ Сначала выберите модель",
-  "variant.menu.empty": "⚠️ Нет доступных вариантов",
-  "variant.menu.current": "Текущий вариант: {name}\n\nВыберите вариант:",
   "variant.menu.error": "🔴 Не удалось получить список вариантов",
 
   "context.button.confirm": "✅ Да, сжать контекст",
@@ -394,11 +277,6 @@ export const ru: I18nDictionary = {
   "question.summary.question": "Вопрос {index}:\n{question}\n\n",
   "question.summary.answer": "Ответ:\n{answer}\n\n",
 
-  "keyboard.agent_mode": "{emoji} {name} Agent",
-  "keyboard.context": "📊 {used} / {limit} ({percent}%)",
-  "keyboard.context_empty": "📊 0",
-  "keyboard.variant": "💭 {name}",
-  "keyboard.variant_default": "💡 Default",
   "keyboard.queued_prompt": "❌ {index}. {text}",
   "queue.added": "📥 Добавлено в очередь ({count}/{max}). Сообщение уйдёт после завершения текущей задачи.",
   "queue.full": "⚠️ Очередь заполнена ({max}). Удалите сообщение или дождитесь завершения текущей задачи.",
@@ -409,29 +287,12 @@ export const ru: I18nDictionary = {
 
   "pinned.default_session_title": "новая сессия",
   "pinned.unknown": "Неизвестно",
-  "pinned.line.project": "Проект: {project}",
-  "pinned.line.worktree": "Worktree: {worktree}",
   "pinned.line.model": "Модель: {model}",
-  "pinned.line.attach": "Tracking: {status}",
-  "pinned.attach.status.idle": "активен, idle",
-  "pinned.attach.status.busy": "активен, busy",
-  "pinned.line.context": "Контекст: {used} / {limit} ({percent}%)",
-  "pinned.line.cost": "Стоимость: {cost} потрачено",
-  "subagent.header": "Сабагент {agent}: {description}",
-  "subagent.line.status": "Статус: {status}",
   "subagent.line.task": "Задача: {task}",
   "subagent.line.agent": "Агент: {agent}",
   "subagent.working": "В работе...",
-  "subagent.working_with_details": "В работе: {details}",
   "subagent.completed": "Завершена",
   "subagent.failed": "Ошибка задачи",
-  "subagent.status.pending": "ожидание",
-  "subagent.status.running": "в работе",
-  "subagent.status.completed": "завершен",
-  "subagent.status.error": "ошибка",
-  "pinned.files.title": "Файлы ({count}):",
-  "pinned.files.item": "  {path}{diff}",
-  "pinned.files.more": "  ... и еще {count}",
 
   "tool.todo.overflow": "*(ещё {count} задач)*",
   "tool.file_header.write":
@@ -533,7 +394,6 @@ export const ru: I18nDictionary = {
   "commands.fetch_error": "🔴 Не удалось загрузить список команд OpenCode.",
   "commands.no_description": "Без описания",
   "commands.button.execute": "✅ Выполнить",
-  "commands.button.cancel": "❌ Отмена",
   "commands.confirm":
     "Подтвердите выполнение команды {command}. Для выполнения с аргументами отправьте аргументы отдельным сообщением.",
   "commands.inactive_callback": "Это меню команд уже неактивно",
@@ -546,9 +406,6 @@ export const ru: I18nDictionary = {
   "commands.button.prev_page": "⬅️ Назад",
   "commands.button.next_page": "Вперёд ➡️",
   "commands.page_empty_callback": "На этой странице нет команд",
-  "commands.page_load_error_callback":
-    "Не удалось загрузить эту страницу. Пожалуйста, попробуйте снова.",
-  "commands.download.no_roots": "Не настроены разрешённые корневые каталоги для просмотра.",
   "commands.download.downloading": "Скачиваю файл...",
   "commands.download.not_found": "Файл не найден",
   "commands.download.not_file": "Путь не является файлом",
@@ -562,9 +419,45 @@ export const ru: I18nDictionary = {
   "skills.fetch_error": "🔴 Не удалось загрузить список скиллов OpenCode.",
   "skills.no_description": "Без описания",
   "skills.button.execute": "✅ Выполнить",
-  "skills.button.cancel": "❌ Отмена",
   "skills.confirm":
     "Подтвердите запуск скилла {skill}. Чтобы запустить его с аргументами, отправьте аргументы следующим сообщением.",
+  "skills.button.refresh": "🔄 Обновить",
+  "skills.meta.developer": "👤 {developer}",
+  "skills.meta.developer_version": "👤 {developer} ({version})",
+  "skills.meta.source": "📍 {location}",
+  "skills.meta.updated": "🕒 {date}",
+  "skills.button.new": "➕ Новый скилл",
+  "skills.button.delete": "🗑 Удалить скилл",
+  "skills.button.edit": "✏️ Изменить скилл",
+  "skills.button.delete_confirm": "🗑 Удалить навсегда",
+  "skills.button.delete_cancel": "Отмена",
+  "skills.wizard.ask_name": "Отправьте название скилла (строчные буквы, цифры, дефисы — например deploy-check).",
+  "skills.wizard.invalid_name": "⚠️ Недопустимое название. Используйте строчные буквы, цифры и одиночные дефисы (1-64 символа), например deploy-check.",
+  "skills.wizard.ask_description": "Теперь отправьте однострочное описание: когда агенту использовать этот скилл?",
+  "skills.wizard.ask_body": "Теперь отправьте тело скилла (инструкции в Markdown). Совет: держите сфокусированно и практично.",
+  "skills.wizard.saved": "✅ Скилл \"{name}\" сохранён в глобальной папке скиллов.",
+  "skills.wizard.write_error": "🔴 Не удалось сохранить скилл: {error}",
+  "skills.wizard.cancelled": "Мастер скиллов отменён.",
+  "skills.restart_hint": "Перезапустите OpenCode (/opencode_stop + /opencode_start), чтобы загрузить изменение.",
+  "skills.delete_not_managed": "Удалять можно только скиллы из глобальной папки скиллов.",
+  "skills.delete_confirm": "Удалить скилл {skill}? Папка будет удалена из глобальной папки скиллов.",
+  "skills.deleted": "🗑 Скилл \"{name}\" удалён.",
+  "skills.delete_failed": "🔴 Не удалось удалить скилл.",
+  "skills.edit_not_managed": "Редактировать можно только скиллы из глобальной папки скиллов.",
+  "skills.edit.ask_description": "Отправьте новое однострочное описание для скилла \"{name}\".",
+  "skills.edit.ask_body": "Теперь отправьте новое тело скилла (инструкции в Markdown). Оно заменит текущее содержимое.",
+  "skills.edit.saved": "✅ Скилл \"{name}\" обновлён.",
+  "skills.button.import": "📥 Импорт с GitHub",
+  "skills.button.import_confirm": "⬇️ Импорт",
+  "skills.import.ask_url": "Отправьте ссылку GitHub на скилл: репозиторий, папку скилла или файл SKILL.md.",
+  "skills.import.invalid_url": "⚠️ Это некорректная ссылка GitHub. Отправьте URL репозитория, папки или файла SKILL.md.",
+  "skills.import.not_found": "🔴 В этом расположении GitHub не найден файл SKILL.md.",
+  "skills.import.fetch_error": "🔴 Не удалось получить с GitHub: {error}",
+  "skills.import.confirm": "Импортировать скилл {skill}?\n\n{description}\n\n📍 Источник: {url}",
+  "skills.import.multiple_found": "В этом расположении найдено скиллов: {count}. Выберите один для импорта:",
+  "skills.imported": "✅ Скилл \"{name}\" импортирован с GitHub.",
+  "skills.import.exists": "⚠️ Скилл \"{name}\" уже существует. Сначала измените или удалите его.",
+  "skills.import.cancelled": "Импорт скилла отменён.",
   "skills.inactive_callback": "Это меню скиллов уже неактивно",
   "skills.execute_callback": "Использую скилл...",
   "skills.executing_prefix": "⚡ Использую скилл:",
@@ -574,11 +467,8 @@ export const ru: I18nDictionary = {
   "skills.button.prev_page": "⬅️ Назад",
   "skills.button.next_page": "Вперёд ➡️",
   "skills.page_empty_callback": "На этой странице нет скиллов",
-  "skills.page_load_error_callback":
-    "Не удалось загрузить эту страницу. Пожалуйста, попробуйте снова.",
 
   "mcps.select": "MCP серверы:",
-  "mcps.empty": "📭 MCP серверы не настроены.",
   "mcps.fetch_error": "🔴 Не удалось загрузить MCP серверы.",
   "mcps.toggle_error": "🔴 Не удалось переключить MCP сервер.",
   "mcps.enabling": "Включаю...",
@@ -596,15 +486,7 @@ export const ru: I18nDictionary = {
   "mcps.button.back": "⬅️ Назад",
   "mcps.auth_required": "Этот сервер требует авторизации и не может быть включен из бота.",
 
-  "cmd.description.rename": "Переименовать текущую сессию",
 
-  "legacy.models.fetch_error":
-    "🔴 Не удалось получить список моделей. Проверьте статус сервера /status.",
-  "legacy.models.empty": "📋 Нет доступных моделей. Настройте провайдеры через OpenCode.",
-  "legacy.models.header": "📋 Доступные модели:\n\n",
-  "legacy.models.no_provider_models": "  ⚠️ Нет доступных моделей\n",
-  "legacy.models.env_hint": "💡 Для использования модели в .env:\n",
-  "legacy.models.error": "🔴 Произошла ошибка при получении списка моделей.",
 
   "stt.uncertain": "🎤 Некоторые слова могли быть распознаны неверно. Проверьте и отправьте исправленный текст:",
   "stt.recognizing": "🎤 Распознаю аудио...",
@@ -614,7 +496,6 @@ export const ru: I18nDictionary = {
   "stt.error": "🔴 Не удалось распознать аудио: {error}",
   "stt.empty_result": "🎤 В аудиосообщении не обнаружена речь.",
 
-  "cmd.description.open": "Добавить проект через обзор папок",
   "worktree.branch_detached": "detached HEAD",
   "worktree.select_with_current": "Выберите worktree:",
   "worktree.project_not_selected":

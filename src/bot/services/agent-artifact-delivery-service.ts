@@ -247,4 +247,3 @@ class AgentArtifactDeliveryService {
 }
 
 export const agentArtifactDeliveryService = new AgentArtifactDeliveryService();
-export const artifactDeliveryMarker = ARTIFACT_MARKER;

@@ -165,11 +165,11 @@ export async function reconcileBusyState(directory: string, now: number = Date.n
     return;
   }
 
-  lastReconcileAtByDirectory.set(directory, now);
   inFlightDirectories.add(directory);
 
   try {
     await reconcileBusyStateNow(directory, now);
+    lastReconcileAtByDirectory.set(directory, now);
   } catch (error) {
     logger.warn("[BusyReconciliation] Failed to reconcile busy state", error);
   } finally {

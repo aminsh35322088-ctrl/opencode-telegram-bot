@@ -30,11 +30,14 @@ import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button
 import { handleDocumentMessage } from "../handlers/document-handler.js";
 import { createMediaGroupAttachmentMiddleware } from "../handlers/media-group-handler.js";
 import { handlePhotoMessage } from "../handlers/photo-handler.js";
+import { handleVideoMessage } from "../handlers/video-handler.js";
 import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
 import { isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
+import { clearSkillWizard, handleSkillWizardMessage, isSkillWizardActive } from "../commands/skills-wizard.js";
+import { clearSkillImportFlow, handleSkillImportMessage, isSkillImportActive } from "../commands/skills-import-flow.js";
 import { newCommand } from "../commands/new-command.js";
 import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
 import { abortCurrentOperation } from "../commands/abort-command.js";
@@ -153,22 +156,39 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
       await integrationsCommand(ctx as never);
       return true;
     }
+
+    if (isSkillWizardActive()) {
+      clearSkillWizard();
+      await ctx.reply(t("common.cancelled"));
+      return true;
+    }
+
+    if (isSkillImportActive()) {
+      clearSkillImportFlow();
+      await ctx.reply(t("common.cancelled"));
+      return true;
+    }
   }
 
   return false;
 }
 
 /**
- * In a forum group, the General ("All") topic is a lobby, not a chat surface:
- * AI conversations live in their own Topics. Free-form text there is accepted
- * only while the bot explicitly waits for input (a wizard step, a question,
- * rename, task creation, model search, …); everything else
- * would silently start a prompt against whatever session the General chat
- * happens to follow.
+ * Main/General is a navigation lobby, not an AI conversation surface. Telegram
+ * exposes forum mode differently for supergroups (`chat.is_forum`) and private
+ * bot chats (`ctx.me.has_topics_enabled`), so both capabilities must be handled.
+ * Free-form input is allowed here only while the bot explicitly awaits text for
+ * a wizard/question/etc.; actual AI prompts belong in conversation Topics.
  */
-function isForumGeneralTopic(ctx: Context): boolean {
+function isMainNavigationTopic(ctx: Context): boolean {
   const chat = ctx.chat as { type?: string; is_forum?: boolean } | undefined;
-  if (!chat || chat.type === "private" || chat.is_forum !== true) return false;
+  if (!chat) return false;
+
+  const botInfo = ctx.me as { has_topics_enabled?: boolean } | undefined;
+  const isSupergroupForum = chat.type !== "private" && chat.is_forum === true;
+  const isPrivateBotForum = chat.type === "private" && botInfo?.has_topics_enabled === true;
+  if (!isSupergroupForum && !isPrivateBotForum) return false;
+
   const threadId = (ctx.message as { message_thread_id?: number } | undefined)?.message_thread_id;
   return typeof threadId !== "number" || threadId <= 1;
 }
@@ -176,11 +196,17 @@ function isForumGeneralTopic(ctx: Context): boolean {
 function isBotAwaitingTextInput(): boolean {
   const state = interactionManager.getSnapshot();
   if (state && (state.expectedInput === "text" || state.expectedInput === "mixed")) return true;
-  return isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive();
+  return (
+    isProviderWizardActive() ||
+    isIntegrationWizardActive() ||
+    isMcpAddWizardActive() ||
+    isSkillWizardActive() ||
+    isSkillImportActive()
+  );
 }
 
 function isGeneralTopicPromptBlocked(ctx: Context): boolean {
-  return isForumGeneralTopic(ctx) && !isBotAwaitingTextInput();
+  return isMainNavigationTopic(ctx) && !isBotAwaitingTextInput();
 }
 
 async function rejectGeneralTopicPrompt(ctx: Context): Promise<void> {
@@ -217,6 +243,8 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
 
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
+    if (await handleSkillWizardMessage(ctx)) return;
+    if (await handleSkillImportMessage(ctx)) return;
     if (questionManager.isActive()) {
       await handleQuestionTextAnswer(ctx);
       return;
@@ -367,7 +395,14 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
-  bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription }));
+  const mediaGroupMiddleware = createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription: deps.ensureEventSubscription });
+  bot.on("message", async (ctx, next) => {
+    if (ctx.message?.media_group_id && isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+    await mediaGroupMiddleware(ctx, next);
+  });
 
   bot.on("message:photo", async (ctx) => {
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
@@ -380,6 +415,32 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
 
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message:video", async (ctx) => {
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
+    await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
+  });
+
+  bot.on("message:video_note", async (ctx) => {
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    if (isGeneralTopicPromptBlocked(ctx)) {
+      await rejectGeneralTopicPrompt(ctx);
+      return;
+    }
+
+    await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
   bot.on("message:document", async (ctx) => {

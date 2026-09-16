@@ -9,6 +9,14 @@ export const SKILLS_CALLBACK_CANCEL = `${SKILLS_CALLBACK_PREFIX}cancel`;
 export const SKILLS_CALLBACK_EXECUTE = `${SKILLS_CALLBACK_PREFIX}execute`;
 export const SKILLS_CALLBACK_BACK = `${SKILLS_CALLBACK_PREFIX}back`;
 export const SKILLS_CALLBACK_LIST_BACK = `${SKILLS_CALLBACK_PREFIX}list_back`;
+export const SKILLS_CALLBACK_NEW = `${SKILLS_CALLBACK_PREFIX}new`;
+export const SKILLS_CALLBACK_IMPORT = `${SKILLS_CALLBACK_PREFIX}import`;
+export const SKILLS_CALLBACK_REFRESH = `${SKILLS_CALLBACK_PREFIX}refresh`;
+export const SKILLS_CALLBACK_WIZARD_CANCEL = `${SKILLS_CALLBACK_PREFIX}wizard_cancel`;
+export const SKILLS_CALLBACK_EDIT = `${SKILLS_CALLBACK_PREFIX}edit`;
+export const SKILLS_CALLBACK_DELETE = `${SKILLS_CALLBACK_PREFIX}delete`;
+export const SKILLS_CALLBACK_DELETE_CONFIRM = `${SKILLS_CALLBACK_PREFIX}delete_confirm`;
+export const SKILLS_CALLBACK_DELETE_CANCEL = `${SKILLS_CALLBACK_PREFIX}delete_cancel`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
@@ -85,15 +93,39 @@ export function formatSkillsSelectText(page: number): string {
   return t("skills.select_page", { page: page + 1 });
 }
 
-function formatSkillButtonLabel(skill: SkillCatalogItem): string {
-  const description = skill.description?.trim() || t("skills.no_description");
-  const rawLabel = `/${skill.name} - ${description}`;
+export function prettifySkillName(name: string): string {
+  return name
+    .split("-")
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
+}
 
-  if (rawLabel.length <= MAX_INLINE_BUTTON_LABEL_LENGTH) {
-    return rawLabel;
+function formatSkillButtonLabel(skill: SkillCatalogItem): string {
+  const label = prettifySkillName(skill.name);
+  if (label.length <= MAX_INLINE_BUTTON_LABEL_LENGTH) {
+    return label;
   }
 
-  return `${rawLabel.slice(0, MAX_INLINE_BUTTON_LABEL_LENGTH - 3)}...`;
+  return `${label.slice(0, MAX_INLINE_BUTTON_LABEL_LENGTH - 3)}...`;
+}
+
+export function formatSkillDetailView(skill: SkillCatalogItem): string {
+  const lines = [t("skills.confirm", { skill: `/${skill.name}` }), "", skill.description?.trim() || t("skills.no_description")];
+  if (skill.developer) {
+    lines.push(
+      skill.version
+        ? t("skills.meta.developer_version", { developer: skill.developer, version: skill.version })
+        : t("skills.meta.developer", { developer: skill.developer }),
+    );
+  }
+  if (skill.location && skill.location !== "<built-in>") {
+    lines.push(t("skills.meta.source", { location: skill.location }));
+  }
+  if (skill.updatedAt) {
+    lines.push(t("skills.meta.updated", { date: skill.updatedAt }));
+  }
+  return lines.join("\n");
 }
 
 export function calculateSkillsPaginationRange(
@@ -145,15 +177,22 @@ export function buildSkillsListKeyboard(
     keyboard.row();
   }
 
+  keyboard.text(t("skills.button.new"), SKILLS_CALLBACK_NEW).row();
+  keyboard.text(t("skills.button.import"), SKILLS_CALLBACK_IMPORT);
+  keyboard.text(t("skills.button.refresh"), SKILLS_CALLBACK_REFRESH).row();
   keyboard
     .text("← Back", SKILLS_CALLBACK_BACK)
     .text("✖ Close", SKILLS_CALLBACK_CANCEL);
   return keyboard;
 }
 
-export function buildSkillsConfirmKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text(t("skills.button.execute"), SKILLS_CALLBACK_EXECUTE)
+export function buildSkillsConfirmKeyboard(canManage: boolean): InlineKeyboard {
+  const keyboard = new InlineKeyboard().text(t("skills.button.execute"), SKILLS_CALLBACK_EXECUTE);
+  if (canManage) {
+    keyboard.text(t("skills.button.edit"), SKILLS_CALLBACK_EDIT);
+    keyboard.text(t("skills.button.delete"), SKILLS_CALLBACK_DELETE);
+  }
+  return keyboard
     .row()
     .text("← Skills", SKILLS_CALLBACK_LIST_BACK)
     .text("✖ Close", SKILLS_CALLBACK_CANCEL);

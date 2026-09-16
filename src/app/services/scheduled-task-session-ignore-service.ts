@@ -78,7 +78,3 @@ export async function cleanupScheduledTaskSessionIgnores(now = new Date()): Prom
     };
   });
 }
-
-export function __resetScheduledTaskSessionIgnoreForTests(): void {
-  mutationQueue = Promise.resolve();
-}

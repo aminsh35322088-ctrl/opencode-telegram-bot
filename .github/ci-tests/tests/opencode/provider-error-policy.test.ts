@@ -7,6 +7,14 @@ describe("opencode/provider-error-policy", () => {
     expect(isDeterministicProviderRetryError("insufficient balance")).toBe(true);
   });
 
+  it("classifies context-window overflow as deterministic", () => {
+    expect(isDeterministicProviderRetryError(
+      "The request is invalid: Input tokens exceed the configured limit of 192000 tokens. Your messages resulted in 556328 tokens.",
+    )).toBe(true);
+    expect(isDeterministicProviderRetryError("maximum context length is 128000 tokens")).toBe(true);
+    expect(isDeterministicProviderRetryError("context length exceeded")).toBe(true);
+  });
+
   it("classifies provider rate-limit messages before they can enter an endless retry loop", () => {
     const messages = [
       "Too Many Requests",

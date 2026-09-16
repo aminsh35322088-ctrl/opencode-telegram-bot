@@ -88,7 +88,7 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
     });
     expect(mocked.cleanupIgnoresMock).toHaveBeenCalledTimes(1);
     expect(mocked.registerIgnoreMock).toHaveBeenCalledWith("temp-session");
-    expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ sessionID: "temp-session" });
+    expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo", sessionID: "temp-session" });
   });
 
   it("parses one-time schedule from fenced JSON", async () => {
@@ -123,7 +123,7 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
       summary: "Tomorrow at 12:00",
       nextRunAt: "2026-03-16T12:00:00.000Z",
     });
-    expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ sessionID: "temp-session" });
+    expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo", sessionID: "temp-session" });
   });
 
   it("cleans up temporary session when parser returns invalid JSON", async () => {
@@ -137,6 +137,6 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
     await expect(parseTaskSchedule("every friday", "D:/Projects/Repo")).rejects.toThrow(
       "invalid JSON",
     );
-    expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ sessionID: "temp-session" });
+    expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo", sessionID: "temp-session" });
   });
 });
