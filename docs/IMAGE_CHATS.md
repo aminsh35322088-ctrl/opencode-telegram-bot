@@ -6,7 +6,7 @@ Main has **New Chat** and **New Image Chat**. Coding and image conversations hav
 
 Open **Settings → AI Providers**:
 
-- **Chat & Coding** manages custom conversation providers and the built-in OpenRouter connection. Use **Default Model** to choose the model for new coding Topics. Existing native OpenCode providers stay in that catalog.
+- **Chat & Coding** manages custom OpenAI-compatible conversation providers. Use **Default Model** to choose the model for new coding Topics. Existing native OpenCode providers stay in that catalog.
 - **Image** configures the profile copied into each new Image Chat. Choose either a native Gemini image model, or a vision conversation connection plus an image generator/editor.
 - **Transcription** manages Groq and custom transcription connections. For a custom connection, open its details and choose its transcription model.
 
@@ -20,7 +20,9 @@ Free Model Detection and its existing price colors are unchanged. Experimental r
 
 **Native Gemini:** enter the exact model ID and Gemini API key. Setup checks key/model access through `models.get` and requires `generateContent`. It does not generate a test image or guarantee image output from an arbitrary text model. Choose a Gemini model supporting text, image generation and conversational editing. The adapter uses the native `generateContent` protocol and preserves returned part order and opaque thought signatures. It does not use the separate Interactions API.
 
-**Conversation + image tool:** choose a configured vision chat connection, its exact model ID, and a generator with both generation and editing. OpenRouter works here as an OpenAI-compatible conversation provider. Existing Cloudflare Workers AI and Custom image APIs provide the actual generation/edit operation. A custom image API must support `/images/generations`, `/images/edits` and Base64 image responses. The planner's valid structured decision determines discussion/generation/editing; malformed output asks for clarification and cannot trigger an image call.
+**Conversation + image tool:** choose a configured vision chat connection, its exact model ID, and a generator with both generation and editing. Any compatible Custom API can provide the conversation model. Existing Cloudflare Workers AI and Custom image APIs provide the actual generation/edit operation. A custom image API must support `/images/generations`, `/images/edits` and Base64 image responses. The planner's valid structured decision determines discussion/generation/editing; malformed output asks for clarification and cannot trigger an image call.
+
+**Auto mode:** only conversation models whose IDs explicitly contain a `:free` variant marker and that advertise image input are considered. Known model families are ranked in the existing GPT → Gemini → DeepSeek → Qwen → GLM → Mistral → Llama order. This keeps automatic selection provider-agnostic without assuming an arbitrary account or gateway is free.
 
 A Topic pins its mode, connection IDs, endpoints, conversation model, image model and edit model. Credential rotation for the same connection is supported. Removing a connection or changing a pinned endpoint/model produces an actionable error; the bot never silently changes engine or retries an ambiguous generation POST. Changing the default affects only new Topics. **New design with current default** explicitly resets an existing Topic and adopts the updated profile.
 
