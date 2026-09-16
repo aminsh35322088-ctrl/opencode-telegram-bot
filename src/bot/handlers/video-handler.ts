@@ -91,8 +91,11 @@ export async function extractAudio(videoBuffer: Buffer, sourceFilename: string):
 
 export function buildVideoAnalysisPrompt(caption: string, frameCount: number, transcription?: string): string {
   const parts: string[] = [];
-  if (caption) parts.push(caption);
-  parts.push(`Analyze this video frame by frame. ${frameCount} keyframes were sampled in chronological order from the video I sent. Describe what happens, the notable changes between frames, and transcribe any text visible in the frames.`);
+  if (caption) {
+    parts.push(caption);
+  } else {
+    parts.push(`Analyze this video frame by frame. ${frameCount} keyframes were sampled in chronological order from the video I sent. Describe what happens, the notable changes between frames, and transcribe any text visible in the frames.`);
+  }
   if (transcription) parts.push(`\n\nAudio transcription from the video:\n${transcription}`);
   return parts.join("\n");
 }
