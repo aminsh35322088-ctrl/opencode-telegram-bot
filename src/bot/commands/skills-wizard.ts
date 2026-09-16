@@ -10,6 +10,7 @@ type WizardStep = "name" | "description" | "body";
 interface SkillWizardState {
   mode: WizardMode;
   step: WizardStep;
+  messageId: number;
   name?: string;
   description?: string;
   expiresAt: number;
@@ -18,8 +19,19 @@ interface SkillWizardState {
 const WIZARD_TTL_MS = 15 * 60_000;
 let wizard: SkillWizardState | null = null;
 
-function freshState(mode: WizardMode, step: WizardStep, extra: Partial<SkillWizardState> = {}): SkillWizardState {
-  return { mode, step, expiresAt: Date.now() + WIZARD_TTL_MS, ...extra };
+function callbackMessageId(ctx: Context): number | null {
+  const message = ctx.callbackQuery?.message;
+  if (!message || !("message_id" in message)) return null;
+  return typeof message.message_id === "number" ? message.message_id : null;
+}
+
+function freshState(
+  mode: WizardMode,
+  step: WizardStep,
+  messageId: number,
+  extra: Partial<SkillWizardState> = {},
+): SkillWizardState {
+  return { mode, step, messageId, expiresAt: Date.now() + WIZARD_TTL_MS, ...extra };
 }
 
 export function isSkillWizardActive(): boolean {
@@ -35,18 +47,51 @@ export function clearSkillWizard(): void {
   wizard = null;
 }
 
-function cancelKeyboard(): InlineKeyboard {
-  return new InlineKeyboard().text(t("inline.button.cancel"), "skills:wizard_cancel");
+function wizardKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("← Skills", "skills:wizard_cancel")
+    .text("🏠 Home", "main:home");
+}
+
+function doneKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("← Skills", "skills:list_back")
+    .text("🏠 Home", "main:home");
+}
+
+async function editWizardPanel(
+  ctx: Context,
+  messageId: number,
+  text: string,
+  keyboard: InlineKeyboard = wizardKeyboard(),
+): Promise<void> {
+  if (!ctx.chat?.id) return;
+  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard });
+}
+
+async function deleteInput(ctx: Context): Promise<void> {
+  if (!ctx.chat?.id || !ctx.message?.message_id) return;
+  await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
 }
 
 export async function startSkillWizard(ctx: Context): Promise<void> {
-  wizard = freshState("create", "name");
-  await ctx.reply(t("skills.wizard.ask_name"), { reply_markup: cancelKeyboard() });
+  const messageId = callbackMessageId(ctx);
+  if (messageId === null) {
+    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true }).catch(() => {});
+    return;
+  }
+  wizard = freshState("create", "name", messageId);
+  await editWizardPanel(ctx, messageId, t("skills.wizard.ask_name"));
 }
 
 export async function startSkillEdit(ctx: Context, name: string): Promise<void> {
-  wizard = freshState("edit", "description", { name });
-  await ctx.reply(t("skills.edit.ask_description", { name }), { reply_markup: cancelKeyboard() });
+  const messageId = callbackMessageId(ctx);
+  if (messageId === null) {
+    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true }).catch(() => {});
+    return;
+  }
+  wizard = freshState("edit", "description", messageId, { name });
+  await editWizardPanel(ctx, messageId, t("skills.edit.ask_description", { name }));
 }
 
 export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
@@ -55,22 +100,27 @@ export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
   if (!text || text.startsWith("/")) return false;
 
   const current = wizard;
+  await deleteInput(ctx);
+
   try {
     if (current.step === "name") {
       const name = text.toLowerCase();
       if (!isValidSkillName(name)) {
-        await ctx.reply(t("skills.wizard.invalid_name"), { reply_markup: cancelKeyboard() });
+        await editWizardPanel(ctx, current.messageId, t("skills.wizard.invalid_name"));
         return true;
       }
-      wizard = freshState("create", "description", { name });
-      await ctx.reply(t("skills.wizard.ask_description"), { reply_markup: cancelKeyboard() });
+      wizard = freshState("create", "description", current.messageId, { name });
+      await editWizardPanel(ctx, current.messageId, t("skills.wizard.ask_description"));
       return true;
     }
 
     if (current.step === "description") {
-      wizard = freshState(current.mode, "body", { name: current.name, description: text });
+      wizard = freshState(current.mode, "body", current.messageId, {
+        name: current.name,
+        description: text,
+      });
       const nextPrompt = current.mode === "edit" ? t("skills.edit.ask_body") : t("skills.wizard.ask_body");
-      await ctx.reply(nextPrompt, { reply_markup: cancelKeyboard() });
+      await editWizardPanel(ctx, current.messageId, nextPrompt);
       return true;
     }
 
@@ -78,23 +128,27 @@ export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
     const description = current.description;
     if (!name || !description) {
       clearSkillWizard();
-      await ctx.reply(t("callback.processing_error"));
+      await editWizardPanel(ctx, current.messageId, t("callback.processing_error"), doneKeyboard());
       return true;
     }
+
     if (current.mode === "edit") {
       await updateGlobalSkill({ name, description, body: text });
     } else {
       await writeGlobalSkill({ name, description, body: text });
     }
-    const savedMessage = current.mode === "edit" ? t("skills.edit.saved", { name }) : t("skills.wizard.saved", { name });
+
+    const savedMessage = current.mode === "edit"
+      ? t("skills.edit.saved", { name })
+      : t("skills.wizard.saved", { name });
     clearSkillWizard();
     logger.info(`[SkillWizard] ${current.mode === "edit" ? "Updated" : "Created"} global skill: ${name}`);
-    await ctx.reply(`${savedMessage}\n\n${t("skills.restart_hint")}`);
+    await editWizardPanel(ctx, current.messageId, `${savedMessage}\n\n${t("skills.restart_hint")}`, doneKeyboard());
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     logger.warn(`[SkillWizard] Step failed: mode=${current.mode}, step=${current.step}, message=${message}`);
-    await ctx.reply(t("skills.wizard.write_error", { error: message }), { reply_markup: cancelKeyboard() });
+    await editWizardPanel(ctx, current.messageId, t("skills.wizard.write_error", { error: message }));
     return true;
   }
 }
