@@ -6,6 +6,7 @@ export const MESSAGES_CALLBACK_PREFIX = "messages:";
 export const MESSAGES_CALLBACK_SELECT_PREFIX = `${MESSAGES_CALLBACK_PREFIX}select:`;
 const MESSAGES_CALLBACK_PAGE_PREFIX = `${MESSAGES_CALLBACK_PREFIX}page:`;
 export const MESSAGES_CALLBACK_REVERT = `${MESSAGES_CALLBACK_PREFIX}revert`;
+export const MESSAGES_CALLBACK_REDO = `${MESSAGES_CALLBACK_PREFIX}redo`;
 export const MESSAGES_CALLBACK_FORK = `${MESSAGES_CALLBACK_PREFIX}fork`;
 export const MESSAGES_CALLBACK_BACK = `${MESSAGES_CALLBACK_PREFIX}back`;
 export const MESSAGES_CALLBACK_CANCEL = `${MESSAGES_CALLBACK_PREFIX}cancel`;
@@ -149,6 +150,14 @@ export function buildMessageDetailKeyboard(): InlineKeyboard {
     .text(t("messages.button.revert"), MESSAGES_CALLBACK_REVERT)
     .row()
     .text(t("messages.button.fork"), MESSAGES_CALLBACK_FORK)
+    .row()
+    .text(t("messages.button.back"), MESSAGES_CALLBACK_BACK)
+    .text(t("messages.button.cancel"), MESSAGES_CALLBACK_CANCEL);
+}
+
+export function buildMessageRevertedKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(t("messages.button.redo"), MESSAGES_CALLBACK_REDO)
     .row()
     .text(t("messages.button.back"), MESSAGES_CALLBACK_BACK)
     .text(t("messages.button.cancel"), MESSAGES_CALLBACK_CANCEL);

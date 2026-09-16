@@ -21,6 +21,7 @@ import { mcpsCommand } from "../commands/mcp-catalog-command.js";
 import { startCommand } from "../commands/start-command.js";
 import { helpCommand } from "../commands/help-command.js";
 import { statusCommand } from "../commands/status-command.js";
+import { sessionCommand } from "../commands/session-command.js";
 import { updateCommand } from "../commands/update-command.js";
 import { allVersionInfoCommand } from "../commands/all-version-info-command.js";
 import { memoryCommand, rememberCommand, forgetCommand } from "../commands/memory-command.js";
@@ -97,6 +98,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.command("all", allVersionInfoCommand);
   bot.command("help", helpCommand);
   bot.command("status", statusCommand);
+  bot.command("session", sessionCommand);
   bot.command("settings", settingsCommand);
   bot.command("topic_settings", async (ctx) => {
     if (await requireAiTopic(ctx, "topic_settings")) await settingsCommand(ctx as never);
