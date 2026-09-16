@@ -5,17 +5,9 @@ import { getCustomProviderConfig, listCustomProviders, type CustomProvider, type
 import { getActiveImageAiProviders } from "./image-ai-provider-service.js";
 import { asRecord, readBoundedJson } from "./ai-http-service.js";
 import { isChatModelMetadata } from "./model-eligibility-service.js";
-import { OPENROUTER_FREE_ROUTER_MODEL_ID, OPENROUTER_PROVIDER_ID } from "./openrouter-provider-service.js";
 
 export const GEMINI_IMAGE_CONNECTION = "gemini-image-chat";
 export const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
-
-const OPENROUTER_FREE_ROUTER_MODEL: CustomProviderModel = {
-  id: OPENROUTER_FREE_ROUTER_MODEL_ID,
-  name: "OpenRouter Free Router",
-  attachment: true,
-  modalities: { input: ["text", "image"], output: ["text"] },
-};
 
 const AUTO_CHAT_FAMILY_PRIORITY: ReadonlyArray<{ label: string; patterns: RegExp[] }> = [
   { label: "OpenAI / GPT", patterns: [/\bopenai\b/i, /(^|[/._-])gpt[-_/0-9]/i] },
@@ -31,42 +23,32 @@ function supportsImageInput(model: CustomProviderModel): boolean {
   return isChatModelMetadata(model) && (model.modalities?.input?.includes("image") === true || model.attachment === true);
 }
 
-function providerModelsForAuto(provider: CustomProvider): CustomProviderModel[] {
-  if (provider.id !== OPENROUTER_PROVIDER_ID || provider.models.some((model) => model.id === OPENROUTER_FREE_ROUTER_MODEL_ID)) return provider.models;
-  // Older saved OpenRouter connections predate the virtual free-router catalog
-  // entry. Add it at read time so existing users do not need to re-enter a key.
-  return [...provider.models, OPENROUTER_FREE_ROUTER_MODEL];
-}
-
 /**
- * Auto never guesses that a third-party/custom gateway is free. Only explicit
- * OpenRouter zero-cost variants participate, preventing a silent paid fallback.
+ * Auto mode only considers models that explicitly advertise a free variant in
+ * their model ID. This keeps automatic selection provider-agnostic without
+ * guessing that an arbitrary gateway or account tier is free.
  */
-function isKnownFreeModel(provider: CustomProvider, model: CustomProviderModel): boolean {
-  if (provider.id !== OPENROUTER_PROVIDER_ID) return false;
-  const id = model.id.toLowerCase();
-  return id === OPENROUTER_FREE_ROUTER_MODEL_ID || /:free(?:$|:)/.test(id);
+function isExplicitFreeModel(model: CustomProviderModel): boolean {
+  return /:free(?:$|:)/i.test(model.id);
 }
 
 function familyRank(provider: CustomProvider, model: CustomProviderModel): number {
   const haystack = `${provider.id} ${provider.name} ${model.id} ${model.name}`;
   const rank = AUTO_CHAT_FAMILY_PRIORITY.findIndex((family) => family.patterns.some((pattern) => pattern.test(haystack)));
-  if (rank >= 0) return rank;
-  if (model.id.toLowerCase() === OPENROUTER_FREE_ROUTER_MODEL_ID) return AUTO_CHAT_FAMILY_PRIORITY.length;
-  return AUTO_CHAT_FAMILY_PRIORITY.length + 1;
+  return rank >= 0 ? rank : AUTO_CHAT_FAMILY_PRIORITY.length;
 }
 
 export function rankAutoImageChatModels(providers: CustomProvider[]): Array<{ providerID: string; modelID: string; family: string }> {
   return providers
     .filter((provider) => provider.capability === "coding")
-    .flatMap((provider) => providerModelsForAuto(provider)
-      .filter((model) => isKnownFreeModel(provider, model) && supportsImageInput(model))
+    .flatMap((provider) => provider.models
+      .filter((model) => isExplicitFreeModel(model) && supportsImageInput(model))
       .map((model) => ({ provider, model, rank: familyRank(provider, model) })))
     .sort((a, b) => a.rank - b.rank || a.model.id.localeCompare(b.model.id))
     .map(({ provider, model, rank }) => ({
       providerID: provider.id,
       modelID: model.id,
-      family: AUTO_CHAT_FAMILY_PRIORITY[rank]?.label ?? (model.id.toLowerCase() === OPENROUTER_FREE_ROUTER_MODEL_ID ? "OpenRouter Free Router" : "Other free model"),
+      family: AUTO_CHAT_FAMILY_PRIORITY[rank]?.label ?? "Other free model",
     }));
 }
 
@@ -91,10 +73,9 @@ export async function resolveImageChatConnection(profile: ImageChatProfile): Pro
     return { apiKey, endpoint: GEMINI_ENDPOINT };
   }
   const config = await getCustomProviderConfig(profile.connectionID);
-  const virtualFreeRouter = profile.connectionID === OPENROUTER_PROVIDER_ID && profile.modelID === OPENROUTER_FREE_ROUTER_MODEL_ID;
   const model = config?.models.find((candidate) => candidate.id === profile.modelID);
-  if (!config || config.capability !== "coding" || config.apiUrl !== profile.endpoint || (!virtualFreeRouter && (!model || !isChatModelMetadata(model)))) throw new Error("The conversation connection/model changed or was removed. Reconfigure this Image Chat.");
-  if (!virtualFreeRouter && model && !model.modalities?.input?.includes("image") && model.attachment !== true) throw new Error("The conversation model needs confirmed image input support. Choose a vision model.");
+  if (!config || config.capability !== "coding" || config.apiUrl !== profile.endpoint || !model || !isChatModelMetadata(model)) throw new Error("The conversation connection/model changed or was removed. Reconfigure this Image Chat.");
+  if (!model.modalities?.input?.includes("image") && model.attachment !== true) throw new Error("The conversation model needs confirmed image input support. Choose a vision model.");
   return { apiKey: config.apiKey, endpoint: config.apiUrl };
 }
 
@@ -123,7 +104,7 @@ export async function buildAutoImageChatProfile(): Promise<{ profile: ImageChatP
   const candidates = rankAutoImageChatModels(providers);
   const selected = candidates[0];
   if (!selected) {
-    throw new Error("Auto Image Chat found no confirmed free vision chat model. Connect OpenRouter and keep a :free vision model (or openrouter/free), or switch Settings → Default Models → Image Chat to Manual.");
+    throw new Error("Auto Image Chat found no confirmed free vision chat model. Connect a Custom API that exposes a :free vision model, or switch Settings → Default Models → Image Chat to Manual.");
   }
   const profile = await buildToolImageChatProfile(selected.providerID, selected.modelID, preferredImage.id);
   return { profile, selection: `${selected.family} · ${selected.modelID}` };
