@@ -137,12 +137,14 @@ describe("bot/commands/skills", () => {
 
     const [, options] = defined((ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0]) as [
       string,
-      { reply_markup: { inline_keyboard: Array<Array<{ callback_data?: string }>> } },
+      { reply_markup: { inline_keyboard: Array<Array<{ callback_data?: string; text?: string }>> } },
     ];
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("skills:select:0");
+    expect(options.reply_markup.inline_keyboard[0]?.[0]?.text).toBe("Borsch");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("skills:select:1");
     expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("skills:new");
     expect(options.reply_markup.inline_keyboard[3]?.[0]?.callback_data).toBe("skills:import");
+    expect(options.reply_markup.inline_keyboard[3]?.[1]?.callback_data).toBe("skills:refresh");
     expect(options.reply_markup.inline_keyboard[4]?.[0]?.callback_data).toBe("skills:back");
 
     const state = interactionManager.getSnapshot();
@@ -151,6 +153,80 @@ describe("bot/commands/skills", () => {
     expect(state?.metadata.flow).toBe("skills");
     expect(state?.metadata.stage).toBe("list");
     expect(state?.metadata.messageId).toBe(123);
+  });
+
+  it("shows full details with developer, source and updated date on select", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 321,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [
+          {
+            name: "super-skill",
+            description: "Full description here",
+            location: "/x/skills/super-skill/SKILL.md",
+            developer: "obra/superpowers",
+            version: "v6.3.0",
+            updatedAt: "2026-09-14",
+          },
+        ],
+      },
+    });
+
+    const ctx = createCallbackContext("skills:select:0", 321);
+    await handleSkillsCallback(ctx, createDeps());
+
+    const calls = (ctx.editMessageText as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const text = String(calls[0]?.[0]);
+    expect(text).toContain("Full description here");
+    expect(text).toContain(t("skills.meta.developer_version", { developer: "obra/superpowers", version: "v6.3.0" }));
+    expect(text).toContain(t("skills.meta.source", { location: "/x/skills/super-skill/SKILL.md" }));
+    expect(text).toContain(t("skills.meta.updated", { date: "2026-09-14" }));
+  });
+
+  it("refreshes the catalog in place from the list", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 340,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [{ name: "old-skill", description: "Old" }],
+        page: 0,
+      },
+    });
+    mocked.skillListMock.mockResolvedValue({
+      data: [{ name: "fresh-skill", description: "Fresh", location: "", content: "" }],
+      error: null,
+    });
+
+    const ctx = createCallbackContext("skills:refresh", 340);
+    const handled = await handleSkillsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(mocked.skillListMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo" });
+    const calls = (ctx.editMessageText as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBe(1);
+    const options = calls[0]?.[1] as { reply_markup: { inline_keyboard: Array<Array<{ text?: string }>> } };
+    expect(options.reply_markup.inline_keyboard[0]?.[0]?.text).toBe("Fresh Skill");
+
+    const state = interactionManager.getSnapshot();
+    expect(state?.metadata.skills).toEqual([
+      {
+        name: "fresh-skill",
+        description: "Fresh",
+        location: undefined,
+        developer: undefined,
+        version: undefined,
+        updatedAt: undefined,
+      },
+    ]);
   });
 
   it("derives missing descriptions from skill content", async () => {

@@ -421,7 +421,11 @@ export const ru: I18nDictionary = {
   "skills.button.execute": "✅ Выполнить",
   "skills.confirm":
     "Подтвердите запуск скилла {skill}. Чтобы запустить его с аргументами, отправьте аргументы следующим сообщением.",
-  "skills.confirm_detail": "Подтвердите выполнение скилла {skill}.\n\n{description}\n📍 Источник: {location}\n\nЧтобы запустить с аргументами, отправьте аргументы сообщением.",
+  "skills.button.refresh": "🔄 Обновить",
+  "skills.meta.developer": "👤 {developer}",
+  "skills.meta.developer_version": "👤 {developer} ({version})",
+  "skills.meta.source": "📍 {location}",
+  "skills.meta.updated": "🕒 {date}",
   "skills.button.new": "➕ Новый скилл",
   "skills.button.delete": "🗑 Удалить скилл",
   "skills.button.edit": "✏️ Изменить скилл",

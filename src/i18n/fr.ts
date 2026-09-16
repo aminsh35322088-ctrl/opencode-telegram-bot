@@ -437,7 +437,11 @@ export const fr: I18nDictionary = {
   "skills.button.execute": "✅ Exécuter",
   "skills.confirm":
     "Confirmez l'exécution du skill {skill}. Pour l'exécuter avec des arguments, envoyez-les dans un message.",
-  "skills.confirm_detail": "Confirmer l'exécution du skill {skill}.\n\n{description}\n📍 Source : {location}\n\nPour l'exécuter avec des arguments, envoie les arguments en message.",
+  "skills.button.refresh": "🔄 Actualiser",
+  "skills.meta.developer": "👤 {developer}",
+  "skills.meta.developer_version": "👤 {developer} ({version})",
+  "skills.meta.source": "📍 {location}",
+  "skills.meta.updated": "🕒 {date}",
   "skills.button.new": "➕ Nouvelle skill",
   "skills.button.delete": "🗑 Supprimer la skill",
   "skills.button.edit": "✏️ Modifier la skill",

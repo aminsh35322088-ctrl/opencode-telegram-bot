@@ -1,6 +1,7 @@
 import { InlineKeyboard, type Context } from "grammy";
 import { config } from "../../config.js";
 import type { SkillCatalogItem } from "../../app/services/skills-catalog-service.js";
+import { loadSkillsCatalog } from "../../app/services/skills-catalog-service.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
@@ -16,6 +17,7 @@ import {
   buildSkillsListKeyboard,
   calculateSkillsPaginationRange,
   formatExecutingSkillMessage,
+  formatSkillDetailView,
   formatSkillsSelectText,
   parseSkillPageCallback,
   parseSkillSelectCallback,
@@ -28,6 +30,7 @@ import {
   SKILLS_CALLBACK_IMPORT,
   SKILLS_CALLBACK_NEW,
   SKILLS_CALLBACK_PREFIX,
+  SKILLS_CALLBACK_REFRESH,
   SKILLS_CALLBACK_WIZARD_CANCEL,
 } from "../menus/skills-catalog-menu.js";
 
@@ -85,10 +88,16 @@ function parseSkillItems(value: unknown): SkillCatalogItem[] | null {
 
     const description = (item as { description?: unknown }).description;
     const location = (item as { location?: unknown }).location;
+    const developer = (item as { developer?: unknown }).developer;
+    const version = (item as { version?: unknown }).version;
+    const updatedAt = (item as { updatedAt?: unknown }).updatedAt;
     skills.push({
       name: skillName,
       description: typeof description === "string" ? description : undefined,
       location: typeof location === "string" ? location : undefined,
+      developer: typeof developer === "string" ? developer : undefined,
+      version: typeof version === "string" ? version : undefined,
+      updatedAt: typeof updatedAt === "string" ? updatedAt : undefined,
     });
   }
 
@@ -301,6 +310,39 @@ export async function handleSkillsCallback(
       return true;
     }
 
+    if (data === SKILLS_CALLBACK_REFRESH) {
+      if (metadata.stage !== "list") {
+        await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+        return true;
+      }
+
+      let skills: SkillCatalogItem[];
+      try {
+        skills = await loadSkillsCatalog(metadata.projectDirectory);
+      } catch (error) {
+        logger.warn("[Skills] Catalog refresh failed:", error);
+        await ctx.answerCallbackQuery({ text: t("skills.fetch_error"), show_alert: true });
+        return true;
+      }
+
+      const pageSize = config.bot.commandsListLimit;
+      const keyboard = buildSkillsListKeyboard(skills, 0, pageSize);
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(formatSkillsSelectText(0), { reply_markup: keyboard });
+      interactionManager.transition({
+        expectedInput: "callback",
+        metadata: {
+          flow: "skills",
+          stage: "list",
+          messageId: metadata.messageId,
+          projectDirectory: metadata.projectDirectory,
+          skills,
+          page: 0,
+        },
+      });
+      return true;
+    }
+
     const page = parseSkillPageCallback(data);
     if (page !== null) {
       if (metadata.stage !== "list") {
@@ -356,11 +398,7 @@ export async function handleSkillsCallback(
     await ctx.answerCallbackQuery();
     const canManage = isManagedSkillLocation(selectedSkill.location);
     const confirmText = selectedSkill.location
-      ? t("skills.confirm_detail", {
-          skill: `/${selectedSkill.name}`,
-          description: selectedSkill.description ?? t("skills.no_description"),
-          location: selectedSkill.location,
-        })
+      ? formatSkillDetailView(selectedSkill)
       : t("skills.confirm", { skill: `/${selectedSkill.name}` });
     await ctx.editMessageText(confirmText, {
       reply_markup: buildSkillsConfirmKeyboard(canManage),
