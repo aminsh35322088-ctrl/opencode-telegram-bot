@@ -4,7 +4,7 @@ import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGit
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
-import { replyWithInlineMenu } from "../menus/inline-menu.js";
+import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 
@@ -19,7 +19,7 @@ function callbackMessageId(ctx: Context): number | null {
   return typeof message.message_id === "number" ? message.message_id : null;
 }
 function wizardKeyboard(): InlineKeyboard {
-  return new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Integrations", "integration:menu");
+  return appendHomeNavigation(new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Integrations", "integration:menu"));
 }
 export function isIntegrationWizardActive(): boolean { const pending = integrationWizard.get(); return Boolean(pending?.github || pending?.railway); }
 export function clearIntegrationWizard(): void { integrationWizard.clear(); }
