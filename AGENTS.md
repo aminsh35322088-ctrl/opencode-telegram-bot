@@ -6,6 +6,15 @@ Instructions for AI agents working on this project.
 
 Always read `AGENTS.md` before changing code. It is the project's operating contract.
 
+## Skills — use them in every session
+
+The list of available skills appears in `<available_skills>` in the system prompt. This rule applies to every topic, every model, and every workspace.
+
+- Before answering any non-trivial request, scan the skill descriptions. If there is even a small chance a skill applies, load it with the `skill` tool and follow it — without waiting for the user to ask.
+- Typical mappings: new feature or behavior change → `brainstorming`; bug, failing test, unexpected behavior → `systematic-debugging`; implementing any feature or fix → `test-driven-development`; about to claim work complete → `verification-before-completion`; dense or structurally complex material that needs a map → `focus-friendly`.
+- Skills are the default workflow, not optional polish. Missing an applicable skill counts as an error.
+- When creating a skill (manually, via GitHub import, or through `writing-skills`), always give it a clear `description:` in the SKILL.md frontmatter so the bot's `/skills` catalog shows a meaningful, skill-specific description.
+
 ## About the project
 
 **opencode-telegram-bot** is a Telegram bot client for OpenCode.
