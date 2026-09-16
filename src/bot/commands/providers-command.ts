@@ -155,8 +155,17 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
   const text = ctx.message?.text?.trim(), s = providerWizard.get();
   if (!ctx.chat || !text || !s) return false;
   if (text.startsWith("/") || text === "❌ Cancel") { clearProviderWizard(); return false; }
-  if (Date.now() > s.expires) { clearProviderWizard(); await ctx.reply("Setup expired. Reopen AI Providers."); return true; }
-  if (s.busy) { await deleteInput(ctx); await ctx.reply("Verification is running. Wait or press Back."); return true; }
+  if (Date.now() > s.expires) {
+    await deleteInput(ctx);
+    clearProviderWizard();
+    await renderProviders(ctx, s.messageId, "⌛ Setup expired. Reopen AI Providers.\n\n");
+    return true;
+  }
+  if (s.busy) {
+    await deleteInput(ctx);
+    await editWizard(ctx, s.messageId, "🔎 Verification is already running.\n\nWait for it to finish or press Back.");
+    return true;
+  }
   await deleteInput(ctx);
   let saved = false;
   const guard = () => { if (providerWizard.get() !== s || Date.now() > s.expires) throw new DOMException("Setup cancelled", "AbortError"); };
