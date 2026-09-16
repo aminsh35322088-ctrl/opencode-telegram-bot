@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { rankAutoImageChatModels } from "../../../src/app/services/image-chat-profile-service.js";
-import { OPENROUTER_PROVIDER_ID } from "../../../src/app/services/openrouter-provider-service.js";
 import type { CustomProvider } from "../../../src/app/services/custom-provider-service.js";
 
-function openRouter(models: CustomProvider["models"]): CustomProvider {
+function provider(id: string, models: CustomProvider["models"], capability: CustomProvider["capability"] = "coding"): CustomProvider {
   return {
-    id: OPENROUTER_PROVIDER_ID,
-    name: "OpenRouter",
-    baseURL: "https://openrouter.ai/api/v1",
-    capability: "coding",
+    id,
+    name: id,
+    baseURL: `https://${id}.test/v1`,
+    capability,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     models,
@@ -19,56 +18,43 @@ function vision(id: string) {
 }
 
 describe("image-chat-profile-service auto ranking", () => {
-  it("prefers GPT, then Gemini, then DeepSeek regardless of catalog order", () => {
-    const ranked = rankAutoImageChatModels([openRouter([
-      vision("deepseek/deepseek-v3:free"),
-      vision("google/gemini-2.5-flash:free"),
-      vision("openai/gpt-oss-120b:free"),
-    ])]);
+  it("prefers GPT, then Gemini, then DeepSeek regardless of provider or catalog order", () => {
+    const ranked = rankAutoImageChatModels([
+      provider("gateway-b", [vision("deepseek/deepseek-v3:free")]),
+      provider("gateway-a", [vision("google/gemini-2.5-flash:free"), vision("openai/gpt-oss-120b:free")]),
+    ]);
 
-    expect(ranked.slice(0, 3).map((model) => model.modelID)).toEqual([
+    expect(ranked.map((model) => model.modelID)).toEqual([
       "openai/gpt-oss-120b:free",
       "google/gemini-2.5-flash:free",
       "deepseek/deepseek-v3:free",
     ]);
-    expect(ranked.at(-1)?.modelID).toBe("openrouter/free");
   });
 
-  it("never includes paid or unconfirmed custom-provider models", () => {
+  it("accepts explicit :free vision models from custom coding providers only", () => {
     const ranked = rankAutoImageChatModels([
-      openRouter([vision("openai/gpt-paid"), vision("google/gemini-free:free")]),
-      {
-        ...openRouter([vision("openai/custom-free-looking:free")]),
-        id: "custom-provider",
-        name: "Custom Provider",
-      },
+      provider("custom-a", [vision("qwen/qwen3-vl:free"), vision("openai/gpt-paid")]),
+      provider("custom-stt", [vision("google/gemini-vision:free")], "stt"),
+      provider("custom-b", [{ id: "deepseek/text-only:free", name: "Text only", modalities: { input: ["text"], output: ["text"] } }]),
     ]);
 
-    expect(ranked[0]?.modelID).toBe("google/gemini-free:free");
-    expect(ranked.map((model) => model.modelID)).not.toContain("openai/gpt-paid");
-    expect(ranked.map((model) => model.modelID)).not.toContain("openai/custom-free-looking:free");
-    expect(ranked.at(-1)?.modelID).toBe("openrouter/free");
-  });
-
-  it("injects the free router for older saved OpenRouter connections", () => {
-    const ranked = rankAutoImageChatModels([openRouter([])]);
     expect(ranked).toEqual([{
-      providerID: OPENROUTER_PROVIDER_ID,
-      modelID: "openrouter/free",
-      family: "OpenRouter Free Router",
+      providerID: "custom-a",
+      modelID: "qwen/qwen3-vl:free",
+      family: "Qwen",
     }]);
   });
 
-  it("keeps OpenRouter free router as the capability-aware fallback", () => {
-    const ranked = rankAutoImageChatModels([openRouter([
-      vision("openrouter/free"),
+  it("puts unknown explicit free model families after known families", () => {
+    const ranked = rankAutoImageChatModels([provider("custom", [
+      vision("vendor/vision:free"),
       vision("meta-llama/llama-vision:free"),
     ])]);
 
     expect(ranked.map((model) => model.modelID)).toEqual([
       "meta-llama/llama-vision:free",
-      "openrouter/free",
+      "vendor/vision:free",
     ]);
-    expect(ranked.at(-1)?.family).toBe("OpenRouter Free Router");
+    expect(ranked.at(-1)?.family).toBe("Other free model");
   });
 });
