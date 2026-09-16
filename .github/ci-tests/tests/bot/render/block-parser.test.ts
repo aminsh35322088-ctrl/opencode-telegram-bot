@@ -314,4 +314,59 @@ describe("bot/render/block-parser", () => {
       },
     ]);
   });
+
+  it("parses inline html anchor tags as links", () => {
+    expect(
+      parseTelegramBlocks('Visit <a href="https://example.com">our site</a> for details'),
+    ).toEqual([
+      {
+        type: "paragraph",
+        inlines: [
+          { type: "text", text: "Visit " },
+          {
+            type: "link",
+            text: [{ type: "text", text: "our site" }],
+            url: "https://example.com",
+          },
+          { type: "text", text: " for details" },
+        ],
+      },
+    ]);
+  });
+
+  it("parses anchor tags with complex content", () => {
+    expect(
+      parseTelegramBlocks('<a href="https://example.com"><b>bold link</b></a>'),
+    ).toEqual([
+      {
+        type: "paragraph",
+        inlines: [
+          {
+            type: "link",
+            text: [{ type: "bold", children: [{ type: "text", text: "bold link" }] }],
+            url: "https://example.com",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("parses pre tags as code blocks", () => {
+    expect(parseTelegramBlocks("<pre>const x = 1;</pre>")).toEqual([
+      {
+        type: "code",
+        text: "const x = 1;",
+      },
+    ]);
+  });
+
+  it("parses pre tags with language attribute", () => {
+    expect(parseTelegramBlocks('<pre><code class="language-typescript">const x: number = 1;</code></pre>')).toEqual([
+      {
+        type: "code",
+        language: "typescript",
+        text: "const x: number = 1;",
+      },
+    ]);
+  });
 });
