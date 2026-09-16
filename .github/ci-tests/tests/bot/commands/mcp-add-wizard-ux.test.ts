@@ -39,31 +39,35 @@ describe("MCP add wizard UX", () => {
     interactionManager.clear("test_cleanup");
   });
 
-  it("opens the wizard in a separate temporary message without editing the parent menu", async () => {
+  it("edits the existing General panel instead of sending a temporary wizard message", async () => {
     const ctx = createContext();
 
     await startMcpAddWizard(ctx);
 
-    expect(ctx.reply).toHaveBeenCalledWith(
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      500,
       expect.stringContaining("1/3 · Server name"),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
-    expect(ctx.api.editMessageText).not.toHaveBeenCalled();
 
     const state = interactionManager.getSnapshot();
+    expect(state?.expectedInput).toBe("mixed");
     expect(state?.metadata.stage).toBe("add");
-    expect(state?.metadata.messageId).toBe(901);
-    expect(state?.metadata.parentMessageId).toBe(500);
+    expect(state?.metadata.messageId).toBe(500);
+    expect(state?.metadata.parentMessageId).toBeUndefined();
   });
 
-  it("dismisses only the temporary wizard message when parent restore is not requested", async () => {
+  it("dismisses without deleting the General panel", async () => {
     const ctx = createContext();
     await startMcpAddWizard(ctx);
+    (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mockClear();
 
     const dismissed = await dismissMcpAddWizard(ctx);
 
     expect(dismissed).toBe(true);
-    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 901);
+    expect(ctx.api.deleteMessage).not.toHaveBeenCalled();
     expect(ctx.api.editMessageText).not.toHaveBeenCalled();
     expect(interactionManager.getSnapshot()).toBeNull();
   });
