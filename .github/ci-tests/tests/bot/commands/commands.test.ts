@@ -145,6 +145,7 @@ function createCommandContext(messageId: number): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 900 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -165,6 +166,7 @@ function createCallbackContext(data: string, messageId: number): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 902 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -172,7 +174,7 @@ function createCallbackContext(data: string, messageId: number): Context {
 function createTextContext(text: string): Context {
   return {
     chat: { id: 777 },
-    message: { text } as Context["message"],
+    message: { text, message_id: 905 } as Context["message"],
     reply: vi.fn().mockResolvedValue({ message_id: 903 }),
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
@@ -180,6 +182,7 @@ function createTextContext(text: string): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 904 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -259,7 +262,8 @@ describe("bot/commands/commands", () => {
     ];
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("commands:select:0");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("commands:select:1");
-    expect(options.reply_markup.inline_keyboard[2]?.[1]?.callback_data).toBe("commands:cancel");
+    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("commands:back");
+    expect(options.reply_markup.inline_keyboard[2]?.[1]?.callback_data).toBe("main:home");
 
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");
@@ -321,7 +325,11 @@ describe("bot/commands/commands", () => {
 
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
-    expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.editMessageText).toHaveBeenCalledWith(
+      "▶️ /poem\n\nExecution started.",
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     expect(ctx.reply).toHaveBeenCalledWith(`${t("commands.executing_prefix")}\n/poem`, {
       entities: [{ type: "code", offset: t("commands.executing_prefix").length + 1, length: 5 }],
     });
@@ -366,7 +374,13 @@ describe("bot/commands/commands", () => {
 
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
-    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 500);
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 905);
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      500,
+      "▶️ /poem\n\nExecution started.",
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     expect(ctx.reply).toHaveBeenCalledWith(
       `${t("commands.executing_prefix")}\n/poem about spring`,
       {
@@ -401,8 +415,6 @@ describe("bot/commands/commands", () => {
       },
     });
 
-    // Set up commandListMock for recoverCommandsListMetadata fallback — return
-    // empty list so recovery fails and the callback is treated as inactive.
     mocked.commandListMock.mockResolvedValueOnce({
       data: [],
       error: null,
@@ -448,7 +460,8 @@ describe("bot/commands/commands", () => {
     expect(paginationRow?.[0]?.callback_data).toBe("commands:page:1");
     expect(paginationRow?.[0]?.text).toBe(t("commands.button.next_page"));
 
-    expect(options.reply_markup.inline_keyboard[11]?.[1]?.callback_data).toBe("commands:cancel");
+    expect(options.reply_markup.inline_keyboard[11]?.[0]?.callback_data).toBe("commands:back");
+    expect(options.reply_markup.inline_keyboard[11]?.[1]?.callback_data).toBe("main:home");
   });
 
   it("filters out non-command sources from command list", async () => {
@@ -474,7 +487,8 @@ describe("bot/commands/commands", () => {
 
     expect(options.reply_markup.inline_keyboard[0]?.[0]?.callback_data).toBe("commands:select:0");
     expect(options.reply_markup.inline_keyboard[1]?.[0]?.callback_data).toBe("commands:select:1");
-    expect(options.reply_markup.inline_keyboard[2]?.[1]?.callback_data).toBe("commands:cancel");
+    expect(options.reply_markup.inline_keyboard[2]?.[0]?.callback_data).toBe("commands:back");
+    expect(options.reply_markup.inline_keyboard[2]?.[1]?.callback_data).toBe("main:home");
 
     const state = interactionManager.getSnapshot();
     expect(state?.kind).toBe("custom");
@@ -526,7 +540,8 @@ describe("bot/commands/commands", () => {
     expect(paginationRow?.[0]?.callback_data).toBe("commands:page:0");
     expect(paginationRow?.[0]?.text).toBe(t("commands.button.prev_page"));
 
-    expect(inlineRows[3]?.[1]?.callback_data).toBe("commands:cancel");
+    expect(inlineRows[3]?.[0]?.callback_data).toBe("commands:back");
+    expect(inlineRows[3]?.[1]?.callback_data).toBe("main:home");
   });
 
   it("returns page-empty callback message when requested page has no commands", async () => {
