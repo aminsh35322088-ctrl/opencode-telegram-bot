@@ -17,6 +17,7 @@ import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { clearProviderWizard, handleProviderCallback } from "../commands/providers-command.js";
+import { dismissMcpAddWizard } from "../commands/mcp-catalog-command.js";
 import { handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
@@ -69,6 +70,7 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
   const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
 
   if (data === "main:home") {
+    await dismissMcpAddWizard(ctx);
     const chatId = ctx.chat?.id ?? callbackMessage?.chat.id;
     const messageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : undefined;
     if (typeof chatId !== "number" || typeof messageId !== "number") return true;
