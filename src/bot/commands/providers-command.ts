@@ -3,6 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
 import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 import { configureOpenRouterCodingProvider, OPENROUTER_PROVIDER_ID } from "../../app/services/openrouter-provider-service.js";
+import { configurePuterCodingProvider, PUTER_PROVIDER_ID } from "../../app/services/puter-provider-service.js";
 import { imageConnectionUsage } from "../../app/services/image-chat-profile-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { config } from "../../config.js";
@@ -16,7 +17,7 @@ import { setAiRoleSelection } from "../../app/services/ai-role-selection-service
 
 const CAPABILITIES: AiCapability[] = ["coding", "image", "stt"];
 const LABEL: Record<AiCapability, string> = { coding: "💬 Chat & Coding", image: "🎨 Image", stt: "🎙️ Transcription" };
-type Step = "name" | "url" | "key" | "openrouter-key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
+type Step = "name" | "url" | "key" | "openrouter-key" | "puter-token" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
 function messageId(ctx: Context): number | undefined { return ctx.callbackQuery?.message?.message_id; }
@@ -63,7 +64,10 @@ async function renderSlot(ctx: Context, capability: AiCapability, id?: number, n
   if (capability === "image") { await renderImage(ctx, id, notice, "provider:connections"); return; }
   const ps = (await listCustomProviders()).filter(p => p.capability === capability);
   const keyboard = new InlineKeyboard();
-  if (capability === "coding") keyboard.text(ps.some(p => p.id === OPENROUTER_PROVIDER_ID) ? "OpenRouter · Configure key" : "OpenRouter · Connect", "provider:openrouter:configure").row();
+  if (capability === "coding") {
+    keyboard.text(ps.some(p => p.id === OPENROUTER_PROVIDER_ID) ? "OpenRouter · Configure key" : "OpenRouter · Connect", "provider:openrouter:configure").row();
+    keyboard.text(ps.some(p => p.id === PUTER_PROVIDER_ID) ? "Puter AI · Configure token" : "Puter AI · Connect", "provider:puter:configure").row();
+  }
   for (const p of ps) keyboard.text(`🔌 ${p.name}`, `provider:view:${p.id}`).row();
   keyboard.text("➕ Add Custom API", `provider:add:${capability}`).row();
   if (capability === "stt") {
@@ -108,6 +112,7 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (data === "provider:image:menu") { await showImageChatSettings(ctx); return true; }
   if (data === "provider:image:engines") { await renderImage(ctx, id); return true; }
   if (data === "provider:openrouter:configure") { await start(ctx, "openrouter-key", "OpenRouter\n\nSend an inference API key. It will be verified before saving.", "coding"); return true; }
+  if (data === "provider:puter:configure") { await start(ctx, "puter-token", "Puter AI\n\nSend an auth token created in puter.com/dashboard. The bot verifies real OpenAI-compatible inference before saving it.", "coding"); return true; }
   if (data.startsWith("provider:add:")) {
     const capability = data.slice("provider:add:".length) as AiCapability;
     if (capability === "coding" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
@@ -182,6 +187,7 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
     if (s.step === "image-custom-edit-model") { s.editModel = text; s.step = "image-custom-key"; await editWizard(ctx, s.messageId, "4/4 · API key"); return true; }
     s.busy = true; await editWizard(ctx, s.messageId, "🔎 Verifying credentials and model access…");
     if (s.step === "openrouter-key") await configureOpenRouterCodingProvider(text, guard);
+    else if (s.step === "puter-token") await configurePuterCodingProvider(text, guard);
     else if (s.step === "image-cloudflare-token") {
       const validation = await configureCloudflareCredentials(s.accountId!, text, guard);
       if (!validation.valid) throw new Error(`Cloudflare verification failed: ${validation.reason}`);
