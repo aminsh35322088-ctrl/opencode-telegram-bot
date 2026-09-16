@@ -11,7 +11,13 @@ import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import { processUserPrompt, type ProcessPromptDeps } from "../handlers/prompt.js";
 import { clearSkillWizard, startSkillEdit, startSkillWizard } from "../commands/skills-wizard.js";
-import { clearSkillImportFlow, handleSkillImportCallback, SKILLS_IMPORT_CALLBACK_PREFIX, startSkillImport } from "../commands/skills-import-flow.js";
+import {
+  clearSkillImportFlow,
+  handleSkillImportCallback,
+  SKILLS_IMPORT_CALLBACK_PREFIX,
+  startSkillImport,
+} from "../commands/skills-import-flow.js";
+import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "../../app/services/skill-manage-service.js";
 import {
   buildSkillsConfirmKeyboard,
@@ -63,30 +69,18 @@ export interface ExecuteSkillParams {
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) {
-    return null;
-  }
-
+  if (!message || !("message_id" in message)) return null;
   const messageId = (message as { message_id?: number }).message_id;
   return typeof messageId === "number" ? messageId : null;
 }
 
 function parseSkillItems(value: unknown): SkillCatalogItem[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
+  if (!Array.isArray(value)) return null;
   const skills: SkillCatalogItem[] = [];
   for (const item of value) {
-    if (!item || typeof item !== "object") {
-      return null;
-    }
-
+    if (!item || typeof item !== "object") return null;
     const skillName = (item as { name?: unknown }).name;
-    if (typeof skillName !== "string" || !skillName.trim()) {
-      return null;
-    }
-
+    if (typeof skillName !== "string" || !skillName.trim()) return null;
     const description = (item as { description?: unknown }).description;
     const location = (item as { location?: unknown }).location;
     const developer = (item as { developer?: unknown }).developer;
@@ -101,70 +95,38 @@ function parseSkillItems(value: unknown): SkillCatalogItem[] | null {
       updatedAt: typeof updatedAt === "string" ? updatedAt : undefined,
     });
   }
-
   return skills;
 }
 
 export function parseSkillsMetadata(state: InteractionState | null): SkillsMetadata | null {
-  if (!state || state.kind !== "custom") {
-    return null;
-  }
-
+  if (!state || state.kind !== "custom") return null;
   const flow = state.metadata.flow;
   const stage = state.metadata.stage;
   const messageId = state.metadata.messageId;
   const projectDirectory = state.metadata.projectDirectory;
-
-  if (flow !== "skills" || typeof messageId !== "number" || typeof projectDirectory !== "string") {
-    return null;
-  }
+  if (flow !== "skills" || typeof messageId !== "number" || typeof projectDirectory !== "string") return null;
 
   if (stage === "list") {
     const skills = parseSkillItems(state.metadata.skills);
-    if (!skills) {
-      return null;
-    }
-
-    const page =
-      typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
-        ? Math.max(0, state.metadata.page)
-        : 0;
-
-    return {
-      flow,
-      stage,
-      messageId,
-      projectDirectory,
-      skills,
-      page,
-    };
+    if (!skills) return null;
+    const page = typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
+      ? Math.max(0, state.metadata.page)
+      : 0;
+    return { flow, stage, messageId, projectDirectory, skills, page };
   }
 
   if (stage === "confirm") {
     const skillName = state.metadata.skillName;
-    if (typeof skillName !== "string" || !skillName.trim()) {
-      return null;
-    }
-
+    if (typeof skillName !== "string" || !skillName.trim()) return null;
     const skillLocation = typeof state.metadata.skillLocation === "string" ? state.metadata.skillLocation : undefined;
-    return {
-      flow,
-      stage,
-      messageId,
-      projectDirectory,
-      skillName,
-      skillLocation,
-    };
+    return { flow, stage, messageId, projectDirectory, skillName, skillLocation };
   }
-
   return null;
 }
 
 export function clearSkillsInteraction(reason: string): void {
   const metadata = parseSkillsMetadata(interactionManager.getSnapshot());
-  if (metadata) {
-    interactionManager.clear(reason);
-  }
+  if (metadata) interactionManager.clear(reason);
 }
 
 function isMessageNotModifiedError(error: unknown): boolean {
@@ -176,10 +138,16 @@ async function editCatalogMessageIgnoringNoop(ctx: Context, text: string, keyboa
   try {
     await ctx.editMessageText(text, { reply_markup: keyboard });
   } catch (error) {
-    if (!isMessageNotModifiedError(error)) {
-      throw error;
-    }
+    if (!isMessageNotModifiedError(error)) throw error;
   }
+}
+
+function homeOnlyKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("🏠 Home", "main:home");
+}
+
+function skillsBackHomeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home");
 }
 
 export async function executeSkill(
@@ -202,7 +170,6 @@ export async function executeSkill(
   const args = params.argumentsText.trim();
   const executingMessage = formatExecutingSkillMessage(params.skillName, args);
   await ctx.reply(executingMessage.text, { entities: executingMessage.entities });
-
   const promptText = args ? `/${params.skillName} ${args}` : `/${params.skillName}`;
   await processUserPrompt(ctx, promptText, deps);
 }
@@ -227,7 +194,11 @@ async function recoverSkillsListInteraction(ctx: Context): Promise<boolean> {
     logger.warn("[Skills] Failed to re-render skills list during recovery:", error);
     return false;
   }
-  interactionManager.start({ kind: "custom", expectedInput: "callback", metadata: { flow: "skills", stage: "list", messageId, projectDirectory, skills, page: 0 } });
+  interactionManager.start({
+    kind: "custom",
+    expectedInput: "callback",
+    metadata: { flow: "skills", stage: "list", messageId, projectDirectory, skills, page: 0 },
+  });
   await ctx.answerCallbackQuery().catch(() => {});
   return true;
 }
@@ -237,17 +208,23 @@ export async function handleSkillsCallback(
   deps: ProcessPromptDeps,
 ): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
-  if (!data || !data.startsWith(SKILLS_CALLBACK_PREFIX)) {
-    return false;
-  }
+  if (!data || !data.startsWith(SKILLS_CALLBACK_PREFIX)) return false;
 
   if (data.startsWith(SKILLS_IMPORT_CALLBACK_PREFIX)) {
     return handleSkillImportCallback(ctx, data);
   }
 
+  if (data === SKILLS_CALLBACK_WIZARD_CANCEL) {
+    clearSkillWizard();
+    clearSkillImportFlow();
+    clearSkillsInteraction("skills_wizard_cancelled");
+    await ctx.answerCallbackQuery({ text: t("common.cancelled") }).catch(() => {});
+    await skillsCommand(ctx);
+    return true;
+  }
+
   let metadata = parseSkillsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
-
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
     if (!(await recoverSkillsListInteraction(ctx))) {
       await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
@@ -272,11 +249,11 @@ export async function handleSkillsCallback(
         await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
         return true;
       }
-
       clearSkillsInteraction("skills_execute_clicked");
       await ctx.answerCallbackQuery({ text: t("skills.execute_callback") });
-      await ctx.deleteMessage().catch(() => {});
-
+      await ctx.editMessageText(`▶️ /${metadata.skillName}\n\nExecution started.`, {
+        reply_markup: homeOnlyKeyboard(),
+      }).catch(() => {});
       await executeSkill(ctx, deps, {
         projectDirectory: metadata.projectDirectory,
         skillName: metadata.skillName,
@@ -299,15 +276,9 @@ export async function handleSkillsCallback(
         return true;
       }
       clearSkillsInteraction("skills_import_start");
+      clearSkillWizard();
       await ctx.answerCallbackQuery();
       await startSkillImport(ctx);
-      return true;
-    }
-
-    if (data === SKILLS_CALLBACK_WIZARD_CANCEL) {
-      clearSkillWizard();
-      await ctx.answerCallbackQuery({ text: t("common.cancelled") });
-      await ctx.editMessageText(t("skills.wizard.cancelled")).catch(() => {});
       return true;
     }
 
@@ -317,8 +288,8 @@ export async function handleSkillsCallback(
         return true;
       }
       clearSkillsInteraction("skills_edit_clicked");
+      clearSkillImportFlow();
       await ctx.answerCallbackQuery();
-      await ctx.deleteMessage().catch(() => {});
       await startSkillEdit(ctx, metadata.skillName);
       return true;
     }
@@ -332,7 +303,8 @@ export async function handleSkillsCallback(
       await ctx.editMessageText(t("skills.delete_confirm", { skill: metadata.skillName }), {
         reply_markup: new InlineKeyboard()
           .text(t("skills.button.delete_confirm"), SKILLS_CALLBACK_DELETE_CONFIRM)
-          .text(t("skills.button.delete_cancel"), SKILLS_CALLBACK_DELETE_CANCEL),
+          .text(t("skills.button.delete_cancel"), SKILLS_CALLBACK_DELETE_CANCEL).row()
+          .text("🏠 Home", "main:home"),
       });
       return true;
     }
@@ -349,12 +321,15 @@ export async function handleSkillsCallback(
         deleted
           ? `${t("skills.deleted", { name: metadata.skillName })}\n\n${t("skills.restart_hint")}`
           : t("skills.delete_failed"),
+        { reply_markup: skillsBackHomeKeyboard() },
       ).catch(() => {});
       return true;
     }
 
     if (data === SKILLS_CALLBACK_DELETE_CANCEL) {
       await ctx.answerCallbackQuery({ text: t("common.cancelled") });
+      clearSkillsInteraction("skills_delete_cancelled");
+      await skillsCommand(ctx);
       return true;
     }
 
@@ -363,7 +338,6 @@ export async function handleSkillsCallback(
         await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
         return true;
       }
-
       let skills: SkillCatalogItem[];
       try {
         skills = await loadSkillsCatalog(metadata.projectDirectory);
@@ -372,7 +346,6 @@ export async function handleSkillsCallback(
         await ctx.answerCallbackQuery({ text: t("skills.fetch_error"), show_alert: true });
         return true;
       }
-
       const pageSize = config.bot.commandsListLimit;
       const keyboard = buildSkillsListKeyboard(skills, 0, pageSize);
       await ctx.answerCallbackQuery();
@@ -397,23 +370,19 @@ export async function handleSkillsCallback(
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-
       const pageSize = config.bot.commandsListLimit;
       const { page: normalizedPage, totalPages } = calculateSkillsPaginationRange(
         metadata.skills.length,
         page,
         pageSize,
       );
-
       if (page >= totalPages || page < 0) {
         await ctx.answerCallbackQuery({ text: t("skills.page_empty_callback") });
         return true;
       }
-
       const keyboard = buildSkillsListKeyboard(metadata.skills, normalizedPage, pageSize);
       await ctx.answerCallbackQuery();
       await editCatalogMessageIgnoringNoop(ctx, formatSkillsSelectText(normalizedPage), keyboard);
-
       interactionManager.transition({
         expectedInput: "callback",
         metadata: {
@@ -425,7 +394,6 @@ export async function handleSkillsCallback(
           page: normalizedPage,
         },
       });
-
       return true;
     }
 
@@ -449,7 +417,6 @@ export async function handleSkillsCallback(
     await ctx.editMessageText(confirmText, {
       reply_markup: buildSkillsConfirmKeyboard(canManage),
     });
-
     interactionManager.transition({
       expectedInput: "mixed",
       metadata: {
@@ -461,7 +428,6 @@ export async function handleSkillsCallback(
         skillLocation: selectedSkill.location,
       },
     });
-
     return true;
   } catch (error) {
     logger.error("[Skills] Error handling skill callback:", error);
