@@ -11,6 +11,7 @@ import { clearPausedSession } from "../../app/managers/paused-session-manager.js
 import { getBotUpdateNotice, markBotVersionNotified } from "../../app/services/version-info-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
+import { dismissMcpAddWizard } from "./mcp-catalog-command.js";
 
 async function normalizeStartContext(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
@@ -40,6 +41,8 @@ function isPrivateBotTopicMode(ctx: Context): boolean {
 export async function startCommand(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (typeof chatId !== "number") return;
+
+  await dismissMcpAddWizard(ctx);
 
   const inboundThreadId = ctx.message?.message_thread_id;
   const isInTopic = typeof inboundThreadId === "number" && inboundThreadId > 1;
