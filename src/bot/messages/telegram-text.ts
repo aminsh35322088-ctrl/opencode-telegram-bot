@@ -118,7 +118,20 @@ function isThinkingPart(part: TelegramRenderedPart): boolean {
   return part.blocks.some((block) => block.type === "thinking");
 }
 
+/**
+ * Code blocks stay LTR no matter what language their string literals quote:
+ * a part made solely of `pre` blocks must never take an RTL base, mirroring
+ * the "code is never flipped" invariant of RTL typography helpers.
+ */
+function isCodeOnlyPart(part: TelegramRenderedPart): boolean {
+  return part.blocks.length > 0 && part.blocks.every((block) => block.type === "pre");
+}
+
 function toInputRichMessage(part: TelegramRenderedPart): InputRichMessageWithoutUpload {
+  if (isCodeOnlyPart(part)) {
+    return { blocks: part.blocks };
+  }
+
   return {
     blocks: part.blocks,
     ...(shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
