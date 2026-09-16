@@ -35,48 +35,73 @@ import {
 import { handleSkillWizardMessage, startSkillWizard, clearSkillWizard } from "../../../src/bot/commands/skills-wizard.js";
 import { t } from "../../../src/i18n/index.js";
 
+interface PanelEdit {
+  text: string;
+  options?: { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
+}
 interface Ctx {
   context: Context;
-  replies: Array<{ text: string; options?: { reply_markup?: unknown } }>;
+  edits: PanelEdit[];
   lastKeyboard: () => Array<Array<{ callback_data?: string }>>;
 }
 
-function makeCtx(): Ctx {
-  const replies: Ctx["replies"] = [];
+function makeCtx(messageId = 700): Ctx {
+  const edits: PanelEdit[] = [];
+  const recordEdit = vi.fn(async (...args: unknown[]) => {
+    const text = typeof args[0] === "number" ? String(args[2] ?? "") : String(args[0] ?? "");
+    const options = (typeof args[0] === "number" ? args[3] : args[1]) as PanelEdit["options"];
+    edits.push({ text, options });
+    return true;
+  });
   const context = {
-    message: undefined,
-    reply: vi.fn(async (text: string, options?: { reply_markup?: unknown }) => {
-      replies.push({ text, options });
-      return { message_id: 1 };
-    }),
+    chat: { id: 777 },
+    callbackQuery: {
+      data: "skills:import",
+      message: { message_id: messageId, chat: { id: 777 } },
+    } as Context["callbackQuery"],
+    reply: vi.fn().mockResolvedValue({ message_id: 999 }),
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
-    editMessageText: vi.fn().mockResolvedValue(undefined),
+    editMessageText: recordEdit,
+    api: {
+      editMessageText: recordEdit,
+      deleteMessage: vi.fn().mockResolvedValue(true),
+    },
   } as unknown as Context;
   return {
     context,
-    replies,
-    lastKeyboard: () =>
-      ((replies[replies.length - 1]?.options?.reply_markup as { inline_keyboard?: unknown } | undefined)
-        ?.inline_keyboard ?? []) as Array<Array<{ callback_data?: string }>>,
+    edits,
+    lastKeyboard: () => edits[edits.length - 1]?.options?.reply_markup?.inline_keyboard ?? [],
   };
+}
+
+let nextInputId = 800;
+async function sendText(ctx: Ctx, text: string): Promise<boolean> {
+  (ctx.context as { message?: { message_id: number; text: string } }).message = {
+    message_id: nextInputId++,
+    text,
+  };
+  return handleSkillImportMessage(ctx.context);
 }
 
 function makeMessage(text: string): Context {
   return {
-    message: { text },
-    reply: vi.fn().mockResolvedValue({ message_id: 2 }),
-    answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
-    editMessageText: vi.fn().mockResolvedValue(undefined),
+    chat: { id: 777 },
+    message: { message_id: 990, text } as Context["message"],
+    reply: vi.fn().mockResolvedValue({ message_id: 991 }),
+    api: {
+      editMessageText: vi.fn().mockResolvedValue(undefined),
+      deleteMessage: vi.fn().mockResolvedValue(true),
+    },
   } as unknown as Context;
 }
 
-async function sendText(ctx: Ctx, text: string): Promise<boolean> {
-  (ctx.context as { message?: { text: string } }).message = { text };
-  return handleSkillImportMessage(ctx.context);
-}
-
 function skill(name: string, description = "desc") {
-  return { name, description, content: `---\nname: ${name}\ndescription: ${description}\n---\n\nBody`, sourceUrl: `https://github.com/o/r/tree/main/skills/${name}` };
+  return {
+    name,
+    description,
+    content: `---\nname: ${name}\ndescription: ${description}\n---\n\nBody`,
+    sourceUrl: `https://github.com/o/r/tree/main/skills/${name}`,
+  };
 }
 
 describe("bot/commands/skills-import-flow", () => {
@@ -87,12 +112,14 @@ describe("bot/commands/skills-import-flow", () => {
     pathsMock.appHome = tmpHome;
     clearSkillImportFlow();
     clearSkillWizard();
+    nextInputId = 800;
     serviceMock.resolveSkillSource.mockReset();
     serviceMock.fetchSkillFromGitHub.mockReset();
   });
 
   afterEach(async () => {
     clearSkillImportFlow();
+    clearSkillWizard();
     await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
@@ -102,50 +129,55 @@ describe("bot/commands/skills-import-flow", () => {
     expect(await handleSkillImportCallback(makeCtx().context, "skills:new")).toBe(false);
   });
 
-  it("asks for a link and clears the create wizard when starting", async () => {
-    await startSkillWizard(makeCtx().context);
-    const ctx = makeCtx();
+  it("edits the General panel for the URL prompt and clears the create wizard", async () => {
+    const createCtx = makeCtx(699);
+    await startSkillWizard(createCtx.context);
+    const ctx = makeCtx(700);
     await startSkillImport(ctx.context);
+
     expect(isSkillImportActive()).toBe(true);
-    expect(ctx.replies[0]?.text).toBe(t("skills.import.ask_url"));
-    expect(ctx.lastKeyboard()[0]?.[0]?.callback_data).toBe("skills:imp_cancel");
+    expect(ctx.context.reply).not.toHaveBeenCalled();
+    expect(ctx.edits[0]?.text).toBe(t("skills.import.ask_url"));
+    expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual(
+      expect.arrayContaining(["skills:imp_cancel", "main:home"]),
+    );
     expect(await handleSkillWizardMessage(makeMessage("name"))).toBe(false);
   });
 
-  it("imports a single resolved skill verbatim and finishes", async () => {
+  it("imports a single resolved skill on the same panel and finishes", async () => {
     const ctx = makeCtx();
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockResolvedValue({ kind: "single", skill: skill("deploy-check", "Check deploys") });
 
     expect(await sendText(ctx, "https://github.com/o/r")).toBe(true);
-    const confirm = ctx.replies[ctx.replies.length - 1];
-    expect(confirm?.text).toContain("deploy-check");
-    expect(confirm?.text).toContain("Check deploys");
+    expect(ctx.edits.at(-1)?.text).toContain("deploy-check");
+    expect(ctx.edits.at(-1)?.text).toContain("Check deploys");
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toContain("skills:imp_confirm");
+    expect(ctx.context.api.deleteMessage).toHaveBeenCalledWith(777, 800);
 
     expect(await handleSkillImportCallback(ctx.context, "skills:imp_confirm")).toBe(true);
     expect(isSkillImportActive()).toBe(false);
     const file = path.join(tmpHome, ".config", "opencode", "skills", "deploy-check", "SKILL.md");
     expect(await fs.readFile(file, "utf8")).toContain("Check deploys");
-    const last = ctx.replies[ctx.replies.length - 1];
-    expect(last?.text).toContain(t("skills.imported", { name: "deploy-check" }));
-    expect(last?.text).toContain(t("skills.restart_hint"));
+    expect(ctx.edits.at(-1)?.text).toContain(t("skills.imported", { name: "deploy-check" }));
+    expect(ctx.edits.at(-1)?.text).toContain(t("skills.restart_hint"));
+    expect(ctx.context.reply).not.toHaveBeenCalled();
   });
 
-  it("keeps the flow active and reports invalid links", async () => {
+  it("keeps the flow active and renders invalid-link errors in place", async () => {
     const ctx = makeCtx();
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockRejectedValue(new Error("This is not a GitHub link"));
     expect(await sendText(ctx, "https://example.com/x")).toBe(true);
     expect(isSkillImportActive()).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.invalid_url"));
+    expect(ctx.edits.at(-1)?.text).toBe(t("skills.import.invalid_url"));
 
     serviceMock.resolveSkillSource.mockRejectedValue(new Error("No SKILL.md found in this location"));
     expect(await sendText(ctx, "https://github.com/o/r/tree/main/nope")).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.not_found"));
+    expect(ctx.edits.at(-1)?.text).toBe(t("skills.import.not_found"));
   });
 
-  it("walks a multi-skill list one by one", async () => {
+  it("walks a multi-skill list one by one without creating prompt messages", async () => {
     const ctx = makeCtx();
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockResolvedValue({
@@ -157,11 +189,12 @@ describe("bot/commands/skills-import-flow", () => {
     });
 
     expect(await sendText(ctx, "https://github.com/o/r")).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.multiple_found", { count: 2 }));
+    expect(ctx.edits.at(-1)?.text).toBe(t("skills.import.multiple_found", { count: 2 }));
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual([
       "skills:imp_pick:0",
       "skills:imp_pick:1",
       "skills:imp_cancel",
+      "main:home",
     ]);
 
     serviceMock.fetchSkillFromGitHub.mockResolvedValue(skill("alpha", "Alpha skill"));
@@ -173,17 +206,14 @@ describe("bot/commands/skills-import-flow", () => {
 
     expect(await handleSkillImportCallback(ctx.context, "skills:imp_confirm")).toBe(true);
     expect(isSkillImportActive()).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.multiple_found", { count: 1 }));
-    expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual([
-      "skills:imp_pick:0",
-      "skills:imp_cancel",
-    ]);
+    expect(ctx.edits.at(-1)?.text).toBe(t("skills.import.multiple_found", { count: 1 }));
 
     expect(await handleSkillImportCallback(ctx.context, "skills:imp_cancel")).toBe(true);
     expect(isSkillImportActive()).toBe(false);
+    expect(ctx.context.reply).not.toHaveBeenCalled();
   });
 
-  it("reports when a skill already exists and stays active", async () => {
+  it("reports duplicate skills on the same panel and stays active", async () => {
     const ctx = makeCtx();
     await startSkillImport(ctx.context);
     serviceMock.resolveSkillSource.mockResolvedValue({ kind: "single", skill: skill("dupe") });
@@ -194,6 +224,6 @@ describe("bot/commands/skills-import-flow", () => {
 
     expect(await handleSkillImportCallback(ctx.context, "skills:imp_confirm")).toBe(true);
     expect(isSkillImportActive()).toBe(true);
-    expect(ctx.replies[ctx.replies.length - 1]?.text).toBe(t("skills.import.exists", { name: "dupe" }));
+    expect(ctx.edits.at(-1)?.text).toBe(t("skills.import.exists", { name: "dupe" }));
   });
 });
