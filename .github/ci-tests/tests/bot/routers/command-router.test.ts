@@ -38,6 +38,7 @@ describe("bot/routers/command-router", () => {
       "all",
       "help",
       "status",
+      "session",
       "settings",
       "topic_settings",
       "providers",
