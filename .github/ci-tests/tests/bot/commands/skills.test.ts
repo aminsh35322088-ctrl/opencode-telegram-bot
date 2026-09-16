@@ -44,9 +44,9 @@ vi.mock("../../../src/opencode/client.js", () => ({
 }));
 
 vi.mock("../../../src/bot/handlers/prompt.js", () => ({
-    processUserPrompt: mocked.processUserPromptMock,
-    __resetPromptRecoveryStateForTests: vi.fn(),
-  }));
+  processUserPrompt: mocked.processUserPromptMock,
+  __resetPromptRecoveryStateForTests: vi.fn(),
+}));
 
 function createCommandContext(messageId: number): Context {
   return {
@@ -58,6 +58,7 @@ function createCommandContext(messageId: number): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 900 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -78,6 +79,7 @@ function createCallbackContext(data: string, messageId: number): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 902 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -85,7 +87,7 @@ function createCallbackContext(data: string, messageId: number): Context {
 function createTextContext(text: string): Context {
   return {
     chat: { id: 777 },
-    message: { text } as Context["message"],
+    message: { text, message_id: 905 } as Context["message"],
     reply: vi.fn().mockResolvedValue({ message_id: 903 }),
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
@@ -93,6 +95,7 @@ function createTextContext(text: string): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 904 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -299,7 +302,13 @@ describe("bot/commands/skills", () => {
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
     expect(isSkillImportActive()).toBe(true);
-    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      330,
+      t("skills.import.ask_url"),
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     clearSkillImportFlow();
   });
 
@@ -429,7 +438,13 @@ describe("bot/commands/skills", () => {
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
     expect(isSkillWizardActive()).toBe(true);
-    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      400,
+      t("skills.edit.ask_description", { name: "borsch" }),
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     clearSkillWizard();
   });
 
@@ -478,7 +493,11 @@ describe("bot/commands/skills", () => {
 
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
-    expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.editMessageText).toHaveBeenCalledWith(
+      "▶️ /borsch\n\nExecution started.",
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     expect(ctx.reply).toHaveBeenCalledWith(`${t("skills.executing_prefix")}\n/borsch`, {
       entities: [{ type: "code", offset: t("skills.executing_prefix").length + 1, length: 7 }],
     });
@@ -504,7 +523,13 @@ describe("bot/commands/skills", () => {
 
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
-    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 500);
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 905);
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      500,
+      "▶️ /borsch\n\nExecution started.",
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     expect(ctx.reply).toHaveBeenCalledWith(
       `${t("skills.executing_prefix")}\n/borsch with garlic buns`,
       {
