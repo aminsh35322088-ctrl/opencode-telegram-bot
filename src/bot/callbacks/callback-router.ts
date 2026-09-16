@@ -1,5 +1,5 @@
 import type { Bot, Context } from "grammy";
-import { clearInteractionErrorState, type InteractionErrorScope } from "../../app/managers/interaction-manager.js";
+import { clearInteractionErrorState, interactionManager, type InteractionErrorScope } from "../../app/managers/interaction-manager.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { handleAgentSelect } from "./agent-selection-callback-handler.js";
@@ -17,8 +17,10 @@ import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { clearProviderWizard, handleProviderCallback } from "../commands/providers-command.js";
-import { dismissMcpAddWizard } from "../commands/mcp-catalog-command.js";
-import { handleIntegrationsCallback } from "../commands/integrations-command.js";
+import { clearMcpAddWizard } from "../commands/mcp-catalog-command.js";
+import { clearIntegrationWizard, handleIntegrationsCallback } from "../commands/integrations-command.js";
+import { clearSkillWizard } from "../commands/skills-wizard.js";
+import { clearSkillImportFlow } from "../commands/skills-import-flow.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { handleBackgroundSessionOpen, handleSessionSelect } from "./session-callback-handler.js";
@@ -49,6 +51,16 @@ interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope:
 interface CallbackRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void; }
 function parseCallbackPrefix(data: string): string | null { const separatorIndex = data.indexOf(":"); return separatorIndex <= 0 ? null : data.slice(0, separatorIndex); }
 
+function clearGeneralPanelWizardState(reason: string): void {
+  clearProviderWizard();
+  clearIntegrationWizard();
+  clearMcpAddWizard();
+  clearSkillWizard();
+  clearSkillImportFlow();
+  const state = interactionManager.getSnapshot();
+  if (state?.kind === "custom") interactionManager.clear(reason);
+}
+
 async function resolveCallbackTopicSession(ctx: Context): Promise<string | null> {
   const callbackMessage = ctx.callbackQuery?.message;
   if (!callbackMessage || callbackMessage.chat.type !== "private") return null;
@@ -70,7 +82,7 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
   const threadId = callbackMessage && "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
 
   if (data === "main:home") {
-    await dismissMcpAddWizard(ctx);
+    clearGeneralPanelWizardState("main_home");
     const chatId = ctx.chat?.id ?? callbackMessage?.chat.id;
     const messageId = callbackMessage && "message_id" in callbackMessage ? callbackMessage.message_id : undefined;
     if (typeof chatId !== "number" || typeof messageId !== "number") return true;
@@ -99,21 +111,45 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
     return true;
   }
   await ctx.answerCallbackQuery().catch(() => {});
-  if (data === "main:history") { await sessionsCommand(ctx as never); return true; }
-  if (data === "main:new") { await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); return true; }
-  if (data === "main:model") { await showModelCenterMenu(ctx); return true; }
-  if (data === "main:settings") { await settingsCommand(ctx as never); return true; }
+  if (data === "main:history") { clearGeneralPanelWizardState("main_history"); await sessionsCommand(ctx as never); return true; }
+  if (data === "main:new") { clearGeneralPanelWizardState("main_new"); await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription }); return true; }
+  if (data === "main:model") { clearGeneralPanelWizardState("main_model"); await showModelCenterMenu(ctx); return true; }
+  if (data === "main:settings") { clearGeneralPanelWizardState("main_settings"); await settingsCommand(ctx as never); return true; }
   await ctx.answerCallbackQuery({ text: t("callback.unknown_command") }).catch(() => {});
   return true;
 }
 
 async function handleSettingsChildNavigation(ctx: Context, data: string): Promise<boolean> {
   const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "mcps:parent_back" || data === "integration:advanced";
-  if (isAdvancedBack) { await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); logger.debug(`[Navigation] Restored Advanced settings from child menu: ${data}`); return true; }
-  if (data === MODEL_CENTER_SETTINGS_BACK) { await ctx.answerCallbackQuery().catch(() => {}); const view = buildSettingsMenuView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); logger.debug("[Navigation] Restored Settings from Model Center"); return true; }
+  if (isAdvancedBack) {
+    clearGeneralPanelWizardState(`advanced_back:${data}`);
+    await ctx.answerCallbackQuery().catch(() => {});
+    const view = buildAdvancedSettingsView();
+    await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard });
+    logger.debug(`[Navigation] Restored Advanced settings from child menu: ${data}`);
+    return true;
+  }
+  if (data === MODEL_CENTER_SETTINGS_BACK) {
+    clearGeneralPanelWizardState("model_center_settings_back");
+    await ctx.answerCallbackQuery().catch(() => {});
+    const view = buildSettingsMenuView();
+    await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard });
+    logger.debug("[Navigation] Restored Settings from Model Center");
+    return true;
+  }
   return false;
 }
-async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> { if (data !== "commands:list_back" && data !== "skills:list_back") return false; await ctx.answerCallbackQuery().catch(() => {}); if (data === "commands:list_back") await commandsCommand(ctx as never); else await skillsCommand(ctx as never); logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`); return true; }
+
+async function handleCatalogListBack(ctx: Context, data: string): Promise<boolean> {
+  if (data !== "commands:list_back" && data !== "skills:list_back") return false;
+  clearGeneralPanelWizardState(`catalog_back:${data}`);
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (data === "commands:list_back") await commandsCommand(ctx as never);
+  else await skillsCommand(ctx as never);
+  logger.debug(`[Navigation] Returned from catalog confirm screen: ${data}`);
+  return true;
+}
+
 export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDeps): void {
   registerTelegramTopicDeleteHandlers(bot);
   const routes = new Map<string, CallbackRoute>([
@@ -130,7 +166,10 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["permission", { name: "permission", handlers: [handlePermissionCallback], errorScope: "permission" }],
     ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],
     ["rename", { name: "rename", handlers: [handleRenameCancel], errorScope: "rename" }],
-    ["session", { name: "session", handlers: [ (ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }), (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["session", { name: "session", handlers: [
+      (ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }),
+      (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }),
+    ], errorScope: "interaction" }],
     ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }],
     ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }],
@@ -140,6 +179,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }],
     ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
   ]);
+
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery?.data ?? "";
     let topicSessionId: string | null = null;
