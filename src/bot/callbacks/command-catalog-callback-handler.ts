@@ -1,4 +1,4 @@
-import type { Bot, Context } from "grammy";
+import { InlineKeyboard, type Bot, type Context } from "grammy";
 import type { CommandCatalogItem } from "../../app/services/command-catalog-service.js";
 import { config } from "../../config.js";
 import { loadCommandCatalog } from "../../app/services/command-catalog-service.js";
@@ -60,17 +60,8 @@ interface CommandsConfirmMetadata {
 }
 
 export type CommandsMetadata = CommandsListMetadata | CommandsConfirmMetadata;
-
-export interface ExecuteCommandParams {
-  projectDirectory: string;
-  commandName: string;
-  argumentsText: string;
-}
-
-export interface ExecuteCommandDeps {
-  bot: Bot<Context>;
-  ensureEventSubscription: (directory: string) => Promise<void>;
-}
+export interface ExecuteCommandParams { projectDirectory: string; commandName: string; argumentsText: string; }
+export interface ExecuteCommandDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
 
 const commandMenus = new Map<number, CommandsMetadata>();
 
@@ -81,17 +72,9 @@ function getCallbackMessageId(ctx: Context): number | null {
   return typeof messageId === "number" ? messageId : null;
 }
 
-function saveCommandsMenu(metadata: CommandsMetadata): void {
-  commandMenus.set(metadata.messageId, metadata);
-}
-
-export function registerCommandsMenu(metadata: CommandsMetadata): void {
-  saveCommandsMenu(metadata);
-}
-
-export function clearCommandsMenu(messageId: number | null): void {
-  if (messageId !== null) commandMenus.delete(messageId);
-}
+function saveCommandsMenu(metadata: CommandsMetadata): void { commandMenus.set(metadata.messageId, metadata); }
+export function registerCommandsMenu(metadata: CommandsMetadata): void { saveCommandsMenu(metadata); }
+export function clearCommandsMenu(messageId: number | null): void { if (messageId !== null) commandMenus.delete(messageId); }
 
 function parseCommandItems(value: unknown): CommandCatalogItem[] | null {
   if (!Array.isArray(value)) return null;
@@ -101,10 +84,7 @@ function parseCommandItems(value: unknown): CommandCatalogItem[] | null {
     const commandName = (item as { name?: unknown }).name;
     if (typeof commandName !== "string" || !commandName.trim()) return null;
     const description = (item as { description?: unknown }).description;
-    commands.push({
-      name: commandName,
-      description: typeof description === "string" ? description : undefined,
-    });
+    commands.push({ name: commandName, description: typeof description === "string" ? description : undefined });
   }
   return commands;
 }
@@ -116,16 +96,12 @@ export function parseCommandsMetadata(state: InteractionState | null): CommandsM
   const messageId = state.metadata.messageId;
   const projectDirectory = state.metadata.projectDirectory;
   if (flow !== "commands" || typeof messageId !== "number" || typeof projectDirectory !== "string") return null;
-
   if (stage === "list") {
     const commands = parseCommandItems(state.metadata.commands);
     if (!commands) return null;
-    const page = typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
-      ? Math.max(0, state.metadata.page)
-      : 0;
+    const page = typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page) ? Math.max(0, state.metadata.page) : 0;
     return { flow, stage, messageId, projectDirectory, commands, page };
   }
-
   if (stage === "confirm") {
     const commandName = state.metadata.commandName;
     if (typeof commandName !== "string" || !commandName.trim()) return null;
@@ -144,23 +120,13 @@ async function recoverCommandsListMetadata(ctx: Context): Promise<CommandsListMe
   if (messageId === null) return null;
   const cached = commandMenus.get(messageId);
   if (cached?.stage === "list") return cached;
-
   const projectDirectory = getCurrentSessionDirectory();
   if (!projectDirectory) return null;
   const commands = await loadCommandCatalog(projectDirectory);
   if (commands.length === 0) return null;
-
   const pageSize = config.bot.commandsListLimit;
   const { page } = calculateCommandsPaginationRange(commands.length, 0, pageSize);
-  const recovered: CommandsListMetadata = {
-    flow: "commands",
-    stage: "list",
-    messageId,
-    projectDirectory,
-    commands,
-    page,
-  };
-
+  const recovered: CommandsListMetadata = { flow: "commands", stage: "list", messageId, projectDirectory, commands, page };
   saveCommandsMenu(recovered);
   interactionManager.start({ kind: "custom", expectedInput: "callback", metadata: { ...recovered } });
   logger.warn(`[Commands] Recovered stale custom-command menu state: messageId=${messageId}`);
@@ -194,7 +160,6 @@ async function ensureSessionForProject(ctx: Context, projectDirectory: string): 
     currentSession = null;
   }
   if (currentSession) return currentSession;
-
   await ctx.reply(t("bot.creating_session"));
   const { data: session, error } = await opencodeClient.session.create({ directory: projectDirectory });
   if (error || !session) {
@@ -213,11 +178,9 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
   const args = params.argumentsText.trim();
   const executingMessage = formatExecutingCommandMessage(params.commandName, args);
   await ctx.reply(executingMessage.text, { entities: executingMessage.entities });
-
   const session = await ensureSessionForProject(ctx, params.projectDirectory);
   if (!session) return;
   await attachToSession({ bot: deps.bot, chatId: ctx.chat.id, session, ensureEventSubscription: deps.ensureEventSubscription });
-
   if (await isSessionBusy(session.id, session.directory)) {
     await ctx.reply(t("bot.session_busy"));
     return;
@@ -226,7 +189,6 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
   const currentAgent = await resolveProjectAgent(getStoredAgent());
   const storedModel = getStoredModel();
   const model = storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : undefined;
-
   foregroundSessionState.markBusy(session.id, session.directory);
   await markAttachedSessionBusy(session.id);
   assistantRunState.startRun(session.id, {
@@ -274,7 +236,6 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
 export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandDeps): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(COMMANDS_CALLBACK_PREFIX)) return false;
-
   const callbackMessageId = getCallbackMessageId(ctx);
   if (data === COMMANDS_CALLBACK_CANCEL) {
     clearCommandsMenu(callbackMessageId);
@@ -290,7 +251,6 @@ export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandD
     if (metadata && callbackMessageId !== null && metadata.messageId !== callbackMessageId) metadata = null;
   }
   if (!metadata) metadata = await recoverCommandsListMetadata(ctx);
-
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
     await ctx.answerCallbackQuery({ text: t("commands.inactive_callback"), show_alert: true });
     return true;
@@ -305,7 +265,9 @@ export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandD
       clearCommandsMenu(metadata.messageId);
       clearCommandsInteraction("commands_execute_clicked");
       await ctx.answerCallbackQuery({ text: t("commands.execute_callback") });
-      await ctx.deleteMessage().catch(() => {});
+      await ctx.editMessageText(`▶️ /${metadata.commandName}\n\nExecution started.`, {
+        reply_markup: new InlineKeyboard().text("← Commands", "commands:list_back").text("🏠 Home", "main:home"),
+      }).catch(() => {});
       await executeCommand(ctx, deps, {
         projectDirectory: metadata.projectDirectory,
         commandName: metadata.commandName,
@@ -326,10 +288,7 @@ export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandD
         await ctx.answerCallbackQuery({ text: t("commands.page_empty_callback") });
         return true;
       }
-      const nextMetadata: CommandsListMetadata = {
-        ...metadata,
-        page: normalizedPage,
-      };
+      const nextMetadata: CommandsListMetadata = { ...metadata, page: normalizedPage };
       saveCommandsMenu(nextMetadata);
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(formatCommandsSelectText(normalizedPage), {
@@ -344,7 +303,6 @@ export async function handleCommandsCallback(ctx: Context, deps: ExecuteCommandD
       await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
       return true;
     }
-
     const selectedCommand = metadata.commands[commandIndex];
     if (!selectedCommand) {
       await ctx.answerCallbackQuery({ text: t("commands.inactive_callback"), show_alert: true });
