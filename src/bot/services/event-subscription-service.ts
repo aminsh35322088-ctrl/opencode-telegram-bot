@@ -91,7 +91,6 @@ import {
 } from "../../app/managers/background-session-manager.js";
 import { buildBackgroundSessionOpenKeyboard } from "../menus/session-selection-menu.js";
 import { questionManager } from "../../app/managers/question-manager.js";
-import { registerBotMessage } from "../../app/managers/bot-message-registry.js";
 import { permissionManager } from "../../app/managers/permission-manager.js";
 import { interactionEventGate } from "../../app/services/interaction-event-gate.js";
 import { showCurrentQuestion } from "../menus/question-menu.js";
@@ -261,8 +260,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           disable_notification: true,
         });
 
-        registerBotMessage({ chatId, messageId: sentMessage.message_id, sessionId });
-
         return sentMessage.message_id;
       },
       editText: async (sessionId, messageId, text) => {
@@ -308,8 +305,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
           disable_notification: true,
         });
-
-        registerBotMessage({ chatId, messageId: sentMessage.message_id, sessionId });
 
         return sentMessage.message_id;
       },

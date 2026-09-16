@@ -43,7 +43,6 @@ describe("bot/routers/message-router", () => {
       "message:video",
       "message:video_note",
       "message:document",
-      "message_reaction",
     ]);
   });
 

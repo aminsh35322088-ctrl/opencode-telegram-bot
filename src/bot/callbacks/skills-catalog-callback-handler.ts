@@ -1,6 +1,7 @@
-import type { Context } from "grammy";
+import { InlineKeyboard, type Context } from "grammy";
 import { config } from "../../config.js";
 import type { SkillCatalogItem } from "../../app/services/skills-catalog-service.js";
+import { loadSkillsCatalog } from "../../app/services/skills-catalog-service.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
@@ -8,17 +9,29 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import { processUserPrompt, type ProcessPromptDeps } from "../handlers/prompt.js";
+import { clearSkillWizard, startSkillEdit, startSkillWizard } from "../commands/skills-wizard.js";
+import { clearSkillImportFlow, handleSkillImportCallback, SKILLS_IMPORT_CALLBACK_PREFIX, startSkillImport } from "../commands/skills-import-flow.js";
+import { deleteGlobalSkill, isManagedSkillLocation } from "../../app/services/skill-manage-service.js";
 import {
   buildSkillsConfirmKeyboard,
   buildSkillsListKeyboard,
   calculateSkillsPaginationRange,
   formatExecutingSkillMessage,
+  formatSkillDetailView,
   formatSkillsSelectText,
   parseSkillPageCallback,
   parseSkillSelectCallback,
   SKILLS_CALLBACK_CANCEL,
+  SKILLS_CALLBACK_EDIT,
+  SKILLS_CALLBACK_DELETE,
+  SKILLS_CALLBACK_DELETE_CANCEL,
+  SKILLS_CALLBACK_DELETE_CONFIRM,
   SKILLS_CALLBACK_EXECUTE,
+  SKILLS_CALLBACK_IMPORT,
+  SKILLS_CALLBACK_NEW,
   SKILLS_CALLBACK_PREFIX,
+  SKILLS_CALLBACK_REFRESH,
+  SKILLS_CALLBACK_WIZARD_CANCEL,
 } from "../menus/skills-catalog-menu.js";
 
 interface SkillsListMetadata {
@@ -36,6 +49,7 @@ interface SkillsConfirmMetadata {
   messageId: number;
   projectDirectory: string;
   skillName: string;
+  skillLocation?: string | undefined;
 }
 
 export type SkillsMetadata = SkillsListMetadata | SkillsConfirmMetadata;
@@ -73,9 +87,17 @@ function parseSkillItems(value: unknown): SkillCatalogItem[] | null {
     }
 
     const description = (item as { description?: unknown }).description;
+    const location = (item as { location?: unknown }).location;
+    const developer = (item as { developer?: unknown }).developer;
+    const version = (item as { version?: unknown }).version;
+    const updatedAt = (item as { updatedAt?: unknown }).updatedAt;
     skills.push({
       name: skillName,
       description: typeof description === "string" ? description : undefined,
+      location: typeof location === "string" ? location : undefined,
+      developer: typeof developer === "string" ? developer : undefined,
+      version: typeof version === "string" ? version : undefined,
+      updatedAt: typeof updatedAt === "string" ? updatedAt : undefined,
     });
   }
 
@@ -123,12 +145,14 @@ export function parseSkillsMetadata(state: InteractionState | null): SkillsMetad
       return null;
     }
 
+    const skillLocation = typeof state.metadata.skillLocation === "string" ? state.metadata.skillLocation : undefined;
     return {
       flow,
       stage,
       messageId,
       projectDirectory,
       skillName,
+      skillLocation,
     };
   }
 
@@ -176,6 +200,10 @@ export async function handleSkillsCallback(
     return false;
   }
 
+  if (data.startsWith(SKILLS_IMPORT_CALLBACK_PREFIX)) {
+    return handleSkillImportCallback(ctx, data);
+  }
+
   const metadata = parseSkillsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
 
@@ -205,6 +233,112 @@ export async function handleSkillsCallback(
         projectDirectory: metadata.projectDirectory,
         skillName: metadata.skillName,
         argumentsText: "",
+      });
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_NEW) {
+      clearSkillsInteraction("skills_wizard_start");
+      clearSkillImportFlow();
+      await ctx.answerCallbackQuery();
+      await startSkillWizard(ctx);
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_IMPORT) {
+      if (metadata.stage !== "list") {
+        await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+        return true;
+      }
+      clearSkillsInteraction("skills_import_start");
+      await ctx.answerCallbackQuery();
+      await startSkillImport(ctx);
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_WIZARD_CANCEL) {
+      clearSkillWizard();
+      await ctx.answerCallbackQuery({ text: t("common.cancelled") });
+      await ctx.editMessageText(t("skills.wizard.cancelled")).catch(() => {});
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_EDIT) {
+      if (metadata.stage !== "confirm" || !isManagedSkillLocation(metadata.skillLocation)) {
+        await ctx.answerCallbackQuery({ text: t("skills.edit_not_managed"), show_alert: true });
+        return true;
+      }
+      clearSkillsInteraction("skills_edit_clicked");
+      await ctx.answerCallbackQuery();
+      await ctx.deleteMessage().catch(() => {});
+      await startSkillEdit(ctx, metadata.skillName);
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_DELETE) {
+      if (metadata.stage !== "confirm" || !isManagedSkillLocation(metadata.skillLocation)) {
+        await ctx.answerCallbackQuery({ text: t("skills.delete_not_managed"), show_alert: true });
+        return true;
+      }
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(t("skills.delete_confirm", { skill: metadata.skillName }), {
+        reply_markup: new InlineKeyboard()
+          .text(t("skills.button.delete_confirm"), SKILLS_CALLBACK_DELETE_CONFIRM)
+          .text(t("skills.button.delete_cancel"), SKILLS_CALLBACK_DELETE_CANCEL),
+      });
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_DELETE_CONFIRM) {
+      if (metadata.stage !== "confirm") {
+        await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+        return true;
+      }
+      clearSkillsInteraction("skills_delete_confirmed");
+      await ctx.answerCallbackQuery();
+      const deleted = await deleteGlobalSkill(metadata.skillName);
+      await ctx.editMessageText(
+        deleted
+          ? `${t("skills.deleted", { name: metadata.skillName })}\n\n${t("skills.restart_hint")}`
+          : t("skills.delete_failed"),
+      ).catch(() => {});
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_DELETE_CANCEL) {
+      await ctx.answerCallbackQuery({ text: t("common.cancelled") });
+      return true;
+    }
+
+    if (data === SKILLS_CALLBACK_REFRESH) {
+      if (metadata.stage !== "list") {
+        await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
+        return true;
+      }
+
+      let skills: SkillCatalogItem[];
+      try {
+        skills = await loadSkillsCatalog(metadata.projectDirectory);
+      } catch (error) {
+        logger.warn("[Skills] Catalog refresh failed:", error);
+        await ctx.answerCallbackQuery({ text: t("skills.fetch_error"), show_alert: true });
+        return true;
+      }
+
+      const pageSize = config.bot.commandsListLimit;
+      const keyboard = buildSkillsListKeyboard(skills, 0, pageSize);
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(formatSkillsSelectText(0), { reply_markup: keyboard });
+      interactionManager.transition({
+        expectedInput: "callback",
+        metadata: {
+          flow: "skills",
+          stage: "list",
+          messageId: metadata.messageId,
+          projectDirectory: metadata.projectDirectory,
+          skills,
+          page: 0,
+        },
       });
       return true;
     }
@@ -262,15 +396,12 @@ export async function handleSkillsCallback(
     }
 
     await ctx.answerCallbackQuery();
+    const canManage = isManagedSkillLocation(selectedSkill.location);
     const confirmText = selectedSkill.location
-      ? t("skills.confirm_detail", {
-          skill: `/${selectedSkill.name}`,
-          description: selectedSkill.description ?? t("skills.no_description"),
-          location: selectedSkill.location,
-        })
+      ? formatSkillDetailView(selectedSkill)
       : t("skills.confirm", { skill: `/${selectedSkill.name}` });
     await ctx.editMessageText(confirmText, {
-      reply_markup: buildSkillsConfirmKeyboard(),
+      reply_markup: buildSkillsConfirmKeyboard(canManage),
     });
 
     interactionManager.transition({
@@ -281,6 +412,7 @@ export async function handleSkillsCallback(
         messageId: metadata.messageId,
         projectDirectory: metadata.projectDirectory,
         skillName: selectedSkill.name,
+        skillLocation: selectedSkill.location,
       },
     });
 

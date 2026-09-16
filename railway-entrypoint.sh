@@ -179,7 +179,7 @@ su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
-printf '%s\n' "[railway] OpenCode CLI: $(opencode --version 2>/dev/null || echo unknown)"
+printf '%s\n' "[railway] OpenCode CLI: $(su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
@@ -192,6 +192,10 @@ printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null 
 printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
 printf '%s\n' "[railway] Runtime dependencies: ${OPENCODE_RUNTIME_NODE_DEPS}"
 printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
+
+# Version probes above run as root and may create root-owned cache dirs (e.g. opencode --version
+# writes /data/.cache/opencode). The bot runs as node, so restore ownership before startup.
+chown -R node:node /data/.cache /data/.local 2>/dev/null || true
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
