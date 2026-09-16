@@ -19,6 +19,7 @@ jobs:
     name: Publish from main version bump
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    if: github.repository == 'grinev/opencode-telegram-bot'
 
     steps:
       - name: Checkout
