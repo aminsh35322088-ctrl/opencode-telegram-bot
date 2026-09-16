@@ -415,7 +415,11 @@ export const en = {
   "skills.button.execute": "✅ Execute",
   "skills.confirm":
     "Confirm execution of skill {skill}. To run it with arguments, send the arguments as a message.",
-  "skills.confirm_detail": "Confirm execution of skill {skill}.\n\n{description}\n📍 Source: {location}\n\nTo run it with arguments, send the arguments as a message.",
+  "skills.button.refresh": "🔄 Refresh",
+  "skills.meta.developer": "👤 {developer}",
+  "skills.meta.developer_version": "👤 {developer} ({version})",
+  "skills.meta.source": "📍 {location}",
+  "skills.meta.updated": "🕒 {date}",
   "skills.button.new": "➕ New skill",
   "skills.button.delete": "🗑 Delete skill",
   "skills.button.edit": "✏️ Edit skill",

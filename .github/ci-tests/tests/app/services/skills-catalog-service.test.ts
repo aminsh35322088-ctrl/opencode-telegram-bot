@@ -31,7 +31,7 @@ describe("app/services/skills-catalog-service", () => {
     const localFile = path.join(tmpDir, "SKILL.md");
     await fs.writeFile(localFile, "---\nname: local\ndescription: d\n---\n\nBody", "utf8");
     const stat = await fs.stat(localFile);
-    const expectedDate = stat.toISOString().slice(0, 10);
+    const expectedDate = stat.mtime.toISOString().slice(0, 10);
 
     skillListMock.mockResolvedValue({
       data: [

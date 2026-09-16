@@ -425,7 +425,11 @@ export const ko: I18nDictionary = {
   "skills.button.execute": "✅ 실행",
   "skills.confirm":
     "스킬 {skill} 실행을 확인해 주세요. 인자와 함께 실행하려면 인자를 메시지로 보내주세요.",
-  "skills.confirm_detail": "스킬 {skill} 실행을 확인하세요.\n\n{description}\n📍 소스: {location}\n\n인수와 함께 실행하려면 인수를 메시지로 보내세요.",
+  "skills.button.refresh": "🔄 새로 고침",
+  "skills.meta.developer": "👤 {developer}",
+  "skills.meta.developer_version": "👤 {developer} ({version})",
+  "skills.meta.source": "📍 {location}",
+  "skills.meta.updated": "🕒 {date}",
   "skills.button.new": "➕ 새 스킬",
   "skills.button.delete": "🗑 스킬 삭제",
   "skills.button.edit": "✏️ 스킬 편집",
