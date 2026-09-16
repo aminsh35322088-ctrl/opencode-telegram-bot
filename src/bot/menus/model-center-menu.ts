@@ -3,7 +3,7 @@ import { PRICE_COLOR, type ModelPrice } from "../../app/services/model-price-cla
 import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import { getFavoriteModels as readFavorites, getRecentModels as readRecent } from "../../app/services/model-preferences-service.js";
-import { fetchCurrentModel, getProviderModels, getProviders, searchModels } from "../../app/services/model-selection-service.js";
+import { fetchCurrentModel, getProviderModels, getProviders } from "../../app/services/model-selection-service.js";
 import { refreshAllCustomProviderModels } from "../../app/services/model-catalog-refresh-service.js";
 import { formatModelName, type FavoriteModel, type ModelInfo, type ProviderInfo } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
@@ -217,14 +217,52 @@ export async function buildModelCenterProvider(provider: ProviderInfo, page: num
   };
 }
 
+function normalizeModelSearchText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\s._/:+\\-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+export function matchesModelCenterSearch(
+  model: Pick<FavoriteModel, "providerID" | "modelID" | "name">,
+  providerName: string,
+  query: string,
+): boolean {
+  const normalizedQuery = normalizeModelSearchText(query);
+  if (!normalizedQuery) return false;
+  const fields = [model.modelID, model.name ?? "", model.providerID, providerName];
+  const haystack = normalizeModelSearchText(fields.join(" "));
+  const compactHaystack = haystack.replace(/\s+/g, "");
+  return normalizedQuery.split(" ").every((token) =>
+    haystack.includes(token) || compactHaystack.includes(token.replace(/\s+/g, "")),
+  );
+}
+
+async function searchModelCenterCatalog(query: string): Promise<FavoriteModel[]> {
+  const providers = await getProviders();
+  const results = new Map<string, FavoriteModel>();
+  for (const provider of providers) {
+    const models = await getProviderModels(provider.id);
+    for (const model of models) {
+      if (!matchesModelCenterSearch(model, provider.name, query)) continue;
+      results.set(modelKey(model), model);
+      if (results.size >= SEARCH_RESULTS_LIMIT) return [...results.values()];
+    }
+  }
+  return [...results.values()];
+}
+
 export async function buildModelCenterSearchResults(query: string, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const models = (await searchModels(query)).slice(0, SEARCH_RESULTS_LIMIT);
+  const models = await searchModelCenterCatalog(query);
   const keyboard = new InlineKeyboard();
   await appendModelRows(keyboard, models, current, { kind: "search", query });
   keyboard.text("🔎 Search again", MODEL_CENTER_SEARCH_AGAIN).text("← Back", MODEL_CENTER_ROOT).row();
   return {
     text: models.length
-      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nResults are shown by model name only.`
+      ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nResults match model name, ID, or provider.`
       : `🔎 <b>SEARCH</b>\n\nNo models matched <code>${escapeHtml(query)}</code>.`,
     keyboard,
   };
