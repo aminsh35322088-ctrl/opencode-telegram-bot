@@ -16,10 +16,11 @@ import { getCurrentSession } from "../../app/services/session-service.js";
 // Commands that manage an existing run must reach their handler while the
 // session is busy. The equivalent Reply Keyboard buttons are consumed by the
 // router before this guard runs, so slash-command parity requires the same
-// commands to pass the busy gate here. Menu controls (model/agent/variant/
-// context/compact/topic_settings) intentionally stay gated while busy, matching
-// the buttons' menuAllowed behavior. During an active interaction the stricter
-// per-interaction allowedCommands list still applies.
+// commands to pass the busy gate here. Pure navigation commands (/start,
+// /settings) only open UI panels and are equally safe during a run; menu
+// BUTTON taps follow the same principle via the busy callback allowance.
+// During an active interaction the stricter per-interaction allowedCommands
+// list still applies.
 const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
   "/abort",
   "/stop",
@@ -30,6 +31,8 @@ const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
   "/pause",
   "/resume",
   "/delete_topic",
+  "/start",
+  "/settings",
 ]);
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && ALWAYS_REACHABLE_CONTROL_COMMANDS.has(command)); }
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);

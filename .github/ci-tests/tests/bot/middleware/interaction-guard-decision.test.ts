@@ -341,16 +341,19 @@ describe("interaction guard", () => {
     expect(decision.state?.kind).toBe("inline");
   });
 
-  it("blocks start, plain text, and media while busy without interaction", () => {
+  it("blocks plain text and media while busy without interaction, but lets navigation commands through", () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
     const startDecision = resolveInteractionGuardDecision(createContext({ text: "/start" }));
+    const settingsDecision = resolveInteractionGuardDecision(createContext({ text: "/settings" }));
     const textDecision = resolveInteractionGuardDecision(createContext({ text: "hello" }));
     const voiceDecision = resolveInteractionGuardDecision(createContext({ voice: true }));
     const photoDecision = resolveInteractionGuardDecision(createContext({ photo: true }));
 
-    expect(startDecision.allow).toBe(false);
-    expect(startDecision.reason).toBe("command_not_allowed");
+    expect(startDecision.allow).toBe(true);
+    expect(startDecision.busy).toBe(true);
+    expect(settingsDecision.allow).toBe(true);
+    expect(settingsDecision.busy).toBe(true);
     expect(textDecision.allow).toBe(false);
     expect(textDecision.reason).toBe("expected_text");
     expect(voiceDecision.allow).toBe(false);
@@ -526,5 +529,31 @@ describe("interaction guard: menu callbacks while busy or expired", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("interaction guard: navigation commands while busy", () => {
+  beforeEach(() => {
+    interactionManager.clear("test_setup");
+    foregroundSessionState.__resetForTests();
+    questionManager.clearAll();
+  });
+
+  it("allows /start to open the main panel while the session is busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+
+    const decision = resolveInteractionGuardDecision(createContext({ text: "/start" }));
+
+    expect(decision.allow).toBe(true);
+    expect(decision.busy).toBe(true);
+  });
+
+  it("allows /settings to open the settings menu while the session is busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
+
+    const decision = resolveInteractionGuardDecision(createContext({ text: "/settings" }));
+
+    expect(decision.allow).toBe(true);
+    expect(decision.busy).toBe(true);
   });
 });
