@@ -12,6 +12,7 @@ import { logger } from "../../utils/logger.js";
 import { clearIntegrationWizard } from "./integrations-command.js";
 import { buildSettingsMenuView } from "../menus/settings-menu.js";
 import { showImageChatSettings } from "../menus/image-chat-settings.js";
+import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 
@@ -26,7 +27,7 @@ export function isProviderWizardActive(): boolean { return providerWizard.isActi
 export function clearProviderWizard(): void { providerWizard.clear(); }
 async function deleteInput(ctx: Context) { if (ctx.chat && ctx.message) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
 async function render(ctx: Context, text: string, keyboard: InlineKeyboard, id?: number) {
-  const options = { reply_markup: keyboard };
+  const options = { reply_markup: appendHomeNavigation(keyboard) };
   if (id !== undefined && ctx.chat) await ctx.api.editMessageText(ctx.chat.id, id, text.slice(0, 4000), options);
   else await ctx.reply(text.slice(0, 4000), options);
 }
