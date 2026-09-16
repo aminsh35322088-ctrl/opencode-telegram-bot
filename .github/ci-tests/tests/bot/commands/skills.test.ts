@@ -229,6 +229,38 @@ describe("bot/commands/skills", () => {
     ]);
   });
 
+  it("keeps the skills menu active when refresh hits telegram message-is-not-modified", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "skills",
+        stage: "list",
+        messageId: 341,
+        projectDirectory: "D:\\Projects\\Repo",
+        skills: [{ name: "fresh-skill", description: "Fresh" }],
+        page: 0,
+      },
+    });
+    mocked.skillListMock.mockResolvedValue({
+      data: [{ name: "fresh-skill", description: "Fresh", location: "", content: "" }],
+      error: null,
+    });
+
+    const ctx = createCallbackContext("skills:refresh", 341);
+    (ctx.editMessageText as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Call to 'editMessageText' failed! (400: Bad Request: message is not modified: specified new message content and reply markup are exactly the same)"),
+    );
+    const handled = await handleSkillsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    const state = interactionManager.getSnapshot();
+    expect(state?.metadata.flow).toBe("skills");
+    expect(state?.metadata.stage).toBe("list");
+    expect(state?.metadata.messageId).toBe(341);
+    expect((ctx.answerCallbackQuery as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
+  });
+
   it("derives missing descriptions from skill content", async () => {
     mocked.skillListMock.mockResolvedValue({
       data: [
