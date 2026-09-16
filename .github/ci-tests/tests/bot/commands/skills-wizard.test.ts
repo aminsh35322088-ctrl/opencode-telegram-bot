@@ -23,16 +23,34 @@ import {
 } from "../../../src/bot/commands/skills-wizard.js";
 import { writeGlobalSkill } from "../../../src/app/services/skill-manage-service.js";
 
-function ctx(text?: string): { context: Context; replies: string[] } {
-  const replies: string[] = [];
-  const context = {
-    message: text === undefined ? undefined : { text },
-    reply: vi.fn(async () => {
-      replies.push(text ?? "");
-      return { message_id: 1 };
-    }),
+function panelCtx(messageId = 700): Context {
+  return {
+    chat: { id: 777 },
+    callbackQuery: {
+      data: "skills:new",
+      message: { message_id: messageId, chat: { id: 777 } },
+    } as Context["callbackQuery"],
+    reply: vi.fn().mockResolvedValue({ message_id: 999 }),
+    answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    api: {
+      editMessageText: vi.fn().mockResolvedValue(undefined),
+      deleteMessage: vi.fn().mockResolvedValue(true),
+    },
   } as unknown as Context;
-  return { context, replies };
+}
+
+let nextInputId = 800;
+function messageCtx(text: string): Context {
+  const messageId = nextInputId++;
+  return {
+    chat: { id: 777 },
+    message: { message_id: messageId, text } as Context["message"],
+    reply: vi.fn().mockResolvedValue({ message_id: 999 }),
+    api: {
+      editMessageText: vi.fn().mockResolvedValue(undefined),
+      deleteMessage: vi.fn().mockResolvedValue(true),
+    },
+  } as unknown as Context;
 }
 
 describe("bot/commands/skills-wizard", () => {
@@ -42,6 +60,7 @@ describe("bot/commands/skills-wizard", () => {
     tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "otb-wizard-"));
     pathsMock.appHome = tmpHome;
     clearSkillWizard();
+    nextInputId = 800;
   });
 
   afterEach(async () => {
@@ -49,17 +68,32 @@ describe("bot/commands/skills-wizard", () => {
     await fs.rm(tmpHome, { recursive: true, force: true });
   });
 
-  it("runs the three-step wizard and writes the skill", async () => {
-    const start = ctx();
-    await startSkillWizard(start.context);
-    expect(isSkillWizardActive()).toBe(true);
+  it("runs the three-step wizard entirely on the existing General panel", async () => {
+    const start = panelCtx(700);
+    await startSkillWizard(start);
 
-    expect(await handleSkillWizardMessage(ctx("Bad Name").context)).toBe(true);
     expect(isSkillWizardActive()).toBe(true);
+    expect(start.reply).not.toHaveBeenCalled();
+    expect(start.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      700,
+      expect.any(String),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
 
-    expect(await handleSkillWizardMessage(ctx("deploy-check").context)).toBe(true);
-    expect(await handleSkillWizardMessage(ctx("Use before deploys").context)).toBe(true);
-    expect(await handleSkillWizardMessage(ctx("# Steps\n1. run tests").context)).toBe(true);
+    const badName = messageCtx("Bad Name");
+    expect(await handleSkillWizardMessage(badName)).toBe(true);
+    expect(badName.api.deleteMessage).toHaveBeenCalledWith(777, 800);
+    expect(badName.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      700,
+      expect.any(String),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+
+    expect(await handleSkillWizardMessage(messageCtx("deploy-check"))).toBe(true);
+    expect(await handleSkillWizardMessage(messageCtx("Use before deploys"))).toBe(true);
+    expect(await handleSkillWizardMessage(messageCtx("# Steps\n1. run tests"))).toBe(true);
 
     expect(isSkillWizardActive()).toBe(false);
     const content = await fs.readFile(path.join(tmpHome, ".config", "opencode", "skills", "deploy-check", "SKILL.md"), "utf8");
@@ -68,23 +102,29 @@ describe("bot/commands/skills-wizard", () => {
   });
 
   it("ignores text when inactive and ignores commands/slash text", async () => {
-    expect(await handleSkillWizardMessage(ctx("hello").context)).toBe(false);
-    await startSkillWizard(ctx().context);
-    expect(await handleSkillWizardMessage(ctx("/cancel").context)).toBe(false);
+    expect(await handleSkillWizardMessage(messageCtx("hello"))).toBe(false);
+    await startSkillWizard(panelCtx());
+    expect(await handleSkillWizardMessage(messageCtx("/cancel"))).toBe(false);
     expect(isSkillWizardActive()).toBe(true);
   });
 
-  it("edits an existing skill without a name step", async () => {
+  it("edits an existing skill without creating a prompt message", async () => {
     await writeGlobalSkill({ name: "deploy-check", description: "old desc", body: "# Old" });
 
-    const start = ctx();
-    await startSkillEdit(start.context, "deploy-check");
+    const start = panelCtx(701);
+    await startSkillEdit(start, "deploy-check");
     expect(isSkillWizardActive()).toBe(true);
-    expect(start.context.reply).toHaveBeenCalledTimes(1);
+    expect(start.reply).not.toHaveBeenCalled();
+    expect(start.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      701,
+      expect.any(String),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
 
-    expect(await handleSkillWizardMessage(ctx("new desc").context)).toBe(true);
+    expect(await handleSkillWizardMessage(messageCtx("new desc"))).toBe(true);
     expect(isSkillWizardActive()).toBe(true);
-    expect(await handleSkillWizardMessage(ctx("# New body").context)).toBe(true);
+    expect(await handleSkillWizardMessage(messageCtx("# New body"))).toBe(true);
     expect(isSkillWizardActive()).toBe(false);
 
     const content = await fs.readFile(
@@ -96,15 +136,20 @@ describe("bot/commands/skills-wizard", () => {
     expect(content).not.toContain("# Old");
   });
 
-  it("reports a write error when editing a missing skill and stays active", async () => {
-    const start = ctx();
-    await startSkillEdit(start.context, "ghost-skill");
-    expect(await handleSkillWizardMessage(ctx("desc").context)).toBe(true);
-    expect(await handleSkillWizardMessage(ctx("body").context)).toBe(true);
+  it("reports a write error on the same panel and stays active", async () => {
+    await startSkillEdit(panelCtx(702), "ghost-skill");
+    expect(await handleSkillWizardMessage(messageCtx("desc"))).toBe(true);
+    const body = messageCtx("body");
+    expect(await handleSkillWizardMessage(body)).toBe(true);
     expect(isSkillWizardActive()).toBe(true);
+    expect(body.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      702,
+      expect.any(String),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
     await expect(
       fs.stat(path.join(tmpHome, ".config", "opencode", "skills", "ghost-skill", "SKILL.md")),
     ).rejects.toThrow();
-    clearSkillWizard();
   });
 });
