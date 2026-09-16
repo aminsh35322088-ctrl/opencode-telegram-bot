@@ -98,6 +98,11 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     return true;
   }
 
+  if (data === MCPS_CALLBACK_ADD_LOCAL || data === MCPS_CALLBACK_ADD_REMOTE) {
+    await selectMcpAddType(ctx, data === MCPS_CALLBACK_ADD_LOCAL ? "local" : "remote");
+    return true;
+  }
+
   let metadata = parseMcpsMetadata(interactionManager.getSnapshot());
   const callbackMessageId = getCallbackMessageId(ctx);
   if (!metadata || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
@@ -112,16 +117,12 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     }
   }
 
-  if (data === MCPS_CALLBACK_ADD || data === MCPS_CALLBACK_ADD_LOCAL || data === MCPS_CALLBACK_ADD_REMOTE) {
-    if (data === MCPS_CALLBACK_ADD) {
-      if (!metadata || metadata.stage !== "list" || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
-        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
-        return true;
-      }
-      await startMcpAddWizard(ctx);
+  if (data === MCPS_CALLBACK_ADD) {
+    if (metadata.stage !== "list" || callbackMessageId === null || metadata.messageId !== callbackMessageId) {
+      await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
       return true;
     }
-    await selectMcpAddType(ctx, data === MCPS_CALLBACK_ADD_LOCAL ? "local" : "remote");
+    await startMcpAddWizard(ctx);
     return true;
   }
 
