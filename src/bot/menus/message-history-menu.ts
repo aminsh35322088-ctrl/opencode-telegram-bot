@@ -157,7 +157,7 @@ export function buildMessageDetailKeyboard(): InlineKeyboard {
 
 export function buildMessageRevertedKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("↪️ Redo", MESSAGES_CALLBACK_REDO)
+    .text(t("messages.button.redo"), MESSAGES_CALLBACK_REDO)
     .row()
     .text(t("messages.button.back"), MESSAGES_CALLBACK_BACK)
     .text(t("messages.button.cancel"), MESSAGES_CALLBACK_CANCEL);

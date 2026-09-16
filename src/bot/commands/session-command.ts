@@ -1,6 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 
 interface SessionStatusLike {
@@ -55,13 +56,13 @@ async function loadCapability<T>(
 }
 
 function formatStatus(status: SessionStatusLike | undefined): string {
-  if (!status?.type) return "⚪ unknown";
-  if (status.type === "idle") return "🟢 idle";
-  if (status.type === "busy") return "🟡 busy";
+  if (!status?.type) return t("session.status_unknown");
+  if (status.type === "idle") return t("session.status_idle");
+  if (status.type === "busy") return t("session.status_busy");
   if (status.type === "retry") {
     const attempt = typeof status.attempt === "number" ? ` · attempt ${status.attempt}` : "";
     const message = status.message ? ` · ${truncateInline(status.message, 80)}` : "";
-    return `🔁 retry${attempt}${message}`;
+    return `${t("session.status_retry")}${attempt}${message}`;
   }
   return `⚪ ${truncateInline(status.type, 40)}`;
 }
@@ -74,14 +75,12 @@ function todoIcon(status: string | undefined): string {
 }
 
 function formatTodoSection(todos: SessionTodoLike[] | null): string[] {
-  if (todos === null) return ["📝 OpenCode todos: unavailable"];
-  if (todos.length === 0) return ["📝 OpenCode todos: none"];
+  if (todos === null) return [t("session.todos_unavailable")];
+  if (todos.length === 0) return [t("session.todos_none")];
 
   const active = todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled");
   const completed = todos.filter((todo) => todo.status === "completed").length;
-  const lines = [
-    `📝 OpenCode todos: ${todos.length} total · ${active.length} active · ${completed} done`,
-  ];
+  const lines = [t("session.todos_summary", { total: todos.length, active: active.length, done: completed })];
 
   const visible = active.length > 0 ? active : todos;
   for (const todo of visible.slice(0, MAX_TODO_ITEMS)) {
@@ -89,40 +88,40 @@ function formatTodoSection(todos: SessionTodoLike[] | null): string[] {
     const content = truncateInline(todo.content || "Untitled task");
     lines.push(`${todoIcon(todo.status)}${priority} ${content}`);
   }
-  if (visible.length > MAX_TODO_ITEMS) lines.push(`…and ${visible.length - MAX_TODO_ITEMS} more`);
+  if (visible.length > MAX_TODO_ITEMS) lines.push(t("session.more", { count: visible.length - MAX_TODO_ITEMS }));
   return lines;
 }
 
 function formatDiffSection(diffs: SessionDiffLike[] | null): string[] {
-  if (diffs === null) return ["🧩 Session changes: unavailable"];
-  if (diffs.length === 0) return ["🧩 Session changes: none"];
+  if (diffs === null) return [t("session.changes_unavailable")];
+  if (diffs.length === 0) return [t("session.changes_none")];
 
   const additions = diffs.reduce((sum, diff) => sum + (Number.isFinite(diff.additions) ? diff.additions! : 0), 0);
   const deletions = diffs.reduce((sum, diff) => sum + (Number.isFinite(diff.deletions) ? diff.deletions! : 0), 0);
-  const lines = [`🧩 Session changes: ${diffs.length} files · +${additions} / -${deletions}`];
+  const lines = [t("session.changes_summary", { files: diffs.length, additions, deletions })];
   for (const diff of diffs.slice(0, MAX_DIFF_FILES)) {
     lines.push(`• ${truncateInline(diff.file || "unknown file")}`);
   }
-  if (diffs.length > MAX_DIFF_FILES) lines.push(`…and ${diffs.length - MAX_DIFF_FILES} more`);
+  if (diffs.length > MAX_DIFF_FILES) lines.push(t("session.more", { count: diffs.length - MAX_DIFF_FILES }));
   return lines;
 }
 
 function formatChildrenSection(children: ChildSessionLike[] | null): string[] {
-  if (children === null) return ["🌿 Child sessions: unavailable"];
-  if (children.length === 0) return ["🌿 Child sessions: none"];
+  if (children === null) return [t("session.children_unavailable")];
+  if (children.length === 0) return [t("session.children_none")];
 
-  const lines = [`🌿 Child sessions: ${children.length}`];
+  const lines = [t("session.children_summary", { count: children.length })];
   for (const child of children.slice(0, MAX_CHILDREN)) {
     lines.push(`• ${truncateInline(child.title || child.id || "Untitled child session")}`);
   }
-  if (children.length > MAX_CHILDREN) lines.push(`…and ${children.length - MAX_CHILDREN} more`);
+  if (children.length > MAX_CHILDREN) lines.push(t("session.more", { count: children.length - MAX_CHILDREN }));
   return lines;
 }
 
 export async function sessionCommand(ctx: CommandContext<Context>): Promise<void> {
   const session = getCurrentSession();
   if (!session) {
-    await ctx.reply("ℹ️ No active OpenCode session. Open or attach to a session first.");
+    await ctx.reply(t("session.no_session"));
     return;
   }
 
@@ -148,9 +147,9 @@ export async function sessionCommand(ctx: CommandContext<Context>): Promise<void
 
   const status = statuses?.[session.id];
   const lines = [
-    "🧭 OpenCode Session",
+    t("session.header"),
     truncateInline(session.title || session.id, 160),
-    `State: ${formatStatus(status)}`,
+    t("session.state", { status: formatStatus(status) }),
     "",
     ...formatTodoSection(todos),
     "",

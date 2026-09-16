@@ -153,7 +153,7 @@ describe("message history revert/redo callbacks", () => {
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()?.metadata.stage).toBe("detail");
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
-      text: t("callback.processing_error"),
+      text: t("messages.redo_error"),
       show_alert: true,
     });
   });

@@ -100,7 +100,7 @@ describe("bot/commands/session", () => {
     expect(text).toContain("🔄 [high] Wire session dashboard");
     expect(text).toContain("2 files · +122 / -0");
     expect(text).toContain("src/bot/commands/session-command.ts");
-    expect(text).toContain("🌿 Child sessions: 1");
+    expect(text).toContain("🌿 Sub-sessions: 1");
     expect(text).toContain("Research child");
   });
 
@@ -115,9 +115,9 @@ describe("bot/commands/session", () => {
 
     const replyMock = ctx.reply as unknown as ReturnType<typeof vi.fn>;
     const text = replyMock.mock.calls[0]?.[0] as string;
-    expect(text).toContain("📝 OpenCode todos: unavailable");
-    expect(text).toContain("🧩 Session changes: 2 files");
-    expect(text).toContain("🌿 Child sessions: 1");
+    expect(text).toContain("📝 Tasks: unavailable");
+    expect(text).toContain("🧩 Changes: 2 files");
+    expect(text).toContain("🌿 Sub-sessions: 1");
   });
 
   it("does not call OpenCode APIs without an active session", async () => {

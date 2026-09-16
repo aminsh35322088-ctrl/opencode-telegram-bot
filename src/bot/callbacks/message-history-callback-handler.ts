@@ -283,7 +283,7 @@ export async function handleMessagesCallback(
         });
       } catch (error) {
         logger.error("[Messages] Error redoing reverted session:", error);
-        await ctx.answerCallbackQuery({ text: t("callback.processing_error"), show_alert: true });
+        await ctx.answerCallbackQuery({ text: t("messages.redo_error"), show_alert: true });
       }
 
       return true;
