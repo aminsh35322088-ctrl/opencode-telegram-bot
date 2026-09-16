@@ -15,12 +15,19 @@ export const SKILLS_IMPORT_CALLBACK_PICK_PREFIX = `${SKILLS_IMPORT_CALLBACK_PREF
 const IMPORT_TTL_MS = 15 * 60_000;
 
 interface SkillImportState {
+  messageId: number;
   pending?: ImportedSkill;
   candidates?: SkillImportCandidate[];
   expiresAt: number;
 }
 
 let state: SkillImportState | null = null;
+
+function callbackMessageId(ctx: Context): number | null {
+  const message = ctx.callbackQuery?.message;
+  if (!message || !("message_id" in message)) return null;
+  return typeof message.message_id === "number" ? message.message_id : null;
+}
 
 function activeState(): SkillImportState | null {
   if (!state) return null;
@@ -39,44 +46,75 @@ export function clearSkillImportFlow(): void {
   state = null;
 }
 
-function cancelKeyboard(): InlineKeyboard {
-  return new InlineKeyboard().text(t("inline.button.cancel"), SKILLS_IMPORT_CALLBACK_CANCEL);
+function navigationKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("← Skills", SKILLS_IMPORT_CALLBACK_CANCEL)
+    .text("🏠 Home", "main:home");
+}
+
+async function editImportPanel(
+  ctx: Context,
+  messageId: number,
+  text: string,
+  keyboard: InlineKeyboard = navigationKeyboard(),
+): Promise<void> {
+  if (!ctx.chat?.id) return;
+  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard });
+}
+
+async function deleteInput(ctx: Context): Promise<void> {
+  if (!ctx.chat?.id || !ctx.message?.message_id) return;
+  await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
 }
 
 export async function startSkillImport(ctx: Context): Promise<void> {
   clearSkillWizard();
-  state = { expiresAt: Date.now() + IMPORT_TTL_MS };
-  await ctx.reply(t("skills.import.ask_url"), { reply_markup: cancelKeyboard() });
+  const messageId = callbackMessageId(ctx);
+  if (messageId === null) {
+    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true }).catch(() => {});
+    return;
+  }
+  state = { messageId, expiresAt: Date.now() + IMPORT_TTL_MS };
+  await editImportPanel(ctx, messageId, t("skills.import.ask_url"));
 }
 
 function classifyImportError(message: string): string {
-  if (message.includes("GitHub")) {
-    return t("skills.import.invalid_url");
-  }
-  if (message.includes("SKILL.md")) {
-    return t("skills.import.not_found");
-  }
+  if (message.includes("GitHub")) return t("skills.import.invalid_url");
+  if (message.includes("SKILL.md")) return t("skills.import.not_found");
   return t("skills.import.fetch_error", { error: message });
 }
 
-async function renderConfirmation(ctx: Context, skill: ImportedSkill, candidates?: SkillImportCandidate[]): Promise<void> {
-  state = { pending: skill, candidates, expiresAt: Date.now() + IMPORT_TTL_MS };
+async function renderConfirmation(
+  ctx: Context,
+  messageId: number,
+  skill: ImportedSkill,
+  candidates?: SkillImportCandidate[],
+): Promise<void> {
+  state = { messageId, pending: skill, candidates, expiresAt: Date.now() + IMPORT_TTL_MS };
   const keyboard = new InlineKeyboard()
-    .text(t("skills.button.import_confirm"), SKILLS_IMPORT_CALLBACK_CONFIRM)
-    .text(t("inline.button.cancel"), SKILLS_IMPORT_CALLBACK_CANCEL);
-  await ctx.reply(t("skills.import.confirm", { skill: skill.name, description: skill.description, url: skill.sourceUrl }), {
-    reply_markup: keyboard,
-  });
+    .text(t("skills.button.import_confirm"), SKILLS_IMPORT_CALLBACK_CONFIRM).row()
+    .text("← Skills", SKILLS_IMPORT_CALLBACK_CANCEL)
+    .text("🏠 Home", "main:home");
+  await editImportPanel(
+    ctx,
+    messageId,
+    t("skills.import.confirm", { skill: skill.name, description: skill.description, url: skill.sourceUrl }),
+    keyboard,
+  );
 }
 
-async function renderCandidateList(ctx: Context, candidates: SkillImportCandidate[]): Promise<void> {
-  state = { candidates, expiresAt: Date.now() + IMPORT_TTL_MS };
+async function renderCandidateList(
+  ctx: Context,
+  messageId: number,
+  candidates: SkillImportCandidate[],
+): Promise<void> {
+  state = { messageId, candidates, expiresAt: Date.now() + IMPORT_TTL_MS };
   const keyboard = new InlineKeyboard();
   candidates.forEach((candidate, index) => {
     keyboard.text(`/${candidate.name}`, `${SKILLS_IMPORT_CALLBACK_PICK_PREFIX}${index}`).row();
   });
-  keyboard.text(t("inline.button.cancel"), SKILLS_IMPORT_CALLBACK_CANCEL);
-  await ctx.reply(t("skills.import.multiple_found", { count: candidates.length }), { reply_markup: keyboard });
+  keyboard.text("← Skills", SKILLS_IMPORT_CALLBACK_CANCEL).text("🏠 Home", "main:home");
+  await editImportPanel(ctx, messageId, t("skills.import.multiple_found", { count: candidates.length }), keyboard);
 }
 
 export async function handleSkillImportMessage(ctx: Context): Promise<boolean> {
@@ -85,37 +123,39 @@ export async function handleSkillImportMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text?.trim();
   if (!text || text.startsWith("/")) return false;
 
+  await deleteInput(ctx);
   try {
     const resolved = await resolveSkillSource(text);
     if (resolved.kind === "single") {
-      await renderConfirmation(ctx, resolved.skill);
+      await renderConfirmation(ctx, current.messageId, resolved.skill);
     } else {
-      await renderCandidateList(ctx, resolved.candidates);
+      await renderCandidateList(ctx, current.messageId, resolved.candidates);
     }
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     logger.warn(`[SkillImport] Resolve failed: ${message}`);
-    await ctx.reply(classifyImportError(message), { reply_markup: cancelKeyboard() });
+    await editImportPanel(ctx, current.messageId, classifyImportError(message));
     return true;
   }
 }
 
 export async function handleSkillImportCallback(ctx: Context, data: string): Promise<boolean> {
-  if (!data.startsWith(SKILLS_IMPORT_CALLBACK_PREFIX)) {
-    return false;
-  }
+  if (!data.startsWith(SKILLS_IMPORT_CALLBACK_PREFIX)) return false;
 
   const current = activeState();
-  if (!current) {
+  const messageId = callbackMessageId(ctx);
+  if (!current || messageId === null || current.messageId !== messageId) {
     await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true });
     return true;
   }
 
   if (data === SKILLS_IMPORT_CALLBACK_CANCEL) {
     clearSkillImportFlow();
-    await ctx.answerCallbackQuery({ text: t("common.cancelled") });
-    await ctx.editMessageText(t("skills.import.cancelled")).catch(() => {});
+    await ctx.answerCallbackQuery({ text: t("common.cancelled") }).catch(() => {});
+    await ctx.editMessageText(t("skills.import.cancelled"), {
+      reply_markup: new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home"),
+    }).catch(() => {});
     return true;
   }
 
@@ -132,20 +172,21 @@ export async function handleSkillImportCallback(ctx: Context, data: string): Pro
       logger.warn(`[SkillImport] Write failed: skill=${skill.name}, message=${message}`);
       await ctx.answerCallbackQuery({ text: t("skills.import.fetch_error", { error: message }), show_alert: true });
       if (message.includes("already exists")) {
-        await ctx.reply(t("skills.import.exists", { name: skill.name }), { reply_markup: cancelKeyboard() });
+        await editImportPanel(ctx, current.messageId, t("skills.import.exists", { name: skill.name }));
       }
       return true;
     }
 
     await ctx.answerCallbackQuery();
     logger.info(`[SkillImport] Imported global skill: ${skill.name}`);
-    await ctx.reply(`${t("skills.imported", { name: skill.name })}\n\n${t("skills.restart_hint")}`);
-
     const remaining = (current.candidates ?? []).filter((candidate) => candidate.name !== skill.name);
     if (remaining.length > 0) {
-      await renderCandidateList(ctx, remaining);
+      await renderCandidateList(ctx, current.messageId, remaining);
     } else {
       clearSkillImportFlow();
+      await ctx.editMessageText(`${t("skills.imported", { name: skill.name })}\n\n${t("skills.restart_hint")}`, {
+        reply_markup: new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home"),
+      }).catch(() => {});
     }
     return true;
   }
@@ -163,7 +204,7 @@ export async function handleSkillImportCallback(ctx: Context, data: string): Pro
       const skill = await fetchSkillFromGitHub(candidate.url);
       await ctx.answerCallbackQuery();
       const others = (current.candidates ?? []).filter((item) => item.name !== candidate.name);
-      await renderConfirmation(ctx, skill, others.length > 0 ? others : undefined);
+      await renderConfirmation(ctx, current.messageId, skill, others.length > 0 ? others : undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       logger.warn(`[SkillImport] Candidate fetch failed: ${message}`);
