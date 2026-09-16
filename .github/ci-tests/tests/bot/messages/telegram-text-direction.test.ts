@@ -24,6 +24,14 @@ const englishPart: TelegramRenderedPart = {
   source: "blocks",
 };
 
+const codeOnlyPart: TelegramRenderedPart = {
+  blocks: [
+    { type: "pre", text: 'const msg = "سلام دنیا";', language: "javascript" },
+  ],
+  fallbackText: 'const msg = "سلام دنیا";',
+  source: "blocks",
+};
+
 describe("bot/messages/telegram-text RTL transport", () => {
   it("sends mixed Persian rich messages with native RTL enabled", async () => {
     const sendMessage = vi.fn();
@@ -110,6 +118,23 @@ describe("bot/messages/telegram-text RTL transport", () => {
     expect(sendRichMessage).toHaveBeenCalledWith(
       100,
       { blocks: persianPart.blocks, is_rtl: true },
+      undefined,
+    );
+  });
+
+  it("does not force RTL on code-only parts containing Persian string literals", async () => {
+    const sendMessage = vi.fn();
+    const sendRichMessage = vi.fn().mockResolvedValue({ message_id: 13 });
+
+    await sendRenderedBotPart({
+      api: { sendMessage, sendRichMessage },
+      chatId: 100,
+      part: codeOnlyPart,
+    });
+
+    expect(sendRichMessage).toHaveBeenCalledWith(
+      100,
+      { blocks: codeOnlyPart.blocks },
       undefined,
     );
   });
