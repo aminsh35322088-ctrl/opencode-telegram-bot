@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureOpenRouterCodingProvider, verifyOpenRouterApiKey } from "../../../src/app/services/openrouter-provider-service.js";
 import { buildOpenCodeCustomConfig, listCustomProviders, saveCustomProvider } from "../../../src/app/services/custom-provider-service.js";
 import { buildToolImageChatProfile, configureGeminiImageConnection, validateImageChatProfile } from "../../../src/app/services/image-chat-profile-service.js";
 import { getAiRoleSelections, setAiRoleSelection } from "../../../src/app/services/ai-role-selection-service.js";
@@ -17,28 +16,11 @@ afterEach(async () => { await writeAppState({ version: 2 }); __resetProviderCata
 beforeEach(async () => {
   await writeAppState({ version: 2 }); __resetProviderCatalogForTests();
   vi.stubGlobal("fetch", request);
-  request.mockImplementation(async (url: string) => new Response(JSON.stringify(url.endsWith("/key") ? { data: { is_management_key: false } } : { data: models })));
+  request.mockImplementation(async () => new Response(JSON.stringify({ data: models })));
 });
 describe("provider separation and setup", () => {
-  it("verifies OpenRouter through /key and uses a collision-free built-in ID", async () => {
-    await saveCustomProvider({ id: "openrouter", name: "Existing router", baseURL: "https://custom.test/v1", apiKey: "original", models });
-    await configureOpenRouterCodingProvider("new-key");
-    const providers = await listCustomProviders();
-    expect(providers.find(p => p.id === "openrouter")?.baseURL).toBe("https://custom.test/v1");
-    expect(providers.find(p => p.id === "builtin-openrouter")?.capability).toBe("coding");
-    expect(request).toHaveBeenCalledWith("https://openrouter.ai/api/v1/key", expect.objectContaining({ headers: { Authorization: "Bearer new-key" } }));
-  });
-  it.each([{ is_management_key: true }, { is_provisioning_key: true }, {}])("rejects unusable OpenRouter key metadata %j", async data => {
-    request.mockResolvedValue(new Response(JSON.stringify({ data })));
-    await expect(verifyOpenRouterApiKey("secret")).rejects.toThrow();
-    expect(await listCustomProviders()).toEqual([]);
-  });
-  it("does not store a verified key after its wizard was cancelled", async () => {
-    await expect(configureOpenRouterCodingProvider("secret", () => { throw new DOMException("Cancelled", "AbortError"); })).rejects.toMatchObject({ name: "AbortError" });
-    expect(await listCustomProviders()).toEqual([]);
-  });
   it("reserves built-in names and refuses implicit replacement of custom connections", async () => {
-    await expect(saveCustomProvider({ name: "builtin-openrouter", baseURL: "https://custom.test", apiKey: "secret", models })).rejects.toThrow("reserved");
+    await expect(saveCustomProvider({ name: "builtin-reserved", baseURL: "https://custom.test", apiKey: "secret", models })).rejects.toThrow("reserved");
     await saveCustomProvider({ name: "existing", baseURL: "https://custom.test", apiKey: "secret", models });
     await expect(saveCustomProvider({ name: "existing", baseURL: "https://other.test", apiKey: "secret", models })).rejects.toThrow("already exists");
   });
