@@ -160,8 +160,8 @@ export const de: I18nDictionary = {
   "messages.button.cancel": "❌ Abbrechen",
   "messages.revert_success": "✅ Zurück zur Nachricht:\n\n{text}",
   "messages.revert_error":
-  "messages.redo_error": "❌ Wiederherstellung fehlgeschlagen. Bitte erneut versuchen.",
     "❌ Nachricht konnte nicht zurückgesetzt werden. Bitte versuche es erneut.",
+  "messages.redo_error": "❌ Wiederherstellung fehlgeschlagen. Bitte erneut versuchen.",
   "messages.fork_success": "🔀 Fork erstellt von Nachricht:\n\n{text}",
   "messages.fork_error": "❌ Fork konnte nicht erstellt werden. Bitte versuche es erneut.",
   "session.no_session": "ℹ️ Keine aktive OpenCode-Sitzung. Öffne oder verbinde zuerst eine Sitzung.",
