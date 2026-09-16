@@ -3,8 +3,20 @@ import { toBlockPlainText } from "./block-plain-text.js";
 import { splitOversizeTelegramBlocks, type BlockSplitLimits } from "./block-splitter.js";
 import { chunkTelegramRenderedBlocks, type TelegramChunkerOptions } from "./chunker.js";
 import { liftTextListContent, toRichBlock } from "./rich-blocks.js";
-import type { TelegramBlock, TelegramRenderedBlock } from "./types.js";
+import type { TelegramBlock, TelegramRenderedBlock, TelegramRichBlock } from "./types.js";
 import type { TelegramRenderedPart } from "./types.js";
+
+/**
+ * Bot API 10.3 can render native tables with tighter cell padding. Markdown
+ * tables are inherently dense data, so opt into compact presentation at the
+ * final render boundary while keeping the parser and fallback text unchanged.
+ */
+function applyRichBlockPresentation(block: TelegramRichBlock): TelegramRichBlock {
+  if (block.type === "table") {
+    return { ...block, is_compact: true };
+  }
+  return block;
+}
 
 /**
  * Lifts native content out of lists that are written as text, splits blocks
@@ -16,7 +28,7 @@ export function toRenderedBlocks(
   limits?: Partial<BlockSplitLimits>,
 ): TelegramRenderedBlock[] {
   return splitOversizeTelegramBlocks(liftTextListContent(blocks), limits).map((block) => ({
-    block: toRichBlock(block),
+    block: applyRichBlockPresentation(toRichBlock(block)),
     plainText: toBlockPlainText(block),
   }));
 }

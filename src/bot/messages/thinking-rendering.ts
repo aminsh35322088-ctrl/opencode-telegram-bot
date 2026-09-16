@@ -1,9 +1,7 @@
-import type { MessageEntity } from "grammy/types";
-
 import { t } from "../../i18n/index.js";
-import { PLAIN_MAX_PART_CHARS } from "../render/limits.js";
+import { DEFAULT_MAX_PART_CHARS } from "../render/limits.js";
 import { splitTextIntoChunks } from "../render/text-splitter.js";
-import type { TelegramRenderedPart } from "../render/types.js";
+import type { TelegramRenderedPart, TelegramRichBlock } from "../render/types.js";
 import type { StreamingMessagePayload } from "../streaming/response-streamer.js";
 
 export interface ThinkingSection {
@@ -13,10 +11,7 @@ export interface ThinkingSection {
 }
 
 interface ThinkingPayloadOptions {
-  /**
-   * Final render: the reasoning is complete, so the quote is collapsed. While
-   * the model is still thinking the quote stays open so the text is readable.
-   */
+  /** Final render is persisted as a normal expandable quotation. */
   final?: boolean;
 }
 
@@ -26,48 +21,56 @@ function formatHeader(title?: string): string {
   return normalizedTitle ? `${fallback} — ${normalizedTitle}` : fallback;
 }
 
-/**
- * Reasoning is delivered as a plain text message with a quote entity: rich
- * blocks have no collapsed quotation, only the `details` disclosure widget.
- */
-function createThinkingPart(
-  header: string,
-  text: string,
-  collapsed: boolean,
-): TelegramRenderedPart {
-  if (!text) {
-    return { blocks: [], fallbackText: header, source: "plain" };
-  }
-
-  const entity: MessageEntity = {
-    type: collapsed ? "expandable_blockquote" : "blockquote",
-    offset: header.length + 1,
-    length: text.length,
-  };
-
+function createThinkingBlock(header: string, text: string): TelegramRichBlock {
   return {
-    blocks: [],
-    fallbackText: `${header}\n${text}`,
-    source: "plain",
-    entities: [entity],
+    type: "thinking",
+    text: text ? `${header}\n${text}` : header,
   };
 }
 
+function createFinalThinkingBlock(header: string, text: string): TelegramRichBlock {
+  return {
+    type: "expandable_blockquote",
+    text: text
+      ? [{ type: "bold", text: header }, "\n", text]
+      : { type: "bold", text: header },
+  };
+}
+
+function createThinkingPart(
+  header: string,
+  text: string,
+  final: boolean,
+): TelegramRenderedPart {
+  const fallbackText = text ? `${header}\n${text}` : header;
+  return {
+    blocks: [final ? createFinalThinkingBlock(header, text) : createThinkingBlock(header, text)],
+    fallbackText,
+    source: "blocks",
+  };
+}
+
+/**
+ * While a model run is active, reasoning is represented by Telegram's native
+ * `thinking` rich block and therefore must travel through sendRichMessageDraft.
+ * On completion the same visible content is converted to a persistent,
+ * collapsible rich quotation because `thinking` blocks are draft-only.
+ */
 export function prepareThinkingPayload(
   sections: ThinkingSection[],
   options: ThinkingPayloadOptions = {},
 ): StreamingMessagePayload | null {
-  const collapsed = options.final ?? false;
+  const final = options.final ?? false;
   const parts: TelegramRenderedPart[] = [];
 
   for (const section of sections) {
     const header = formatHeader(section.title);
     const text = section.text.replace(/\r\n/g, "\n").trimEnd();
-    const textLimit = Math.max(1, PLAIN_MAX_PART_CHARS - header.length - 1);
+    const textLimit = Math.max(1, DEFAULT_MAX_PART_CHARS - header.length - 1);
     const chunks = text ? splitTextIntoChunks(text, textLimit) : [""];
 
     for (const chunk of chunks) {
-      parts.push(createThinkingPart(header, chunk, collapsed));
+      parts.push(createThinkingPart(header, chunk, final));
     }
   }
 
