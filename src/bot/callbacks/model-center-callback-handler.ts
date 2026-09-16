@@ -44,6 +44,11 @@ import { findTelegramTopicBindingByThread } from "../../app/services/telegram-to
 const SEARCH_FLOW = "model-search";
 interface ModelCenterSearchState { stage: "input" | "results"; }
 function getTopicThreadId(ctx: Context): number | undefined { const message = ctx.callbackQuery?.message; const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined; return typeof threadId === "number" ? threadId : undefined; }
+function getMessageThreadId(ctx: Context): number | undefined { const message = ctx.message; const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined; return typeof threadId === "number" ? threadId : undefined; }
+function getCallbackMessageId(ctx: Context): number | null { const message = ctx.callbackQuery?.message; return message && "message_id" in message && typeof message.message_id === "number" ? message.message_id : null; }
+function searchInputKeyboard(): InlineKeyboard { return new InlineKeyboard().text("← Back", MODEL_CENTER_ROOT).text("🏠 Home", "main:home"); }
+async function deleteSearchInput(ctx: Context): Promise<void> { if (ctx.chat?.id && ctx.message?.message_id) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
+async function editSearchPanel(ctx: Context, messageId: number, text: string, keyboard: InlineKeyboard): Promise<void> { if (!ctx.chat?.id) return; await ctx.api.editMessageText(ctx.chat.id, messageId, text, { parse_mode: "HTML", reply_markup: keyboard }); }
 
 export async function handleModelCenterCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
@@ -67,7 +72,10 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     if (data === MODEL_CENTER_RECENT) return await render(ctx, await buildModelCenterList("recent", fetchCurrentModel()));
     if (data === MODEL_CENTER_PROVIDERS) return await render(ctx, await buildModelCenterProviders());
     if (data === MODEL_CENTER_SEARCH || data === MODEL_CENTER_SEARCH_AGAIN) return beginSearch(ctx);
-    if (data === MODEL_CENTER_SEARCH_CANCEL) { await ctx.answerCallbackQuery().catch(() => {}); interactionManager.clear("model_search_cancelled"); await ctx.deleteMessage().catch(() => {}); return true; }
+    if (data === MODEL_CENTER_SEARCH_CANCEL) {
+      interactionManager.clear("model_search_cancelled");
+      return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
+    }
     if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
       const parts = data.slice(MODEL_CENTER_PROVIDER_PREFIX.length).split(":");
       if (parts.length !== 2) return true;
@@ -120,12 +128,25 @@ async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTar
 }
 
 async function beginSearch(ctx: Context): Promise<boolean> {
+  const messageId = getCallbackMessageId(ctx);
+  if (messageId === null || !ctx.chat?.id) {
+    await ctx.answerCallbackQuery({ text: "This menu has expired. Reopen Model Center.", show_alert: true }).catch(() => {});
+    return true;
+  }
   await ctx.answerCallbackQuery().catch(() => {});
-  await ctx.deleteMessage().catch(() => {});
   const threadId = getTopicThreadId(ctx);
-  const keyboard = new InlineKeyboard().text("← Back", MODEL_CENTER_ROOT);
-  interactionManager.start({ kind: "custom", expectedInput: "text", metadata: { flow: SEARCH_FLOW, stage: "input" satisfies ModelCenterSearchState["stage"], ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
-  await ctx.reply("🔎 <b>Search models</b>\n\nSend part of a model name or ID.", { parse_mode: "HTML", reply_markup: keyboard, ...(threadId !== undefined ? { message_thread_id: threadId } : {}) } as never);
+  interactionManager.start({
+    kind: "custom",
+    expectedInput: "mixed",
+    metadata: {
+      flow: SEARCH_FLOW,
+      stage: "input" satisfies ModelCenterSearchState["stage"],
+      messageId,
+      chatId: ctx.chat.id,
+      ...(threadId !== undefined ? { threadId } : {}),
+    },
+  });
+  await editSearchPanel(ctx, messageId, "🔎 <b>Search models</b>\n\nSend part of a model name, ID, or provider.", searchInputKeyboard());
   return true;
 }
 
@@ -133,22 +154,46 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
   const state = interactionManager.getSnapshot();
   if (!state || state.kind !== "custom" || state.metadata.flow !== SEARCH_FLOW || state.metadata.stage !== "input") return false;
   if (typeof state.metadata.chatId === "number" && state.metadata.chatId !== ctx.chat?.id) return false;
-  if (typeof state.metadata.threadId === "number") {
-    const threadId = ctx.message && "message_thread_id" in ctx.message ? (ctx.message as { message_thread_id?: number }).message_thread_id : undefined;
-    if (threadId !== state.metadata.threadId) return false;
-  }
+  if (typeof state.metadata.threadId === "number" && getMessageThreadId(ctx) !== state.metadata.threadId) return false;
+  const messageId = typeof state.metadata.messageId === "number" ? state.metadata.messageId : null;
+  if (messageId === null || !ctx.chat?.id) { interactionManager.clear("model_search_missing_panel"); return false; }
+
   const query = ctx.message?.text?.trim() ?? "";
-  if (!query) { await ctx.reply("🔎 Send a model name or ID to search."); return true; }
+  await deleteSearchInput(ctx);
+  if (!query) {
+    await editSearchPanel(ctx, messageId, "🔎 <b>Search models</b>\n\n❌ Send a model name, ID, or provider to search.", searchInputKeyboard());
+    return true;
+  }
   try {
     const view = await buildModelCenterSearchResults(query, fetchCurrentModel());
-    const threadId = ctx.message && "message_thread_id" in ctx.message ? (ctx.message as { message_thread_id?: number }).message_thread_id : undefined;
-    await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard, ...(typeof threadId === "number" ? { message_thread_id: threadId } : {}) } as never);
-    interactionManager.start({ kind: "inline", expectedInput: "callback", metadata: { menuKind: "model", flow: SEARCH_FLOW, stage: "results", ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(typeof threadId === "number" ? { threadId } : {}) } });
+    await editSearchPanel(ctx, messageId, view.text, view.keyboard);
+    const threadId = getMessageThreadId(ctx);
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "model",
+        flow: SEARCH_FLOW,
+        stage: "results" satisfies ModelCenterSearchState["stage"],
+        messageId,
+        chatId: ctx.chat.id,
+        ...(threadId !== undefined ? { threadId } : {}),
+      },
+    });
     return true;
   } catch (error) {
     logger.error("[ModelCenter] Search failed", error);
-    interactionManager.clear("model_search_error");
-    await ctx.reply("❌ Model search failed. Reopen Model Center and try again.");
+    interactionManager.transition({
+      expectedInput: "mixed",
+      metadata: {
+        flow: SEARCH_FLOW,
+        stage: "input" satisfies ModelCenterSearchState["stage"],
+        messageId,
+        chatId: ctx.chat.id,
+        ...(getMessageThreadId(ctx) !== undefined ? { threadId: getMessageThreadId(ctx) } : {}),
+      },
+    });
+    await editSearchPanel(ctx, messageId, "❌ <b>Model search failed.</b>\n\nSend another query, go Back, or return Home.", searchInputKeyboard()).catch(() => {});
     return true;
   }
 }
@@ -169,10 +214,6 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   if (chatId) keyboardManager.initialize(ctx.api, chatId, activeSessionId, threadId);
   const previousModel = fetchCurrentModel();
 
-  // A model switch changes only the model/provider used by subsequent prompts.
-  // Keeping the same OpenCode session is what preserves conversation history.
-  // Topic isolation remains intact because each Telegram Topic keeps its own
-  // binding/session and setCurrentModel() writes into that Topic's runtime state.
   interactionManager.clear("model_selected");
   selectModel(modelInfo);
   if (!getCurrentTopicSettings()) updateTopicDefaults({ model: modelInfo });
