@@ -1,6 +1,6 @@
 import { asRecord, readBoundedJson } from "./ai-http-service.js";
 import { getCustomProvider, normalizeDiscoveredModel, type CustomProviderModel } from "./custom-provider-service.js";
-import { readAppState, updateAppState } from "../stores/app-state-store.js";
+import { updateAppState } from "../stores/app-state-store.js";
 import { logger } from "../../utils/logger.js";
 
 export const PUTER_BASE_URL = "https://api.puter.com/puterai/openai/v1";
@@ -116,7 +116,5 @@ export async function configurePuterCodingProvider(authToken: string, beforeSave
     };
   });
 
-  // Force the app-state write queue to settle before OpenCode config sync reads it.
-  await readAppState();
   logger.info(`[Puter] Saved verified provider ${PUTER_PROVIDER_ID} models=${models.length}`);
 }
