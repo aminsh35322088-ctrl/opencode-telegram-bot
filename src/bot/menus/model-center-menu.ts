@@ -260,6 +260,7 @@ export async function buildModelCenterSearchResults(query: string, current?: Mod
   const keyboard = new InlineKeyboard();
   await appendModelRows(keyboard, models, current, { kind: "search", query });
   keyboard.text("🔎 Search again", MODEL_CENTER_SEARCH_AGAIN).text("← Back", MODEL_CENTER_ROOT).row();
+  keyboard.text("🏠 Home", "main:home");
   return {
     text: models.length
       ? `🔎 <b>SEARCH</b> · <code>${escapeHtml(query)}</code>\n\nResults match model name, ID, or provider.`
