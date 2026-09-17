@@ -1,0 +1,9 @@
+rustdesk core cargo check: PASS (exit 0)
+bridge cargo check: PASS (exit 0)
+bridge cargo build: PASS (exit 0)
+bridge unit tests: PASS (6 passed, 0 failed)
+runtime /health authenticated smoke: PASS
+runtime unauthorized /health: 401 PASS
+servers.list smoke: PASS
+servers.test unreachable custom profile: expected connect_failed PASS
+real remote-device E2E: NOT YET RUN
