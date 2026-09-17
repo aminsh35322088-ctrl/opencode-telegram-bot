@@ -3,21 +3,25 @@ import net from "node:net";
 import { tool } from "@opencode-ai/plugin";
 
 export default tool({
-  description: "Diagnose DNS, HTTP(S), and TCP connectivity from the Railway runtime without requiring raw shell networking tools.",
+  description: "Diagnose DNS, HTTP(S), and TCP connectivity from the Railway runtime. Prefer the normalized action field; mode remains a backwards-compatible alias.",
   args: {
+    action: tool.schema.enum(["dns", "http", "tcp"]).optional().describe("Normalized diagnostic action."),
     target: tool.schema.string().describe("Hostname, IP, URL, or host:port target."),
-    mode: tool.schema.enum(["dns", "http", "tcp"]).describe("Diagnostic mode."),
+    mode: tool.schema.enum(["dns", "http", "tcp"]).optional().describe("Deprecated alias for action."),
     timeoutMs: tool.schema.number().optional().describe("Timeout in milliseconds, default 10000."),
   },
   async execute(args) {
+    const action = args.action ?? args.mode;
+    if (!action) throw new Error("network-diagnostics requires action: dns, http, or tcp");
     const timeout = Math.max(1000, Math.min(args.timeoutMs ?? 10000, 30000));
-    if (args.mode === "dns") {
+
+    if (action === "dns") {
       const host = args.target.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
       const [a, aaaa] = await Promise.allSettled([dns.resolve4(host), dns.resolve6(host)]);
       return JSON.stringify({ host, ipv4: a.status === "fulfilled" ? a.value : [], ipv6: aaaa.status === "fulfilled" ? aaaa.value : [], ok: a.status === "fulfilled" || aaaa.status === "fulfilled" }, null, 2);
     }
 
-    if (args.mode === "http") {
+    if (action === "http") {
       const url = /^https?:\/\//i.test(args.target) ? args.target : `https://${args.target}`;
       const started = Date.now();
       const controller = new AbortController();
@@ -29,7 +33,7 @@ export default tool({
     }
 
     const match = args.target.match(/^\[?([^\]]+)\]?:([0-9]+)$/);
-    if (!match) throw new Error("TCP mode requires host:port (IPv6 may be written as [host]:port)");
+    if (!match) throw new Error("TCP action requires host:port (IPv6 may be written as [host]:port)");
     const host = match[1];
     const port = Number(match[2]);
     return await new Promise<string>((resolve) => {
