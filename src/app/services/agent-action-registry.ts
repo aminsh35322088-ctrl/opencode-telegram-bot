@@ -49,6 +49,36 @@ export const CORE_TOOL_ACTIONS = {
 
 export const CUSTOM_TOOL_ACTIONS = {
   actions: ["list", "describe", "resolve", "sources", "summary"],
+  bot: [
+    "capabilities.list",
+    "projects.list",
+    "worktree.context",
+    "models.providers",
+    "models.list",
+    "models.search",
+    "models.refresh",
+    "agents.list",
+    "variants.list",
+    "skills.list",
+    "skills.create",
+    "skills.update",
+    "skills.delete",
+    "commands.list",
+    "mcp.list",
+    "mcp.add-local",
+    "mcp.add-remote",
+    "mcp.enable",
+    "mcp.disable",
+    "memory.list",
+    "memory.search",
+    "memory.add",
+    "memory.remove",
+    "memory.clear",
+    "providers.list",
+    "providers.get",
+    "providers.stt-status",
+    "version.info",
+  ],
   browser: [
     "open", "goto", "back", "forward", "reload", "snapshot", "screenshot",
     "click", "fill", "type", "press", "hover", "check", "uncheck", "select",
@@ -80,6 +110,7 @@ type CustomToolName = keyof typeof CUSTOM_TOOL_ACTIONS;
 
 const TOOL_CATEGORIES: Record<CustomToolName, string> = {
   actions: "discovery",
+  bot: "bot-control",
   browser: "browser",
   "database-query": "database",
   "full-diagnostics": "diagnostics",
@@ -128,6 +159,34 @@ const ACTION_DESCRIPTIONS: Record<string, string> = {
   "task.delegate": "Delegate work to an OpenCode subagent.",
   "question.ask": "Ask the user a structured interactive question.",
   "skill.load": "Load an installed OpenCode skill and follow its workflow.",
+  "bot.capabilities.list": "List the bot control-plane actions exposed to the coding agent.",
+  "bot.projects.list": "List OpenCode projects visible to the bot.",
+  "bot.worktree.context": "Inspect the active git worktree and linked worktrees.",
+  "bot.models.providers": "List coding-model providers visible through the bot catalog.",
+  "bot.models.list": "List coding models for one provider.",
+  "bot.models.search": "Search the bot model catalog.",
+  "bot.models.refresh": "Refresh the bot model catalog from configured providers.",
+  "bot.agents.list": "List available primary OpenCode agents for the current worktree.",
+  "bot.variants.list": "List variants exposed by a provider/model pair.",
+  "bot.skills.list": "List installed OpenCode skills.",
+  "bot.skills.create": "Create a managed global OpenCode skill.",
+  "bot.skills.update": "Update a managed global OpenCode skill.",
+  "bot.skills.delete": "Delete a managed global OpenCode skill.",
+  "bot.commands.list": "List OpenCode custom commands for the current worktree.",
+  "bot.mcp.list": "List configured MCP servers and connection states.",
+  "bot.mcp.add-local": "Add a local MCP server definition.",
+  "bot.mcp.add-remote": "Add a remote MCP server definition.",
+  "bot.mcp.enable": "Connect an existing MCP server.",
+  "bot.mcp.disable": "Disconnect an MCP server.",
+  "bot.memory.list": "List persistent bot memories.",
+  "bot.memory.search": "Search persistent bot memories relevant to a query.",
+  "bot.memory.add": "Add a persistent user or project memory.",
+  "bot.memory.remove": "Remove one persistent memory by ID.",
+  "bot.memory.clear": "Delete all persistent memories.",
+  "bot.providers.list": "List configured custom AI providers without credentials.",
+  "bot.providers.get": "Read public metadata for one configured custom provider.",
+  "bot.providers.stt-status": "Check whether Groq speech-to-text is configured without exposing its key.",
+  "bot.version.info": "Inspect bot, OpenCode, runtime, and integrated-tool versions.",
   "database-query.query": "Run a read-only SQLite SELECT/PRAGMA/WITH/EXPLAIN query.",
   "image-inspect.inspect": "Inspect image format, dimensions, colorspace, depth, and metadata.",
   "logs-observability.search": "Search bounded recent application/runtime logs.",
@@ -149,12 +208,14 @@ const ACTION_DESCRIPTIONS: Record<string, string> = {
 const READ_ACTION_PATTERNS = [
   /^(list|describe|resolve|sources|summary|status|inspect|snapshot|screenshot|requests|console|whoami|logs|variables|verify|watch|dns|http|tcp|quick|full|search)$/,
   /^(bridge\.health|devices\.list|device\.info|terminal\.read|screen\.capture|clipboard\.read|files\.list|files\.read|system\.info)$/,
+  /^(capabilities\.list|projects\.list|worktree\.context|models\.(providers|list|search)|agents\.list|variants\.list|skills\.list|commands\.list|mcp\.list|memory\.(list|search)|providers\.(list|get|stt-status)|version\.info)$/,
 ];
-const DESTRUCTIVE_ACTION_PATTERNS = [/restart$/, /^cleanup-safe$/, /^abort$/];
+const DESTRUCTIVE_ACTION_PATTERNS = [/restart$/, /^cleanup-safe$/, /^abort$/, /^skills\.delete$/, /^memory\.clear$/];
 const WRITE_ACTION_PATTERNS = [/^pdf$/, /^download$/, /^send$/, /^files\.download$/];
 
 function customRisk(tool: string, action: string): AgentActionRisk {
   if (DESTRUCTIVE_ACTION_PATTERNS.some((pattern) => pattern.test(action))) return "destructive";
+  if (tool === "bot" && ["skills.create", "skills.update", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable", "memory.add", "memory.remove", "models.refresh"].includes(action)) return "mutating";
   if (tool === "browser" && ["click", "fill", "type", "press", "hover", "check", "uncheck", "select", "tab-new", "tab-select", "tab-close", "close"].includes(action)) return "mutating";
   if (tool === "railway" && ["deploy", "deploy-latest"].includes(action)) return "mutating";
   if (tool === "rustdesk" && /^(device\.(connect|disconnect)|terminal\.(exec|open|write|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action)) return "mutating";
@@ -252,6 +313,7 @@ export function getAgentActionSources(): Record<string, unknown> {
     static: {
       opencodeCore: "Native OpenCode tools are represented by canonical action IDs but are invoked with their native schemas.",
       customTools: "Repository .opencode/tools entries use an explicit action argument and are included in this registry.",
+      botControl: "The bot custom tool exposes model-safe bot control-plane actions without returning provider credentials.",
       plugin: "The skill action is supplied by the configured OpenCode/Superpowers workflow.",
     },
     dynamic: {
