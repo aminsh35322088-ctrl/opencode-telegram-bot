@@ -1,0 +1,6 @@
+upstream_head=0b3a1ddd80285c87baad495f79b54d19ef3ba4d9
+snapshot_utc=2026-09-17T23:11:17Z
+bridge_main_lines=3014
+headless_lines=627
+sha256_bridge_main=805a8ce657f9cff5f997f30a0e67d776509822bace6ff362807e20d9074e7193
+sha256_headless=4ae8b11558e460cb83dc18572e8a306b64b831d2b071bdcedf41815968ce2123
