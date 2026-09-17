@@ -8,8 +8,9 @@ const execFileAsync = promisify(execFile);
 const READ_ONLY = /^(\s*(select|pragma|with|explain)\b)/i;
 
 export default tool({
-  description: "Run read-only SQL against a SQLite database file. Useful for schema inspection, debugging data, and verifying application state. Mutating SQL is deliberately rejected; use the normal shell/database integration for writes.",
+  description: "Run read-only SQL against a SQLite database file through the explicit query action. Mutating SQL is deliberately rejected; use the normal shell/database integration for writes.",
   args: {
+    action: tool.schema.enum(["query"]).describe("Database action to execute."),
     database: tool.schema.string().describe("SQLite database path, absolute or relative to the worktree."),
     query: tool.schema.string().describe("Read-only SQL query (SELECT, PRAGMA, WITH, or EXPLAIN)."),
   },
