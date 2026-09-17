@@ -3,7 +3,6 @@ import { foregroundSessionState } from "../managers/foreground-session-state-man
 import { assistantRunState } from "../managers/assistant-run-state-manager.js";
 import { markAttachedSessionIdle } from "./attach-service.js";
 import { logger } from "../../utils/logger.js";
-import { markAbortExpected } from "../managers/abort-suppression-manager.js";
 import { hasActiveToolCall } from "../managers/tool-activity-manager.js";
 
 const POLL_INTERVAL_MS = 5000;
@@ -114,7 +113,6 @@ async function getStatus(sessionId: string, directory: string, signal: AbortSign
 }
 
 async function requestAbort(sessionId: string, directory: string): Promise<boolean> {
-  markAbortExpected(sessionId);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ABORT_REQUEST_TIMEOUT_MS);
   try {
@@ -187,6 +185,15 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         if (!status) continue;
         if (status.type === "idle" || status.type === "error") return;
         if (status.type !== "busy" && status.type !== "retry") continue;
+
+        // OpenCode owns provider retryability, Retry-After handling and bounded
+        // backoff. A retry can legitimately be quiet while waiting for the next
+        // upstream attempt, so the Telegram watchdog must never abort it.
+        if (status.type === "retry") {
+          lastMeaningfulProgressAt = Date.now();
+          continue;
+        }
+
         if (hasActiveToolCall(options.sessionId)) {
           // A tool is executing right now. OpenCode only emits tool events on
           // output changes, so a silent blocking tool (test runner, CI wait)
@@ -209,7 +216,7 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         }
         const stalledForMs = Date.now() - lastMeaningfulProgressAt;
         if (stalledForMs < STALL_AFTER_MS) continue;
-        logger.warn(`[StallWatchdog] Session stalled: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}, status=${status.type}. Requesting abort.`);
+        logger.warn(`[StallWatchdog] Busy session made no progress: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}. Requesting safety abort without re-prompting.`);
         const aborted = await requestAbort(options.sessionId, options.directory);
         if (controller.signal.aborted) return;
         if (!aborted) {
@@ -226,20 +233,13 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         }
         await clearLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
         if (controller.signal.aborted) return;
-        logger.warn(`[StallWatchdog] Recovered stalled session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}`);
+        logger.warn(`[StallWatchdog] Stopped genuinely stalled busy session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}. No synthetic retry was dispatched.`);
         if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
-        try {
-          await options.onStalled({
-            sessionId: options.sessionId,
-            directory: options.directory,
-            attempt,
-            agent: options.agent,
-            modelConfig: options.modelConfig,
-            variant: options.variant,
-          });
-        } catch (error) {
-          logger.error(`[StallWatchdog] onStalled callback failed: session=${options.sessionId}, attempt=${attempt}`, error);
-        }
+
+        // Do not invoke onStalled here. Historically that callback submitted a
+        // synthetic "continue" prompt, creating a second inference layer on top
+        // of OpenCode and causing duplicate work, long retry loops and apparent
+        // freezes. OpenCode remains the sole owner of inference/retry behavior.
         return;
       }
     } catch (error) {
