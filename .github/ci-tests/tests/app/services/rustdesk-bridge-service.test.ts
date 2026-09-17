@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   RustDeskBridgeClient,
   validateRustDeskActionRequest,
-} from "../../../../src/app/services/rustdesk-bridge-service.js";
+} from "../../../src/app/services/rustdesk-bridge-service.js";
 
 describe("rustdesk bridge service", () => {
   it("allows device discovery without a device id", () => {
