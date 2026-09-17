@@ -85,19 +85,19 @@ async function packageCheck(worktree: string): Promise<Record<string, unknown>> 
 }
 
 export default tool({
-  description: "Run a bounded, read-only health check across OpenCode API reachability, session status, runtime resources, project validation readiness, and core executables. Use this before recovery or repeated testing; it never installs packages, mutates files, aborts sessions, or retries indefinitely.",
+  description: "Run a bounded, read-only health check across OpenCode API reachability, session status, runtime resources, project validation readiness, and core executables. Use action=quick for core health or action=full for the complete check.",
   args: {
+    action: tool.schema.enum(["quick", "full"]).describe("Diagnostics action: quick checks core health; full also checks project files, disk, and executables."),
     sessionId: tool.schema.string().optional().describe("Optional OpenCode session ID to inspect."),
     timeoutMs: tool.schema.number().optional().describe("Per-check timeout in milliseconds, capped at 15000."),
-    detail: tool.schema.enum(["quick", "full"]).optional().describe("quick checks core health; full also checks project files, disk, and executables."),
   },
   async execute(args, context) {
     const started = Date.now();
-    const detail = args.detail ?? "full";
+    const action = args.action;
     const timeout = timeoutMs(args.timeoutMs);
     const result: Record<string, unknown> = {
       ok: true,
-      mode: detail,
+      mode: action,
       timeoutMs: timeout,
       opencode: { address: apiUrl() },
       checks: {},
@@ -137,7 +137,7 @@ export default tool({
       memory: { totalBytes: memTotal, freeBytes: memFree, usedBytes: memTotal - memFree },
     };
 
-    if (detail === "full") {
+    if (action === "full") {
       checks.project = await packageCheck(context.worktree);
       checks.disk = await command("df", ["-h", "/data"], context.worktree, context.abort, timeout);
       const tools: Record<string, unknown> = {};
