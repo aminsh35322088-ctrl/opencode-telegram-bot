@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -19,6 +21,18 @@ describe("agent action registry", () => {
     }
     for (const [tool, actions] of Object.entries(CUSTOM_TOOL_ACTIONS)) {
       for (const action of actions) expect(getAgentAction(`${tool}.${action}`)).not.toBeNull();
+    }
+  });
+
+  it("keeps every repository custom tool action-based and registered", async () => {
+    const toolsDir = path.join(process.cwd(), ".opencode", "tools");
+    const files = (await fs.readdir(toolsDir)).filter((name) => name.endsWith(".ts")).sort();
+    const registeredTools = Object.keys(CUSTOM_TOOL_ACTIONS).map((name) => `${name}.ts`).sort();
+    expect(registeredTools).toEqual(files);
+
+    for (const file of files) {
+      const source = await fs.readFile(path.join(toolsDir, file), "utf8");
+      expect(source, `${file} must expose an explicit action schema`).toContain("action: tool.schema");
     }
   });
 
