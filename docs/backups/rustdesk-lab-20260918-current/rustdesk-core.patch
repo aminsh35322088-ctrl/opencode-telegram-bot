@@ -1,0 +1,696 @@
+diff --git a/src/client/io_loop.rs b/src/client/io_loop.rs
+index e893a4780..f0b824f9b 100644
+--- a/src/client/io_loop.rs
++++ b/src/client/io_loop.rs
+@@ -1525,6 +1525,16 @@ impl<T: InvokeUiSession> Remote<T> {
+                         !lc.disable_clipboard.v && !lc.view_only.v
+                     };
+                     if clipboard_allowed {
++                        if cb.format.enum_value() == Ok(ClipboardFormat::Text) {
++                            let content = if cb.compress {
++                                hbb_common::compress::decompress(&cb.content)
++                            } else {
++                                cb.content.to_vec()
++                            };
++                            if let Ok(content) = String::from_utf8(content) {
++                                self.handler.on_clipboard_text(content);
++                            }
++                        }
+                         #[cfg(all(
+                             feature = "flutter",
+                             not(any(target_os = "android", target_os = "ios"))
+@@ -1560,6 +1570,20 @@ impl<T: InvokeUiSession> Remote<T> {
+                         !lc.disable_clipboard.v && !lc.view_only.v
+                     };
+                     if clipboard_allowed {
++                        if let Some(cb) = _mcb
++                            .clipboards
++                            .iter()
++                            .find(|cb| cb.format.enum_value() == Ok(ClipboardFormat::Text))
++                        {
++                            let content = if cb.compress {
++                                hbb_common::compress::decompress(&cb.content)
++                            } else {
++                                cb.content.to_vec()
++                            };
++                            if let Ok(content) = String::from_utf8(content) {
++                                self.handler.on_clipboard_text(content);
++                            }
++                        }
+                         #[cfg(all(
+                             feature = "flutter",
+                             not(any(target_os = "android", target_os = "ios"))
+diff --git a/src/lib.rs b/src/lib.rs
+index 649f3ef95..b84276937 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
++pub mod headless_controller;
+ #[cfg(any(test, not(target_os = "linux")))]
+ mod audio_resampler;
+ mod keyboard;
+diff --git a/src/ui_session_interface.rs b/src/ui_session_interface.rs
+index 37aa7a67e..fb7d5e7b0 100644
+--- a/src/ui_session_interface.rs
++++ b/src/ui_session_interface.rs
+@@ -1719,6 +1719,7 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
+     fn job_progress(&self, id: i32, file_num: i32, speed: f64, finished_size: f64);
+     fn adapt_size(&self);
+     fn on_rgba(&self, display: usize, rgba: &mut scrap::ImageRgb);
++    fn on_clipboard_text(&self, _content: String) {}
+     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str, retry: bool);
+     #[cfg(any(target_os = "android", target_os = "ios"))]
+     fn clipboard(&self, content: String);
+diff --git a/src/headless_controller.rs b/src/headless_controller.rs
+new file mode 100644
+index 000000000..6c77823a3
+--- /dev/null
++++ b/src/headless_controller.rs
+@@ -0,0 +1,627 @@
++//! Machine-oriented RustDesk controller primitives for headless integrations.
++//!
++//! This module intentionally reuses the same generic `Session<T>` core as the
++//! desktop clients while replacing UI callbacks with bounded in-memory state.
++//! Secret material stays at the controller boundary; callers should expose only
++//! opaque connection/device identifiers to higher-level model-facing APIs.
++
++use std::{
++    collections::{HashMap, VecDeque},
++    ptr,
++    sync::{
++        atomic::{AtomicBool, Ordering},
++        Arc, Mutex, RwLock,
++    },
++};
++
++use crate::input::{
++    MOUSE_BUTTON_BACK, MOUSE_BUTTON_FORWARD, MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT,
++    MOUSE_BUTTON_WHEEL, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP, MOUSE_TYPE_WHEEL,
++};
++use base::message_proto::*;
++use hbb_common::rendezvous_proto::ConnType;
++
++use crate::{
++    client::{file_trait::FileManager, Data, Interface, QualityStatus},
++    ui_session_interface::{InvokeUiSession, Session},
++};
++
++const MAX_TERMINAL_EVENTS: usize = 1024;
++const MAX_MESSAGES: usize = 128;
++
++/// Normalized terminal events for machine clients. Protocol-specific
++/// compression is removed before `Data` reaches the bridge layer.
++#[derive(Clone, Debug)]
++pub enum HeadlessTerminalEvent {
++    Opened {
++        terminal_id: i32,
++        success: bool,
++        message: String,
++        pid: u32,
++        service_id: String,
++        persistent_sessions: Vec<i32>,
++        replay_terminal_output: bool,
++    },
++    Data {
++        terminal_id: i32,
++        data: Vec<u8>,
++    },
++    Closed {
++        terminal_id: i32,
++        exit_code: i32,
++    },
++    Error {
++        terminal_id: i32,
++        message: String,
++    },
++}
++
++/// Per-connection rendezvous override. The server key is intentionally kept in
++/// the controller process rather than returned through model-facing metadata.
++#[derive(Clone, Debug)]
++pub struct HeadlessServerConfig {
++    pub id_server: String,
++    pub relay_server: Option<String>,
++    pub server_key: String,
++}
++
++#[derive(Clone, Debug)]
++pub struct HeadlessFrame {
++    pub display: usize,
++    pub width: usize,
++    pub height: usize,
++    pub format: String,
++    pub align: usize,
++    pub data: Vec<u8>,
++}
++
++#[derive(Clone, Debug)]
++pub struct HeadlessFileEntry {
++    pub entry_type: i32,
++    pub name: String,
++    pub hidden: bool,
++    pub size: u64,
++    pub modified_time: u64,
++}
++
++#[derive(Clone, Debug)]
++pub struct HeadlessFileDirectory {
++    pub id: i32,
++    pub path: String,
++    pub entries: Vec<HeadlessFileEntry>,
++}
++
++#[derive(Clone, Debug)]
++pub enum HeadlessFileJobEvent {
++    Done { id: i32, file_num: i32 },
++    Error { id: i32, file_num: i32, message: String },
++    Progress { id: i32, file_num: i32, finished_size: u64 },
++    OverrideRequired {
++        id: i32,
++        file_num: i32,
++        destination: String,
++        is_upload: bool,
++        identical: bool,
++    },
++}
++
++#[derive(Clone, Default)]
++pub struct HeadlessHandler {
++    connected: Arc<AtomicBool>,
++    peer_info: Arc<RwLock<Option<PeerInfo>>>,
++    permissions: Arc<RwLock<HashMap<String, bool>>>,
++    terminal_events: Arc<Mutex<VecDeque<HeadlessTerminalEvent>>>,
++    file_directories: Arc<Mutex<VecDeque<HeadlessFileDirectory>>>,
++    file_job_events: Arc<Mutex<VecDeque<HeadlessFileJobEvent>>>,
++    frames: Arc<RwLock<HashMap<usize, HeadlessFrame>>>,
++    displays: Arc<RwLock<Vec<DisplayInfo>>>,
++    platform_additions: Arc<RwLock<String>>,
++    connection_type: Arc<RwLock<Option<(bool, bool, String)>>>,
++    clipboard_text: Arc<RwLock<Option<String>>>,
++    messages: Arc<Mutex<VecDeque<String>>>,
++    auth_prompt: Arc<RwLock<Option<String>>>,
++    last_error: Arc<RwLock<Option<String>>>,
++}
++
++impl HeadlessHandler {
++    fn push_message(&self, message: String) {
++        let mut messages = self.messages.lock().unwrap();
++        while messages.len() >= MAX_MESSAGES {
++            messages.pop_front();
++        }
++        messages.push_back(message);
++    }
++
++    fn push_terminal_event(&self, event: HeadlessTerminalEvent) {
++        let mut events = self.terminal_events.lock().unwrap();
++        while events.len() >= MAX_TERMINAL_EVENTS {
++            events.pop_front();
++        }
++        events.push_back(event);
++    }
++
++    fn push_file_job_event(&self, event: HeadlessFileJobEvent) {
++        let mut events = self.file_job_events.lock().unwrap();
++        while events.len() >= 256 {
++            events.pop_front();
++        }
++        events.push_back(event);
++    }
++
++    fn set_last_error(&self, message: String) {
++        self.connected.store(false, Ordering::Relaxed);
++        *self.last_error.write().unwrap() = Some(message);
++    }
++
++    fn mark_disconnected(&self) {
++        self.connected.store(false, Ordering::Relaxed);
++    }
++
++    pub fn is_connected(&self) -> bool {
++        self.connected.load(Ordering::Relaxed)
++    }
++
++    pub fn last_error(&self) -> Option<String> {
++        self.last_error.read().unwrap().clone()
++    }
++
++    pub fn auth_prompt(&self) -> Option<String> {
++        self.auth_prompt.read().unwrap().clone()
++    }
++
++    pub fn peer_info(&self) -> Option<PeerInfo> {
++        self.peer_info.read().unwrap().clone()
++    }
++
++    pub fn permissions(&self) -> HashMap<String, bool> {
++        self.permissions.read().unwrap().clone()
++    }
++
++    pub fn drain_terminal_events(&self) -> Vec<HeadlessTerminalEvent> {
++        self.terminal_events.lock().unwrap().drain(..).collect()
++    }
++
++    pub fn drain_file_directories(&self) -> Vec<HeadlessFileDirectory> {
++        self.file_directories.lock().unwrap().drain(..).collect()
++    }
++
++    pub fn drain_file_job_events(&self) -> Vec<HeadlessFileJobEvent> {
++        self.file_job_events.lock().unwrap().drain(..).collect()
++    }
++
++    pub fn latest_frame(&self, display: usize) -> Option<HeadlessFrame> {
++        self.frames.read().unwrap().get(&display).cloned()
++    }
++
++    pub fn displays(&self) -> Vec<DisplayInfo> {
++        self.displays.read().unwrap().clone()
++    }
++
++    pub fn platform_additions(&self) -> String {
++        self.platform_additions.read().unwrap().clone()
++    }
++
++    pub fn connection_type(&self) -> Option<(bool, bool, String)> {
++        self.connection_type.read().unwrap().clone()
++    }
++
++    pub fn clipboard_text(&self) -> Option<String> {
++        self.clipboard_text.read().unwrap().clone()
++    }
++
++    pub fn drain_messages(&self) -> Vec<String> {
++        self.messages.lock().unwrap().drain(..).collect()
++    }
++}
++
++impl InvokeUiSession for HeadlessHandler {
++    fn set_cursor_data(&self, _cd: CursorData) {}
++    fn set_cursor_id(&self, _id: String) {}
++    fn set_cursor_position(&self, _cp: CursorPosition) {}
++    fn set_display(&self, _x: i32, _y: i32, _w: i32, _h: i32, _cursor_embedded: bool, _scale: f64) {
++    }
++    fn switch_display(&self, _display: &SwitchDisplay) {}
++
++    fn set_peer_info(&self, peer_info: &PeerInfo) {
++        *self.peer_info.write().unwrap() = Some(peer_info.clone());
++    }
++
++    fn set_displays(&self, displays: &Vec<DisplayInfo>) {
++        *self.displays.write().unwrap() = displays.clone();
++    }
++    fn set_platform_additions(&self, data: &str) {
++        *self.platform_additions.write().unwrap() = data.to_owned();
++    }
++
++    fn on_connected(&self, _conn_type: ConnType) {
++        *self.last_error.write().unwrap() = None;
++        *self.auth_prompt.write().unwrap() = None;
++        self.connected.store(true, Ordering::Relaxed);
++    }
++
++    fn update_privacy_mode(&self) {}
++
++    fn set_permission(&self, name: &str, value: bool) {
++        self.permissions
++            .write()
++            .unwrap()
++            .insert(name.to_owned(), value);
++    }
++
++    fn close_success(&self) {
++        self.mark_disconnected();
++    }
++
++    fn update_quality_status(&self, _qs: QualityStatus) {}
++    fn set_connection_type(&self, is_secured: bool, direct: bool, stream_type: &str) {
++        *self.connection_type.write().unwrap() = Some((is_secured, direct, stream_type.to_owned()));
++    }
++    fn set_fingerprint(&self, _fingerprint: String) {}
++
++    fn job_error(&self, id: i32, err: String, file_num: i32) {
++        self.push_message(format!("file job {id}/{file_num} failed: {err}"));
++        self.push_file_job_event(HeadlessFileJobEvent::Error {
++            id,
++            file_num,
++            message: err,
++        });
++    }
++
++    fn job_done(&self, id: i32, file_num: i32) {
++        self.push_file_job_event(HeadlessFileJobEvent::Done { id, file_num });
++    }
++    fn clear_all_jobs(&self) {}
++    fn new_message(&self, msg: String) {
++        self.push_message(msg);
++    }
++    fn update_transfer_list(&self) {}
++    fn load_last_job(&self, _cnt: i32, _job_json: &str, _auto_start: bool) {}
++    fn update_folder_files(
++        &self,
++        id: i32,
++        entries: &Vec<FileEntry>,
++        path: String,
++        is_local: bool,
++        only_count: bool,
++    ) {
++        if is_local || only_count {
++            return;
++        }
++        let entries = entries
++            .iter()
++            .map(|entry| HeadlessFileEntry {
++                entry_type: entry.entry_type.value(),
++                name: entry.name.clone(),
++                hidden: entry.is_hidden,
++                size: entry.size,
++                modified_time: entry.modified_time,
++            })
++            .collect();
++        let mut directories = self.file_directories.lock().unwrap();
++        while directories.len() >= 64 {
++            directories.pop_front();
++        }
++        directories.push_back(HeadlessFileDirectory { id, path, entries });
++    }
++    fn confirm_delete_files(&self, _id: i32, _i: i32, _name: String) {}
++    fn override_file_confirm(
++        &self,
++        id: i32,
++        file_num: i32,
++        to: String,
++        is_upload: bool,
++        is_identical: bool,
++    ) {
++        self.push_file_job_event(HeadlessFileJobEvent::OverrideRequired {
++            id,
++            file_num,
++            destination: to,
++            is_upload,
++            identical: is_identical,
++        });
++    }
++    fn update_block_input_state(&self, _on: bool) {}
++    fn job_progress(&self, id: i32, file_num: i32, _speed: f64, finished_size: f64) {
++        let finished_size = if finished_size.is_finite() && finished_size > 0.0 {
++            finished_size as u64
++        } else {
++            0
++        };
++        self.push_file_job_event(HeadlessFileJobEvent::Progress {
++            id,
++            file_num,
++            finished_size,
++        });
++    }
++    fn adapt_size(&self) {}
++    fn on_rgba(&self, display: usize, rgba: &mut scrap::ImageRgb) {
++        const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
++        if rgba.raw.is_empty() || rgba.raw.len() > MAX_FRAME_BYTES {
++            return;
++        }
++        let format = match rgba.fmt {
++            scrap::ImageFormat::Raw => "raw",
++            scrap::ImageFormat::ABGR => "abgr",
++            scrap::ImageFormat::ARGB => "argb",
++        };
++        self.frames.write().unwrap().insert(
++            display,
++            HeadlessFrame {
++                display,
++                width: rgba.w,
++                height: rgba.h,
++                format: format.to_owned(),
++                align: rgba.align,
++                data: rgba.raw.clone(),
++            },
++        );
++    }
++
++    fn on_clipboard_text(&self, content: String) {
++        *self.clipboard_text.write().unwrap() = Some(content);
++    }
++
++    fn msgbox(&self, msgtype: &str, title: &str, text: &str, _link: &str, _retry: bool) {
++        let message = format!("{msgtype}: {title}: {text}");
++        match msgtype {
++            "input-password" | "re-input-password" | "input-2fa" => {
++                *self.auth_prompt.write().unwrap() = Some(msgtype.to_owned());
++            }
++            "error" => self.set_last_error(message.clone()),
++            _ => {}
++        }
++        self.push_message(message);
++    }
++
++    fn cancel_msgbox(&self, _tag: &str) {}
++    fn switch_back(&self, _id: &str) {}
++    fn portable_service_running(&self, _running: bool) {}
++    fn on_voice_call_started(&self) {}
++    fn on_voice_call_closed(&self, _reason: &str) {}
++    fn on_voice_call_waiting(&self) {}
++    fn on_voice_call_incoming(&self) {}
++    fn get_rgba(&self, _display: usize) -> *const u8 {
++        ptr::null()
++    }
++    fn next_rgba(&self, _display: usize) {}
++    fn set_multiple_windows_session(&self, _sessions: Vec<WindowsSession>) {}
++    fn set_current_display(&self, _disp_idx: i32) {}
++    fn update_record_status(&self, _start: bool) {}
++    fn printer_request(&self, _id: i32, _path: String) {}
++    fn handle_screenshot_resp(&self, _sid: String, _msg: String) {}
++
++    fn handle_terminal_response(&self, response: TerminalResponse) {
++        use base::message_proto::terminal_response::Union;
++
++        let event = match response.union {
++            Some(Union::Opened(opened)) => HeadlessTerminalEvent::Opened {
++                terminal_id: opened.terminal_id,
++                success: opened.success,
++                message: opened.message,
++                pid: opened.pid,
++                service_id: opened.service_id,
++                persistent_sessions: opened.persistent_sessions,
++                replay_terminal_output: opened.replay_terminal_output,
++            },
++            Some(Union::Data(data)) => HeadlessTerminalEvent::Data {
++                terminal_id: data.terminal_id,
++                data: if data.compressed {
++                    hbb_common::compress::decompress(&data.data)
++                } else {
++                    data.data.to_vec()
++                },
++            },
++            Some(Union::Closed(closed)) => HeadlessTerminalEvent::Closed {
++                terminal_id: closed.terminal_id,
++                exit_code: closed.exit_code,
++            },
++            Some(Union::Error(error)) => HeadlessTerminalEvent::Error {
++                terminal_id: error.terminal_id,
++                message: error.message,
++            },
++            None => return,
++            Some(_) => return,
++        };
++        self.push_terminal_event(event);
++    }
++}
++
++#[derive(Clone)]
++pub struct HeadlessSession {
++    inner: Session<HeadlessHandler>,
++}
++
++impl HeadlessSession {
++    pub fn terminal(peer_id: String, password: String, force_relay: bool) -> Self {
++        Self::terminal_with_server(peer_id, password, force_relay, None)
++    }
++
++    pub fn terminal_with_server(
++        peer_id: String,
++        password: String,
++        force_relay: bool,
++        server: Option<HeadlessServerConfig>,
++    ) -> Self {
++        Self::with_server(ConnType::TERMINAL, peer_id, password, force_relay, server)
++    }
++
++    pub fn remote_with_server(
++        peer_id: String,
++        password: String,
++        force_relay: bool,
++        server: Option<HeadlessServerConfig>,
++    ) -> Self {
++        Self::with_server(
++            ConnType::DEFAULT_CONN,
++            peer_id,
++            password,
++            force_relay,
++            server,
++        )
++    }
++
++    fn with_server(
++        conn_type: ConnType,
++        peer_id: String,
++        password: String,
++        force_relay: bool,
++        server: Option<HeadlessServerConfig>,
++    ) -> Self {
++        let session: Session<HeadlessHandler> = Session {
++            password,
++            server_keyboard_enabled: Arc::new(RwLock::new(true)),
++            server_file_transfer_enabled: Arc::new(RwLock::new(true)),
++            server_clipboard_enabled: Arc::new(RwLock::new(true)),
++            ..Default::default()
++        };
++        {
++            let mut lc = session.lc.write().unwrap();
++            lc.initialize(
++                peer_id.clone(),
++                conn_type,
++                None,
++                force_relay,
++                None,
++                None,
++                None,
++            );
++            if let Some(server) = server {
++                let server_key = if server.id_server == "public" && server.server_key.is_empty() {
++                    hbb_common::config::RS_PUB_KEY.to_owned()
++                } else {
++                    server.server_key
++                };
++                lc.relay_server_override = server
++                    .relay_server
++                    .filter(|value| !value.trim().is_empty());
++                lc.other_server = Some((peer_id, server.id_server, server_key));
++            }
++        }
++        Self { inner: session }
++    }
++
++    pub fn start(&self) {
++        self.inner.reconnect(false);
++    }
++
++    pub fn close(&self) {
++        self.inner.close();
++        self.inner.ui_handler.mark_disconnected();
++    }
++
++    pub fn handler(&self) -> HeadlessHandler {
++        self.inner.ui_handler.clone()
++    }
++
++    pub fn submit_password(&self, password: String) {
++        self.inner
++            .login(String::new(), String::new(), password, false);
++    }
++
++    pub fn submit_2fa(&self, code: String, trust_this_device: bool) {
++        self.inner.send2fa(code, trust_this_device);
++    }
++
++    pub fn restart_remote_device(&self) {
++        self.inner.restart_remote_device();
++    }
++
++    pub fn mouse_move(&self, x: i32, y: i32) {
++        self.inner.send_mouse(0, x, y, false, false, false, false);
++    }
++
++    pub fn mouse_button(&self, button: &str, down: bool, x: i32, y: i32) {
++        let button = match button {
++            "right" => MOUSE_BUTTON_RIGHT,
++            "middle" | "wheel" => MOUSE_BUTTON_WHEEL,
++            "back" => MOUSE_BUTTON_BACK,
++            "forward" => MOUSE_BUTTON_FORWARD,
++            _ => MOUSE_BUTTON_LEFT,
++        };
++        let event = if down { MOUSE_TYPE_DOWN } else { MOUSE_TYPE_UP };
++        self.inner
++            .send_mouse(event | (button << 3), x, y, false, false, false, false);
++    }
++
++    pub fn mouse_scroll(&self, x: i32, y: i32) {
++        self.inner
++            .send_mouse(MOUSE_TYPE_WHEEL, x, y, false, false, false, false);
++    }
++
++    pub fn keyboard_type(&self, text: &str) {
++        self.inner.input_string(text);
++    }
++
++    pub fn keyboard_press(&self, key: &str, alt: bool, ctrl: bool, shift: bool, command: bool) {
++        self.inner
++            .input_key(key, false, true, alt, ctrl, shift, command);
++    }
++
++    pub fn touch_pan(&self, event: &str, x: i32, y: i32) {
++        self.inner
++            .send_touch_pan_event(event, x, y, false, false, false, false);
++    }
++
++    pub fn write_clipboard_text(&self, text: String) {
++        let mut message = Message::new();
++        message.set_clipboard(Clipboard {
++            compress: false,
++            content: text.into_bytes().into(),
++            format: ClipboardFormat::Text.into(),
++            ..Default::default()
++        });
++        self.inner.send(Data::Message(message));
++    }
++
++    pub fn read_remote_dir(&self, path: String, include_hidden: bool) {
++        self.inner.read_remote_dir(path, include_hidden);
++    }
++
++    pub fn transfer_file(&self, job_id: i32, path: String, to: String, is_remote: bool) {
++        self.inner.send_files(
++            job_id,
++            base::fs::JobType::Generic.into(),
++            path,
++            to,
++            0,
++            false,
++            is_remote,
++        );
++    }
++
++    pub fn cancel_file_job(&self, job_id: i32) {
++        self.inner.cancel_job(job_id);
++    }
++
++    pub fn confirm_file_override(
++        &self,
++        job_id: i32,
++        file_num: i32,
++        overwrite: bool,
++        remember: bool,
++        is_upload: bool,
++    ) {
++        self.inner
++            .set_confirm_override_file(job_id, file_num, overwrite, remember, is_upload);
++    }
++
++    pub fn take_screenshot(&self, display: i32, sid: String) {
++        self.inner.take_screenshot(display, sid);
++    }
++
++    pub fn open_terminal(&self, terminal_id: i32, rows: u32, cols: u32) {
++        self.inner.open_terminal(terminal_id, rows, cols);
++    }
++
++    pub fn write_terminal(&self, terminal_id: i32, data: String) {
++        self.inner.send_terminal_input(terminal_id, data);
++    }
++
++    pub fn resize_terminal(&self, terminal_id: i32, rows: u32, cols: u32) {
++        self.inner.resize_terminal(terminal_id, rows, cols);
++    }
++
++    pub fn close_terminal(&self, terminal_id: i32) {
++        self.inner.close_terminal(terminal_id);
++    }
++}
