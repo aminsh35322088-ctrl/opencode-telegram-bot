@@ -376,7 +376,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   });
 
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
-  bot.on("message:voice", async (ctx) => {
+  bot.on("message:voice", async (ctx, next) => {
     if (!ctx.chat) { await next(); return; }
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
@@ -388,7 +388,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
-  bot.on("message:audio", async (ctx) => {
+  bot.on("message:audio", async (ctx, next) => {
     if (!ctx.chat) { await next(); return; }
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
