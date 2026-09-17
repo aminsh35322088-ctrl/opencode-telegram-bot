@@ -1,4 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Bot, type Context } from "grammy";
+import type { Update } from "grammy/types";
+import { config } from "../../../src/config.js";
+import { cleanupBotRuntime, createBot } from "../../../src/bot/index.js";
+import * as photoHandler from "../../../src/bot/handlers/photo-handler.js";
+import * as videoHandler from "../../../src/bot/handlers/video-handler.js";
+import * as voiceHandler from "../../../src/bot/handlers/voice-handler.js";
+import * as modelMenu from "../../../src/bot/menus/model-center-menu.js";
+import * as agentMenu from "../../../src/bot/menus/agent-selection-menu.js";
+import * as variantMenu from "../../../src/bot/menus/variant-selection-menu.js";
+import * as contextMenu from "../../../src/bot/menus/context-control-menu.js";
+import * as settingsCommand from "../../../src/bot/commands/settings-command.js";
+import * as sessionsCommand from "../../../src/bot/commands/sessions-command.js";
+import * as newCommand from "../../../src/bot/commands/new-command.js";
 import { registerMessageRouter } from "../../../src/bot/routers/message-router.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN } from "../../../src/bot/message-patterns.js";
 import { promptQueue } from "../../../src/app/managers/prompt-queue-manager.js";
@@ -10,6 +24,95 @@ const mergerMock = vi.hoisted(() => ({ queuePromptForMerging: vi.fn() }));
 vi.mock("../../../src/bot/handlers/message-merger.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../src/bot/handlers/message-merger.js")>();
   return { ...actual, queuePromptForMerging: mergerMock.queuePromptForMerging };
+});
+
+vi.mock("../../../src/utils/safe-background-task.js", () => ({ safeBackgroundTask: vi.fn() }));
+
+describe("captioned forwarded media routing", () => {
+  afterEach(() => {
+    cleanupBotRuntime("caption_routing_test");
+  });
+
+  const captions = [
+    "\u274c Cancel",
+    "\u2699\ufe0f Settings",
+    "\ud83d\udd58 History",
+    "\ud83d\udcac New Chat",
+    "\ud83d\udce6 Compact: OFF",
+    "\u274c 1. queued prompt",
+    "\ud83d\udee0 Build Agent",
+    "\ud83d\udcca Context",
+    "\ud83d\udca1 Default",
+    "Please inspect this forwarded attachment",
+  ];
+
+  const media = [
+    { kind: "photo", attachment: { photo: [{ file_id: "photo-id", file_unique_id: "photo-unique", width: 640, height: 480 }] } },
+    { kind: "video", attachment: { video: { file_id: "video-id", file_unique_id: "video-unique", width: 640, height: 480, duration: 3 } } },
+    { kind: "audio", attachment: { audio: { file_id: "audio-id", file_unique_id: "audio-unique", duration: 3 } } },
+  ] as const;
+
+  const cases = [
+    ...media.flatMap((item) => captions.map((caption) => ({ ...item, caption, router: "message" as const }))),
+    ...media.flatMap((item) => ["\ud83e\udde0 Model Center", "Please inspect this forwarded attachment"].map((caption) => ({ ...item, caption, router: "bot" as const }))),
+  ];
+
+  it.each(cases)("dispatches forwarded $kind with caption '$caption' through $router without opening controls", async ({ kind, attachment, caption, router }) => {
+    const handlers = {
+      photo: vi.spyOn(photoHandler, "handlePhotoMessage").mockResolvedValue(undefined),
+      video: vi.spyOn(videoHandler, "handleVideoMessage").mockResolvedValue(undefined),
+      audio: vi.spyOn(voiceHandler, "handleVoiceMessage").mockResolvedValue(undefined),
+    };
+    const menus = [
+      vi.spyOn(modelMenu, "showModelCenterMenu").mockResolvedValue(undefined),
+      vi.spyOn(agentMenu, "showAgentSelectionMenu").mockResolvedValue(undefined),
+      vi.spyOn(variantMenu, "showVariantSelectionMenu").mockResolvedValue(undefined),
+      vi.spyOn(contextMenu, "handleContextButtonPress").mockResolvedValue(undefined),
+      vi.spyOn(settingsCommand, "settingsCommand").mockResolvedValue(undefined),
+      vi.spyOn(sessionsCommand, "sessionsCommand").mockResolvedValue(undefined),
+      vi.spyOn(newCommand, "newCommand").mockResolvedValue(undefined),
+    ];
+    const bot: Bot<Context> = router === "bot" ? createBot() : new Bot("123456:test-token");
+    if (router === "message") {
+      registerMessageRouter(bot, {
+        ensureEventSubscription: vi.fn(),
+        setTelegramContext: vi.fn(),
+      });
+    }
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: false,
+      supports_inline_queries: false,
+    };
+    const api = vi.fn().mockResolvedValue({ ok: true, result: true });
+    bot.api.config.use(api);
+    const message = {
+      message_id: 42,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: config.telegram.allowedUserId, type: "private" as const, first_name: "Owner" },
+      from: { id: config.telegram.allowedUserId, is_bot: false, first_name: "Owner" },
+      forward_origin: { type: "hidden_user" as const, date: 1, sender_user_name: "Original sender" },
+      caption,
+      ...attachment,
+    };
+
+    await bot.handleUpdate({ update_id: 42, message } as Update);
+
+    expect(handlers[kind]).toHaveBeenCalledTimes(1);
+    expect(handlers[kind]).toHaveBeenCalledWith(
+      expect.objectContaining({ message }),
+      expect.objectContaining({ bot, ensureEventSubscription: expect.any(Function) }),
+    );
+    for (const [otherKind, handler] of Object.entries(handlers)) {
+      if (otherKind !== kind) expect(handler).not.toHaveBeenCalled();
+    }
+    for (const menu of menus) expect(menu).not.toHaveBeenCalled();
+    expect(api.mock.calls.some(([, method]) => method === "sendMessage")).toBe(false);
+  });
 });
 
 describe("bot/routers/message-router", () => {
