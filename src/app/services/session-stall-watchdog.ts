@@ -163,7 +163,8 @@ export interface StartSessionStallWatchdogOptions {
   modelConfig?: { providerID: string; modelID: string };
   variant?: string;
   attempt?: number;
-  onStalled: (info: StalledSessionInfo) => void | Promise<void>;
+  /** @deprecated OpenCode owns inference retries; the watchdog never re-prompts. */
+  onStalled?: (info: StalledSessionInfo) => void | Promise<void>;
 }
 
 export function startSessionStallWatchdog(options: StartSessionStallWatchdogOptions): void {
@@ -235,11 +236,6 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         if (controller.signal.aborted) return;
         logger.warn(`[StallWatchdog] Stopped genuinely stalled busy session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}. No synthetic retry was dispatched.`);
         if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
-
-        // Do not invoke onStalled here. Historically that callback submitted a
-        // synthetic "continue" prompt, creating a second inference layer on top
-        // of OpenCode and causing duplicate work, long retry loops and apparent
-        // freezes. OpenCode remains the sole owner of inference/retry behavior.
         return;
       }
     } catch (error) {
