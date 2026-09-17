@@ -13,6 +13,10 @@ import { resetStreamThrottle } from "../../bot/streaming/stream-throttle.js";
 import { logger } from "../../utils/logger.js";
 import { isExpectedOpencodeUnavailableError } from "../../utils/opencode-error.js";
 
+const SESSION_STATUS_TIMEOUT_MS = 3500;
+
+type SessionStatusMap = Record<string, { type?: string }>;
+
 interface EnsureAttachPinnedSessionParams {
   api: Bot<Context>["api"];
   chatId: number;
@@ -61,9 +65,38 @@ export interface RestoreAttachedCurrentSessionDeps {
 
 function getAttachBusyStatus(
   sessionId: string,
-  statuses: Record<string, { type?: string }> | undefined,
+  statuses: SessionStatusMap | undefined,
 ): boolean {
-  return statuses?.[sessionId]?.type === "busy";
+  const type = statuses?.[sessionId]?.type;
+  return type === "busy" || type === "retry";
+}
+
+async function loadSessionStatuses(directory: string): Promise<{
+  statuses: SessionStatusMap | undefined;
+  error: unknown;
+}> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SESSION_STATUS_TIMEOUT_MS);
+  timeoutId.unref?.();
+
+  try {
+    const { data, error } = await opencodeClient.session.status(
+      { directory },
+      { signal: controller.signal },
+    );
+    return {
+      statuses: data as SessionStatusMap | undefined,
+      error,
+    };
+  } catch (error) {
+    logger.warn(
+      `[Attach] Session status lookup failed or timed out after ${SESSION_STATUS_TIMEOUT_MS}ms: directory=${directory}`,
+      error,
+    );
+    return { statuses: undefined, error };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function syncPinnedAttachState(): Promise<void> {
@@ -226,9 +259,7 @@ export async function attachToSession(deps: AttachSessionDeps): Promise<AttachSe
     summaryAggregator.setBotAndChatId(bot, chatId);
   }
 
-  const { data: statuses, error: statusesError } = await opencodeClient.session.status({
-    directory: session.directory,
-  });
+  const { statuses, error: statusesError } = await loadSessionStatuses(session.directory);
 
   if (statusesError) {
     if (isExpectedOpencodeUnavailableError(statusesError)) {
