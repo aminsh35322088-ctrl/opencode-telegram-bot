@@ -67,11 +67,18 @@ export const CUSTOM_TOOL_ACTIONS = {
   "network-diagnostics": ["dns", "http", "tcp"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   rustdesk: [
-    "bridge.health", "devices.list", "device.info", "device.connect", "device.disconnect",
-    "terminal.exec", "terminal.open", "terminal.write", "terminal.read", "terminal.close", "screen.capture",
-    "mouse.move", "mouse.click", "mouse.doubleClick", "mouse.drag", "mouse.scroll", "keyboard.type", "keyboard.press",
-    "touch.tap", "touch.longPress", "touch.swipe", "clipboard.read", "clipboard.write", "files.list", "files.read",
-    "files.upload", "files.download", "system.info", "system.restart",
+    "bridge.health",
+    "servers.list", "servers.get", "servers.test",
+    "devices.list", "devices.get", "devices.connect",
+    "session.connectTemporary", "connection.status", "connection.disconnect",
+    "terminal.open", "terminal.write", "terminal.read", "terminal.resize", "terminal.close", "terminal.exec",
+    "screen.capture",
+    "mouse.move", "mouse.click", "mouse.doubleClick", "mouse.drag", "mouse.scroll",
+    "keyboard.type", "keyboard.press",
+    "touch.tap", "touch.longPress", "touch.swipe",
+    "clipboard.read", "clipboard.write",
+    "files.list", "files.read", "files.upload", "files.download",
+    "system.info", "system.restart",
   ],
   "safe-download": ["download"],
   "send-file": ["send"],
@@ -115,10 +122,15 @@ const DESCRIPTIONS: Record<string, string> = {
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
   "media.image.generate": "Generate an image with the configured Image Chat engine and save it to the worktree.",
   "media.image.edit": "Edit a worktree image with the configured Image Chat engine and save the result.",
-  "rustdesk.devices.list": "List authorized RustDesk devices with OS and capability metadata.",
-  "rustdesk.terminal.exec": "Execute a command in an authorized remote device terminal.",
-  "rustdesk.screen.capture": "Capture the current screen of an authorized remote device.",
-  "rustdesk.system.restart": "Restart an authorized remote device.",
+  "rustdesk.servers.list": "List model-selectable RustDesk public and saved custom server profiles without secrets.",
+  "rustdesk.servers.test": "Test reachability/configuration of a RustDesk connection server without authenticating to a target.",
+  "rustdesk.devices.list": "List saved permanent RustDesk devices with server, OS, and capability metadata.",
+  "rustdesk.devices.connect": "Connect to a saved RustDesk device using its saved server profile and bridge-only credential.",
+  "rustdesk.session.connectTemporary": "Create an ephemeral RustDesk connection with explicit peer, server, and authentication mode.",
+  "rustdesk.connection.status": "Inspect safe live RustDesk connection, capability, and permission state.",
+  "rustdesk.terminal.exec": "Execute a command through an authorized remote RustDesk terminal connection.",
+  "rustdesk.screen.capture": "Capture the current screen of an authorized RustDesk connection.",
+  "rustdesk.system.restart": "Restart an authorized remote device through RustDesk's normal remote restart path.",
 };
 
 const BOT_READ = new Set([
@@ -144,7 +156,15 @@ function customRisk(tool: string, action: string): AgentActionRisk {
   if (tool === "media") return ["stt.status", "image.providers", "image.profile"].includes(action) ? "read" : "external";
   if (tool === "rustdesk") {
     if (action === "system.restart") return "destructive";
-    return /^(device\.(connect|disconnect)|terminal\.(exec|open|write|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action) ? "mutating" : "read";
+    if (action === "servers.test") return "external";
+    if (action === "files.download") return "write";
+    if (
+      ["devices.connect", "session.connectTemporary", "connection.disconnect"].includes(action) ||
+      /^(terminal\.(exec|open|write|resize|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action)
+    ) {
+      return "mutating";
+    }
+    return "read";
   }
   if (tool === "browser") {
     if (["click", "fill", "type", "press", "hover", "check", "uncheck", "select", "tab-new", "tab-select", "tab-close", "close"].includes(action)) return "mutating";
