@@ -62,6 +62,14 @@ function getBase64(value: unknown, field: string): string | null {
   return typeof encoded === "string" && encoded ? encoded : null;
 }
 
+function imageExtension(value: unknown): string {
+  if (!isRecord(value) || typeof value.mimeType !== "string") return ".png";
+  const mime = value.mimeType.toLowerCase();
+  if (mime === "image/jpeg" || mime === "image/jpg") return ".jpg";
+  if (mime === "image/webp") return ".webp";
+  return ".png";
+}
+
 function resultWithoutBinary(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const copy = { ...value };
@@ -103,8 +111,13 @@ export default tool({
     timeout_ms: tool.schema.number().optional().describe("Per-action bridge timeout, capped at 120000ms."),
   },
   async execute(args, context) {
-    const client = await getClient();
     const action = args.action.trim();
+    const downloadPath = action === "files.download" ? clean(args.local_path) : undefined;
+    if (action === "files.download" && !downloadPath) {
+      throw new Error("files.download requires local_path");
+    }
+
+    const client = await getClient();
     const request: Record<string, unknown> = {
       action,
       deviceId: clean(args.device_id),
@@ -138,8 +151,9 @@ export default tool({
       if (!localPath) throw new Error("files.upload requires local_path");
       const absolute = resolveInsideWorktree(context.worktree, localPath);
       const file = await fs.readFile(absolute);
-      if (file.byteLength > maxTransferBytes()) {
-        throw new Error(`Upload exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxTransferBytes()} bytes)`);
+      const maxBytes = maxTransferBytes();
+      if (file.byteLength > maxBytes) {
+        throw new Error(`Upload exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxBytes} bytes)`);
       }
       request.contentBase64 = file.toString("base64");
     }
@@ -149,29 +163,33 @@ export default tool({
     if (action === "screen.capture") {
       const imageBase64 = getBase64(result, "imageBase64");
       if (imageBase64) {
+        const image = Buffer.from(imageBase64, "base64");
+        const maxBytes = maxTransferBytes();
+        if (image.byteLength > maxBytes) {
+          throw new Error(`Screenshot exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxBytes} bytes)`);
+        }
         const requestedPath = clean(args.local_path);
         const devicePart = clean(args.device_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") || "device";
-        const localPath = requestedPath ?? `.opencode/rustdesk/${devicePart}-screen-${Date.now()}.png`;
+        const localPath = requestedPath ?? `.opencode/rustdesk/${devicePart}-screen-${Date.now()}${imageExtension(result)}`;
         const absolute = resolveInsideWorktree(context.worktree, localPath);
         await fs.mkdir(path.dirname(absolute), { recursive: true });
-        await fs.writeFile(absolute, Buffer.from(imageBase64, "base64"));
-        return stringify({ ...resultWithoutBinary(result), localPath });
+        await fs.writeFile(absolute, image);
+        return stringify({ ...resultWithoutBinary(result), localPath, bytes: image.byteLength });
       }
     }
 
     if (action === "files.download") {
-      const localPath = clean(args.local_path);
-      if (!localPath) throw new Error("files.download requires local_path");
       const contentBase64 = getBase64(result, "contentBase64");
       if (!contentBase64) throw new Error("RustDesk bridge did not return contentBase64 for files.download");
-      const absolute = resolveInsideWorktree(context.worktree, localPath);
+      const absolute = resolveInsideWorktree(context.worktree, downloadPath!);
       await fs.mkdir(path.dirname(absolute), { recursive: true });
       const file = Buffer.from(contentBase64, "base64");
-      if (file.byteLength > maxTransferBytes()) {
-        throw new Error(`Download exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxTransferBytes()} bytes)`);
+      const maxBytes = maxTransferBytes();
+      if (file.byteLength > maxBytes) {
+        throw new Error(`Download exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxBytes} bytes)`);
       }
       await fs.writeFile(absolute, file);
-      return stringify({ ...resultWithoutBinary(result), localPath, bytes: file.byteLength });
+      return stringify({ ...resultWithoutBinary(result), localPath: downloadPath, bytes: file.byteLength });
     }
 
     return stringify(result);
