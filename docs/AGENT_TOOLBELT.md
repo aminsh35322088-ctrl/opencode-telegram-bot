@@ -20,6 +20,7 @@ This repository ships a focused agent toolbelt for the Railway runtime. OpenCode
 | `image-inspect` | Inspect image format, dimensions, colorspace and metadata | allow |
 | `send-file` | Deliver generated artifacts to Telegram | existing |
 | `railway` | Structured Railway project, deployment, environment and log operations | allow |
+| `rustdesk` | Structured remote-device actions through a RustDesk bridge: discovery, terminal, screen, input, touch, clipboard, files and system operations | ask |
 | `safe-download` | Bounded file retrieval for supported user-requested downloads | allow |
 | `session-recovery` | Diagnose and recover stalled OpenCode sessions | allow |
 | `full-diagnostics` | Combined runtime/session diagnostics | allow |
@@ -31,6 +32,12 @@ This repository ships a focused agent toolbelt for the Railway runtime. OpenCode
 The Docker image installs `@playwright/cli` and Chromium. Browser binaries are kept outside the application bundle at `/opt/ms-playwright`; the persistent Railway volume is used for OpenCode state and workspace data.
 
 The browser tool is approval-gated because it can interact with external websites and can upload files or preserve browser state.
+
+## RustDesk remote-device runtime
+
+The `rustdesk` tool exposes a stable action surface to the agent and delegates transport/control to a separate RustDesk bridge. It deliberately does not vendor RustDesk source into this MIT-licensed repository. Device discovery returns OS and capability metadata so the model can select terminal, GUI, touch, clipboard, or file actions without hard-coded OS routing.
+
+See [`RUSTDESK_AGENT_TOOL.md`](./RUSTDESK_AGENT_TOOL.md) for the action list, bridge contract, configuration, and security boundary.
 
 ## Database scope
 
