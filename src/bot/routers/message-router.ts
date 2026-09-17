@@ -215,6 +215,7 @@ async function rejectGeneralTopicPrompt(ctx: Context): Promise<void> {
 
 function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
   bot.on("message:text", async (ctx, next) => {
+    if (!ctx.chat) { await next(); return; }
     const rawText = ctx.message.text;
     const text = rawText.trim();
     if (!text) return;
@@ -270,11 +271,13 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   currentEnsureEventSubscription = deps.ensureEventSubscription;
 
   bot.on("message", async (ctx, next) => {
-    if (ctx.chat?.id) {
-      agentArtifactDeliveryService.setChatId(ctx.chat.id);
-      const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
-      deps.setTelegramContext(bot, ctx.chat.id, sessionId);
+    if (!ctx.chat) {
+      await next();
+      return;
     }
+    agentArtifactDeliveryService.setChatId(ctx.chat.id);
+    const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
+    deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     await next();
   });
 
@@ -374,6 +377,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
 
   const voicePromptDeps = { bot, ensureEventSubscription: deps.ensureEventSubscription };
   bot.on("message:voice", async (ctx) => {
+    if (!ctx.chat) { await next(); return; }
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
       return;
@@ -385,6 +389,7 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
   });
 
   bot.on("message:audio", async (ctx) => {
+    if (!ctx.chat) { await next(); return; }
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
       return;
@@ -404,7 +409,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await mediaGroupMiddleware(ctx, next);
   });
 
-  bot.on("message:photo", async (ctx) => {
+  bot.on("message:photo", async (ctx, next) => {
+    if (!ctx.chat) { await next(); return; }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
@@ -417,7 +423,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handlePhotoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
-  bot.on("message:video", async (ctx) => {
+  bot.on("message:video", async (ctx, next) => {
+    if (!ctx.chat) { await next(); return; }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
@@ -430,7 +437,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
-  bot.on("message:video_note", async (ctx) => {
+  bot.on("message:video_note", async (ctx, next) => {
+    if (!ctx.chat) { await next(); return; }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
@@ -443,7 +451,8 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleVideoMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
-  bot.on("message:document", async (ctx) => {
+  bot.on("message:document", async (ctx, next) => {
+    if (!ctx.chat) { await next(); return; }
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
       return;
