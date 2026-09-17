@@ -1,14 +1,20 @@
 export const RUSTDESK_ACTIONS = [
   "bridge.health",
+  "servers.list",
+  "servers.get",
+  "servers.test",
   "devices.list",
-  "device.info",
-  "device.connect",
-  "device.disconnect",
-  "terminal.exec",
+  "devices.get",
+  "devices.connect",
+  "session.connectTemporary",
+  "connection.status",
+  "connection.disconnect",
   "terminal.open",
   "terminal.write",
   "terminal.read",
+  "terminal.resize",
   "terminal.close",
+  "terminal.exec",
   "screen.capture",
   "mouse.move",
   "mouse.click",
@@ -32,6 +38,27 @@ export const RUSTDESK_ACTIONS = [
 
 export type RustDeskAction = (typeof RUSTDESK_ACTIONS)[number];
 
+export type RustDeskAuthMode =
+  | "permanent-password"
+  | "temporary-password"
+  | "manual-approval"
+  | "password-or-approval";
+
+export type RustDeskTemporaryAuthMode = Exclude<RustDeskAuthMode, "permanent-password">;
+
+export type RustDeskServerSelector =
+  | { kind: "public" }
+  | { kind: "saved-custom"; serverProfileId: string }
+  | { kind: "one-time-custom"; idServer: string; relayServer?: string; apiServer?: string };
+
+export type RustDeskConnectionStatus =
+  | "connecting"
+  | "waiting_remote_approval"
+  | "credential_required"
+  | "connected"
+  | "disconnected"
+  | "failed";
+
 export interface RustDeskCapabilities {
   terminal?: boolean;
   screen?: boolean;
@@ -40,15 +67,16 @@ export interface RustDeskCapabilities {
   touch?: boolean;
   clipboard?: boolean;
   files?: boolean;
-  audio?: boolean;
-  camera?: boolean;
-  portForward?: boolean;
   restart?: boolean;
 }
 
 export interface RustDeskDevice {
   id: string;
   name?: string;
+  rustdeskId?: string;
+  serverProfileId?: string;
+  credentialConfigured?: boolean;
+  trustedController?: boolean;
   online?: boolean;
   os?: {
     family?: string;
@@ -59,17 +87,41 @@ export interface RustDeskDevice {
   capabilities?: RustDeskCapabilities;
 }
 
+export interface RustDeskConnection {
+  connectionId: string;
+  kind: "permanent" | "temporary";
+  status: RustDeskConnectionStatus;
+  deviceId?: string;
+  rustdeskId: string;
+  serverProfileId?: string;
+  serverKind: "public" | "saved-custom" | "one-time-custom";
+  authMode: RustDeskAuthMode;
+  capabilities?: RustDeskCapabilities;
+  credentialRequestId?: string;
+  errorCode?: string;
+}
+
 export interface RustDeskActionRequest {
   action: RustDeskAction;
   deviceId?: string;
-  sessionId?: string;
+  connectionId?: string;
+  terminalId?: string;
+  rustdeskId?: string;
+  serverProfileId?: string;
+  server?: RustDeskServerSelector;
+  authMode?: RustDeskTemporaryAuthMode;
   command?: string;
-  shell?: string;
   text?: string;
   keys?: string[];
   path?: string;
   remotePath?: string;
   contentBase64?: string;
+  rows?: number;
+  cols?: number;
+  displayIndex?: number;
+  imageFormat?: "png" | "jpeg" | "webp";
+  quality?: number;
+  maxBytes?: number;
   x?: number;
   y?: number;
   fromX?: number;
@@ -92,8 +144,62 @@ export interface RustDeskBridgeClientOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
-const DEVICE_OPTIONAL_ACTIONS = new Set<RustDeskAction>(["bridge.health", "devices.list"]);
 const ACTION_SET = new Set<string>(RUSTDESK_ACTIONS);
+const TEMPORARY_AUTH_MODES = new Set<RustDeskTemporaryAuthMode>([
+  "temporary-password",
+  "manual-approval",
+  "password-or-approval",
+]);
+const CONNECTION_ACTIONS = new Set<RustDeskAction>([
+  "connection.status",
+  "connection.disconnect",
+  "terminal.open",
+  "terminal.write",
+  "terminal.read",
+  "terminal.resize",
+  "terminal.close",
+  "terminal.exec",
+  "screen.capture",
+  "mouse.move",
+  "mouse.click",
+  "mouse.doubleClick",
+  "mouse.drag",
+  "mouse.scroll",
+  "keyboard.type",
+  "keyboard.press",
+  "touch.tap",
+  "touch.longPress",
+  "touch.swipe",
+  "clipboard.read",
+  "clipboard.write",
+  "files.list",
+  "files.read",
+  "files.upload",
+  "files.download",
+  "system.info",
+  "system.restart",
+]);
+const TERMINAL_ID_ACTIONS = new Set<RustDeskAction>([
+  "terminal.write",
+  "terminal.read",
+  "terminal.resize",
+  "terminal.close",
+]);
+const SECRET_FIELD_NAMES = new Set([
+  "password",
+  "passcode",
+  "token",
+  "secret",
+  "key",
+  "privatekey",
+  "serverkey",
+  "apikey",
+  "authtoken",
+  "accesstoken",
+  "refreshtoken",
+  "twofactorcode",
+  "2facode",
+]);
 
 function requireText(value: string | undefined, field: string, action: RustDeskAction): void {
   if (!value?.trim()) throw new Error(`${action} requires ${field}`);
@@ -102,6 +208,37 @@ function requireText(value: string | undefined, field: string, action: RustDeskA
 function requireNumber(value: number | undefined, field: string, action: RustDeskAction): void {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${action} requires a finite ${field}`);
+  }
+}
+
+function requirePositiveInteger(value: number | undefined, field: string, action: RustDeskAction): void {
+  requireNumber(value, field, action);
+  if (!Number.isInteger(value) || (value ?? 0) <= 0) {
+    throw new Error(`${action} requires ${field} to be a positive integer`);
+  }
+}
+
+function validateOptionalPositiveInteger(value: number | undefined, field: string, action: RustDeskAction): void {
+  if (value !== undefined) requirePositiveInteger(value, field, action);
+}
+
+function normalizeFieldName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function rejectSecretFields(value: unknown, path = "args"): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => rejectSecretFields(item, `${path}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = normalizeFieldName(key);
+    if (SECRET_FIELD_NAMES.has(normalized)) {
+      throw new Error(`RustDesk model actions cannot carry secret field ${path}.${key}`);
+    }
+    rejectSecretFields(child, `${path}.${key}`);
   }
 }
 
@@ -117,21 +254,85 @@ function requireDragCoordinates(request: RustDeskActionRequest, action: RustDesk
   requireNumber(request.toY, "toY", action);
 }
 
+function validateServerSelector(server: RustDeskServerSelector | undefined, action: RustDeskAction): void {
+  if (!server || typeof server !== "object") throw new Error(`${action} requires server selection`);
+
+  switch (server.kind) {
+    case "public":
+      break;
+    case "saved-custom":
+      requireText(server.serverProfileId, "server.serverProfileId", action);
+      break;
+    case "one-time-custom":
+      requireText(server.idServer, "server.idServer", action);
+      break;
+    default:
+      throw new Error(`${action} has an unsupported server kind`);
+  }
+}
+
+function validateSavedDeviceConnect(request: RustDeskActionRequest): void {
+  requireText(request.deviceId, "deviceId", request.action);
+  if (request.rustdeskId || request.server || request.serverProfileId || request.authMode) {
+    throw new Error("devices.connect uses the saved device server/auth configuration and does not accept overrides");
+  }
+}
+
+function validateTemporaryConnect(request: RustDeskActionRequest): void {
+  requireText(request.rustdeskId, "rustdeskId", request.action);
+  validateServerSelector(request.server, request.action);
+  if (!request.authMode || !TEMPORARY_AUTH_MODES.has(request.authMode)) {
+    throw new Error(
+      `${request.action} requires authMode temporary-password, manual-approval, or password-or-approval`,
+    );
+  }
+}
+
+function validateServerTest(request: RustDeskActionRequest): void {
+  const hasProfile = Boolean(request.serverProfileId?.trim());
+  const hasServer = request.server !== undefined;
+  if (hasProfile === hasServer) {
+    throw new Error("servers.test requires exactly one of serverProfileId or server");
+  }
+  if (hasServer) validateServerSelector(request.server, request.action);
+}
+
 export function validateRustDeskActionRequest(request: RustDeskActionRequest): void {
   if (!ACTION_SET.has(request.action)) throw new Error(`Unsupported RustDesk action: ${request.action}`);
-  if (!DEVICE_OPTIONAL_ACTIONS.has(request.action)) requireText(request.deviceId, "deviceId", request.action);
+  rejectSecretFields(request);
+
+  if (CONNECTION_ACTIONS.has(request.action)) requireText(request.connectionId, "connectionId", request.action);
+  if (TERMINAL_ID_ACTIONS.has(request.action)) requireText(request.terminalId, "terminalId", request.action);
 
   switch (request.action) {
+    case "servers.get":
+      requireText(request.serverProfileId, "serverProfileId", request.action);
+      break;
+    case "servers.test":
+      validateServerTest(request);
+      break;
+    case "devices.get":
+      requireText(request.deviceId, "deviceId", request.action);
+      break;
+    case "devices.connect":
+      validateSavedDeviceConnect(request);
+      break;
+    case "session.connectTemporary":
+      validateTemporaryConnect(request);
+      break;
+    case "terminal.open":
+      validateOptionalPositiveInteger(request.rows, "rows", request.action);
+      validateOptionalPositiveInteger(request.cols, "cols", request.action);
+      break;
     case "terminal.exec":
       requireText(request.command, "command", request.action);
       break;
     case "terminal.write":
-      requireText(request.sessionId, "sessionId", request.action);
       if (request.text === undefined) throw new Error(`${request.action} requires text`);
       break;
-    case "terminal.read":
-    case "terminal.close":
-      requireText(request.sessionId, "sessionId", request.action);
+    case "terminal.resize":
+      requirePositiveInteger(request.rows, "rows", request.action);
+      requirePositiveInteger(request.cols, "cols", request.action);
       break;
     case "mouse.move":
     case "mouse.click":
