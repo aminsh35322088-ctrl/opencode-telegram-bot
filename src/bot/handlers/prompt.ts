@@ -26,37 +26,9 @@ import { resolvePendingAttachment } from "../../app/services/prompt-attachment-s
 import { startSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import type { ModelInfo } from "../../app/types/model.js";
 
-const SESSION_STATUS_TIMEOUT_MS = 3500;
-
 export function clearPromptResponseMode(_sessionId: string): void {}
 /** @deprecated Kept as a no-op for test/plugin compatibility after removing bot-layer stall recovery. */
 export function __resetPromptRecoveryStateForTests(): void {}
-
-async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
-  if (assistantRunState.hasActiveRun(sessionId)) return true;
-  if (foregroundSessionState.getBusySessions().some((session) => session.sessionId === sessionId)) return true;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), SESSION_STATUS_TIMEOUT_MS);
-  timeoutId.unref?.();
-  try {
-    const { data, error } = await opencodeClient.session.status(
-      { directory },
-      { signal: controller.signal },
-    );
-    if (error || !data) return false;
-    const sessionStatus = (data as Record<string, { type?: string }>)[sessionId];
-    return sessionStatus?.type === "busy" || sessionStatus?.type === "retry";
-  } catch (err) {
-    logger.warn(
-      `[Bot] Session status preflight failed or timed out after ${SESSION_STATUS_TIMEOUT_MS}ms; falling back to local run state: session=${sessionId}`,
-      err,
-    );
-    return assistantRunState.hasActiveRun(sessionId) || foregroundSessionState.getBusySessions().some((session) => session.sessionId === sessionId);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
 
 async function resetMismatchedSessionContext(): Promise<void> {
   detachAttachedSession("session_mismatch_reset");
@@ -114,7 +86,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     await ingestSessionInfoForCache(session);
     createdNewSession = true;
   }
-  await attachToSession({ bot, chatId: ctx.chat!.id, session: currentSession, ensureEventSubscription });
+  const attachResult = await attachToSession({ bot, chatId: ctx.chat!.id, session: currentSession, ensureEventSubscription });
   if (createdNewSession) {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const currentModel = getStoredModel();
@@ -123,7 +95,10 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     const variantName = formatVariantForButton(currentModel.variant || "default");
     await ctx.reply(t("bot.session_created", { title: currentSession.title }), { reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName) });
   }
-  if (await isSessionBusy(currentSession.id, currentSession.directory)) { await ctx.reply(t("bot.session_busy")); return false; }
+  const locallyBusy =
+    assistantRunState.hasActiveRun(currentSession.id) ||
+    foregroundSessionState.getBusySessions().some((session) => session.sessionId === currentSession!.id);
+  if (attachResult.busy || locallyBusy) { await ctx.reply(t("bot.session_busy")); return false; }
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = modelOverride ?? getStoredModel();
@@ -157,9 +132,11 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     // Telegram edit must never delay the provider request itself.
     safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
 
-    void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, false, currentSession.id).catch((error) => {
-      logger.warn(`[Bot] Busy keyboard update failed without blocking prompt dispatch: session=${currentSession!.id}`, error);
-    });
+    void Promise.resolve()
+      .then(() => keyboardManager.sendKeyboardUpdate(ctx.chat!.id, false, currentSession!.id))
+      .catch((error) => {
+        logger.warn(`[Bot] Busy keyboard update failed without blocking prompt dispatch: session=${currentSession!.id}`, error);
+      });
     return true;
   } catch (err) {
     if (currentSession) { foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
