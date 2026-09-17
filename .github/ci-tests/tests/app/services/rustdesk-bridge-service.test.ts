@@ -51,6 +51,19 @@ describe("rustdesk bridge service", () => {
     );
   });
 
+  it("requires https for a non-loopback bridge even when a token is supplied", () => {
+    expect(() =>
+      new RustDeskBridgeClient({
+        baseUrl: "http://bridge.example.com",
+        token: "secret-token",
+      }),
+    ).toThrow("Remote RustDesk bridges must use https");
+  });
+
+  it("allows an IPv6 loopback bridge without a token", () => {
+    expect(() => new RustDeskBridgeClient({ baseUrl: "http://[::1]:21119" })).not.toThrow();
+  });
+
   it("sends an authenticated action request to the bridge", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
