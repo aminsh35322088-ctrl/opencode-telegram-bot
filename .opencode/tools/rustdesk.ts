@@ -14,6 +14,9 @@ interface RustDeskBridgeModule {
 const DEFAULT_SERVICE_PATH = "/app/dist/app/services/rustdesk-bridge-service.js";
 const DEFAULT_MAX_TRANSFER_BYTES = 8 * 1024 * 1024;
 const BUTTONS = new Set(["left", "right", "middle"]);
+const SERVER_KINDS = new Set(["public", "saved-custom", "one-time-custom"]);
+const TEMPORARY_AUTH_MODES = new Set(["temporary-password", "manual-approval", "password-or-approval"]);
+const IMAGE_FORMATS = new Set(["png", "jpeg", "webp"]);
 
 function servicePath(): string {
   return process.env.RUSTDESK_BRIDGE_SERVICE_PATH?.trim() || DEFAULT_SERVICE_PATH;
@@ -32,7 +35,10 @@ function clean(value?: string): string | undefined {
 function parseKeys(value?: string): string[] | undefined {
   const raw = clean(value);
   if (!raw) return undefined;
-  const keys = raw.split(/[+,]/).map((key) => key.trim()).filter(Boolean);
+  const keys = raw
+    .split(/[+,]/)
+    .map((key) => key.trim())
+    .filter(Boolean);
   return keys.length ? keys : undefined;
 }
 
@@ -82,21 +88,77 @@ function stringify(value: unknown): string {
   return JSON.stringify(resultWithoutBinary(value), null, 2);
 }
 
+function buildServerSelector(args: {
+  server_kind?: string;
+  server_profile_id?: string;
+  id_server?: string;
+  relay_server?: string;
+  api_server?: string;
+}): Record<string, unknown> | undefined {
+  const rawKind = clean(args.server_kind);
+  if (!rawKind) return undefined;
+  const kind = rawKind.toLowerCase();
+  if (!SERVER_KINDS.has(kind)) {
+    throw new Error("server_kind must be public, saved-custom, or one-time-custom");
+  }
+
+  if (kind === "public") return { kind: "public" };
+  if (kind === "saved-custom") {
+    const serverProfileId = clean(args.server_profile_id);
+    if (!serverProfileId) throw new Error("saved-custom server selection requires server_profile_id");
+    return { kind, serverProfileId };
+  }
+
+  const idServer = clean(args.id_server);
+  if (!idServer) throw new Error("one-time-custom server selection requires id_server");
+  return {
+    kind,
+    idServer,
+    relayServer: clean(args.relay_server),
+    apiServer: clean(args.api_server),
+  };
+}
+
 export default tool({
   description:
-    "Control authorized remote devices through the RustDesk agent bridge. Start with devices.list unless the target is already known, then choose actions from the device OS/capabilities. Prefer terminal actions for shellable work; use screen + mouse/keyboard/touch only when GUI interaction is actually needed. Supports terminals, screenshots, mouse, keyboard, touch, clipboard, files, device info, and restart. The bridge keeps RustDesk credentials; never ask users to paste device passwords into prompts.",
+    "Control authorized remote devices through the RustDesk agent bridge. Permanent devices come from Settings > Integrations > RustDesk and resolve their saved server profile and permanent credential inside the trusted control plane. Temporary chat connections require an explicit RustDesk ID, connection server, and authentication mode. Use the question tool for non-sensitive choices and the permission flow for side effects. Never request or pass RustDesk passwords, 2FA codes, tokens, or private server keys through this tool; credential-required responses are completed through secure input outside model context.",
   args: {
     action: tool.schema.string().describe(
-      "Action: bridge.health, devices.list, device.info, device.connect, device.disconnect, terminal.exec, terminal.open, terminal.write, terminal.read, terminal.close, screen.capture, mouse.move, mouse.click, mouse.doubleClick, mouse.drag, mouse.scroll, keyboard.type, keyboard.press, touch.tap, touch.longPress, touch.swipe, clipboard.read, clipboard.write, files.list, files.read, files.upload, files.download, system.info, system.restart.",
+      "Action: bridge.health, servers.list, servers.get, servers.test, devices.list, devices.get, devices.connect, session.connectTemporary, connection.status, connection.disconnect, terminal.open, terminal.write, terminal.read, terminal.resize, terminal.close, terminal.exec, screen.capture, mouse.move, mouse.click, mouse.doubleClick, mouse.drag, mouse.scroll, keyboard.type, keyboard.press, touch.tap, touch.longPress, touch.swipe, clipboard.read, clipboard.write, files.list, files.read, files.upload, files.download, system.info, system.restart.",
     ),
-    device_id: tool.schema.string().optional().describe("Target RustDesk device ID. Not required for bridge.health or devices.list."),
-    session_id: tool.schema.string().optional().describe("Terminal session ID for terminal.read/write/close."),
+    device_id: tool.schema.string().optional().describe("Saved permanent integration device ID for devices.get/devices.connect."),
+    connection_id: tool.schema.string().optional().describe("Live RustDesk connection ID returned by devices.connect or session.connectTemporary."),
+    terminal_id: tool.schema.string().optional().describe("Interactive PTY ID for terminal.read/write/resize/close."),
+    rustdesk_id: tool.schema.string().optional().describe("RustDesk peer ID for session.connectTemporary. This is an identifier, not a password."),
+    server_kind: tool.schema
+      .string()
+      .optional()
+      .describe("Connection server selection: public, saved-custom, or one-time-custom. Required for temporary connections."),
+    server_profile_id: tool.schema
+      .string()
+      .optional()
+      .describe("Saved RustDesk server profile ID for servers.get/servers.test or server_kind=saved-custom."),
+    id_server: tool.schema.string().optional().describe("One-time custom RustDesk ID/rendezvous server host. Do not put keys/secrets here."),
+    relay_server: tool.schema.string().optional().describe("Optional one-time custom RustDesk relay server host."),
+    api_server: tool.schema.string().optional().describe("Optional one-time custom RustDesk API server host."),
+    auth_mode: tool.schema
+      .string()
+      .optional()
+      .describe("Temporary authentication mode: temporary-password, manual-approval, or password-or-approval."),
     command: tool.schema.string().optional().describe("Command for terminal.exec."),
-    shell: tool.schema.string().optional().describe("Optional shell for terminal.open."),
     text: tool.schema.string().optional().describe("Text for keyboard.type, clipboard.write, or terminal.write."),
     keys: tool.schema.string().optional().describe("Keys for keyboard.press, separated by + or comma, for example CTRL+L or ALT,F4."),
+    rows: tool.schema.number().optional().describe("PTY row count for terminal.open/terminal.resize."),
+    cols: tool.schema.number().optional().describe("PTY column count for terminal.open/terminal.resize."),
+    display_index: tool.schema.number().optional().describe("Display index for screen.capture where supported."),
+    image_format: tool.schema.string().optional().describe("Screenshot format: png, jpeg, or webp."),
+    quality: tool.schema.number().optional().describe("Optional bounded screenshot quality understood by the bridge."),
+    max_bytes: tool.schema.number().optional().describe("Optional bounded maximum bytes for supported read operations."),
     path: tool.schema.string().optional().describe("Remote path for files.list/files.read."),
-    local_path: tool.schema.string().optional().describe("Worktree-relative local path for files.upload/files.download. screen.capture may also write here."),
+    local_path: tool.schema
+      .string()
+      .optional()
+      .describe("Worktree-relative local path for files.upload/files.download. screen.capture may also write here."),
     remote_path: tool.schema.string().optional().describe("Remote path for files.upload/files.download."),
     x: tool.schema.number().optional().describe("X coordinate for pointer/touch actions."),
     y: tool.schema.number().optional().describe("Y coordinate for pointer/touch actions."),
@@ -117,15 +179,36 @@ export default tool({
       throw new Error("files.download requires local_path");
     }
 
+    const server = buildServerSelector(args);
+    const authMode = clean(args.auth_mode)?.toLowerCase();
+    if (authMode && !TEMPORARY_AUTH_MODES.has(authMode)) {
+      throw new Error("auth_mode must be temporary-password, manual-approval, or password-or-approval");
+    }
+
+    const imageFormat = clean(args.image_format)?.toLowerCase();
+    if (imageFormat && !IMAGE_FORMATS.has(imageFormat)) {
+      throw new Error("image_format must be png, jpeg, or webp");
+    }
+
     const client = await getClient();
     const request: Record<string, unknown> = {
       action,
       deviceId: clean(args.device_id),
-      sessionId: clean(args.session_id),
+      connectionId: clean(args.connection_id),
+      terminalId: clean(args.terminal_id),
+      rustdeskId: clean(args.rustdesk_id),
+      serverProfileId: clean(args.server_profile_id),
+      server,
+      authMode,
       command: args.command,
-      shell: clean(args.shell),
       text: args.text,
       keys: parseKeys(args.keys),
+      rows: args.rows,
+      cols: args.cols,
+      displayIndex: args.display_index,
+      imageFormat,
+      quality: args.quality,
+      maxBytes: args.max_bytes,
       path: clean(args.path),
       remotePath: clean(args.remote_path),
       x: args.x,
@@ -169,8 +252,11 @@ export default tool({
           throw new Error(`Screenshot exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxBytes} bytes)`);
         }
         const requestedPath = clean(args.local_path);
-        const devicePart = clean(args.device_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") || "device";
-        const localPath = requestedPath ?? `.opencode/rustdesk/${devicePart}-screen-${Date.now()}${imageExtension(result)}`;
+        const targetPart =
+          clean(args.device_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") ||
+          clean(args.connection_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") ||
+          "device";
+        const localPath = requestedPath ?? `.opencode/rustdesk/${targetPart}-screen-${Date.now()}${imageExtension(result)}`;
         const absolute = resolveInsideWorktree(context.worktree, localPath);
         await fs.mkdir(path.dirname(absolute), { recursive: true });
         await fs.writeFile(absolute, image);
