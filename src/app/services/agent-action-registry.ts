@@ -51,32 +51,21 @@ export const CUSTOM_TOOL_ACTIONS = {
   actions: ["list", "describe", "resolve", "sources", "summary"],
   bot: [
     "capabilities.list",
-    "projects.list",
-    "worktree.context",
-    "models.providers",
-    "models.list",
-    "models.search",
-    "models.refresh",
-    "agents.list",
-    "variants.list",
-    "skills.list",
-    "skills.create",
-    "skills.update",
-    "skills.delete",
+    "projects.list",\n    "worktree.context",
+    "models.providers", "models.list", "models.search", "models.selection", "models.current", "models.refresh", "models.select",
+    "agents.list", "agents.current", "agents.select",
+    "variants.list", "variants.current", "variants.select",
+    "skills.list", "skills.create", "skills.update", "skills.delete", "skills.import",
     "commands.list",
-    "mcp.list",
-    "mcp.add-local",
-    "mcp.add-remote",
-    "mcp.enable",
-    "mcp.disable",
-    "memory.list",
-    "memory.search",
-    "memory.add",
-    "memory.remove",
-    "memory.clear",
-    "providers.list",
-    "providers.get",
-    "providers.stt-status",
+    "mcp.list", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable",
+    "session.current", "session.messages", "session.latest-assistant",
+    "run.status",
+    "tasks.list", "tasks.get", "tasks.parse", "tasks.create", "tasks.delete",
+    "settings.get", "settings.set",
+    "memory.list", "memory.search", "memory.add", "memory.remove", "memory.clear",
+    "providers.list", "providers.get", "providers.stt-status",
+    "integrations.github.list", "integrations.github.active", "integrations.github.select", "integrations.github.remove",
+    "integrations.railway.list", "integrations.railway.active", "integrations.railway.select", "integrations.railway.remove",
     "version.info",
   ],
   browser: [
@@ -89,6 +78,7 @@ export const CUSTOM_TOOL_ACTIONS = {
   "github-ci": ["status", "watch", "logs", "verify"],
   "image-inspect": ["inspect"],
   "logs-observability": ["search"],
+  media: ["stt.status", "stt.transcribe", "image.providers", "image.profile", "image.generate", "image.edit"],
   "network-diagnostics": ["dns", "http", "tcp"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   rustdesk: [
@@ -117,6 +107,7 @@ const TOOL_CATEGORIES: Record<CustomToolName, string> = {
   "github-ci": "ci",
   "image-inspect": "media",
   "logs-observability": "observability",
+  media: "media",
   "network-diagnostics": "network",
   railway: "deployment",
   rustdesk: "remote-control",
@@ -154,75 +145,142 @@ const ACTION_DESCRIPTIONS: Record<string, string> = {
   "glob.search": "Discover files by path pattern with OpenCode's native glob tool.",
   "webfetch.fetch": "Fetch and inspect a web resource.",
   "websearch.search": "Search the public web when the configured OpenCode provider supports it.",
-  "lsp.query": "Use language-server code intelligence such as definitions, references, symbols, and hover.",
-  "todowrite.update": "Create or update the agent's structured task list.",
+  "lsp.query": "Use language-server code intelligence.",
+  "todowrite.update": "Create or update the agent task list.",
   "task.delegate": "Delegate work to an OpenCode subagent.",
   "question.ask": "Ask the user a structured interactive question.",
-  "skill.load": "Load an installed OpenCode skill and follow its workflow.",
-  "bot.capabilities.list": "List the bot control-plane actions exposed to the coding agent.",
+  "skill.load": "Load an installed OpenCode skill.",
+
+  "bot.capabilities.list": "List bot control-plane actions available to the model.",
   "bot.projects.list": "List OpenCode projects visible to the bot.",
   "bot.worktree.context": "Inspect the active git worktree and linked worktrees.",
-  "bot.models.providers": "List coding-model providers visible through the bot catalog.",
-  "bot.models.list": "List coding models for one provider.",
-  "bot.models.search": "Search the bot model catalog.",
-  "bot.models.refresh": "Refresh the bot model catalog from configured providers.",
-  "bot.agents.list": "List available primary OpenCode agents for the current worktree.",
-  "bot.variants.list": "List variants exposed by a provider/model pair.",
+  "bot.models.providers": "List coding-model providers.",
+  "bot.models.list": "List models for one provider.",
+  "bot.models.search": "Search the live model catalog.",
+  "bot.models.selection": "Read favorite and recent model selections.",
+  "bot.models.current": "Read the currently selected model.",
+  "bot.models.refresh": "Refresh the live model catalog.",
+  "bot.models.select": "Select a verified model and optional variant.",
+  "bot.agents.list": "List available primary OpenCode agents.",
+  "bot.agents.current": "Read the selected agent.",
+  "bot.agents.select": "Select an available OpenCode agent.",
+  "bot.variants.list": "List variants exposed by a model.",
+  "bot.variants.current": "Read the current model variant.",
+  "bot.variants.select": "Select a validated variant for the current model.",
   "bot.skills.list": "List installed OpenCode skills.",
-  "bot.skills.create": "Create a managed global OpenCode skill.",
-  "bot.skills.update": "Update a managed global OpenCode skill.",
-  "bot.skills.delete": "Delete a managed global OpenCode skill.",
+  "bot.skills.create": "Create a managed global skill.",
+  "bot.skills.update": "Update a managed global skill.",
+  "bot.skills.delete": "Delete a managed global skill.",
+  "bot.skills.import": "Import a skill from an approved GitHub source without exposing credentials.",
   "bot.commands.list": "List OpenCode custom commands for the current worktree.",
-  "bot.mcp.list": "List configured MCP servers and connection states.",
+  "bot.mcp.list": "List configured MCP servers and states.",
   "bot.mcp.add-local": "Add a local MCP server definition.",
   "bot.mcp.add-remote": "Add a remote MCP server definition.",
-  "bot.mcp.enable": "Connect an existing MCP server.",
-  "bot.mcp.disable": "Disconnect an MCP server.",
+  "bot.mcp.enable": "Connect a configured MCP server.",
+  "bot.mcp.disable": "Disconnect a configured MCP server.",
+  "bot.session.current": "Read the effective current OpenCode session.",
+  "bot.session.messages": "List user messages from the effective current session.",
+  "bot.session.latest-assistant": "Read the latest assistant response from the current session.",
+  "bot.run.status": "Read the reconciled foreground run/busy state.",
+  "bot.tasks.list": "List scheduled tasks.",
+  "bot.tasks.get": "Read one scheduled task.",
+  "bot.tasks.parse": "Parse and validate a natural-language schedule.",
+  "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
+  "bot.tasks.delete": "Delete a scheduled task and cancel its runtime timer.",
+  "bot.settings.get": "Read safe model-facing bot settings.",
+  "bot.settings.set": "Update a constrained safe bot setting.",
   "bot.memory.list": "List persistent bot memories.",
-  "bot.memory.search": "Search persistent bot memories relevant to a query.",
-  "bot.memory.add": "Add a persistent user or project memory.",
-  "bot.memory.remove": "Remove one persistent memory by ID.",
+  "bot.memory.search": "Search persistent memories.",
+  "bot.memory.add": "Add a persistent memory.",
+  "bot.memory.remove": "Remove one persistent memory.",
   "bot.memory.clear": "Delete all persistent memories.",
-  "bot.providers.list": "List configured custom AI providers without credentials.",
-  "bot.providers.get": "Read public metadata for one configured custom provider.",
-  "bot.providers.stt-status": "Check whether Groq speech-to-text is configured without exposing its key.",
+  "bot.providers.list": "List custom AI-provider metadata without credentials.",
+  "bot.providers.get": "Read public metadata for one provider.",
+  "bot.providers.stt-status": "Check speech-to-text configuration without exposing its key.",
+  "bot.integrations.github.list": "List stored GitHub account metadata without tokens.",
+  "bot.integrations.github.active": "Read the active GitHub account metadata.",
+  "bot.integrations.github.select": "Switch the active stored GitHub account.",
+  "bot.integrations.github.remove": "Remove a stored GitHub account without revealing its token.",
+  "bot.integrations.railway.list": "List stored Railway account metadata without tokens.",
+  "bot.integrations.railway.active": "Read the active Railway account metadata.",
+  "bot.integrations.railway.select": "Switch the active stored Railway account.",
+  "bot.integrations.railway.remove": "Remove a stored Railway account without revealing its token.",
   "bot.version.info": "Inspect bot, OpenCode, runtime, and integrated-tool versions.",
-  "database-query.query": "Run a read-only SQLite SELECT/PRAGMA/WITH/EXPLAIN query.",
-  "image-inspect.inspect": "Inspect image format, dimensions, colorspace, depth, and metadata.",
-  "logs-observability.search": "Search bounded recent application/runtime logs.",
+
+  "media.stt.status": "Check whether transcription is configured.",
+  "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
+  "media.image.providers": "List configured image providers without credentials.",
+  "media.image.profile": "Inspect the resolved default Image Chat profile.",
+  "media.image.generate": "Generate an image with the configured Image Chat engine and save it to the worktree.",
+  "media.image.edit": "Edit a worktree image with the configured Image Chat engine and save the result.",
+
+  "database-query.query": "Run a read-only SQLite query.",
+  "image-inspect.inspect": "Inspect image file metadata.",
+  "logs-observability.search": "Search bounded runtime/application logs.",
   "safe-download.download": "Download a bounded HTTP(S) resource into the current worktree.",
-  "send-file.send": "Deliver a generated file or artifact to the user through Telegram.",
-  "storage-health.inspect": "Inspect persistent /data volume health and disposable cache usage.",
-  "storage-health.cleanup-safe": "Remove only approved disposable caches from persistent storage.",
-  "session-recovery.inspect": "Inspect the state of an OpenCode session.",
-  "session-recovery.abort": "Abort a non-idle OpenCode session while preserving its history.",
-  "session-recovery.continue": "Recover and continue an OpenCode session with a fresh prompt.",
-  "railway.deploy": "Deploy the current local worktree to Railway through the Railway CLI.",
-  "railway.deploy-latest": "Trigger a Railway deployment from the latest commit of the connected repository.",
-  "rustdesk.devices.list": "List authorized RustDesk devices with OS and capability metadata.",
-  "rustdesk.terminal.exec": "Execute a command in an authorized remote device terminal.",
-  "rustdesk.screen.capture": "Capture the current screen of an authorized remote device.",
-  "rustdesk.system.restart": "Restart an authorized remote device when that capability is permitted.",
+  "send-file.send": "Deliver a generated artifact through Telegram.",
+  "storage-health.inspect": "Inspect persistent volume health.",
+  "storage-health.cleanup-safe": "Remove approved disposable caches.",
+  "session-recovery.inspect": "Inspect an OpenCode session.",
+  "session-recovery.abort": "Abort a non-idle OpenCode session.",
+  "session-recovery.continue": "Continue a recoverable OpenCode session.",
+  "railway.deploy": "Deploy the current local worktree to Railway.",
+  "railway.deploy-latest": "Trigger a Railway deployment from the latest connected-repository commit.",
+  "rustdesk.devices.list": "List authorized RustDesk devices and capabilities.",
+  "rustdesk.terminal.exec": "Execute a command in an authorized remote terminal.",
+  "rustdesk.screen.capture": "Capture the screen of an authorized remote device.",
+  "rustdesk.system.restart": "Restart an authorized remote device.",
 };
 
-const READ_ACTION_PATTERNS = [
-  /^(list|describe|resolve|sources|summary|status|inspect|snapshot|screenshot|requests|console|whoami|logs|variables|verify|watch|dns|http|tcp|quick|full|search)$/,
-  /^(bridge\.health|devices\.list|device\.info|terminal\.read|screen\.capture|clipboard\.read|files\.list|files\.read|system\.info)$/,
-  /^(capabilities\.list|projects\.list|worktree\.context|models\.(providers|list|search)|agents\.list|variants\.list|skills\.list|commands\.list|mcp\.list|memory\.(list|search)|providers\.(list|get|stt-status)|version\.info)$/,
-];
-const DESTRUCTIVE_ACTION_PATTERNS = [/restart$/, /^cleanup-safe$/, /^abort$/, /^skills\.delete$/, /^memory\.clear$/];
-const WRITE_ACTION_PATTERNS = [/^pdf$/, /^download$/, /^send$/, /^files\.download$/];
+const BOT_READ_ACTIONS = new Set([
+  "capabilities.list", "projects.list", "worktree.context",
+  "models.providers", "models.list", "models.search", "models.selection", "models.current",
+  "agents.list", "agents.current", "variants.list", "variants.current", "skills.list", "commands.list", "mcp.list",
+  "session.current", "session.messages", "session.latest-assistant", "run.status",
+  "tasks.list", "tasks.get", "tasks.parse", "settings.get",
+  "memory.list", "memory.search", "providers.list", "providers.get", "providers.stt-status",
+  "integrations.github.list", "integrations.github.active", "integrations.railway.list", "integrations.railway.active",
+  "version.info",
+]);
+const BOT_DESTRUCTIVE_ACTIONS = new Set([
+  "skills.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove",
+]);
+const BOT_MUTATING_ACTIONS = new Set([
+  "models.refresh", "models.select", "agents.select", "variants.select",
+  "skills.create", "skills.update", "skills.import",
+  "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable",
+  "tasks.create", "settings.set", "memory.add", "memory.remove",
+  "integrations.github.select", "integrations.railway.select",
+]);
 
 function customRisk(tool: string, action: string): AgentActionRisk {
-  if (DESTRUCTIVE_ACTION_PATTERNS.some((pattern) => pattern.test(action))) return "destructive";
-  if (tool === "bot" && ["skills.create", "skills.update", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable", "memory.add", "memory.remove", "models.refresh"].includes(action)) return "mutating";
-  if (tool === "browser" && ["click", "fill", "type", "press", "hover", "check", "uncheck", "select", "tab-new", "tab-select", "tab-close", "close"].includes(action)) return "mutating";
+  if (tool === "bot") {
+    if (BOT_DESTRUCTIVE_ACTIONS.has(action)) return "destructive";
+    if (BOT_MUTATING_ACTIONS.has(action)) return "mutating";
+    if (BOT_READ_ACTIONS.has(action)) return "read";
+  }
+  if (tool === "media") {
+    if (action === "stt.status" || action === "image.providers" || action === "image.profile") return "read";
+    return "external";
+  }
+  if (tool === "rustdesk") {
+    if (action === "system.restart") return "destructive";
+    if (/^(device\.(connect|disconnect)|terminal\.(exec|open|write|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action)) return "mutating";
+    return "read";
+  }
+  if (tool === "browser") {
+    if (["click", "fill", "type", "press", "hover", "check", "uncheck", "select", "tab-new", "tab-select", "tab-close", "close"].includes(action)) return "mutating";
+    return action === "pdf" ? "write" : "external";
+  }
   if (tool === "railway" && ["deploy", "deploy-latest"].includes(action)) return "mutating";
-  if (tool === "rustdesk" && /^(device\.(connect|disconnect)|terminal\.(exec|open|write|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action)) return "mutating";
-  if (tool === "session-recovery" && action === "continue") return "mutating";
-  if (WRITE_ACTION_PATTERNS.some((pattern) => pattern.test(action))) return "write";
-  if (READ_ACTION_PATTERNS.some((pattern) => pattern.test(action))) return "read";
-  if (tool === "browser" || tool === "network-diagnostics" || tool === "github-ci") return "external";
+  if (tool === "session-recovery") {
+    if (action === "abort") return "destructive";
+    if (action === "continue") return "mutating";
+    return "read";
+  }
+  if (tool === "storage-health" && action === "cleanup-safe") return "destructive";
+  if (tool === "safe-download" || tool === "send-file") return "write";
+  if (tool === "network-diagnostics" || tool === "github-ci") return "external";
   return "read";
 }
 
@@ -311,13 +369,12 @@ export function summarizeAgentActions(): Record<string, unknown> {
 export function getAgentActionSources(): Record<string, unknown> {
   return {
     static: {
-      opencodeCore: "Native OpenCode tools are represented by canonical action IDs but are invoked with their native schemas.",
-      customTools: "Repository .opencode/tools entries use an explicit action argument and are included in this registry.",
-      botControl: "The bot custom tool exposes model-safe bot control-plane actions without returning provider credentials.",
-      plugin: "The skill action is supplied by the configured OpenCode/Superpowers workflow.",
+      opencodeCore: "Native OpenCode tools are represented by canonical action IDs and invoked with native schemas.",
+      customTools: "Repository .opencode/tools entries expose explicit action values and are registered here.",
+      plugin: "Installed plugin/skill capabilities remain discoverable through OpenCode.",
     },
     dynamic: {
-      mcp: "Connected MCP servers can inject additional model tools at runtime. Their names and schemas are server-defined, so they cannot be safely hard-coded; OpenCode exposes them directly when connected.",
+      mcp: "Connected MCP servers inject server-defined tools at runtime. They are exposed by OpenCode directly and intentionally are not hard-coded in the static registry.",
     },
   };
 }
