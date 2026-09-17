@@ -5,12 +5,13 @@ import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
-const ALLOWED_ACTIONS = new Set([
+const BROWSER_ACTIONS = [
   "open", "goto", "back", "forward", "reload", "snapshot", "screenshot",
   "click", "fill", "type", "press", "hover", "check", "uncheck", "select",
   "close", "tab-list", "tab-new", "tab-select", "tab-close", "requests",
   "console", "pdf",
-]);
+] as const;
+const ALLOWED_ACTIONS = new Set<string>(BROWSER_ACTIONS);
 
 function sessionArgs(session?: string): string[] {
   return session?.trim() ? [`-s=${session.trim()}`] : [];
@@ -18,9 +19,9 @@ function sessionArgs(session?: string): string[] {
 
 export default tool({
   description:
-    "Control a real headless browser through Playwright CLI. Use for JavaScript-heavy websites, UI inspection, clicks, forms, screenshots, PDFs, tabs, console/network inspection, and browser-based testing. Prefer snapshot before interacting so element refs are current.",
+    "Control a real headless browser through Playwright CLI. Every capability is an explicit action. Use snapshot before interacting so element refs are current.",
   args: {
-    action: tool.schema.string().describe("Browser action: open, goto, snapshot, screenshot, click, fill, type, press, hover, check, uncheck, select, close, tab-list, tab-new, tab-select, tab-close, requests, console, pdf, back, forward, reload."),
+    action: tool.schema.enum(BROWSER_ACTIONS).describe("Browser action to execute."),
     url: tool.schema.string().optional().describe("URL for open/goto/tab-new."),
     ref: tool.schema.string().optional().describe("Element ref or selector for click/fill/hover/check/uncheck/select/screenshot."),
     text: tool.schema.string().optional().describe("Text/value for fill/type/select/press."),
