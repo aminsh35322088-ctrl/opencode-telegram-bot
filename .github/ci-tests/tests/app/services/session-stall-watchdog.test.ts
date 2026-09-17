@@ -9,6 +9,9 @@ const options = (sessionId: string, onStalled = vi.fn()) => ({ sessionId, direct
 describe("watchdog liveness and isolation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    mocks.status.mockReset();
+    mocks.messages.mockReset();
+    mocks.abort.mockReset();
     mocks.status.mockResolvedValue({ data: { a: { type: "busy" }, b: { type: "busy" } } });
     mocks.messages.mockResolvedValue({ data: [] });
     mocks.abort.mockResolvedValue({ data: true });
@@ -42,6 +45,18 @@ describe("watchdog liveness and isolation", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mocks.messages).not.toHaveBeenCalled();
     expect(mocks.abort).not.toHaveBeenCalled();
+  });
+
+  it("does not abort a session while OpenCode is handling a provider retry", async () => {
+    mocks.status.mockResolvedValue({ data: { a: { type: "retry" } } });
+    const onStalled = vi.fn();
+    start(options("a", onStalled));
+
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+
+    expect(mocks.messages).not.toHaveBeenCalled();
+    expect(mocks.abort).not.toHaveBeenCalled();
+    expect(onStalled).not.toHaveBeenCalled();
   });
 
   it("does not abort a session while a tool call is active past the stall threshold", async () => {
