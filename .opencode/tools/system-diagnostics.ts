@@ -12,12 +12,13 @@ async function command(bin: string, args: string[]): Promise<string> {
 }
 
 export default tool({
-  description: "Inspect CPU, memory, uptime, filesystem capacity, and running processes in the current Railway container.",
+  description: "Inspect CPU, memory, uptime, filesystem capacity, and running processes in the current Railway container. Prefer action; detail remains a backwards-compatible alias.",
   args: {
-    detail: tool.schema.enum(["summary", "processes", "disk"]).optional().describe("Detail level."),
+    action: tool.schema.enum(["summary", "processes", "disk"]).optional().describe("Normalized diagnostics action."),
+    detail: tool.schema.enum(["summary", "processes", "disk"]).optional().describe("Deprecated alias for action."),
   },
   async execute(args) {
-    const detail = args.detail ?? "summary";
+    const action = args.action ?? args.detail ?? "summary";
     const mem = { totalBytes: os.totalmem(), freeBytes: os.freemem(), usedBytes: os.totalmem() - os.freemem() };
     const result: Record<string, unknown> = {
       platform: process.platform,
@@ -29,10 +30,10 @@ export default tool({
       processUptimeSec: process.uptime(),
       memory: mem,
     };
-    if (detail === "disk") result.disk = await command("df", ["-h", "/data"]);
-    if (detail === "processes") result.processes = await command("ps", ["-eo", "pid,ppid,%cpu,%mem,rss,etime,cmd", "--sort=-%cpu"]);
-    if (detail === "summary") {
-      try { result.dataFree = (await fs.statfs("/data")).bavail * (await fs.statfs("/data")).bsize; } catch { /* optional */ }
+    if (action === "disk") result.disk = await command("df", ["-h", "/data"]);
+    if (action === "processes") result.processes = await command("ps", ["-eo", "pid,ppid,%cpu,%mem,rss,etime,cmd", "--sort=-%cpu"]);
+    if (action === "summary") {
+      try { const stats = await fs.statfs("/data"); result.dataFree = stats.bavail * stats.bsize; } catch { /* optional */ }
     }
     return JSON.stringify(result, null, 2).slice(0, 16000);
   },
