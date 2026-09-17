@@ -184,7 +184,11 @@ function normalizeBaseUrl(value: string): string {
 
 function isLoopbackUrl(value: string): boolean {
   const host = new URL(value).hostname.toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+}
+
+function isSecureTransport(value: string): boolean {
+  return new URL(value).protocol === "https:";
 }
 
 function clampTimeout(value: number | undefined): number {
@@ -212,6 +216,9 @@ export class RustDeskBridgeClient {
     this.timeoutMs = clampTimeout(options.timeoutMs);
     this.fetchImpl = options.fetchImpl ?? fetch;
 
+    if (!isLoopbackUrl(this.baseUrl) && !isSecureTransport(this.baseUrl)) {
+      throw new Error("Remote RustDesk bridges must use https");
+    }
     if (!this.token && !isLoopbackUrl(this.baseUrl)) {
       throw new Error("RUSTDESK_BRIDGE_TOKEN is required when the bridge is not on loopback");
     }
