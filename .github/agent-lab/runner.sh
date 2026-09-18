@@ -29,8 +29,16 @@ materialize_tests() {
 }
 
 link_environment() {
-  rm -rf "$ROOT/node_modules"
-  ln -s "$NODE_MODULES" "$ROOT/node_modules"
+  if git -C "$ROOT" ls-files --error-unmatch node_modules >/dev/null 2>&1 \
+    && [[ "$(git -C "$ROOT" show HEAD:node_modules 2>/dev/null || true)" == "/app/node_modules" ]]; then
+    sudo mkdir -p /app
+    sudo rm -rf /app/node_modules
+    sudo ln -s "$NODE_MODULES" /app/node_modules
+    git -C "$ROOT" checkout -- node_modules
+  else
+    rm -rf "$ROOT/node_modules"
+    ln -s "$NODE_MODULES" "$ROOT/node_modules"
+  fi
 }
 
 prepare_environment() {
