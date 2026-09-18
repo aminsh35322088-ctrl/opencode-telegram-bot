@@ -39,9 +39,10 @@ Run these checks with the project's manual-testing agent/workflow when available
    Only one process at a time may use the browser profile. If a browser is
    already open on it, the subagent will fail with a profile-lock error.
 
-4. **Update the peer id.** The subagent opens the chat by
-   `data-peer-id`. If you use a different test bot, update that id in
-   `.claude/agents/manual-tester.md`.
+4. **Update the peer id if your manual-testing harness uses one.** The Telegram Web
+   chat is identified by `data-peer-id`. If you use a different test bot, update
+   the peer id in the active manual-testing harness/configuration for your checkout.
+   Do not rely on a hard-coded path to an optional subagent file.
 
 ## GitHub Runner Lab preflight
 
