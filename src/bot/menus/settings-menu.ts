@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import { getDefaultImageModel, getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicImageModelOverride, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 
@@ -7,6 +7,8 @@ export const SETTINGS_CALLBACK_PREFIX = "settings:";
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
 export const SETTINGS_DEFAULT_MODELS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_models`;
 export const SETTINGS_CHAT_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}chat_model`;
+export const SETTINGS_IMAGE_MODEL_CALLBACK = SETTINGS_CALLBACK_PREFIX + "image_model";
+export const SETTINGS_TOPIC_MODELS_CALLBACK = SETTINGS_CALLBACK_PREFIX + "models";
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
@@ -60,19 +62,51 @@ function formatTopicModel(): string {
   return model ? `${model.providerID}/${model.modelID}` : "Inherited default";
 }
 function statusPill(enabled: boolean): string { return enabled ? "🟢 ON" : "⚪ OFF"; }
+function formatImageModel(): string {
+  const selection = getDefaultImageModel();
+  return selection ? selection.providerID + "/" + selection.modelID : "Not configured";
+}
+function formatTopicImageModel(): string {
+  const override = getCurrentTopicImageModelOverride();
+  return override
+    ? override.providerID + "/" + override.modelID + " · Override"
+    : formatImageModel() + " · Main Default";
+}
+
+export function buildTopicModelsSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  const chatModel = formatTopicModel();
+  const imageModel = formatTopicImageModel();
+  return {
+    text: [
+      "🧠 <b>Models</b>",
+      "",
+      "💬 <b>Chat / Coding</b> · " + chatModel,
+      "🎨 <b>Image Model</b> · " + imageModel,
+      "",
+      "Chat/Coding controls the OpenCode conversation. Image Model is used only when the AI invokes image generation or editing.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("💬 Chat / Coding", SETTINGS_MODEL_CALLBACK).row()
+      .text("🎨 Image Model", SETTINGS_IMAGE_MODEL_CALLBACK).row()
+      .text("← Topic Settings", SETTINGS_BACK_CALLBACK),
+  };
+}
 
 export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboard } {
   if (getCurrentTopicSettings()) {
     const model = formatTopicModel();
     const agent = getCurrentTopicSettings()?.agent ?? "Inherited default";
     const variant = getCurrentTopicSettings()?.variant ?? "Default";
+    const imageModel = formatTopicImageModel();
     return {
       text: [
         "🧵 <b>Topic Settings</b>",
         "",
         `<code>${model}</code>`,
         "",
-        `🤖 <b>Model</b> · ${model}`,
+        "🧠 <b>Models</b> · Chat/Coding + Image",
+        "💬 <b>Chat / Coding</b> · " + model,
+        "🎨 <b>Image Model</b> · " + imageModel,
         `🧑‍💻 <b>Agent</b> · ${agent}`,
         `🎛 <b>Variant</b> · ${variant}`,
         "",
@@ -81,7 +115,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
         "🧠 <b>Context Health</b>",
       ].join("\n"),
       keyboard: new InlineKeyboard()
-        .text(`🤖 Model · ${model}`, SETTINGS_MODEL_CALLBACK).row()
+        .text("🧠 Models", SETTINGS_TOPIC_MODELS_CALLBACK).row()
         .text(`🧑‍💻 Agent · ${agent}`, SETTINGS_AGENT_CALLBACK).row()
         .text(`🎛 Variant · ${variant}`, SETTINGS_VARIANT_CALLBACK).row()
         .text("💬 Response & Output", SETTINGS_APPEARANCE_CALLBACK).row()
@@ -97,7 +131,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "",
       "Global configuration and defaults for the bot.",
       "",
-      "🧠 <b>Default Models</b> · Chat/Coding and Image Chat defaults in one place.",
+      "🧠 <b>Default Models</b> · Chat/Coding and Image defaults in one place.",
       "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
       "🔌 <b>AI Providers</b> · Manage API connections only.",
       "🔗 <b>Integrations</b> · Manage connected services.",
@@ -119,16 +153,16 @@ export function buildDefaultModelsSettingsView(): { text: string; keyboard: Inli
     text: [
       "🧠 <b>Default Models</b>",
       "",
-      "Choose the defaults used when a new conversation starts.",
+      "Choose the global defaults used by AI Topics.",
       "",
       "💬 <b>Chat & Coding</b> · default OpenCode model for new AI Topics.",
-      "🎨 <b>Image Chat</b> · Auto free planner or manual chat model, plus an independent image generator/editor.",
+      "🎨 <b>Image Model</b> · " + formatImageModel() + " · inherited dynamically unless a Topic has an override.",
       "",
-      "Existing Topics keep their pinned model until you explicitly change them.",
+      "Chat/Coding remains Topic-pinned. Image Model inheritance is dynamic: changing the Main Default updates Topics that do not have an override.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("💬 Chat & Coding", SETTINGS_CHAT_MODEL_CALLBACK).row()
-      .text("🎨 Image Chat", "icfg:root").row()
+      .text("🎨 Image Model", SETTINGS_IMAGE_MODEL_CALLBACK).row()
       .text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
