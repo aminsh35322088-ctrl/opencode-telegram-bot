@@ -1,4 +1,5 @@
 import type { ImageChatProfile, MediaImage } from "../types/image-chat.js";
+import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { readBoundedJson, detectImageMimeType } from "./ai-http-service.js";
 import crypto from "node:crypto";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
@@ -87,6 +88,54 @@ async function imageRequest(url: string, init: RequestInit, signal?: AbortSignal
   if (!signal) return fetchRetry(url, init);
   signal.throwIfAborted();
   return fetch(url, { ...init, signal, redirect: "error" });
+}
+
+export async function runImageForSelection(
+  selection: ImageModelSelection,
+  prompt: string,
+  image: ImageBinary | undefined,
+  signal: AbortSignal,
+): Promise<ImageBinary> {
+  const provider = (await getActiveImageAiProviders()).find((candidate) =>
+    candidate.id === selection.providerID);
+
+  if (
+    !provider
+    || provider.model !== selection.modelID
+    || (provider.editModel ?? provider.model) !== (selection.editModelID ?? selection.modelID)
+    || !provider.capabilities.includes(image ? "edit" : "generate")
+  ) {
+    throw new Error("The selected Image Model is unavailable or changed. Choose it again in Settings.");
+  }
+
+  if (image && detectImageMimeType(image.buffer) !== image.mimeType) {
+    throw new Error("Only valid PNG, JPEG and WebP images are supported");
+  }
+
+  signal.throwIfAborted();
+  const result = provider.id === CUSTOM_ID
+    ? await runCustomOpenAiCompatible(
+      provider,
+      provider.apiKey,
+      prompt,
+      image?.buffer,
+      image?.mimeType,
+      signal,
+    )
+    : provider.id === CLOUDFLARE_ID
+      ? await runCloudflare(
+        provider,
+        provider.apiKey,
+        prompt,
+        image?.buffer,
+        image?.mimeType,
+        signal,
+      )
+      : (() => { throw new Error("Unsupported Image Model provider."); })();
+
+  const mimeType = detectImageMimeType(result.buffer);
+  if (!mimeType) throw new Error("Image provider returned an unsupported image format");
+  return { buffer: result.buffer, mimeType };
 }
 
 /** Dedicated chats pin one image connection. No fallback or ambiguous POST retry. */

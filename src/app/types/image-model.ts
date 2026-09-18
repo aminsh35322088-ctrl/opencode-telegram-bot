@@ -27,3 +27,8 @@ export function cloneImageModelSelection(
 export function normalizeImageModelSelection(value: unknown): ImageModelSelection | undefined {
   return isImageModelSelection(value) ? cloneImageModelSelection(value) : undefined;
 }
+
+export interface ImageBinary {
+  buffer: Buffer;
+  mimeType: string;
+}
