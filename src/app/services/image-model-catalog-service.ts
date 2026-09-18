@@ -1,7 +1,5 @@
-import {
-  listCustomProvidersByCapability,
-  type CustomProviderModel,
-} from "./custom-provider-service.js";
+import { opencodeClient } from "../../opencode/client.js";
+import { isImageEditModelMetadata, isImageModelMetadata } from "./model-eligibility-service.js";
 import {
   listImageAiProviders,
   type ImageAiCapability,
@@ -15,37 +13,50 @@ export interface ImageModelCatalogEntry {
   modelName: string;
   editModelID?: string;
   capabilities: ImageAiCapability[];
-  source: "custom-provider" | "legacy-image-provider";
+  source: "opencode-provider" | "legacy-image-provider";
 }
 
-function customEntry(
-  providerID: string,
-  providerName: string,
-  model: CustomProviderModel,
-): ImageModelCatalogEntry {  return {
-    providerID,
-    providerName,
-    modelID: model.id,
-    modelName: model.name || model.id,
-    editModelID: model.id,
-    capabilities: ["generate", "edit"],
-    source: "custom-provider",
-  };
+function advertisedName(metadata: unknown, fallback: string): string {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return fallback;
+  const name = (metadata as { name?: unknown }).name;
+  return typeof name === "string" && name.trim() ? name.trim() : fallback;
 }
 
+/**
+ * Canonical Image Model catalog.
+ *
+ * OpenCode's provider catalog is authoritative for normal AI connections:
+ * every model is classified by its own output/input capabilities, not by a
+ * provider-level "chat" or "image" category. Legacy direct image adapters are
+ * appended only while the old subsystem is being migrated.
+ */
 export async function listImageModelCatalog(): Promise<ImageModelCatalogEntry[]> {
-  const [customProviders, legacyProviders] = await Promise.all([
-    listCustomProvidersByCapability("image"),
+  const [providerResponse, legacyProviders] = await Promise.all([
+    opencodeClient.config.providers(),
     listImageAiProviders(),
   ]);
 
   const entries: ImageModelCatalogEntry[] = [];
 
-  for (const provider of customProviders) {
-    for (const model of provider.models) {
-      entries.push(customEntry(provider.id, provider.name, model));
+  if (!providerResponse.error && providerResponse.data) {
+    for (const provider of providerResponse.data.providers) {
+      for (const [modelID, metadata] of Object.entries(provider.models)) {
+        if (!isImageModelMetadata(metadata)) continue;
+        const editable = isImageEditModelMetadata(metadata);
+        entries.push({
+          providerID: provider.id,
+          providerName: provider.name || provider.id,
+          modelID,
+          modelName: advertisedName(metadata, modelID),
+          ...(editable ? { editModelID: modelID } : {}),
+          capabilities: editable ? ["generate", "edit"] : ["generate"],
+          source: "opencode-provider",
+        });
+      }
     }
-  }  for (const provider of legacyProviders) {
+  }
+
+  for (const provider of legacyProviders) {
     if (!provider.active) continue;
     entries.push({
       providerID: provider.id,
@@ -71,7 +82,8 @@ export async function listImageModelCatalog(): Promise<ImageModelCatalogEntry[]>
       || a.modelName.localeCompare(b.modelName));
 }
 
-export function imageCatalogSelection(entry: ImageModelCatalogEntry): ImageModelSelection {  return {
+export function imageCatalogSelection(entry: ImageModelCatalogEntry): ImageModelSelection {
+  return {
     providerID: entry.providerID,
     modelID: entry.modelID,
     ...(entry.editModelID ? { editModelID: entry.editModelID } : {}),

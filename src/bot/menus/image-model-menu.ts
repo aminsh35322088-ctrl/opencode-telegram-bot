@@ -10,9 +10,13 @@ import {
   getCurrentTopicImageModelOverride,
   getCurrentTopicSettings,
   getDefaultImageModel,
+  getFreeModelDetectionEnabled,
   setCurrentTopicImageModelOverride,
   setDefaultImageModel,
 } from "../../app/stores/settings-store.js";
+import { getProviderModelPrices } from "../../app/services/model-price-service.js";
+import { PRICE_COLOR, PRICE_ORDER, type ModelPrice } from "../../app/services/model-price-classifier.js";
+import { refreshModelCatalog } from "../../app/services/model-selection-service.js";
 import type { ImageModelSelection } from "../../app/types/image-model.js";
 import {
   SETTINGS_BACK_CALLBACK,
@@ -22,7 +26,7 @@ import {
 
 const PICK_PREFIX = SETTINGS_IMAGE_MODEL_CALLBACK + ":pick:";
 const RESET_CALLBACK = SETTINGS_IMAGE_MODEL_CALLBACK + ":reset";
-const MANAGE_CONNECTIONS_CALLBACK = "provider:image:engines";
+const MANAGE_CONNECTIONS_CALLBACK = "provider:connections";
 const CHOICE_TTL_MS = 15 * 60_000;
 const MAX_CHOICES = 200;
 
@@ -62,6 +66,42 @@ function formatSelection(
   return html(entry.providerName) + " · " + html(entry.modelName);
 }
 
+async function priceMaps(
+  catalog: ImageModelCatalogEntry[],
+): Promise<Map<string, Map<string, ModelPrice>>> {
+  if (!getFreeModelDetectionEnabled()) return new Map();
+  // Refreshing the shared OpenCode catalog also refreshes the native price
+  // metadata cache. Custom providers reuse the raw /models discovery cache.
+  await refreshModelCatalog().catch(() => {});
+  const providers = [...new Set(catalog.map((entry) => entry.providerID))];
+  const maps = await Promise.all(
+    providers.map(async (providerID) => [
+      providerID,
+      await getProviderModelPrices(providerID),
+    ] as const),
+  );
+  return new Map(maps);
+}
+
+function priceFor(
+  entry: ImageModelCatalogEntry,
+  prices: Map<string, Map<string, ModelPrice>>,
+): ModelPrice | undefined {
+  return prices.get(entry.providerID)?.get(entry.modelID);
+}
+
+function imageModelLabel(
+  entry: ImageModelCatalogEntry,
+  selected: boolean,
+  prices: Map<string, Map<string, ModelPrice>>,
+): string {
+  const price = priceFor(entry, prices);
+  const prefix = price ? PRICE_COLOR[price.group] : (selected ? "✅" : "🎨");
+  const selectedMark = price && selected ? " ✓" : "";
+  const editMark = entry.capabilities.includes("edit") ? " ✏️" : "";
+  return prefix + " " + entry.providerName + " · " + entry.modelName + selectedMark + editMark;
+}
+
 function choice(ctx: Context, selection: ImageModelSelection): string {
   const token = randomBytes(8).toString("hex");
   choices.set(token, {
@@ -77,10 +117,18 @@ export async function buildImageModelSettingsView(
   ctx: Context,
   notice = "",
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const catalog = (await listImageModelCatalog())
-    .filter((entry) =>
-      entry.capabilities.includes("generate")
-      && entry.capabilities.includes("edit"));
+  let catalog = (await listImageModelCatalog())
+    .filter((entry) => entry.capabilities.includes("generate"));
+  const prices = await priceMaps(catalog);
+  if (prices.size) {
+    catalog = [...catalog].sort((left, right) => {
+      const leftOrder = PRICE_ORDER[priceFor(left, prices)?.group ?? "unknown"];
+      const rightOrder = PRICE_ORDER[priceFor(right, prices)?.group ?? "unknown"];
+      return leftOrder - rightOrder
+        || left.providerName.localeCompare(right.providerName)
+        || left.modelName.localeCompare(right.modelName);
+    });
+  }
   const topic = getCurrentTopicSettings();
   const globalDefault = getDefaultImageModel();
   const override = getCurrentTopicImageModelOverride();
@@ -97,12 +145,12 @@ export async function buildImageModelSettingsView(
       ? catalogEntryMatchesSelection(entry, activeSelection)
       : false;
     keyboard.text(
-      (selected ? "✅ " : "🎨 ") + entry.providerName + " · " + entry.modelName,
+      imageModelLabel(entry, selected, prices),
       choice(ctx, selection),
     ).row();
   }
 
-  keyboard.text("🔌 Manage image connections", MANAGE_CONNECTIONS_CALLBACK).row();
+  keyboard.text("🔌 Manage AI providers", MANAGE_CONNECTIONS_CALLBACK).row();
   keyboard.text(
     topic ? "← Topic Settings" : "← Default Models",
     topic ? SETTINGS_BACK_CALLBACK : SETTINGS_DEFAULT_MODELS_CALLBACK,
@@ -119,10 +167,10 @@ export async function buildImageModelSettingsView(
       ? "Choose an override for this AI Topic, or inherit the Main Default."
       : "Choose the default generator/editor inherited by AI Topics without an override.",
     "",
-    "There is no automatic fallback. If the selected image model becomes unavailable, image actions fail explicitly until you choose another model.",
+    "Models are detected from provider capabilities. ✏️ means image editing is supported. There is no automatic fallback if the selected model disappears.",
   ];
   if (catalog.length === 0) {
-    lines.push("", "No configured image connection currently supports both generation and editing.");
+    lines.push("", "No connected provider currently advertises image output.");
   }
 
   return { text: lines.filter(Boolean).join("\n"), keyboard };

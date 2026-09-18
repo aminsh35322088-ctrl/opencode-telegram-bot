@@ -6,7 +6,7 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
-export type AiCapability = "coding" | "image" | "stt";
+export type AiCapability = "general" | "coding" | "image" | "stt";
 
 /**
  * OpenCode model capability metadata.
@@ -62,7 +62,7 @@ const SUPPORTED_MODALITIES = new Set(["text", "audio", "image", "video", "pdf"])
 type DiscoveredModelRecord = Record<string, unknown>;
 
 function normalizeCapability(value: unknown): AiCapability {
-  return value === "image" || value === "stt" ? value : "coding";
+  return value === "stt" ? "stt" : "general";
 }
 
 function normalizeModalityList(value: unknown): string[] | undefined {
@@ -240,7 +240,17 @@ export async function listCustomProviders(): Promise<CustomProvider[]> {
 }
 
 export async function listCustomProvidersByCapability(capability: AiCapability): Promise<CustomProvider[]> {
-  return (await listCustomProviders()).filter((p) => p.capability === capability);
+  const providers = await listCustomProviders();
+  if (capability === "stt") return providers.filter((provider) => provider.capability === "stt");
+  const general = providers.filter((provider) => provider.capability !== "stt");
+  if (capability === "image") {
+    const { isImageModelMetadata } = await import("./model-eligibility-service.js");
+    return general.filter((provider) => provider.models.some(isImageModelMetadata));
+  }
+  if (capability === "coding") {
+    return general.filter((provider) => provider.models.some(isChatModelMetadata));
+  }
+  return general;
 }
 
 export async function getCustomProvider(id: string): Promise<CustomProvider | undefined> {
@@ -384,7 +394,7 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
   applyProviderEnvironment(store);
   const providers: Record<string, unknown> = {};
 
-  for (const provider of store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID && p.capability === "coding")) {
+  for (const provider of store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID && p.capability !== "stt")) {
     if (!provider.apiKey?.trim()) {
       logger.warn(`[CustomProvider] Skipping provider ${provider.id}: API key is empty`);
       continue;
@@ -397,7 +407,7 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
         baseURL: provider.baseURL,
         apiKey: `{env:${envKey(provider.id)}}`,
       },
-      models: Object.fromEntries(provider.models.filter(isChatModelMetadata).map((model) => [model.id, getOpenCodeCustomModelConfig(model)])),
+      models: Object.fromEntries(provider.models.map((model) => [model.id, getOpenCodeCustomModelConfig(model)])),
     };
   }
 

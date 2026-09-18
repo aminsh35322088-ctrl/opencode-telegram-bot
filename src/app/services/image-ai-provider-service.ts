@@ -4,7 +4,7 @@ import { readBoundedJson, detectImageMimeType } from "./ai-http-service.js";
 import crypto from "node:crypto";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { logger } from "../../utils/logger.js";
-import { getCustomProviderConfig } from "./custom-provider-service.js";
+import { runOpenCodeImageModel } from "./opencode-image-execution-service.js";
 
 export type ImageAiCapability = "generate" | "edit";
 export interface ImageAiProviderStatus { id: string; name: string; model: string; editModel?: string; capabilities: ImageAiCapability[]; active: boolean; default: boolean; }
@@ -96,6 +96,7 @@ export async function runImageForSelection(
   prompt: string,
   image: ImageBinary | undefined,
   signal: AbortSignal,
+  worktree = process.cwd(),
 ): Promise<ImageBinary> {
   if (image && detectImageMimeType(image.buffer) !== image.mimeType) {
     throw new Error("Only valid PNG, JPEG and WebP images are supported");
@@ -103,60 +104,19 @@ export async function runImageForSelection(
 
   signal.throwIfAborted();
 
-  const custom = await getCustomProviderConfig(selection.providerID);
-  if (
-    custom
-    && custom.capability === "image"
-    && custom.models.some((model) => model.id === selection.modelID)
-  ) {
-    const transient: StoredImageAiProvider = {
-      id: selection.providerID,
-      name: selection.providerID,
-      baseURL: custom.apiUrl,
-      apiKey: custom.apiKey,
-      model: selection.modelID,
-      editModel: selection.editModelID ?? selection.modelID,
-      capabilities: ["generate", "edit"],
-      active: true,
-      default: false,
-      updatedAt: new Date().toISOString(),
-    };
-    const result = await runCustomOpenAiCompatible(
-      transient,
-      transient.apiKey,
-      prompt,
-      image?.buffer,
-      image?.mimeType,
-      signal,
-    );
-    const mimeType = detectImageMimeType(result.buffer);
-    if (!mimeType) throw new Error("Image provider returned an unsupported image format");
-    return { buffer: result.buffer, mimeType };
-  }
-
   const provider = (await getActiveImageAiProviders()).find((candidate) =>
     candidate.id === selection.providerID);
 
-  if (
-    !provider
-    || provider.model !== selection.modelID
-    || (provider.editModel ?? provider.model) !== (selection.editModelID ?? selection.modelID)
-    || !provider.capabilities.includes(image ? "edit" : "generate")
-  ) {
-    throw new Error("The selected Image Model is unavailable or changed. Choose it again in Settings.");
-  }
-
-  const result = provider.id === CUSTOM_ID
-    ? await runCustomOpenAiCompatible(
-      provider,
-      provider.apiKey,
-      prompt,
-      image?.buffer,
-      image?.mimeType,
-      signal,
-    )
-    : provider.id === CLOUDFLARE_ID
-      ? await runCloudflare(
+  if (provider) {
+    if (
+      provider.model !== selection.modelID
+      || (provider.editModel ?? provider.model) !== (selection.editModelID ?? selection.modelID)
+      || !provider.capabilities.includes(image ? "edit" : "generate")
+    ) {
+      throw new Error("The selected Image Model is unavailable or changed. Choose it again in Settings.");
+    }
+    const result = provider.id === CUSTOM_ID
+      ? await runCustomOpenAiCompatible(
         provider,
         provider.apiKey,
         prompt,
@@ -164,11 +124,25 @@ export async function runImageForSelection(
         image?.mimeType,
         signal,
       )
-      : (() => { throw new Error("Unsupported Image Model provider."); })();
+      : provider.id === CLOUDFLARE_ID
+        ? await runCloudflare(
+          provider,
+          provider.apiKey,
+          prompt,
+          image?.buffer,
+          image?.mimeType,
+          signal,
+        )
+        : (() => { throw new Error("Unsupported legacy Image Model provider."); })();
 
-  const mimeType = detectImageMimeType(result.buffer);
-  if (!mimeType) throw new Error("Image provider returned an unsupported image format");
-  return { buffer: result.buffer, mimeType };
+    const mimeType = detectImageMimeType(result.buffer);
+    if (!mimeType) throw new Error("Image provider returned an unsupported image format");
+    return { buffer: result.buffer, mimeType };
+  }
+
+  // Normal AI providers are executed through OpenCode itself. This keeps the
+  // image path provider-agnostic (Gemini/OpenRouter/custom gateways/etc.).
+  return runOpenCodeImageModel(selection, prompt, image, signal, worktree);
 }
 
 /** Dedicated chats pin one image connection. No fallback or ambiguous POST retry. */
