@@ -141,6 +141,10 @@ vi.mock("../../../src/app/managers/external-input-suppression-manager.js", () =>
 
 vi.mock("../../../src/app/services/prompt-attachment-service.js", () => ({
   resolvePendingAttachment: mocked.resolvePendingAttachmentMock,
+  resolvePendingAttachments: async (...args: unknown[]) => {
+    const value = await mocked.resolvePendingAttachmentMock(...args);
+    return value ? [value] : [];
+  },
 }));
 
 function createContext(): Context {

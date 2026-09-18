@@ -23,6 +23,20 @@ describe("app/managers/prompt-attachment-manager", () => {
     });
   });
 
+  it("supports multiple pending attachments while single set still replaces", () => {
+    promptAttachment.setMany([
+      { absolutePath: "D:\\Repo\\frame-01.jpg", worktree: "D:\\Repo", mimeType: "image/jpeg" },
+      { absolutePath: "D:\\Repo\\frame-02.jpg", worktree: "D:\\Repo", mimeType: "image/jpeg" },
+    ]);
+
+    expect(promptAttachment.getAll()).toHaveLength(2);
+    expect(promptAttachment.get()?.absolutePath).toBe("D:\\Repo\\frame-01.jpg");
+
+    promptAttachment.set("D:\\Repo\\single.txt", "D:\\Repo");
+    expect(promptAttachment.getAll()).toHaveLength(1);
+    expect(promptAttachment.get()?.absolutePath).toBe("D:\\Repo\\single.txt");
+  });
+
   it("keeps only the latest file when set twice", () => {
     promptAttachment.set("D:\\Repo\\a.ts", "D:\\Repo");
     promptAttachment.set("D:\\Repo\\b.ts", "D:\\Repo");

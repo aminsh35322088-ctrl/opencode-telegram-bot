@@ -208,6 +208,7 @@ interface RailwayIntegrationModule {
   removeRailwayAccount(id: string): Promise<boolean>;
 }
 interface VersionModule { getVersionSnapshot(): Promise<unknown>; }
+
 interface ConfigModule { config: { bot: { taskLimit: number } }; }
 
 async function load<T>(relativePath: string): Promise<T> {
