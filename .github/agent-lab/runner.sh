@@ -18,6 +18,11 @@ NPM_CACHE="$CACHE_ROOT/npm-downloads"
 MARKER="$ENV_DIR/.agent-lab-ready"
 
 materialize_tests() {
+  local exclude_file="$ROOT/.git/info/exclude"
+  if [[ -d "$ROOT/.git" ]]; then
+    mkdir -p "$(dirname "$exclude_file")"
+    grep -qxF "/tests/" "$exclude_file" 2>/dev/null || echo "/tests/" >> "$exclude_file"
+  fi
   rm -rf "$ROOT/tests"
   mkdir -p "$ROOT/tests"
   cp -R "$CI_TEST_SOURCE/." "$ROOT/tests/"
