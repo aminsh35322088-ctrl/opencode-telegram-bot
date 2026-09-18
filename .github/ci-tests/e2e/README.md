@@ -3,9 +3,7 @@
 Drives the real bot through Telegram Web with Playwright MCP — no MTProto, no API
 credentials. A persistent browser profile keeps the web session logged in.
 
-Running the checks is the job of the `manual-tester` subagent
-(`.claude/agents/manual-tester.md`). This file covers the one-time setup
-a human does first.
+Run these checks with the project's manual-testing agent/workflow when available. If no dedicated subagent is present in the current checkout, follow this document directly; the scenarios under `scenarios/` are the source of truth for repeatable physical checks.
 
 ## Files
 
@@ -44,6 +42,25 @@ a human does first.
 4. **Update the peer id.** The subagent opens the chat by
    `data-peer-id`. If you use a different test bot, update that id in
    `.claude/agents/manual-tester.md`.
+
+## GitHub Runner Lab preflight
+
+If the physical Telegram test is running on `GitHub-Runner-Lab`, runner lifetime is part of the test setup.
+
+Before launching the test bot:
+
+```bash
+# Run from the GitHub-Runner-Lab repository
+./scripts/agent-run.sh status
+```
+
+The report must include `RUNTIME_STATE` and `REMAINING_MINUTES`.
+
+- `SAFE`: normal physical testing is allowed.
+- `CAUTION`: only bounded smoke checks; do not start a long scenario.
+- `CHECKPOINT_REQUIRED`, `HANDOFF_IMMINENT`, or `HANDOFF_DUE`: stop before launching a new test, push durable work, checkpoint, and move to the successor runner.
+
+Once per physical-test session on the Lab, run the non-destructive [runner lifecycle scenario](./scenarios/runner-lifecycle.md). Do **not** modify the live lifecycle clock just to force warning states during a bot test.
 
 ## Running
 
@@ -98,8 +115,7 @@ too — there is no `.mcp.json` in this project.
 
 `scenarios/` holds the regression scenarios. The subagent runs them before any
 feature check, so a change that breaks the basic loop is caught before anything
-else is judged. Today there is one, [`smoke.md`](./scenarios/smoke.md) — longer
-scenarios get added as separate files next to it.
+else is judged. `smoke.md` covers the basic bot regression loop. When testing on GitHub Runner Lab, also run [`runner-lifecycle.md`](./scenarios/runner-lifecycle.md) once per physical-test session. Longer feature scenarios belong in separate files next to them.
 
 The feature scenario itself is passed to the subagent per task, as behaviour
 only: it gets no diff and no implementation detail, and writes its own cases.
