@@ -47,7 +47,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     mocks.getCompactOutputMode.mockReturnValue(false);
   });
 
-  it("bindTopic outside any runtime context still seeds the Topic's own persisted model, not the ambient default", () => {
+  it("bindTopic outside runtime context resolves Topic-scoped state while rendering the unified Models hub", () => {
     mocks.getStoredModel.mockReturnValue({ providerID: "p", modelID: "global-default", name: "Global Default" });
     mocks.getTopicRuntimeStateSync.mockReturnValue({
       settings: { model: { providerID: "p2", modelID: "topicone" } },
@@ -57,11 +57,12 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const texts = keyboardTexts(keyboardManager.getKeyboard("session-topic-model"));
 
     expect(mocks.getTopicRuntimeStateSync).toHaveBeenCalledWith(CHAT_ID, THREAD_ID);
-    expect(texts.some((text) => text.includes("topicone"))).toBe(true);
+    expect(texts).toContain("🧠 Models");
+    expect(texts.some((text) => text.includes("topicone"))).toBe(false);
     expect(texts.some((text) => text.includes("Global Default"))).toBe(false);
   });
 
-  it("re-syncs a stale keyboard state to the Topic's persisted model on the next bind", () => {
+  it("re-syncs Topic-scoped state on the next bind without leaking model labels into the reply keyboard", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
     mocks.getTopicRuntimeStateSync.mockReturnValue({
       settings: { model: { providerID: "p3", modelID: "persisted-model", name: "Persisted" } },
@@ -70,7 +71,9 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
     const texts = keyboardTexts(keyboardManager.getKeyboard("session-resync"));
 
-    expect(texts.some((text) => text.includes("Persisted"))).toBe(true);
+    expect(mocks.getTopicRuntimeStateSync).toHaveBeenCalledTimes(2);
+    expect(texts).toContain("🧠 Models");
+    expect(texts.some((text) => text.includes("Persisted"))).toBe(false);
     expect(texts.some((text) => text.includes("Global Model"))).toBe(false);
   });
 
@@ -88,7 +91,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     const keyboard = runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.getKeyboard());
     const texts = keyboardTexts(keyboard);
-    expect(texts).toContain("🧠 Global Model");
+    expect(texts).toContain("🧠 Models");
     expect(texts).not.toContain("💬 New Chat");
     expect(texts).not.toContain("⏸️ Pause");
     expect(texts).not.toContain("▶️ Resume");
@@ -129,7 +132,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
     expect(options.message_thread_id).toBe(THREAD_ID);
-    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
+    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Models");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
   });
 
