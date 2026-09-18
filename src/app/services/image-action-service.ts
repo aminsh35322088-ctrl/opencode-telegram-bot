@@ -1,21 +1,14 @@
 import {
-  listImageAiProviders,
   runImageForSelection,
   type ImageAiCapability,
-  type ImageAiProviderStatus,
 } from "./image-ai-provider-service.js";
+import {
+  catalogEntryMatchesSelection,
+  listImageModelCatalog,
+} from "./image-model-catalog-service.js";
 import { getEffectiveImageModel } from "../stores/settings-store.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { validateImage } from "./ai-http-service.js";
-
-function sameProviderSelection(
-  provider: ImageAiProviderStatus,
-  selection: ImageModelSelection,
-): boolean {
-  return provider.id === selection.providerID
-    && provider.model === selection.modelID
-    && (provider.editModel ?? provider.model) === (selection.editModelID ?? selection.modelID);
-}
 
 function requirePrompt(prompt: string): string {
   if (!prompt.trim()) throw new Error("Image instruction is empty.");
@@ -31,12 +24,11 @@ export async function resolveConfiguredImageModel(
     throw new Error("Image Model is not configured. Open Settings → Default Models → Image Model.");
   }
 
-  const provider = (await listImageAiProviders()).find((candidate) =>
-    candidate.active
-    && candidate.capabilities.includes(capability)
-    && sameProviderSelection(candidate, selection));
+  const model = (await listImageModelCatalog()).find((candidate) =>
+    candidate.capabilities.includes(capability)
+    && catalogEntryMatchesSelection(candidate, selection));
 
-  if (!provider) {
+  if (!model) {
     throw new Error(
       "The selected Image Model is unavailable or changed. Choose it again under Settings → Models → Image Model.",
     );

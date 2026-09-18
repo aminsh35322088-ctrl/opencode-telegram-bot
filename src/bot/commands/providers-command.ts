@@ -49,15 +49,34 @@ async function applyCodingChanges(): Promise<string> {
   catch { logger.warn("[Providers] Settings saved, but OpenCode refresh failed"); return "\n⚠️ Settings are saved. OpenCode could not reload them; restart the bot to apply."; }
 }
 async function renderImage(ctx: Context, id?: number, notice = "", backCallback = "icfg:root") {
-  const ps = await listImageAiProviders();
-  const cf = ps.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID), custom = ps.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+  const [legacy, providers] = await Promise.all([
+    listImageAiProviders(),
+    listCustomProviders(),
+  ]);
+  const cf = legacy.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
+  const oldCustom = legacy.find(p => p.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+  const imageProviders = providers.filter((provider) => provider.capability === "image");
   const keyboard = new InlineKeyboard()
-    .text(`☁️ Cloudflare Workers AI${cf ? " · Configured" : ""}`, "provider:image:cloudflare:configure").row()
-    .text(`🔌 Custom API${custom ? " · Configured" : ""}`, "provider:image:custom:configure").row();
+    .text(`☁️ Cloudflare Workers AI${cf ? " · Configured" : ""}`, "provider:image:cloudflare:configure").row();
+  for (const provider of imageProviders) {
+    keyboard.text(`🔌 ${provider.name} · ${provider.models.length} models`, `provider:view:${provider.id}`).row();
+  }
+  keyboard.text("➕ Add Custom Image API", "provider:add:image").row();
   if (cf) keyboard.text("Remove Cloudflare", "provider:remove-image:cloudflare").row();
-  if (custom) keyboard.text("Remove Custom API", "provider:remove-image:custom").row();
+  if (oldCustom) keyboard.text("Remove Legacy Custom API", "provider:remove-image:custom").row();
   keyboard.text(backCallback === "icfg:root" ? "← Image Chat" : "← Connections", backCallback);
-  await render(ctx, `${notice}🎨 Image connections\n\n${ps.map(p => `${p.name}: ${p.model}${p.editModel ? ` / edit: ${p.editModel}` : ""}`).join("\n") || "No generator configured."}\n\nThis screen manages API connections only. Choose the default image model under Settings → Default Models → Image Chat.`, keyboard, id);
+
+  const lines = [
+    ...(cf ? [`Cloudflare Workers AI: ${cf.model}`] : []),
+    ...imageProviders.map((provider) => `${provider.name}: ${provider.models.length} discovered models`),
+    ...(oldCustom ? [`Legacy Custom API: ${oldCustom.model}`] : []),
+  ];
+  await render(
+    ctx,
+    `${notice}🎨 Image connections\n\n${lines.join("\n") || "No image provider configured."}\n\nConnections only. Choose the global default under Settings → Default Models → Image Model, or override it inside an AI Topic → Models.`,
+    keyboard,
+    id,
+  );
 }
 async function renderSlot(ctx: Context, capability: AiCapability, id?: number, notice = "") {
   if (capability === "image") { await renderImage(ctx, id, notice, "provider:connections"); return; }
@@ -79,13 +98,15 @@ async function renderConnections(ctx: Context, id?: number, notice = "") {
   await render(ctx, `${notice}🔌 Manage Connections\n\nChoose which API connection type you want to manage. These controls no longer choose default models.`, keyboard, id);
 }
 async function renderProviders(ctx: Context, id?: number, notice = "") {
-  const [ps, imageProviders, groq] = await Promise.all([listCustomProviders(), listImageAiProviders(), isGroqSttConfigured()]);
+  const [ps, legacyImageProviders, groq] = await Promise.all([listCustomProviders(), listImageAiProviders(), isGroqSttConfigured()]);
   const coding = ps.filter(p => p.capability === "coding").length;
+  const imageConnections = ps.filter(p => p.capability === "image").length
+    + legacyImageProviders.filter(p => p.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID).length;
   const transcription = groq || ps.some(p => p.capability === "stt");
   const keyboard = new InlineKeyboard()
     .text("🔌 Manage Connections", "provider:connections").row()
     .text("← Settings", "provider:settings");
-  await render(ctx, `${notice}🔌 AI Providers\n\n${coding} chat/coding connection${coding === 1 ? "" : "s"}\n${imageProviders.length} image connection${imageProviders.length === 1 ? "" : "s"}\nTranscription: ${transcription ? "Configured" : "Not configured"}\n\nProvider setup lives here. Default model selection now lives under Settings → Default Models.`, keyboard, id);
+  await render(ctx, `${notice}🔌 AI Providers\n\n${coding} chat/coding connection${coding === 1 ? "" : "s"}\n${imageConnections} image connection${imageConnections === 1 ? "" : "s"}\nTranscription: ${transcription ? "Configured" : "Not configured"}\n\nProvider setup lives here. Default model selection now lives under Settings → Default Models.`, keyboard, id);
 }
 export async function providersCommand(ctx: CommandContext<Context>) {
   clearProviderWizard(); clearIntegrationWizard(); await renderProviders(ctx);
@@ -108,10 +129,10 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (data === "provider:image:engines") { await renderImage(ctx, id); return true; }
   if (data.startsWith("provider:add:")) {
     const capability = data.slice("provider:add:".length) as AiCapability;
-    if (capability === "coding" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
+    if (capability === "coding" || capability === "image" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
   }
   if (data === "provider:image:cloudflare:configure") { await start(ctx, "image-cloudflare-account", "Cloudflare Workers AI\n\n1/2 · Send the 32-character Account ID"); return true; }
-  if (data === "provider:image:custom:configure") { await start(ctx, "image-custom-base-url", "Custom image API\n\n1/4 · Base URL"); return true; }
+  if (data === "provider:image:custom:configure") { await start(ctx, "name", "Add Image provider\n\n1/3 · Provider name", "image"); return true; }
   if (data === "provider:stt:groq:add") { await start(ctx, "groq-stt-key", "Groq transcription\n\nSend the API key to verify.", "stt"); return true; }
   if (data === "provider:stt:groq:remove") { await removeGroqStt(); await renderSlot(ctx, "stt", id, "✅ Groq removed.\n\n"); return true; }
   if (data.startsWith("provider:stt:")) {

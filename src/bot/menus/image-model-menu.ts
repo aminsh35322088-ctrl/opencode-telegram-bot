@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { InlineKeyboard, type Context } from "grammy";
 import {
-  listImageAiProviders,
-  type ImageAiProviderStatus,
-} from "../../app/services/image-ai-provider-service.js";
+  catalogEntryMatchesSelection,
+  imageCatalogSelection,
+  listImageModelCatalog,
+  type ImageModelCatalogEntry,
+} from "../../app/services/image-model-catalog-service.js";
 import {
   getCurrentTopicImageModelOverride,
   getCurrentTopicSettings,
@@ -47,35 +49,17 @@ function scope(ctx: Context): string {
   return String(ctx.chat?.id ?? "unknown") + ":" + String(threadID > 1 ? threadID : 0);
 }
 
-function selectionFromProvider(provider: ImageAiProviderStatus): ImageModelSelection {
-  return {
-    providerID: provider.id,
-    modelID: provider.model,
-    ...(provider.editModel ? { editModelID: provider.editModel } : {}),
-  };
-}
-
-function sameSelection(
-  left: ImageModelSelection | undefined,
-  right: ImageModelSelection,
-): boolean {
-  return left?.providerID === right.providerID
-    && left.modelID === right.modelID
-    && (left.editModelID ?? left.modelID) === (right.editModelID ?? right.modelID);
-}
-
 function formatSelection(
   selection: ImageModelSelection | undefined,
-  providers: ImageAiProviderStatus[],
+  catalog: ImageModelCatalogEntry[],
 ): string {
   if (!selection) return "Not configured";
-  const provider = providers.find((candidate) => candidate.id === selection.providerID);
-  const name = provider?.name ?? selection.providerID;
-  const stale = !provider
-    || provider.model !== selection.modelID
-    || (provider.editModel ?? provider.model) !== (selection.editModelID ?? selection.modelID)
-    || !provider.active;
-  return html(name) + " · " + html(selection.modelID) + (stale ? " · unavailable" : "");
+  const entry = catalog.find((candidate) =>
+    catalogEntryMatchesSelection(candidate, selection));
+  if (!entry) {
+    return html(selection.providerID) + " · " + html(selection.modelID) + " · unavailable";
+  }
+  return html(entry.providerName) + " · " + html(entry.modelName);
 }
 
 function choice(ctx: Context, selection: ImageModelSelection): string {
@@ -89,21 +73,14 @@ function choice(ctx: Context, selection: ImageModelSelection): string {
   return PICK_PREFIX + token;
 }
 
-function selectableProviders(
-  providers: ImageAiProviderStatus[],
-): ImageAiProviderStatus[] {
-  return providers.filter((provider) =>
-    provider.active
-    && provider.capabilities.includes("generate")
-    && provider.capabilities.includes("edit"));
-}
-
 export async function buildImageModelSettingsView(
   ctx: Context,
   notice = "",
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const providers = await listImageAiProviders();
-  const selectable = selectableProviders(providers);
+  const catalog = (await listImageModelCatalog())
+    .filter((entry) =>
+      entry.capabilities.includes("generate")
+      && entry.capabilities.includes("edit"));
   const topic = getCurrentTopicSettings();
   const globalDefault = getDefaultImageModel();
   const override = getCurrentTopicImageModelOverride();
@@ -113,11 +90,14 @@ export async function buildImageModelSettingsView(
   const keyboard = new InlineKeyboard();
   if (topic && override) keyboard.text("↩️ Use Main Default", RESET_CALLBACK).row();
 
-  for (const provider of selectable) {
-    const selection = selectionFromProvider(provider);
-    const selected = sameSelection(topic ? override : globalDefault, selection);
+  for (const entry of catalog.slice(0, 60)) {
+    const selection = imageCatalogSelection(entry);
+    const activeSelection = topic ? override : globalDefault;
+    const selected = activeSelection
+      ? catalogEntryMatchesSelection(entry, activeSelection)
+      : false;
     keyboard.text(
-      (selected ? "✅ " : "🎨 ") + provider.name + " · " + provider.model,
+      (selected ? "✅ " : "🎨 ") + entry.providerName + " · " + entry.modelName,
       choice(ctx, selection),
     ).row();
   }
@@ -133,7 +113,7 @@ export async function buildImageModelSettingsView(
     "🎨 <b>Image Model</b>",
     "",
     "Source · " + source,
-    "Current · " + formatSelection(current, providers),
+    "Current · " + formatSelection(current, catalog),
     "",
     topic
       ? "Choose an override for this AI Topic, or inherit the Main Default."
@@ -141,7 +121,7 @@ export async function buildImageModelSettingsView(
     "",
     "There is no automatic fallback. If the selected image model becomes unavailable, image actions fail explicitly until you choose another model.",
   ];
-  if (selectable.length === 0) {
+  if (catalog.length === 0) {
     lines.push("", "No configured image connection currently supports both generation and editing.");
   }
 
@@ -190,10 +170,10 @@ export async function handleImageModelSettingsCallback(
     return true;
   }
 
-  const providers = selectableProviders(await listImageAiProviders());
-  const provider = providers.find((candidate) =>
-    sameSelection(selectionFromProvider(candidate), selected.selection));
-  if (!provider) {
+  const catalog = await listImageModelCatalog();
+  const model = catalog.find((candidate) =>
+    catalogEntryMatchesSelection(candidate, selected.selection));
+  if (!model) {
     await ctx.answerCallbackQuery({
       text: "This Image Model is no longer available. Reopen the menu.",
       show_alert: true,

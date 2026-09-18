@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   getEffectiveImageModel,
-  listImageAiProviders,
+  listImageModelCatalog,
   runImageForSelection,
 } = vi.hoisted(() => ({
   getEffectiveImageModel: vi.fn(),
-  listImageAiProviders: vi.fn(),
+  listImageModelCatalog: vi.fn(),
   runImageForSelection: vi.fn(),
 }));
 
@@ -14,37 +14,41 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getEffectiveImageModel,
 }));
 vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
-  listImageAiProviders,
   runImageForSelection,
+}));
+vi.mock("../../../src/app/services/image-model-catalog-service.js", () => ({
+  listImageModelCatalog,
+  catalogEntryMatchesSelection: (entry: any, selection: any) =>
+    entry.providerID === selection.providerID
+      && entry.modelID === selection.modelID
+      && (entry.editModelID ?? entry.modelID) === (selection.editModelID ?? selection.modelID),
 }));
 
 import {
   editConfiguredImage,
   generateConfiguredImage,
   resolveConfiguredImageModel,
-} from "../../../src/app/services/image-action-service.js";
-
-const selection = {
-  providerID: "cloudflare",
-  modelID: "flux-main",
-  editModelID: "flux-edit",
+} from "../../../src/app/services/image-action-service.js";const selection = {
+  providerID: "custom-images",
+  modelID: "image-v2",
+  editModelID: "image-v2",
 };
 
-const provider = {
-  id: "cloudflare",
-  name: "Cloudflare",
-  model: "flux-main",
-  editModel: "flux-edit",
+const catalogEntry = {
+  providerID: "custom-images",
+  providerName: "Custom Images",
+  modelID: "image-v2",
+  modelName: "Image V2",
+  editModelID: "image-v2",
   capabilities: ["generate", "edit"],
-  active: true,
-  default: false,
+  source: "custom-provider",
 };
 
 describe("image-action-service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getEffectiveImageModel.mockReturnValue(selection);
-    listImageAiProviders.mockResolvedValue([provider]);
+    listImageModelCatalog.mockResolvedValue([catalogEntry]);
     runImageForSelection.mockResolvedValue({
       buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       mimeType: "image/png",
@@ -58,15 +62,9 @@ describe("image-action-service", () => {
       "Image Model is not configured",
     );
     expect(runImageForSelection).not.toHaveBeenCalled();
-  });
-
-  it("never falls back to another provider when the selected model is unavailable", async () => {
-    listImageAiProviders.mockResolvedValue([
-      {
-        ...provider,
-        id: "custom-image-ai",
-        name: "Other provider",
-      },
+  });  it("never falls back when the selected catalog entry is unavailable", async () => {
+    listImageModelCatalog.mockResolvedValue([
+      { ...catalogEntry, providerID: "other-provider", modelID: "other-model" },
     ]);
 
     await expect(resolveConfiguredImageModel("generate")).rejects.toThrow(
@@ -94,9 +92,7 @@ describe("image-action-service", () => {
       mimeType: "image/png",
     };
 
-    await editConfiguredImage("make the sky warmer", source, controller.signal);
-
-    expect(runImageForSelection).toHaveBeenCalledWith(
+    await editConfiguredImage("make the sky warmer", source, controller.signal);    expect(runImageForSelection).toHaveBeenCalledWith(
       selection,
       "make the sky warmer",
       source,

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  listImageAiProviders,
+  listImageModelCatalog,
   getCurrentTopicSettings,
   getCurrentTopicImageModelOverride,
   getDefaultImageModel,
   setCurrentTopicImageModelOverride,
   setDefaultImageModel,
 } = vi.hoisted(() => ({
-  listImageAiProviders: vi.fn(),
+  listImageModelCatalog: vi.fn(),
   getCurrentTopicSettings: vi.fn(),
   getCurrentTopicImageModelOverride: vi.fn(),
   getDefaultImageModel: vi.fn(),
@@ -16,10 +16,18 @@ const {
   setDefaultImageModel: vi.fn(),
 }));
 
-vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
-  listImageAiProviders,
-}));
-vi.mock("../../../src/app/stores/settings-store.js", () => ({
+vi.mock("../../../src/app/services/image-model-catalog-service.js", () => ({
+  listImageModelCatalog,
+  imageCatalogSelection: (entry: any) => ({
+    providerID: entry.providerID,
+    modelID: entry.modelID,
+    ...(entry.editModelID ? { editModelID: entry.editModelID } : {}),
+  }),
+  catalogEntryMatchesSelection: (entry: any, selection: any) =>
+    entry.providerID === selection.providerID
+      && entry.modelID === selection.modelID
+      && (entry.editModelID ?? entry.modelID) === (selection.editModelID ?? selection.modelID),
+}));vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentTopicSettings,
   getCurrentTopicImageModelOverride,
   getDefaultImageModel,
@@ -54,46 +62,53 @@ function context(data: string) {
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
   } as unknown as import("grammy").Context;
-}
-
-describe("Image Model V2 menu", () => {
+}describe("Image Model V2 menu", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearImageModelMenuChoices();
-    listImageAiProviders.mockResolvedValue([
+    listImageModelCatalog.mockResolvedValue([
       {
-        id: "cloudflare",
-        name: "Cloudflare",
-        model: "flux-main",
-        editModel: "flux-edit",
+        providerID: "custom-images",
+        providerName: "Custom Images",
+        modelID: "image-a",
+        modelName: "Image A",
+        editModelID: "image-a",
         capabilities: ["generate", "edit"],
-        active: true,
-        default: true,
+        source: "custom-provider",
       },
       {
-        id: "generate-only",
-        name: "Generate only",
-        model: "gen",
+        providerID: "custom-images",
+        providerName: "Custom Images",
+        modelID: "image-b",
+        modelName: "Image B",
+        editModelID: "image-b",
+        capabilities: ["generate", "edit"],
+        source: "custom-provider",
+      },
+      {
+        providerID: "generate-only",
+        providerName: "Generate only",
+        modelID: "gen",
+        modelName: "Gen",
         capabilities: ["generate"],
-        active: true,
-        default: false,
+        source: "custom-provider",
       },
     ]);
     getDefaultImageModel.mockReturnValue({
-      providerID: "cloudflare",
-      modelID: "flux-main",
-      editModelID: "flux-edit",
+      providerID: "custom-images",
+      modelID: "image-a",
+      editModelID: "image-a",
     });
     getCurrentTopicImageModelOverride.mockReturnValue(undefined);
-  });
-
-  it("shows the global default and only generator+editor connections", async () => {
+  });  it("shows every selectable model discovered from an image provider", async () => {
     getCurrentTopicSettings.mockReturnValue(undefined);
     const view = await buildImageModelSettingsView(context("settings:image_model"));
 
     expect(view.text).toContain("Main Default");
-    expect(view.text).toContain("Cloudflare · flux-main");
-    expect(view.text).not.toContain("Generate only");
+    const labels = view.keyboard.inline_keyboard.flat().map((button) => button.text);
+    expect(labels).toContain("✅ Custom Images · Image A");
+    expect(labels).toContain("🎨 Custom Images · Image B");
+    expect(labels).not.toContain("🎨 Generate only · Gen");
     expect(callbacks(view)).toContain("settings:default_models");
   });
 
@@ -106,30 +121,28 @@ describe("Image Model V2 menu", () => {
     expect(callbacks(view)).not.toContain("settings:image_model:reset");
 
     getCurrentTopicImageModelOverride.mockReturnValue({
-      providerID: "cloudflare",
-      modelID: "flux-main",
-      editModelID: "flux-edit",
+      providerID: "custom-images",
+      modelID: "image-b",
+      editModelID: "image-b",
     });
     view = await buildImageModelSettingsView(context("settings:image_model"));
     expect(view.text).toContain("Source · Topic Override");
     expect(callbacks(view)).toContain("settings:image_model:reset");
-  });
-
-  it("stores a Topic override from a bounded callback token", async () => {
+  });  it("stores a Topic override from a bounded callback token", async () => {
     getCurrentTopicSettings.mockReturnValue({
       model: { providerID: "p", modelID: "m" },
     });
     const view = await buildImageModelSettingsView(context("settings:image_model"));
-    const pick = callbacks(view).find((value) =>
+    const picks = callbacks(view).filter((value) =>
       value.startsWith("settings:image_model:pick:"));
-    expect(pick).toBeDefined();
+    expect(picks).toHaveLength(2);
 
-    await handleImageModelSettingsCallback(context(pick!), pick!);
+    await handleImageModelSettingsCallback(context(picks[1]!), picks[1]!);
 
     expect(setCurrentTopicImageModelOverride).toHaveBeenCalledWith({
-      providerID: "cloudflare",
-      modelID: "flux-main",
-      editModelID: "flux-edit",
+      providerID: "custom-images",
+      modelID: "image-b",
+      editModelID: "image-b",
     });
     expect(setDefaultImageModel).not.toHaveBeenCalled();
   });
