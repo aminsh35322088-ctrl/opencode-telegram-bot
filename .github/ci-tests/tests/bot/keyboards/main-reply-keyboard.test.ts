@@ -30,7 +30,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.is_persistent).toBeUndefined();
   });
 
-  it("shows model selection only inside an AI Topic", () => {
+  it("shows the unified Models hub only inside an AI Topic", () => {
     const keyboard = createMainKeyboard({
       providerID: "very-long-provider-name-that-keeps-going-and-going",
       modelID: "vendor/very-long-model-name-that-keeps-going-and-going",
@@ -38,7 +38,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     }, { isTopic: true });
 
     const labels = keyboard.keyboard.flat().map(getButtonText);
-    expect(labels).toContain("🧠 Custom Model 2026");
+    expect(labels).toContain("🧠 Models");
     expect(labels.join("\n")).not.toContain("very-long-provider-name");
     expect(labels.join("\n")).not.toContain(" · ");
   });
@@ -72,7 +72,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
       [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
       [{ text: "📦 Compact: ON" }],
-      [{ text: "🧠 GPT 4o" }],
+      [{ text: "🧠 Models" }],
       [{ text: "🗑️ Delete Chat" }, { text: "⚙️ Topic Settings" }],
     ]);
   });

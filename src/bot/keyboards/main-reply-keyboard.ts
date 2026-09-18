@@ -1,6 +1,6 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
-import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
+import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
 
 export const MAIN_BUTTONS = {
@@ -22,9 +22,8 @@ export const TOPIC_BUTTONS = {
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
-  modelCenter: (model?: ModelInfo) => model?.providerID && model.modelID
-    ? formatModelForButton(model.providerID, model.modelID, model.name)
-    : "🧠 Model",
+  models: "🧠 Models",
+  modelCenter: (_model?: ModelInfo) => "🧠 Models",
   deleteChat: MAIN_BUTTONS.deleteChat,
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
