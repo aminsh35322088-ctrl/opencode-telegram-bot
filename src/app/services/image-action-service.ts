@@ -9,6 +9,7 @@ import {
 import { getEffectiveImageModel } from "../stores/settings-store.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { validateImage } from "./ai-http-service.js";
+import { resolvePersistedImageModel } from "./image-model-resolution-service.js";
 
 function requirePrompt(prompt: string): string {
   if (!prompt.trim()) throw new Error("Image instruction is empty.");
@@ -18,8 +19,11 @@ function requirePrompt(prompt: string): string {
 
 export async function resolveConfiguredImageModel(
   capability: ImageAiCapability,
+  worktree?: string,
 ): Promise<ImageModelSelection> {
-  const selection = getEffectiveImageModel();
+  const selection = worktree
+    ? await resolvePersistedImageModel(worktree)
+    : getEffectiveImageModel() ?? await resolvePersistedImageModel();
   if (!selection) {
     throw new Error("Image Model is not configured. Open Settings → Default Models → Image Model.");
   }
@@ -40,9 +44,10 @@ export async function resolveConfiguredImageModel(
 export async function generateConfiguredImage(
   prompt: string,
   signal: AbortSignal = AbortSignal.timeout(120_000),
+  worktree?: string,
 ): Promise<ImageBinary> {
   const instruction = requirePrompt(prompt);
-  const selection = await resolveConfiguredImageModel("generate");
+  const selection = await resolveConfiguredImageModel("generate", worktree);
   signal.throwIfAborted();
   return runImageForSelection(selection, instruction, undefined, signal);
 }
@@ -51,10 +56,11 @@ export async function editConfiguredImage(
   prompt: string,
   source: ImageBinary,
   signal: AbortSignal = AbortSignal.timeout(120_000),
+  worktree?: string,
 ): Promise<ImageBinary> {
   const instruction = requirePrompt(prompt);
   validateImage(source.buffer, source.mimeType);
-  const selection = await resolveConfiguredImageModel("edit");
+  const selection = await resolveConfiguredImageModel("edit", worktree);
   signal.throwIfAborted();
   return runImageForSelection(selection, instruction, source, signal);
 }
