@@ -98,6 +98,21 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 
 When the user explicitly asks for a fix/change, direct GitHub changes are authorized. Keep commits focused and descriptive.
 
+## Physical/manual bot testing on GitHub Runner Lab
+
+When browser-driven or other physical Telegram tests run on `GitHub-Runner-Lab`, treat the runner lifecycle as part of the test preflight.
+
+Before starting the test bot, and again before any long feature scenario:
+
+1. From the Lab repository, run `./scripts/agent-run.sh status`.
+2. Record `RUNTIME_STATE` and `REMAINING_MINUTES` in the test notes.
+3. Start normal/heavy physical testing only in `SAFE`.
+4. In `CAUTION`, run only bounded smoke checks and prepare durable commits.
+5. In `CHECKPOINT_REQUIRED`, `HANDOFF_IMMINENT`, or `HANDOFF_DUE`, do not start a new physical test. Push safe changes, create/verify a runner checkpoint, and move to the successor runner first.
+6. Run the non-destructive runner lifecycle scenario in `.github/ci-tests/e2e/scenarios/runner-lifecycle.md` once per physical-test session when using the Lab.
+
+Do not alter the live runner timer to test deadline behavior during bot testing. Deadline-state logic is validated in the Runner Lab repository; bot physical tests only verify live status visibility and checkpoint/recovery plumbing.
+
 ## Runtime diagnostics
 
 For a stuck coding session, use the existing runtime diagnostics and recovery tools. Keep operational diagnostics separate from application execution paths.
