@@ -63,7 +63,7 @@ export const CUSTOM_TOOL_ACTIONS = {
   "github-ci": ["status", "watch", "logs", "verify"],
   "image-inspect": ["inspect"],
   "logs-observability": ["search"],
-  media: ["stt.status", "stt.transcribe", "image.providers", "image.profile", "image.generate", "image.edit"],
+  media: ["stt.status", "stt.transcribe", "image.providers", "image.models", "image.current", "image.generate", "image.edit"],
   "network-diagnostics": ["dns", "http", "tcp"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   rustdesk: [
@@ -113,8 +113,10 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
   "bot.settings.set": "Update a constrained safe bot setting.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
-  "media.image.generate": "Generate an image with the configured Image Chat engine and save it to the worktree.",
-  "media.image.edit": "Edit a worktree image with the configured Image Chat engine and save the result.",
+  "media.image.generate": "Generate an image with the effective Main/Topic Image Model and save it to the worktree.",
+  "media.image.edit": "Edit a worktree image with the effective Main/Topic Image Model and save the result.",
+  "media.image.models": "List image models discovered from configured image providers.",
+  "media.image.current": "Show the effective Image Model for the current worktree/Topic.",
   "rustdesk.devices.list": "List authorized RustDesk devices with OS and capability metadata.",
   "rustdesk.terminal.exec": "Execute a command in an authorized remote device terminal.",
   "rustdesk.screen.capture": "Capture the current screen of an authorized remote device.",
@@ -141,7 +143,7 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     if (BOT_MUTATING.has(action)) return "mutating";
     if (BOT_READ.has(action)) return "read";
   }
-  if (tool === "media") return ["stt.status", "image.providers", "image.profile"].includes(action) ? "read" : "external";
+  if (tool === "media") return ["stt.status", "image.providers", "image.models", "image.current"].includes(action) ? "read" : "external";
   if (tool === "rustdesk") {
     if (action === "system.restart") return "destructive";
     return /^(device\.(connect|disconnect)|terminal\.(exec|open|write|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action) ? "mutating" : "read";

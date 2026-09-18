@@ -7,7 +7,8 @@ const MEDIA_ACTIONS = [
   "stt.status",
   "stt.transcribe",
   "image.providers",
-  "image.profile",
+  "image.models",
+  "image.current",
   "image.generate",
   "image.edit",
 ] as const;
@@ -21,20 +22,20 @@ interface SttModule {
   isSttConfigured(): Promise<boolean>;
   transcribeAudio(audioBuffer: Buffer, filename: string): Promise<{ text: string; uncertain?: boolean }>;
 }
-interface ImageProviderModule {
-  listImageAiProviders(): Promise<unknown[]>;
+interface ImageCatalogModule {
+  listImageModelCatalog(): Promise<unknown[]>;
 }
-interface ImageProfileModule {
-  resolveDefaultImageChatProfile(): Promise<{ profile: unknown; source: "auto" | "manual"; selection: string }>;
+interface ImageResolutionModule {
+  resolvePersistedImageModel(worktree?: string): Promise<unknown>;
 }
-interface ImageEngineModule {
-  runImageChatEngine(
-    profile: unknown,
-    turns: Array<{ role: "user" | "model"; parts: Array<{ text?: string; image?: { fileID: string; mimeType: string } }> }>,
-    reference: { fileID: string; mimeType: string } | undefined,
-    load: (reference: { fileID: string; mimeType: string }, signal: AbortSignal) => Promise<{ buffer: Buffer; mimeType: string }>,
-    signal: AbortSignal,
-  ): Promise<Array<{ text?: string; image?: { buffer: Buffer; mimeType: string }; thought?: boolean }>>;
+interface ImageActionModule {
+  generateConfiguredImage(prompt: string, signal?: AbortSignal, worktree?: string): Promise<{ buffer: Buffer; mimeType: string }>;
+  editConfiguredImage(
+    prompt: string,
+    source: { buffer: Buffer; mimeType: string },
+    signal?: AbortSignal,
+    worktree?: string,
+  ): Promise<{ buffer: Buffer; mimeType: string }>;
 }
 interface AiHttpModule {
   detectImageMimeType(buffer: Buffer): string | null;
@@ -68,7 +69,7 @@ function extensionForMime(mimeType: string): string {
 
 export default tool({
   description:
-    "Use the bot's configured audio transcription and Image Chat engines through explicit actions. Credentials stay inside the bot. Input/output files are restricted to the current worktree.",
+    "Use the bot's configured STT and Image AI capabilities. Image generation/editing always uses the effective Image Model selected in Main Settings or overridden for this AI Topic. Credentials and provider/model resolution stay server-side.",
   args: {
     action: tool.schema.enum(MEDIA_ACTIONS).describe("Media action to execute."),
     path: tool.schema.string().optional().describe("Worktree-relative audio or reference-image path."),
@@ -88,71 +89,74 @@ export default tool({
       const filePath = resolveWorktreePath(context.worktree, rawPath);
       const stat = await fs.stat(filePath);
       if (!stat.isFile()) throw new Error("Audio path is not a regular file.");
-      if (stat.size > MAX_AUDIO_BYTES) throw new Error(`Audio file exceeds the ${MAX_AUDIO_BYTES} byte agent limit.`);
+      if (stat.size > MAX_AUDIO_BYTES) {
+        throw new Error(`Audio file exceeds the ${MAX_AUDIO_BYTES} byte agent limit.`);
+      }
       const service = await load<SttModule>("app/services/stt-service.js");
-      const result = await service.transcribeAudio(await fs.readFile(filePath), path.basename(filePath));
-      return JSON.stringify(result, null, 2);
+      return JSON.stringify(
+        await service.transcribeAudio(await fs.readFile(filePath), path.basename(filePath)),
+        null,
+        2,
+      );
     }
 
-    if (action === "image.providers") {
-      const service = await load<ImageProviderModule>("app/services/image-ai-provider-service.js");
-      return JSON.stringify(await service.listImageAiProviders(), null, 2).slice(0, 30000);
+    if (action === "image.providers" || action === "image.models") {
+      const catalog = await load<ImageCatalogModule>("app/services/image-model-catalog-service.js");
+      return JSON.stringify(await catalog.listImageModelCatalog(), null, 2).slice(0, 30000);
     }
 
-    const profileService = await load<ImageProfileModule>("app/services/image-chat-profile-service.js");
-    const resolved = await profileService.resolveDefaultImageChatProfile();
-    if (action === "image.profile") {
-      return JSON.stringify(resolved, null, 2).slice(0, 30000);
+    if (action === "image.current") {
+      const resolver = await load<ImageResolutionModule>("app/services/image-model-resolution-service.js");
+      return JSON.stringify({
+        selection: await resolver.resolvePersistedImageModel(context.worktree) ?? null,
+      }, null, 2);
     }
 
     const prompt = required(args.prompt, "prompt", action);
-    const engine = await load<ImageEngineModule>("app/services/image-chat-engine.js");
-    const aiHttp = await load<AiHttpModule>("app/services/ai-http-service.js");
+    const imageService = await load<ImageActionModule>("app/services/image-action-service.js");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 180_000);
 
-    let reference: { fileID: string; mimeType: string } | undefined;
-    if (action === "image.edit") {
-      const rawPath = required(args.path, "path", action);
-      const filePath = resolveWorktreePath(context.worktree, rawPath);
-      const buffer = await fs.readFile(filePath);
-      const mimeType = aiHttp.detectImageMimeType(buffer);
-      if (!mimeType) throw new Error("Reference file is not a supported image.");
-      reference = { fileID: filePath, mimeType };
-    }
-
     try {
-      const turns = [{
-        role: "user" as const,
-        parts: [
-          { text: prompt },
-          ...(reference ? [{ image: reference }] : []),
-        ],
-      }];
-      const parts = await engine.runImageChatEngine(
-        resolved.profile,
-        turns,
-        reference,
-        async (item) => {
-          const buffer = await fs.readFile(item.fileID);
-          const mimeType = aiHttp.detectImageMimeType(buffer);
-          if (!mimeType) throw new Error("Reference file is not a supported image.");
-          return { buffer, mimeType };
-        },
-        controller.signal,
-      );
-      const imagePart = parts.find((part) => part.image)?.image;
-      const text = parts.filter((part) => !part.thought && part.text).map((part) => part.text).join("\n").trim();
-      if (!imagePart) throw new Error("Image engine returned no image for this request.");
+      let result: { buffer: Buffer; mimeType: string };
+      if (action === "image.edit") {
+        const rawPath = required(args.path, "path", action);
+        const filePath = resolveWorktreePath(context.worktree, rawPath);
+        const buffer = await fs.readFile(filePath);
+        const aiHttp = await load<AiHttpModule>("app/services/ai-http-service.js");
+        const mimeType = aiHttp.detectImageMimeType(buffer);
+        if (!mimeType) throw new Error("Reference file is not a supported image.");
+        result = await imageService.editConfiguredImage(
+          prompt,
+          { buffer, mimeType },
+          controller.signal,
+          context.worktree,
+        );
+      } else {
+        result = await imageService.generateConfiguredImage(
+          prompt,
+          controller.signal,
+          context.worktree,
+        );
+      }
 
       const requestedOutput = args.output?.trim() || `artifacts/image-${Date.now()}`;
       const outputPath = resolveWorktreePath(
         context.worktree,
-        path.extname(requestedOutput) ? requestedOutput : `${requestedOutput}${extensionForMime(imagePart.mimeType)}`,
+        path.extname(requestedOutput)
+          ? requestedOutput
+          : requestedOutput + extensionForMime(result.mimeType),
       );
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
-      await fs.writeFile(outputPath, imagePart.buffer);
-      return JSON.stringify({ ok: true, path: outputPath, mimeType: imagePart.mimeType, text, profile: resolved.selection }, null, 2);
+      await fs.writeFile(outputPath, result.buffer);
+
+      const resolver = await load<ImageResolutionModule>("app/services/image-model-resolution-service.js");
+      return JSON.stringify({
+        ok: true,
+        path: outputPath,
+        mimeType: result.mimeType,
+        selection: await resolver.resolvePersistedImageModel(context.worktree) ?? null,
+      }, null, 2);
     } finally {
       clearTimeout(timer);
     }
