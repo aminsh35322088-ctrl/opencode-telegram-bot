@@ -11,6 +11,7 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
+import { handleImageModelSettingsCallback } from "../menus/image-model-menu.js";
 
 import {
   buildDefaultModelsSettingsView,
@@ -26,12 +27,15 @@ import {
   buildResetHistoryConfirmationView,
   buildSettingsMenuView,
   buildTopicDefaultsSettingsView,
+  buildTopicModelsSettingsView,
   SETTINGS_AGENT_CALLBACK,
   SETTINGS_ADVANCED_CALLBACK,
   SETTINGS_APPEARANCE_CALLBACK,
   SETTINGS_ASSISTANT_FOOTER_CALLBACK,
   SETTINGS_BACK_CALLBACK,
   SETTINGS_CHAT_MODEL_CALLBACK,
+  SETTINGS_IMAGE_MODEL_CALLBACK,
+  SETTINGS_TOPIC_MODELS_CALLBACK,
   SETTINGS_COMMANDS_CALLBACK,
   SETTINGS_COMPACT_OUTPUT_CALLBACK,
   SETTINGS_CONTEXT_CALLBACK,
@@ -106,8 +110,16 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
       return true;
     }
+    if (
+      callbackData === SETTINGS_IMAGE_MODEL_CALLBACK
+      || callbackData.startsWith(SETTINGS_IMAGE_MODEL_CALLBACK + ":")
+    ) {
+      return await handleImageModelSettingsCallback(ctx, callbackData);
+    }
+
     switch (callbackData) {
       // Topic Settings keeps its per-topic model selector. Global Settings uses the unified Default Models hub.
+      case SETTINGS_TOPIC_MODELS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicModelsSettingsView(), "back"); return true;
       case SETTINGS_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
       case SETTINGS_DEFAULT_MODELS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildDefaultModelsSettingsView(), "back"); return true;
       case SETTINGS_CHAT_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;

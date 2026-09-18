@@ -1,9 +1,17 @@
 import type { CommandContext, Context } from "grammy";
-import { buildSettingsMenuView } from "../menus/settings-menu.js";
+import {
+  buildSettingsMenuView,
+  buildTopicModelsSettingsView,
+} from "../menus/settings-menu.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
-import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import {
+  getTopicRuntimeContext,
+  runInTopicRuntimeContext,
+} from "../../app/services/topic-runtime-context.js";
 import { ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+
+type SettingsView = ReturnType<typeof buildSettingsMenuView>;
 
 function getThreadId(ctx: Context): number | undefined {
   const message = ctx.message ?? ctx.callbackQuery?.message;
@@ -13,14 +21,17 @@ function getThreadId(ctx: Context): number | undefined {
   return typeof threadId === "number" && threadId > 1 ? threadId : undefined;
 }
 
-async function buildInitialSettingsView(ctx: Context): Promise<ReturnType<typeof buildSettingsMenuView>> {
+async function buildScopedSettingsView(
+  ctx: Context,
+  builder: () => SettingsView,
+): Promise<SettingsView> {
   const runtime = getTopicRuntimeContext();
   const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
   const threadId = getThreadId(ctx);
 
   if (runtime && runtime.chatId === chatId && runtime.threadId === threadId) {
     ensureTopicRuntimeStateSync(runtime.chatId, runtime.threadId);
-    return buildSettingsMenuView();
+    return builder();
   }
 
   if (typeof chatId === "number" && typeof threadId === "number") {
@@ -35,17 +46,38 @@ async function buildInitialSettingsView(ctx: Context): Promise<ReturnType<typeof
         workspaceDirectory: binding.directory,
       });
       return runInTopicRuntimeContext(
-        { chatId, threadId, sessionId: binding.sessionId, directory: binding.directory },
-        () => buildSettingsMenuView(),
+        {
+          chatId,
+          threadId,
+          sessionId: binding.sessionId,
+          directory: binding.directory,
+        },
+        builder,
       );
     }
   }
 
-  return buildSettingsMenuView();
+  return builder();
 }
 
 export async function settingsCommand(ctx: CommandContext<Context>): Promise<void> {
-  const { text, keyboard } = await buildInitialSettingsView(ctx as Context);
+  const { text, keyboard } = await buildScopedSettingsView(
+    ctx as Context,
+    buildSettingsMenuView,
+  );
+
+  await replyWithInlineMenu(ctx, {
+    menuKind: "settings",
+    text,
+    keyboard,
+  });
+}
+
+export async function topicModelsCommand(ctx: Context): Promise<void> {
+  const { text, keyboard } = await buildScopedSettingsView(
+    ctx,
+    buildTopicModelsSettingsView,
+  );
 
   await replyWithInlineMenu(ctx, {
     menuKind: "settings",

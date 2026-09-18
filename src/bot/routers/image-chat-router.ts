@@ -221,7 +221,7 @@ export function createImageChatMiddleware(): MiddlewareFn<Context> {
         await send(ctx, resolved ? `🖼 New design started with ${resolved.source === "auto" ? `Auto · ${resolved.selection}` : `Manual · ${resolved.selection}`}. Send an idea or reply to an image.` : "🖼 New design started. Send an idea or reply to an image.", { profile: resolved?.profile ?? state.profile }); return;
       }
       if (text === MAIN_BUTTONS.topicSettings || text.startsWith(IMAGE_CHAT_BUTTONS.modelPrefix) || data === "ichat:settings") { await sendMenu(ctx, buildImageChatTopicSettingsView(state)); return; }
-      const oldControl = Object.values(MAIN_BUTTONS).some(value => typeof value === "string" && value === text) || ["📦 Compact: ON", "📦 Compact: OFF", "🧠 Model", "🧠 Model Center", "❌ Cancel"].includes(text);
+      const oldControl = Object.values(MAIN_BUTTONS).some(value => typeof value === "string" && value === text) || ["📦 Compact: ON", "📦 Compact: OFF", "🧠 Model", "🧠 Models", "🧠 Model Center", "❌ Cancel"].includes(text);
       if (data || text === "/settings" || text === "/model" || oldControl) {
         await send(ctx, `🎨 Image Chat\nModel: ${state.profile.modelID}\n${isImageChatBusy(state.chatID, state.threadID) ? "Working / queued" : "Ready"}\n\nTo change defaults, open Settings → Default Models. Existing Image Chats keep their pinned profile until you choose New design with current default.`, { inline: new InlineKeyboard().text("New design with current default", "ichat:adopt").row().text("🖼 New design", "ichat:new").text("⏹ Stop", "ichat:stop") }); return;
       }
