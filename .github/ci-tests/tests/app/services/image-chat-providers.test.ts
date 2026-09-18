@@ -37,9 +37,9 @@ describe("provider separation and setup", () => {
     await expect(saveCustomProvider({ name: "video", baseURL: "https://v.test", apiKey: "secret", models, capability: "video" as never })).rejects.toThrow("no longer supported");
     await expect(setAiRoleSelection("video" as never, "x", "y")).rejects.toThrow("Unknown AI role");
   });
-  it("keeps video input on text models while excluding media output", () => {
+  it("keeps text-capable multimodal models chat-eligible while excluding media-only output", () => {
     expect(isChatModelMetadata({ capabilities: { input: { video: true }, output: { text: true } } })).toBe(true);
-    expect(isChatModelMetadata({ capabilities: { output: { text: true, image: true } } })).toBe(false);
+    expect(isChatModelMetadata({ capabilities: { output: { text: true, image: true } } })).toBe(true);
     expect(isChatModelMetadata({ modalities: { output: ["audio"] } })).toBe(false);
   });
   it("checks Gemini model access without issuing generation requests", async () => {
@@ -57,6 +57,7 @@ describe("provider separation and setup", () => {
     expect(profile.imageEndpoint).toBe(image.baseURL);
     await writeAppState({ ...(await readAppState()), imageAi: { providers: [{ ...image, baseURL: "https://other.test/v1" }] } });
     await expect(validateImageChatProfile(profile)).rejects.toThrow("settings changed");
-    await expect(buildToolImageChatProfile("chat", "image", "custom-image-ai")).rejects.toThrow("conversation connection/model");
+    const multimodalProfile = await buildToolImageChatProfile("chat", "image", "custom-image-ai");
+    expect(multimodalProfile.modelID).toBe("image");
   });
 });

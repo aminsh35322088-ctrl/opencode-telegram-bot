@@ -45,6 +45,8 @@ function modalityState(metadata: Record<string, unknown>, direction: "input" | "
   if (architectureList) return architectureList.includes(modality);
 
   const capabilities = record(metadata.capabilities);
+  const capabilityList = normalizedList(capabilities?.[direction]);
+  if (capabilityList) return capabilityList.includes(modality);
   const directionFlags = record(capabilities?.[direction]);
   const flag = directionFlags?.[modality];
   return typeof flag === "boolean" ? flag : "unknown";
@@ -79,7 +81,7 @@ export function detectModelCapabilities(metadataValue: unknown, options: Detecti
   const chat = output.text;
 
   const capabilitiesRecord = record(metadata.capabilities);
-  const toolCalling = explicitBoolean(capabilitiesRecord?.toolcall, capabilitiesRecord?.tool_call, metadata.toolcall, metadata.tool_call);
+  const toolCalling = explicitBoolean(capabilitiesRecord?.tools, capabilitiesRecord?.toolcall, capabilitiesRecord?.tool_call, metadata.tools, metadata.toolcall, metadata.tool_call);
   const reasoning = explicitBoolean(capabilitiesRecord?.reasoning, metadata.reasoning);
   const structuredOutput = explicitBoolean(capabilitiesRecord?.structuredOutput, capabilitiesRecord?.structured_output, metadata.structured_output);
 
