@@ -95,7 +95,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
         return cachedValidModelKeys;
       }
 
-      const customProviders = await listCustomProvidersByCapability("coding");
+      const customProviders = (await listCustomProviders()).filter((provider) => provider.capability !== "stt");
       const customProviderIds = new Set((await listCustomProviders()).map((provider) => provider.id));
       const valid = new Set<string>();
       const all: FavoriteModel[] = [];
@@ -137,7 +137,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       const env = getEnvDefaultModel();
       const envProvider = response.data.providers.find((p) => p.id === env?.providerID);
       const envCustom = (await listCustomProviders()).find((p) => p.id === env?.providerID);
-      const envAllowed = env && (!envCustom || (envCustom.capability === "coding" && isChatModelMetadata(envCustom.models.find((m) => m.id === env.modelID)))) && (!envProvider?.models[env.modelID] || isChatModelMetadata(envProvider.models[env.modelID]));
+      const envAllowed = env && (!envCustom || (envCustom.capability !== "stt" && isChatModelMetadata(envCustom.models.find((m) => m.id === env.modelID)))) && (!envProvider?.models[env.modelID] || isChatModelMetadata(envProvider.models[env.modelID]));
       if (envAllowed) { valid.add(getModelKey(env.providerID, env.modelID)); all.push(env); }
       if (envAllowed && !providers.some((provider) => provider.id === env.providerID)) {
         providers.push({ id: env.providerID, name: env.providerID === "opencode" ? "OpenCode" : env.providerID, modelCount: 1 });
@@ -259,15 +259,23 @@ export async function getProviders() {
 
 export async function getProvidersForCapability(capability: AiCapability) {
   const customProviders = await listCustomProvidersByCapability(capability);
-  if (capability !== "coding") return customProviders.map((p) => ({ id: p.id, name: p.name, modelCount: p.models.length }));
-  await getValidModelKeys();
-  const merged = new Map((cachedProviders ?? []).map((provider) => [provider.id, { id: provider.id, name: provider.name, modelCount: provider.modelCount }]));
-  for (const provider of customProviders) {
-    const existing = merged.get(provider.id);
-    if (existing) existing.modelCount = Math.max(existing.modelCount, provider.models.filter(isChatModelMetadata).length);
-    else merged.set(provider.id, { id: provider.id, name: provider.name, modelCount: provider.models.length });
+  if (capability === "stt") {
+    return customProviders.map((provider) => ({ id: provider.id, name: provider.name, modelCount: provider.models.length }));
   }
-  return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  if (capability === "image") {
+    const { listImageModelCatalog } = await import("./image-model-catalog-service.js");
+    const models = await listImageModelCatalog();
+    const counts = new Map<string, { id: string; name: string; modelCount: number }>();
+    for (const model of models) {
+      const current = counts.get(model.providerID) ?? { id: model.providerID, name: model.providerName, modelCount: 0 };
+      current.modelCount += 1;
+      counts.set(model.providerID, current);
+    }
+    return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  }
+
+  await getValidModelKeys();
+  return cachedProviders ?? [];
 }
 
 export async function getProviderModels(providerID: string) {
@@ -276,15 +284,19 @@ export async function getProviderModels(providerID: string) {
 }
 
 export async function getProviderModelsForCapability(providerID: string, capability: AiCapability) {
-  if (capability === "coding") {
-    await getValidModelKeys();
-    const openCodeModels = cachedModelsByProvider?.get(providerID) ?? [];
-    const customProvider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-    const customModels = customProvider?.models.filter(isChatModelMetadata).map((m) => ({ providerID, modelID: m.id, name: m.name })) ?? [];
-    return dedupeModels([...openCodeModels, ...customModels]);
+  if (capability === "stt") {
+    const provider = (await listCustomProvidersByCapability("stt")).find((item) => item.id === providerID);
+    return provider?.models.map((model) => ({ providerID, modelID: model.id, name: model.name })) ?? [];
   }
-  const provider = (await listCustomProvidersByCapability(capability)).find((p) => p.id === providerID);
-  return provider?.models.map((m) => ({ providerID, modelID: m.id, name: m.name })) ?? [];
+  if (capability === "image") {
+    const { listImageModelCatalog } = await import("./image-model-catalog-service.js");
+    return (await listImageModelCatalog())
+      .filter((model) => model.providerID === providerID)
+      .map((model) => ({ providerID, modelID: model.modelID, name: model.modelName }));
+  }
+
+  await getValidModelKeys();
+  return cachedModelsByProvider?.get(providerID) ?? [];
 }
 
 export async function resolveCatalogModel(providerID: string, modelID: string, options?: { forceRefresh?: boolean }): Promise<ModelInfo | null> {

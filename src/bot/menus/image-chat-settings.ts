@@ -116,7 +116,7 @@ export async function showImageChatSettings(ctx: Context, options: { messageID?:
 
 async function showConversationConnections(ctx: Context): Promise<void> {
   clearImageChatSetup(ctx);
-  const providers = (await listCustomProviders()).filter((provider) => provider.capability === "coding" && provider.models.some((model) => isChatModelMetadata(model) && (model.modalities?.input?.includes("image") || model.attachment === true)));
+  const providers = (await listCustomProviders()).filter((provider) => provider.capability !== "stt" && provider.models.some((model) => isChatModelMetadata(model) && (model.modalities?.input?.includes("image") || model.attachment === true)));
   const keyboard = new InlineKeyboard();
   for (const provider of providers) keyboard.text(provider.name, choice(ctx, "connection", provider.id)).row();
   keyboard.text("← Image Chat", "icfg:root");

@@ -49,7 +49,7 @@ export async function generateConfiguredImage(
   const instruction = requirePrompt(prompt);
   const selection = await resolveConfiguredImageModel("generate", worktree);
   signal.throwIfAborted();
-  return runImageForSelection(selection, instruction, undefined, signal);
+  return runImageForSelection(selection, instruction, undefined, signal, worktree);
 }
 
 export async function editConfiguredImage(
@@ -62,5 +62,5 @@ export async function editConfiguredImage(
   validateImage(source.buffer, source.mimeType);
   const selection = await resolveConfiguredImageModel("edit", worktree);
   signal.throwIfAborted();
-  return runImageForSelection(selection, instruction, source, signal);
+  return runImageForSelection(selection, instruction, source, signal, worktree);
 }
