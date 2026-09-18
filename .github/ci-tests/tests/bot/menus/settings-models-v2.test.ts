@@ -22,6 +22,7 @@ import {
   buildSettingsMenuView,
   buildTopicModelsSettingsView,
   SETTINGS_IMAGE_MODEL_CALLBACK,
+  SETTINGS_VOICE_MODEL_CALLBACK,
   SETTINGS_TOPIC_MODELS_CALLBACK,
 } from "../../../src/bot/menus/settings-menu.js";
 
@@ -51,14 +52,16 @@ describe("Image AI Topic V2 model settings UI", () => {
     getCurrentTopicImageModelOverride.mockReturnValue(undefined);
   });
 
-  it("replaces legacy Image Chat defaults with the global Image Model entry", () => {
+  it("shows capability-aware Main Default helpers without legacy Image Chat controls", () => {
     getCurrentTopicSettings.mockReturnValue(undefined);
     const view = buildDefaultModelsSettingsView();
 
-    expect(view.text).toContain("Image Model");
+    expect(view.text).toContain("Image AI");
     expect(view.text).not.toContain("Auto free planner");
-    expect(buttonTexts(view)).toContain("🎨 Image Model");
+    expect(buttonTexts(view)).toContain("🎨 Image AI");
+    expect(buttonTexts(view)).toContain("🎙️ Voice → Text");
     expect(callbacks(view)).toContain(SETTINGS_IMAGE_MODEL_CALLBACK);
+    expect(callbacks(view)).toContain(SETTINGS_VOICE_MODEL_CALLBACK);
   });
 
   it("uses a Models hub in Topic Settings", () => {
@@ -72,14 +75,16 @@ describe("Image AI Topic V2 model settings UI", () => {
     expect(view.text).toContain("Main Default");
   });
 
-  it("shows both Chat/Coding and Image Model inside the Topic Models hub", () => {
+  it("shows Primary, Image AI and Voice routing inside the Topic Model Center", () => {
     getCurrentTopicSettings.mockReturnValue({
       model: { providerID: "openai", modelID: "gpt-test" },
     });
     const view = buildTopicModelsSettingsView();
 
-    expect(view.text).toContain("Chat / Coding");
-    expect(view.text).toContain("Image Model");
+    expect(view.text).toContain("Primary / Chat & Coding");
+    expect(view.text).toContain("Image AI");
+    expect(view.text).toContain("Voice → Text");
     expect(callbacks(view)).toContain(SETTINGS_IMAGE_MODEL_CALLBACK);
+    expect(callbacks(view)).toContain(SETTINGS_VOICE_MODEL_CALLBACK);
   });
 });

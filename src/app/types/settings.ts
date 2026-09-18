@@ -4,6 +4,7 @@ import type { SessionDirectoryCacheInfo, SessionInfo } from "./session.js";
 import type { ScheduledTask } from "./scheduled-task.js";
 import type { TopicDefaults } from "./topic-settings.js";
 import type { ImageModelSelection } from "./image-model.js";
+import type { CapabilityModelBindings } from "./model-capability.js";
 
 export type ResponseStreamingMode = "edit" | "draft";
 export type MessageFormatMode = "raw" | "markdown";
@@ -32,7 +33,9 @@ export interface GlobalSettings {
   scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[];
   alwaysAllowedPermissions?: AlwaysAllowedPermissionInfo[];
   topicDefaults?: TopicDefaults;
+  /** Legacy alias retained during Image AI migration. */
   defaultImageModel?: ImageModelSelection;
+  defaultCapabilityModels?: CapabilityModelBindings;
 }
 
 /**

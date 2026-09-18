@@ -2,6 +2,7 @@ import type { ModelInfo } from "./model.js";
 import type { SessionInfo } from "./session.js";
 import type { MessageFormatMode, ResponseStreamingMode } from "./settings.js";
 import type { ImageModelSelection } from "./image-model.js";
+import type { CapabilityModelBindings } from "./model-capability.js";
 
 export type TopicRunState = "idle" | "running" | "paused" | "aborting";
 
@@ -14,7 +15,9 @@ export interface TopicSettings {
   session?: SessionInfo;
   model?: ModelInfo;
   /** Optional per-Topic override. Undefined means inherit the global Default Image Model dynamically. */
+  /** Legacy alias retained during migration; capabilityOverrides.imageAI is canonical. */
   imageModelOverride?: ImageModelSelection;
+  capabilityOverrides?: CapabilityModelBindings;
   agent?: string;
   variant?: string;
   compactOutputMode: boolean;
@@ -35,5 +38,5 @@ export interface TopicSettings {
  */
 export type TopicDefaults = Omit<
   TopicSettings,
-  "session" | "imageModelOverride" | "runState" | "workspaceDirectory" | "updatedAt"
+  "session" | "imageModelOverride" | "capabilityOverrides" | "runState" | "workspaceDirectory" | "updatedAt"
 >;

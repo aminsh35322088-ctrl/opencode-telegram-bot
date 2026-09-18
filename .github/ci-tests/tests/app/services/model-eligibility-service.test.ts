@@ -36,13 +36,13 @@ describe("model-level capability classification", () => {
     expect(isImageEditModelMetadata(metadata)).toBe(true);
   });
 
-  it("does not expose mixed text+image output in Chat/Coding Model Center", () => {
+  it("keeps mixed text+image output in both Chat/Coding and Image views", () => {
     const metadata = {
       capabilities: {
         output: { text: true, image: true },
       },
     };
-    expect(isChatModelMetadata(metadata)).toBe(false);
+    expect(isChatModelMetadata(metadata)).toBe(true);
     expect(isImageModelMetadata(metadata)).toBe(true);
   });
 });
