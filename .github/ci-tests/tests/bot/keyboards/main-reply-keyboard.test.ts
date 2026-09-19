@@ -38,9 +38,10 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     }, { isTopic: true });
 
     const labels = keyboard.keyboard.flat().map(getButtonText);
-    expect(labels).toContain("🧠 Models");
+    expect(labels).toContain("🧠 Custom Model 2026");
     expect(labels.join("\n")).not.toContain("very-long-provider-name");
     expect(labels.join("\n")).not.toContain(" · ");
+    expect(keyboard.is_persistent).toBe(true);
   });
 
   it("reflects compact mode state in an AI Topic", () => {
@@ -71,7 +72,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
       [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
       [{ text: "📦 Compact: ON" }],
-      [{ text: "🧠 Models" }],
+      [{ text: "🧠 GPT 4o" }],
       [{ text: "🗑️ Delete Chat" }, { text: "⚙️ Topic Settings" }],
     ]);
   });
