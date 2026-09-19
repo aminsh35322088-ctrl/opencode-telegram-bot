@@ -1,3 +1,5 @@
+[Reading 561 lines from start (total: 561 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 /**
@@ -307,7 +309,6 @@ export const ko: I18nDictionary = {
   "queue.removed": "🗑 대기열에서 메시지를 삭제했습니다.",
   "queue.not_found": "이 메시지는 더 이상 대기열에 없습니다.",
   "queue.disabled_hint": "메시지 대기열은 /settings에서 활성화할 수 있습니다.",
-  "keyboard.updated": "⌨️ 키보드가 업데이트되었습니다",
 
   "pinned.default_session_title": "새 세션",
   "pinned.unknown": "알 수 없음",

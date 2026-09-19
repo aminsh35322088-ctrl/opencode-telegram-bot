@@ -1,3 +1,5 @@
+[Reading 155 lines from start (total: 155 lines, 0 remaining)]
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -125,15 +127,19 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("⏸️ Pause");
   });
 
-  it("sendKeyboardUpdate inside a topic runtime context sends the topic keyboard to the topic thread", async () => {
-    const sendMessage = vi.fn().mockResolvedValue({});
-    keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
+  it("sendKeyboardUpdate applies the Topic keyboard without leaving a visible status message", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 901, message_thread_id: THREAD_ID });
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+    keyboardManager.bindTopic({ sendMessage, deleteMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
+    const [, text, options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
+    expect(text).toBe("⁣");
     expect(options.message_thread_id).toBe(THREAD_ID);
+    expect(options.disable_notification).toBe(true);
     expect(keyboardTexts(options.reply_markup)).toContain("🧠 Models");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
+    expect(deleteMessage).toHaveBeenCalledWith(CHAT_ID, 901);
   });
 
   it("sendKeyboardUpdate outside a Topic routes to the persistent Main panel", async () => {

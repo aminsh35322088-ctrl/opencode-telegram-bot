@@ -1,3 +1,5 @@
+[Reading 573 lines from start (total: 573 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const de: I18nDictionary = {
@@ -314,7 +316,6 @@ export const de: I18nDictionary = {
   "queue.removed": "🗑 Nachricht aus der Warteschlange entfernt.",
   "queue.not_found": "Diese Nachricht ist nicht mehr in der Warteschlange.",
   "queue.disabled_hint": "Die Nachrichtenwarteschlange lässt sich in /settings aktivieren.",
-  "keyboard.updated": "⌨️ Tastatur aktualisiert",
 
   "pinned.default_session_title": "neue Sitzung",
   "pinned.unknown": "Unbekannt",

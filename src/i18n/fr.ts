@@ -1,3 +1,5 @@
+[Reading 575 lines from start (total: 575 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const fr: I18nDictionary = {
@@ -316,7 +318,6 @@ export const fr: I18nDictionary = {
   "queue.removed": "🗑 Message retiré de la file d'attente.",
   "queue.not_found": "Ce message n'est plus dans la file d'attente.",
   "queue.disabled_hint": "La file d'attente des messages s'active dans /settings.",
-  "keyboard.updated": "⌨️ Clavier mis à jour",
 
   "pinned.default_session_title": "nouvelle session",
   "pinned.unknown": "Inconnu",

@@ -1,3 +1,5 @@
+[Reading 230 lines from start (total: 230 lines, 0 remaining)]
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -209,12 +211,13 @@ describe("Main panel All/root pin isolation", () => {
     const sessionId = "topic-session-pin-isolation";
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 704, message_thread_id: threadId });
     const pinChatMessage = vi.fn().mockResolvedValue(true);
+    const deleteMessage = vi.fn().mockResolvedValue(true);
     const api = {
       sendMessage,
       pinChatMessage,
       editMessageText: vi.fn(),
       unpinChatMessage: vi.fn(),
-      deleteMessage: vi.fn(),
+      deleteMessage,
     };
 
     keyboardManager.bindTopic(api as never, chatId, threadId, sessionId);
@@ -223,6 +226,7 @@ describe("Main panel All/root pin isolation", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
     expect(options.message_thread_id).toBe(threadId);
+    expect(deleteMessage).toHaveBeenCalledWith(chatId, 704);
     expect(pinChatMessage).not.toHaveBeenCalled();
   });
 });

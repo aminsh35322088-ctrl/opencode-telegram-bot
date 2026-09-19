@@ -1,3 +1,5 @@
+[Reading 565 lines from start (total: 565 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const it: I18nDictionary = {
@@ -311,7 +313,6 @@ export const it: I18nDictionary = {
   "queue.removed": "🗑 Messaggio rimosso dalla coda.",
   "queue.not_found": "Questo messaggio non è più in coda.",
   "queue.disabled_hint": "La coda dei messaggi può essere attivata in /settings.",
-  "keyboard.updated": "⌨️ Tastiera aggiornata",
 
   "pinned.default_session_title": "nuova sessione",
   "pinned.unknown": "Sconosciuto",

@@ -1,3 +1,5 @@
+[Reading 125 lines from start (total: 125 lines, 0 remaining)]
+
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
@@ -15,6 +17,8 @@ import { buildTelegramFileUrl } from "../../app/services/file-download-service.j
 import { buildQuotedNotification } from "../../app/services/quoted-notification.js";
 import { editBotText } from "../messages/telegram-text.js";
 import { saveTopicVoiceAsset } from "../../app/services/telegram-topic-voice-asset-service.js";
+import { sanitizeAudioHistoryForTextFallback } from "../../app/services/session-error-recovery-service.js";
+import { getEffectiveCurrentSession } from "../../app/services/session-service.js";
 import { resolveCapabilityRoute } from "../../app/services/model-capability-routing-service.js";
 import { findUnifiedModel } from "../../app/services/unified-model-catalog-service.js";
 import { prepareNativeAudioInput } from "../../app/services/native-audio-input-service.js";
@@ -100,6 +104,16 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     }
     if (result.uncertain) return;
     logger.info(`[Voice] Transcribed audio via ${route.routeSource}: ${recognizedText.length} chars`);
+    const activeSession = await getEffectiveCurrentSession();
+    if (activeSession) {
+      const sanitized = await sanitizeAudioHistoryForTextFallback(activeSession.id, activeSession.directory);
+      if (sanitized.contaminationRemaining) {
+        throw new Error("Voice transcription succeeded, but incompatible historical audio remains in the OpenCode session. The run was stopped to prevent another provider error.");
+      }
+      if (sanitized.removedMessageIds.length > 0) {
+        logger.warn(`[Voice] Sanitized incompatible historical audio before STT text fallback: session=${activeSession.id} removed=${sanitized.removedMessageIds.length}`);
+      }
+    }
     let textForLLM = recognizedText;
     const notePrompt = config.stt.notePrompt.trim();
     if (notePrompt && notePrompt.toLowerCase() !== "false" && notePrompt !== "0") textForLLM = `[Note: ${notePrompt}]\n${recognizedText}`;

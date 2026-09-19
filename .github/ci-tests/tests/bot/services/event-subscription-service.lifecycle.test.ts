@@ -1,3 +1,5 @@
+[Reading 1024 lines from start (total: 1024 lines, 0 remaining)]
+
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -15,6 +17,11 @@ const mocked = vi.hoisted(() => ({
   reconciliationStreamer: {
     current: null as { hasActiveStream(sessionId: string): boolean } | null,
   },
+  recoverSessionAfterError: vi.fn(),
+}));
+
+vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
+  recoverSessionAfterError: mocked.recoverSessionAfterError,
 }));
 
 vi.mock("../../../src/opencode/events.js", () => ({
@@ -254,6 +261,8 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     mocked.subscribeToEvents.mockReset();
     mocked.stopEventListening.mockReset();
     mocked.reconcileBusyState.mockReset();
+    mocked.recoverSessionAfterError.mockReset();
+    mocked.recoverSessionAfterError.mockResolvedValue({ abortAttempted: true, abortAccepted: true, removedMessageIds: [], contaminationRemaining: false });
     mocked.subscribeToEvents.mockResolvedValue(undefined);
     mocked.reconciliationStreamer.current = null;
 
@@ -860,20 +869,26 @@ describe("bot/services/event-subscription-service lifecycle", () => {
   });
 
   describe("session errors and retries", () => {
-    it("reports the session error and releases the run", async () => {
+    it("auto-aborts, clears queued work, reports the error, and restores controls", async () => {
       const { api, summaryAggregator } = await setupService({ startAssistantRun: true });
-      const [{ foregroundSessionState }, { assistantRunState }] = await Promise.all([
+      const [{ foregroundSessionState }, { assistantRunState }, { promptQueue }, { keyboardManager }] = await Promise.all([
         import("../../../src/app/managers/foreground-session-state-manager.js"),
         import("../../../src/app/managers/assistant-run-state-manager.js"),
+        import("../../../src/app/managers/prompt-queue-manager.js"),
+        import("../../../src/bot/keyboards/keyboard-manager.js"),
       ]);
+      const keyboardSpy = vi.spyOn(keyboardManager, "sendKeyboardUpdate").mockResolvedValue(undefined);
       foregroundSessionState.markBusy("session-1", "D:/repo");
+      promptQueue.add("do not run me", "session-1");
 
       emitSessionError(summaryAggregator, "provider exploded");
 
       await vi.waitFor(() => {
-        expect(api.sendMessage).toHaveBeenCalledTimes(1);
+        expect(collectSentTexts(api).some((text) => text.includes("provider exploded"))).toBe(true);
+        expect(keyboardSpy).toHaveBeenCalledWith(42, true, "session-1");
       });
-      expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("provider exploded");
+      expect(mocked.recoverSessionAfterError).toHaveBeenCalledWith("session-1", "D:/repo", "provider exploded");
+      expect(promptQueue.size("session-1")).toBe(0);
       expect(foregroundSessionState.isBusy()).toBe(false);
       expect(assistantRunState.finishRun("session-1", "assertion")).toBeNull();
     });

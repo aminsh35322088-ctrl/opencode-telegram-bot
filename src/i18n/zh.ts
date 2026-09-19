@@ -1,3 +1,5 @@
+[Reading 510 lines from start (total: 510 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const zh: I18nDictionary = {
@@ -272,7 +274,6 @@ export const zh: I18nDictionary = {
   "queue.removed": "🗑 消息已从队列中移除。",
   "queue.not_found": "该消息已不在队列中。",
   "queue.disabled_hint": "可在 /settings 中开启消息队列。",
-  "keyboard.updated": "⌨️ 键盘已更新",
 
   "pinned.default_session_title": "新会话",
   "pinned.unknown": "未知",

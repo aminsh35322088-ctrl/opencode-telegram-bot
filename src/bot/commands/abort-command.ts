@@ -1,3 +1,5 @@
+[Reading 52 lines from start (total: 52 lines, 0 remaining)]
+
 import type { Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getEffectiveCurrentSession } from "../../app/services/session-service.js";
@@ -22,7 +24,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 function abortLocalStreaming(): void { clearAllInteractionState("abort_command"); }
 function setTopicRunState(runState: "idle" | "running" | "paused" | "aborting"): void { const context = getTopicRuntimeContext(); if (context) updateTopicRuntimeStateSync(context.chatId, context.threadId, { runState }); }
 async function releaseAbortBusyState(sessionId: string, reason: string): Promise<void> { stopSessionStallWatchdog(sessionId); foregroundSessionState.markIdle(sessionId); assistantRunState.clearRun(sessionId, reason); await markAttachedSessionIdle(sessionId); setTopicRunState("idle"); }
-async function restoreControlsAfterAbort(ctx: Context, sessionId: string): Promise<void> { const topic = getTopicRuntimeContext(); if (topic?.sessionId === sessionId && topic.threadId !== undefined) { keyboardManager.setPaused(false, sessionId); await keyboardManager.sendKeyboardUpdate(topic.chatId, true, sessionId); return; } keyboardManager.setPaused(false, sessionId); const keyboard = keyboardManager.getKeyboard(sessionId); if (!keyboard || !ctx.chat?.id) return; await ctx.reply("⌨️ Controls restored.", { reply_markup: keyboard }); }
+async function restoreControlsAfterAbort(ctx: Context, sessionId: string): Promise<void> { const topic = getTopicRuntimeContext(); keyboardManager.setPaused(false, sessionId); if (topic?.sessionId === sessionId && topic.threadId !== undefined) { await keyboardManager.sendKeyboardUpdate(topic.chatId, true, sessionId); return; } if (ctx.chat?.id) await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, sessionId); }
 async function pollSessionStatus(sessionId: string, directory: string, maxWaitMs = 5000): Promise<SessionState> { const startedAt = Date.now(); while (Date.now() - startedAt < maxWaitMs) { try { const { data, error } = await opencodeClient.session.status({ directory }); if (error || !data) break; const sessionStatus = (data as Record<string, { type?: string }>)[sessionId]; if (!sessionStatus) return "not-found"; if (sessionStatus.type === "idle" || sessionStatus.type === "error") return "idle"; if (sessionStatus.type !== "busy" && sessionStatus.type !== "retry") return "not-found"; await sleep(250); } catch (error) { logger.warn("[Abort] Failed to poll session status:", error); break; } } return "busy"; }
 
 export async function abortCurrentOperation(ctx: Context, options: AbortCurrentOperationOptions = {}): Promise<AbortResult> {
