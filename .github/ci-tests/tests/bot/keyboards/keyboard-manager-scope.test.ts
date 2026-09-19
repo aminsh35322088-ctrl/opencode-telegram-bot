@@ -47,7 +47,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     mocks.getCompactOutputMode.mockReturnValue(false);
   });
 
-  it("bindTopic outside runtime context resolves Topic-scoped state while rendering the unified Models hub", () => {
+  it("bindTopic outside runtime context resolves Topic-scoped state and shows the active model", () => {
     mocks.getStoredModel.mockReturnValue({ providerID: "p", modelID: "global-default", name: "Global Default" });
     mocks.getTopicRuntimeStateSync.mockReturnValue({
       settings: { model: { providerID: "p2", modelID: "topicone" } },
@@ -57,12 +57,11 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const texts = keyboardTexts(keyboardManager.getKeyboard("session-topic-model"));
 
     expect(mocks.getTopicRuntimeStateSync).toHaveBeenCalledWith(CHAT_ID, THREAD_ID);
-    expect(texts).toContain("🧠 Models");
-    expect(texts.some((text) => text.includes("topicone"))).toBe(false);
+    expect(texts).toContain("🧠 topicone");
     expect(texts.some((text) => text.includes("Global Default"))).toBe(false);
   });
 
-  it("re-syncs Topic-scoped state on the next bind without leaking model labels into the reply keyboard", () => {
+  it("re-syncs Topic-scoped state and refreshes the active model label", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, "session-resync");
     mocks.getTopicRuntimeStateSync.mockReturnValue({
       settings: { model: { providerID: "p3", modelID: "persisted-model", name: "Persisted" } },
@@ -72,8 +71,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     const texts = keyboardTexts(keyboardManager.getKeyboard("session-resync"));
 
     expect(mocks.getTopicRuntimeStateSync).toHaveBeenCalledTimes(2);
-    expect(texts).toContain("🧠 Models");
-    expect(texts.some((text) => text.includes("Persisted"))).toBe(false);
+    expect(texts).toContain("🧠 Persisted");
     expect(texts.some((text) => text.includes("Global Model"))).toBe(false);
   });
 
@@ -91,7 +89,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     const keyboard = runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.getKeyboard());
     const texts = keyboardTexts(keyboard);
-    expect(texts).toContain("🧠 Models");
+    expect(texts).toContain("🧠 Global Model");
     expect(texts).not.toContain("💬 New Chat");
     expect(texts).not.toContain("⏸️ Pause");
     expect(texts).not.toContain("▶️ Resume");
@@ -125,19 +123,21 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("⏸️ Pause");
   });
 
-  it("sendKeyboardUpdate applies the Topic keyboard without leaving a visible status message", async () => {
+  it("sendKeyboardUpdate keeps a durable persistent Topic keyboard and suppresses duplicate layouts", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 901, message_thread_id: THREAD_ID });
     const deleteMessage = vi.fn().mockResolvedValue(true);
     keyboardManager.bindTopic({ sendMessage, deleteMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, text, options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
-    expect(text).toBe("⁣");
+    expect(text).toBe("⌨️ Keyboard updated");
     expect(options.message_thread_id).toBe(THREAD_ID);
     expect(options.disable_notification).toBe(true);
-    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Models");
+    expect((options.reply_markup as { is_persistent?: boolean }).is_persistent).toBe(true);
+    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
-    expect(deleteMessage).toHaveBeenCalledWith(CHAT_ID, 901);
+    expect(deleteMessage).not.toHaveBeenCalled();
   });
 
   it("sendKeyboardUpdate outside a Topic routes to the persistent Main panel", async () => {

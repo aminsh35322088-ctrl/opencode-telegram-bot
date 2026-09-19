@@ -91,29 +91,11 @@ async function consumeReplyKeyboardMessage(ctx: Context): Promise<void> {
   catch (error) { logger.debug?.(`[Bot] Could not delete Reply Keyboard control message: chat=${chatId} message=${messageId}`, error); }
 }
 
-// Telegram ReplyKeyboardMarkup is chat-scoped, not forum-topic-scoped. Keep a
-// tiny per-chat latch so stale AI controls are actively removed once the user
-// sends a message in Main/General, and can be recreated when an AI Topic is used.
-const mainKeyboardRemovedChats = new Set<number>();
-async function removeReplyKeyboardFromMainChat(ctx: Context): Promise<void> {
-  const chatId = ctx.chat?.id;
-  if (typeof chatId !== "number" || mainKeyboardRemovedChats.has(chatId)) return;
-  mainKeyboardRemovedChats.add(chatId);
-  try {
-    const notice = await ctx.api.sendMessage(chatId, "⌨️", { reply_markup: { remove_keyboard: true } });
-    try { await ctx.api.deleteMessage(chatId, notice.message_id); }
-    catch (error) { logger.debug(`[Bot] Could not delete temporary Reply Keyboard removal notice: chat=${chatId}`, error); }
-    logger.info(`[Bot] Removed AI Topic ReplyKeyboard from Main/General chat scope: chat=${chatId}`);
-  } catch (error) {
-    mainKeyboardRemovedChats.delete(chatId);
-    logger.warn(`[Bot] Failed to remove stale AI Topic ReplyKeyboard from Main/General: chat=${chatId}`, error);
-  }
-}
-
-function markAiTopicKeyboardVisible(ctx: Context): void {
-  const chatId = ctx.chat?.id;
-  if (typeof chatId === "number") mainKeyboardRemovedChats.delete(chatId);
-}
+// ReplyKeyboardMarkup is chat-scoped. Never send remove_keyboard merely because
+// the user visits Main/General: Telegram applies that removal to the whole chat,
+// which can make the AI Topic keyboard impossible to summon again. Wrong-scope
+// button presses are already consumed fail-closed below.
+function markAiTopicKeyboardVisible(_ctx: Context): void {}
 
 function getRenderedReplyKeyboardTexts(scope: { topicMode: boolean; aiTopic: boolean }, runtime: ReturnType<typeof getTopicRuntimeContext>): Set<string> {
   const keyboard = scope.topicMode ? keyboardManager.getKeyboard(scope.aiTopic ? runtime?.sessionId : undefined) : keyboardManager.getKeyboard();
@@ -133,7 +115,6 @@ async function handleReplyKeyboardInput(
 
   const scope = await getTopicScope(ctx);
   if (scope.aiTopic) markAiTopicKeyboardVisible(ctx);
-  else await removeReplyKeyboardFromMainChat(ctx);
 
   // The classifier is the authoritative prompt/UI boundary. Nothing below is
   // allowed to turn arbitrary text into a Reply Keyboard control.

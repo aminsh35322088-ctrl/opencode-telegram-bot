@@ -95,6 +95,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           `✅ New AI Topic ready.\n\n${routingSummary}`,
           { message_thread_id: binding!.threadId, reply_markup: topicKeyboard },
         );
+        keyboardManager.markKeyboardDelivered(session.id);
         await attachToSession({
           bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding!.threadId }),
           chatId: ctx.chat.id,
