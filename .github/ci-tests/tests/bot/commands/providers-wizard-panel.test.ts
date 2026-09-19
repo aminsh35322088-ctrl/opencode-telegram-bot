@@ -29,10 +29,6 @@ vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
   removeImageAiProvider: vi.fn(),
 }));
 
-vi.mock("../../../src/app/services/image-chat-profile-service.js", () => ({
-  imageConnectionUsage: vi.fn().mockResolvedValue(0),
-}));
-
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({
   reconcileStoredModelSelection: vi.fn(),
 }));
@@ -58,10 +54,6 @@ vi.mock("../../../src/bot/commands/integrations-command.js", () => ({
 
 vi.mock("../../../src/bot/menus/settings-menu.js", () => ({
   buildSettingsMenuView: vi.fn(() => ({ text: "Settings", keyboard: {} })),
-}));
-
-vi.mock("../../../src/bot/menus/image-chat-settings.js", () => ({
-  showImageChatSettings: vi.fn(),
 }));
 
 vi.mock("../../../src/bot/menus/inline-menu.js", () => ({

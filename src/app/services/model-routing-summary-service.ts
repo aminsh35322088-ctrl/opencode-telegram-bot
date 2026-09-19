@@ -8,11 +8,11 @@ function refName(ref: ModelRef | undefined, catalog: UnifiedModelCatalogEntry[])
   return entry ? `${entry.modelName} · ${entry.providerName}` : `${ref.modelID} · ${ref.providerID}`;
 }
 
-function routeLine(label: string, route: CapabilityRoute, catalog: UnifiedModelCatalogEntry[]): string {
-  if (route.routeSource === "primary-native") return `✅ ${label} → ${refName(route.model, catalog)} · Native`;
-  if (route.routeSource === "topic-override") return `⚙️ ${label} → ${refName(route.model, catalog)} · Topic Override`;
-  if (route.routeSource === "main-default") return `↪️ ${label} → ${refName(route.model, catalog)} · Main Default`;
-  return `❌ ${label} → Unavailable`;
+function routeBadge(route: CapabilityRoute): string {
+  if (route.routeSource === "primary-native") return "✅";
+  if (route.routeSource === "topic-override") return "✅ ⚙️";
+  if (route.routeSource === "main-default") return "✅ ↪️";
+  return "❌";
 }
 
 export async function buildModelRoutingSummary(primary: ModelInfo, worktree?: string): Promise<string> {
@@ -24,19 +24,15 @@ export async function buildModelRoutingSummary(primary: ModelInfo, worktree?: st
   const tts = routes.get("textToSpeech")!;
   const ref = { providerID: primary.providerID, modelID: primary.modelID };
   const entry = catalog.find((item) => item.providerID === ref.providerID && item.modelID === ref.modelID);
-  const chat = entry?.capabilities.operations.chat === true
-    ? `✅ Chat / Text → ${refName(ref, catalog)} · Native`
-    : `❌ Chat / Text → ${refName(ref, catalog)} · capability unconfirmed`;
+  const chat = entry?.capabilities.operations.chat === true ? "✅" : "❌";
 
   return [
-    `🧠 Active Model: ${refName(ref, catalog)}`,
+    `🧠 ${refName(ref, catalog)}`,
     "",
-    chat,
-    routeLine("Vision", vision, catalog),
-    routeLine("Voice → Text", voice, catalog),
-    routeLine("Image AI", image, catalog),
-    routeLine("Text → Voice", tts, catalog),
-    "",
-    "✅ Native  ⚙️ Topic Override  ↪️ Main Default  ❌ Unavailable",
+    `💬 Chat ${chat}`,
+    `👁️ Vision ${routeBadge(vision)}`,
+    `🎙️ Voice → Text ${routeBadge(voice)}`,
+    `🎨 Image AI ${routeBadge(image)}`,
+    `🔊 Text → Voice ${routeBadge(tts)}`,
   ].join("\n");
 }

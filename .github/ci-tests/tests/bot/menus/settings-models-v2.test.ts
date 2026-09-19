@@ -52,7 +52,7 @@ describe("Image AI Topic V2 model settings UI", () => {
     getCurrentTopicImageModelOverride.mockReturnValue(undefined);
   });
 
-  it("shows capability-aware Main Default helpers without legacy Image Chat controls", () => {
+  it("shows capability-aware Main Default helpers without removed legacy image-topic controls", () => {
     getCurrentTopicSettings.mockReturnValue(undefined);
     const view = buildDefaultModelsSettingsView();
 

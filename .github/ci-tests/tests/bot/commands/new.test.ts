@@ -16,6 +16,7 @@ const mocked = vi.hoisted(() => ({
   openSessionInTelegramTopicMock: vi.fn(),
   ingestSessionInfoForCacheMock: vi.fn(),
   createTopicKeyboardMock: vi.fn(),
+  buildModelRoutingSummaryMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -70,6 +71,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     clearMainInlineMessage: vi.fn().mockResolvedValue(undefined),
     sendMainInlineKeyboard: vi.fn().mockResolvedValue(undefined),
     sendKeyboardUpdate: vi.fn().mockResolvedValue(undefined),
+    getKeyboard: vi.fn().mockReturnValue(undefined),
   },
 }));
 
@@ -80,6 +82,10 @@ vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({
   getStoredAgent: vi.fn(() => "build"),
   resolveProjectAgent: vi.fn(async (agentName?: string) => agentName ?? "build"),
+}));
+
+vi.mock("../../../src/app/services/model-routing-summary-service.js", () => ({
+  buildModelRoutingSummary: mocked.buildModelRoutingSummaryMock,
 }));
 
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({
@@ -188,16 +194,19 @@ describe("bot/commands/new", () => {
     mocked.openSessionInTelegramTopicMock.mockReset();
     mocked.openSessionInTelegramTopicMock.mockResolvedValue({
       chatId: 123,
-      threadId: 1,
+      threadId: 42,
       sessionId: "session-2",
       directory: "/repo",
       createdAt: "",
       updatedAt: "",
+      title: "Chat #01",
     });
     mocked.ingestSessionInfoForCacheMock.mockReset();
     mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
     mocked.createTopicKeyboardMock.mockReset();
     mocked.createTopicKeyboardMock.mockReturnValue({ keyboard: true });
+    mocked.buildModelRoutingSummaryMock.mockReset();
+    mocked.buildModelRoutingSummaryMock.mockResolvedValue("🧠 GPT 5 · OpenAI\n\n💬 Chat ✅");
   });
 
   it("creates a new session even while the foreground session is busy", async () => {
@@ -230,16 +239,30 @@ describe("bot/commands/new", () => {
       chatId: 123,
       session: {
         id: "session-2",
-        title: "Chat #1",
+        title: "Chat #01",
         directory: "/repo",
       },
       ensureEventSubscription: mocked.ensureEventSubscriptionMock,
     });
     // The New Chat confirmation must be a plain message: the Main keyboard
     // panel belongs exclusively to the pinned welcome/anchor message.
-    const createdCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("Chat #1"));
+    const createdCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("Chat #01"));
     expect(createdCall).toBeDefined();
     expect(createdCall?.[2] ?? {}).not.toHaveProperty("reply_markup");
+
+    const summaryCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("New AI Topic ready"));
+    expect(summaryCall).toBeDefined();
+    expect(summaryCall?.[2]).toMatchObject({
+      message_thread_id: 42,
+      reply_markup: { keyboard: true },
+    });
+    expect(mocked.buildModelRoutingSummaryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ providerID: "openai", modelID: "gpt-5" }),
+      "/repo",
+    );
+    expect((deps.sendMessageMock.mock.invocationCallOrder[0] ?? Infinity)).toBeLessThan(
+      mocked.attachToSessionMock.mock.invocationCallOrder[0] ?? Infinity,
+    );
   });
 
   it("allows concurrent session creation", async () => {

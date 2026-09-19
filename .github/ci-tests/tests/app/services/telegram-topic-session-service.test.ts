@@ -29,9 +29,9 @@ describe("Telegram managed Topic numbering", () => {
     ], 100)).toBe("Chat #03");
   });
 
-  it("ignores Image Chat and bindings from other Telegram chats", () => {
+  it("ignores non-managed titles and bindings from other Telegram chats", () => {
     expect(getNextManagedChatTitle([
-      binding(100, "🎨 Image Chat", 9),
+      binding(100, "Manual Topic", 9),
       binding(100, "Chat #01", 10),
       binding(200, "Chat #02", 20),
     ], 100)).toBe("Chat #02");

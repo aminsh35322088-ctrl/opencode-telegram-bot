@@ -1,4 +1,3 @@
-import type { ImageChatProfile, MediaImage } from "../types/image-chat.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { readBoundedJson, detectImageMimeType } from "./ai-http-service.js";
 import crypto from "node:crypto";
@@ -146,14 +145,3 @@ export async function runImageForSelection(
 }
 
 /** Dedicated chats pin one image connection. No fallback or ambiguous POST retry. */
-export async function runImageForChat(profile: ImageChatProfile, prompt: string, image: MediaImage | undefined, signal: AbortSignal): Promise<MediaImage> {
-  const provider = (await getActiveImageAiProviders()).find(p => p.id === profile.imageProviderID);
-  if (!provider || !provider.capabilities.includes(image ? "edit" : "generate") || provider.baseURL !== profile.imageEndpoint || provider.model !== profile.imageModelID || (provider.editModel ?? provider.model) !== profile.imageEditModelID) throw new Error("Image connection changed or is unavailable. Update the Topic image settings.");
-  signal.throwIfAborted();
-  const result = provider.id === CUSTOM_ID
-    ? await runCustomOpenAiCompatible(provider, provider.apiKey, prompt, image?.buffer, image?.mimeType, signal)
-    : await runCloudflare(provider, provider.apiKey, prompt, image?.buffer, image?.mimeType, signal);
-  const mimeType = detectImageMimeType(result.buffer);
-  if (!mimeType) throw new Error("Image provider returned an unsupported image format");
-  return { buffer: result.buffer, mimeType };
-}

@@ -22,7 +22,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     );
 
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "💬 New Chat" }, { text: "🎨 New Image Chat" }],
+      [{ text: "💬 New Chat" }],
       [{ text: "🕘 History" }, { text: "⚙️ Main Settings" }],
     ]);
     expect(keyboard.keyboard.flat().map(getButtonText)).not.toContain("🧠 GPT 4o");
@@ -59,7 +59,6 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 0, 0)).toBe("❌ 1. first");
     expect(buttonTextAt(keyboard, 1, 0)).toBe("❌ 2. second");
     expect(buttonTextAt(keyboard, 2, 0)).toBe("💬 New Chat");
-    expect(buttonTextAt(keyboard, 2, 1)).toBe("🎨 New Image Chat");
     expect(buttonTextAt(keyboard, 3, 0)).toBe("🕘 History");
     expect(buttonTextAt(keyboard, 3, 1)).toBe("⚙️ Main Settings");
   });
@@ -85,7 +84,6 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     const labels = keyboard.keyboard.flat().map(getButtonText);
     expect(labels).not.toContain("🎨 Image AI");
     expect(labels).not.toContain("💬 New Chat");
-    expect(labels).not.toContain("🎨 New Image Chat");
     expect(labels).not.toContain("🕘 History");
     expect(labels).not.toContain("⚙️ Main Settings");
   });

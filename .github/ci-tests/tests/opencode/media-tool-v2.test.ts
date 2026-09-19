@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("media tool Image AI V2 contract", () => {
-  it("uses the configured image action service instead of legacy Image Chat", async () => {
+  it("uses the configured image action service instead of deleted legacy image-topic code", async () => {
     const source = await fs.readFile(".opencode/tools/media.ts", "utf8");
     expect(source).toContain("generateConfiguredImage");
     expect(source).toContain("editConfiguredImage");
