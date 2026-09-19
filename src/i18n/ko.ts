@@ -1,5 +1,3 @@
-[Reading 561 lines from start (total: 561 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 /**

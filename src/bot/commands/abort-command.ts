@@ -1,5 +1,3 @@
-[Reading 52 lines from start (total: 52 lines, 0 remaining)]
-
 import type { Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getEffectiveCurrentSession } from "../../app/services/session-service.js";

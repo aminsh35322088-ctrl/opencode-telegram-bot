@@ -1,5 +1,3 @@
-[Reading 1943 lines from start (total: 1943 lines, 0 remaining)]
-
 import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.js";
 import { promises as fs } from "fs";
 import * as path from "path";

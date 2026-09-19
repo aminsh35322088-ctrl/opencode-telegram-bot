@@ -1,5 +1,3 @@
-[Reading 555 lines from start (total: 555 lines, 0 remaining)]
-
 export const en = {
   "cmd.description.help": "Help",
 

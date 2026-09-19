@@ -1,5 +1,3 @@
-[Reading 108 lines from start (total: 108 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({

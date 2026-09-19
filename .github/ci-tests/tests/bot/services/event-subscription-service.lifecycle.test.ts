@@ -1,5 +1,3 @@
-[Reading 1024 lines from start (total: 1024 lines, 0 remaining)]
-
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";

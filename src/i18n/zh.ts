@@ -1,5 +1,3 @@
-[Reading 510 lines from start (total: 510 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 export const zh: I18nDictionary = {

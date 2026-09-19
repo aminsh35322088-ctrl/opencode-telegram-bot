@@ -1,5 +1,3 @@
-[Reading 483 lines from start (total: 483 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot, Context } from "grammy";
 import { processUserPrompt, type ProcessPromptDeps } from "../../../src/bot/handlers/prompt.js";

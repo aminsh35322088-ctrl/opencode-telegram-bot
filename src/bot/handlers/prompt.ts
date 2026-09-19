@@ -1,5 +1,3 @@
-[Reading 194 lines from start (total: 194 lines, 0 remaining)]
-
 import { Bot, Context } from "grammy";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";

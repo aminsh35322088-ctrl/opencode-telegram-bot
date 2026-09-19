@@ -1,5 +1,3 @@
-[Reading 565 lines from start (total: 565 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 export const it: I18nDictionary = {

@@ -1,5 +1,3 @@
-[Reading 137 lines from start (total: 137 lines, 0 remaining)]
-
 import { opencodeClient } from "../../opencode/client.js";
 import { markAbortExpected } from "../managers/abort-suppression-manager.js";
 import { logger } from "../../utils/logger.js";

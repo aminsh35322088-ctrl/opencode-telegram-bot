@@ -1,5 +1,3 @@
-[Reading 408 lines from start (total: 408 lines, 0 remaining)]
-
 import type { Api } from "grammy";
 import { createMainInlineKeyboard, createMainKeyboard, createTopicKeyboard } from "./main-reply-keyboard.js";
 import { getQueuedPromptButtonLabels } from "./queued-prompt-button.js";

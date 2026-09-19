@@ -1,5 +1,3 @@
-[Reading 125 lines from start (total: 125 lines, 0 remaining)]
-
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
