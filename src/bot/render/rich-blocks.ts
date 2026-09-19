@@ -11,7 +11,7 @@ import type {
 /** Telegram rejects rich tables wider than this; such tables fall back to preformatted text. */
 const RICH_TABLE_MAX_COLUMNS = 20;
 const TELEGRAM_LINK_MAX_LENGTH = 2_000;
-const TELEGRAM_LINK_PROTOCOL = /^(?:https?:\\/\\/|tg:\\/\\/|mailto:|tel:)/i;
+const TELEGRAM_LINK_PREFIXES = ["https://", "http://", "tg://", "mailto:", "tel:"] as const;
 
 /**
  * Telegram RichText URLs are stricter than Markdown. Unsupported schemes can
@@ -21,7 +21,8 @@ const TELEGRAM_LINK_PROTOCOL = /^(?:https?:\\/\\/|tg:\\/\\/|mailto:|tel:)/i;
 function sanitizeTelegramLinkUrl(value: string): string | null {
   const normalized = value.trim();
   if (!normalized || normalized.length > TELEGRAM_LINK_MAX_LENGTH) return null;
-  return TELEGRAM_LINK_PROTOCOL.test(normalized) ? normalized : null;
+  const lower = normalized.toLowerCase();
+  return TELEGRAM_LINK_PREFIXES.some((prefix) => lower.startsWith(prefix)) ? normalized : null;
 }
 
 function toRichTextNodes(nodes: InlineNode[]): RichText[] {
