@@ -6,7 +6,6 @@ import type { ContextInfo } from "./keyboard-types.js";
 export const MAIN_BUTTONS = {
   history: "🕘 History",
   newChat: "💬 New Chat",
-  newImageChat: "🎨 New Image Chat",
   mainSettings: "⚙️ Main Settings",
   topicSettings: "⚙️ Topic Settings",
   settings: "⚙️ Main Settings",
@@ -42,7 +41,7 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
 }
 
 function addMainControls(keyboard: Keyboard): void {
-  keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.newImageChat).row();
+  keyboard.text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.mainSettings).row();
 }
 
@@ -78,7 +77,6 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
 export function createMainInlineKeyboard(_currentModel: ModelInfo): InlineKeyboard {
   return new InlineKeyboard()
     .text(MAIN_BUTTONS.newChat, "main:new")
-    .text(MAIN_BUTTONS.newImageChat, "main:new_image")
     .row()
     .text(MAIN_BUTTONS.history, "main:history")
     .text(MAIN_BUTTONS.mainSettings, "main:settings");

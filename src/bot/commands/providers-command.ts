@@ -2,7 +2,6 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
 import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
-import { imageConnectionUsage } from "../../app/services/image-chat-profile-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { isChatModelMetadata, isImageModelMetadata } from "../../app/services/model-eligibility-service.js";
 import { config } from "../../config.js";
@@ -10,7 +9,6 @@ import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLoca
 import { logger } from "../../utils/logger.js";
 import { clearIntegrationWizard } from "./integrations-command.js";
 import { buildSettingsMenuView } from "../menus/settings-menu.js";
-import { showImageChatSettings } from "../menus/image-chat-settings.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
@@ -138,7 +136,6 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     if (CAPABILITIES.includes(capability)) await renderSlot(ctx, capability, id);
     return true;
   }
-  if (data === "provider:image:menu") { await showImageChatSettings(ctx); return true; }
   if (data === "provider:image:engines") { await renderAiProviders(ctx, id); return true; }
   if (data.startsWith("provider:add:")) {
     const capability = data.slice("provider:add:".length) as AiCapability;
@@ -155,16 +152,15 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   }
   if (data.startsWith("provider:remove-image:") || data === "provider:image:cloudflare:remove" || data === "provider:image:custom:remove") {
     const type = data.includes("cloudflare") ? "cloudflare" : "custom";
-    const usage = await imageConnectionUsage(type === "cloudflare" ? IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID : IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
-    await render(ctx, `Remove this image connection?\n\n${usage} Image Chat/default selections depend on it and will become unavailable.`, new InlineKeyboard().text("Remove", `provider:confirm-image:${type}`).text("Cancel", "provider:slot:general"), id); return true;
+    await render(ctx, "Remove this image connection?\n\nAny Image AI default or Topic override using it will become unavailable.", new InlineKeyboard().text("Remove", `provider:confirm-image:${type}`).text("Cancel", "provider:slot:general"), id); return true;
   }
   if (data === "provider:confirm-image:cloudflare" || data === "provider:confirm-image:custom") {
     if (data.endsWith(":cloudflare")) await removeCloudflareCredentials(); else await removeImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
     await renderAiProviders(ctx, id, "✅ Connection removed.\n\n"); return true;
   }
   if (data.startsWith("provider:delete:")) {
-    const providerID = data.slice("provider:delete:".length), usage = await imageConnectionUsage(providerID);
-    await render(ctx, `Remove this provider?\n\n${usage} Image Chat/default selections also depend on it.`, new InlineKeyboard().text("Remove", `provider:rm:${providerID}`).text("Cancel", "provider:connections"), id); return true;
+    const providerID = data.slice("provider:delete:".length);
+    await render(ctx, "Remove this provider?\n\nAny selected default or Topic override using it will become unavailable.", new InlineKeyboard().text("Remove", `provider:rm:${providerID}`).text("Cancel", "provider:connections"), id); return true;
   }
   if (data.startsWith("provider:rm:")) {
     const providerID = data.slice("provider:rm:".length);
@@ -227,7 +223,7 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
       if (!/^[a-f0-9]{32}$/i.test(text)) throw new Error("Account ID must contain 32 hexadecimal characters");
       s.accountId = text; s.step = "image-cloudflare-token"; await editWizard(ctx, s.messageId, "2/2 · Cloudflare API token"); return true;
     }
-    if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await editWizard(ctx, s.messageId, "3/4 · Edit model ID (required for Image Chat)"); return true; }
+    if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await editWizard(ctx, s.messageId, "3/4 · Edit model ID"); return true; }
     if (s.step === "image-custom-edit-model") { s.editModel = text; s.step = "image-custom-key"; await editWizard(ctx, s.messageId, "4/4 · API key"); return true; }
     s.busy = true; await editWizard(ctx, s.messageId, "🔎 Verifying credentials and model access…");
     if (s.step === "image-cloudflare-token") {

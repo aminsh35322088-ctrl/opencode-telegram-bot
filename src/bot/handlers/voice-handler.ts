@@ -14,7 +14,6 @@ import { t } from "../../i18n/index.js";
 import { buildTelegramFileUrl } from "../../app/services/file-download-service.js";
 import { buildQuotedNotification } from "../../app/services/quoted-notification.js";
 import { editBotText } from "../messages/telegram-text.js";
-import { saveTopicVoiceAsset } from "../../app/services/telegram-topic-voice-asset-service.js";
 import { sanitizeAudioHistoryForTextFallback } from "../../app/services/session-error-recovery-service.js";
 import { getEffectiveCurrentSession } from "../../app/services/session-service.js";
 import { resolveCapabilityRoute } from "../../app/services/model-capability-routing-service.js";
@@ -52,12 +51,6 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
 
     const fileData = await downloadFile(ctx, fileId);
     if (!fileData) { await ctx.reply(t("stt.error", { error: "download failed" })); return; }
-    let voiceAssetPath: string | null = null;
-    try {
-      const savedAsset = await saveTopicVoiceAsset(fileData.buffer, fileData.filename);
-      if (savedAsset) voiceAssetPath = savedAsset.relativePath;
-    } catch (saveError) { logger.warn("[Voice] Failed to persist voice asset:", saveError); }
-
     if (route.routeSource === "primary-native" && route.model) {
       const entry = await findUnifiedModel(route.model.providerID, route.model.modelID);
       const sourceMime = voice?.mime_type || audio?.mime_type || (fileData.filename.toLowerCase().endsWith(".mp3") ? "audio/mpeg" : "audio/ogg");
@@ -69,9 +62,7 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
           filename: prepared.filename,
           url: `data:${prepared.mimeType};base64,${prepared.buffer.toString("base64")}`,
         };
-        const promptText = voiceAssetPath
-          ? `Listen to the attached voice message and respond to it.\n\n[Voice attachment saved at: ${voiceAssetPath}]`
-          : "Listen to the attached voice message and respond to it.";
+        const promptText = "Listen to the attached voice message and respond to it.";
         logger.info(`[Voice] Routing verified native audio to Primary model: ${route.model.providerID}/${route.model.modelID} mime=${prepared.mimeType} transcoded=${prepared.transcoded}`);
         await processPrompt(ctx, promptText, deps, [filePart]);
         return;
@@ -115,8 +106,7 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     let textForLLM = recognizedText;
     const notePrompt = config.stt.notePrompt.trim();
     if (notePrompt && notePrompt.toLowerCase() !== "false" && notePrompt !== "0") textForLLM = `[Note: ${notePrompt}]\n${recognizedText}`;
-    const promptText = voiceAssetPath ? `${textForLLM}\n\n[Voice attachment saved at: ${voiceAssetPath}]` : textForLLM;
-    await processPrompt(ctx, promptText, deps, []);
+    await processPrompt(ctx, textForLLM, deps, []);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "unknown error";
     logger.error("[Voice] Error processing voice message:", err);

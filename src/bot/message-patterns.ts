@@ -7,7 +7,7 @@ export const QUEUED_PROMPT_BUTTON_TEXT_PATTERN = /^❌\s\d+\.\s/;
 // Patterns are matched against normalizeReplyKeyboardText() output, which strips
 // the U+FE0F variation selector. Pattern literals must stay selector-free or
 // labels like "⚙️ Settings" would silently stop matching their own keyboard.
-export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|🎨 New Image Chat|⚙ Main Settings|⚙ Topic Settings|⚙ Settings|🗑 Delete Chat|📦 Compact: (?:ON|OFF)|⏸ Pause|▶ Resume|🛑 Abort|🧠 Models|🧠 Model Center)$/u;
+export const ROOT_REPLY_BUTTON_TEXT_PATTERN = /^(?:🕘 History|💬 New Chat|⚙ Main Settings|⚙ Topic Settings|⚙ Settings|🗑 Delete Chat|📦 Compact: (?:ON|OFF)|⏸ Pause|▶ Resume|🛑 Abort|🧠 Models|🧠 Model Center)$/u;
 
 const REPLY_KEYBOARD_BUTTON_TEXT_PATTERNS = [
   AGENT_MODE_BUTTON_TEXT_PATTERN,
