@@ -224,7 +224,7 @@ describe("Main panel All/root pin isolation", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
     expect(options.message_thread_id).toBe(threadId);
-    expect(deleteMessage).toHaveBeenCalledWith(chatId, 704);
+    expect(deleteMessage).not.toHaveBeenCalled();
     expect(pinChatMessage).not.toHaveBeenCalled();
   });
 });

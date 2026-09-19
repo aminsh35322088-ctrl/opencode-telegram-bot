@@ -152,7 +152,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(text).toBe("📝 todowrite (3)\n\n✅ Done item\n🔄 In progress item\n🔲 Pending item");
+    expect(text).toBe("📝 Update Tasks (3)\n\n✅ Done item\n🔄 In progress item\n🔲 Pending item");
   });
 
   it("formats write/edit tool details with line counters", () => {
@@ -168,7 +168,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(writeText).toContain("✍️ write src/example.ts (+2)");
+    expect(writeText).toContain("✍️ Write File src/example.ts (+2)");
 
     const editText = formatToolInfo({
       sessionId: "s1",
@@ -187,7 +187,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(editText).toContain("✏️ edit src/example.ts (+3 -1)");
+    expect(editText).toContain("✏️ Edit File src/example.ts (+3 -1)");
   });
 
   it("formats bash tool using description and command", () => {
@@ -203,7 +203,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(text).toBe("💻 Run tests\nbash npm test");
+    expect(text).toBe("💻 Run tests\nRun Command npm test");
   });
 
   it("skips compact tool activity until details are available", () => {
@@ -238,7 +238,7 @@ describe("bot/messages/summary-message-formatter", () => {
           filePath: "D:/repo/.gitignore",
         },
       }),
-    ).toBe("📖 read .gitignore");
+    ).toBe("📖 Read File .gitignore");
 
     expect(
       formatCompactToolActivity({
@@ -251,7 +251,7 @@ describe("bot/messages/summary-message-formatter", () => {
           command: "npm test",
         },
       }),
-    ).toBe("💻 bash npm test");
+    ).toBe("💻 Run Command npm test");
   });
 
   it("truncates long bash commands with ellipsis", () => {
@@ -268,9 +268,9 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(text).toMatch(/^💻 bash /);
+    expect(text).toMatch(/^💻 Run Command /);
     expect(text?.endsWith("...")).toBe(true);
-    expect(text).toHaveLength("💻 bash ".length + 128);
+    expect(text).toHaveLength("💻 Run Command ".length + 128);
   });
 
   it("formats apply_patch tool details without dumping full patch", () => {
@@ -293,7 +293,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(text).toBe("🩹 apply_patch src/one.ts (+2 -1)");
+    expect(text).toBe("🩹 Apply Patch src/one.ts (+2 -1)");
   });
 
   it("formats apply_patch line info from patchText fallback", () => {
@@ -317,7 +317,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(text).toBe("🩹 apply_patch README.md (+3)");
+    expect(text).toBe("🩹 Apply Patch README.md (+3)");
   });
 
   it("prepares file payloads for write/edit and skips oversized content", () => {
@@ -367,7 +367,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(writeText).toContain("✍️ write src/absolute-write.ts (+1)");
+    expect(writeText).toContain("✍️ Write File src/absolute-write.ts (+1)");
 
     const editText = formatToolInfo({
       sessionId: "s1",
@@ -387,7 +387,7 @@ describe("bot/messages/summary-message-formatter", () => {
       },
     });
 
-    expect(editText).toContain("✏️ edit README.md (+3)");
+    expect(editText).toContain("✏️ Edit File README.md (+3)");
 
     const writeFile = prepareCodeFile("content", "D:/repo/src/absolute-write.ts", "write");
     expect(writeFile?.buffer.toString("utf8")).toContain("Write File/Path: src/absolute-write.ts");
