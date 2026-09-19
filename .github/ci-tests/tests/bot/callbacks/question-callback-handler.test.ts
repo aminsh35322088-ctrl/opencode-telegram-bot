@@ -135,6 +135,9 @@ describe("bot question menu/callbacks", () => {
       .fn()
       .mockRejectedValueOnce(
         Object.assign(new Error("Bad Request: RICH_MESSAGE_BLOCK_UNSUPPORTED"), { error_code: 400 }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Bad Request: RICH_MESSAGE_HTML_UNSUPPORTED"), { error_code: 400 }),
       );
     const api = {
       sendMessage,
@@ -146,7 +149,7 @@ describe("bot question menu/callbacks", () => {
     questionManager.startQuestions([QUESTION_ONE], "req-fallback");
     await showCurrentQuestion(api, 123);
 
-    expect(sendRichMessage).toHaveBeenCalledTimes(1);
+    expect(sendRichMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
