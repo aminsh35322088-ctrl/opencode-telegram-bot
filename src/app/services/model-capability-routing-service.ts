@@ -35,7 +35,7 @@ function modelSupportsPrimary(entry: UnifiedModelCatalogEntry | undefined, capab
   switch (capability) {
     case "imageGenerate": return entry.capabilities.operations.imageGenerate === true;
     case "imageEdit": return entry.capabilities.operations.imageEdit === true;
-    case "voiceInput": return entry.capabilities.modalities.input.audio === true;
+    case "voiceInput": return entry.capabilities.modalities.input.audio === true && entry.execution?.nativeAudioFileInput === true;
     case "vision": return entry.capabilities.modalities.input.image === true && entry.capabilities.modalities.output.text === true;
     case "textToSpeech": return entry.capabilities.operations.textToSpeech === true;
   }
@@ -52,15 +52,22 @@ function lookup(catalog: UnifiedModelCatalogEntry[], ref: ModelRef | undefined):
   return catalog.find((entry) => entry.providerID === ref.providerID && entry.modelID === ref.modelID && entry.availability === "available");
 }
 
+export interface CapabilityRouteOptions {
+  allowPrimaryNative?: boolean;
+}
+
 export function resolveCapabilityRouteFromContext(
   capability: ModelRoutingCapability,
   context: RoutingContext,
   catalog: UnifiedModelCatalogEntry[],
+  options: CapabilityRouteOptions = {},
 ): CapabilityRoute {
   const key = bindingKey(capability);
   const override = context.topicOverrides?.[key];
   const primary = context.primary;
-  const primarySupported = modelSupportsPrimary(lookup(catalog, primary), capability);
+  const primaryEntry = lookup(catalog, primary);
+  const primarySupported = modelSupportsPrimary(primaryEntry, capability);
+  const allowPrimaryNative = options.allowPrimaryNative !== false;
 
   if (override) {
     if (helperSupports(lookup(catalog, override), capability)) {
@@ -69,7 +76,7 @@ export function resolveCapabilityRouteFromContext(
     return { capability, routeSource: "unavailable", primarySupportsCapability: primarySupported, reason: "The configured Topic override is unavailable or does not support this capability." };
   }
 
-  if (primarySupported && primary) {
+  if (allowPrimaryNative && primarySupported && primary) {
     return { capability, model: cloneModelRef(primary), routeSource: "primary-native", primarySupportsCapability: true };
   }
 
@@ -81,6 +88,14 @@ export function resolveCapabilityRouteFromContext(
     return { capability, routeSource: "unavailable", primarySupportsCapability: false, reason: "The configured Main Default helper is unavailable or does not support this capability." };
   }
 
+  if (capability === "voiceInput" && primaryEntry?.capabilities.modalities.input.audio === true && primaryEntry.execution?.nativeAudioFileInput !== true) {
+    return {
+      capability,
+      routeSource: "unavailable",
+      primarySupportsCapability: false,
+      reason: "The Primary model advertises audio input, but its OpenCode/provider audio FilePart transport is not verified. Configure a Voice → Text helper or a verified native-audio transport.",
+    };
+  }
   return { capability, routeSource: "unavailable", primarySupportsCapability: false, reason: "No capable model is configured for this operation." };
 }
 
@@ -122,16 +137,20 @@ function liveRoutingContext(): RoutingContext {
   };
 }
 
-export async function resolveCapabilityPlan(capabilities: readonly ModelRoutingCapability[], worktree?: string): Promise<{ routes: Map<ModelRoutingCapability, CapabilityRoute>; catalog: UnifiedModelCatalogEntry[] }> {
+export async function resolveCapabilityPlan(
+  capabilities: readonly ModelRoutingCapability[],
+  worktree?: string,
+  options: CapabilityRouteOptions = {},
+): Promise<{ routes: Map<ModelRoutingCapability, CapabilityRoute>; catalog: UnifiedModelCatalogEntry[] }> {
   const [context, catalog] = await Promise.all([worktree ? persistedRoutingContext(worktree) : Promise.resolve(liveRoutingContext()), listUnifiedModelCatalog()]);
   if (capabilities.includes("voiceInput") && !context.mainDefaults?.speechToText) {
     const legacyStt = await getAiRoleSelection("stt");
     if (legacyStt) context.mainDefaults = { ...(context.mainDefaults ?? {}), speechToText: legacyStt };
   }
-  return { routes: new Map(capabilities.map((capability) => [capability, resolveCapabilityRouteFromContext(capability, context, catalog)])), catalog };
+  return { routes: new Map(capabilities.map((capability) => [capability, resolveCapabilityRouteFromContext(capability, context, catalog, options)])), catalog };
 }
 
-export async function resolveCapabilityRoute(capability: ModelRoutingCapability, worktree?: string): Promise<CapabilityRoute> {
-  const plan = await resolveCapabilityPlan([capability], worktree);
+export async function resolveCapabilityRoute(capability: ModelRoutingCapability, worktree?: string, options: CapabilityRouteOptions = {}): Promise<CapabilityRoute> {
+  const plan = await resolveCapabilityPlan([capability], worktree, options);
   return plan.routes.get(capability)!;
 }

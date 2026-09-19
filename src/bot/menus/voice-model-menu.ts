@@ -51,10 +51,10 @@ export async function buildVoiceModelSettingsView(ctx: Context, notice = ""): Pr
   keyboard.text("🔌 Manage AI providers", MANAGE_CONNECTIONS_CALLBACK).row();
   keyboard.text(topic ? "← Topic Model Center" : "← Default Models", topic ? SETTINGS_BACK_CALLBACK : SETTINGS_DEFAULT_MODELS_CALLBACK);
 
-  const current = topic ? (override ? `${format(override)} · Topic Override` : `Auto · Primary native audio when supported, otherwise ${format(mainDefault)}`) : format(mainDefault);
+  const current = topic ? (override ? `${format(override)} · Topic Override` : `Auto · Verified Primary native audio → otherwise ${format(mainDefault)}`) : format(mainDefault);
   return {
     text: [notice, "🎙️ <b>Voice → Text</b>", "", `Current · ${current}`, "", topic
-      ? "Auto uses the Primary model natively when it accepts audio; otherwise it uses the Main Default STT helper. Choose a model here to force a Topic override even when Primary audio is available."
+      ? "Auto uses the Primary model natively only when both audio capability and its OpenCode/provider audio transport are verified; otherwise it uses the Main Default STT helper. Choose a model here to force a Topic override."
       : "Choose the Main Default transcription helper used only when a Topic Primary cannot accept audio natively.", "", models.length ? "Only models with confirmed speech-to-text support are listed." : "No connected model currently has confirmed speech-to-text support."].filter(Boolean).join("\n"),
     keyboard,
   };
