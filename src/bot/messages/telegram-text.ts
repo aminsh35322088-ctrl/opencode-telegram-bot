@@ -8,6 +8,7 @@ import {
 } from "./send-with-markdown-fallback.js";
 import { chunkPlainText } from "../render/chunker.js";
 import { TELEGRAM_TEXT_MESSAGE_LIMIT } from "../render/limits.js";
+import { buildSourcePreservingRichHtml } from "../render/rich-html-fallback.js";
 import { getTelegramRenderedPartSignature } from "../render/part-signature.js";
 import { shouldRenderRtl } from "../render/text-direction.js";
 import type { TelegramRenderedPart } from "../render/types.js";
@@ -296,7 +297,34 @@ export async function sendRenderedBotPart({
       throw error;
     }
 
-    logger.warn("[Bot] Rich message send failed, retrying assistant part as plain text", error);
+    logger.warn(
+      "[Bot] Native rich blocks were rejected, retrying with source-preserving Rich HTML",
+      error,
+    );
+
+    try {
+      const sentMessage = await api.sendRichMessage(
+        chatId,
+        {
+          html: buildSourcePreservingRichHtml(part.fallbackText, {
+            preformatted: isCodeOnlyPart(part),
+          }),
+          ...(!isCodeOnlyPart(part) && shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
+        },
+        rawOptions as TelegramSendRichOptions,
+      );
+
+      return {
+        messageId: sentMessage.message_id,
+        deliveredSignature: getTelegramRenderedPartSignature(part),
+      };
+    } catch (richHtmlError) {
+      if (!isTelegramBadRequestError(richHtmlError)) throw richHtmlError;
+      logger.warn(
+        "[Bot] Source-preserving Rich HTML was also rejected, falling back to plain text",
+        richHtmlError,
+      );
+    }
 
     const chunks = chunkPlainText(part.fallbackText);
     let firstMessageId: number | null = null;
