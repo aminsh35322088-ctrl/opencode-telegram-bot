@@ -41,7 +41,7 @@ describe("Voice → Text model menu", () => {
 
   it("explains Auto as Primary native then Main Default", async () => {
     const view = await buildVoiceModelSettingsView(context("settings:voice_model"));
-    expect(view.text).toContain("Auto · Primary native");
+    expect(view.text).toContain("Auto · Verified Primary native audio");
     expect(view.text).toContain("Main Default STT helper");
   });
 

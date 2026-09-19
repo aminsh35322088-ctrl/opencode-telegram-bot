@@ -3,6 +3,7 @@ import type { UnifiedModelCatalogEntry } from "../types/model-capability.js";
 import { getGroqSttConfig, listCustomProvidersByCapability } from "./custom-provider-service.js";
 import { listImageAiProviders } from "./image-ai-provider-service.js";
 import { detectModelCapabilities } from "./model-capability-detection-service.js";
+import { detectModelExecutionCapabilities } from "./model-execution-capability-service.js";
 
 function advertisedName(metadata: unknown, fallback: string): string {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return fallback;
@@ -23,12 +24,14 @@ export async function listUnifiedModelCatalog(): Promise<UnifiedModelCatalogEntr
     for (const provider of providerResponse.data.providers) {
       for (const [modelID, metadata] of Object.entries(provider.models)) {
         const detected = detectModelCapabilities(metadata, { source: "provider-metadata" });
+        const execution = detectModelExecutionCapabilities(metadata);
         entries.push({
           providerID: provider.id,
           providerName: provider.name || provider.id,
           modelID,
           modelName: advertisedName(metadata, modelID),
           capabilities: detected.capabilities,
+          execution: execution.execution,
           capabilityDetection: detected.detection,
           availability: "available",
         });
@@ -46,18 +49,18 @@ export async function listUnifiedModelCatalog(): Promise<UnifiedModelCatalogEntr
       forceImageGenerate: provider.capabilities.includes("generate"),
       forceImageEdit: provider.capabilities.includes("edit"),
     });
-    entries.push({ providerID: provider.id, providerName: provider.name, modelID: provider.model, modelName: provider.model, capabilities: detected.capabilities, capabilityDetection: detected.detection, availability: "available" });
+    entries.push({ providerID: provider.id, providerName: provider.name, modelID: provider.model, modelName: provider.model, capabilities: detected.capabilities, execution: { nativeAudioFileInput: false, nativeAudioMimeTypes: [] }, capabilityDetection: detected.detection, availability: "available" });
   }
 
   for (const provider of sttProviders) {
     for (const model of provider.models) {
       const detected = detectModelCapabilities({ modalities: { input: ["audio"], output: ["text"] } }, { source: "adapter", confidence: "high", forceSpeechToText: true });
-      entries.push({ providerID: provider.id, providerName: provider.name, modelID: model.id, modelName: model.name || model.id, capabilities: detected.capabilities, capabilityDetection: detected.detection, availability: "available" });
+      entries.push({ providerID: provider.id, providerName: provider.name, modelID: model.id, modelName: model.name || model.id, capabilities: detected.capabilities, execution: { nativeAudioFileInput: false, nativeAudioMimeTypes: [] }, capabilityDetection: detected.detection, availability: "available" });
     }
   }
   if (groq) {
     const detected = detectModelCapabilities({ modalities: { input: ["audio"], output: ["text"] } }, { source: "adapter", confidence: "high", forceSpeechToText: true });
-    entries.push({ providerID: "groq", providerName: "Groq", modelID: groq.model, modelName: groq.model, capabilities: detected.capabilities, capabilityDetection: detected.detection, availability: "available" });
+    entries.push({ providerID: "groq", providerName: "Groq", modelID: groq.model, modelName: groq.model, capabilities: detected.capabilities, execution: { nativeAudioFileInput: false, nativeAudioMimeTypes: [] }, capabilityDetection: detected.detection, availability: "available" });
   }
 
   const deduped = new Map<string, UnifiedModelCatalogEntry>();

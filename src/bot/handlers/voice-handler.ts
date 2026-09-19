@@ -16,6 +16,8 @@ import { buildQuotedNotification } from "../../app/services/quoted-notification.
 import { editBotText } from "../messages/telegram-text.js";
 import { saveTopicVoiceAsset } from "../../app/services/telegram-topic-voice-asset-service.js";
 import { resolveCapabilityRoute } from "../../app/services/model-capability-routing-service.js";
+import { findUnifiedModel } from "../../app/services/unified-model-catalog-service.js";
+import { prepareNativeAudioInput } from "../../app/services/native-audio-input-service.js";
 import type { ModelRef } from "../../app/types/model-capability.js";
 
 const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -39,7 +41,7 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
   flushPendingPrompt(ctx.chat!.id);
 
   try {
-    const route = await resolveCapabilityRoute("voiceInput");
+    let route = await resolveCapabilityRoute("voiceInput");
     const legacyStt = route.routeSource === "unavailable" && await sttConfigured();
     if (route.routeSource === "unavailable" && !legacyStt) {
       await ctx.reply(route.reason ?? t("stt.not_configured"));
@@ -54,20 +56,35 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
       if (savedAsset) voiceAssetPath = savedAsset.relativePath;
     } catch (saveError) { logger.warn("[Voice] Failed to persist voice asset:", saveError); }
 
-    if (route.routeSource === "primary-native") {
-      const mime = audio?.mime_type || (fileData.filename.toLowerCase().endsWith(".mp3") ? "audio/mpeg" : "audio/ogg");
-      const filePart: FilePartInput = {
-        type: "file",
-        mime,
-        filename: fileData.filename,
-        url: `data:${mime};base64,${fileData.buffer.toString("base64")}`,
-      };
-      const promptText = voiceAssetPath
-        ? `Listen to the attached voice message and respond to it.\n\n[Voice attachment saved at: ${voiceAssetPath}]`
-        : "Listen to the attached voice message and respond to it.";
-      logger.info(`[Voice] Routing audio natively to Primary model: ${route.model?.providerID}/${route.model?.modelID}`);
-      await processPrompt(ctx, promptText, deps, [filePart]);
-      return;
+    if (route.routeSource === "primary-native" && route.model) {
+      const entry = await findUnifiedModel(route.model.providerID, route.model.modelID);
+      const sourceMime = voice?.mime_type || audio?.mime_type || (fileData.filename.toLowerCase().endsWith(".mp3") ? "audio/mpeg" : "audio/ogg");
+      const prepared = await prepareNativeAudioInput(fileData.buffer, fileData.filename, sourceMime, entry?.execution);
+      if (prepared) {
+        const filePart: FilePartInput = {
+          type: "file",
+          mime: prepared.mimeType,
+          filename: prepared.filename,
+          url: `data:${prepared.mimeType};base64,${prepared.buffer.toString("base64")}`,
+        };
+        const promptText = voiceAssetPath
+          ? `Listen to the attached voice message and respond to it.\n\n[Voice attachment saved at: ${voiceAssetPath}]`
+          : "Listen to the attached voice message and respond to it.";
+        logger.info(`[Voice] Routing verified native audio to Primary model: ${route.model.providerID}/${route.model.modelID} mime=${prepared.mimeType} transcoded=${prepared.transcoded}`);
+        await processPrompt(ctx, promptText, deps, [filePart]);
+        return;
+      }
+
+      logger.warn(`[Voice] Primary native-audio route was not executable for ${route.model.providerID}/${route.model.modelID}; falling back to configured STT helper.`);
+      route = await resolveCapabilityRoute("voiceInput", undefined, { allowPrimaryNative: false });
+    }
+
+    if (route.routeSource === "unavailable") {
+      const legacySttAfterNativeFallback = await sttConfigured();
+      if (!legacySttAfterNativeFallback) {
+        await ctx.reply(route.reason ?? t("stt.not_configured"));
+        return;
+      }
     }
 
     const statusMessage = await ctx.reply(t("stt.recognizing"));

@@ -32,6 +32,13 @@ export interface UnifiedModelCapabilities {
   };
 }
 
+export interface ModelExecutionCapabilities {
+  /** Whether the active OpenCode/provider transport can actually carry native audio FileParts. */
+  nativeAudioFileInput: CapabilityState;
+  /** Exact MIME types accepted by that verified transport. Supports audio/* for wildcard contracts. */
+  nativeAudioMimeTypes: string[];
+}
+
 export interface UnifiedModelCatalogEntry {
   providerID: string;
   providerName: string;
@@ -39,6 +46,7 @@ export interface UnifiedModelCatalogEntry {
   modelName: string;
   family?: string;
   capabilities: UnifiedModelCapabilities;
+  execution?: ModelExecutionCapabilities;
   capabilityDetection: {
     source: CapabilityDetectionSource;
     confidence: CapabilityConfidence;
