@@ -50,6 +50,7 @@ class KeyboardManager {
   private readonly mainInlineMessageIds = new Map<number, number>();
   private readonly mainAnchorLocks = new Map<number, Promise<void>>();
   private readonly topicModeChats = new Set<number>();
+  private readonly replyKeyboardFingerprints = new Map<string, string>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
@@ -348,6 +349,22 @@ class KeyboardManager {
   public clearContext(sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = null; }
   public getContextInfo(sessionId?: string): ContextInfo | null { return this.state(sessionId)?.contextInfo ?? null; }
 
+  private replyKeyboardFingerprint(sessionId?: string): string | null {
+    const keyboard = this.buildKeyboard(sessionId);
+    if (!keyboard) return null;
+    return JSON.stringify({
+      keyboard: keyboard.keyboard,
+      resize_keyboard: keyboard.resize_keyboard,
+      is_persistent: keyboard.is_persistent,
+      one_time_keyboard: keyboard.one_time_keyboard,
+    });
+  }
+
+  public markKeyboardDelivered(sessionId: string): void {
+    const fingerprint = this.replyKeyboardFingerprint(sessionId);
+    if (fingerprint) this.replyKeyboardFingerprints.set(this.key(sessionId), fingerprint);
+  }
+
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     if (state?.sessionId && state.threadId !== undefined) {
@@ -379,16 +396,15 @@ class KeyboardManager {
       const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
       if (!isTopic) { await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true); return; }
       const keyboard = this.buildKeyboard(resolvedSessionId);
+      const fingerprint = this.replyKeyboardFingerprint(resolvedSessionId);
+      const fingerprintKey = this.key(resolvedSessionId);
+      if (fingerprint && this.replyKeyboardFingerprints.get(fingerprintKey) === fingerprint) return;
       const options: Record<string, unknown> = { reply_markup: keyboard, disable_notification: true };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
-      const controlMessage = await this.api.sendMessage(targetChatId, "⁣", options as never);
-      if (controlMessage?.message_id) {
-        await this.api.deleteMessage(targetChatId, controlMessage.message_id).catch((error) => {
-          logger.debug(`[KeyboardManager] Could not delete silent ReplyKeyboard control message ${controlMessage.message_id}:`, error);
-        });
-      }
-      logger.info(`[KeyboardManager] Refreshed AI Topic ReplyKeyboard silently: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
+      await this.api.sendMessage(targetChatId, "⌨️ Keyboard updated", options as never);
+      if (fingerprint) this.replyKeyboardFingerprints.set(fingerprintKey, fingerprint);
+      logger.info(`[KeyboardManager] Refreshed persistent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
@@ -402,7 +418,12 @@ class KeyboardManager {
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)) || (!sessionId && Boolean(this.api)); }
   public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
-  public clearSession(sessionId: string): void { this.states.delete(this.key(sessionId)); this.lastUpdateTimes.delete(this.key(sessionId)); }
+  public clearSession(sessionId: string): void {
+    const key = this.key(sessionId);
+    this.states.delete(key);
+    this.lastUpdateTimes.delete(key);
+    this.replyKeyboardFingerprints.delete(key);
+  }
 }
 
 export const keyboardManager = new KeyboardManager();

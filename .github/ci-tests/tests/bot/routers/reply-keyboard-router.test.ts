@@ -172,7 +172,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
   it("consumes dynamic model-name buttons inside a topic", async () => {
     mocks.keyboardManager.getState.mockReturnValue({ sessionId: SESSION_ID, currentModel: { providerID: "p", modelID: "m", name: "Topic Model" } });
     const { handler, next } = registerHandler();
-    await handler(makeTopicContext("🧠 p/m Topic Model"), next);
+    await handler(makeTopicContext("🧠 Topic Model"), next);
     expect(next).not.toHaveBeenCalled();
   });
 

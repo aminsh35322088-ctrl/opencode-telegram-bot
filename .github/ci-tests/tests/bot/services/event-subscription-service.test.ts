@@ -434,7 +434,7 @@ describe("bot/services/event-subscription-service", () => {
       },
       { timeout: 3000 },
     );
-    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("write");
+    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("Write File");
     expect(api.sendDocument).not.toHaveBeenCalled();
   });
 
@@ -508,7 +508,7 @@ describe("bot/services/event-subscription-service", () => {
       await vi.advanceTimersByTimeAsync(ELAPSED_SETTLE_MS);
 
       const texts = collectSentTexts(api);
-      expect(texts.some((text) => text.includes("💻 bash"))).toBe(true);
+      expect(texts.some((text) => text.includes("💻 Run Command"))).toBe(true);
       expect(texts.some((text) => text.includes("20s"))).toBe(true);
     });
 

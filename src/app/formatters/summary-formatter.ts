@@ -5,6 +5,7 @@ import { isRecord } from "../../utils/type-guards.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { getCurrentProject } from "../stores/settings-store.js";
+import { getFriendlyActionDisplay } from "./action-display-formatter.js";
 
 function truncateWithEllipsis(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
@@ -82,49 +83,12 @@ function getToolDetails(tool: string, input?: { [key: string]: unknown }): strin
 
   // If nothing matched but string fields exist, take the first one (except description)
   for (const [key, value] of Object.entries(input)) {
-    if (key !== "description" && typeof value === "string" && value.length > 0) {
+    if (key !== "description" && key !== "action" && typeof value === "string" && value.length > 0) {
       return value;
     }
   }
 
   return "";
-}
-
-function getToolIcon(tool: string): string {
-  switch (tool) {
-    case "read":
-      return "📖";
-    case "write":
-      return "✍️";
-    case "edit":
-      return "✏️";
-    case "apply_patch":
-      return "🩹";
-    case "bash":
-      return "💻";
-    case "glob":
-      return "📁";
-    case "grep":
-      return "🔍";
-    case "task":
-      return "🤖";
-    case "question":
-      return "❓";
-    case "todoread":
-      return "📋";
-    case "todowrite":
-      return "📝";
-    case "webfetch":
-      return "🌐";
-    case "web-search_tavily_search":
-      return "🔎";
-    case "web-search_tavily_extract":
-      return "📄";
-    case "skill":
-      return "🎓";
-    default:
-      return "🛠️";
-  }
 }
 
 function formatTodos(todos: Array<{ content: string; status: string }>): string {
@@ -210,13 +174,16 @@ export function formatToolInfo(toolInfo: ToolInfo): string | null {
           typeof item.status === "string",
       )
       .map(({ content, status }) => ({ content, status }));
-    const toolIcon = getToolIcon(tool);
+    const display = getFriendlyActionDisplay(tool, input);
     const todosList = formatTodos(todos);
-    return `${toolIcon} ${tool} (${todos.length})\n\n${todosList}`;
+    return `${display.icon} ${display.label} (${todos.length})\n\n${todosList}`;
   }
 
-  let details = title || getToolDetails(tool, input);
-  const toolIcon = getToolIcon(tool);
+  const display = getFriendlyActionDisplay(tool, input);
+  const action = input && typeof input.action === "string" ? input.action.trim() : "";
+  // OpenCode often uses technical titles such as "media image.current" for action tools.
+  // Never surface those raw identifiers when a friendly action label exists.
+  let details = action ? getToolDetails(tool, input) : (title || getToolDetails(tool, input));
 
   let description = "";
   if (input && typeof input.description === "string") {
@@ -275,7 +242,7 @@ export function formatToolInfo(toolInfo: ToolInfo): string | null {
     }
   }
 
-  return `${toolIcon} ${description}${tool}${detailsStr}${lineInfo}`;
+  return `${display.icon} ${description}${display.label}${detailsStr}${lineInfo}`;
 }
 
 export function formatCompactToolInfo(toolInfo: ToolInfo, maxLength = 64, fallback = "-"): string {

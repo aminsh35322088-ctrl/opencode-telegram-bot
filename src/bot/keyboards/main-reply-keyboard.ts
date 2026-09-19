@@ -1,6 +1,6 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import { getAgentButtonLabel } from "../../app/types/agent.js";
-import type { ModelInfo } from "../../app/types/model.js";
+import { formatModelForButton, type ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo } from "./keyboard-types.js";
 
 export const MAIN_BUTTONS = {
@@ -22,7 +22,9 @@ export const TOPIC_BUTTONS = {
   resume: MAIN_BUTTONS.resume,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   models: "🧠 Models",
-  modelCenter: (_model?: ModelInfo) => "🧠 Models",
+  modelCenter: (model?: ModelInfo) => model?.providerID && model.modelID
+    ? formatModelForButton(model.providerID, model.modelID, model.name)
+    : "🧠 Models",
   deleteChat: MAIN_BUTTONS.deleteChat,
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
@@ -68,9 +70,9 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   } else {
     addMainControls(keyboard);
   }
-  // Reply keyboards are chat-scoped in Telegram. Do not make them persistent:
-  // the router actively removes stale Topic controls when Main/General is used.
-  return keyboard.resized();
+  return options.isTopic === true
+    ? keyboard.resized().persistent()
+    : keyboard.resized();
 }
 
 /** Canonical Main/General navigation. Model choices live under Settings → Default Models. */
