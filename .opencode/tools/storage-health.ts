@@ -42,12 +42,12 @@ function statusFor(free: number): "healthy" | "warning" | "critical" {
 }
 
 export default tool({
-  description: "Inspect and safely reclaim persistent /data volume space. Never deletes user workspaces, sessions, databases, or source files.",
+  description: "Inspect or safely reclaim persistent /data volume space through explicit actions. Never deletes user workspaces, sessions, databases, or source files.",
   args: {
-    action: tool.schema.enum(["inspect", "cleanup-safe"]).optional().describe("Inspect usage or remove only disposable package/tool caches."),
+    action: tool.schema.enum(["inspect", "cleanup-safe"]).describe("Storage action: inspect usage or remove only disposable package/tool caches."),
   },
   async execute(args) {
-    const action = args.action ?? "inspect";
+    const action = args.action;
     const before = await freeBytes();
     const result: Record<string, unknown> = {
       mount: dataRoot,

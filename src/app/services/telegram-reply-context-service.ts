@@ -3,6 +3,8 @@ import type { Context } from "grammy";
 import { downloadTelegramFile } from "./file-download-service.js";
 import { promptAttachment } from "../managers/prompt-attachment-manager.js";
 import { logger } from "../../utils/logger.js";
+import { extractVideoAudio, extractVideoFrames } from "./video-preparation-service.js";
+import { isSttConfigured, transcribeAudio } from "./stt-service.js";
 
 const REPLY_ASSET_DIR = ".telegram/replies";
 
@@ -68,6 +70,44 @@ async function saveReplyDocument(ctx: Context, message: Record<string, unknown>,
   return { relativePath, mimeType };
 }
 
+
+async function saveReplyVideo(ctx: Context, message: Record<string, unknown>, workspace: string): Promise<{ relativePaths: string[]; transcription?: string } | null> {
+  const raw = message.video ?? message.video_note;
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const fileId = value.file_id;
+  if (typeof fileId !== "string" || !fileId) return null;
+  const downloaded = await downloadTelegramFile(ctx.api, fileId);
+  const sourceName = typeof value.file_name === "string" ? value.file_name : `reply-${String(message.message_id ?? Date.now())}.mp4`;
+  const frames = await extractVideoFrames(downloaded.buffer, sourceName);
+  const dirRelative = path.join(REPLY_ASSET_DIR, `video-${String(message.message_id ?? Date.now())}`);
+  const dirAbsolute = path.resolve(workspace, dirRelative);
+  const fs = await import("fs/promises");
+  await fs.mkdir(dirAbsolute, { recursive: true });
+  const attachments = [];
+  const relativePaths: string[] = [];
+  for (const frame of frames) {
+    const relativePath = path.join(dirRelative, frame.filename);
+    const absolutePath = path.resolve(workspace, relativePath);
+    await fs.writeFile(absolutePath, frame.buffer);
+    attachments.push({ absolutePath, worktree: workspace, mimeType: "image/jpeg" });
+    relativePaths.push(relativePath);
+  }
+  promptAttachment.setMany(attachments);
+  let transcription: string | undefined;
+  if (await isSttConfigured()) {
+    try {
+      const audio = await extractVideoAudio(downloaded.buffer, sourceName);
+      if (audio) {
+        const result = await transcribeAudio(audio.buffer, audio.filename);
+        const text = result.text.trim();
+        if (text) transcription = text.slice(0, 6000);
+      }
+    } catch (error) { logger.warn("[TelegramTopics] Failed to transcribe replied video audio:", error); }
+  }
+  return { relativePaths, ...(transcription ? { transcription } : {}) };
+}
+
 const SLASH_COMMAND_PATTERN = /^\/[a-zA-Z0-9_]+(?:@\w+)?(?:\s|$)/u;
 
 function isSlashCommand(text: string | undefined): boolean {
@@ -98,10 +138,18 @@ export async function enrichTelegramReplyContext(ctx: Context, workspace: string
       logger.warn("[TelegramTopics] Failed to persist replied document:", error);
       return null;
     });
+  const replyVideo = replyPhotoPath || replyDocumentPath
+    ? null
+    : await saveReplyVideo(ctx, replyMessage, workspace).catch((error) => {
+      logger.warn("[TelegramTopics] Failed to prepare replied video:", error);
+      return null;
+    });
 
   const assetNote = replyPhotoPath || replyDocumentPath
     ? `\nReferenced asset saved at: ${replyPhotoPath?.relativePath ?? replyDocumentPath?.relativePath}`
-    : "";
+    : replyVideo
+      ? `\nReferenced video prepared as ${replyVideo.relativePaths.length} keyframes.${replyVideo.transcription ? `\nAudio transcription:\n${replyVideo.transcription}` : ""}`
+      : "";
   const currentText = typeof message.text === "string" ? message.text.trim() : "";
   if (currentText) {
     message.text = `${description}${assetNote}\n\n${currentText}`;
@@ -110,6 +158,6 @@ export async function enrichTelegramReplyContext(ctx: Context, workspace: string
   }
 
   logger.debug(
-    `[TelegramTopics] Enriched reply context: chat=${ctx.chat?.id ?? "unknown"}, replyMessage=${String(replyMessage.message_id ?? "unknown")}, asset=${replyPhotoPath || replyDocumentPath || "none"}`,
+    `[TelegramTopics] Enriched reply context: chat=${ctx.chat?.id ?? "unknown"}, replyMessage=${String(replyMessage.message_id ?? "unknown")}, asset=${replyPhotoPath || replyDocumentPath || replyVideo || "none"}`,
   );
 }

@@ -181,4 +181,42 @@ describe("provider wizard General panel contract", () => {
     await verification;
     expect(isProviderWizardActive()).toBe(false);
   });
+
+
+  it("shows generic AI + transcription slots instead of separate chat/image provider slots", async () => {
+    const ctx = callbackContext("provider:connections", 500);
+    expect(await handleProviderCallback(ctx)).toBe(true);
+
+    const keyboard = (ctx.api.editMessageText as any).mock.calls[0]?.[3]?.reply_markup;
+    const callbacks = keyboard.inline_keyboard.flat().map((button: { callback_data?: string }) => button.callback_data);
+    expect(callbacks).toContain("provider:slot:general");
+    expect(callbacks).toContain("provider:slot:stt");
+    expect(callbacks).not.toContain("provider:slot:coding");
+    expect(callbacks).not.toContain("provider:slot:image");
+  });
+
+  it("migrates legacy add:image flow into one generic AI provider catalog", async () => {
+    const start = callbackContext("provider:add:image", 500);
+    expect(await handleProviderCallback(start)).toBe(true);
+
+    expect(await handleProviderWizardMessage(textContext("Mixed API", 601))).toBe(true);
+    expect(await handleProviderWizardMessage(textContext("https://api.example.com/v1", 602))).toBe(true);
+
+    mocks.discoverModels.mockResolvedValueOnce([
+      { id: "chat-model", modalities: { input: ["text"], output: ["text"] } },
+      { id: "image-model", modalities: { input: ["text", "image"], output: ["image"] } },
+    ]);
+
+    expect(await handleProviderWizardMessage(textContext("secret-key", 603))).toBe(true);
+
+    expect(mocks.saveCustomProvider).toHaveBeenCalledWith(expect.objectContaining({
+      name: "Mixed API",
+      baseURL: "https://api.example.com/v1",
+      capability: "general",
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "chat-model" }),
+        expect.objectContaining({ id: "image-model" }),
+      ]),
+    }));
+  });
 });

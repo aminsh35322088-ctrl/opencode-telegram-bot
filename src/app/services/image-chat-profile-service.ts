@@ -40,7 +40,7 @@ function familyRank(provider: CustomProvider, model: CustomProviderModel): numbe
 
 export function rankAutoImageChatModels(providers: CustomProvider[]): Array<{ providerID: string; modelID: string; family: string }> {
   return providers
-    .filter((provider) => provider.capability === "coding")
+    .filter((provider) => provider.capability !== "stt")
     .flatMap((provider) => provider.models
       .filter((model) => isExplicitFreeModel(model) && supportsImageInput(model))
       .map((model) => ({ provider, model, rank: familyRank(provider, model) })))
@@ -74,7 +74,7 @@ export async function resolveImageChatConnection(profile: ImageChatProfile): Pro
   }
   const config = await getCustomProviderConfig(profile.connectionID);
   const model = config?.models.find((candidate) => candidate.id === profile.modelID);
-  if (!config || config.capability !== "coding" || config.apiUrl !== profile.endpoint || !model || !isChatModelMetadata(model)) throw new Error("The conversation connection/model changed or was removed. Reconfigure this Image Chat.");
+  if (!config || config.capability === "stt" || config.apiUrl !== profile.endpoint || !model || !isChatModelMetadata(model)) throw new Error("The conversation connection/model changed or was removed. Reconfigure this Image Chat.");
   if (!model.modalities?.input?.includes("image") && model.attachment !== true) throw new Error("The conversation model needs confirmed image input support. Choose a vision model.");
   return { apiKey: config.apiKey, endpoint: config.apiUrl };
 }

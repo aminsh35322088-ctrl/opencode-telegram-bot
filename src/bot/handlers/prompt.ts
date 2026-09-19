@@ -22,7 +22,7 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { attachToSession, detachAttachedSession, markAttachedSessionBusy, markAttachedSessionIdle } from "../../app/services/attach-service.js";
 import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
-import { resolvePendingAttachment } from "../../app/services/prompt-attachment-service.js";
+import { resolvePendingAttachments } from "../../app/services/prompt-attachment-service.js";
 import { startSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import type { ModelInfo } from "../../app/types/model.js";
 
@@ -106,8 +106,8 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     if (text.trim()) parts.push({ type: "text", text });
     parts.push(...fileParts);
     const pendingAttachment = promptAttachment.get();
-    const attachmentPart = await resolvePendingAttachment(currentSession.directory);
-    if (attachmentPart) parts.push(attachmentPart); else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
+    const attachmentParts = await resolvePendingAttachments(currentSession.directory);
+    if (attachmentParts.length) parts.push(...attachmentParts); else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
     if (pendingAttachment) { promptAttachment.clear("consumed"); interactionManager.clear("attachment_consumed"); await retireAttachmentConfirmation(ctx, pendingAttachment.confirmationMessageId); }
     if (parts.length === 0 || parts.every((p) => p.type === "file")) if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
     if (parts.length === 0) {

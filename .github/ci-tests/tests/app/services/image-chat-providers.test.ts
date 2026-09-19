@@ -24,12 +24,12 @@ describe("provider separation and setup", () => {
     await saveCustomProvider({ name: "existing", baseURL: "https://custom.test", apiKey: "secret", models });
     await expect(saveCustomProvider({ name: "existing", baseURL: "https://other.test", apiKey: "secret", models })).rejects.toThrow("already exists");
   });
-  it("exports only coding connections and text output models to OpenCode", async () => {
+  it("exports the full non-STT model catalog to OpenCode for model-level capability routing", async () => {
     await saveCustomProvider({ name: "mixed", baseURL: "https://custom.test", apiKey: "secret", models });
     await saveCustomProvider({ name: "transcription", baseURL: "https://stt.test", apiKey: "secret", capability: "stt", models });
     const config = JSON.parse(await buildOpenCodeCustomConfig());
     expect(Object.keys(config.provider)).toEqual(["mixed"]);
-    expect(Object.keys(config.provider.mixed.models)).toEqual(["vision"]);
+    expect(Object.keys(config.provider.mixed.models)).toEqual(["vision", "image", "speech"]);
   });
   it("ignores legacy video selections and rejects new Video AI configuration", async () => {
     await writeAppState({ version: 2, aiRoles: { video: { providerID: "legacy", modelID: "video" } }, customProviders: { providers: [{ id: "legacy", name: "Legacy", baseURL: "https://video.test", apiKey: "secret", models, capability: "video" }] } });
