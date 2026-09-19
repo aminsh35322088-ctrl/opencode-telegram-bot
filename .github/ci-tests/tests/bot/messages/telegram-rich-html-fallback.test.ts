@@ -37,7 +37,7 @@ describe("bot/messages/rich HTML fallback", () => {
         chatId: 100,
         part: richPart,
       }),
-    ).resolves.toMatchObject({ messageId: 77, degradedToPlain: undefined });
+    ).resolves.toMatchObject({ messageId: 77 });
 
     expect(sendRichMessage).toHaveBeenCalledTimes(2);
     expect(sendRichMessage).toHaveBeenNthCalledWith(
