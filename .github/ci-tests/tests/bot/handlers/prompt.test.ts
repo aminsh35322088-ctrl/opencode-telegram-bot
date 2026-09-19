@@ -22,6 +22,11 @@ const mocked = vi.hoisted(() => ({
   setSessionSummaryMock: vi.fn(),
   setBotAndChatIdMock: vi.fn(),
   attachToSessionMock: vi.fn(),
+  recoverSessionAfterErrorMock: vi.fn(),
+}));
+
+vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
+  recoverSessionAfterError: mocked.recoverSessionAfterErrorMock,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -75,6 +80,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     clearContext: vi.fn(),
     updateAgent: vi.fn(),
     sendKeyboardUpdate: vi.fn().mockResolvedValue(undefined),
+    setPaused: vi.fn(),
     getContextInfo: vi.fn().mockReturnValue(null),
     getKeyboard: vi.fn().mockReturnValue(null),
   },
@@ -164,15 +170,15 @@ function createDeps(): ProcessPromptDeps {
 
 function getScheduledBackgroundTask(): {
   task: () => Promise<unknown>;
-  onSuccess?: (value: { error: unknown | null }) => void;
-  onError?: (error: unknown) => void;
+  onSuccess?: (value: { error: unknown | null }) => void | Promise<void>;
+  onError?: (error: unknown) => void | Promise<void>;
 } {
   const [[options]] = mocked.safeBackgroundTaskMock.mock.calls as [
     [
       {
         task: () => Promise<unknown>;
-        onSuccess?: (value: { error: unknown | null }) => void;
-        onError?: (error: unknown) => void;
+        onSuccess?: (value: { error: unknown | null }) => void | Promise<void>;
+        onError?: (error: unknown) => void | Promise<void>;
       },
     ],
   ];
@@ -197,6 +203,8 @@ describe("bot/handlers/prompt", () => {
     mocked.setSessionSummaryMock.mockReset();
     mocked.setBotAndChatIdMock.mockReset();
     mocked.attachToSessionMock.mockReset();
+    mocked.recoverSessionAfterErrorMock.mockReset();
+    mocked.recoverSessionAfterErrorMock.mockResolvedValue({ abortAttempted: true, abortAccepted: true, removedMessageIds: [], contaminationRemaining: false });
     mocked.attachToSessionMock.mockResolvedValue({
       busy: false,
       alreadyAttached: false,
@@ -286,11 +294,16 @@ describe("bot/handlers/prompt", () => {
     expect(handled).toBe(true);
 
     const backgroundTask = getScheduledBackgroundTask();
-    backgroundTask.onSuccess?.({ error: new Error("request start failed") });
+    await backgroundTask.onSuccess?.({ error: new Error("request start failed") });
 
     expect(deps.bot.api.sendMessage).toHaveBeenCalledWith(
       777,
       "Failed to send request to OpenCode.",
+    );
+    expect(mocked.recoverSessionAfterErrorMock).toHaveBeenCalledWith(
+      "session-1",
+      "D:\\Projects\\Repo",
+      "request start failed",
     );
   });
 
@@ -306,13 +319,20 @@ describe("bot/handlers/prompt", () => {
     const startError = new Error("network down");
     mocked.sessionPromptAsyncMock.mockRejectedValueOnce(startError);
 
-    await backgroundTask.task().catch((error) => {
-      backgroundTask.onError?.(error);
-    });
+    try {
+      await backgroundTask.task();
+    } catch (error) {
+      await backgroundTask.onError?.(error);
+    }
 
     expect(deps.bot.api.sendMessage).toHaveBeenCalledWith(
       777,
       "Failed to send request to OpenCode.",
+    );
+    expect(mocked.recoverSessionAfterErrorMock).toHaveBeenCalledWith(
+      "session-1",
+      "D:\\Projects\\Repo",
+      "network down",
     );
   });
 

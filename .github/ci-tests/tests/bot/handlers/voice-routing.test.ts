@@ -6,12 +6,16 @@ const mocks = vi.hoisted(() => ({
   editBotText: vi.fn(),
   findUnifiedModel: vi.fn(),
   prepareNativeAudioInput: vi.fn(),
+  sanitizeAudioHistoryForTextFallback: vi.fn(),
+  getEffectiveCurrentSession: vi.fn(),
 }));
 vi.mock("../../../src/app/services/model-capability-routing-service.js", () => ({ resolveCapabilityRoute: mocks.resolveCapabilityRoute }));
 vi.mock("../../../src/app/services/telegram-topic-voice-asset-service.js", () => ({ saveTopicVoiceAsset: mocks.saveTopicVoiceAsset }));
 vi.mock("../../../src/bot/messages/telegram-text.js", () => ({ editBotText: mocks.editBotText }));
 vi.mock("../../../src/app/services/unified-model-catalog-service.js", () => ({ findUnifiedModel: mocks.findUnifiedModel }));
 vi.mock("../../../src/app/services/native-audio-input-service.js", () => ({ prepareNativeAudioInput: mocks.prepareNativeAudioInput }));
+vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({ sanitizeAudioHistoryForTextFallback: mocks.sanitizeAudioHistoryForTextFallback }));
+vi.mock("../../../src/app/services/session-service.js", () => ({ getEffectiveCurrentSession: mocks.getEffectiveCurrentSession }));
 
 import { handleVoiceMessage } from "../../../src/bot/handlers/voice-handler.js";
 
@@ -29,6 +33,8 @@ describe("voice capability routing", () => {
     vi.clearAllMocks();
     mocks.saveTopicVoiceAsset.mockResolvedValue(null);
     mocks.editBotText.mockResolvedValue(undefined);
+    mocks.getEffectiveCurrentSession.mockResolvedValue({ id: "session-1", title: "Topic", directory: "/repo" });
+    mocks.sanitizeAudioHistoryForTextFallback.mockResolvedValue({ removedMessageIds: [], contaminationRemaining: false });
     mocks.findUnifiedModel.mockResolvedValue({
       providerID: "native",
       modelID: "audio",
@@ -77,6 +83,7 @@ describe("voice capability routing", () => {
 
     expect(mocks.resolveCapabilityRoute).toHaveBeenNthCalledWith(2, "voiceInput", undefined, { allowPrimaryNative: false });
     expect(transcribeAudio).toHaveBeenCalledWith(expect.any(Buffer), "voice.ogg", helper);
+    expect(mocks.sanitizeAudioHistoryForTextFallback).toHaveBeenCalledWith("session-1", "/repo");
     expect(processPrompt).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("سلام دنیا"), expect.anything(), []);
     expect(processPrompt.mock.calls[0]?.[3]).toEqual([]);
   });
@@ -95,6 +102,7 @@ describe("voice capability routing", () => {
       processPrompt,
     });
     expect(transcribeAudio).toHaveBeenCalledWith(expect.any(Buffer), "voice.ogg", selected);
+    expect(mocks.sanitizeAudioHistoryForTextFallback).toHaveBeenCalledWith("session-1", "/repo");
     expect(processPrompt).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("سلام دنیا"), expect.anything(), []);
   });
 });

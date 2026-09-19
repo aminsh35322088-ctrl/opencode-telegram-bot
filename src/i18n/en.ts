@@ -299,7 +299,6 @@ export const en = {
   "queue.removed": "🗑 Message removed from the queue.",
   "queue.not_found": "This message is no longer in the queue.",
   "queue.disabled_hint": "The message queue can be enabled in /settings.",
-  "keyboard.updated": "⌨️ Keyboard updated",
 
   "pinned.default_session_title": "new session",
   "pinned.unknown": "Unknown",

@@ -8,7 +8,6 @@ import { getCompactOutputMode, getMainNavigationMessageId, setMainNavigationMess
 import { getTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
-import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -380,11 +379,16 @@ class KeyboardManager {
       const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
       if (!isTopic) { await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true); return; }
       const keyboard = this.buildKeyboard(resolvedSessionId);
-      const options: Record<string, unknown> = { reply_markup: keyboard };
+      const options: Record<string, unknown> = { reply_markup: keyboard, disable_notification: true };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
-      await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
-      logger.info(`[KeyboardManager] Sent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
+      const controlMessage = await this.api.sendMessage(targetChatId, "⁣", options as never);
+      if (controlMessage?.message_id) {
+        await this.api.deleteMessage(targetChatId, controlMessage.message_id).catch((error) => {
+          logger.debug(`[KeyboardManager] Could not delete silent ReplyKeyboard control message ${controlMessage.message_id}:`, error);
+        });
+      }
+      logger.info(`[KeyboardManager] Refreshed AI Topic ReplyKeyboard silently: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 

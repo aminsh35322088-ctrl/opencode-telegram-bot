@@ -19,11 +19,14 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { attachToSession, detachAttachedSession, markAttachedSessionBusy, markAttachedSessionIdle } from "../../app/services/attach-service.js";
 import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { resolvePendingAttachments } from "../../app/services/prompt-attachment-service.js";
-import { startSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
+import { startSessionStallWatchdog, stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
+import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
+import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
 
 export function clearPromptResponseMode(_sessionId: string): void {}
@@ -48,6 +51,32 @@ export interface ProcessPromptDeps { bot: Bot<Context>; ensureEventSubscription:
 async function retireAttachmentConfirmation(ctx: Context, messageId: number | undefined): Promise<void> {
   if (!messageId || !ctx.chat) return;
   await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId).catch((err) => logger.debug(`[PromptAttachment] Could not retire confirmation message ${messageId}:`, err));
+}
+
+async function handlePromptStartFailure(input: {
+  bot: Bot<Context>;
+  chatId: number;
+  session: { id: string; directory: string };
+  error: unknown;
+  reason: string;
+}): Promise<void> {
+  const message = input.error instanceof Error ? input.error.message : String(input.error);
+  promptQueue.clear(input.reason, input.session.id);
+  promptAttachment.clear(input.reason, input.session.id);
+  clearPausedSession(input.session.id);
+  clearAllInteractionState(input.reason);
+  stopSessionStallWatchdog(input.session.id);
+  foregroundSessionState.markIdle(input.session.id);
+  await markAttachedSessionIdle(input.session.id);
+  assistantRunState.clearRun(input.session.id, input.reason);
+  keyboardManager.setPaused(false, input.session.id);
+  await recoverSessionAfterError(input.session.id, input.session.directory, message);
+  try {
+    await keyboardManager.sendKeyboardUpdate(input.chatId, true, input.session.id);
+  } catch (error) {
+    logger.warn(`[Bot] Failed to restore keyboard after prompt start error: session=${input.session.id}`, error);
+  }
+  await input.bot.api.sendMessage(input.chatId, t("bot.prompt_send_error")).catch(() => {});
 }
 
 async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string }) {
@@ -130,7 +159,24 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
 
     // Start inference before cosmetic Telegram keyboard work. A slow/rate-limited
     // Telegram edit must never delay the provider request itself.
-    safeBackgroundTask({ taskName: "session.promptAsync", task: () => promptAsyncWithModelRecovery(promptOptions), onSuccess: ({ error }) => { if (!error) { logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`); return; } foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_api_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id); logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext); logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); }, onError: (error) => { foregroundSessionState.markIdle(currentSession!.id); void markAttachedSessionIdle(currentSession!.id); assistantRunState.clearRun(currentSession!.id, "session_prompt_background_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id); logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext); logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000)); void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {}); } });
+    safeBackgroundTask({
+      taskName: "session.promptAsync",
+      task: () => promptAsyncWithModelRecovery(promptOptions),
+      onSuccess: async ({ error }) => {
+        if (!error) {
+          logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`);
+          return;
+        }
+        logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext);
+        logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000));
+        await handlePromptStartFailure({ bot, chatId: ctx.chat!.id, session: currentSession!, error, reason: "session_prompt_api_error" });
+      },
+      onError: async (error) => {
+        logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext);
+        logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000));
+        await handlePromptStartFailure({ bot, chatId: ctx.chat!.id, session: currentSession!, error, reason: "session_prompt_background_error" });
+      },
+    });
 
     void Promise.resolve()
       .then(() => keyboardManager.sendKeyboardUpdate(ctx.chat!.id, false, currentSession!.id))

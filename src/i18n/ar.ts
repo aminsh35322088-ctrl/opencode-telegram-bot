@@ -289,7 +289,6 @@ export const ar: I18nDictionary = {
   "queue.removed": "🗑 تمت إزالة الرسالة من قائمة الانتظار.",
   "queue.not_found": "لم تعد هذه الرسالة في قائمة الانتظار.",
   "queue.disabled_hint": "يمكن تفعيل قائمة انتظار الرسائل من /settings.",
-  "keyboard.updated": "⌨️ تم تحديث لوحة التحكم",
 
   "pinned.default_session_title": "جلسة جديدة",
   "pinned.unknown": "غير معروف",
