@@ -314,10 +314,16 @@ export async function sendRenderedBotPart({
         rawOptions as TelegramSendRichOptions,
       );
 
-      return {
-        messageId: sentMessage.message_id,
-        deliveredSignature: getTelegramRenderedPartSignature(part),
-      };
+      if (sentMessage && typeof sentMessage.message_id === "number") {
+        return {
+          messageId: sentMessage.message_id,
+          deliveredSignature: getTelegramRenderedPartSignature(part),
+        };
+      }
+
+      logger.warn(
+        "[Bot] Source-preserving Rich HTML returned no message id, falling back to plain text",
+      );
     } catch (richHtmlError) {
       if (!isTelegramBadRequestError(richHtmlError)) throw richHtmlError;
       logger.warn(
