@@ -112,13 +112,13 @@ describe("Image Model V2 menu", () => {
 
   it("lists generation-only and edit-capable image models", async () => {
     const view = await buildImageModelSettingsView(context("settings:image_model"));
-    expect(labels(view)).toContain("✅ Mixed · Paid Edit ✏️");
+    expect(labels(view)).toContain("🎨 Mixed · Paid Edit ✓");
     expect(labels(view)).toContain("🎨 Mixed · Free Generate");
     expect(callbacks(view)).toContain("settings:default_models");
     expect(callbacks(view)).toContain("provider:connections");
   });
 
-  it("reuses Experimental Free Model Detection for free-first ordering and colors", async () => {
+  it("reuses Experimental Free Model Detection as annotation only without reordering", async () => {
     mocks.getFreeModelDetectionEnabled.mockReturnValue(true);
     mocks.getProviderModelPrices.mockResolvedValue(new Map([
       ["paid-edit", { group: "paid", reason: "paid" }],
@@ -127,8 +127,8 @@ describe("Image Model V2 menu", () => {
 
     const view = await buildImageModelSettingsView(context("settings:image_model"));
     const imageLabels = labels(view).filter((label) => label.includes("Mixed ·"));
-    expect(imageLabels[0]).toBe("🟢 Mixed · Free Generate");
-    expect(imageLabels[1]).toBe("🔴 Mixed · Paid Edit ✓ ✏️");
+    expect(imageLabels[0]).toBe("🧪 Paid? · 🎨 Mixed · Paid Edit ✓");
+    expect(imageLabels[1]).toBe("🧪 Free? · 🎨 Mixed · Free Generate");
     expect(mocks.refreshModelCatalog).toHaveBeenCalledTimes(1);
   });
 

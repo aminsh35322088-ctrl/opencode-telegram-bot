@@ -13,7 +13,6 @@ const mocked = vi.hoisted(() => ({
   handleMcpsCallback: vi.fn(),
   handleMessagesCallback: vi.fn(),
   handleModelCenterCallback: vi.fn(),
-  handleAiRoleCallback: vi.fn(),
   handlePermissionCallback: vi.fn(),
   handlePromptAttachmentCancel: vi.fn(),
   handleQuestionCallback: vi.fn(),
@@ -66,9 +65,6 @@ vi.mock("../../../src/bot/callbacks/message-history-callback-handler.js", () => 
 vi.mock("../../../src/bot/callbacks/model-center-callback-handler.js", () => ({
   handleModelCenterCallback: mocked.handleModelCenterCallback,
 }));
-vi.mock("../../../src/bot/callbacks/ai-role-selection-callback-handler.js", () => ({
-  handleAiRoleCallback: mocked.handleAiRoleCallback,
-}));
 vi.mock("../../../src/bot/callbacks/permission-callback-handler.js", () => ({
   handlePermissionCallback: mocked.handlePermissionCallback,
 }));
@@ -117,7 +113,6 @@ const tableHandlers = [
   mocked.handleMcpsCallback,
   mocked.handleMessagesCallback,
   mocked.handleModelCenterCallback,
-  mocked.handleAiRoleCallback,
   mocked.handlePermissionCallback,
   mocked.handlePromptAttachmentCancel,
   mocked.handleQuestionCallback,
@@ -183,19 +178,6 @@ describe("bot/callbacks/callback-router", () => {
     }
   });
 
-  it("dispatches AI role callbacks to the AI role handler", async () => {
-    mocked.handleAiRoleCallback.mockResolvedValue(true);
-    const callback = registerAndGetCallback();
-
-    await callback(createCallbackContext("role:select:review"));
-
-    expect(mocked.handleAiRoleCallback).toHaveBeenCalledTimes(1);
-    for (const handler of tableHandlers) {
-      if (handler !== mocked.handleAiRoleCallback) {
-        expect(handler).not.toHaveBeenCalled();
-      }
-    }
-  });
 
   it("does not call table handlers when the background session pre-hook handles the callback", async () => {
     mocked.handleBackgroundSessionOpen.mockResolvedValue(true);

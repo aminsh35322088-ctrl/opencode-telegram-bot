@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { getDefaultImageModel, getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicImageModelOverride, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import { getDefaultCapabilityModel, getDefaultImageModel, getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicCapabilityOverride, getCurrentTopicImageModelOverride, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 
@@ -8,6 +8,7 @@ export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
 export const SETTINGS_DEFAULT_MODELS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_models`;
 export const SETTINGS_CHAT_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}chat_model`;
 export const SETTINGS_IMAGE_MODEL_CALLBACK = SETTINGS_CALLBACK_PREFIX + "image_model";
+export const SETTINGS_VOICE_MODEL_CALLBACK = SETTINGS_CALLBACK_PREFIX + "voice_model";
 export const SETTINGS_TOPIC_MODELS_CALLBACK = SETTINGS_CALLBACK_PREFIX + "models";
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
@@ -72,22 +73,31 @@ function formatTopicImageModel(): string {
     ? override.providerID + "/" + override.modelID + " · Override"
     : formatImageModel() + " · Main Default";
 }
+function formatVoiceModel(): string {
+  const selection = getDefaultCapabilityModel("speechToText");
+  return selection ? selection.providerID + "/" + selection.modelID : "Not configured";
+}
+function formatTopicVoiceModel(): string {
+  const override = getCurrentTopicCapabilityOverride("speechToText");
+  return override ? override.providerID + "/" + override.modelID + " · Override" : "Auto · Primary native → " + formatVoiceModel();
+}
 
 export function buildTopicModelsSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const chatModel = formatTopicModel();
   const imageModel = formatTopicImageModel();
+  const voiceModel = formatTopicVoiceModel();
   return {
     text: [
-      "🧠 <b>Models</b>",
-      "",
-      "💬 <b>Chat / Coding</b> · " + chatModel,
-      "🎨 <b>Image Model</b> · " + imageModel,
-      "",
-      "Chat/Coding controls the OpenCode conversation. Image Model is used only when the AI invokes image generation or editing.",
+      "🧠 <b>Model Center</b>", "",
+      "💬 <b>Primary / Chat & Coding</b> · " + chatModel,
+      "🎨 <b>Image AI</b> · " + imageModel,
+      "🎙️ <b>Voice → Text</b> · " + voiceModel, "",
+      "Primary handles every capability it supports. Topic overrides take priority; missing capabilities use configured Main Default helpers.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("💬 Chat / Coding", SETTINGS_MODEL_CALLBACK).row()
-      .text("🎨 Image Model", SETTINGS_IMAGE_MODEL_CALLBACK).row()
+      .text("💬 Primary / Chat & Coding", SETTINGS_MODEL_CALLBACK).row()
+      .text("🎨 Image AI", SETTINGS_IMAGE_MODEL_CALLBACK).row()
+      .text("🎙️ Voice → Text", SETTINGS_VOICE_MODEL_CALLBACK).row()
       .text("← Topic Settings", SETTINGS_BACK_CALLBACK),
   };
 }
@@ -104,9 +114,10 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
         "",
         `<code>${model}</code>`,
         "",
-        "🧠 <b>Models</b> · Chat/Coding + Image",
-        "💬 <b>Chat / Coding</b> · " + model,
-        "🎨 <b>Image Model</b> · " + imageModel,
+        "🧠 <b>Model Center</b> · Capability-aware routing",
+        "💬 <b>Primary / Chat & Coding</b> · " + model,
+        "🎨 <b>Image AI</b> · " + imageModel,
+        "🎙️ <b>Voice → Text</b> · " + formatTopicVoiceModel(),
         `🧑‍💻 <b>Agent</b> · ${agent}`,
         `🎛 <b>Variant</b> · ${variant}`,
         "",
@@ -131,7 +142,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "",
       "Global configuration and defaults for the bot.",
       "",
-      "🧠 <b>Default Models</b> · Chat/Coding and Image defaults in one place.",
+      "🧠 <b>Default Model Center</b> · Primary + capability helpers in one place.",
       "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
       "🔌 <b>AI Providers</b> · Manage API connections only.",
       "🔗 <b>Integrations</b> · Manage connected services.",
@@ -139,7 +150,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "🧰 <b>Advanced</b> · OpenCode tools and destructive data controls.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("🧠 Default Models", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
+      .text("🧠 Default Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
       .text("🔌 AI Providers", "provider:menu").row()
       .text("🔗 Integrations", "integration:menu").row()
@@ -151,18 +162,17 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
 export function buildDefaultModelsSettingsView(): { text: string; keyboard: InlineKeyboard } {
   return {
     text: [
-      "🧠 <b>Default Models</b>",
-      "",
-      "Choose the global defaults used by AI Topics.",
-      "",
-      "💬 <b>Chat & Coding</b> · default OpenCode model for new AI Topics.",
-      "🎨 <b>Image Model</b> · " + formatImageModel() + " · inherited dynamically unless a Topic has an override.",
-      "",
-      "Chat/Coding remains Topic-pinned. Image Model inheritance is dynamic: changing the Main Default updates Topics that do not have an override.",
+      "🧠 <b>Default Model Center</b>", "",
+      "Choose the Primary model and default helpers used by AI Topics.", "",
+      "💬 <b>Primary / Chat & Coding</b> · default OpenCode model for new AI Topics.",
+      "🎨 <b>Image AI</b> · " + formatImageModel() + " · fills Image AI gaps unless a Topic overrides it.",
+      "🎙️ <b>Voice → Text</b> · " + formatVoiceModel() + " · fills audio gaps unless a Topic overrides it.", "",
+      "No hidden model fallback: only Primary, an explicit Topic override, or these Main Defaults can be routed.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("💬 Chat & Coding", SETTINGS_CHAT_MODEL_CALLBACK).row()
-      .text("🎨 Image Model", SETTINGS_IMAGE_MODEL_CALLBACK).row()
+      .text("💬 Primary / Chat & Coding", SETTINGS_CHAT_MODEL_CALLBACK).row()
+      .text("🎨 Image AI", SETTINGS_IMAGE_MODEL_CALLBACK).row()
+      .text("🎙️ Voice → Text", SETTINGS_VOICE_MODEL_CALLBACK).row()
       .text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
@@ -405,7 +415,7 @@ export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKe
 
 export function buildExperimentalSettingsView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🧪 <b>Experimental</b>\n\nFree Model Detection adds price colors and free-first ordering to provider model lists. Provider information can be incomplete. Applies to the whole bot.",
+    text: "🧪 <b>Experimental</b>\n\nFree Model Detection adds experimental pricing hints to model lists. Results may be incomplete or wrong and never filter, select, or reroute a model. Applies to the whole bot.",
     keyboard: new InlineKeyboard().text("Free Model Detection: " + formatBooleanSettingValue(getFreeModelDetectionEnabled()), SETTINGS_FREE_DETECTION_CALLBACK).row().text("← Back", SETTINGS_BACK_CALLBACK),
   };
 }

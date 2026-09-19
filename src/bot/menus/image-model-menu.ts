@@ -15,7 +15,7 @@ import {
   setDefaultImageModel,
 } from "../../app/stores/settings-store.js";
 import { getProviderModelPrices } from "../../app/services/model-price-service.js";
-import { PRICE_COLOR, PRICE_ORDER, type ModelPrice } from "../../app/services/model-price-classifier.js";
+import type { ModelPrice } from "../../app/services/model-price-classifier.js";
 import { refreshModelCatalog } from "../../app/services/model-selection-service.js";
 import type { ImageModelSelection } from "../../app/types/image-model.js";
 import {
@@ -90,16 +90,21 @@ function priceFor(
   return prices.get(entry.providerID)?.get(entry.modelID);
 }
 
+function experimentalPriceBadge(price: ModelPrice | undefined): string {
+  if (!price) return "";
+  if (price.group === "free" || price.group === "conditional" || price.group === "hint") return "🧪 Free? · ";
+  if (price.group === "paid") return "🧪 Paid? · ";
+  return "";
+}
+
 function imageModelLabel(
   entry: ImageModelCatalogEntry,
   selected: boolean,
   prices: Map<string, Map<string, ModelPrice>>,
 ): string {
-  const price = priceFor(entry, prices);
-  const prefix = price ? PRICE_COLOR[price.group] : (selected ? "✅" : "🎨");
-  const selectedMark = price && selected ? " ✓" : "";
-  const editMark = entry.capabilities.includes("edit") ? " ✏️" : "";
-  return prefix + " " + entry.providerName + " · " + entry.modelName + selectedMark + editMark;
+  const badge = experimentalPriceBadge(priceFor(entry, prices));
+  const selectedMark = selected ? " ✓" : "";
+  return badge + "🎨 " + entry.providerName + " · " + entry.modelName + selectedMark;
 }
 
 function choice(ctx: Context, selection: ImageModelSelection): string {
@@ -117,18 +122,9 @@ export async function buildImageModelSettingsView(
   ctx: Context,
   notice = "",
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  let catalog = (await listImageModelCatalog())
+  const catalog = (await listImageModelCatalog())
     .filter((entry) => entry.capabilities.includes("generate"));
   const prices = await priceMaps(catalog);
-  if (prices.size) {
-    catalog = [...catalog].sort((left, right) => {
-      const leftOrder = PRICE_ORDER[priceFor(left, prices)?.group ?? "unknown"];
-      const rightOrder = PRICE_ORDER[priceFor(right, prices)?.group ?? "unknown"];
-      return leftOrder - rightOrder
-        || left.providerName.localeCompare(right.providerName)
-        || left.modelName.localeCompare(right.modelName);
-    });
-  }
   const topic = getCurrentTopicSettings();
   const globalDefault = getDefaultImageModel();
   const override = getCurrentTopicImageModelOverride();
@@ -167,7 +163,7 @@ export async function buildImageModelSettingsView(
       ? "Choose an override for this AI Topic, or inherit the Main Default."
       : "Choose the default generator/editor inherited by AI Topics without an override.",
     "",
-    "Models are detected from provider capabilities. ✏️ means image editing is supported. There is no automatic fallback if the selected model disappears.",
+    "Models are detected from the Unified Model Catalog. Experimental free detection only adds a 🧪 hint; it never filters, selects, or reroutes models.",
   ];
   if (catalog.length === 0) {
     lines.push("", "No connected provider currently advertises image output.");

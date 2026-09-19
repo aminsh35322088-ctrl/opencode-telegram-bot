@@ -3,6 +3,7 @@ import { getGroqSttConfig, getCustomProviderConfig } from "./custom-provider-ser
 import { getAiRoleSelection } from "./ai-role-selection-service.js";
 import { assessTranscription } from "./stt-quality.js";
 import { logger } from "../../utils/logger.js";
+import type { ModelRef } from "../types/model-capability.js";
 
 const STT_REQUEST_TIMEOUT_MS = 60_000;
 export interface SttResult {
@@ -25,8 +26,8 @@ export async function isSttConfigured(): Promise<boolean> {
   if (selected) return Boolean(await selectedSttConnection());
   return Boolean(config.stt.apiUrl && config.stt.apiKey) || Boolean(await getGroqSttConfig());
 }
-async function selectedSttConnection() {
-  const selected = await getAiRoleSelection("stt");
+async function selectedSttConnection(explicitSelection?: ModelRef) {
+  const selected = explicitSelection ?? await getAiRoleSelection("stt");
   if (!selected) return getGroqSttConfig();
   if (selected.providerID === "groq") return getGroqSttConfig();
   const connection = await getCustomProviderConfig(selected.providerID);
@@ -38,9 +39,9 @@ function getAudioFormat(filename: string): string {
   return AUDIO_FORMAT_BY_EXTENSION[extension] || "ogg";
 }
 
-export async function transcribeAudio(audioBuffer: Buffer, filename: string): Promise<SttResult> {
-  const custom = await selectedSttConnection();
-  if (!custom && await getAiRoleSelection("stt")) throw new Error("The selected transcription connection is unavailable. Open AI Providers → Transcription.");
+export async function transcribeAudio(audioBuffer: Buffer, filename: string, selection?: ModelRef): Promise<SttResult> {
+  const custom = await selectedSttConnection(selection);
+  if (!custom && (selection || await getAiRoleSelection("stt"))) throw new Error("The selected transcription connection is unavailable. Open Model Center → Voice → Text.");
   const apiUrl = custom?.apiUrl || config.stt.apiUrl;
   const apiKey = custom?.apiKey || config.stt.apiKey;
   const model = custom?.model || config.stt.model;

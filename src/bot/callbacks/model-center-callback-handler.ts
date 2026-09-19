@@ -28,14 +28,14 @@ import {
 import { fetchCurrentModel, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
-import { formatModelForDisplay, type ModelInfo } from "../../app/types/model.js";
+import type { ModelInfo } from "../../app/types/model.js";
 import { resolveProjectAgent, getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
-import { getModelCapabilities, formatCapabilitiesIcons } from "../../app/services/model-capabilities-service.js";
+import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
@@ -235,19 +235,17 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   keyboardManager.updateAgent(currentAgent, activeSessionId);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, activeSessionId);
 
-  const capabilities = await getModelCapabilities(modelInfo.providerID, modelInfo.modelID);
-  const icons = formatCapabilitiesIcons(capabilities);
-  const suffix = icons ? `\n${icons}` : "";
+  const routingSummary = await buildModelRoutingSummary(modelInfo);
 
   if (isTopic) {
     const topicKeyboard = keyboardManager.getKeyboard(activeSessionId);
     if (!topicKeyboard) throw new Error(`No Topic keyboard state available after model selection: session=${activeSessionId}`);
-    await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}${suffix}`, topicKeyboard);
+    await switched(ctx, `✅ Model changed.\n\n${routingSummary}`, topicKeyboard);
     return;
   }
 
   const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
-  await switched(ctx, `Model changed to ${formatModelForDisplay(modelInfo.providerID, modelInfo.modelID, modelInfo.name)}${suffix}`, keyboard);
+  await switched(ctx, `✅ Model changed.\n\n${routingSummary}`, keyboard);
 }
 
 async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<boolean> {

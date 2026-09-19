@@ -10,7 +10,6 @@ import { handleInlineMenuCancel } from "./inline-menu-cancel-callback-handler.js
 import { handleMcpsCallback } from "./mcp-catalog-callback-handler.js";
 import { handleMessagesCallback } from "./message-history-callback-handler.js";
 import { handleModelCenterCallback } from "./model-center-callback-handler.js";
-import { handleAiRoleCallback } from "./ai-role-selection-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
 import { handlePromptAttachmentCancel } from "./prompt-attachment-callback-handler.js";
 import { handleQuestionCallback } from "./question-callback-handler.js";
@@ -161,7 +160,6 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["mcps", { name: "mcps", handlers: [handleMcpsCallback], errorScope: "interaction" }],
     ["messages", { name: "messages", handlers: [(ctx) => handleMessagesCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["mc", { name: "mc", handlers: [handleModelCenterCallback], errorScope: "interaction" }],
-    ["role", { name: "role", handlers: [handleAiRoleCallback], errorScope: "interaction" }],
     ["open", { name: "open", handlers: [(ctx) => handleOpenCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["permission", { name: "permission", handlers: [handlePermissionCallback], errorScope: "permission" }],
     ["question", { name: "question", handlers: [handleQuestionCallback], errorScope: "question" }],

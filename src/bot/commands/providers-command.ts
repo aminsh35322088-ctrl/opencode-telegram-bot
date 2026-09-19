@@ -14,6 +14,7 @@ import { showImageChatSettings } from "../menus/image-chat-settings.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
+import { setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 
 const CAPABILITIES: AiCapability[] = ["general", "stt"];
 const LABEL: Record<AiCapability, string> = { general: "🤖 AI Models", coding: "🤖 AI Models", image: "🤖 AI Models", stt: "🎙️ Transcription" };
@@ -62,7 +63,7 @@ async function renderAiProviders(ctx: Context, id?: number, notice = "") {
     keyboard.text("🔌 " + provider.name + " · 💬" + chat + " 🎨" + image, "provider:view:" + provider.id).row();
   }
 
-  keyboard.text("➕ Add Custom AI API", "provider:add:general").row();
+  keyboard.text("➕ Add AI Provider", "provider:add:general").row();
   keyboard.text("☁️ Cloudflare Workers AI" + (cloudflare ? " · Configured" : ""), "provider:image:cloudflare:configure").row();
   if (cloudflare) keyboard.text("Remove Cloudflare", "provider:remove-image:cloudflare").row();
   if (oldCustom) keyboard.text("Remove Legacy Custom Image API", "provider:remove-image:custom").row();
@@ -73,8 +74,8 @@ async function renderAiProviders(ctx: Context, id?: number, notice = "") {
     "🤖 AI Providers",
     "",
     "Add one API connection. Each discovered model is classified automatically:",
-    "• text-only output → Chat/Coding Model Center",
-    "• image output → Image Model Center",
+    "• text output → Primary / Chat & Coding",
+    "• image output → Image AI",
     "• one provider may appear in both",
     "",
     general.length + " custom AI connection" + (general.length === 1 ? "" : "s"),
@@ -141,7 +142,7 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   if (data === "provider:image:engines") { await renderAiProviders(ctx, id); return true; }
   if (data.startsWith("provider:add:")) {
     const capability = data.slice("provider:add:".length) as AiCapability;
-    if (capability === "coding" || capability === "image" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
+    if (capability === "general" || capability === "coding" || capability === "image" || capability === "stt") await start(ctx, "name", `Add ${LABEL[capability]} provider\n\n1/3 · Provider name`, capability); return true;
   }
   if (data === "provider:image:cloudflare:configure") { await start(ctx, "image-cloudflare-account", "Cloudflare Workers AI\n\n1/2 · Send the 32-character Account ID"); return true; }
   if (data === "provider:image:custom:configure") { await start(ctx, "name", "Add AI provider\n\n1/3 · Provider name", "general"); return true; }
@@ -214,7 +215,7 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
     if (s.step === "stt-select") {
       const p = (await listCustomProviders()).find(p => p.id === s.providerID && p.capability === "stt");
       if (!p?.models.some(m => m.id === text)) throw new Error("Choose a model returned by this transcription provider");
-      guard(); await setAiRoleSelection("stt", p.id, text); clearProviderWizard(); await renderSlot(ctx, "stt", s.messageId, `✅ Transcription model: ${text}\n\n`); return true;
+      guard(); await setAiRoleSelection("stt", p.id, text); setDefaultCapabilityModel("speechToText", { providerID: p.id, modelID: text }); clearProviderWizard(); await renderSlot(ctx, "stt", s.messageId, `✅ Transcription model: ${text}\n\n`); return true;
     }
     if (s.step === "name") { s.name = text; s.step = "url"; await editWizard(ctx, s.messageId, "2/3 · Base URL"); return true; }
     if (s.step === "url" || s.step === "image-custom-base-url") {
@@ -233,7 +234,7 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
       const validation = await configureCloudflareCredentials(s.accountId!, text, guard);
       if (!validation.valid) throw new Error(`Cloudflare verification failed: ${validation.reason}`);
     } else if (s.step === "image-custom-key") await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, { baseURL: s.baseURL!, model: s.model!, editModel: s.editModel! }, guard);
-    else if (s.step === "groq-stt-key") { await configureGroqStt(text, guard); saved = true; await setAiRoleSelection("stt", "groq", "whisper-large-v3"); }
+    else if (s.step === "groq-stt-key") { await configureGroqStt(text, guard); saved = true; await setAiRoleSelection("stt", "groq", "whisper-large-v3"); setDefaultCapabilityModel("speechToText", { providerID: "groq", modelID: "whisper-large-v3" }); }
     else {
       const models = await discoverModels(s.baseURL!, text); guard();
       await saveCustomProvider({ name: s.name!, baseURL: s.baseURL!, apiKey: text, models, capability: s.capability === "stt" ? "stt" : "general", beforeSave: guard });

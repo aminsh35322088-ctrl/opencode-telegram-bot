@@ -12,6 +12,7 @@ import { logger } from "../../utils/logger.js";
 import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { handleImageModelSettingsCallback } from "../menus/image-model-menu.js";
+import { handleVoiceModelSettingsCallback } from "../menus/voice-model-menu.js";
 
 import {
   buildDefaultModelsSettingsView,
@@ -35,6 +36,7 @@ import {
   SETTINGS_BACK_CALLBACK,
   SETTINGS_CHAT_MODEL_CALLBACK,
   SETTINGS_IMAGE_MODEL_CALLBACK,
+  SETTINGS_VOICE_MODEL_CALLBACK,
   SETTINGS_TOPIC_MODELS_CALLBACK,
   SETTINGS_COMMANDS_CALLBACK,
   SETTINGS_COMPACT_OUTPUT_CALLBACK,
@@ -115,6 +117,12 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       || callbackData.startsWith(SETTINGS_IMAGE_MODEL_CALLBACK + ":")
     ) {
       return await handleImageModelSettingsCallback(ctx, callbackData);
+    }
+    if (
+      callbackData === SETTINGS_VOICE_MODEL_CALLBACK
+      || callbackData.startsWith(SETTINGS_VOICE_MODEL_CALLBACK + ":")
+    ) {
+      return await handleVoiceModelSettingsCallback(ctx, callbackData);
     }
 
     switch (callbackData) {

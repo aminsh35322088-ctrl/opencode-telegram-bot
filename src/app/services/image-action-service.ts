@@ -1,15 +1,8 @@
-import {
-  runImageForSelection,
-  type ImageAiCapability,
-} from "./image-ai-provider-service.js";
-import {
-  catalogEntryMatchesSelection,
-  listImageModelCatalog,
-} from "./image-model-catalog-service.js";
-import { getEffectiveImageModel } from "../stores/settings-store.js";
+import { runImageForSelection, type ImageAiCapability } from "./image-ai-provider-service.js";
+import { imageCatalogSelection, listImageModelCatalog } from "./image-model-catalog-service.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { validateImage } from "./ai-http-service.js";
-import { resolvePersistedImageModel } from "./image-model-resolution-service.js";
+import { resolveCapabilityRoute } from "./model-capability-routing-service.js";
 
 function requirePrompt(prompt: string): string {
   if (!prompt.trim()) throw new Error("Image instruction is empty.");
@@ -17,47 +10,30 @@ function requirePrompt(prompt: string): string {
   return prompt;
 }
 
-export async function resolveConfiguredImageModel(
-  capability: ImageAiCapability,
-  worktree?: string,
-): Promise<ImageModelSelection> {
-  const selection = worktree
-    ? await resolvePersistedImageModel(worktree)
-    : getEffectiveImageModel() ?? await resolvePersistedImageModel();
-  if (!selection) {
-    throw new Error("Image Model is not configured. Open Settings → Default Models → Image Model.");
+export async function resolveConfiguredImageModel(capability: ImageAiCapability, worktree?: string): Promise<ImageModelSelection> {
+  const route = await resolveCapabilityRoute(capability === "edit" ? "imageEdit" : "imageGenerate", worktree);
+  if (!route.model) {
+    throw new Error(route.reason ?? "Image AI is unavailable. Configure an Image AI model under Settings → Default Models.");
   }
 
   const model = (await listImageModelCatalog()).find((candidate) =>
-    candidate.capabilities.includes(capability)
-    && catalogEntryMatchesSelection(candidate, selection));
-
+    candidate.providerID === route.model!.providerID
+    && candidate.modelID === route.model!.modelID
+    && candidate.capabilities.includes(capability));
   if (!model) {
-    throw new Error(
-      "The selected Image Model is unavailable or changed. Choose it again under Settings → Models → Image Model.",
-    );
+    throw new Error("The routed Image AI model is unavailable or no longer supports this operation. Choose it again in Model Center.");
   }
-
-  return selection;
+  return imageCatalogSelection(model);
 }
 
-export async function generateConfiguredImage(
-  prompt: string,
-  signal: AbortSignal = AbortSignal.timeout(120_000),
-  worktree?: string,
-): Promise<ImageBinary> {
+export async function generateConfiguredImage(prompt: string, signal: AbortSignal = AbortSignal.timeout(120_000), worktree?: string): Promise<ImageBinary> {
   const instruction = requirePrompt(prompt);
   const selection = await resolveConfiguredImageModel("generate", worktree);
   signal.throwIfAborted();
   return runImageForSelection(selection, instruction, undefined, signal, worktree);
 }
 
-export async function editConfiguredImage(
-  prompt: string,
-  source: ImageBinary,
-  signal: AbortSignal = AbortSignal.timeout(120_000),
-  worktree?: string,
-): Promise<ImageBinary> {
+export async function editConfiguredImage(prompt: string, source: ImageBinary, signal: AbortSignal = AbortSignal.timeout(120_000), worktree?: string): Promise<ImageBinary> {
   const instruction = requirePrompt(prompt);
   validateImage(source.buffer, source.mimeType);
   const selection = await resolveConfiguredImageModel("edit", worktree);

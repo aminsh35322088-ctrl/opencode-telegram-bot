@@ -18,6 +18,7 @@ import type { TelegramTopicBinding } from "../../app/services/telegram-topic-sto
 import { createTopicAwareBot } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -78,6 +79,15 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           session: sessionInfo,
           ensureEventSubscription: deps.ensureEventSubscription,
         });
+        try {
+          const routingSummary = await buildModelRoutingSummary(initialModel);
+          await createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding!.threadId }).api.sendMessage(
+            ctx.chat.id,
+            `✅ New AI Topic ready.\n\n${routingSummary}`,
+          );
+        } catch (summaryError) {
+          logger.warn("[TelegramTopics] Could not send model routing summary", summaryError);
+        }
       },
     );
 
