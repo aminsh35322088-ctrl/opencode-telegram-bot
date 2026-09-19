@@ -10,6 +10,19 @@ import type {
 
 /** Telegram rejects rich tables wider than this; such tables fall back to preformatted text. */
 const RICH_TABLE_MAX_COLUMNS = 20;
+const TELEGRAM_LINK_MAX_LENGTH = 2_000;
+const TELEGRAM_LINK_PROTOCOL = /^(?:https?:\\/\\/|tg:\\/\\/|mailto:|tel:)/i;
+
+/**
+ * Telegram RichText URLs are stricter than Markdown. Unsupported schemes can
+ * make the whole Rich Message fail, so preserve the visible text and only
+ * attach URLs Telegram can safely accept.
+ */
+function sanitizeTelegramLinkUrl(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > TELEGRAM_LINK_MAX_LENGTH) return null;
+  return TELEGRAM_LINK_PROTOCOL.test(normalized) ? normalized : null;
+}
 
 function toRichTextNodes(nodes: InlineNode[]): RichText[] {
   const result: RichText[] = [];
@@ -48,9 +61,15 @@ function toRichTextNodes(nodes: InlineNode[]): RichText[] {
       case "code":
         result.push({ type: "code", text: node.text });
         break;
-      case "link":
-        result.push({ type: "url", text: toRichText(node.text), url: node.url });
+      case "link": {
+        const url = sanitizeTelegramLinkUrl(node.url);
+        if (url) {
+          result.push({ type: "url", text: toRichText(node.text), url });
+        } else {
+          result.push(...toRichTextNodes(node.text));
+        }
         break;
+      }
       default: {
         const exhaustiveCheck: never = node;
         throw new Error(`Unsupported inline node: ${JSON.stringify(exhaustiveCheck)}`);
