@@ -154,7 +154,7 @@ export async function loadSettings(): Promise<void> {
     }),
   };
   applyInitialSettingsPreset(config.bot.initialSettingsPreset);
-  if (!storedTopicDefaults) void writeSettingsFile(currentSettings);
+  if (!storedTopicDefaults) await writeSettingsFile(currentSettings);
 }
 
 // Global even when called from a Topic.
