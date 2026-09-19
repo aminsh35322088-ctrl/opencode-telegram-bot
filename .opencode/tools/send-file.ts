@@ -21,8 +21,9 @@ function isSensitive(filePath: string): boolean {
 
 export default tool({
   description:
-    "Send a real file/artifact to the user through the Telegram bridge. Use this when the user explicitly asks to receive a generated file, archive, website, image, document, build artifact, or other output file. The file can be any format; do not rename or convert it just to satisfy an extension list. For multi-file projects, create a real archive first, verify it, then call this tool with the archive path.",
+    "Send a real file/artifact to the user through the Telegram bridge with the explicit send action. Sensitive credential-like files are refused.",
   args: {
+    action: tool.schema.enum(["send"]).describe("Artifact delivery action to execute."),
     path: tool.schema.string().describe("Absolute or working-directory-relative path of the file to send."),
     caption: tool.schema.string().optional().describe("Optional short Telegram caption."),
   },

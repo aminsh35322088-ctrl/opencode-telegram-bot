@@ -6,6 +6,7 @@ import { tool } from "@opencode-ai/plugin";
 const MEDIA_ACTIONS = [
   "stt.status",
   "stt.transcribe",
+  "video.prepare",
   "image.providers",
   "image.models",
   "image.current",
@@ -39,6 +40,10 @@ interface ImageActionModule {
 }
 interface AiHttpModule {
   detectImageMimeType(buffer: Buffer): string | null;
+}
+interface VideoPreparationModule {
+  extractVideoFrames(buffer: Buffer, filename: string): Promise<Array<{ filename: string; buffer: Buffer }>>;
+  extractVideoAudio(buffer: Buffer, filename: string): Promise<{ buffer: Buffer; filename: string } | null>;
 }
 
 async function load<T>(relativePath: string): Promise<T> {
@@ -98,6 +103,33 @@ export default tool({
         null,
         2,
       );
+    }
+
+    if (action === "video.prepare") {
+      const rawPath = required(args.path, "path", action);
+      const filePath = resolveWorktreePath(context.worktree, rawPath);
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) throw new Error("Video path is not a regular file.");
+      if (stat.size > 20 * 1024 * 1024) throw new Error("Video exceeds the 20 MB preparation limit.");
+      const source = await fs.readFile(filePath);
+      const service = await load<VideoPreparationModule>("app/services/video-preparation-service.js");
+      const frames = await service.extractVideoFrames(source, path.basename(filePath));
+      const audio = await service.extractVideoAudio(source, path.basename(filePath));
+      const requestedOutput = args.output?.trim() || `artifacts/video-${Date.now()}`;
+      const outputDir = resolveWorktreePath(context.worktree, requestedOutput);
+      await fs.mkdir(outputDir, { recursive: true });
+      const framePaths: string[] = [];
+      for (const frame of frames) {
+        const framePath = path.join(outputDir, frame.filename);
+        await fs.writeFile(framePath, frame.buffer);
+        framePaths.push(framePath);
+      }
+      let audioPath: string | null = null;
+      if (audio) {
+        audioPath = path.join(outputDir, audio.filename);
+        await fs.writeFile(audioPath, audio.buffer);
+      }
+      return JSON.stringify({ ok: true, source: filePath, frames: framePaths, audio: audioPath }, null, 2);
     }
 
     if (action === "image.providers" || action === "image.models") {

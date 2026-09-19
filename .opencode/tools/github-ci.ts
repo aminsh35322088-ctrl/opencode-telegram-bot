@@ -129,18 +129,19 @@ function nextStepHint(run: RunSummary): string {
 
 export default tool({
   description:
-    "Bounded GitHub Actions companion for the repository test suite: read the latest CI run status, wait briefly for completion, fetch failed test logs, or verify in one call (wait + auto-fetch failure logs). verify is fail-closed: only completed+success is accepted as green. Every call returns within a fixed time budget and always produces text output. Use this after pushing test or source changes to validate on GitHub instead of running heavy local test toolchains on constrained runtimes.",
+    "Bounded GitHub Actions companion: inspect runs/jobs, dispatch an existing workflow on an explicit ref, watch/verify CI, fetch failed logs, rerun failed jobs, or cancel a run. Dispatch never creates or edits workflow files. verify is fail-closed: only completed+success is accepted as green.",
   args: {
-    action: tool.schema.string().describe("One of: status | watch | logs | verify"),
+    action: tool.schema.string().describe("One of: status | jobs | dispatch | watch | logs | verify | rerun-failed | cancel"),
     branch: tool.schema
       .string()
       .optional()
       .describe("Filter the latest run by branch name (default: any recent)."),
-    workflow: tool.schema.string().optional().describe("Workflow name filter (default: 'CI')."),
+    workflow: tool.schema.string().optional().describe("Existing workflow name/file (default: 'CI')."),
     repo: tool.schema
       .string()
       .optional()
       .describe("Repository owner/name for gh (default: inferred from the current git checkout)."),
+    ref: tool.schema.string().optional().describe("Explicit branch/tag/SHA for dispatch. Required for action=dispatch."),
     commit: tool.schema
       .string()
       .optional()
@@ -158,7 +159,7 @@ export default tool({
   },
   async execute(args) {
     const action = String(args.action ?? "").trim().toLowerCase();
-    const validActions = ["status", "watch", "logs", "verify"];
+    const validActions = ["status", "jobs", "dispatch", "watch", "logs", "verify", "rerun-failed", "cancel"];
     if (!validActions.includes(action)) {
       return result({ ok: false, error: `action must be one of: ${validActions.join(" | ")}` });
     }
@@ -170,6 +171,14 @@ export default tool({
     const repoArgs = repo ? ["--repo", repo] : [];
     let runId = String(args.runId ?? "").trim();
     let run: RunSummary | null = null;
+
+    if (action === "dispatch") {
+      const ref = args.ref?.trim() || "";
+      if (!ref) return result({ ok: false, error: "dispatch requires ref (branch/tag/SHA)." });
+      const dispatched = await gh(["workflow", "run", workflowName, ...repoArgs, "--ref", ref]);
+      if (!dispatched.ok) return result({ ok: false, error: `Could not dispatch workflow ${workflowName}: ${clip(dispatched.stderr || dispatched.stdout)}` });
+      return result({ ok: true, workflow: workflowName, ref, hint: "Workflow dispatch accepted. Call action=status or action=jobs after GitHub creates the run." });
+    }
 
     if (!runId) {
       const listArgs = [
@@ -222,6 +231,23 @@ export default tool({
       if (!runId) {
         return result({ ok: false, run, error: "Resolved workflow run has no database id." });
       }
+    }
+
+    if (action === "jobs") {
+      const jobsView = await gh(["run", "view", runId, ...repoArgs, "--json", "databaseId,name,status,conclusion,jobs,url"]);
+      if (!jobsView.ok) return result({ ok: false, runId, error: `Could not inspect jobs for run ${runId}: ${clip(jobsView.stderr || jobsView.stdout)}` });
+      try { return result({ ok: true, run: JSON.parse(jobsView.stdout) }); }
+      catch { return result({ ok: false, runId, error: "GitHub returned invalid job JSON." }); }
+    }
+
+    if (action === "rerun-failed") {
+      const rerun = await gh(["run", "rerun", runId, ...repoArgs, "--failed"]);
+      return result(rerun.ok ? { ok: true, runId, rerun: "failed" } : { ok: false, runId, error: clip(rerun.stderr || rerun.stdout) });
+    }
+
+    if (action === "cancel") {
+      const cancelled = await gh(["run", "cancel", runId, ...repoArgs]);
+      return result(cancelled.ok ? { ok: true, runId, cancelled: true } : { ok: false, runId, error: clip(cancelled.stderr || cancelled.stdout) });
     }
 
     if (action === "logs") {

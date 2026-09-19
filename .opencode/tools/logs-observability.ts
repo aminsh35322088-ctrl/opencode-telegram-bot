@@ -22,8 +22,9 @@ async function collect(dir: string, out: string[], remaining: { value: number },
 }
 
 export default tool({
-  description: "Inspect recent application/runtime logs under /data/logs and the current workspace. Use for debugging crashes, deployment issues, and recurring errors.",
+  description: "Search bounded recent application/runtime logs under /data/logs and the current workspace through the explicit search action.",
   args: {
+    action: tool.schema.enum(["search"]).describe("Log action to execute."),
     pattern: tool.schema.string().optional().describe("Optional case-insensitive text filter."),
     lines: tool.schema.number().optional().describe("Maximum lines to return, default 100, capped at 500."),
   },

@@ -15,8 +15,9 @@ function assertHttpUrl(raw: string): URL {
 
 export default tool({
   description:
-    "Download a remote HTTP(S) file into the current worktree with a hard 50 MB size limit. Use this instead of raw download commands. The tool refuses larger Content-Length values and aborts streaming downloads that exceed the limit.",
+    "Download a remote HTTP(S) file into the current worktree through the explicit download action, with a hard 50 MB size limit.",
   args: {
+    action: tool.schema.enum(["download"]).describe("Download action to execute."),
     url: tool.schema.string().describe("HTTP(S) URL of the file to download."),
     filename: tool.schema.string().describe("Destination filename/path relative to the current worktree."),
     timeoutMs: tool.schema.number().optional().describe("Timeout in milliseconds, default 120000."),

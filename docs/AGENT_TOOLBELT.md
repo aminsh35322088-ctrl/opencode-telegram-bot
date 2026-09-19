@@ -1,47 +1,75 @@
 # OpenCode Agent Toolbelt
 
-This repository ships a focused agent toolbelt for the Railway runtime. OpenCode's built-in `bash`, `read`, `write`, `edit`, `grep`, `glob`, `webfetch`, `websearch`, and experimental `lsp` tools remain available; the files under `.opencode/tools/` add structured capabilities on top.
+The model-facing tool surface is standardized around **canonical actions**. OpenCode native tools keep their native schemas, while repository custom tools expose an explicit `action` argument. The `actions` tool is the discovery layer for both.
 
-## Built-in capabilities
+## Discovery
 
-- **Web Search / Web Fetch** — current web research and URL retrieval. `websearch` requires an OpenCode/Go provider or the corresponding Exa/Parallel environment flag.
-- **LSP / code intelligence** — definitions, references, symbols, hover and call hierarchy when a matching language server is available.
-- **Shell / filesystem / Git / GitHub** — existing OpenCode and runtime toolchain.
+Use:
 
-## Custom tools
+- `actions(action="list")` to discover canonical actions.
+- `actions(action="describe", id="tool.action")` to inspect metadata.
+- `actions(action="resolve", id="tool.action")` to get the exact invocation target.
+- `actions(action="summary")` for counts by source/category/risk.
+- `actions(action="sources")` to understand static vs dynamic action sources.
 
-| Tool | Purpose | Permission |
-|---|---|---|
-| `browser` | Playwright browser automation: navigation, snapshots, clicks, forms, screenshots, tabs, console and network inspection | ask |
-| `network-diagnostics` | DNS, HTTP and TCP connectivity checks | allow |
-| `system-diagnostics` | CPU, RAM, uptime, disk and process inspection | allow |
-| `database-query` | Read-only SQLite queries and schema inspection | ask |
-| `logs-observability` | Search recent runtime/application logs | allow |
-| `image-inspect` | Inspect image format, dimensions, colorspace and metadata | allow |
-| `send-file` | Deliver generated artifacts to Telegram | existing |
-| `railway` | Structured Railway project, deployment, environment and log operations | allow |
-| `safe-download` | Bounded file retrieval for supported user-requested downloads | allow |
-| `session-recovery` | Diagnose and recover stalled OpenCode sessions | allow |
-| `full-diagnostics` | Combined runtime/session diagnostics | allow |
-| `github-ci` | Inspect, watch, and fetch logs for GitHub Actions runs | allow |
-| `storage-health` | Inspect and safely reclaim persistent `/data` volume space | allow |
+Every registry entry includes a source, category, risk classification, description, and invocation metadata.
 
-## Browser runtime
+## Action sources
 
-The Docker image installs `@playwright/cli` and Chromium. Browser binaries are kept outside the application bundle at `/opt/ms-playwright`; the persistent Railway volume is used for OpenCode state and workspace data.
+### OpenCode native tools
 
-The browser tool is approval-gated because it can interact with external websites and can upload files or preserve browser state.
+Canonical IDs cover native OpenCode capabilities such as `bash.exec`, `read.read`, `write.write`, `edit.edit`, `apply_patch.apply`, `grep.search`, `glob.search`, `webfetch.fetch`, `websearch.search`, `lsp.query`, `todowrite.update`, `task.delegate`, `question.ask`, and `skill.load`.
 
-## Database scope
+These are registry aliases for discovery only; the model still invokes the native OpenCode tool with its native schema.
 
-`database-query` is intentionally SQLite and read-only. PostgreSQL/Redis access should be added later through dedicated integrations or MCP servers rather than embedding credentials into the local tool bundle.
+### Repository custom tools
 
-## Cloud integrations
+| Tool | Main action families |
+|---|---|
+| `actions` | catalog list/describe/resolve/source/summary |
+| `bot` | projects, worktrees, models, agents, variants, skills, commands, MCP, sessions, scheduled tasks, safe settings, memory, provider metadata, GitHub/Railway account metadata, versions |
+| `media` | STT status/transcription and configured Image Chat generation/editing |
+| `browser` | navigation, snapshots, screenshots, interaction, tabs, console/network inspection, PDF |
+| `network-diagnostics` | DNS, HTTP, TCP |
+| `system-diagnostics` | summary, process, disk inspection |
+| `full-diagnostics` | quick/full bounded runtime checks |
+| `database-query` | read-only SQLite query |
+| `logs-observability` | bounded log search |
+| `image-inspect` | image format/dimensions/colorspace/metadata |
+| `safe-download` | bounded HTTP(S) download into the active worktree |
+| `send-file` | Telegram artifact delivery |
+| `github-ci` | workflow status/watch/logs/verification |
+| `railway` | project/status/log/variable/deploy operations |
+| `storage-health` | persistent-volume inspection and safe cache cleanup |
+| `session-recovery` | inspect/abort/continue stalled OpenCode sessions |
+| `rustdesk` | authorized device discovery, terminal, screen, input, touch, clipboard, files, and system actions |
 
-Railway, Cloudflare, Vercel and other cloud APIs are intentionally handled through Settings → Integrations, where credentials can be stored and switched independently, just like GitHub.
+All custom tools use an explicit `action` discriminator, including formerly single-purpose tools.
 
-## Dependency policy
+### Dynamic MCP tools
 
-The Railway runtime has no custom package-management capability. Dependency changes are made in source control and resolved during the normal GitHub Actions / container build process; the running bot must not install, update, remove, or execute packages on demand.
+MCP servers are runtime-defined. Their tool names and schemas are intentionally **not** hard-coded into the static registry. When an MCP server is connected, OpenCode exposes its tools directly to the model. `bot.mcp.*` actions manage connection metadata and state; the server-provided tools remain dynamic.
 
-Operational diagnostics belong in the runtime toolbelt and must remain separate from the bot's normal application execution paths.
+## Bot control-plane boundaries
+
+The `bot` tool exposes capabilities that are useful to an autonomous coding agent without exposing stored credentials. It can inspect or switch existing model/agent/variant selections, manage scheduled tasks, safe settings, skills, MCP state, memory, and existing GitHub/Railway account selections.
+
+Credential enrollment remains UI-only. API keys and GitHub/Railway tokens are never returned by model-facing actions and are not accepted as tool arguments.
+
+## Media actions
+
+The `media` tool reuses the bot's configured AI connections instead of asking the model for credentials. Audio transcription reads a bounded file inside the active worktree. Image generation/editing uses the resolved default Image Chat profile and writes the resulting image back into the active worktree.
+
+## RustDesk remote-device actions
+
+The `rustdesk` tool delegates transport/control to a separate bridge. Device discovery returns OS and capability metadata; the model decides whether terminal, GUI, touch, clipboard, or file actions are appropriate instead of relying on hard-coded OS routing.
+
+See [`RUSTDESK_AGENT_TOOL.md`](./RUSTDESK_AGENT_TOOL.md) for the bridge contract and security boundary.
+
+## Risk metadata vs runtime permissions
+
+Registry risk metadata (`read`, `write`, `external`, `mutating`, `destructive`) helps the agent and future policy layers reason about side effects. It does **not** replace OpenCode's runtime permission configuration. Runtime permission rules remain authoritative.
+
+## Runtime dependency policy
+
+Railway is production only. Dependency changes are made in source control and resolved by the normal GitHub/container build. The running bot must not mutate its application dependency graph on demand.
