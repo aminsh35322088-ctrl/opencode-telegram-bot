@@ -75,4 +75,41 @@ describe("agent action registry", () => {
     expect(summary.total).toBe(AGENT_ACTIONS.length);
     expect(summary.total).toBeGreaterThan(100);
   });
+
+  it("passes the session title as a top-level create parameter, not a nested body", async () => {
+    const source = await fs.readFile(path.join(process.cwd(), ".opencode", "tools", "session-extended.ts"), "utf8");
+    const parsed = ts.createSourceFile("session-extended.ts", source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+
+    const createCalls: ts.CallExpression[] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node)
+        && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === "create"
+        && node.expression.expression.getText(parsed).endsWith("session")
+      ) {
+        createCalls.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
+
+    expect(createCalls.length).toBeGreaterThan(0);
+    const firstArgument = createCalls[0]!.arguments[0];
+    expect(firstArgument && ts.isObjectLiteralExpression(firstArgument)).toBe(true);
+
+    const propertyNames = (firstArgument as ts.ObjectLiteralExpression).properties
+      .map((property) => (ts.isPropertyAssignment(property) ? property.name.getText(parsed) : ""));
+    expect(propertyNames).toContain("title");
+    expect(propertyNames).not.toContain("body");
+  });
+
+  it("wires the hardened tool helpers into the custom tools", async () => {
+    const toolsDir = path.join(process.cwd(), ".opencode", "tools");
+    const read = (file: string): Promise<string> => fs.readFile(path.join(toolsDir, file), "utf8");
+
+    expect(await read("git.ts"), "git.push must reject force pushes").toContain("containsForcePushFlag");
+    expect(await read("file.ts"), "file.read must guard sensitive paths").toContain("isSensitivePath");
+    expect(await read("test.ts"), "test args must use the shared parser").toContain("parseShellLikeArgs");
+  });
 });
