@@ -96,17 +96,16 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("🛑 Abort");
   });
 
-  it("shows execution controls only while the Topic session is actively running", () => {
+  it("hides the Topic keyboard markup on outbound messages while the session is running", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
-    const runningKeyboard = keyboardManager.getKeyboard(SESSION_ID);
-    const runningTexts = keyboardTexts(runningKeyboard);
-    expect(runningTexts).toContain("⏸️ Pause");
-    expect(runningTexts).toContain("🛑 Abort");
+    expect(keyboardManager.getKeyboard(SESSION_ID)).toBeUndefined();
 
     mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
     const idleKeyboard = keyboardManager.getKeyboard(SESSION_ID);
+    expect(idleKeyboard).toBeDefined();
     const idleTexts = keyboardTexts(idleKeyboard);
+    expect(idleTexts).toContain("🧠 Global Model");
     expect(idleTexts).not.toContain("⏸️ Pause");
     expect(idleTexts).not.toContain("▶️ Resume");
     expect(idleTexts).not.toContain("🛑 Abort");
@@ -145,6 +144,64 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     keyboardManager.initialize({} as never, CHAT_ID);
     await keyboardManager.sendKeyboardUpdate(CHAT_ID, true);
     expect(updateMain).toHaveBeenCalledWith(CHAT_ID, expect.objectContaining({ modelID: "m" }), true);
+  });
+
+  it("sendKeyboardUpdate does not re-open the Topic keyboard while the run is active", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 901, message_thread_id: THREAD_ID });
+    keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
+
+    // Deliver once while idle so the user's keyboard exists before the run starts.
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+    const deliveredCount = sendMessage.mock.calls.length;
+    expect(deliveredCount).toBe(1);
+
+    // Refresh attempts during an active run must be suppressed: the collapsed
+    // keyboard must not be force-opened on the user while the model works.
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+    expect(sendMessage).toHaveBeenCalledTimes(deliveredCount);
+  });
+
+  it("re-asserts a refreshed Topic keyboard after a suppressed run once content changed", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 902, message_thread_id: THREAD_ID });
+    keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
+
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+    const deliveredCount = sendMessage.mock.calls.length;
+
+    // Run starts and is suppressed, then finishes with changed keyboard content
+    // (the chat became paused while the model ran).
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
+    mocks.isChatPaused.mockReturnValue(true);
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+
+    expect(sendMessage).toHaveBeenCalledTimes(deliveredCount + 1);
+    const [, , options] = sendMessage.mock.calls.at(-1) as [number, string, Record<string, unknown>];
+    expect(options.message_thread_id).toBe(THREAD_ID);
+    expect(keyboardTexts(options.reply_markup)).toContain("▶️ Resume");
+  });
+
+  it("delivers the initial Topic keyboard even when the first refresh arrives while running", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 903, message_thread_id: THREAD_ID });
+    keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, "session-fresh");
+    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
+
+    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: "session-fresh" }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [, , options] = sendMessage.mock.calls[0] as [number, string, Record<string, unknown>];
+    expect(options.message_thread_id).toBe(THREAD_ID);
+  });
+
+  it("getTopicSendTarget resolves the authoritative Topic thread for a bound session", () => {
+    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
+    expect(keyboardManager.getTopicSendTarget(SESSION_ID)).toEqual({ chatId: CHAT_ID, threadId: THREAD_ID });
+
+    keyboardManager.initialize({} as never, CHAT_ID);
+    expect(keyboardManager.getTopicSendTarget("unknown-session")).toBeUndefined();
   });
 
   it("an explicit sessionId always wins over the runtime context", () => {
