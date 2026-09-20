@@ -98,8 +98,15 @@ describe("agent action registry", () => {
     const firstArgument = createCalls[0]!.arguments[0];
     expect(firstArgument && ts.isObjectLiteralExpression(firstArgument)).toBe(true);
 
-    const propertyNames = (firstArgument as ts.ObjectLiteralExpression).properties
-      .map((property) => (ts.isPropertyAssignment(property) ? property.name.getText(parsed) : ""));
+    const propertyNames: string[] = [];
+    const collectPropertyNames = (node: ts.Node): void => {
+      if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+        propertyNames.push(node.name.getText(parsed));
+      }
+      ts.forEachChild(node, collectPropertyNames);
+    };
+    collectPropertyNames(firstArgument);
+
     expect(propertyNames).toContain("title");
     expect(propertyNames).not.toContain("body");
   });
