@@ -5,111 +5,136 @@ import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
+const MAX_OUTPUT_CHARS = 30000;
 
-async function detectPackageManager(worktree: string): Promise<{ cmd: string; args: string[] }> {
-  const packageJsonPath = path.join(worktree, "package.json");
-  const yarnLockPath = path.join(worktree, "yarn.lock");
-  const pnpmLockPath = path.join(worktree, "pnpm-lock.yaml");
-  const bunLockPath = path.join(worktree, "bun.lockb");
+type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+type PackageJson = { scripts?: Record<string, string> };
 
+async function exists(file: string): Promise<boolean> {
+  return fs.access(file).then(() => true).catch(() => false);
+}
+
+async function detectPackageManager(worktree: string): Promise<PackageManager> {
+  if (await exists(path.join(worktree, "pnpm-lock.yaml"))) return "pnpm";
+  if (await exists(path.join(worktree, "yarn.lock"))) return "yarn";
+  if (await exists(path.join(worktree, "bun.lockb")) || await exists(path.join(worktree, "bun.lock"))) return "bun";
+  return "npm";
+}
+
+function parseArgs(input?: string): string[] {
+  const value = input?.trim();
+  if (!value) return [];
+  const output: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+  for (const char of value) {
+    if (escaping) { current += char; escaping = false; continue; }
+    if (char === "\\") { escaping = true; continue; }
+    if (quote) { if (char === quote) quote = null; else current += char; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (/\s/u.test(char)) { if (current) { output.push(current); current = ""; } continue; }
+    current += char;
+  }
+  if (quote) throw new Error("Unclosed quote in args.");
+  if (escaping) current += "\\";
+  if (current) output.push(current);
+  return output;
+}
+
+async function packageJson(worktree: string): Promise<PackageJson> {
   try {
-    await fs.access(packageJsonPath);
-    if (await fs.access(yarnLockPath).then(() => true).catch(() => false)) {
-      return { cmd: "yarn", args: [] };
-    }
-    if (await fs.access(pnpmLockPath).then(() => true).catch(() => false)) {
-      return { cmd: "pnpm", args: [] };
-    }
-    if (await fs.access(bunLockPath).then(() => true).catch(() => false)) {
-      return { cmd: "bun", args: ["run"] };
-    }
-    return { cmd: "npm", args: ["run"] };
+    return JSON.parse(await fs.readFile(path.join(worktree, "package.json"), "utf8")) as PackageJson;
   } catch {
-    return { cmd: "npx", args: [] };
+    throw new Error("package.json was not found or is invalid.");
   }
 }
 
-async function runCommand(cmd: string, args: string[], worktree: string, timeout = 120000): Promise<string> {
+function scriptInvocation(pm: PackageManager, script: string, extra: string[]): { cmd: string; args: string[] } {
+  if (pm === "npm") return { cmd: "npm", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
+  if (pm === "pnpm") return { cmd: "pnpm", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
+  if (pm === "yarn") return { cmd: "yarn", args: ["run", script, ...extra] };
+  return { cmd: "bun", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
+}
+
+async function run(cmd: string, args: string[], worktree: string, timeout = 180000): Promise<string> {
   try {
     const { stdout, stderr } = await execFileAsync(cmd, args, {
       cwd: worktree,
       timeout,
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, CI: "true" },
     });
-    return stdout.trim() || stderr.trim();
+    return (stdout.trim() || stderr.trim() || "OK").slice(0, MAX_OUTPUT_CHARS);
   } catch (error) {
-    const e = error as { stderr?: string; message?: string; code?: string | number; stdout?: string };
-    if (e.code === "ENOENT") throw new Error(`${cmd} is not installed. Install it first.`);
-    const output = [e.stdout, e.stderr].filter(Boolean).join("\n");
-    throw new Error(output || e.message || `Command failed: ${cmd} ${args.join(" ")}`);
+    const e = error as { code?: string | number; stdout?: string; stderr?: string; message?: string };
+    if (e.code === "ENOENT") throw new Error(`${cmd} is not installed in this runtime.`);
+    const output = [e.stdout, e.stderr].filter(Boolean).join("\n").trim();
+    throw new Error((output || e.message || `${cmd} failed`).slice(0, MAX_OUTPUT_CHARS));
   }
 }
 
+async function runLocalBinary(worktree: string, binary: string, args: string[], timeout = 180000): Promise<string> {
+  const executable = path.join(worktree, "node_modules", ".bin", process.platform === "win32" ? `${binary}.cmd` : binary);
+  if (!await exists(executable)) {
+    throw new Error(`No package script and no local ${binary} binary are available. Install project dev dependencies explicitly; this tool will not download packages via npx.`);
+  }
+  return run(executable, args, worktree, timeout);
+}
+
 export default tool({
-  description: "Run tests, linter, type checker, and build commands. Auto-detects package manager (npm/yarn/pnpm/bun).",
+  description: "Run project tests, lint, typecheck, build, a specific test file, or lint-fix. Uses package scripts/local binaries only and never downloads tooling implicitly.",
   args: {
-    action: tool.schema.enum(["test", "lint", "typecheck", "build", "test-file", "lint-fix"]).describe("Test/CI action to execute."),
-    args: tool.schema.string().optional().describe("Additional arguments (e.g., file path for test-file, specific test name)."),
+    action: tool.schema.enum(["test", "lint", "typecheck", "build", "test-file", "lint-fix"]).describe("Validation action to execute."),
+    args: tool.schema.string().optional().describe("Additional arguments; quotes/backslash escapes are supported."),
   },
   async execute(args, context) {
-    const { action, args: extraArgs } = args;
     const worktree = context.worktree;
-    const extra = extraArgs ? extraArgs.split(/\s+/) : [];
+    const pkg = await packageJson(worktree);
     const pm = await detectPackageManager(worktree);
+    const extra = parseArgs(args.args);
 
-    const hasScript = async (name: string): Promise<boolean> => {
-      try {
-        const pkg = JSON.parse(await fs.readFile(path.join(worktree, "package.json"), "utf-8"));
-        return !!pkg.scripts?.[name];
-      } catch {
-        return false;
+    if (args.action === "test-file") {
+      if (!extra.length) throw new Error('test-file requires a test file path in args.');
+      if (pkg.scripts?.test) {
+        const invocation = scriptInvocation(pm, "test", extra);
+        return run(invocation.cmd, invocation.args, worktree);
       }
-    };
-
-    switch (action) {
-      case "test": {
-        if (await hasScript("test")) {
-          return runCommand(pm.cmd, [...pm.args, "test", ...extra], worktree);
-        }
-        return runCommand("npx", ["jest", ...extra], worktree);
-      }
-      case "test-file": {
-        if (!extra.length) throw new Error("File path required. Provide: args=\"path/to/file.test.ts\"");
-        if (await hasScript("test")) {
-          return runCommand(pm.cmd, [...pm.args, "test", "--", ...extra], worktree);
-        }
-        return runCommand("npx", ["jest", ...extra], worktree);
-      }
-      case "lint": {
-        if (await hasScript("lint")) {
-          return runCommand(pm.cmd, [...pm.args, "lint", ...extra], worktree);
-        }
-        return runCommand("npx", ["eslint", ".", ...extra], worktree);
-      }
-      case "lint-fix": {
-        if (await hasScript("lint")) {
-          return runCommand(pm.cmd, [...pm.args, "lint", "--fix", ...extra], worktree);
-        }
-        return runCommand("npx", ["eslint", ".", "--fix", ...extra], worktree);
-      }
-      case "typecheck": {
-        if (await hasScript("typecheck")) {
-          return runCommand(pm.cmd, [...pm.args, "typecheck", ...extra], worktree);
-        }
-        if (await hasScript("tsc")) {
-          return runCommand(pm.cmd, [...pm.args, "tsc", ...extra], worktree);
-        }
-        return runCommand("npx", ["tsc", "--noEmit", ...extra], worktree);
-      }
-      case "build": {
-        if (await hasScript("build")) {
-          return runCommand(pm.cmd, [...pm.args, "build", ...extra], worktree);
-        }
-        throw new Error("No 'build' script found in package.json");
-      }
-      default:
-        throw new Error(`Unknown test action: ${action}`);
+      const config = path.join(worktree, ".github", "ci-tests", "vitest.config.ts");
+      const vitestArgs = ["run", ...(await exists(config) ? ["--config", config] : []), ...extra];
+      return runLocalBinary(worktree, "vitest", vitestArgs);
     }
+
+    if (args.action === "test") {
+      if (pkg.scripts?.test) {
+        const invocation = scriptInvocation(pm, "test", extra);
+        return run(invocation.cmd, invocation.args, worktree);
+      }
+      const config = path.join(worktree, ".github", "ci-tests", "vitest.config.ts");
+      if (!await exists(path.join(worktree, "tests"))) {
+        throw new Error("This repository has no test script and CI-only tests are not materialized in this runtime.");
+      }
+      return runLocalBinary(worktree, "vitest", ["run", ...(await exists(config) ? ["--config", config] : []), ...extra]);
+    }
+
+    if (args.action === "lint-fix") {
+      if (pkg.scripts?.lint) {
+        const invocation = scriptInvocation(pm, "lint", ["--fix", ...extra]);
+        return run(invocation.cmd, invocation.args, worktree);
+      }
+      return runLocalBinary(worktree, "eslint", [".", "--fix", ...extra]);
+    }
+
+    const script = args.action === "typecheck" ? "typecheck" : args.action;
+    if (pkg.scripts?.[script]) {
+      const invocation = scriptInvocation(pm, script, extra);
+      return run(invocation.cmd, invocation.args, worktree);
+    }
+
+    if (args.action === "lint") return runLocalBinary(worktree, "eslint", [".", ...extra]);
+    if (args.action === "typecheck") return runLocalBinary(worktree, "tsc", ["--noEmit", ...extra]);
+    if (args.action === "build") throw new Error("No build script is defined in package.json.");
+
+    throw new Error(`Unknown test action: ${args.action}`);
   },
 });
