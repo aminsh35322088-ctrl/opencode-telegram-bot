@@ -1078,6 +1078,44 @@ describe("summary/aggregator", () => {
     );
   });
 
+  it("still fires onComplete when the completed assistant message has no text", () => {
+    const onComplete = vi.fn();
+
+    summaryAggregator.setOnComplete(onComplete);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-empty-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-empty-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-empty-1",
+      "",
+      expect.objectContaining({}),
+    );
+  });
+
   it("emits completed external user input for the current session", async () => {
     const onExternalUserInput = vi.fn();
     summaryAggregator.setOnExternalUserInput(onExternalUserInput);

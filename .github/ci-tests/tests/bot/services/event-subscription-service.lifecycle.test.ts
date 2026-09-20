@@ -645,6 +645,30 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     });
   });
 
+  describe("completion queue deadline", () => {
+    it("releases the session queue when a completion task never settles", async () => {
+      const { service } = await setupService({ startAssistantRun: false });
+      const queue = service as unknown as {
+        enqueueSessionCompletionTask: (id: string, task: () => Promise<void>) => Promise<void>;
+      };
+      const { setSessionCompletionTaskTimeoutForTests } = await import(
+        "../../../src/bot/services/event-subscription-service.js"
+      );
+      setSessionCompletionTaskTimeoutForTests(50);
+      try {
+        const stuck = queue.enqueueSessionCompletionTask("a", () => new Promise<void>(() => {}));
+        const delivered: string[] = [];
+        await queue.enqueueSessionCompletionTask("a", async () => {
+          delivered.push("second");
+        });
+        expect(delivered).toEqual(["second"]);
+        await expect(stuck).resolves.toBeUndefined();
+      } finally {
+        setSessionCompletionTaskTimeoutForTests(0);
+      }
+    });
+  });
+
   describe("session retirement cleanup", () => {
     it("retireSessionRuntime drops active assistant streams and run state for the retired session only", async () => {
       const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });

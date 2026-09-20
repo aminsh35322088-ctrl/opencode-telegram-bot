@@ -77,4 +77,20 @@ describe("watchdog liveness and isolation", () => {
     expect(mocks.status.mock.calls.filter(call => call[0].directory === "/workspace/a").length).toBeGreaterThan(1);
     expect(mocks.status.mock.calls.filter(call => call[0].directory === "/workspace/b").length).toBeGreaterThan(1);
   });
+
+  it("notifies the user instead of staying silent after a confirmed stall abort", async () => {
+    const { setStallNoticeSender } = await import(
+      "../../../src/app/services/session-stall-watchdog.js"
+    );
+    const notice = vi.fn().mockResolvedValue(undefined);
+    setStallNoticeSender(notice);
+    try {
+      start(options("a"));
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(mocks.abort.mock.calls.some((call) => call[0].sessionID === "a")).toBe(true);
+      expect(notice).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "a" }));
+    } finally {
+      setStallNoticeSender(null);
+    }
+  });
 });
