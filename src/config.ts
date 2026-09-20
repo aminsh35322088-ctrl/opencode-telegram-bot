@@ -78,26 +78,39 @@ const HARDCODED = {
   },
 };
 
-export function buildTelegramConfig(): {
+type TelegramConfig = {
   token: string;
   allowedUserId: number;
   proxyUrl: string;
   apiRoot: string;
   proxySecret: string;
   forceIpv4: boolean;
-} {
-  return {
-    token: getRequiredTelegramEnvVar("TELEGRAM_BOT_TOKEN"),
-    allowedUserId: parseTelegramAllowedUserId(),
-    proxyUrl: "",
-    apiRoot: "",
-    proxySecret: "",
-    forceIpv4: false,
-  };
+};
+
+let resolvedTelegramConfig: TelegramConfig | null = null;
+
+export function buildTelegramConfig(): TelegramConfig {
+  if (resolvedTelegramConfig === null) {
+    resolvedTelegramConfig = {
+      token: getRequiredTelegramEnvVar("TELEGRAM_BOT_TOKEN"),
+      allowedUserId: parseTelegramAllowedUserId(),
+      proxyUrl: "",
+      apiRoot: "",
+      proxySecret: "",
+      forceIpv4: false,
+    };
+  }
+  return resolvedTelegramConfig;
 }
 
 export const config = {
-  telegram: buildTelegramConfig(),
+  // Built lazily: agent-side tool chains import the config module to read
+  // non-secret settings, and the host bot strips Telegram credentials from
+  // their environment (src/opencode/process.ts buildAgentEnvironment). The
+  // token is only required once a consumer actually touches telegram config.
+  get telegram(): TelegramConfig {
+    return buildTelegramConfig();
+  },
   opencode: {
     apiUrl: HARDCODED.opencode.apiUrl,
     username: HARDCODED.opencode.username,
