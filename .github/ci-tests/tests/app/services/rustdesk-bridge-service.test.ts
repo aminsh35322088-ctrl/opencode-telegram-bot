@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   RustDeskBridgeClient,
+  RustDeskBridgeHttpError,
   type RustDeskActionRequest,
   validateRustDeskActionRequest,
 } from "../../../src/app/services/rustdesk-bridge-service.js";
@@ -156,6 +157,134 @@ describe("rustdesk bridge service", () => {
         headers: expect.objectContaining({ Authorization: "Bearer secret-token" }),
       }),
     );
+  });
+
+
+  it("preserves structured permission-required bridge errors", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: "approval required",
+          errorCode: "permission_required",
+          risk: "mutating",
+          permission: "ask",
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    try {
+      await client.execute({
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        command: "uname -a",
+      });
+      throw new Error("expected structured bridge error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RustDeskBridgeHttpError);
+      const bridgeError = error as RustDeskBridgeHttpError;
+      expect(bridgeError.status).toBe(403);
+      expect(bridgeError.errorCode).toBe("permission_required");
+      expect(bridgeError.payload).toMatchObject({ risk: "mutating", permission: "ask" });
+    }
+  });
+
+  it("uses the separate control token for permission grants", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          permissionGrantId: "perm-1",
+          action: "terminal.exec",
+          scope: "once",
+          expiresInSeconds: 300,
+          risk: "mutating",
+          permission: "ask",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await client.grantPermission({
+      action: "terminal.exec",
+      connectionId: "conn-1",
+      scope: "once",
+    });
+
+    expect(result.permissionGrantId).toBe("perm-1");
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[0]).toBe("https://bridge.example.com/v1/permission");
+    expect((request?.[1] as RequestInit | undefined)?.method).toBe("POST");
+    expect((request?.[1] as RequestInit | undefined)?.body).toBe(
+      JSON.stringify({ action: "terminal.exec", connectionId: "conn-1", scope: "once" }),
+    );
+  });
+
+  it("asks for approval, mints a one-shot grant, and retries the action", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "approval required",
+            errorCode: "permission_required",
+            risk: "mutating",
+            permission: "ask",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, permissionGrantId: "perm-1", scope: "once" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, output: "Linux" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    const authorize = vi.fn(async () => {});
+
+    const result = await client.executeAuthorized(
+      { action: "terminal.exec", connectionId: "conn-1", command: "uname -a" },
+      authorize,
+    );
+
+    expect(result).toMatchObject({ ok: true, output: "Linux" });
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        risk: "mutating",
+        permission: "ask",
+      }),
+    );
+    const retry = fetchMock.mock.calls[2];
+    const retryBody = JSON.parse(String((retry?.[1] as RequestInit | undefined)?.body));
+    expect(retryBody.permissionGrantId).toBe("perm-1");
   });
 
   it("surfaces structured bridge errors without leaking credentials", async () => {
