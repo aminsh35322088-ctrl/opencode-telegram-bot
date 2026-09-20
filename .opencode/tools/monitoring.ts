@@ -50,7 +50,7 @@ async function tailFile(file: string, lines: number): Promise<string> {
 }
 
 export default tool({
-  description: "Bounded monitoring actions for application logs and host health: tail, grep, health, metrics, and alerts.",
+  description: "Bounded monitoring actions: tail and grep application logs, report project/tool health, host metrics, and alerts. Log paths must stay inside the worktree or /data/logs.",
   args: {
     action: tool.schema.enum(["tail", "grep", "health", "metrics", "alerts"]).describe("Monitoring action to execute."),
     pattern: tool.schema.string().optional().describe("Regular expression for grep."),

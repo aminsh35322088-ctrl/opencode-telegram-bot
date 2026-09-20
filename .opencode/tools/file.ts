@@ -1,10 +1,24 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
 const MAX_OUTPUT_CHARS = 16000;
 const MAX_RESULTS = 2000;
 const SKIP_DIRS = new Set([".git", "node_modules"]);
+const DIST_ROOT = process.env.AGENT_BOT_DIST_ROOT?.trim() || "/app/dist";
+
+interface ToolSupportModule {
+  isSensitivePath(relativePath: string): boolean;
+}
+
+async function loadSupport(): Promise<ToolSupportModule> {
+  return import(pathToFileURL(path.join(DIST_ROOT, "app/services/agent-tool-support-service.js")).href) as Promise<ToolSupportModule>;
+}
+
+async function fileExists(target: string): Promise<boolean> {
+  return fs.access(target).then(() => true).catch(() => false);
+}
 
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -102,14 +116,27 @@ export default tool({
     path: tool.schema.string().describe("File or directory path relative to the current worktree."),
     content: tool.schema.string().optional().describe("Content for write. Empty strings are allowed."),
     pattern: tool.schema.string().optional().describe("Glob for search, regex for grep, or destination path for copy/move."),
+    overwrite: tool.schema.boolean().optional().describe("Allow write to replace an existing file. Defaults to false."),
+    confirm: tool.schema.boolean().optional().describe("Required as true to delete a file or directory."),
+    allow_sensitive: tool.schema.boolean().optional().describe("Allow reading credential or environment files. Defaults to false."),
   },
   async execute(args, context) {
     const worktree = path.resolve(context.worktree);
     const requested = resolveInside(worktree, args.path, "path");
+    const support = await loadSupport();
+    const guardSensitive = (label: string, target: string): void => {
+      const relative = path.relative(worktree, target).replaceAll(path.sep, "/");
+      if (args.allow_sensitive !== true && support.isSensitivePath(relative)) {
+        throw new Error(`Refusing to access sensitive path ${label}. Pass allow_sensitive=true to override.`);
+      }
+    };
 
     if (args.action === "write") {
       if (args.content === undefined) throw new Error("write requires content (an empty string is valid).");
       await assertDestinationInside(worktree, requested);
+      if (args.overwrite !== true && await fileExists(requested)) {
+        throw new Error(`Refusing to overwrite existing file ${args.path}. Pass overwrite=true to replace it.`);
+      }
       await fs.mkdir(path.dirname(requested), { recursive: true });
       await fs.writeFile(requested, args.content, "utf8");
       return `Written ${Buffer.byteLength(args.content, "utf8")} bytes to ${args.path}`;
@@ -118,6 +145,7 @@ export default tool({
     if (args.action === "copy" || args.action === "move") {
       if (!args.pattern?.trim()) throw new Error(`${args.action} requires pattern as a destination path.`);
       const source = await assertRealpathInside(worktree, requested);
+      guardSensitive(args.path, source);
       const destination = resolveInside(worktree, args.pattern, "destination");
       await assertDestinationInside(worktree, destination);
       await fs.mkdir(path.dirname(destination), { recursive: true });
@@ -129,6 +157,7 @@ export default tool({
     const fullPath = await assertRealpathInside(worktree, requested);
 
     if (args.action === "read") {
+      guardSensitive(args.path, fullPath);
       const stat = await fs.stat(fullPath);
       if (stat.isDirectory()) {
         const entries = (await fs.readdir(fullPath)).sort((a, b) => a.localeCompare(b));
@@ -138,6 +167,7 @@ export default tool({
     }
 
     if (args.action === "info") {
+      guardSensitive(args.path, fullPath);
       const stat = await fs.stat(fullPath);
       return JSON.stringify({
         path: path.relative(worktree, fullPath) || ".",
@@ -151,6 +181,7 @@ export default tool({
     }
 
     if (args.action === "delete") {
+      if (args.confirm !== true) throw new Error("delete requires confirm=true.");
       if (path.resolve(fullPath) === worktree) throw new Error("Refusing to delete the worktree root.");
       await fs.rm(fullPath, { recursive: true, force: false });
       return `Deleted ${args.path}`;
@@ -179,6 +210,8 @@ export default tool({
       const matches: string[] = [];
       for (const file of files) {
         if (matches.join("\n").length >= MAX_OUTPUT_CHARS) break;
+        const relative = path.relative(worktree, file).replaceAll(path.sep, "/");
+        if (args.allow_sensitive !== true && support.isSensitivePath(relative)) continue;
         let text: string;
         try {
           text = await fs.readFile(file, "utf8");

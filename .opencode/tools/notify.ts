@@ -194,8 +194,6 @@ async function currentTarget(worktree: string, sessionID: string): Promise<{ cha
   return { chatId: context.chatId, threadId: context.threadId };
 }
 
-void ensureRecovered().catch(() => {});
-
 export default tool({
   description: "Send or schedule bounded Telegram notifications for the current Telegram Topic. Arbitrary chat targets are rejected; schedules are persisted and recovered across tool reloads.",
   args: {

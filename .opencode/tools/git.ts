@@ -1,51 +1,20 @@
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 20000;
+const DIST_ROOT = process.env.AGENT_BOT_DIST_ROOT?.trim() || "/app/dist";
 
-function parseArgs(input?: string): string[] {
-  const value = input?.trim();
-  if (!value) return [];
-  const result: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | null = null;
-  let escaping = false;
+interface ToolSupportModule {
+  parseShellLikeArgs(input?: string): string[];
+  containsForcePushFlag(args: string[]): boolean;
+}
 
-  for (const char of value) {
-    if (escaping) {
-      current += char;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      else current += char;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-    if (/\s/u.test(char)) {
-      if (current) {
-        result.push(current);
-        current = "";
-      }
-      continue;
-    }
-    current += char;
-  }
-
-  if (escaping) current += "\\";
-  if (quote) throw new Error("Unclosed quote in git args.");
-  if (current) result.push(current);
-  return result;
+async function loadSupport(): Promise<ToolSupportModule> {
+  return import(pathToFileURL(path.join(DIST_ROOT, "app/services/agent-tool-support-service.js")).href) as Promise<ToolSupportModule>;
 }
 
 async function git(args: string[], worktree: string, timeout = 30000): Promise<string> {
@@ -66,7 +35,7 @@ async function git(args: string[], worktree: string, timeout = 30000): Promise<s
 }
 
 export default tool({
-  description: "Execute explicit Git operations in the current worktree without invoking a shell. Supports read operations plus commit, branch, checkout, stash, merge, rebase, fetch, pull, push, and reset.",
+  description: "Execute explicit Git operations in the current worktree without invoking a shell. Supports read operations plus commit, branch, checkout, stash, merge, rebase, fetch, pull, push, and reset. Force pushes are refused.",
   args: {
     action: tool.schema.enum([
       "status", "diff", "log", "commit", "push", "pull",
@@ -77,7 +46,8 @@ export default tool({
     message: tool.schema.string().optional().describe("Commit message for the commit action. Preferred over embedding -m in args."),
   },
   async execute(args, context) {
-    const extra = parseArgs(args.args);
+    const support = await loadSupport();
+    const extra = support.parseShellLikeArgs(args.args);
 
     switch (args.action) {
       case "status":
@@ -93,6 +63,9 @@ export default tool({
         return git(["commit", ...extra], context.worktree, 60000);
       }
       case "push":
+        if (support.containsForcePushFlag(extra)) {
+          throw new Error("Refusing to force-push. Force pushes must be requested explicitly outside this tool.");
+        }
         return git(["push", ...extra], context.worktree, 120000);
       case "pull":
         return git(["pull", ...extra], context.worktree, 120000);

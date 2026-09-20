@@ -76,7 +76,7 @@ export default tool({
       const title = args.title?.trim();
       const result = unwrap(await client.session.create({
         directory,
-        ...(title ? { body: { title } } : {}),
+        ...(title ? { title } : {}),
       }), "session.create");
       return JSON.stringify({ ok: true, session: result, note: "Telegram Topic binding was not changed." }, null, 2);
     }

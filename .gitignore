@@ -24,7 +24,8 @@ Thumbs.db
 .claude/
 .codex/
 .kilocode/
-.opencode/
+.opencode/*
+!.opencode/tools/
 opencode.json
 .pi/
 
@@ -35,6 +36,10 @@ settings.json
 settings.json.bak
 settings.json.tmp
 .tmp/
+
+# Agent session exports
+session-export-*
+.archive/
 
 # Orbit runtime state
 .orbit-state/

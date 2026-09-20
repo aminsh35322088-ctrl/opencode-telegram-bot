@@ -2,10 +2,20 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 30000;
+const DIST_ROOT = process.env.AGENT_BOT_DIST_ROOT?.trim() || "/app/dist";
+
+interface ToolSupportModule {
+  parseShellLikeArgs(input?: string): string[];
+}
+
+async function loadSupport(): Promise<ToolSupportModule> {
+  return import(pathToFileURL(path.join(DIST_ROOT, "app/services/agent-tool-support-service.js")).href) as Promise<ToolSupportModule>;
+}
 
 type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 type PackageJson = { scripts?: Record<string, string> };
@@ -21,27 +31,6 @@ async function detectPackageManager(worktree: string): Promise<PackageManager> {
   return "npm";
 }
 
-function parseArgs(input?: string): string[] {
-  const value = input?.trim();
-  if (!value) return [];
-  const output: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | null = null;
-  let escaping = false;
-  for (const char of value) {
-    if (escaping) { current += char; escaping = false; continue; }
-    if (char === "\\") { escaping = true; continue; }
-    if (quote) { if (char === quote) quote = null; else current += char; continue; }
-    if (char === "'" || char === '"') { quote = char; continue; }
-    if (/\s/u.test(char)) { if (current) { output.push(current); current = ""; } continue; }
-    current += char;
-  }
-  if (quote) throw new Error("Unclosed quote in args.");
-  if (escaping) current += "\\";
-  if (current) output.push(current);
-  return output;
-}
-
 async function packageJson(worktree: string): Promise<PackageJson> {
   try {
     return JSON.parse(await fs.readFile(path.join(worktree, "package.json"), "utf8")) as PackageJson;
@@ -53,7 +42,7 @@ async function packageJson(worktree: string): Promise<PackageJson> {
 function scriptInvocation(pm: PackageManager, script: string, extra: string[]): { cmd: string; args: string[] } {
   if (pm === "npm") return { cmd: "npm", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
   if (pm === "pnpm") return { cmd: "pnpm", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
-  if (pm === "yarn") return { cmd: "yarn", args: ["run", script, ...extra] };
+  if (pm === "yarn") return { cmd: "yarn", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
   return { cmd: "bun", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
 }
 
@@ -90,9 +79,10 @@ export default tool({
   },
   async execute(args, context) {
     const worktree = context.worktree;
+    const support = await loadSupport();
     const pkg = await packageJson(worktree);
     const pm = await detectPackageManager(worktree);
-    const extra = parseArgs(args.args);
+    const extra = support.parseShellLikeArgs(args.args);
 
     if (args.action === "test-file") {
       if (!extra.length) throw new Error('test-file requires a test file path in args.');
