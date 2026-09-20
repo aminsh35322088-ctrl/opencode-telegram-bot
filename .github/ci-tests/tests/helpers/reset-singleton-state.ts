@@ -23,7 +23,6 @@ interface KeyboardManagerPrivateState {
   api: null;
   lastUpdateTimes: Map<string, number>;
   replyKeyboardFingerprints?: Map<string, string>;
-  suppressedWhileRunning?: Set<string>;
 }
 
 export async function resetSingletonState(): Promise<void> {
@@ -106,7 +105,6 @@ export async function resetSingletonState(): Promise<void> {
   keyboard.api = null;
   keyboard.lastUpdateTimes?.clear();
   keyboard.replyKeyboardFingerprints?.clear();
-  keyboard.suppressedWhileRunning?.clear();
 
   if (typeof pinnedMessageManager.__resetForTests === "function") {
     pinnedMessageManager.__resetForTests();

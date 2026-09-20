@@ -51,7 +51,7 @@ class KeyboardManager {
   private readonly mainAnchorLocks = new Map<number, Promise<void>>();
   private readonly topicModeChats = new Set<number>();
   private readonly replyKeyboardFingerprints = new Map<string, string>();
-  private readonly suppressedWhileRunning = new Set<string>();
+  private readonly topicKeyboardUpdates = new Map<string, Promise<void>>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
@@ -366,6 +366,16 @@ class KeyboardManager {
     if (fingerprint) this.replyKeyboardFingerprints.set(this.key(sessionId), fingerprint);
   }
 
+  /** Explicit user recovery must bypass layout deduplication, including during inference. */
+  public async restoreTopicKeyboard(sessionId: string): Promise<void> {
+    await this.queueTopicKeyboardUpdate(sessionId, async () => {
+      const state = this.state(sessionId);
+      if (!state?.sessionId || state.threadId === undefined) return;
+      this.replyKeyboardFingerprints.delete(this.key(sessionId));
+      await this.deliverKeyboardUpdate(state.chatId, true, sessionId);
+    });
+  }
+
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     if (state?.sessionId && state.threadId !== undefined) {
@@ -383,39 +393,44 @@ class KeyboardManager {
   }
 
   public async sendKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
+    const resolved = this.resolveSessionId(sessionId);
+    if (!resolved) return this.deliverKeyboardUpdate(chatId, force);
+    await this.queueTopicKeyboardUpdate(resolved, () => this.deliverKeyboardUpdate(chatId, force, resolved));
+  }
+
+  private async queueTopicKeyboardUpdate(sessionId: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.topicKeyboardUpdates.get(sessionId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    this.topicKeyboardUpdates.set(sessionId, current);
+    try { await current; }
+    finally {
+      if (this.topicKeyboardUpdates.get(sessionId) === current) this.topicKeyboardUpdates.delete(sessionId);
+    }
+  }
+
+  private async deliverKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
     if (!this.api) return;
     const resolvedSessionId = this.resolveSessionId(sessionId);
     const state = this.state(resolvedSessionId);
+    // A queued refresh may outlive a deleted Topic; never turn it into Main UI.
+    if (resolvedSessionId && !state) return;
     const targetChatId = chatId ?? state?.chatId;
     if (!targetChatId) return;
     const key = this.key(resolvedSessionId);
     const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
 
-    // Collapse the AI Topic keyboard while the model is working: never push a
-    // running-state ReplyKeyboardMarkup that would force the keyboard open on
-    // the user. Only a keyboard already delivered at least once is suppressed,
-    // so a brand-new Topic still receives its initial layout.
-    if (isTopic && state?.sessionId && assistantRunState.hasActiveRun(state.sessionId)) {
-      if (this.replyKeyboardFingerprints.has(key) || this.suppressedWhileRunning.has(key)) {
-        this.suppressedWhileRunning.add(key);
-        return;
-      }
-    } else if (isTopic && this.suppressedWhileRunning.delete(key)) {
-      // First idle refresh after a suppressed run bypasses debounce; the
-      // refreshed layout is re-asserted only when its content changes, so a
-      // keyboard the user collapsed stays collapsed until summoned manually.
-      force = true;
-    }
+    // State transitions must arrive even within debounce (idle -> running ->
+    // paused). Deduplicate identical layouts, never suppress running controls.
+    const fingerprint = isTopic ? this.replyKeyboardFingerprint(resolvedSessionId) : null;
+    if (fingerprint && this.replyKeyboardFingerprints.get(key) === fingerprint) return;
 
     const now = Date.now();
     const previous = this.lastUpdateTimes.get(key) ?? 0;
-    if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
+    if (!isTopic && !force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
     try {
       if (!isTopic) { await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true); return; }
       const keyboard = this.buildKeyboard(resolvedSessionId);
-      const fingerprint = this.replyKeyboardFingerprint(resolvedSessionId);
-      if (fingerprint && this.replyKeyboardFingerprints.get(key) === fingerprint) return;
       const options: Record<string, unknown> = { reply_markup: keyboard, disable_notification: true };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
@@ -463,7 +478,6 @@ class KeyboardManager {
     this.states.delete(key);
     this.lastUpdateTimes.delete(key);
     this.replyKeyboardFingerprints.delete(key);
-    this.suppressedWhileRunning.delete(key);
   }
 }
 

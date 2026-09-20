@@ -22,8 +22,34 @@ import {
 } from "../../../src/bot/routers/command-router.js";
 import { BOT_COMMANDS } from "../../../src/bot/commands/definitions.js";
 import { config } from "../../../src/config.js";
+import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 
 describe("bot/routers/command-router", () => {
+  it("restores a Topic keyboard on repeated explicit requests", async () => {
+    const bot = { command: vi.fn(), use: vi.fn(), hears: vi.fn(), on: vi.fn() };
+    registerCommandRouter(bot as never, { ensureEventSubscription: vi.fn(), clearRuntimeState: vi.fn() });
+    const handler = bot.command.mock.calls.find(([command]) => command === "keyboard")![1];
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 900 });
+    const ctx = { chat: { id: 123 }, api: { sendMessage }, reply: vi.fn() } as unknown as Context;
+    await runInTopicRuntimeContext({ chatId: 123, threadId: 42, sessionId: "restore-session" }, async () => {
+      await handler(ctx);
+      await handler(ctx);
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage.mock.calls[1]![2]).toMatchObject({ message_thread_id: 42, reply_markup: { is_persistent: true } });
+  });
+
+  it("keeps keyboard recovery outside an AI Topic from overwriting Topic controls", async () => {
+    const bot = { command: vi.fn(), use: vi.fn(), hears: vi.fn(), on: vi.fn() };
+    registerCommandRouter(bot as never, { ensureEventSubscription: vi.fn(), clearRuntimeState: vi.fn() });
+    const handler = bot.command.mock.calls.find(([command]) => command === "keyboard")![1];
+    const sendMessage = vi.fn();
+    const reply = vi.fn();
+    await handler({ chat: { id: 123 }, api: { sendMessage }, reply });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("only available inside an AI Topic"));
+  });
+
   it("registers bot slash command handlers", () => {
     const bot = { command: vi.fn(), use: vi.fn(), hears: vi.fn(), on: vi.fn() };
 
@@ -34,6 +60,7 @@ describe("bot/routers/command-router", () => {
 
     expect(bot.command.mock.calls.map(([command]) => command)).toEqual([
       "start",
+      "keyboard",
       "update",
       "all",
       "help",

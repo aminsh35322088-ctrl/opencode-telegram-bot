@@ -369,7 +369,7 @@ describe("interactionGuardMiddleware", () => {
   it("allows AI Topic management commands while busy so they match the Reply Keyboard buttons", async () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
-    for (const command of ["/pause", "/resume", "/delete_topic", "/stop"]) {
+    for (const command of ["/pause", "/resume", "/delete_topic", "/stop", "/keyboard"]) {
       const ctx = createTextContext(command);
       const next: NextFunction = vi.fn().mockResolvedValue(undefined);
 

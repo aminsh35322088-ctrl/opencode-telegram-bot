@@ -6,6 +6,7 @@ export interface BotCommandDefinition {
 
 const COMMAND_DEFINITIONS: BotCommandDefinition[] = [
   { command: "start", description: "🚀 Start bot & show bot/OpenCode versions" },
+  { command: "keyboard", description: "⌨️ Restore AI Topic keyboard" },
   { command: "update", description: "🔄 Check for bot/OpenCode updates" },
   { command: "all", description: "🧰 All integrated versions (use /all version info)" },
   { command: "help", description: "❓ Show help & available features" },
