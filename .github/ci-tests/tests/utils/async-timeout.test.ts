@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { TimeoutError, isTimeoutError, withTimeout } from "../../../src/utils/async-timeout.js";
+import { TimeoutError, isTimeoutError, withTimeout } from "../../src/utils/async-timeout.js";
 
 describe("withTimeout", () => {
   it("resolves with the value when the promise settles in time", async () => {

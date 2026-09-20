@@ -82,6 +82,11 @@ describe("watchdog liveness and isolation", () => {
     const { setStallNoticeSender } = await import(
       "../../../src/app/services/session-stall-watchdog.js"
     );
+    // The session stays busy until the abort lands, then OpenCode reports idle.
+    mocks.status.mockImplementation(() => {
+      const aborted = mocks.abort.mock.calls.length > 0;
+      return Promise.resolve({ data: { a: { type: aborted ? "idle" : "busy" } } });
+    });
     const notice = vi.fn().mockResolvedValue(undefined);
     setStallNoticeSender(notice);
     try {

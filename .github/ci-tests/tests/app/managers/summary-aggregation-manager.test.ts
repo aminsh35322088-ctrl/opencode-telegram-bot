@@ -2131,13 +2131,12 @@ describe("summary/aggregator", () => {
     expect(summaryAggregator.isSubagentSession("some-other-session")).toBe(false);
   });
 
-  it("drops the upstream empty-response placeholder instead of showing it to the user", async () => {
+  it("completes with empty text instead of showing the upstream empty-response placeholder", async () => {
     const onPartial = vi.fn();
     const onComplete = vi.fn();
     summaryAggregator.setOnPartial(onPartial);
     summaryAggregator.setOnComplete(onComplete);
     summaryAggregator.setSession("session-1");
-
     summaryAggregator.processEvent({
       type: "message.updated",
       properties: {
@@ -2177,10 +2176,15 @@ describe("summary/aggregator", () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    // Nothing is left to send, so the run completes silently - same as when the
-    // provider returns no text part at all.
+    // The placeholder text itself is never shown, but completion still fires
+    // with empty text so the run finalizes instead of going silent.
     expect(onPartial).not.toHaveBeenCalled();
-    expect(onComplete).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-empty-response",
+      "",
+      expect.objectContaining({}),
+    );
   });
 
   it("drops the empty-response placeholder while it is still streaming in", () => {
