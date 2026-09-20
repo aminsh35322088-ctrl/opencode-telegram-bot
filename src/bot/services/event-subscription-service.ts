@@ -31,7 +31,8 @@ import {
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { logger } from "../../utils/logger.js";
-import { stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
+import { withTimeout } from "../../utils/async-timeout.js";
+import { stopSessionStallWatchdog, setStallNoticeSender } from "../../app/services/session-stall-watchdog.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -114,6 +115,14 @@ const SUBAGENT_STREAM_PREFIX = "🧩";
 const TOOL_ELAPSED_TICK_INTERVAL_MS = 5000;
 const TOOL_ELAPSED_MAX_TRACKING_HOURS = 24;
 const TOOL_ELAPSED_MAX_TRACKING_MS = TOOL_ELAPSED_MAX_TRACKING_HOURS * 60 * 60 * 1000;
+// A single wedged completion (stalled transport, missing event) must never
+// hold the session queue hostage: everything behind it would stay silent.
+const DEFAULT_SESSION_COMPLETION_TASK_TIMEOUT_MS = 180_000;
+let sessionCompletionTaskTimeoutMs = DEFAULT_SESSION_COMPLETION_TASK_TIMEOUT_MS;
+
+export function setSessionCompletionTaskTimeoutForTests(timeoutMs: number): void {
+  sessionCompletionTaskTimeoutMs = timeoutMs > 0 ? timeoutMs : DEFAULT_SESSION_COMPLETION_TASK_TIMEOUT_MS;
+}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.join(__dirname, "..", "..", ".tmp");
@@ -372,6 +381,15 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.botInstance = bot;
     this.chatIdInstance = chatId;
     if (sessionId && chatId) this.sessionChatIds.set(sessionId, chatId);
+    setStallNoticeSender(async (info) => {
+      try {
+        const chatId = this.getChatIdForSession(info.sessionId) ?? this.chatIdInstance;
+        if (!this.botInstance || !chatId) return;
+        await this.sessionScopedApi(info.sessionId).sendMessage(chatId, t("bot.session_stalled"));
+      } catch (error) {
+        logger.warn(`[Bot] Failed to send stall notice: session=${info.sessionId}`, error);
+      }
+    });
   }
 
   private getChatIdForSession(sessionId: string): number | null {
@@ -866,6 +884,17 @@ class EventSubscriptionService implements BotEventSubscriptionService {
               });
             },
           });
+
+          if (!messageText.trim()) {
+            try {
+              await botApi.sendMessage(chatId, t("bot.empty_response"));
+            } catch (noticeError) {
+              logger.warn(
+                `[Bot] Failed to send empty-response notice: session=${sessionId}`,
+                noticeError,
+              );
+            }
+          }
         } catch (err) {
           clearPromptResponseMode(sessionId);
           this.clearThinkingStream(sessionId, messageId, "assistant_finalize_failed");
@@ -1309,7 +1338,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       // or fire a compact-progress timer armed before the run stopped.
       this.clearToolElapsedState(sessionId, "session_idle");
       this.compactProgressStreamer.clearSession(sessionId, "session_idle");
-      await this.sessionCompletionTasks.get(sessionId)?.catch(() => undefined);
+      try {
+        await withTimeout(
+          this.sessionCompletionTasks.get(sessionId)?.catch(() => undefined) ?? Promise.resolve(),
+          sessionCompletionTaskTimeoutMs,
+          `drain session completion tasks for ${sessionId}`,
+        );
+      } catch (error) {
+        logger.error(
+          `[Bot] Timed out waiting for session completion tasks on idle: session=${sessionId}`,
+          error,
+        );
+      }
 
       const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
       clearPromptResponseMode(sessionId);
@@ -1559,6 +1599,16 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       summaryAggregator.processEvent(event);
     }).catch((err) => {
       logger.error("Failed to subscribe to events:", err);
+      // Without a subscription no model events will ever arrive while the run
+      // looks busy. Say so immediately instead of leaving a silent chat behind.
+      const chatId = this.chatIdInstance;
+      if (this.botInstance && chatId) {
+        void this.botInstance.api
+          .sendMessage(chatId, t("bot.prompt_send_error"))
+          .catch((noticeError) => {
+            logger.warn("[Bot] Failed to send event-subscription failure notice", noticeError);
+          });
+      }
     });
   };
 
@@ -1833,7 +1883,19 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     const nextTask = previousTask
       .catch(() => undefined)
       .then(() => {
-        if (this.completionGenerations.get(sessionId) === generation) return task();
+        if (this.completionGenerations.get(sessionId) === generation) {
+          return withTimeout(
+            task(),
+            sessionCompletionTaskTimeoutMs,
+            `session completion task for ${sessionId}`,
+          ).catch((error) => {
+            logger.error(
+              `[Bot] Session completion task timed out and was skipped so the queue can continue: session=${sessionId}`,
+              error,
+            );
+          });
+        }
+        return undefined;
       })
       .finally(() => {
         if (this.sessionCompletionTasks.get(sessionId) === nextTask) {

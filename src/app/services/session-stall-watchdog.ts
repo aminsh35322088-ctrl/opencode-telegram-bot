@@ -155,7 +155,29 @@ export interface StalledSessionInfo {
   variant?: string;
 }
 
-export interface StartSessionStallWatchdogOptions {
+export interface StallNoticeInfo {
+  sessionId: string;
+  directory: string;
+  model: string;
+  stalledForMs: number;
+}
+
+type StallNoticeSender = (info: StallNoticeInfo) => Promise<void> | void;
+
+let stallNoticeSender: StallNoticeSender | null = null;
+
+export function setStallNoticeSender(sender: StallNoticeSender | null): void {
+  stallNoticeSender = sender;
+}
+
+async function notifyStall(info: StallNoticeInfo): Promise<void> {
+  if (!stallNoticeSender) return;
+  try {
+    await stallNoticeSender(info);
+  } catch (error) {
+    logger.warn(`[StallWatchdog] Stall notice delivery failed: session=${info.sessionId}`, error);
+  }
+}
   sessionId: string;
   directory: string;
   model: string;
@@ -235,6 +257,12 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         await clearLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
         if (controller.signal.aborted) return;
         logger.warn(`[StallWatchdog] Stopped genuinely stalled busy session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}. No synthetic retry was dispatched.`);
+        await notifyStall({
+          sessionId: options.sessionId,
+          directory: options.directory,
+          model: options.model,
+          stalledForMs,
+        });
         if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
         return;
       }

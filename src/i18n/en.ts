@@ -62,6 +62,10 @@ export const en = {
     "⚠️ Active session does not match the selected project, so it was reset. Use /sessions to pick one or /new to create a new session.",
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
   "bot.empty_prompt": "⚠️ Nothing to send: the message is empty after attachment handling.",
+  "bot.empty_response":
+    "⚠️ The model finished without producing any text. Try rephrasing the request or use /abort and retry.",
+  "bot.session_stalled":
+    "⏸️ The model stopped making progress and the run was stopped. No response was produced; please retry.",
   "bot.session_error": "🔴 OpenCode returned an error: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nProvider keeps returning the same error on repeated retries. Use /abort to abort.",

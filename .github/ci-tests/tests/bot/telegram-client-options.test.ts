@@ -1,6 +1,12 @@
 import { Agent as HttpsAgent } from "https";
-import { describe, expect, it } from "vitest";
-import { createTelegramBotOptions } from "../../src/bot/telegram-client-options.js";
+import { afterEach, describe, expect, it } from "vitest";
+import type { RequestInfo, RequestInit } from "node-fetch";
+import {
+  createTelegramBotOptions,
+  resetTelegramFetchForTests,
+  setTelegramFetchForTests,
+  setTelegramRequestTimeoutForTests,
+} from "../../src/bot/telegram-client-options.js";
 
 function makeTelegramConfig(overrides: Partial<Parameters<typeof createTelegramBotOptions>[0]> = {}) {
   return {
@@ -13,10 +19,14 @@ function makeTelegramConfig(overrides: Partial<Parameters<typeof createTelegramB
 }
 
 describe("createTelegramBotOptions", () => {
-  it("does not configure an agent for direct Telegram API requests by default", () => {
+  afterEach(() => {
+    resetTelegramFetchForTests();
+  });
+  it("always installs the bounded fetch wrapper, even for direct requests", () => {
     const options = createTelegramBotOptions(makeTelegramConfig());
 
-    expect(options.client).toBeUndefined();
+    expect(options.client?.fetch).toBeTypeOf("function");
+    expect(options.client?.baseFetchConfig).toBeUndefined();
   });
 
   it("configures an IPv4 HTTPS agent for direct Telegram API requests when enabled", () => {
@@ -58,56 +68,42 @@ describe("createTelegramBotOptions", () => {
     const options = createTelegramBotOptions(makeTelegramConfig());
     const fetch = options.client?.fetch;
     expect(fetch).toBeTypeOf("function");
+    if (typeof fetch !== "function") return;
 
     const calls: Array<{ url: string; signal?: AbortSignal }> = [];
-    const hangingFetch = ((_url: unknown, init?: { signal?: AbortSignal }) => {
-      calls.push({ url: String(_url), signal: init?.signal });
-      return new Promise(() => {});
-    }) as unknown as typeof fetch;
+    const hangingFetch = (_url: RequestInfo, init?: RequestInit): Promise<unknown> => {
+      const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+      calls.push({ url: String(typeof _url === "string" ? _url : ""), signal });
+      return new Promise<unknown>(() => {});
+    };
 
-    const {
-      setTelegramFetchForTests,
-      setTelegramRequestTimeoutForTests,
-      resetTelegramFetchForTests,
-    } = await import("../../src/bot/telegram-client-options.js");
     setTelegramFetchForTests(hangingFetch);
     setTelegramRequestTimeoutForTests(10);
-    try {
-      const sendPromise = (fetch as unknown as (url: string, init?: object) => Promise<unknown>)(
-        "https://api.telegram.org/bottoken/sendMessage",
-        {},
-      );
-      await expect(sendPromise).rejects.toThrow(/timed out/i);
-      expect(calls).toHaveLength(1);
-      expect(calls[0]?.signal?.aborted).toBe(true);
-    } finally {
-      resetTelegramFetchForTests();
-    }
+    const sendPromise = (
+      fetch as unknown as (url: string, init?: object) => Promise<unknown>
+    )("https://api.telegram.org/bottoken/sendMessage", {});
+    await expect(sendPromise).rejects.toThrow(/timed out/i);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.signal?.aborted).toBe(true);
   });
 
   it("never applies the request timeout to long-poll getUpdates", async () => {
     const options = createTelegramBotOptions(makeTelegramConfig());
     const fetch = options.client?.fetch;
     expect(fetch).toBeTypeOf("function");
+    if (typeof fetch !== "function") return;
 
     let calls = 0;
-    const instantFetch = (() => {
+    const instantFetch = (): Promise<unknown> => {
       calls += 1;
       return Promise.resolve({ ok: true });
-    }) as unknown as typeof fetch;
+    };
 
-    const { setTelegramFetchForTests, resetTelegramFetchForTests } = await import(
-      "../../src/bot/telegram-client-options.js"
-    );
     setTelegramFetchForTests(instantFetch);
-    try {
-      await (fetch as unknown as (url: string, init?: object) => Promise<unknown>)(
-        "https://api.telegram.org/bottoken/getUpdates",
-        {},
-      );
-      expect(calls).toBe(1);
-    } finally {
-      resetTelegramFetchForTests();
-    }
+    await (fetch as unknown as (url: string, init?: object) => Promise<unknown>)(
+      "https://api.telegram.org/bottoken/getUpdates",
+      {},
+    );
+    expect(calls).toBe(1);
   });
 });
