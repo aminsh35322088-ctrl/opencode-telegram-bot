@@ -3,8 +3,19 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
+interface RustDeskPermissionChallenge {
+  action: string;
+  connectionId?: string;
+  risk?: string;
+  permission?: string;
+}
+
 interface RustDeskBridgeClient {
   execute(request: Record<string, unknown>): Promise<unknown>;
+  executeAuthorized(
+    request: Record<string, unknown>,
+    authorize: (challenge: RustDeskPermissionChallenge) => Promise<void>,
+  ): Promise<unknown>;
 }
 
 interface RustDeskBridgeModule {
@@ -17,6 +28,8 @@ const BUTTONS = new Set(["left", "right", "middle"]);
 const SERVER_KINDS = new Set(["public", "saved-custom", "one-time-custom"]);
 const TEMPORARY_AUTH_MODES = new Set(["temporary-password", "manual-approval", "password-or-approval"]);
 const IMAGE_FORMATS = new Set(["png", "jpeg", "webp"]);
+const CREDENTIAL_WAIT_TIMEOUT_MS = 120_000;
+const CONNECTION_POLL_INTERVAL_MS = 350;
 
 function servicePath(): string {
   return process.env.RUSTDESK_BRIDGE_SERVICE_PATH?.trim() || DEFAULT_SERVICE_PATH;
@@ -86,6 +99,103 @@ function resultWithoutBinary(value: unknown): unknown {
 
 function stringify(value: unknown): string {
   return JSON.stringify(resultWithoutBinary(value), null, 2);
+}
+
+function getConnection(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || !isRecord(value.connection)) return null;
+  return value.connection;
+}
+
+function permissionPattern(action: string, request: Record<string, unknown>): string {
+  const target =
+    (typeof request.connectionId === "string" && request.connectionId) ||
+    (typeof request.deviceId === "string" && request.deviceId) ||
+    (typeof request.rustdeskId === "string" && request.rustdeskId) ||
+    "bridge";
+  return `${action}:${target}`;
+}
+
+async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw new Error("RustDesk operation was cancelled");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("RustDesk operation was cancelled"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function waitForCredentialResolution(
+  client: RustDeskBridgeClient,
+  initialResult: unknown,
+  context: {
+    abort: AbortSignal;
+    metadata(input: { title?: string; metadata?: Record<string, unknown> }): void;
+  },
+): Promise<unknown> {
+  let current = initialResult;
+  let lastCredentialRequestId: string | undefined;
+  const deadline = Date.now() + CREDENTIAL_WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const connection = getConnection(current);
+    if (!connection) return current;
+    const status = typeof connection.status === "string" ? connection.status : undefined;
+    const connectionId =
+      typeof connection.connectionId === "string" ? connection.connectionId : undefined;
+
+    if (status !== "credential_required") {
+      if (lastCredentialRequestId) {
+        context.metadata({
+          title: "RustDesk credential resolved",
+          metadata: {
+            rustdeskSecureInput: {
+              state: "resolved",
+              credentialRequestId: lastCredentialRequestId,
+              connectionId,
+            },
+          },
+        });
+      }
+      return current;
+    }
+
+    const credentialRequestId =
+      typeof connection.credentialRequestId === "string"
+        ? connection.credentialRequestId
+        : undefined;
+    const credentialKind =
+      typeof connection.credentialKind === "string" ? connection.credentialKind : undefined;
+
+    if (!connectionId || !credentialRequestId) {
+      throw new Error("RustDesk bridge returned an incomplete credential challenge");
+    }
+
+    if (credentialRequestId !== lastCredentialRequestId) {
+      lastCredentialRequestId = credentialRequestId;
+      context.metadata({
+        title: "RustDesk credential required",
+        metadata: {
+          rustdeskSecureInput: {
+            state: "required",
+            credentialRequestId,
+            credentialKind,
+            connectionId,
+          },
+        },
+      });
+    }
+
+    await sleepWithAbort(CONNECTION_POLL_INTERVAL_MS, context.abort);
+    current = await client.execute({ action: "connection.status", connectionId });
+  }
+
+  throw new Error("RustDesk credential input timed out");
 }
 
 function buildServerSelector(args: {
@@ -241,7 +351,26 @@ export default tool({
       request.contentBase64 = file.toString("base64");
     }
 
-    const result = await client.execute(request);
+    let result = await client.executeAuthorized(request, async (challenge) => {
+      const pattern = permissionPattern(action, request);
+      await context.ask({
+        permission: `rustdesk.${action}`,
+        patterns: [pattern],
+        always: challenge.permission === "always-ask" ? [] : [pattern],
+        metadata: {
+          source: "rustdesk",
+          action,
+          risk: challenge.risk,
+          connectionId: clean(args.connection_id),
+          deviceId: clean(args.device_id),
+          rustdeskId: clean(args.rustdesk_id),
+        },
+      });
+    });
+
+    if (getConnection(result)?.status === "credential_required") {
+      result = await waitForCredentialResolution(client, result, context);
+    }
 
     if (action === "screen.capture") {
       const imageBase64 = getBase64(result, "imageBase64");
