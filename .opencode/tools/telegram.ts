@@ -21,12 +21,13 @@ export default tool({
     output: tool.schema.string().optional().describe("For media.fetch: worktree-relative output path."),
   },
   async execute(args, context) {
-    const action = args.action as TelegramAction; const service = await load();
-    const snapshot = await service.getTelegramMessageContext(context.worktree, context.sessionID);
+    const action = args.action as TelegramAction; const base = context.directory || context.worktree || process.cwd();
+    const service = await load();
+    const snapshot = await service.getTelegramMessageContext(base, context.sessionID);
     if (action === "context.current") return json(snapshot);
     if (!snapshot) return json({ ok: false, error: "No Telegram message context is available for this worktree." });
     if (action === "reply.resolve") return json(snapshot.message?.reply ?? null);
     if (action === "forward.inspect") return json(snapshot.message?.forward ?? null);
-    return json(await service.fetchTelegramContextMedia(context.worktree, { target: args.target as "current" | "reply" | undefined, index: args.media_index, output: args.output }, context.sessionID));
+    return json(await service.fetchTelegramContextMedia(base, { target: args.target as "current" | "reply" | undefined, index: args.media_index, output: args.output }, context.sessionID));
   },
 });

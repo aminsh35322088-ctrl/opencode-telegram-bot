@@ -98,8 +98,8 @@ export default tool({
 
     const messages = unwrap(await client.session.messages({ sessionID: sessionId, directory }), "session.messages");
     const exportRoot = args.action === "archive"
-      ? path.join(context.worktree, ".archive", "sessions")
-      : context.worktree;
+      ? path.join(directory, ".archive", "sessions")
+      : directory;
     await fs.mkdir(exportRoot, { recursive: true });
 
     const format = args.action === "archive" ? "json" : (args.format ?? "markdown");

@@ -12,7 +12,8 @@ export default tool({
     path: tool.schema.string().describe("Image path, absolute or relative to the worktree."),
   },
   async execute(args, context) {
-    const image = path.isAbsolute(args.path) ? args.path : path.resolve(context.worktree, args.path);
+    const base = context.directory || context.worktree || process.cwd();
+    const image = path.isAbsolute(args.path) ? args.path : path.resolve(base, args.path);
     try {
       const { stdout, stderr } = await execFileAsync("identify", ["-verbose", image], { timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
       const wanted = stdout.split(/\r?\n/).filter((line) => /^(\s*(Format|Geometry|Colorspace|Depth|Filesize|Mime type|Type):)/i.test(line));

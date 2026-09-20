@@ -65,7 +65,7 @@ export default tool({
     path: tool.schema.string().optional().describe("Relative path to inspect for secrets/permissions; defaults to worktree root."),
   },
   async execute(args, context) {
-    const worktree = path.resolve(context.worktree);
+    const worktree = path.resolve(context.directory || context.worktree || process.cwd());
     const target = resolveTarget(worktree, args.path);
 
     if (args.action === "secrets") {
