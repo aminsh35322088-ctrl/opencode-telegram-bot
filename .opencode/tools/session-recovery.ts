@@ -58,15 +58,19 @@ function extractStatus(data: unknown, sessionId: string): string {
   return "unknown";
 }
 
-async function getSessionState(sessionId: string, signal: AbortSignal): Promise<{ status: number; state: string; details: unknown }> {
-  const result = await request(`/session/status`, { method: "GET" }, signal);
+async function getSessionState(sessionId: string, signal: AbortSignal, directory?: string): Promise<{ status: number; state: string; details: unknown }> {
+  // /session/status is scoped to the project directory. Without an explicit
+  // directory OpenCode inspects the root project, which reports sessions from
+  // other worktrees as unknown.
+  const query = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+  const result = await request(`/session/status${query}`, { method: "GET" }, signal);
   return { status: result.status, state: extractStatus(result.data, sessionId), details: result.data };
 }
 
-async function waitForIdle(sessionId: string, waitMs: number, signal: AbortSignal): Promise<string> {
+async function waitForIdle(sessionId: string, waitMs: number, signal: AbortSignal, directory?: string): Promise<string> {
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    const state = await getSessionState(sessionId, signal);
+    const state = await getSessionState(sessionId, signal, directory);
     if (state.state === "idle" || state.state === "not-found") return state.state;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, 250);
@@ -78,22 +82,27 @@ async function waitForIdle(sessionId: string, waitMs: number, signal: AbortSigna
       signal.addEventListener("abort", onAbort, { once: true });
     });
   }
-  return (await getSessionState(sessionId, signal)).state;
+  return (await getSessionState(sessionId, signal, directory)).state;
 }
 
 export default tool({
-  description: "Recover a stuck OpenCode session without deleting its history. Inspect status first, abort only a non-idle session, then optionally continue with a fresh prompt. Use this instead of repeatedly retrying a hung command.",
+  description: "Recover a stuck OpenCode session without deleting its history. Inspect status first, abort only a non-idle session, then optionally continue with a fresh prompt. /session/status is directory-scoped, so pass the session's project directory for reliable results. Use this instead of repeatedly retrying a hung command.",
   args: {
     sessionId: tool.schema.string().describe("OpenCode session ID to inspect or recover."),
     action: tool.schema.enum(["inspect", "abort", "continue"]).describe("Recovery action."),
+    directory: tool.schema.string().optional().describe("Project directory (worktree) that owns the session, e.g. an AI Topic workspace. Omit only when the session belongs to the root project."),
     prompt: tool.schema.string().optional().describe("Prompt used by continue. Ask the agent to resume from the preserved session state rather than repeating an unsafe side effect."),
   },
   async execute(args, context) {
     try {
-      const before = await getSessionState(args.sessionId, context.abort);
+      const directory = args.directory?.trim() || undefined;
+      const before = await getSessionState(args.sessionId, context.abort, directory);
       if (before.status >= 500) return `RECOVERY FAILED: OpenCode status endpoint returned HTTP ${before.status}`;
 
       if (args.action === "inspect") {
+        if (before.state === "unknown" && directory === undefined) {
+          return `SESSION ${args.sessionId}: status=unknown. /session/status is directory-scoped; retry with directory=<project worktree of the session>.`;
+        }
         return `SESSION ${args.sessionId}: status=${before.state}`;
       }
 
@@ -108,7 +117,7 @@ export default tool({
         if (result.status < 200 || result.status >= 300) {
           return `ABORT FAILED: session=${args.sessionId} http=${result.status}`;
         }
-        const finalState = await waitForIdle(args.sessionId, DEFAULT_IDLE_WAIT_MS, context.abort);
+        const finalState = await waitForIdle(args.sessionId, DEFAULT_IDLE_WAIT_MS, context.abort, directory);
         return `ABORTED: session=${args.sessionId} previousStatus=${before.state} finalStatus=${finalState}`;
       }
 
@@ -116,7 +125,7 @@ export default tool({
         return `NOT READY: continue requires a recovery prompt. Inspect/abort first when the session is stuck.`;
       }
 
-      const current = await getSessionState(args.sessionId, context.abort);
+      const current = await getSessionState(args.sessionId, context.abort, directory);
       if (current.state === "unknown") {
         return `RECOVERY FAILED: session=${args.sessionId} status is unknown; refusing to continue blindly.`;
       }
@@ -125,7 +134,7 @@ export default tool({
         if (abortResult.status < 200 || abortResult.status >= 300) {
           return `RECOVERY FAILED: session remained ${current.state}; abort returned HTTP ${abortResult.status}`;
         }
-        const afterAbort = await waitForIdle(args.sessionId, DEFAULT_IDLE_WAIT_MS, context.abort);
+        const afterAbort = await waitForIdle(args.sessionId, DEFAULT_IDLE_WAIT_MS, context.abort, directory);
         if (afterAbort !== "idle") {
           return `RECOVERY FAILED: session did not become idle after abort; status=${afterAbort}`;
         }

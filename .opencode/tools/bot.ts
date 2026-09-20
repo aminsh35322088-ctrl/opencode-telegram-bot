@@ -379,7 +379,17 @@ export default tool({
 
     if (action.startsWith("agents.")) {
       const service = await load<AgentModule>("app/services/agent-selection-service.js");
-      if (action === "agents.list") return json(await service.getAvailableAgents());
+      if (action === "agents.list") {
+        // The raw agent objects embed the full permission rule arrays, which
+        // are large and useless for tool callers. Return the compact shape.
+        const agents = await service.getAvailableAgents();
+        return json(agents.map((agent) => ({
+          name: agent.name,
+          description: agent.description,
+          mode: agent.mode,
+          native: agent.native,
+        })));
+      }
       if (action === "agents.current") return json({ agent: await service.fetchCurrentAgent() });
       const name = required(args.agent, "agent", action);
       const agents = await service.getAvailableAgents();

@@ -11,8 +11,20 @@ const getAuth = () => {
 };
 
 const CONTROL_REQUEST_TIMEOUT_MS = 10_000;
+// A synchronous session prompt (POST /session/{id}/message) blocks until the
+// full model completion finishes. The short control-plane cap routinely aborted
+// slow completions (e.g. the schedule parser) with "The operation timed out",
+// so synchronous prompts get a dedicated generous bound instead.
+const SYNC_PROMPT_TIMEOUT_MS = 180_000;
 
 type FetchInput = string | URL | Request;
+
+function isSyncSessionPrompt(input: FetchInput, init?: RequestInit): boolean {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (!/\/session\/[^/]+\/message(?:\?|$)/u.test(url)) return false;
+  const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  return method === "POST";
+}
 
 function isLongLivedRequest(input: FetchInput, init?: RequestInit): boolean {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -23,11 +35,12 @@ function isLongLivedRequest(input: FetchInput, init?: RequestInit): boolean {
 
 const boundedControlFetch: typeof fetch = (input, init) => {
   if (isLongLivedRequest(input as FetchInput, init)) return fetch(input, init);
+  const timeoutMs = isSyncSessionPrompt(input as FetchInput, init) ? SYNC_PROMPT_TIMEOUT_MS : CONTROL_REQUEST_TIMEOUT_MS;
   return fetch(input, {
     ...init,
     signal: AbortSignal.any([
       init?.signal ?? new AbortController().signal,
-      AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+      AbortSignal.timeout(timeoutMs),
     ]),
   });
 };
