@@ -438,6 +438,35 @@ describe("bot/services/event-subscription-service", () => {
     expect(api.sendDocument).not.toHaveBeenCalled();
   });
 
+  it("routes session output for an AI Topic session to its thread even after General clobbered the context", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+
+    // The General/All path sets the chat context with an unbound bot and no
+    // session id is registered (simulated here by the plain setup call above),
+    // so async session output would otherwise lose message_thread_id and leak
+    // the AI Topic reply keyboard into All/root.
+    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
+    keyboardManager.bindTopic(api as never, 42, 7, "session-1");
+
+    emitWriteTool(summaryAggregator);
+
+    await vi.waitFor(
+      () => {
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3000 },
+    );
+    const options = api.sendMessage.mock.calls[0]?.[2] as { message_thread_id?: number; reply_markup?: unknown };
+    expect(options).toBeDefined();
+    expect(options!.message_thread_id).toBe(7);
+
+    // While the run is active the session output carries no reply keyboard, so
+    // it cannot force the keyboard open or drag it into the wrong thread.
+    expect(options!.reply_markup).toBeUndefined();
+
+    keyboardManager.clearSession("session-1");
+  });
+
   describe("elapsed time for long tool calls", () => {
     it("shows a live line once the call passes the threshold", async () => {
       const { api, summaryAggregator } = await setupService(false);

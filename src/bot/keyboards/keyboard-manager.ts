@@ -51,6 +51,7 @@ class KeyboardManager {
   private readonly mainAnchorLocks = new Map<number, Promise<void>>();
   private readonly topicModeChats = new Set<number>();
   private readonly replyKeyboardFingerprints = new Map<string, string>();
+  private readonly suppressedWhileRunning = new Set<string>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
@@ -388,29 +389,54 @@ class KeyboardManager {
     const targetChatId = chatId ?? state?.chatId;
     if (!targetChatId) return;
     const key = this.key(resolvedSessionId);
+    const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
+
+    // Collapse the AI Topic keyboard while the model is working: never push a
+    // running-state ReplyKeyboardMarkup that would force the keyboard open on
+    // the user. Only a keyboard already delivered at least once is suppressed,
+    // so a brand-new Topic still receives its initial layout.
+    if (isTopic && state?.sessionId && assistantRunState.hasActiveRun(state.sessionId)) {
+      if (this.replyKeyboardFingerprints.has(key) || this.suppressedWhileRunning.has(key)) {
+        this.suppressedWhileRunning.add(key);
+        return;
+      }
+    } else if (isTopic && this.suppressedWhileRunning.delete(key)) {
+      // First idle refresh after a suppressed run bypasses debounce; the
+      // refreshed layout is re-asserted only when its content changes, so a
+      // keyboard the user collapsed stays collapsed until summoned manually.
+      force = true;
+    }
+
     const now = Date.now();
     const previous = this.lastUpdateTimes.get(key) ?? 0;
     if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
     try {
-      const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
       if (!isTopic) { await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true); return; }
       const keyboard = this.buildKeyboard(resolvedSessionId);
       const fingerprint = this.replyKeyboardFingerprint(resolvedSessionId);
-      const fingerprintKey = this.key(resolvedSessionId);
-      if (fingerprint && this.replyKeyboardFingerprints.get(fingerprintKey) === fingerprint) return;
+      if (fingerprint && this.replyKeyboardFingerprints.get(key) === fingerprint) return;
       const options: Record<string, unknown> = { reply_markup: keyboard, disable_notification: true };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
       await this.api.sendMessage(targetChatId, "⌨️ Keyboard updated", options as never);
-      if (fingerprint) this.replyKeyboardFingerprints.set(fingerprintKey, fingerprint);
+      if (fingerprint) this.replyKeyboardFingerprints.set(key, fingerprint);
       logger.info(`[KeyboardManager] Refreshed persistent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
   public getKeyboard(sessionId?: string) {
     const resolved = this.resolveSessionId(sessionId);
-    if (this.state(resolved)) return this.buildKeyboard(resolved);
+    const state = this.state(resolved);
+    if (state) {
+      // While the Topic session is actively running, outbound messages carry no
+      // reply markup so the keyboard stays collapsed until the user summons it
+      // via Telegram's own show/hide control.
+      if (state.sessionId && state.threadId !== undefined && assistantRunState.hasActiveRun(state.sessionId)) {
+        return undefined;
+      }
+      return this.buildKeyboard(resolved);
+    }
     if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
     return undefined;
   }
@@ -418,11 +444,24 @@ class KeyboardManager {
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)) || (!sessionId && Boolean(this.api)); }
   public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
+
+  /**
+   * Authoritative delivery target for a Topic session. Async session output
+   * must be pinned to this thread so it cannot leak into All/General even when
+   * the chat-global bot context was last clobbered by unbound inbound traffic.
+   */
+  public getTopicSendTarget(sessionId?: string): { chatId: number; threadId: number } | undefined {
+    const state = this.state(sessionId);
+    if (!state || state.threadId === undefined || state.threadId <= 1) return undefined;
+    return { chatId: state.chatId, threadId: state.threadId };
+  }
+
   public clearSession(sessionId: string): void {
     const key = this.key(sessionId);
     this.states.delete(key);
     this.lastUpdateTimes.delete(key);
     this.replyKeyboardFingerprints.delete(key);
+    this.suppressedWhileRunning.delete(key);
   }
 }
 

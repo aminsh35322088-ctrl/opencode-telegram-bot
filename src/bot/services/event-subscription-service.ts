@@ -2,7 +2,7 @@ import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { Bot, Context, InputFile } from "grammy";
+import { Bot, Context, InputFile, type Api } from "grammy";
 import { config } from "../../config.js";
 import { t } from "../../i18n/index.js";
 import {
@@ -35,6 +35,7 @@ import { stopSessionStallWatchdog } from "../../app/services/session-stall-watch
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { createTopicAwareApi, getUnscopedTelegramApi } from "./telegram-topic-runtime.js";
 import { clearPromptResponseMode } from "../handlers/prompt.js";
 import {
   reconcileBusyState,
@@ -194,8 +195,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         if (!chatId) return;
 
         const keyboard = this.getCurrentReplyKeyboard(sessionId);
+        const api = this.sessionScopedApi(sessionId);
 
-        await this.botInstance.api.sendMessage(chatId, text, {
+        await api.sendMessage(chatId, text, {
           disable_notification: true,
           ...(keyboard ? { reply_markup: keyboard } : {}),
         });
@@ -223,8 +225,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           await fs.writeFile(tempFilePath, fileData.buffer);
 
           const keyboard = this.getCurrentReplyKeyboard(sessionId);
+          const api = this.sessionScopedApi(sessionId);
 
-          await this.botInstance.api.sendDocument(
+          await api.sendDocument(
             chatId,
             new InputFile(tempFilePath),
             {
@@ -261,7 +264,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
+        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
           disable_notification: true,
         });
 
@@ -307,7 +310,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
+        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
           disable_notification: true,
         });
 
@@ -378,6 +381,20 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private getKeyboardForSession(sessionId: string) {
     if (!keyboardManager.isInitialized()) return undefined;
     return keyboardManager.getKeyboard(sessionId);
+  }
+
+  /**
+   * Async session output must land in the session's own AI Topic thread. The
+   * chat-global bot context can be clobbered by General/All inbound traffic
+   * (no session id and an unbound api), so derive the authoritative Topic
+   * delivery target from the keyboard manager instead of the last inbound frame.
+   */
+  private sessionScopedApi(sessionId: string): Api {
+    const botApi = this.botInstance?.api;
+    if (!botApi) throw new Error("Bot context missing for session-scoped send");
+    const target = keyboardManager.getTopicSendTarget(sessionId);
+    const raw = getUnscopedTelegramApi(botApi);
+    return target ? createTopicAwareApi(raw, target) : raw;
   }
 
   private getLiveToolPrefix(callId: string): string {
@@ -797,7 +814,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           return;
         }
 
-        const botApi = this.botInstance.api;
+        const botApi = this.sessionScopedApi(sessionId);
 
         try {
           assistantRunState.markResponseCompleted(sessionId, {
@@ -872,8 +889,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
         try {
           await deliverExternalUserInputNotification({
-            api: this.botInstance.api,
-            chatId: this.chatIdInstance,
+            api: this.sessionScopedApi(sessionId),
+            chatId: this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
             currentSessionId: getCurrentSession()?.id ?? null,
             sessionId,
             text: messageText,
@@ -1321,9 +1338,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           const modelID = completedRun.actualModelID || completedRun.configuredModelID;
 
           if (agent && providerID && modelID) {
-            const keyboard = this.getCurrentReplyKeyboard();
-            await this.botInstance.api.sendMessage(
-              this.chatIdInstance,
+            const keyboard = this.getCurrentReplyKeyboard(sessionId);
+            await this.sessionScopedApi(sessionId).sendMessage(
+              this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
               formatAssistantRunFooter({
                 agent,
                 providerID,
@@ -1414,8 +1431,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         ? `${normalizedMessage.slice(0, 3497)}...`
         : normalizedMessage;
 
-      await this.botInstance.api
-        .sendMessage(this.chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
+      await this.sessionScopedApi(sessionId)
+        .sendMessage(this.getChatIdForSession(sessionId) ?? this.chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
         .catch((err) => logger.error("[Bot] Failed to send session.error message:", err));
 
       foregroundSessionState.markIdle(sessionId);
