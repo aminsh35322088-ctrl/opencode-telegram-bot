@@ -452,8 +452,9 @@ class KeyboardManager {
    */
   public getTopicSendTarget(sessionId?: string): { chatId: number; threadId: number } | undefined {
     const state = this.state(sessionId);
-    if (!state || state.threadId === undefined || state.threadId <= 1) return undefined;
-    return { chatId: state.chatId, threadId: state.threadId };
+    const threadId = state?.threadId;
+    if (!state || threadId === undefined || threadId <= 1) return undefined;
+    return { chatId: state.chatId, threadId };
   }
 
   public clearSession(sessionId: string): void {
