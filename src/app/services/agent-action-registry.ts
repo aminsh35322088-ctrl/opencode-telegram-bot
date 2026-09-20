@@ -54,6 +54,13 @@ export const CUSTOM_TOOL_ACTIONS = {
     "integrations.railway.list", "integrations.railway.active", "integrations.railway.select", "integrations.railway.remove",
     "version.info",
   ],
+  file: ["read", "write", "search", "grep", "info", "delete", "copy", "move"],
+  git: ["status", "diff", "log", "commit", "push", "pull", "branch", "checkout", "stash", "merge", "rebase", "blame", "tags", "remote", "fetch", "reset"],
+  monitoring: ["tail", "grep", "health", "metrics", "alerts"],
+  notify: ["send", "alert", "schedule", "list", "cancel"],
+  security: ["secrets", "audit", "permissions", "deps"],
+  "session-extended": ["create", "delete", "export", "list-all", "archive"],
+  test: ["test", "lint", "typecheck", "build", "test-file", "lint-fix"],
   browser: [
     "open", "goto", "back", "forward", "reload", "snapshot", "screenshot", "click", "fill", "type", "press",
     "hover", "check", "uncheck", "select", "close", "tab-list", "tab-new", "tab-select", "tab-close", "requests", "console", "pdf",
@@ -92,7 +99,8 @@ const CORE_CATEGORIES: Record<CoreToolName, string> = {
 };
 
 const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
-  actions: "discovery", bot: "bot-control", browser: "browser", "database-query": "database",
+  actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
+  notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
   "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
   media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment", rustdesk: "remote-control",
   "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
@@ -130,6 +138,13 @@ const DESCRIPTIONS: Record<string, string> = {
   "rustdesk.terminal.exec": "Execute a command in an authorized remote device terminal.",
   "rustdesk.screen.capture": "Capture the current screen of an authorized remote device.",
   "rustdesk.system.restart": "Restart an authorized remote device.",
+  "file.delete": "Delete a file or directory inside the current worktree.",
+  "git.reset": "Reset git state in the current worktree.",
+  "notify.send": "Send a Telegram notification to the current Topic.",
+  "notify.schedule": "Schedule a persisted Telegram notification for the current Topic.",
+  "session-extended.create": "Create an OpenCode session without rebinding the current Telegram Topic.",
+  "session-extended.delete": "Delete a non-current OpenCode session.",
+  "test.test": "Run the project's configured tests or local test runner without downloading tools.",
 };
 
 const BOT_READ = new Set([
@@ -152,6 +167,30 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     if (BOT_MUTATING.has(action)) return "mutating";
     if (BOT_READ.has(action)) return "read";
   }
+  if (tool === "file") {
+    if (action === "delete") return "destructive";
+    if (["write", "copy", "move"].includes(action)) return "write";
+    return "read";
+  }
+  if (tool === "git") {
+    if (action === "reset") return "destructive";
+    if (["push", "pull", "fetch"].includes(action)) return "external";
+    if (["commit", "branch", "checkout", "stash", "merge", "rebase"].includes(action)) return "mutating";
+    return "read";
+  }
+  if (tool === "monitoring" || tool === "security") return "read";
+  if (tool === "notify") {
+    if (action === "list") return "read";
+    if (action === "cancel") return "mutating";
+    return "external";
+  }
+  if (tool === "session-extended") {
+    if (action === "delete") return "destructive";
+    if (action === "create") return "mutating";
+    if (["export", "archive"].includes(action)) return "write";
+    return "read";
+  }
+  if (tool === "test") return ["build", "lint-fix"].includes(action) ? "write" : "read";
   if (tool === "media") return ["stt.status", "image.providers", "image.models", "image.current"].includes(action) ? "read" : "external";
   if (tool === "telegram") return action === "media.fetch" ? "write" : "read";
   if (tool === "rustdesk") {
