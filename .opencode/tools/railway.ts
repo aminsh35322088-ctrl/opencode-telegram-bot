@@ -78,8 +78,11 @@ async function railwayApi<T extends RailwayGraphqlResponse>(token: string, token
       body: JSON.stringify({ query, variables }),
       signal: controller.signal,
     });
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => "");
+      throw new Error(`Railway API HTTP ${response.status}: ${errorBody.slice(0, 200) || "No details"}`);
+    }
     const payload = (await response.json().catch(() => ({}))) as T;
-    if (!response.ok) throw new Error(`Railway API HTTP ${response.status}`);
     if (payload.errors?.length) throw new Error(payload.errors.map((error) => error.message ?? "GraphQL error").join("; "));
     return payload;
   } finally {
