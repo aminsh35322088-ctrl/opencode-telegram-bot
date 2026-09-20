@@ -133,13 +133,72 @@ export interface RustDeskActionRequest {
   deltaY?: number;
   durationMs?: number;
   timeoutMs?: number;
+  permissionGrantId?: string;
 }
 
 export interface RustDeskBridgeClientOptions {
   baseUrl: string;
   token?: string;
+  controlToken?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+}
+
+export type RustDeskPermissionRisk = "read" | "interactive" | "mutating" | "destructive";
+export type RustDeskPermissionMode = "allow" | "ask" | "always-ask";
+
+export interface RustDeskPermissionChallenge {
+  action: RustDeskAction;
+  connectionId?: string;
+  risk?: RustDeskPermissionRisk;
+  permission?: RustDeskPermissionMode;
+}
+
+export interface RustDeskPermissionGrantRequest {
+  action: RustDeskAction;
+  connectionId?: string;
+  scope?: "once" | "connection";
+}
+
+export interface RustDeskPermissionGrantResponse {
+  ok: boolean;
+  permissionGrantId: string;
+  action?: string;
+  scope?: "once" | "connection";
+  expiresInSeconds?: number;
+  risk?: RustDeskPermissionRisk;
+  permission?: RustDeskPermissionMode;
+}
+
+export interface RustDeskCredentialSubmission {
+  credentialRequestId: string;
+  credential: string;
+  trustThisDevice?: boolean;
+}
+
+export interface RustDeskBridgeErrorPayload {
+  ok?: boolean;
+  error?: string;
+  message?: string;
+  errorCode?: string;
+  risk?: RustDeskPermissionRisk;
+  permission?: RustDeskPermissionMode;
+  [key: string]: unknown;
+}
+
+export class RustDeskBridgeHttpError extends Error {
+  readonly status: number;
+  readonly errorCode?: string;
+  readonly payload: RustDeskBridgeErrorPayload | null;
+
+  constructor(status: number, payload: RustDeskBridgeErrorPayload | null) {
+    const detail = errorMessageFromPayload(payload);
+    super(`RustDesk bridge HTTP ${status}${detail ? `: ${detail}` : ""}`);
+    this.name = "RustDeskBridgeHttpError";
+    this.status = status;
+    this.errorCode = typeof payload?.errorCode === "string" ? payload.errorCode : undefined;
+    this.payload = payload;
+  }
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -408,12 +467,14 @@ function errorMessageFromPayload(payload: unknown): string | null {
 export class RustDeskBridgeClient {
   private readonly baseUrl: string;
   private readonly token?: string;
+  private readonly controlToken?: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: RustDeskBridgeClientOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.token = options.token?.trim() || undefined;
+    this.controlToken = options.controlToken?.trim() || undefined;
     this.timeoutMs = clampTimeout(options.timeoutMs);
     this.fetchImpl = options.fetchImpl ?? fetch;
 
@@ -427,8 +488,74 @@ export class RustDeskBridgeClient {
 
   async execute(request: RustDeskActionRequest): Promise<unknown> {
     validateRustDeskActionRequest(request);
+    return this.request("/v1/action", request, this.token, request.timeoutMs);
+  }
+
+  async grantPermission(request: RustDeskPermissionGrantRequest): Promise<RustDeskPermissionGrantResponse> {
+    const token = this.requireControlToken();
+    const payload = await this.request("/v1/permission", request, token);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("RustDesk bridge returned an invalid permission grant response");
+    }
+    const grant = payload as Partial<RustDeskPermissionGrantResponse>;
+    if (typeof grant.permissionGrantId !== "string" || !grant.permissionGrantId.trim()) {
+      throw new Error("RustDesk bridge returned a permission grant without permissionGrantId");
+    }
+    return payload as RustDeskPermissionGrantResponse;
+  }
+
+  async submitCredential(request: RustDeskCredentialSubmission): Promise<unknown> {
+    if (!request.credentialRequestId.trim() || !request.credential) {
+      throw new Error("RustDesk credential submission requires credentialRequestId and credential");
+    }
+    return this.request("/v1/credential", request, this.requireControlToken());
+  }
+
+  async executeAuthorized(
+    request: RustDeskActionRequest,
+    authorize: (challenge: RustDeskPermissionChallenge) => Promise<void>,
+  ): Promise<unknown> {
+    try {
+      return await this.execute(request);
+    } catch (error) {
+      if (!(error instanceof RustDeskBridgeHttpError) || error.errorCode !== "permission_required") {
+        throw error;
+      }
+
+      this.requireControlToken();
+      const payload = error.payload;
+      const challenge: RustDeskPermissionChallenge = {
+        action: request.action,
+        connectionId: request.connectionId,
+        risk: payload?.risk,
+        permission: payload?.permission,
+      };
+      await authorize(challenge);
+
+      const grant = await this.grantPermission({
+        action: request.action,
+        connectionId: request.connectionId,
+        scope: "once",
+      });
+      return this.execute({ ...request, permissionGrantId: grant.permissionGrantId });
+    }
+  }
+
+  private requireControlToken(): string {
+    if (!this.controlToken) {
+      throw new Error("RUSTDESK_BRIDGE_CONTROL_TOKEN is required for RustDesk secure control-plane operations");
+    }
+    return this.controlToken;
+  }
+
+  private async request(
+    endpoint: string,
+    body: object,
+    token: string | undefined,
+    requestedTimeoutMs?: number,
+  ): Promise<unknown> {
     const controller = new AbortController();
-    const timeoutMs = clampTimeout(request.timeoutMs ?? this.timeoutMs);
+    const timeoutMs = clampTimeout(requestedTimeoutMs ?? this.timeoutMs);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
@@ -436,12 +563,12 @@ export class RustDeskBridgeClient {
         "Content-Type": "application/json",
         Accept: "application/json",
       };
-      if (this.token) headers.Authorization = `Bearer ${this.token}`;
+      if (token) headers.Authorization = `Bearer ${token}`;
 
-      const response = await this.fetchImpl(`${this.baseUrl}/v1/action`, {
+      const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
         method: "POST",
         headers,
-        body: JSON.stringify(request),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       const text = await response.text();
@@ -455,8 +582,11 @@ export class RustDeskBridgeClient {
       }
 
       if (!response.ok) {
-        const detail = errorMessageFromPayload(payload);
-        throw new Error(`RustDesk bridge HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+        const structured =
+          payload && typeof payload === "object" && !Array.isArray(payload)
+            ? (payload as RustDeskBridgeErrorPayload)
+            : null;
+        throw new RustDeskBridgeHttpError(response.status, structured);
       }
       return payload;
     } catch (error) {
@@ -481,6 +611,7 @@ export function createRustDeskBridgeClientFromEnv(): RustDeskBridgeClient {
   return new RustDeskBridgeClient({
     baseUrl,
     token: process.env.RUSTDESK_BRIDGE_TOKEN,
+    controlToken: process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN,
     timeoutMs,
   });
 }
