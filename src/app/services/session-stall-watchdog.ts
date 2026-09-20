@@ -178,6 +178,8 @@ async function notifyStall(info: StallNoticeInfo): Promise<void> {
     logger.warn(`[StallWatchdog] Stall notice delivery failed: session=${info.sessionId}`, error);
   }
 }
+
+export interface StartSessionStallWatchdogOptions {
   sessionId: string;
   directory: string;
   model: string;
