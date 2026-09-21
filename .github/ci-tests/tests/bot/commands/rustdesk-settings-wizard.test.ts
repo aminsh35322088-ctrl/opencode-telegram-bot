@@ -155,7 +155,7 @@ describe("RustDesk settings wizard", () => {
     expect(secretCtx.reply).not.toHaveBeenCalled();
   });
 
-  it("creates a temporary manual-approval connection from Settings", async () => {
+  it("creates and tracks a public manual-approval connection from Settings", async () => {
     mocks.connectTemporaryFromSettings.mockResolvedValue({
       ok: true,
       connection: {
@@ -163,11 +163,30 @@ describe("RustDesk settings wizard", () => {
         status: "connecting",
       },
     });
+    mocks.execute.mockImplementation(async (request: { action: string; connectionId?: string }) => {
+      if (request.action === "servers.list") {
+        return { ok: true, servers: [{ id: "rustdesk-public", name: "RustDesk Public", kind: "public" }] };
+      }
+      if (request.action === "devices.list") return { ok: true, devices: [] };
+      if (request.action === "connection.status") {
+        expect(request.connectionId).toBe("conn-1");
+        return {
+          ok: true,
+          connection: {
+            connectionId: "conn-1",
+            status: "waiting_remote_approval",
+            error: null,
+          },
+        };
+      }
+      throw new Error(`unexpected action: ${request.action}`);
+    });
 
     await handleRustDeskSettingsCallback(callbackCtx("integration:rd:temp"));
     await handleRustDeskSettingsMessage(messageCtx("987654321", 301));
     await handleRustDeskSettingsCallback(callbackCtx("integration:rd:w:tserver:rustdesk-public"));
-    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:w:auth:manual-approval"));
+    const authCtx = callbackCtx("integration:rd:w:auth:manual-approval");
+    await handleRustDeskSettingsCallback(authCtx);
 
     expect(mocks.connectTemporaryFromSettings).toHaveBeenCalledWith({
       rustdeskId: "987654321",
@@ -175,6 +194,58 @@ describe("RustDesk settings wizard", () => {
       authMode: "manual-approval",
       serverKey: undefined,
     });
+    const rendered = (authCtx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => String(call[2] ?? ""))
+      .join("\n");
+    expect(rendered).toContain("Waiting for approval");
+    expect(rendered).toContain("RustDesk Public");
+    expect(rendered).toContain("conn-1");
+    expect(rendered).not.toContain("unknown");
+  });
+
+  it("refreshes a public manual-approval connection to connected", async () => {
+    mocks.execute.mockResolvedValue({
+      ok: true,
+      connection: {
+        connectionId: "conn-1",
+        status: "connected",
+        error: null,
+      },
+    });
+    const ctx = callbackCtx("integration:rd:c:s:conn-1");
+
+    await handleRustDeskSettingsCallback(ctx);
+
+    expect(mocks.execute).toHaveBeenCalledWith({
+      action: "connection.status",
+      connectionId: "conn-1",
+    });
+    const rendered = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => String(call[2] ?? ""))
+      .join("\n");
+    expect(rendered).toContain("Connected");
+    expect(rendered).toContain("conn-1");
+  });
+
+  it("disconnects a temporary public connection from the status panel", async () => {
+    mocks.executeAuthorized.mockResolvedValue({
+      ok: true,
+      connectionId: "conn-1",
+      status: "disconnected",
+    });
+    const ctx = callbackCtx("integration:rd:c:x:conn-1");
+
+    await handleRustDeskSettingsCallback(ctx);
+
+    expect(mocks.executeAuthorized).toHaveBeenCalledWith(
+      { action: "connection.disconnect", connectionId: "conn-1" },
+      expect.any(Function),
+    );
+    const rendered = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => String(call[2] ?? ""))
+      .join("\n");
+    expect(rendered).toContain("Disconnected");
+    expect(rendered).toContain("conn-1");
   });
 
   it("always edits the canonical General Panel instead of the callback message", async () => {

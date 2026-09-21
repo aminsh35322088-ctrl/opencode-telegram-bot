@@ -130,6 +130,8 @@ interface RustDeskConnectionView {
   credentialRequestId?: string;
   credentialKind?: string;
   error?: string;
+  serverKind?: string;
+  authMode?: string;
 }
 
 function connectionFromResponse(value: unknown): RustDeskConnectionView {
@@ -144,6 +146,8 @@ function connectionFromResponse(value: unknown): RustDeskConnectionView {
     credentialKind:
       typeof source.credentialKind === "string" ? source.credentialKind : undefined,
     error: typeof source.error === "string" && source.error.trim() ? source.error.trim() : undefined,
+    serverKind: typeof source.serverKind === "string" ? source.serverKind : undefined,
+    authMode: typeof source.authMode === "string" ? source.authMode : undefined,
   };
 }
 
@@ -468,6 +472,80 @@ async function finishToRustDesk(ctx: Context, messageId: number, notice: string)
   );
 }
 
+function temporaryServerLabel(
+  server?: RustDeskServerSelector,
+  serverKind?: string,
+): string {
+  if (serverKind === "public" || server?.kind === "public") return "RustDesk Public";
+  if (serverKind === "saved-custom" || server?.kind === "saved-custom") return "Saved self-hosted";
+  if (serverKind === "one-time-custom" || server?.kind === "one-time-custom") return "One-time custom";
+  return "RustDesk";
+}
+
+function temporaryConnectionHeading(status: string): string {
+  switch (status) {
+    case "waiting_remote_approval":
+      return "👆 Waiting for approval";
+    case "connected":
+      return "✅ Connected";
+    case "failed":
+      return "❌ Connection failed";
+    case "credential_required":
+      return "🔐 Credential required";
+    case "disconnected":
+      return "⏹️ Disconnected";
+    default:
+      return "🟡 Connecting";
+  }
+}
+
+async function showTemporaryConnectionStatus(
+  ctx: Context,
+  messageId: number | null | undefined,
+  connection: RustDeskConnectionView,
+  serverLabel?: string,
+): Promise<void> {
+  const connectionId = connection.connectionId;
+  const status = connection.status ?? "connecting";
+  const keyboard = new InlineKeyboard();
+
+  if (connectionId && status !== "disconnected") {
+    keyboard
+      .text("🔄 Refresh Status", `integration:rd:c:s:${connectionId}`)
+      .text("🛑 Disconnect", `integration:rd:c:x:${connectionId}`)
+      .row();
+  }
+  keyboard
+    .text("← RustDesk", "integration:rustdesk")
+    .text("🏠 Home", "main:home");
+
+  const guidance =
+    status === "waiting_remote_approval"
+      ? "Approve the request on the remote RustDesk device, then tap Refresh Status."
+      : status === "connected"
+        ? "The connection is active and ready for RustDesk actions."
+        : status === "failed"
+          ? "The bridge reached a terminal connection error. Check the error below and retry."
+          : status === "credential_required"
+            ? "This connection requires a credential. Start a new connection with Temporary password or Password OR approval."
+            : status === "disconnected"
+              ? "The temporary connection has been closed."
+              : "Contacting the RustDesk public infrastructure. Tap Refresh Status if this takes more than a few seconds.";
+
+  const text = [
+    temporaryConnectionHeading(status),
+    "",
+    `Server: ${serverLabel ?? temporaryServerLabel(undefined, connection.serverKind)}`,
+    connectionId ? `Connection: ${connectionId}` : undefined,
+    `Status: ${status}`,
+    connection.error ? `Error: ${connection.error}` : undefined,
+    "",
+    guidance,
+  ].filter(Boolean).join("\n");
+
+  await edit(ctx, messageId, text, keyboard);
+}
+
 async function connectTemporary(ctx: Context, state: TempWizard): Promise<void> {
   if (!state.rustdeskId || !state.server || !state.authMode) {
     throw new Error("Temporary connection wizard is incomplete");
@@ -479,7 +557,24 @@ async function connectTemporary(ctx: Context, state: TempWizard): Promise<void> 
     authMode: state.authMode,
     serverKey: state.oneTimeServerKey,
   });
-  const connection = connectionFromResponse(payload);
+  let connection = connectionFromResponse(payload);
+
+  if (state.authMode === "manual-approval" && connection.connectionId) {
+    try {
+      connection = await settleConnectionStatus(client, connection);
+    } catch (error) {
+      logger.warn("[RustDeskSettings] Manual approval status polling failed:", error);
+    }
+    clearRustDeskSettingsWizard();
+    await showTemporaryConnectionStatus(
+      ctx,
+      state.messageId,
+      connection,
+      temporaryServerLabel(state.server, connection.serverKind),
+    );
+    return;
+  }
+
   const connectionId = connection.connectionId;
   const status = connection.status ?? "connecting";
   const credentialRequestId = connection.credentialRequestId;
@@ -542,6 +637,43 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
         messageId,
         "⚡ Temporary RustDesk Connection\n\n1/3 · Send the RustDesk peer ID.",
         cancelKeyboard(),
+      );
+      return true;
+    }
+    if (data.startsWith("integration:rd:c:s:")) {
+      const connectionId = data.slice("integration:rd:c:s:".length);
+      if (!connectionId) return true;
+      const client = createRustDeskBridgeClientFromEnv();
+      const payload = await client.execute({
+        action: "connection.status",
+        connectionId,
+      });
+      const connection = connectionFromResponse(payload);
+      await showTemporaryConnectionStatus(
+        ctx,
+        callbackMessageId(ctx),
+        connection,
+        temporaryServerLabel(undefined, connection.serverKind),
+      );
+      return true;
+    }
+    if (data.startsWith("integration:rd:c:x:")) {
+      const connectionId = data.slice("integration:rd:c:x:".length);
+      if (!connectionId) return true;
+      const client = createRustDeskBridgeClientFromEnv();
+      const payload = await client.executeAuthorized(
+        { action: "connection.disconnect", connectionId },
+        async () => {},
+      );
+      const connection = connectionFromResponse(payload);
+      await showTemporaryConnectionStatus(
+        ctx,
+        callbackMessageId(ctx),
+        {
+          ...connection,
+          connectionId: connection.connectionId ?? connectionId,
+          status: connection.status ?? "disconnected",
+        },
       );
       return true;
     }
