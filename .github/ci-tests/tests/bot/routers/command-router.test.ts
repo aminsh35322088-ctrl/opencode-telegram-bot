@@ -36,7 +36,8 @@ describe("bot/routers/command-router", () => {
       await handler(ctx);
     });
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage.mock.calls[1]![2]).toMatchObject({ message_thread_id: 42, reply_markup: { is_persistent: true } });
+    expect(sendMessage.mock.calls[1]![2]).toMatchObject({ message_thread_id: 42, reply_markup: { resize_keyboard: true } });
+    expect(sendMessage.mock.calls[1]![2].reply_markup.is_persistent).not.toBe(true);
   });
 
   it("keeps keyboard recovery outside an AI Topic from overwriting Topic controls", async () => {

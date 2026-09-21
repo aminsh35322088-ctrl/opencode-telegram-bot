@@ -71,7 +71,7 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
     addMainControls(keyboard);
   }
   return options.isTopic === true
-    ? keyboard.resized().persistent()
+    ? keyboard.resized()
     : keyboard.resized();
 }
 

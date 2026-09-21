@@ -151,7 +151,8 @@ function createContext(): Context {
 }
 
 function createDeps() {
-  const sendMessageMock = vi.fn().mockResolvedValue({ message_id: 1 });
+  let nextMessageId = 700;
+  const sendMessageMock = vi.fn().mockImplementation(async () => ({ message_id: nextMessageId++ }));
   return {
     bot: { api: { sendMessage: sendMessageMock } } as unknown as Bot<Context>,
     ensureEventSubscription: mocked.ensureEventSubscriptionMock,
@@ -256,6 +257,13 @@ describe("bot/commands/new", () => {
     expect(summaryCall?.[2]).toMatchObject({
       message_thread_id: 42,
       reply_markup: { keyboard: true },
+    });
+    const summaryMessageId = 700;
+    expect(createdCall?.[2]).toMatchObject({
+      reply_parameters: {
+        message_id: summaryMessageId,
+        allow_sending_without_reply: false,
+      },
     });
     expect(mocked.buildModelRoutingSummaryMock).toHaveBeenCalledWith(
       expect.objectContaining({ providerID: "openai", modelID: "gpt-5" }),
