@@ -216,6 +216,31 @@ function emitRustDeskSecureInputTool(
   } as unknown as Event);
 }
 
+function emitRustDeskTerminalStatus(
+  summaryAggregator: { processEvent(event: Event): void },
+  status: "completed" | "error",
+): void {
+  summaryAggregator.processEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-rustdesk",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "tool",
+        callID: "call-rustdesk",
+        tool: "rustdesk",
+        state: {
+          status,
+          input: { action: "session.connectTemporary" },
+          metadata: {},
+          ...(status === "completed" ? { output: "done" } : { error: "credential wait ended" }),
+        },
+      },
+    },
+  } as unknown as Event);
+}
+
 function emitTaskTool(summaryAggregator: { processEvent(event: Event): void }): void {
   summaryAggregator.processEvent({
     type: "message.part.updated",
@@ -476,6 +501,49 @@ describe("bot/services/event-subscription-service", () => {
     });
 
     emitRustDeskSecureInputTool(summaryAggregator, "resolved");
+
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
+      expect(interactionManager.getSnapshot()).toBeNull();
+    });
+    expect(api.deleteMessage).toHaveBeenCalledWith(42, 100);
+  });
+
+  it("clears RustDesk secure-input state if the Telegram prompt cannot be delivered", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
+      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+      import("../../../src/app/managers/interaction-manager.js"),
+    ]);
+    api.sendMessage.mockRejectedValueOnce(new Error("telegram unavailable"));
+
+    emitRustDeskSecureInputTool(summaryAggregator, "required");
+
+    await vi.waitFor(() => {
+      expect(api.sendMessage).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
+      expect(interactionManager.getSnapshot()).toBeNull();
+    });
+  });
+
+  it("clears RustDesk secure-input state when the owning tool ends", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
+      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+      import("../../../src/app/managers/interaction-manager.js"),
+    ]);
+
+    emitRustDeskSecureInputTool(summaryAggregator, "required");
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toMatchObject({
+        credentialRequestId: "cred-1",
+        callId: "call-rustdesk",
+      });
+    });
+
+    emitRustDeskTerminalStatus(summaryAggregator, "error");
 
     await vi.waitFor(() => {
       expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
