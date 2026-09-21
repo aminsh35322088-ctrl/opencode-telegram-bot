@@ -11,6 +11,9 @@ export const fr: I18nDictionary = {
   "error.load_variants": "❌ Impossible de charger la liste des variantes",
   "error.context_button": "❌ Impossible de traiter le bouton de contexte",
   "error.generic": "🔴 Une erreur s'est produite.",
+  "rustdesk.secure_input.request": "🔐 RustDesk nécessite {kind}. Envoyez-le dans votre prochain message. Ce message est traité comme une saisie sécurisée et n’est pas transmis au modèle d’IA.",
+  "rustdesk.secure_input.submitted": "✅ Les identifiants RustDesk ont été envoyés de manière sécurisée.",
+  "rustdesk.secure_input.failed": "❌ RustDesk a refusé la saisie sécurisée ou le bridge est indisponible. Renvoyez-la ou utilisez /abort.",
 
   "interaction.blocked.expired": "⚠️ Cette interaction a expiré. Veuillez la relancer.",
   "interaction.blocked.expected_callback":

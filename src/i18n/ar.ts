@@ -18,6 +18,9 @@ export const ar: I18nDictionary = {
   "error.load_variants": "❌ تعذر تحميل خيارات النموذج",
   "error.context_button": "❌ تعذر تنفيذ إجراء السياق",
   "error.generic": "🔴 حدث خطأ غير متوقع.",
+  "rustdesk.secure_input.request": "🔐 يحتاج RustDesk إلى {kind}. أرسله في رسالتك التالية. ستُعالج الرسالة كإدخال آمن ولن تُرسل إلى نموذج الذكاء الاصطناعي.",
+  "rustdesk.secure_input.submitted": "✅ تم إرسال بيانات اعتماد RustDesk بأمان.",
+  "rustdesk.secure_input.failed": "❌ رفض RustDesk الإدخال الآمن أو أن الجسر غير متاح. أرسله مرة أخرى أو استخدم /abort.",
 
   "interaction.blocked.expired": "⚠️ انتهت صلاحية هذا الإجراء. ابدأه من جديد.",
   "interaction.blocked.expected_callback":

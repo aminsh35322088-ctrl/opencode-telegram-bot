@@ -112,7 +112,7 @@ export function createOpencodeServeSpawnCommand(
   };
 }
 
-function buildAgentEnvironment(): NodeJS.ProcessEnv {
+export function buildAgentEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
 
   // The OpenCode agent must never receive the Telegram bot credential or
@@ -124,6 +124,7 @@ function buildAgentEnvironment(): NodeJS.ProcessEnv {
     "TELEGRAM_PROXY_URL",
     "TELEGRAM_PROXY_SECRET",
     "TELEGRAM_API_ROOT",
+    "RUSTDESK_BRIDGE_CONTROL_TOKEN",
   ]) {
     delete environment[key];
   }

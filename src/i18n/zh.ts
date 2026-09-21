@@ -11,6 +11,9 @@ export const zh: I18nDictionary = {
   "error.load_variants": "❌ 加载变体列表失败",
   "error.context_button": "❌ 处理上下文按钮失败",
   "error.generic": "🔴 出现了一些问题。",
+  "rustdesk.secure_input.request": "🔐 RustDesk 需要 {kind}。请在下一条消息中发送。该消息会作为安全输入处理，不会转发给 AI 模型。",
+  "rustdesk.secure_input.submitted": "✅ RustDesk 凭据已安全提交。",
+  "rustdesk.secure_input.failed": "❌ RustDesk 拒绝了安全输入，或 bridge 当前不可用。请重新发送或使用 /abort。",
 
   "interaction.blocked.expired": "⚠️ 此交互已过期。请重新开始。",
   "interaction.blocked.expected_callback": "⚠️ 此步骤请使用内联按钮，或点击取消。",

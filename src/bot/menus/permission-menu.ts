@@ -79,6 +79,9 @@ async function autoAllowRememberedPermission(
   chatId: number,
   request: PermissionRequest,
 ): Promise<boolean> {
+  if (request.metadata.source === "rustdesk") {
+    return false;
+  }
   if (!permissionManager.isAlwaysAllowed(chatId, request)) {
     return false;
   }
@@ -152,7 +155,7 @@ export async function showPermissionRequest(
         chatId,
         grouped.messageId,
         formatPermissionText(grouped.request, grouped.count),
-        { reply_markup: buildPermissionKeyboard() },
+        { reply_markup: buildPermissionKeyboard(grouped.request) },
       )
       .catch((err) => {
         logger.warn("[PermissionHandler] Failed to update grouped permission message:", err);
@@ -169,7 +172,7 @@ export async function showPermissionRequest(
   }
 
   const text = formatPermissionText(request);
-  const keyboard = buildPermissionKeyboard();
+  const keyboard = buildPermissionKeyboard(request);
 
   try {
     const message = await bot.sendMessage(chatId, text, {
@@ -216,11 +219,13 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
   return text;
 }
 
-function buildPermissionKeyboard(): InlineKeyboard {
+function buildPermissionKeyboard(request: PermissionRequest): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   keyboard.text(t("permission.button.allow"), "permission:once").row();
-  keyboard.text(t("permission.button.always"), "permission:always").row();
+  if (request.metadata.source !== "rustdesk") {
+    keyboard.text(t("permission.button.always"), "permission:always").row();
+  }
   keyboard.text(t("permission.button.reject"), "permission:reject");
 
   return keyboard;

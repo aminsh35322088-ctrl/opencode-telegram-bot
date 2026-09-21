@@ -10,11 +10,18 @@ import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
   permissionReplyMock: vi.fn(),
+  rustDeskGrantPermissionMock: vi.fn(),
   currentProject: {
     id: "project-1",
     worktree: "D:/repo",
   } as { id: string; worktree: string } | undefined,
   currentSession: null as { id: string; title: string; directory: string } | null,
+}));
+
+vi.mock("../../../src/app/services/rustdesk-bridge-service.js", () => ({
+  createRustDeskBridgeClientFromEnv: () => ({
+    grantPermission: mocked.rustDeskGrantPermissionMock,
+  }),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -123,6 +130,12 @@ describe("bot permission menu/callbacks", () => {
 
     mocked.permissionReplyMock.mockReset();
     mocked.permissionReplyMock.mockResolvedValue({ error: null });
+    mocked.rustDeskGrantPermissionMock.mockReset();
+    mocked.rustDeskGrantPermissionMock.mockResolvedValue({
+      ok: true,
+      permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      scope: "once",
+    });
 
     mocked.currentProject = {
       id: "project-1",
@@ -160,6 +173,105 @@ describe("bot permission menu/callbacks", () => {
     expect(state?.expectedInput).toBe("callback");
     expect(state?.metadata.requestID).toBe("perm-1");
     expect(state?.metadata.messageId).toBe(500);
+  });
+
+  it("shows only one-shot allow and reject for RustDesk permissions", async () => {
+    const botApi = createBotApi(505);
+    const request = createPermissionRequest("rustdesk-perm-1", {
+      permission: "rustdesk.terminal.exec",
+      patterns: ["terminal.exec:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+
+    const sendMessageMock = botApi.sendMessage as unknown as ReturnType<typeof vi.fn>;
+    const call = defined(sendMessageMock.mock.calls[0]);
+    const [, , options] = call;
+    const replyMarkup = (options as { reply_markup: InlineKeyboard }).reply_markup;
+
+    expect(replyMarkup.inline_keyboard).toHaveLength(2);
+    expect(getCallbackData(replyMarkup.inline_keyboard[0]?.[0])).toBe("permission:once");
+    expect(getCallbackData(replyMarkup.inline_keyboard[1]?.[0])).toBe("permission:reject");
+  });
+
+  it("mints the exact RustDesk one-shot grant before releasing OpenCode", async () => {
+    const botApi = createBotApi(506);
+    const request = createPermissionRequest("rustdesk-perm-2", {
+      permission: "rustdesk.terminal.exec",
+      patterns: ["terminal.exec:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+    const ctx = createPermissionCallbackContext("permission:once", 506);
+    await handlePermissionCallback(ctx);
+
+    expect(mocked.rustDeskGrantPermissionMock).toHaveBeenCalledWith({
+      action: "terminal.exec",
+      connectionId: "conn-1",
+      scope: "once",
+      permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+    });
+    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
+      requestID: "rustdesk-perm-2",
+      directory: "D:/repo",
+      reply: "once",
+    });
+    expect(
+      mocked.rustDeskGrantPermissionMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocked.permissionReplyMock.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER);
+  });
+
+  it("retries OpenCode release when the exact RustDesk grant is already active", async () => {
+    const botApi = createBotApi(507);
+    const request = createPermissionRequest("rustdesk-perm-retry", {
+      permission: "rustdesk.terminal.exec",
+      patterns: ["terminal.exec:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+    mocked.permissionReplyMock.mockResolvedValueOnce({
+      error: { name: "ServerError", data: { message: "Permission service unavailable" } },
+    });
+
+    const firstCtx = createPermissionCallbackContext("permission:once", 507);
+    await handlePermissionCallback(firstCtx);
+    expect(permissionManager.isActive()).toBe(true);
+
+    mocked.rustDeskGrantPermissionMock.mockRejectedValueOnce(
+      Object.assign(new Error("permissionGrantId is already active"), {
+        errorCode: "permission_grant_exists",
+      }),
+    );
+    mocked.permissionReplyMock.mockResolvedValueOnce({ error: null });
+
+    const retryCtx = createPermissionCallbackContext("permission:once", 507);
+    await handlePermissionCallback(retryCtx);
+
+    expect(mocked.rustDeskGrantPermissionMock).toHaveBeenCalledTimes(2);
+    expect(mocked.permissionReplyMock).toHaveBeenCalledTimes(2);
+    expect(permissionManager.isActive()).toBe(false);
+    expect(interactionManager.getSnapshot()).toBeNull();
   });
 
   it("keeps multiple active permission requests without deleting previous messages", async () => {

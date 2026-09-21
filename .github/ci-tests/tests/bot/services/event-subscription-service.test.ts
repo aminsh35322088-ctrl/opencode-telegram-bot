@@ -184,6 +184,63 @@ function emitBashTool(
   } as unknown as Event);
 }
 
+function emitRustDeskSecureInputTool(
+  summaryAggregator: { processEvent(event: Event): void },
+  state: "required" | "resolved",
+  credentialRequestId = "cred-1",
+): void {
+  summaryAggregator.processEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-rustdesk",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "tool",
+        callID: "call-rustdesk",
+        tool: "rustdesk",
+        state: {
+          status: "running",
+          input: { action: "session.connectTemporary" },
+          metadata: {
+            rustdeskSecureInput: {
+              state,
+              credentialRequestId,
+              connectionId: "conn-1",
+              credentialKind: "rustdesk-password",
+            },
+          },
+        },
+      },
+    },
+  } as unknown as Event);
+}
+
+function emitRustDeskTerminalStatus(
+  summaryAggregator: { processEvent(event: Event): void },
+  status: "completed" | "error",
+): void {
+  summaryAggregator.processEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-rustdesk",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "tool",
+        callID: "call-rustdesk",
+        tool: "rustdesk",
+        state: {
+          status,
+          input: { action: "session.connectTemporary" },
+          metadata: {},
+          ...(status === "completed" ? { output: "done" } : { error: "credential wait ended" }),
+        },
+      },
+    },
+  } as unknown as Event);
+}
+
 function emitTaskTool(summaryAggregator: { processEvent(event: Event): void }): void {
   summaryAggregator.processEvent({
     type: "message.part.updated",
@@ -411,6 +468,89 @@ describe("bot/services/event-subscription-service", () => {
 
     return { api, summaryAggregator };
   }
+
+  it("creates and resolves a RustDesk secure-input interaction from tool metadata", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
+      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+      import("../../../src/app/managers/interaction-manager.js"),
+    ]);
+
+    emitRustDeskSecureInputTool(summaryAggregator, "required");
+
+    await vi.waitFor(() => {
+      expect(api.sendMessage).toHaveBeenCalledWith(
+        42,
+        expect.stringContaining("RustDesk password"),
+        expect.objectContaining({ disable_notification: true }),
+      );
+    });
+    expect(rustDeskSecureInputManager.get("session-1")).toMatchObject({
+      credentialRequestId: "cred-1",
+      connectionId: "conn-1",
+      chatId: 42,
+    });
+    expect(interactionManager.getSnapshot()).toMatchObject({
+      kind: "custom",
+      expectedInput: "text",
+      metadata: {
+        flow: "rustdesk-secure-input",
+        sessionId: "session-1",
+        credentialRequestId: "cred-1",
+      },
+    });
+
+    emitRustDeskSecureInputTool(summaryAggregator, "resolved");
+
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
+      expect(interactionManager.getSnapshot()).toBeNull();
+    });
+    expect(api.deleteMessage).toHaveBeenCalledWith(42, 100);
+  });
+
+  it("clears RustDesk secure-input state if the Telegram prompt cannot be delivered", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
+      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+      import("../../../src/app/managers/interaction-manager.js"),
+    ]);
+    api.sendMessage.mockRejectedValueOnce(new Error("telegram unavailable"));
+
+    emitRustDeskSecureInputTool(summaryAggregator, "required");
+
+    await vi.waitFor(() => {
+      expect(api.sendMessage).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
+      expect(interactionManager.getSnapshot()).toBeNull();
+    });
+  });
+
+  it("clears RustDesk secure-input state when the owning tool ends", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
+      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+      import("../../../src/app/managers/interaction-manager.js"),
+    ]);
+
+    emitRustDeskSecureInputTool(summaryAggregator, "required");
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toMatchObject({
+        credentialRequestId: "cred-1",
+        callId: "call-rustdesk",
+      });
+    });
+
+    emitRustDeskTerminalStatus(summaryAggregator, "error");
+
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
+      expect(interactionManager.getSnapshot()).toBeNull();
+    });
+    expect(api.deleteMessage).toHaveBeenCalledWith(42, 100);
+  });
 
   it("sends write tool output as a document attachment when diff files are enabled", async () => {
     const { api, summaryAggregator } = await setupService(true);

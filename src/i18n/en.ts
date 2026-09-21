@@ -9,6 +9,9 @@ export const en = {
   "error.load_variants": "❌ Failed to load variants list",
   "error.context_button": "❌ Failed to process context button",
   "error.generic": "🔴 Something went wrong.",
+  "rustdesk.secure_input.request": "🔐 RustDesk requires {kind}. Send it in your next message. This message is handled as secure input and is not forwarded to the AI model.",
+  "rustdesk.secure_input.submitted": "✅ RustDesk credential submitted securely.",
+  "rustdesk.secure_input.failed": "❌ RustDesk rejected the secure input or the bridge is unavailable. Send it again or use /abort.",
 
   "interaction.blocked.expired": "⚠️ This interaction has expired. Please start it again.",
   "interaction.blocked.expected_callback":

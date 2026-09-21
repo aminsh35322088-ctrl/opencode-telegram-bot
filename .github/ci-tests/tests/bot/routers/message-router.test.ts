@@ -7,6 +7,11 @@ import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
 const mergerMock = vi.hoisted(() => ({ queuePromptForMerging: vi.fn() }));
+const secureInputMock = vi.hoisted(() => ({ handleRustDeskSecureInputMessage: vi.fn() }));
+vi.mock("../../../src/bot/handlers/rustdesk-secure-input-handler.js", () => ({
+  handleRustDeskSecureInputMessage: secureInputMock.handleRustDeskSecureInputMessage,
+}));
+
 vi.mock("../../../src/bot/handlers/message-merger.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../src/bot/handlers/message-merger.js")>();
   return { ...actual, queuePromptForMerging: mergerMock.queuePromptForMerging };
@@ -67,6 +72,7 @@ describe("bot/routers/message-router", () => {
 
     beforeEach(() => {
       mergerMock.queuePromptForMerging.mockReset();
+      secureInputMock.handleRustDeskSecureInputMessage.mockReset().mockResolvedValue(false);
       interactionManager.clear("general_gate_test_reset");
     });
 
@@ -108,6 +114,36 @@ describe("bot/routers/message-router", () => {
 
       expect(ctx.reply).not.toHaveBeenCalledWith(t("general.topic_only_prompt"));
       expect(mergerMock.queuePromptForMerging).toHaveBeenCalled();
+    });
+
+    it("consumes RustDesk secure input before it reaches the prompt merger", async () => {
+      secureInputMock.handleRustDeskSecureInputMessage.mockResolvedValueOnce(true);
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "fixture-value", message_thread_id: 42 },
+      });
+
+      await handler(ctx, vi.fn());
+
+      expect(secureInputMock.handleRustDeskSecureInputMessage).toHaveBeenCalledWith(ctx);
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+    });
+
+    it("lets RustDesk secure input consume slash-prefixed credentials before generic commands", async () => {
+      secureInputMock.handleRustDeskSecureInputMessage.mockResolvedValueOnce(true);
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "/credential-value", message_thread_id: 42 },
+      });
+      const next = vi.fn();
+
+      await handler(ctx, next);
+
+      expect(secureInputMock.handleRustDeskSecureInputMessage).toHaveBeenCalledWith(ctx);
+      expect(next).not.toHaveBeenCalled();
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
     });
 
     it("keeps AI Topics and private chats unaffected", async () => {
