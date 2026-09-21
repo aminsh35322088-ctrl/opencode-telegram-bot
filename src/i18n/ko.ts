@@ -1,3 +1,5 @@
+[Reading 565 lines from start (total: 565 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 /**
@@ -18,6 +20,9 @@ export const ko: I18nDictionary = {
   "error.load_variants": "❌ 변형 목록을 불러오지 못했습니다",
   "error.context_button": "❌ 컨텍스트 버튼을 처리하지 못했습니다",
   "error.generic": "🔴 문제가 발생했습니다.",
+  "rustdesk.secure_input.request": "🔐 RustDesk에 {kind}이(가) 필요합니다. 다음 메시지로 보내세요. 이 메시지는 보안 입력으로 처리되며 AI 모델로 전달되지 않습니다.",
+  "rustdesk.secure_input.submitted": "✅ RustDesk 자격 증명이 안전하게 제출되었습니다.",
+  "rustdesk.secure_input.failed": "❌ RustDesk가 보안 입력을 거부했거나 브리지를 사용할 수 없습니다. 다시 보내거나 /abort를 사용하세요.",
 
   "interaction.blocked.expired": "⚠️ 이 상호작용은 만료되었습니다. 다시 시작해 주세요.",
   "interaction.blocked.expected_callback":
@@ -560,3 +565,5 @@ export const ko: I18nDictionary = {
   "attachment.cancelled": "❌ 첨부가 취소되었습니다",
   "attachment.invalid": "⚠️ 첨부한 파일을 더 이상 사용할 수 없습니다. 파일 없이 메시지를 보냅니다.",
 };
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

@@ -1,3 +1,5 @@
+[Reading 577 lines from start (total: 577 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const de: I18nDictionary = {
@@ -11,6 +13,9 @@ export const de: I18nDictionary = {
   "error.load_variants": "❌ Variantenliste konnte nicht geladen werden",
   "error.context_button": "❌ Kontext-Button konnte nicht verarbeitet werden",
   "error.generic": "🔴 Etwas ist schiefgelaufen.",
+  "rustdesk.secure_input.request": "🔐 RustDesk benötigt {kind}. Sende es in deiner nächsten Nachricht. Diese Nachricht wird als sichere Eingabe verarbeitet und nicht an das KI-Modell weitergeleitet.",
+  "rustdesk.secure_input.submitted": "✅ RustDesk-Zugangsdaten wurden sicher übermittelt.",
+  "rustdesk.secure_input.failed": "❌ RustDesk hat die sichere Eingabe abgelehnt oder die Bridge ist nicht verfügbar. Sende sie erneut oder verwende /abort.",
 
   "interaction.blocked.expired": "⚠️ Diese Interaktion ist abgelaufen. Bitte starte sie erneut.",
   "interaction.blocked.expected_callback":
@@ -572,3 +577,5 @@ export const de: I18nDictionary = {
   "attachment.invalid":
     "⚠️ Die angehängte Datei ist nicht mehr verfügbar. Die Nachricht wird ohne sie gesendet.",
 };
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

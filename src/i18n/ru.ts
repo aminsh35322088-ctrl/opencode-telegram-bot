@@ -1,3 +1,5 @@
+[Reading 563 lines from start (total: 563 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const ru: I18nDictionary = {
@@ -11,6 +13,9 @@ export const ru: I18nDictionary = {
   "error.load_variants": "❌ Ошибка при загрузке списка вариантов",
   "error.context_button": "❌ Ошибка при обработке кнопки контекста",
   "error.generic": "🔴 Произошла ошибка.",
+  "rustdesk.secure_input.request": "🔐 RustDesk требует {kind}. Отправьте это следующим сообщением. Оно обрабатывается как защищённый ввод и не передаётся ИИ-модели.",
+  "rustdesk.secure_input.submitted": "✅ Учётные данные RustDesk безопасно отправлены.",
+  "rustdesk.secure_input.failed": "❌ RustDesk отклонил защищённый ввод или bridge недоступен. Отправьте данные снова или используйте /abort.",
 
   "interaction.blocked.expired": "⚠️ Текущая интеракция устарела. Запустите ее снова.",
   "interaction.blocked.expected_callback":
@@ -558,3 +563,5 @@ export const ru: I18nDictionary = {
   "attachment.cancelled": "❌ Вложение отменено",
   "attachment.invalid": "⚠️ Прикреплённый файл больше недоступен. Отправляю сообщение без него.",
 };
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

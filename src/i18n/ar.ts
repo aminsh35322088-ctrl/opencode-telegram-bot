@@ -1,3 +1,5 @@
+[Reading 541 lines from start (total: 541 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 /**
@@ -18,6 +20,9 @@ export const ar: I18nDictionary = {
   "error.load_variants": "❌ تعذر تحميل خيارات النموذج",
   "error.context_button": "❌ تعذر تنفيذ إجراء السياق",
   "error.generic": "🔴 حدث خطأ غير متوقع.",
+  "rustdesk.secure_input.request": "🔐 يحتاج RustDesk إلى {kind}. أرسله في رسالتك التالية. ستُعالج الرسالة كإدخال آمن ولن تُرسل إلى نموذج الذكاء الاصطناعي.",
+  "rustdesk.secure_input.submitted": "✅ تم إرسال بيانات اعتماد RustDesk بأمان.",
+  "rustdesk.secure_input.failed": "❌ رفض RustDesk الإدخال الآمن أو أن الجسر غير متاح. أرسله مرة أخرى أو استخدم /abort.",
 
   "interaction.blocked.expired": "⚠️ انتهت صلاحية هذا الإجراء. ابدأه من جديد.",
   "interaction.blocked.expected_callback":
@@ -536,3 +541,5 @@ export const ar: I18nDictionary = {
   "attachment.cancelled": "❌ تم إلغاء الإرفاق",
   "attachment.invalid": "⚠️ الملف المرفق لم يعد متاحًا. سيتم إرسال الرسالة بدونه.",
 };
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

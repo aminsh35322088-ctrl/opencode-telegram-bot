@@ -1,3 +1,5 @@
+[Reading 1973 lines from start (total: 1973 lines, 0 remaining)]
+
 import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.js";
 import { promises as fs } from "fs";
 import * as path from "path";
@@ -92,6 +94,7 @@ import {
 import { buildBackgroundSessionOpenKeyboard } from "../menus/session-selection-menu.js";
 import { questionManager } from "../../app/managers/question-manager.js";
 import { permissionManager } from "../../app/managers/permission-manager.js";
+import { rustDeskSecureInputManager, parseRustDeskSecureInputSignal } from "../../app/managers/rustdesk-secure-input-manager.js";
 import { interactionEventGate } from "../../app/services/interaction-event-gate.js";
 import { showCurrentQuestion } from "../menus/question-menu.js";
 import { showPermissionRequest, syncPermissionInteractionState } from "../menus/permission-menu.js";
@@ -891,6 +894,76 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         markToolCallFinished(toolInfo.sessionId, toolInfo.callId);
       } else if (typeof status === "string") {
         markToolCallStarted(toolInfo.sessionId, toolInfo.callId);
+      }
+
+      if (toolInfo.tool === "rustdesk") {
+        const secureSignal = parseRustDeskSecureInputSignal(toolInfo.metadata);
+        if (secureSignal) {
+          const chatId = this.getChatIdForSession(toolInfo.sessionId);
+          if (secureSignal.state === "required" && chatId && secureSignal.connectionId) {
+            const started = rustDeskSecureInputManager.start({
+              sessionId: toolInfo.sessionId,
+              callId: toolInfo.callId,
+              chatId,
+              credentialRequestId: secureSignal.credentialRequestId,
+              connectionId: secureSignal.connectionId,
+              credentialKind: secureSignal.credentialKind,
+            });
+            if (started.created && this.botInstance) {
+              const label =
+                secureSignal.credentialKind === "rustdesk-2fa"
+                  ? "2FA code"
+                  : "RustDesk password";
+              interactionManager.start({
+                kind: "custom",
+                expectedInput: "text",
+                metadata: {
+                  flow: "rustdesk-secure-input",
+                  sessionId: toolInfo.sessionId,
+                  credentialRequestId: secureSignal.credentialRequestId,
+                },
+                expiresInMs: 5 * 60 * 1000,
+              });
+              void this.botInstance.api
+                .sendMessage(
+                  chatId,
+                  t("rustdesk.secure_input.request", { kind: label }),
+                  { disable_notification: true },
+                )
+                .then((message) => {
+                  rustDeskSecureInputManager.setPromptMessageId(
+                    toolInfo.sessionId,
+                    secureSignal.credentialRequestId,
+                    message.message_id,
+                  );
+                })
+                .catch((error) => {
+                  logger.error("[RustDesk] Failed to show secure credential prompt:", error);
+                });
+            }
+          } else if (secureSignal.state === "resolved") {
+            const challenge = rustDeskSecureInputManager.get(toolInfo.sessionId);
+            if (challenge?.credentialRequestId === secureSignal.credentialRequestId) {
+              rustDeskSecureInputManager.clear(
+                toolInfo.sessionId,
+                secureSignal.credentialRequestId,
+              );
+              const state = interactionManager.getSnapshot();
+              if (
+                state?.kind === "custom" &&
+                state.metadata.flow === "rustdesk-secure-input" &&
+                state.metadata.sessionId === toolInfo.sessionId
+              ) {
+                interactionManager.clear("rustdesk_secure_input_resolved");
+              }
+              if (challenge.promptMessageId && this.botInstance) {
+                void this.botInstance.api
+                  .deleteMessage(challenge.chatId, challenge.promptMessageId)
+                  .catch(() => {});
+              }
+            }
+          }
+        }
       }
 
       if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
@@ -1900,3 +1973,5 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     }
   }
 }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

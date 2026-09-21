@@ -1,7 +1,9 @@
+[Reading 107 lines from start (total: 107 lines, 0 remaining)]
+
 import type { Context } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
-import type { BlockReason, ExpectedInput, GuardDecision, IncomingInputType, InteractionState, InteractionKind } from "../../app/types/interaction.js";
+import type { BlockReason, ExpectedInput, GuardDecision, IncomingInputType, InteractionState } from "../../app/types/interaction.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN, isReplyKeyboardButtonText } from "../message-patterns.js";
@@ -36,7 +38,7 @@ const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
 ]);
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && ALWAYS_REACHABLE_CONTROL_COMMANDS.has(command)); }
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
-function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
+function allowsBusyInteraction(state: InteractionState | null): boolean { return Boolean(state && (state.kind === "question" || state.kind === "permission" || (state.kind === "custom" && state.metadata.flow === "rustdesk-secure-input"))); }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
 function resolveCurrentSessionBusy(): boolean {
   const topic = getTopicRuntimeContext();
@@ -90,7 +92,7 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   }
   if (isBusy) {
     if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "command_not_allowed", command); }
-    if (scopedState && allowsBusyInteraction(scopedState.kind)) {
+    if (scopedState && allowsBusyInteraction(scopedState)) {
       if (scopedState.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "expected_text", command); }
       if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command, true);
       return createBusyBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);
@@ -105,3 +107,5 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command);
   return createBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);
 }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

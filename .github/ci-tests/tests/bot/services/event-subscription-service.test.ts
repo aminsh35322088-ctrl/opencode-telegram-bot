@@ -1,3 +1,5 @@
+[Reading 877 lines from start (total: 877 lines, 0 remaining)]
+
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -178,6 +180,38 @@ function emitBashTool(
           metadata: {},
           ...(status === "completed" ? { output: "ok" } : {}),
           ...(status === "error" ? { error: "command failed" } : {}),
+        },
+      },
+    },
+  } as unknown as Event);
+}
+
+function emitRustDeskSecureInputTool(
+  summaryAggregator: { processEvent(event: Event): void },
+  state: "required" | "resolved",
+  credentialRequestId = "cred-1",
+): void {
+  summaryAggregator.processEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-rustdesk",
+        sessionID: "session-1",
+        messageID: "message-1",
+        type: "tool",
+        callID: "call-rustdesk",
+        tool: "rustdesk",
+        state: {
+          status: "running",
+          input: { action: "session.connectTemporary" },
+          metadata: {
+            rustdeskSecureInput: {
+              state,
+              credentialRequestId,
+              connectionId: "conn-1",
+              credentialKind: "rustdesk-password",
+            },
+          },
         },
       },
     },
@@ -411,6 +445,46 @@ describe("bot/services/event-subscription-service", () => {
 
     return { api, summaryAggregator };
   }
+
+  it("creates and resolves a RustDesk secure-input interaction from tool metadata", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
+      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+      import("../../../src/app/managers/interaction-manager.js"),
+    ]);
+
+    emitRustDeskSecureInputTool(summaryAggregator, "required");
+
+    await vi.waitFor(() => {
+      expect(api.sendMessage).toHaveBeenCalledWith(
+        42,
+        expect.stringContaining("RustDesk password"),
+        expect.objectContaining({ disable_notification: true }),
+      );
+    });
+    expect(rustDeskSecureInputManager.get("session-1")).toMatchObject({
+      credentialRequestId: "cred-1",
+      connectionId: "conn-1",
+      chatId: 42,
+    });
+    expect(interactionManager.getSnapshot()).toMatchObject({
+      kind: "custom",
+      expectedInput: "text",
+      metadata: {
+        flow: "rustdesk-secure-input",
+        sessionId: "session-1",
+        credentialRequestId: "cred-1",
+      },
+    });
+
+    emitRustDeskSecureInputTool(summaryAggregator, "resolved");
+
+    await vi.waitFor(() => {
+      expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
+      expect(interactionManager.getSnapshot()).toBeNull();
+    });
+    expect(api.deleteMessage).toHaveBeenCalledWith(42, 100);
+  });
 
   it("sends write tool output as a document attachment when diff files are enabled", async () => {
     const { api, summaryAggregator } = await setupService(true);
@@ -803,3 +877,5 @@ describe("bot/services/event-subscription-service", () => {
     expect(interactionManager.getSnapshot()?.kind).toBe("rename");
   });
 });
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

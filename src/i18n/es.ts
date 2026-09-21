@@ -1,3 +1,5 @@
+[Reading 577 lines from start (total: 577 lines, 0 remaining)]
+
 import type { I18nDictionary } from "./en.js";
 
 export const es: I18nDictionary = {
@@ -11,6 +13,9 @@ export const es: I18nDictionary = {
   "error.load_variants": "❌ No se pudo cargar la lista de variantes",
   "error.context_button": "❌ No se pudo procesar el botón de contexto",
   "error.generic": "🔴 Algo salió mal.",
+  "rustdesk.secure_input.request": "🔐 RustDesk requiere {kind}. Envíalo en tu próximo mensaje. Este mensaje se procesa como entrada segura y no se reenvía al modelo de IA.",
+  "rustdesk.secure_input.submitted": "✅ La credencial de RustDesk se envió de forma segura.",
+  "rustdesk.secure_input.failed": "❌ RustDesk rechazó la entrada segura o el bridge no está disponible. Envíala de nuevo o usa /abort.",
 
   "interaction.blocked.expired": "⚠️ Esta interacción ha expirado. Por favor, iníciala de nuevo.",
   "interaction.blocked.expected_callback":
@@ -572,3 +577,5 @@ export const es: I18nDictionary = {
   "attachment.invalid":
     "⚠️ El archivo adjunto ya no está disponible. Enviando el mensaje sin él.",
 };
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

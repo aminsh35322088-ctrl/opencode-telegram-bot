@@ -1,3 +1,5 @@
+[Reading 467 lines from start (total: 467 lines, 0 remaining)]
+
 import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
@@ -9,6 +11,7 @@ import { handleProviderWizardMessage, isProviderWizardActive, clearProviderWizar
 import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
 import { handleModelSearchTextInput } from "../callbacks/model-center-callback-handler.js";
 import { handleQuestionTextAnswer } from "../callbacks/question-callback-handler.js";
+import { handleRustDeskSecureInputMessage } from "../handlers/rustdesk-secure-input-handler.js";
 import { handleRenameTextAnswer } from "../callbacks/rename-callback-handler.js";
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
@@ -242,6 +245,7 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
       return;
     }
 
+    if (await handleRustDeskSecureInputMessage(ctx)) return;
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
     if (await handleSkillWizardMessage(ctx)) return;
@@ -463,3 +467,5 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

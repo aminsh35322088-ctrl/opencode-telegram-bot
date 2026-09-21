@@ -1,3 +1,5 @@
+[Reading 584 lines from start (total: 584 lines, 0 remaining)]
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { resolveInteractionGuardDecision } from "../../../src/bot/middleware/interaction-guard-decision.js";
@@ -397,6 +399,31 @@ describe("interaction guard", () => {
     expect(blockedCommand.reason).toBe("command_not_allowed");
   });
 
+  it("allows RustDesk secure input text while busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\Projects\Repo");
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "text",
+      metadata: {
+        flow: "rustdesk-secure-input",
+        sessionId: "session-1",
+        credentialRequestId: "cred-1",
+      },
+    });
+
+    const textDecision = resolveInteractionGuardDecision(createContext({ text: "fixture-value" }));
+    const commandDecision = resolveInteractionGuardDecision(createContext({ text: "/status" }));
+    const blockedCallback = resolveInteractionGuardDecision(
+      createContext({ callbackData: "settings:advanced" }),
+    );
+
+    expect(textDecision.allow).toBe(true);
+    expect(textDecision.busy).toBe(true);
+    expect(commandDecision.allow).toBe(true);
+    expect(blockedCallback.allow).toBe(false);
+    expect(blockedCallback.busy).toBe(true);
+  });
+
   it("allows valid permission callback while busy and blocks other inputs", () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
     interactionManager.start({
@@ -557,3 +584,5 @@ describe("interaction guard: navigation commands while busy", () => {
     expect(decision.busy).toBe(true);
   });
 });
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]
