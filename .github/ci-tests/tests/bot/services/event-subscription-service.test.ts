@@ -438,6 +438,20 @@ describe("bot/services/event-subscription-service", () => {
     expect(api.sendDocument).not.toHaveBeenCalled();
   });
 
+  it("does not emit footer or keyboard-update messages when idle is caused by Pause", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const { setPausedSession, clearPausedSession } = await import("../../../src/app/managers/paused-session-manager.js");
+
+    setPausedSession({ id: "session-1", title: "Test session", directory: "D:/repo" });
+    api.sendMessage.mockClear();
+
+    emitSessionIdle(summaryAggregator);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    clearPausedSession("session-1");
+  });
+
   it("routes session output for an AI Topic session to its thread even after General clobbered the context", async () => {
     const { api, summaryAggregator } = await setupService(false);
 
