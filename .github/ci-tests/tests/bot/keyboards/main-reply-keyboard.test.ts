@@ -41,7 +41,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(labels).toContain("🧠 Custom Model 2026");
     expect(labels.join("\n")).not.toContain("very-long-provider-name");
     expect(labels.join("\n")).not.toContain(" · ");
-    expect(keyboard.is_persistent).toBe(true);
+    expect(keyboard.is_persistent).not.toBe(true);
   });
 
   it("reflects compact mode state in an AI Topic", () => {

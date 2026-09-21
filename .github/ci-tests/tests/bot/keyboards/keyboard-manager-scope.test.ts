@@ -127,7 +127,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("⏸️ Pause");
   });
 
-  it("sendKeyboardUpdate keeps a durable persistent Topic keyboard and suppresses duplicate layouts", async () => {
+  it("sendKeyboardUpdate keeps a summonable Topic keyboard and suppresses duplicate layouts", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 901, message_thread_id: THREAD_ID });
     const deleteMessage = vi.fn().mockResolvedValue(true);
     keyboardManager.bindTopic({ sendMessage, deleteMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
@@ -138,7 +138,7 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(text).toBe("⌨️ Keyboard updated");
     expect(options.message_thread_id).toBe(THREAD_ID);
     expect(options.disable_notification).toBe(true);
-    expect((options.reply_markup as { is_persistent?: boolean }).is_persistent).toBe(true);
+    expect((options.reply_markup as { is_persistent?: boolean }).is_persistent).not.toBe(true);
     expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
     expect(keyboardTexts(options.reply_markup)).not.toContain("💬 New Chat");
     expect(deleteMessage).not.toHaveBeenCalled();
