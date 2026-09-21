@@ -65,7 +65,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       compactOutputMode: initialCompact,
     });
 
-    const topicWelcomeMessageId = await runInTopicRuntimeContext(
+    await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },
       async () => {
         keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding!.threadId, session.id);
@@ -90,7 +90,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         // use its explicit thread association for native Topic navigation, and carrying
         // the ReplyKeyboard on the same durable message makes the initial controls
         // reliable on Android/iOS instead of depending on a deleted control message.
-        const topicWelcome = await deps.bot.api.sendMessage(
+        await deps.bot.api.sendMessage(
           ctx.chat.id,
           `✅ New AI Topic ready.\n\n${routingSummary}`,
           { message_thread_id: binding!.threadId, reply_markup: topicKeyboard },
@@ -102,7 +102,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           session: sessionInfo,
           ensureEventSubscription: deps.ensureEventSubscription,
         });
-        return topicWelcome.message_id;
       },
     );
 
@@ -111,7 +110,10 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const successText = `${t("new.created", { title: chatTitle })}\n\nUse this Topic for the conversation.`;
     await deps.bot.api.sendMessage(ctx.chat.id, successText, {
       reply_parameters: {
-        message_id: topicWelcomeMessageId,
+        // For a forum Topic, Telegram assigns the creation service message the
+        // same id as message_thread_id. Replying to that service message is
+        // what makes clients render the native "Continue last thread" link.
+        message_id: binding.threadId,
         allow_sending_without_reply: false,
       },
     });
