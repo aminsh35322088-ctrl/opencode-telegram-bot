@@ -1357,6 +1357,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         logger.error("[Bot] Failed to send session idle footer:", err);
       } finally {
         foregroundSessionState.markIdle(sessionId);
+        try {
+          await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
+        } catch (error) {
+          logger.warn(`[Bot] Failed to restore keyboard after session idle: session=${sessionId}`, error);
+        }
         await scheduledTaskRuntime.flushDeferredDeliveries();
         void dispatchNextQueuedPrompt();
       }

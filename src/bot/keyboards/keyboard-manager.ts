@@ -52,6 +52,7 @@ class KeyboardManager {
   private readonly topicModeChats = new Set<number>();
   private readonly replyKeyboardFingerprints = new Map<string, string>();
   private readonly topicKeyboardUpdates = new Map<string, Promise<void>>();
+  private readonly lastRunningState = new Map<string, boolean>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
@@ -424,9 +425,16 @@ class KeyboardManager {
     const fingerprint = isTopic ? this.replyKeyboardFingerprint(resolvedSessionId) : null;
     if (fingerprint && this.replyKeyboardFingerprints.get(key) === fingerprint) return;
 
+    // Force delivery on idle<->running state transitions so the user always
+    // sees the correct controls (Pause/Abort during run, idle layout after).
+    const currentRunning = Boolean(resolvedSessionId && assistantRunState.hasActiveRun(resolvedSessionId));
+    const previousRunning = this.lastRunningState.get(key) ?? false;
+    const stateChanged = isTopic && currentRunning !== previousRunning;
+    if (stateChanged) this.lastRunningState.set(key, currentRunning);
+
     const now = Date.now();
     const previous = this.lastUpdateTimes.get(key) ?? 0;
-    if (!isTopic && !force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
+    if (!isTopic && !force && !stateChanged && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
     try {
       if (!isTopic) { await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true); return; }
@@ -444,12 +452,6 @@ class KeyboardManager {
     const resolved = this.resolveSessionId(sessionId);
     const state = this.state(resolved);
     if (state) {
-      // While the Topic session is actively running, outbound messages carry no
-      // reply markup so the keyboard stays collapsed until the user summons it
-      // via Telegram's own show/hide control.
-      if (state.sessionId && state.threadId !== undefined && assistantRunState.hasActiveRun(state.sessionId)) {
-        return undefined;
-      }
       return this.buildKeyboard(resolved);
     }
     if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
@@ -478,6 +480,7 @@ class KeyboardManager {
     this.states.delete(key);
     this.lastUpdateTimes.delete(key);
     this.replyKeyboardFingerprints.delete(key);
+    this.lastRunningState.delete(key);
   }
 }
 

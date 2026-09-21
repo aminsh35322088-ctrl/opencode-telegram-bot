@@ -96,10 +96,15 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("🛑 Abort");
   });
 
-  it("hides the Topic keyboard markup on outbound messages while the session is running", () => {
+  it("returns the Topic keyboard with running controls while the session is running", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
     mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
-    expect(keyboardManager.getKeyboard(SESSION_ID)).toBeUndefined();
+    const keyboard = keyboardManager.getKeyboard(SESSION_ID);
+    expect(keyboard).toBeDefined();
+    const texts = keyboardTexts(keyboard);
+    expect(texts).toContain("🧠 Global Model");
+    expect(texts).toContain("⏸️ Pause");
+    expect(texts).toContain("🛑 Abort");
 
     mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
     const idleKeyboard = keyboardManager.getKeyboard(SESSION_ID);

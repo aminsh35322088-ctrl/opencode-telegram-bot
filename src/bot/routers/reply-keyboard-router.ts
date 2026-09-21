@@ -24,6 +24,7 @@ import { isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand 
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
+  MODEL_BUTTON_TEXT_PATTERN,
   QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
   VARIANT_BUTTON_TEXT_PATTERN,
 } from "../message-patterns.js";
@@ -179,6 +180,7 @@ async function handleReplyKeyboardInput(
     }
     if (scope.aiTopic && isExact(text, topicModelButton)) { if (await menuAllowed(ctx)) await topicModelsCommand(ctx); return; }
     if (scope.aiTopic && isExact(text, "🧠 Model Center")) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
+    if (scope.aiTopic && MODEL_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showModelCenterMenu(ctx); return; }
     if (scope.aiTopic && AGENT_MODE_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showAgentSelectionMenu(ctx); return; }
     if (scope.aiTopic && VARIANT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await showVariantSelectionMenu(ctx); return; }
     if (scope.aiTopic && CONTEXT_BUTTON_TEXT_PATTERN.test(text)) { if (await menuAllowed(ctx)) await handleContextButtonPress(ctx); return; }
