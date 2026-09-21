@@ -275,6 +275,29 @@ describe("bot/commands/new", () => {
     );
   });
 
+  it("keeps the new Topic when Telegram rejects the native service-message reply", async () => {
+    mocked.sessionCreateMock.mockResolvedValueOnce({
+      data: { id: "session-2", title: "Session Two" },
+      error: null,
+    });
+    const ctx = createContext();
+    const deps = createDeps();
+    deps.sendMessageMock.mockImplementation(async (_chatId, _text, options) => {
+      const replyMessageId = (options as { reply_parameters?: { message_id?: number } } | undefined)?.reply_parameters?.message_id;
+      if (replyMessageId === 42) throw new Error("400: Bad Request: message to be replied not found");
+      return { message_id: replyMessageId ? 702 : 700 };
+    });
+
+    await newCommand(ctx as never, deps);
+
+    const confirmationCalls = deps.sendMessageMock.mock.calls.filter((call) => String(call[1]).includes("Chat #01"));
+    expect(confirmationCalls).toHaveLength(2);
+    expect(confirmationCalls[1]?.[2]).toMatchObject({
+      reply_parameters: { message_id: 700, allow_sending_without_reply: false },
+    });
+    expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
   it("allows concurrent session creation", async () => {
     mocked.sessionCreateMock.mockResolvedValue({
       data: { id: "session-2", title: "Session Two" },
