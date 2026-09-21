@@ -1,3 +1,5 @@
+[Reading 193 lines from start (total: 193 lines, 0 remaining)]
+
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
@@ -7,6 +9,7 @@ import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
+import { createRustDeskBridgeClientFromEnv } from "../../app/services/rustdesk-bridge-service.js";
 
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingRailway { step: "name" | "token"; name?: string; messageId: number; }
@@ -38,6 +41,91 @@ function railwayValidationSuccess(validation: RailwayTokenValidation): string {
   const identity = [validation.subjectName, validation.subjectEmail].filter(Boolean).join(" · ");
   return `✅ Token verified · Account token${identity ? `\n${identity}` : ""}`;
 }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function listLength(value: unknown, key: string): number {
+  if (!isRecord(value)) return 0;
+  const items = value[key];
+  return Array.isArray(items) ? items.length : 0;
+}
+interface RustDeskIntegrationSummary {
+  configured: boolean;
+  healthy: boolean;
+  servers: number;
+  devices: number;
+  controlPlaneConfigured: boolean;
+}
+async function loadRustDeskIntegrationSummary(): Promise<RustDeskIntegrationSummary> {
+  try {
+    const client = createRustDeskBridgeClientFromEnv();
+    const [health, servers, devices] = await Promise.all([
+      client.execute({ action: "bridge.health" }),
+      client.execute({ action: "servers.list" }),
+      client.execute({ action: "devices.list" }),
+    ]);
+    const healthRecord = isRecord(health) ? health : {};
+    return {
+      configured: true,
+      healthy: healthRecord.ok === true,
+      servers: listLength(servers, "servers"),
+      devices: listLength(devices, "devices"),
+      controlPlaneConfigured: healthRecord.controlPlaneConfigured === true,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("RUSTDESK_BRIDGE_URL")) {
+      return {
+        configured: false,
+        healthy: false,
+        servers: 0,
+        devices: 0,
+        controlPlaneConfigured: false,
+      };
+    }
+    logger.warn("[Integrations] RustDesk bridge summary failed:", error);
+    return {
+      configured: true,
+      healthy: false,
+      servers: 0,
+      devices: 0,
+      controlPlaneConfigured: false,
+    };
+  }
+}
+export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
+  const summary = await loadRustDeskIntegrationSummary();
+  const status = !summary.configured
+    ? "⚪ Not configured"
+    : summary.healthy
+      ? "🟢 Bridge online"
+      : "🔴 Bridge unavailable";
+  const keyboard = new InlineKeyboard()
+    .text("🔄 Refresh", "integration:rustdesk:refresh").row()
+    .text("← Integrations", "integration:menu")
+    .text("🏠 Home", "main:home");
+  const lines = [
+    "🖥️ RustDesk",
+    "",
+    "Status: " + status,
+    "Server profiles: " + summary.servers,
+    "Permanent devices: " + summary.devices,
+    "Secure control plane: " + (summary.controlPlaneConfigured ? "Ready" : "Not ready"),
+    "",
+    "🔐 Passwords, 2FA codes, tokens, and private server keys are never shown here or sent to the AI model.",
+  ];
+  if (!summary.configured) {
+    lines.push("", "Configure RUSTDESK_BRIDGE_URL and bridge authentication in the trusted runtime first.");
+  } else {
+    lines.push("", "Saved server/device inventory is owned by the RustDesk Bridge control plane.");
+  }
+  const messageId = callbackMessageId(ctx);
+  if (messageId !== null && ctx.chat?.id) {
+    await ctx.api.editMessageText(ctx.chat.id, messageId, lines.join("\n"), { reply_markup: keyboard });
+    return;
+  }
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
 async function deleteInput(ctx: Context): Promise<void> { const messageId = ctx.message?.message_id; if (ctx.chat?.id && messageId) await ctx.api.deleteMessage(ctx.chat.id, messageId).catch(() => {}); }
 async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> { await ctx.api.editMessageText(ctx.chat!.id, messageId, text, { reply_markup: wizardKeyboard() }); }
 export async function showIntegrationsMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
@@ -45,7 +133,7 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   const githubActive = await getActiveGithubAccount();
   const railwayAccounts = await listRailwayAccounts();
   const railwayActive = await getActiveRailwayAccount();
-  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add");
+  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add").row().text("🖥️ RustDesk", "integration:rustdesk");
   for (const account of githubAccounts) {
     const label = account.id === githubActive?.id ? `✅ ${account.name}` : account.name;
     keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
@@ -55,7 +143,8 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
     keyboard.row().text(label, `integration:railway:select:${account.id}`).text("🗑️", `integration:railway:remove:${account.id}`);
   }
   keyboard.row().text("← Advanced", "integration:advanced").text("🏠 Home", "main:home");
-  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}`;
+  const rustDeskConfigured = Boolean(process.env.RUSTDESK_BRIDGE_URL?.trim());
+  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}\n\nRustDesk: ${rustDeskConfigured ? "Configured" : "Not configured"}`;
   const text = notice ? `${notice}\n\n${body}` : body;
   const targetMessageId = messageId ?? callbackMessageId(ctx);
   if (targetMessageId !== null && ctx.chat?.id) { await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard }); return; }
@@ -72,6 +161,7 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   await ctx.answerCallbackQuery().catch(() => {});
   if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx, state?.github?.messageId ?? state?.railway?.messageId, "❌ Setup cancelled."); return true; }
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
+  if (data === "integration:rustdesk" || data === "integration:rustdesk:refresh") { clearIntegrationWizard(); clearProviderWizard(); await showRustDeskIntegrationMenu(ctx); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
   if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ railway: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
@@ -103,3 +193,5 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   }
 }
 async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInput(ctx); try { await showIntegrationsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]
