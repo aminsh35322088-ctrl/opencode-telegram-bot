@@ -14,7 +14,7 @@ function deleteExpiredAbortRequests(now: number = Date.now()): void {
 /**
  * Registers that the next "Aborted" session.error for this session is an
  * expected consequence of an abort the bot itself initiated (user /abort,
- * stall watchdog recovery, scheduled-task cleanup, image-chat cancellation, or the
+ * stall watchdog recovery, scheduled-task cleanup, media-operation cancellation, or the
  * deterministic provider-retry policy) and must not be surfaced as a raw
  * 🔴 error in the middle of the conversation.
  */

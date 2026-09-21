@@ -6,7 +6,6 @@ import type { ContextInfo } from "./keyboard-types.js";
 export const MAIN_BUTTONS = {
   history: "🕘 History",
   newChat: "💬 New Chat",
-  newImageChat: "🎨 New Image Chat",
   mainSettings: "⚙️ Main Settings",
   topicSettings: "⚙️ Topic Settings",
   settings: "⚙️ Main Settings",
@@ -22,9 +21,10 @@ export const TOPIC_BUTTONS = {
   pause: MAIN_BUTTONS.pause,
   resume: MAIN_BUTTONS.resume,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
+  models: "🧠 Models",
   modelCenter: (model?: ModelInfo) => model?.providerID && model.modelID
     ? formatModelForButton(model.providerID, model.modelID, model.name)
-    : "🧠 Model",
+    : "🧠 Models",
   deleteChat: MAIN_BUTTONS.deleteChat,
   topicSettings: MAIN_BUTTONS.topicSettings,
 } as const;
@@ -43,7 +43,7 @@ function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
 }
 
 function addMainControls(keyboard: Keyboard): void {
-  keyboard.text(MAIN_BUTTONS.newChat).text(MAIN_BUTTONS.newImageChat).row();
+  keyboard.text(MAIN_BUTTONS.newChat).row();
   keyboard.text(MAIN_BUTTONS.history).text(MAIN_BUTTONS.mainSettings).row();
 }
 
@@ -70,16 +70,15 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   } else {
     addMainControls(keyboard);
   }
-  // Reply keyboards are chat-scoped in Telegram. Do not make them persistent:
-  // the router actively removes stale Topic controls when Main/General is used.
-  return keyboard.resized();
+  return options.isTopic === true
+    ? keyboard.resized()
+    : keyboard.resized();
 }
 
 /** Canonical Main/General navigation. Model choices live under Settings → Default Models. */
 export function createMainInlineKeyboard(_currentModel: ModelInfo): InlineKeyboard {
   return new InlineKeyboard()
     .text(MAIN_BUTTONS.newChat, "main:new")
-    .text(MAIN_BUTTONS.newImageChat, "main:new_image")
     .row()
     .text(MAIN_BUTTONS.history, "main:history")
     .text(MAIN_BUTTONS.mainSettings, "main:settings");

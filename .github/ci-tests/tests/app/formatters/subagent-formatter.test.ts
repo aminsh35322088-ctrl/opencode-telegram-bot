@@ -46,7 +46,7 @@ describe("summary/subagent-formatter", () => {
     expect(text).toContain("Model: openai/gpt-5.4");
     expect(text).not.toContain("Context:");
     expect(text).not.toContain("Cost:");
-    expect(text).toContain("📖 read src/bot/pinned/pinned-message-manager.ts");
+    expect(text).toContain("📖 Read File src/bot/pinned/pinned-message-manager.ts");
     expect(text).not.toContain("Working:");
   });
 
@@ -173,8 +173,8 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain("⚙️ Working...");
-    expect(text).not.toContain("📖 read\n");
+    expect(text).toContain("📖 Read File");
+    expect(text).not.toContain("⚙️ Working...");
   });
 
   it("uses input details instead of internal titles for running subagent tools", async () => {
@@ -261,9 +261,9 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain("🔍 grep [WARN]|[ERROR]");
-    expect(text).toContain("📖 read src/app/formatters/subagent-formatter.ts");
-    expect(text).toContain("📁 glob **/*.ts");
+    expect(text).toContain("🔍 Search Text [WARN]|[ERROR]");
+    expect(text).toContain("📖 Read File src/app/formatters/subagent-formatter.ts");
+    expect(text).toContain("📁 Find Files **/*.ts");
     expect(text).not.toContain("22460fc65b183e6921717bba0c84ccfcf4b57982");
   });
 
@@ -303,7 +303,7 @@ describe("summary/subagent-formatter", () => {
 
       const text = await renderSubagentCards([buildSubagent(now - 45_000)], now);
 
-      expect(text).toContain("💻 bash npm test · 🕒 40s");
+      expect(text).toContain("💻 Run Command npm test · 🕒 40s");
     });
 
     it("keeps the step unchanged below the threshold", async () => {
@@ -311,7 +311,7 @@ describe("summary/subagent-formatter", () => {
 
       const text = await renderSubagentCards([buildSubagent(now - 5_000)], now);
 
-      expect(text).toContain("💻 bash npm test");
+      expect(text).toContain("💻 Run Command npm test");
       expect(text).not.toContain("🕒");
     });
 
@@ -320,7 +320,7 @@ describe("summary/subagent-formatter", () => {
 
       const text = await renderSubagentCards([buildSubagent(undefined)], now);
 
-      expect(text).toContain("💻 bash npm test");
+      expect(text).toContain("💻 Run Command npm test");
       expect(text).not.toContain("🕒");
     });
   });

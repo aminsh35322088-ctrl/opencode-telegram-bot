@@ -288,6 +288,7 @@ export default tool({
   },
   async execute(args, context) {
     const action = args.action.trim();
+    const base = context.directory || context.worktree || process.cwd();
     const downloadPath = action === "files.download" ? clean(args.local_path) : undefined;
     if (action === "files.download" && !downloadPath) {
       throw new Error("files.download requires local_path");
@@ -346,7 +347,7 @@ export default tool({
     if (action === "files.upload") {
       const localPath = clean(args.local_path);
       if (!localPath) throw new Error("files.upload requires local_path");
-      const absolute = resolveInsideWorktree(context.worktree, localPath);
+      const absolute = resolveInsideWorktree(base, localPath);
       const file = await fs.readFile(absolute);
       const maxBytes = maxTransferBytes();
       if (file.byteLength > maxBytes) {
@@ -401,7 +402,7 @@ export default tool({
           clean(args.connection_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") ||
           "device";
         const localPath = requestedPath ?? `.opencode/rustdesk/${targetPart}-screen-${Date.now()}${imageExtension(result)}`;
-        const absolute = resolveInsideWorktree(context.worktree, localPath);
+        const absolute = resolveInsideWorktree(base, localPath);
         await fs.mkdir(path.dirname(absolute), { recursive: true });
         await fs.writeFile(absolute, image);
         return stringify({ ...resultWithoutBinary(result), localPath, bytes: image.byteLength });
@@ -411,7 +412,7 @@ export default tool({
     if (action === "files.download") {
       const contentBase64 = getBase64(result, "contentBase64");
       if (!contentBase64) throw new Error("RustDesk bridge did not return contentBase64 for files.download");
-      const absolute = resolveInsideWorktree(context.worktree, downloadPath!);
+      const absolute = resolveInsideWorktree(base, downloadPath!);
       await fs.mkdir(path.dirname(absolute), { recursive: true });
       const file = Buffer.from(contentBase64, "base64");
       const maxBytes = maxTransferBytes();

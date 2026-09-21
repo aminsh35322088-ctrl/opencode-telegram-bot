@@ -68,7 +68,6 @@ function staticControlMap(): ReadonlyMap<string, string> {
   const add = (text: string, id: string): void => { controls.set(normalize(text), id); };
   add(MAIN_BUTTONS.history, "history");
   add(MAIN_BUTTONS.newChat, "new-chat");
-  add(MAIN_BUTTONS.newImageChat, "new-image-chat");
   add(MAIN_BUTTONS.mainSettings, "main-settings");
   add(MAIN_BUTTONS.topicSettings, "topic-settings");
   add(MAIN_BUTTONS.deleteChat, "delete-chat");

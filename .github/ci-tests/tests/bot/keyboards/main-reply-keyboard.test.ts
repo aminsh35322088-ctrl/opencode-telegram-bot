@@ -22,7 +22,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     );
 
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "💬 New Chat" }, { text: "🎨 New Image Chat" }],
+      [{ text: "💬 New Chat" }],
       [{ text: "🕘 History" }, { text: "⚙️ Main Settings" }],
     ]);
     expect(keyboard.keyboard.flat().map(getButtonText)).not.toContain("🧠 GPT 4o");
@@ -30,7 +30,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(keyboard.is_persistent).toBeUndefined();
   });
 
-  it("shows model selection only inside an AI Topic", () => {
+  it("shows the unified Models hub only inside an AI Topic", () => {
     const keyboard = createMainKeyboard({
       providerID: "very-long-provider-name-that-keeps-going-and-going",
       modelID: "vendor/very-long-model-name-that-keeps-going-and-going",
@@ -41,6 +41,7 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(labels).toContain("🧠 Custom Model 2026");
     expect(labels.join("\n")).not.toContain("very-long-provider-name");
     expect(labels.join("\n")).not.toContain(" · ");
+    expect(keyboard.is_persistent).not.toBe(true);
   });
 
   it("reflects compact mode state in an AI Topic", () => {
@@ -59,7 +60,6 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 0, 0)).toBe("❌ 1. first");
     expect(buttonTextAt(keyboard, 1, 0)).toBe("❌ 2. second");
     expect(buttonTextAt(keyboard, 2, 0)).toBe("💬 New Chat");
-    expect(buttonTextAt(keyboard, 2, 1)).toBe("🎨 New Image Chat");
     expect(buttonTextAt(keyboard, 3, 0)).toBe("🕘 History");
     expect(buttonTextAt(keyboard, 3, 1)).toBe("⚙️ Main Settings");
   });
@@ -85,7 +85,6 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     const labels = keyboard.keyboard.flat().map(getButtonText);
     expect(labels).not.toContain("🎨 Image AI");
     expect(labels).not.toContain("💬 New Chat");
-    expect(labels).not.toContain("🎨 New Image Chat");
     expect(labels).not.toContain("🕘 History");
     expect(labels).not.toContain("⚙️ Main Settings");
   });

@@ -10,6 +10,7 @@ import { openSessionInTelegramTopic, sendToTelegramTopic } from "../../app/servi
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { enrichTelegramReplyContext } from "../../app/services/telegram-reply-context-service.js";
+import { captureTelegramMessageContext } from "../../app/services/telegram-message-context-service.js";
 import { stashRawReplyKeyboardText } from "../interaction-classifier.js";
 import { createTopicAwareBot, getTelegramTopicRuntimeDependencies } from "../services/telegram-topic-runtime.js";
 import { logger } from "../../utils/logger.js";
@@ -227,6 +228,12 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
             return;
           }
 
+          await captureTelegramMessageContext(ctx, {
+            chatId: binding.chatId,
+            threadId: binding.threadId,
+            sessionId: binding.sessionId,
+            worktree: binding.directory,
+          });
           await enrichTelegramReplyContext(ctx, binding.directory);
           await next();
         },

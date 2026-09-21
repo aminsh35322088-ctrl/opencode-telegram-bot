@@ -8,7 +8,6 @@ import { getCompactOutputMode, getMainNavigationMessageId, setMainNavigationMess
 import { getTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
-import { t } from "../../i18n/index.js";
 import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -51,6 +50,8 @@ class KeyboardManager {
   private readonly mainInlineMessageIds = new Map<number, number>();
   private readonly mainAnchorLocks = new Map<number, Promise<void>>();
   private readonly topicModeChats = new Set<number>();
+  private readonly replyKeyboardFingerprints = new Map<string, string>();
+  private readonly topicKeyboardUpdates = new Map<string, Promise<void>>();
   private readonly UPDATE_DEBOUNCE_MS = 2000;
 
   private key(sessionId?: string): string { return sessionId ?? MAIN_KEY; }
@@ -349,6 +350,32 @@ class KeyboardManager {
   public clearContext(sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = null; }
   public getContextInfo(sessionId?: string): ContextInfo | null { return this.state(sessionId)?.contextInfo ?? null; }
 
+  private replyKeyboardFingerprint(sessionId?: string): string | null {
+    const keyboard = this.buildKeyboard(sessionId);
+    if (!keyboard) return null;
+    return JSON.stringify({
+      keyboard: keyboard.keyboard,
+      resize_keyboard: keyboard.resize_keyboard,
+      is_persistent: keyboard.is_persistent,
+      one_time_keyboard: keyboard.one_time_keyboard,
+    });
+  }
+
+  public markKeyboardDelivered(sessionId: string): void {
+    const fingerprint = this.replyKeyboardFingerprint(sessionId);
+    if (fingerprint) this.replyKeyboardFingerprints.set(this.key(sessionId), fingerprint);
+  }
+
+  /** Explicit user recovery must bypass layout deduplication, including during inference. */
+  public async restoreTopicKeyboard(sessionId: string): Promise<void> {
+    await this.queueTopicKeyboardUpdate(sessionId, async () => {
+      const state = this.state(sessionId);
+      if (!state?.sessionId || state.threadId === undefined) return;
+      this.replyKeyboardFingerprints.delete(this.key(sessionId));
+      await this.deliverKeyboardUpdate(state.chatId, true, sessionId);
+    });
+  }
+
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     if (state?.sessionId && state.threadId !== undefined) {
@@ -366,31 +393,59 @@ class KeyboardManager {
   }
 
   public async sendKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
+    const resolved = this.resolveSessionId(sessionId);
+    if (!resolved) return this.deliverKeyboardUpdate(chatId, force);
+    await this.queueTopicKeyboardUpdate(resolved, () => this.deliverKeyboardUpdate(chatId, force, resolved));
+  }
+
+  private async queueTopicKeyboardUpdate(sessionId: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.topicKeyboardUpdates.get(sessionId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    this.topicKeyboardUpdates.set(sessionId, current);
+    try { await current; }
+    finally {
+      if (this.topicKeyboardUpdates.get(sessionId) === current) this.topicKeyboardUpdates.delete(sessionId);
+    }
+  }
+
+  private async deliverKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
     if (!this.api) return;
     const resolvedSessionId = this.resolveSessionId(sessionId);
     const state = this.state(resolvedSessionId);
+    // A queued refresh may outlive a deleted Topic; never turn it into Main UI.
+    if (resolvedSessionId && !state) return;
     const targetChatId = chatId ?? state?.chatId;
     if (!targetChatId) return;
     const key = this.key(resolvedSessionId);
+    const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
+
+    // State transitions must arrive even within debounce (idle -> running ->
+    // paused). Deduplicate identical layouts, never suppress running controls.
+    const fingerprint = isTopic ? this.replyKeyboardFingerprint(resolvedSessionId) : null;
+    if (fingerprint && this.replyKeyboardFingerprints.get(key) === fingerprint) return;
+
     const now = Date.now();
     const previous = this.lastUpdateTimes.get(key) ?? 0;
-    if (!force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
+    if (!isTopic && !force && now - previous < this.UPDATE_DEBOUNCE_MS) return;
     this.lastUpdateTimes.set(key, now);
     try {
-      const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
       if (!isTopic) { await this.sendMainInlineKeyboard(targetChatId, state?.currentModel ?? getStoredModel(), true); return; }
       const keyboard = this.buildKeyboard(resolvedSessionId);
-      const options: Record<string, unknown> = { reply_markup: keyboard };
+      const options: Record<string, unknown> = { reply_markup: keyboard, disable_notification: true };
       const threadId = normalizeOutboundThreadId(state?.threadId);
       if (threadId !== undefined) options.message_thread_id = threadId;
-      await this.api.sendMessage(targetChatId, t("keyboard.updated"), options as never);
-      logger.info(`[KeyboardManager] Sent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
+      await this.api.sendMessage(targetChatId, "⌨️ Keyboard updated", options as never);
+      if (fingerprint) this.replyKeyboardFingerprints.set(key, fingerprint);
+      logger.info(`[KeyboardManager] Refreshed persistent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
   public getKeyboard(sessionId?: string) {
     const resolved = this.resolveSessionId(sessionId);
-    if (this.state(resolved)) return this.buildKeyboard(resolved);
+    const state = this.state(resolved);
+    if (state) {
+      return this.buildKeyboard(resolved);
+    }
     if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
     return undefined;
   }
@@ -398,7 +453,26 @@ class KeyboardManager {
   public getState(sessionId?: string): KeyboardState | undefined { return this.state(sessionId); }
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)) || (!sessionId && Boolean(this.api)); }
   public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
-  public clearSession(sessionId: string): void { this.states.delete(this.key(sessionId)); this.lastUpdateTimes.delete(this.key(sessionId)); }
+
+  /**
+   * Authoritative delivery target for a Topic session. Async session output
+   * must be pinned to this thread so it cannot leak into All/General even when
+   * the chat-global bot context was last clobbered by unbound inbound traffic.
+   */
+  public getTopicSendTarget(sessionId?: string): { chatId: number; threadId: number } | undefined {
+    const state = this.state(sessionId);
+    const chatId = state?.chatId;
+    const threadId = state?.threadId;
+    if (!state || chatId === undefined || threadId === undefined || threadId <= 1) return undefined;
+    return { chatId, threadId };
+  }
+
+  public clearSession(sessionId: string): void {
+    const key = this.key(sessionId);
+    this.states.delete(key);
+    this.lastUpdateTimes.delete(key);
+    this.replyKeyboardFingerprints.delete(key);
+  }
 }
 
 export const keyboardManager = new KeyboardManager();

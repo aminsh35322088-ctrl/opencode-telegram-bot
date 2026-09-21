@@ -2,7 +2,7 @@ import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { Bot, Context, InputFile } from "grammy";
+import { Bot, Context, InputFile, type Api } from "grammy";
 import { config } from "../../config.js";
 import { t } from "../../i18n/index.js";
 import {
@@ -35,6 +35,7 @@ import { stopSessionStallWatchdog } from "../../app/services/session-stall-watch
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { createTopicAwareApi, getUnscopedTelegramApi } from "./telegram-topic-runtime.js";
 import { clearPromptResponseMode } from "../handlers/prompt.js";
 import {
   reconcileBusyState,
@@ -60,6 +61,7 @@ import { formatAssistantRunFooter } from "../../app/formatters/assistant-run-foo
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { scheduledTaskRuntime } from "../../app/services/scheduled-task-runtime-service.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { clearPausedSession, isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { ResponseStreamer, type StreamingMessagePayload } from "../streaming/response-streamer.js";
 import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
 import { RunningToolTracker, type RunningToolTick } from "../streaming/running-tool-tracker.js";
@@ -85,6 +87,10 @@ import {
 } from "../messages/thinking-rendering.js";
 import { deliverExternalUserInputNotification } from "../messages/external-user-input-notification.js";
 import { dispatchNextQueuedPrompt } from "../handlers/prompt-queue-dispatch.js";
+import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
+import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
+import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
+import { updateTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import {
   backgroundSessionTracker,
   type BackgroundSessionNotification,
@@ -190,8 +196,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         if (!chatId) return;
 
         const keyboard = this.getCurrentReplyKeyboard(sessionId);
+        const api = this.sessionScopedApi(sessionId);
 
-        await this.botInstance.api.sendMessage(chatId, text, {
+        await api.sendMessage(chatId, text, {
           disable_notification: true,
           ...(keyboard ? { reply_markup: keyboard } : {}),
         });
@@ -219,8 +226,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           await fs.writeFile(tempFilePath, fileData.buffer);
 
           const keyboard = this.getCurrentReplyKeyboard(sessionId);
+          const api = this.sessionScopedApi(sessionId);
 
-          await this.botInstance.api.sendDocument(
+          await api.sendDocument(
             chatId,
             new InputFile(tempFilePath),
             {
@@ -257,7 +265,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
+        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
           disable_notification: true,
         });
 
@@ -303,7 +311,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const sentMessage = await this.botInstance.api.sendMessage(chatId, text, {
+        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
           disable_notification: true,
         });
 
@@ -374,6 +382,20 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private getKeyboardForSession(sessionId: string) {
     if (!keyboardManager.isInitialized()) return undefined;
     return keyboardManager.getKeyboard(sessionId);
+  }
+
+  /**
+   * Async session output must land in the session's own AI Topic thread. The
+   * chat-global bot context can be clobbered by General/All inbound traffic
+   * (no session id and an unbound api), so derive the authoritative Topic
+   * delivery target from the keyboard manager instead of the last inbound frame.
+   */
+  private sessionScopedApi(sessionId: string): Api {
+    const botApi = this.botInstance?.api;
+    if (!botApi) throw new Error("Bot context missing for session-scoped send");
+    const target = keyboardManager.getTopicSendTarget(sessionId);
+    const raw = getUnscopedTelegramApi(botApi);
+    return target ? createTopicAwareApi(raw, target) : raw;
   }
 
   private getLiveToolPrefix(callId: string): string {
@@ -793,7 +815,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           return;
         }
 
-        const botApi = this.botInstance.api;
+        const botApi = this.sessionScopedApi(sessionId);
 
         try {
           assistantRunState.markResponseCompleted(sessionId, {
@@ -868,8 +890,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
         try {
           await deliverExternalUserInputNotification({
-            api: this.botInstance.api,
-            chatId: this.chatIdInstance,
+            api: this.sessionScopedApi(sessionId),
+            chatId: this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
             currentSessionId: getCurrentSession()?.id ?? null,
             sessionId,
             text: messageText,
@@ -1419,6 +1441,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
       clearPromptResponseMode(sessionId);
 
+      // Pause intentionally owns the only user-visible completion message.
+      // Drop queued tool/footer output and let pauseCurrentChat attach the
+      // paused ReplyKeyboard to that single message.
+      if (isChatPaused(sessionId)) {
+        this.toolMessageBatcher.clearSession(sessionId, "session_idle_paused");
+        this.toolCallStreamer.clearSession(sessionId, "session_idle_paused");
+        this.clearAssistantResponseSession(sessionId, "session_idle_paused");
+        foregroundSessionState.markIdle(sessionId);
+        await scheduledTaskRuntime.flushDeferredDeliveries();
+        return;
+      }
+
       if (!this.botInstance || !this.chatIdInstance) {
         foregroundSessionState.markIdle(sessionId);
         return;
@@ -1443,9 +1477,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           const modelID = completedRun.actualModelID || completedRun.configuredModelID;
 
           if (agent && providerID && modelID) {
-            const keyboard = this.getCurrentReplyKeyboard();
-            await this.botInstance.api.sendMessage(
-              this.chatIdInstance,
+            const keyboard = this.getCurrentReplyKeyboard(sessionId);
+            await this.sessionScopedApi(sessionId).sendMessage(
+              this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
               formatAssistantRunFooter({
                 agent,
                 providerID,
@@ -1462,6 +1496,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         logger.error("[Bot] Failed to send session idle footer:", err);
       } finally {
         foregroundSessionState.markIdle(sessionId);
+        try {
+          await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
+        } catch (error) {
+          logger.warn(`[Bot] Failed to restore keyboard after session idle: session=${sessionId}`, error);
+        }
         await scheduledTaskRuntime.flushDeferredDeliveries();
         void dispatchNextQueuedPrompt();
       }
@@ -1471,19 +1510,47 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       interactionEventGate.clearSession(sessionId);
       await markAttachedSessionIdle(sessionId);
       this.clearToolElapsedState(sessionId, "session_error");
+      stopSessionStallWatchdog(sessionId);
+      clearToolActivity(sessionId);
+      promptQueue.clear("session_error", sessionId);
+      promptAttachment.clear("session_error", sessionId);
+      clearAllInteractionState("session_error");
 
+      const normalizedMessage = message.trim() || t("common.unknown_error");
+      const currentSession = getCurrentSession();
+
+      // An abort-related error emitted after a bot/user initiated abort is expected.
+      // Keep it silent and only release local state.
+      if (shouldSuppressUserAbortSessionError(sessionId, normalizedMessage)) {
+        logger.debug(`[Bot] Suppressed expected abort error: session=${sessionId}`);
+        clearPromptResponseMode(sessionId);
+        this.clearAssistantResponseSession(sessionId, "session_error_abort_suppressed");
+        this.toolCallStreamer.clearSession(sessionId, "session_error_abort_suppressed");
+        this.compactProgressStreamer.clearSession(sessionId, "session_error_abort_suppressed");
+        assistantRunState.clearRun(sessionId, "session_error_abort_suppressed");
+        foregroundSessionState.markIdle(sessionId);
+        const keyboardState = keyboardManager.getState(sessionId);
+        if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
+          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: isChatPaused(sessionId) ? "paused" : "idle" });
+        }
+        await scheduledTaskRuntime.flushDeferredDeliveries();
+        return;
+      }
+
+      clearPausedSession(sessionId);
       if (!this.botInstance || !this.chatIdInstance) {
         clearPromptResponseMode(sessionId);
+        this.clearAssistantResponseSession(sessionId, "session_error_no_bot_context");
+        this.toolCallStreamer.clearSession(sessionId, "session_error_no_bot_context");
         this.compactProgressStreamer.clearSession(sessionId, "session_error_no_bot_context");
         assistantRunState.clearRun(sessionId, "session_error_no_bot_context");
         foregroundSessionState.markIdle(sessionId);
         return;
       }
 
-      const currentSession = getCurrentSession();
       if (!currentSession || currentSession.id !== sessionId) {
         clearPromptResponseMode(sessionId);
-          this.clearAssistantResponseSession(sessionId, "session_error_not_current");
+        this.clearAssistantResponseSession(sessionId, "session_error_not_current");
         this.toolCallStreamer.clearSession(sessionId, "session_error_not_current");
         this.compactProgressStreamer.clearSession(sessionId, "session_error_not_current");
         assistantRunState.clearRun(sessionId, "session_error_not_current");
@@ -1501,28 +1568,36 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         this.toolCallStreamer.flushSession(sessionId, "session_error"),
       ]);
 
-      const normalizedMessage = message.trim() || t("common.unknown_error");
-      if (shouldSuppressUserAbortSessionError(sessionId, normalizedMessage)) {
-        logger.debug(`[Bot] Suppressed user-initiated abort error: session=${sessionId}`);
-        foregroundSessionState.markIdle(sessionId);
-        await scheduledTaskRuntime.flushDeferredDeliveries();
-        return;
-      }
+      const recovery = await recoverSessionAfterError(sessionId, currentSession.directory, normalizedMessage);
+      logger.warn(`[Bot] Session error recovery finished: session=${sessionId} abortAccepted=${recovery.abortAccepted} removedMessages=${recovery.removedMessageIds.length} contaminationRemaining=${recovery.contaminationRemaining}`);
 
-      const truncatedMessage =
-        normalizedMessage.length > 3500
-          ? `${normalizedMessage.slice(0, 3497)}...`
-          : normalizedMessage;
+      const truncatedMessage = normalizedMessage.length > 3500
+        ? `${normalizedMessage.slice(0, 3497)}...`
+        : normalizedMessage;
 
-      await this.botInstance.api
-        .sendMessage(this.chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
-        .catch((err) => {
-          logger.error("[Bot] Failed to send session.error message:", err);
-        });
+      await this.sessionScopedApi(sessionId)
+        .sendMessage(this.getChatIdForSession(sessionId) ?? this.chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
+        .catch((err) => logger.error("[Bot] Failed to send session.error message:", err));
 
       foregroundSessionState.markIdle(sessionId);
+      clearPausedSession(sessionId);
+      keyboardManager.setPaused(false, sessionId);
+      const keyboardState = keyboardManager.getState(sessionId);
+      if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
+        const scopeKey = `${keyboardState.chatId}:${keyboardState.threadId}`;
+        questionManager.clearSession(scopeKey);
+        permissionManager.clearSession(scopeKey);
+        interactionManager.clearSession(scopeKey);
+        updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "idle" });
+      }
+      try {
+        await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
+      } catch (error) {
+        logger.warn(`[Bot] Failed to restore keyboard after session error: session=${sessionId}`, error);
+      }
       await scheduledTaskRuntime.flushDeferredDeliveries();
-      void dispatchNextQueuedPrompt();
+      // Intentionally do NOT dispatch queued prompts after an error. The chat is stopped
+      // until the user explicitly sends a new prompt.
     });
 
     summaryAggregator.setOnSessionRetry(async ({ sessionId, message }) => {

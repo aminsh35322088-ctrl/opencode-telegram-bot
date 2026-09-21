@@ -574,8 +574,51 @@ describe("bot/services/event-subscription-service", () => {
       },
       { timeout: 3000 },
     );
-    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("write");
+    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("Write File");
     expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
+  it("does not emit footer or keyboard-update messages when idle is caused by Pause", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const { setPausedSession, clearPausedSession } = await import("../../../src/app/managers/paused-session-manager.js");
+
+    setPausedSession({ id: "session-1", title: "Test session", directory: "D:/repo" });
+    api.sendMessage.mockClear();
+
+    emitSessionIdle(summaryAggregator);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    clearPausedSession("session-1");
+  });
+
+  it("routes session output for an AI Topic session to its thread even after General clobbered the context", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+
+    // The General/All path sets the chat context with an unbound bot and no
+    // session id is registered (simulated here by the plain setup call above),
+    // so async session output would otherwise lose message_thread_id and leak
+    // the AI Topic reply keyboard into All/root.
+    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
+    keyboardManager.bindTopic(api as never, 42, 7, "session-1");
+
+    emitWriteTool(summaryAggregator);
+
+    await vi.waitFor(
+      () => {
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3000 },
+    );
+    const options = api.sendMessage.mock.calls[0]?.[2] as { message_thread_id?: number; reply_markup?: unknown };
+    expect(options).toBeDefined();
+    expect(options!.message_thread_id).toBe(7);
+
+    // While the run is active the session output carries no reply keyboard, so
+    // it cannot force the keyboard open or drag it into the wrong thread.
+    expect(options!.reply_markup).toBeUndefined();
+
+    keyboardManager.clearSession("session-1");
   });
 
   describe("elapsed time for long tool calls", () => {
@@ -648,7 +691,7 @@ describe("bot/services/event-subscription-service", () => {
       await vi.advanceTimersByTimeAsync(ELAPSED_SETTLE_MS);
 
       const texts = collectSentTexts(api);
-      expect(texts.some((text) => text.includes("💻 bash"))).toBe(true);
+      expect(texts.some((text) => text.includes("💻 Run Command"))).toBe(true);
       expect(texts.some((text) => text.includes("20s"))).toBe(true);
     });
 

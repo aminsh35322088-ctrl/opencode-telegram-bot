@@ -17,8 +17,8 @@ describe("bot/routers/command-utils", () => {
     expect(isKnownCommand("status")).toBe(true);
     expect(isKnownCommand("start")).toBe(true);
     expect(isKnownCommand("help")).toBe(true);
-    expect(isKnownCommand("new_image")).toBe(true);
-    expect(isKnownCommand("new_design")).toBe(true);
+    expect(isKnownCommand("new_image")).toBe(false);
+    expect(isKnownCommand("new_design")).toBe(false);
     expect(isKnownCommand("detach")).toBe(false);
     expect(isKnownCommand("skills")).toBe(false);
     expect(isKnownCommand("tts")).toBe(false);

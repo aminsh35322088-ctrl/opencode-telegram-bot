@@ -6,6 +6,7 @@ export interface BotCommandDefinition {
 
 const COMMAND_DEFINITIONS: BotCommandDefinition[] = [
   { command: "start", description: "🚀 Start bot & show bot/OpenCode versions" },
+  { command: "keyboard", description: "⌨️ Restore AI Topic keyboard" },
   { command: "update", description: "🔄 Check for bot/OpenCode updates" },
   { command: "all", description: "🧰 All integrated versions (use /all version info)" },
   { command: "help", description: "❓ Show help & available features" },
@@ -25,8 +26,6 @@ const COMMAND_DEFINITIONS: BotCommandDefinition[] = [
   { command: "context", description: "📊 Open Context controls in the current AI Topic" },
   { command: "compact", description: "📦 Toggle compact output mode in the current AI Topic" },
   { command: "delete_topic", description: "🗑️ Delete the current AI Topic" },
-  { command: "new_image", description: "🎨 Create a dedicated Image Chat" },
-  { command: "new_design", description: "🖼 Start a fresh design in Image Chat" },
 ];
 
 export function getLocalizedBotCommands(): BotCommandDefinition[] {

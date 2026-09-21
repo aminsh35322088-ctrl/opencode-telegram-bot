@@ -29,10 +29,11 @@ export default tool({
     lines: tool.schema.number().optional().describe("Maximum lines to return, default 100, capped at 500."),
   },
   async execute(args, context) {
+    const base = context.directory || context.worktree || process.cwd();
     const out: string[] = [];
     const remaining = { value: Math.max(1, Math.min(args.lines ?? 100, MAX_LINES)) };
     await collect("/data/logs", out, remaining, args.pattern);
-    if (remaining.value > 0) await collect(path.join(context.worktree, ".logs"), out, remaining, args.pattern);
+    if (remaining.value > 0) await collect(path.join(base, ".logs"), out, remaining, args.pattern);
     return out.length ? out.join("\n").slice(0, 20000) : "No matching logs found.";
   },
 });

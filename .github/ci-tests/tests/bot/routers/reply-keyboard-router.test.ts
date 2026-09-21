@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   showVariantSelectionMenu: vi.fn(),
   handleContextButtonPress: vi.fn(),
   settingsCommand: vi.fn(),
+  topicModelsCommand: vi.fn(),
   sessionsCommand: vi.fn(),
   newCommand: vi.fn(),
   abortCurrentOperation: vi.fn(),
@@ -42,7 +43,7 @@ vi.mock("../../../src/bot/menus/model-center-menu.js", () => ({ showModelCenterM
 vi.mock("../../../src/bot/menus/agent-selection-menu.js", () => ({ showAgentSelectionMenu: mocks.showAgentSelectionMenu }));
 vi.mock("../../../src/bot/menus/variant-selection-menu.js", () => ({ showVariantSelectionMenu: mocks.showVariantSelectionMenu }));
 vi.mock("../../../src/bot/menus/context-control-menu.js", () => ({ handleContextButtonPress: mocks.handleContextButtonPress }));
-vi.mock("../../../src/bot/commands/settings-command.js", () => ({ settingsCommand: mocks.settingsCommand }));
+vi.mock("../../../src/bot/commands/settings-command.js", () => ({ settingsCommand: mocks.settingsCommand, topicModelsCommand: mocks.topicModelsCommand }));
 vi.mock("../../../src/bot/commands/sessions-command.js", () => ({ sessionsCommand: mocks.sessionsCommand }));
 vi.mock("../../../src/bot/commands/new-command.js", () => ({ newCommand: mocks.newCommand }));
 vi.mock("../../../src/bot/commands/abort-command.js", () => ({ abortCurrentOperation: mocks.abortCurrentOperation }));
@@ -93,7 +94,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     mocks.findQueuedPromptByButtonLabel.mockReturnValue(null);
   });
 
-  const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "📦 Compact: OFF", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
+  const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "📦 Compact: OFF", "🧠 Models", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
 
   for (const button of topicButtons) {
     it(`consumes "${button}" inside a topic without forwarding it as a prompt`, async () => {
@@ -111,6 +112,13 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     await handler(makeTopicContext("🛑 Abort"), next);
     expect(mocks.abortCurrentOperation).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the unified Models hub inside a topic", async () => {
+    const { handler, next } = registerHandler();
+    await handler(makeTopicContext("🧠 Models"), next);
+    expect(mocks.topicModelsCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.showModelCenterMenu).not.toHaveBeenCalled();
   });
 
   it("dispatches Model Center inside a topic", async () => {
@@ -164,7 +172,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
   it("consumes dynamic model-name buttons inside a topic", async () => {
     mocks.keyboardManager.getState.mockReturnValue({ sessionId: SESSION_ID, currentModel: { providerID: "p", modelID: "m", name: "Topic Model" } });
     const { handler, next } = registerHandler();
-    await handler(makeTopicContext("🧠 p/m Topic Model"), next);
+    await handler(makeTopicContext("🧠 Topic Model"), next);
     expect(next).not.toHaveBeenCalled();
   });
 

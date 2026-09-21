@@ -4,6 +4,7 @@ set -u
 DATA_ROOT="/data"
 WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
 OPENCODE_DB="$DATA_ROOT/.local/share/opencode/opencode.db"
+OPENCODE_LOG="$DATA_ROOT/.local/share/opencode/log/opencode.log"
 PERSISTENT_REPO="$DATA_ROOT/opencode/opencode-telegram-bot"
 
 free_mb() {
@@ -18,6 +19,23 @@ printf '%s\n' "[railway-maintenance] Starting safe volume maintenance: free=${be
 if [ -d "$DATA_ROOT/.cache/gh" ]; then
   rm -rf "$DATA_ROOT/.cache/gh" || true
   printf '%s\n' "[railway-maintenance] Cleared disposable GitHub CLI cache"
+fi
+
+# Preserve recent OpenCode diagnostics without allowing the previous process log
+# to consume a large fraction of the tiny persistent volume. This runs before
+# OpenCode starts, so there is no active writer to this file yet.
+if [ -f "$OPENCODE_LOG" ]; then
+  log_bytes="$(wc -c < "$OPENCODE_LOG" 2>/dev/null || echo 0)"
+  if [ "${log_bytes:-0}" -ge 8388608 ]; then
+    log_tmp="$OPENCODE_LOG.maintenance-tmp"
+    if tail -c 1048576 "$OPENCODE_LOG" > "$log_tmp" 2>/dev/null && cat "$log_tmp" > "$OPENCODE_LOG"; then
+      rm -f "$log_tmp"
+      printf '%s\n' "[railway-maintenance] Trimmed OpenCode log from ${log_bytes} bytes to the most recent 1MB"
+    else
+      rm -f "$log_tmp"
+      printf '%s\n' "[railway-maintenance] OpenCode log trim skipped/failed; continuing startup"
+    fi
+  fi
 fi
 
 # OpenCode uses SQLite WAL mode. At startup there should be no bot-owned DB

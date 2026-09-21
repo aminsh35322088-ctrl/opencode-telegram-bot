@@ -94,6 +94,7 @@ export default tool({
   async execute(args, context) {
     const started = Date.now();
     const action = args.action;
+    const base = context.directory || context.worktree || process.cwd();
     const timeout = timeoutMs(args.timeoutMs);
     const result: Record<string, unknown> = {
       ok: true,
@@ -138,11 +139,11 @@ export default tool({
     };
 
     if (action === "full") {
-      checks.project = await packageCheck(context.worktree);
-      checks.disk = await command("df", ["-h", "/data"], context.worktree, context.abort, timeout);
+      checks.project = await packageCheck(base);
+      checks.disk = await command("df", ["-h", "/data"], base, context.abort, timeout);
       const tools: Record<string, unknown> = {};
       for (const [name, argsList] of [["node", ["--version"]], ["npm", ["--version"]], ["git", ["--version"]], ["tsc", ["--version"]], ["vitest", ["--version"]], ["eslint", ["--version"]]] as const) {
-        tools[name] = await command(name, argsList, context.worktree, context.abort, timeout);
+        tools[name] = await command(name, argsList, base, context.abort, timeout);
       }
       checks.executables = tools;
     }

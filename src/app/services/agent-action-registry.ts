@@ -54,16 +54,24 @@ export const CUSTOM_TOOL_ACTIONS = {
     "integrations.railway.list", "integrations.railway.active", "integrations.railway.select", "integrations.railway.remove",
     "version.info",
   ],
+  file: ["read", "write", "search", "grep", "info", "delete", "copy", "move"],
+  git: ["status", "diff", "log", "commit", "push", "pull", "branch", "checkout", "stash", "merge", "rebase", "blame", "tags", "remote", "fetch", "reset"],
+  monitoring: ["tail", "grep", "health", "metrics", "alerts"],
+  notify: ["send", "alert", "schedule", "list", "cancel"],
+  security: ["secrets", "audit", "permissions", "deps"],
+  "session-extended": ["create", "delete", "export", "list-all", "archive"],
+  test: ["test", "lint", "typecheck", "build", "test-file", "lint-fix"],
   browser: [
     "open", "goto", "back", "forward", "reload", "snapshot", "screenshot", "click", "fill", "type", "press",
     "hover", "check", "uncheck", "select", "close", "tab-list", "tab-new", "tab-select", "tab-close", "requests", "console", "pdf",
   ],
   "database-query": ["query"],
   "full-diagnostics": ["quick", "full"],
-  "github-ci": ["status", "watch", "logs", "verify"],
+  "github-ci": ["status", "jobs", "dispatch", "watch", "logs", "verify", "rerun-failed", "cancel"],
   "image-inspect": ["inspect"],
   "logs-observability": ["search"],
-  media: ["stt.status", "stt.transcribe", "image.providers", "image.profile", "image.generate", "image.edit"],
+  media: ["stt.status", "stt.transcribe", "video.prepare", "image.providers", "image.models", "image.current", "image.generate", "image.edit"],
+  telegram: ["context.current", "reply.resolve", "forward.inspect", "media.fetch"],
   "network-diagnostics": ["dns", "http", "tcp"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   rustdesk: [
@@ -82,6 +90,7 @@ export const CUSTOM_TOOL_ACTIONS = {
   ],
   "safe-download": ["download"],
   "send-file": ["send"],
+  session: ["current", "messages", "latest-assistant", "fork", "revert", "unrevert", "summarize", "abort", "diff", "todo", "children"],
   "session-recovery": ["inspect", "abort", "continue"],
   "storage-health": ["inspect", "cleanup-safe"],
   "system-diagnostics": ["summary", "processes", "disk"],
@@ -97,10 +106,11 @@ const CORE_CATEGORIES: Record<CoreToolName, string> = {
 };
 
 const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
-  actions: "discovery", bot: "bot-control", browser: "browser", "database-query": "database",
+  actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
+  notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
   "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
-  media: "media", "network-diagnostics": "network", railway: "deployment", rustdesk: "remote-control",
-  "safe-download": "transfer", "send-file": "transfer", "session-recovery": "session", "storage-health": "storage",
+  media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment", rustdesk: "remote-control",
+  "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
   "system-diagnostics": "diagnostics",
 };
 
@@ -120,8 +130,17 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
   "bot.settings.set": "Update a constrained safe bot setting.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
-  "media.image.generate": "Generate an image with the configured Image Chat engine and save it to the worktree.",
-  "media.image.edit": "Edit a worktree image with the configured Image Chat engine and save the result.",
+  "media.video.prepare": "Extract bounded video keyframes and audio into the current worktree for model analysis.",
+  "media.image.generate": "Generate an image with the effective Main/Topic Image Model and save it to the worktree.",
+  "media.image.edit": "Edit a worktree image with the effective Main/Topic Image Model and save the result.",
+  "media.image.models": "List image models discovered from configured image providers.",
+  "media.image.current": "Show the effective Image Model for the current worktree/Topic.",
+  "github-ci.dispatch": "Dispatch an existing GitHub Actions workflow on an explicit branch/tag/SHA.",
+  "github-ci.jobs": "Inspect jobs and steps for a GitHub Actions run before falling back to raw logs.",
+  "telegram.context.current": "Read the latest persisted Telegram message context for the current AI Topic/worktree.",
+  "telegram.reply.resolve": "Read the replied Telegram message snapshot for the current AI Topic.",
+  "telegram.forward.inspect": "Inspect safe forwarding metadata for the current Telegram message.",
+  "telegram.media.fetch": "Fetch media belonging to the current/replied Telegram message into the current worktree.",
   "rustdesk.servers.list": "List model-selectable RustDesk public and saved custom server profiles without secrets.",
   "rustdesk.servers.test": "Test reachability/configuration of a RustDesk connection server without authenticating to a target.",
   "rustdesk.devices.list": "List saved permanent RustDesk devices with server, OS, and capability metadata.",
@@ -131,12 +150,19 @@ const DESCRIPTIONS: Record<string, string> = {
   "rustdesk.terminal.exec": "Execute a command through an authorized remote RustDesk terminal connection.",
   "rustdesk.screen.capture": "Capture the current screen of an authorized RustDesk connection.",
   "rustdesk.system.restart": "Restart an authorized remote device through RustDesk's normal remote restart path.",
+  "file.delete": "Delete a file or directory inside the current worktree.",
+  "git.reset": "Reset git state in the current worktree.",
+  "notify.send": "Send a Telegram notification to the current Topic.",
+  "notify.schedule": "Schedule a persisted Telegram notification for the current Topic.",
+  "session-extended.create": "Create an OpenCode session without rebinding the current Telegram Topic.",
+  "session-extended.delete": "Delete a non-current OpenCode session.",
+  "test.test": "Run the project's configured tests or local test runner without downloading tools.",
 };
 
 const BOT_READ = new Set([
   "capabilities.list", "projects.list", "worktree.context", "models.providers", "models.list", "models.search", "models.selection", "models.current",
   "agents.list", "agents.current", "variants.list", "variants.current", "skills.list", "commands.list", "mcp.list",
-  "session.current", "session.messages", "session.latest-assistant", "run.status", "tasks.list", "tasks.get", "tasks.parse", "settings.get",
+  "session.current", "session.messages", "session.latest-assistant", "session.diff", "session.todo", "session.children", "run.status", "tasks.list", "tasks.get", "tasks.parse", "settings.get",
   "memory.list", "memory.search", "providers.list", "providers.get", "providers.stt-status",
   "integrations.github.list", "integrations.github.active", "integrations.railway.list", "integrations.railway.active", "version.info",
 ]);
@@ -153,7 +179,32 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     if (BOT_MUTATING.has(action)) return "mutating";
     if (BOT_READ.has(action)) return "read";
   }
-  if (tool === "media") return ["stt.status", "image.providers", "image.profile"].includes(action) ? "read" : "external";
+  if (tool === "file") {
+    if (action === "delete") return "destructive";
+    if (["write", "copy", "move"].includes(action)) return "write";
+    return "read";
+  }
+  if (tool === "git") {
+    if (action === "reset") return "destructive";
+    if (["push", "pull", "fetch"].includes(action)) return "external";
+    if (["commit", "branch", "checkout", "stash", "merge", "rebase"].includes(action)) return "mutating";
+    return "read";
+  }
+  if (tool === "monitoring" || tool === "security") return "read";
+  if (tool === "notify") {
+    if (action === "list") return "read";
+    if (action === "cancel") return "mutating";
+    return "external";
+  }
+  if (tool === "session-extended") {
+    if (action === "delete") return "destructive";
+    if (action === "create") return "mutating";
+    if (["export", "archive"].includes(action)) return "write";
+    return "read";
+  }
+  if (tool === "test") return ["build", "lint-fix"].includes(action) ? "write" : "read";
+  if (tool === "media") return ["stt.status", "image.providers", "image.models", "image.current"].includes(action) ? "read" : "external";
+  if (tool === "telegram") return action === "media.fetch" ? "write" : "read";
   if (tool === "rustdesk") {
     if (action === "system.restart") return "destructive";
     if (action === "servers.test") return "external";
@@ -171,10 +222,16 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     return action === "pdf" ? "write" : "external";
   }
   if (tool === "railway" && ["deploy", "deploy-latest"].includes(action)) return "mutating";
+  if (tool === "session") {
+    if (["revert", "abort"].includes(action)) return "destructive";
+    if (["fork", "unrevert", "summarize"].includes(action)) return "mutating";
+    return "read";
+  }
   if (tool === "session-recovery") return action === "abort" ? "destructive" : action === "continue" ? "mutating" : "read";
   if (tool === "storage-health" && action === "cleanup-safe") return "destructive";
   if (tool === "safe-download" || tool === "send-file") return "write";
-  if (tool === "network-diagnostics" || tool === "github-ci") return "external";
+  if (tool === "github-ci") return ["dispatch", "rerun-failed", "cancel"].includes(action) ? "mutating" : "external";
+  if (tool === "network-diagnostics") return "external";
   return "read";
 }
 

@@ -94,6 +94,12 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   });
 
   bot.command("start", startCommand);
+  bot.command("keyboard", async (ctx) => {
+    if (!await requireAiTopic(ctx, "keyboard")) return;
+    const runtime = getTopicRuntimeContext()!;
+    keyboardManager.bindTopic(ctx.api, runtime.chatId, runtime.threadId, runtime.sessionId!);
+    await keyboardManager.restoreTopicKeyboard(runtime.sessionId!);
+  });
   bot.command("update", updateCommand);
   bot.command("all", allVersionInfoCommand);
   bot.command("help", helpCommand);

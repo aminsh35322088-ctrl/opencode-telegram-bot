@@ -18,6 +18,8 @@ import type { TelegramTopicBinding } from "../../app/services/telegram-topic-sto
 import { createTopicAwareBot } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
+import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -63,6 +65,12 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       compactOutputMode: initialCompact,
     });
 
+    // Android's ChatMessageCell adds Continue last thread only when the last
+    // message in All belongs to a Topic. Publish root navigation first.
+    await keyboardManager.enterTopicMode(ctx.chat.id);
+    await keyboardManager.clearMainInlineMessage(ctx.chat.id);
+    await keyboardManager.sendMainInlineKeyboard(ctx.chat.id, initialModel, true);
+
     await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },
       async () => {
@@ -72,6 +80,28 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         clearAllInteractionState("session_created");
 
         await ingestSessionInfoForCache(session);
+        let routingSummary: string;
+        try {
+          routingSummary = await buildModelRoutingSummary(initialModel, directory!);
+        } catch (summaryError) {
+          logger.warn("[TelegramTopics] Could not build model routing summary; using compact fallback", summaryError);
+          const modelName = initialModel.name?.trim() || initialModel.modelID;
+          routingSummary = `🧠 ${modelName} · ${initialModel.providerID}`;
+        }
+        const topicKeyboard = keyboardManager.getKeyboard(session.id) ?? createTopicKeyboard({
+          compactOutputMode: initialCompact,
+          currentModel: initialModel,
+        });
+        // This is intentionally the first bot-authored Topic message. Telegram clients
+        // use its explicit thread association for native Topic navigation, and carrying
+        // the ReplyKeyboard on the same durable message makes the initial controls
+        // reliable on Android/iOS instead of depending on a deleted control message.
+        await deps.bot.api.sendMessage(
+          ctx.chat.id,
+          `✅ New AI Topic ready.\n\n${routingSummary}`,
+          { message_thread_id: binding!.threadId, reply_markup: topicKeyboard },
+        );
+        keyboardManager.markKeyboardDelivered(session.id);
         await attachToSession({
           bot: createTopicAwareBot(deps.bot, { chatId: ctx.chat.id, threadId: binding!.threadId }),
           chatId: ctx.chat.id,
@@ -80,17 +110,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         });
       },
     );
-
-    await keyboardManager.enterTopicMode(ctx.chat.id);
-    await keyboardManager.clearMainInlineMessage(ctx.chat.id);
-    const successText = `${t("new.created", { title: chatTitle })}\n\nUse this Topic for the conversation.`;
-    await deps.bot.api.sendMessage(ctx.chat.id, successText);
-    // The Main panel keyboard must live only under the welcome/anchor message.
-    // Reposting it under the New Chat confirmation created a second keyboard
-    // panel in General and moved the anchor away from its pinned message.
-    await keyboardManager.sendMainInlineKeyboard(ctx.chat.id, initialModel, true);
-
-    await keyboardManager.sendKeyboardUpdate(ctx.chat.id, true, session.id);
 
     logger.info(
       `[TelegramTopics] New Chat created: session=${session.id}, title=${chatTitle}, thread=${binding.threadId}; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated`,

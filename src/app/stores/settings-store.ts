@@ -5,6 +5,8 @@ import type { SessionDirectoryCacheInfo, SessionInfo } from "../types/session.js
 import { cloneScheduledTask, type ScheduledTask } from "../types/scheduled-task.js";
 import type { MessageFormatMode, ResponseStreamingMode, ScheduledTaskSessionIgnoreInfo, Settings } from "../types/settings.js";
 import type { TopicDefaults, TopicSettings } from "../types/topic-settings.js";
+import { cloneImageModelSelection, normalizeImageModelSelection, type ImageModelSelection } from "../types/image-model.js";
+import { cloneCapabilityBindings, cloneModelRef, type CapabilityBindingKey, type ModelRef } from "../types/model-capability.js";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { flushAppState, readAppState, updateAppState } from "./app-state-store.js";
@@ -42,6 +44,41 @@ export function getTopicDefaults(): TopicDefaults { return { ...DEFAULT_TOPIC_DE
 export function setTopicDefaults(defaults: TopicDefaults): void { currentSettings.topicDefaults = { ...DEFAULT_TOPIC_DEFAULTS, ...defaults }; void writeSettingsFile(currentSettings); }
 export function updateTopicDefaults(patch: Partial<TopicDefaults>): void { setTopicDefaults({ ...getTopicDefaults(), ...patch }); }
 export function updateCurrentTopicSettings(patch: Partial<TopicSettings>): void { updateTopic(patch); }
+export function getDefaultCapabilityModel(key: CapabilityBindingKey): ModelRef | undefined {
+  return cloneModelRef(currentSettings.defaultCapabilityModels?.[key]);
+}
+export function setDefaultCapabilityModel(key: CapabilityBindingKey, selection: ModelRef | undefined): void {
+  const next = cloneCapabilityBindings(currentSettings.defaultCapabilityModels) ?? {};
+  if (selection) next[key] = cloneModelRef(selection)!; else delete next[key];
+  currentSettings.defaultCapabilityModels = Object.keys(next).length ? next : undefined;
+  if (key === "imageAI") currentSettings.defaultImageModel = selection ? { ...selection } : undefined;
+  void writeSettingsFile(currentSettings);
+}
+export function getCurrentTopicCapabilityOverride(key: CapabilityBindingKey): ModelRef | undefined {
+  return cloneModelRef(currentTopicState()?.settings.capabilityOverrides?.[key]);
+}
+export function setCurrentTopicCapabilityOverride(key: CapabilityBindingKey, selection: ModelRef | undefined): void {
+  if (!getTopicRuntimeContext()) return;
+  const current = cloneCapabilityBindings(currentTopicState()?.settings.capabilityOverrides) ?? {};
+  if (selection) current[key] = cloneModelRef(selection)!; else delete current[key];
+  const capabilityOverrides = Object.keys(current).length ? current : undefined;
+  updateTopic({ capabilityOverrides, ...(key === "imageAI" ? { imageModelOverride: selection ? { ...selection } : undefined } : {}) });
+}
+export function getDefaultImageModel(): ImageModelSelection | undefined {
+  const legacy = cloneImageModelSelection(currentSettings.defaultImageModel);
+  if (legacy) return legacy;
+  const generic = getDefaultCapabilityModel("imageAI");
+  return generic ? { ...generic } : undefined;
+}
+export function setDefaultImageModel(selection: ImageModelSelection | undefined): void { setDefaultCapabilityModel("imageAI", selection); }
+export function getCurrentTopicImageModelOverride(): ImageModelSelection | undefined {
+  const legacy = cloneImageModelSelection(currentTopicState()?.settings.imageModelOverride);
+  if (legacy) return legacy;
+  const generic = getCurrentTopicCapabilityOverride("imageAI");
+  return generic ? { ...generic } : undefined;
+}
+export function setCurrentTopicImageModelOverride(selection: ImageModelSelection | undefined): void { setCurrentTopicCapabilityOverride("imageAI", selection); }
+export function getEffectiveImageModel(): ImageModelSelection | undefined { return getCurrentTopicImageModelOverride() ?? getDefaultImageModel(); }
 export function getCurrentProject(): ProjectInfo { const session = getCurrentSession(); const directory = session?.directory ?? process.cwd(); return { id: `session:${session?.id ?? "default"}`, worktree: directory, name: path.basename(directory) || directory }; }
 export function setCurrentProject(_projectInfo: ProjectInfo): void { void writeSettingsFile(currentSettings); }
 export function clearProject(): void { void writeSettingsFile(currentSettings); }
@@ -91,6 +128,11 @@ export async function loadSettings(): Promise<void> {
   for (const key of ["toolMessagesIntervalSec", "serverProcess", "ttsEnabled", "ttsMode"] as const) delete (loadedSettings as Record<string, unknown>)[key];
   const storedTopicDefaults = loadedSettings.topicDefaults;
   currentSettings = loadedSettings;
+  currentSettings.defaultImageModel = normalizeImageModelSelection(loadedSettings.defaultImageModel);
+  currentSettings.defaultCapabilityModels = cloneCapabilityBindings(loadedSettings.defaultCapabilityModels);
+  if (!currentSettings.defaultCapabilityModels?.imageAI && currentSettings.defaultImageModel) {
+    currentSettings.defaultCapabilityModels = { ...(currentSettings.defaultCapabilityModels ?? {}), imageAI: { providerID: currentSettings.defaultImageModel.providerID, modelID: currentSettings.defaultImageModel.modelID } };
+  }
   currentSettings.scheduledTasks = cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [];
   currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(loadedSettings.scheduledTaskSessionIgnores) ?? [];
   currentSettings.alwaysAllowedPermissions = Array.isArray(loadedSettings.alwaysAllowedPermissions) ? loadedSettings.alwaysAllowedPermissions.filter((rule) => rule && typeof rule.chatId === "number" && typeof rule.permission === "string" && typeof rule.createdAt === "string") : [];

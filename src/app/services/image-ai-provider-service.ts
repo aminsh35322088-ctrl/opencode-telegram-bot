@@ -1,8 +1,9 @@
-import type { ImageChatProfile, MediaImage } from "../types/image-chat.js";
+import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { readBoundedJson, detectImageMimeType } from "./ai-http-service.js";
 import crypto from "node:crypto";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { logger } from "../../utils/logger.js";
+import { runOpenCodeImageModel } from "./opencode-image-execution-service.js";
 
 export type ImageAiCapability = "generate" | "edit";
 export interface ImageAiProviderStatus { id: string; name: string; model: string; editModel?: string; capabilities: ImageAiCapability[]; active: boolean; default: boolean; }
@@ -69,8 +70,8 @@ async function readBody(response: Response): Promise<unknown> { const text = awa
 async function fetchRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> { let lastError: unknown; for (let i = 0; i < attempts; i += 1) { try { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) }); if (![429, 502, 503, 504].includes(response.status) || i === attempts - 1) return response; const retryAfter = Number(response.headers.get("retry-after") ?? ""); const delay = retryAfter > 0 && retryAfter < 30 ? retryAfter * 1000 : 1000 * (i + 1); await new Promise((resolve) => setTimeout(resolve, delay)); } catch (error) { lastError = error; if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1))); } } throw lastError instanceof Error ? lastError : new Error("Image provider request failed"); }
 function imageBufferFromCloudflareResult(body: unknown): Buffer { const result = body && typeof body === "object" ? (body as Record<string, unknown>).result : undefined; const value = result && typeof result === "object" ? (result as Record<string, unknown>).image : undefined; if (typeof value !== "string" || !value) throw new Error("Cloudflare Workers AI returned no image data"); const match = value.match(/^data:[^;]+;base64,(.+)$/s); return Buffer.from(match?.[1] ?? value, "base64"); }
 function imageBufferFromOpenAiResult(body: unknown): Buffer { const data = body && typeof body === "object" && Array.isArray((body as Record<string, unknown>).data) ? (body as { data: unknown[] }).data : []; const first = data[0]; const b64 = first && typeof first === "object" ? (first as Record<string, unknown>).b64_json : undefined; if (typeof b64 !== "string" || !b64) throw new Error("Custom image API returned no b64_json image data"); return Buffer.from(b64, "base64"); }
-async function runCloudflare(provider: StoredImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png", signal?: AbortSignal): Promise<{ buffer: Buffer; mimeType: string }> { const credentials = (await readStore()).cloudflare; if (!credentials) throw new Error("Cloudflare Workers AI is not configured"); const validation = await validateCloudflareCredentials(credentials.accountId, key); if (!validation.valid) throw new Error(`Cloudflare credentials rejected: ${validation.reason}`); const form = new FormData(); form.append("prompt", prompt); form.append("width", "1024"); form.append("height", "768"); if (image) form.append("input_image_0", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png"); const model = image ? (provider.editModel ?? provider.model) : provider.model; const response = await imageRequest(`${provider.baseURL}/${model}`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }, signal); const body = signal ? await readBoundedJson(response) : await readBody(response); if (!response.ok) throw new Error(`Cloudflare Workers AI ${image ? "editing" : "generation"} failed: ${parseError(body, response.status)}`); return { buffer: imageBufferFromCloudflareResult(body), mimeType: "image/png" }; }
-async function runCustomOpenAiCompatible(provider: StoredImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png", signal?: AbortSignal): Promise<{ buffer: Buffer; mimeType: string }> { const baseURL = provider.baseURL.replace(/\/+$/g, ""); if (image) { const form = new FormData(); form.append("model", provider.editModel ?? provider.model); form.append("prompt", prompt); form.append("image", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png"); const response = await imageRequest(`${baseURL}/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }, signal); const body = signal ? await readBoundedJson(response) : await readBody(response); if (!response.ok) throw new Error(`Custom image editing failed: ${parseError(body, response.status)}`); return { buffer: imageBufferFromOpenAiResult(body), mimeType: "image/png" }; } const response = await imageRequest(`${baseURL}/images/generations`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: provider.model, prompt, response_format: "b64_json" }) }, signal); const body = signal ? await readBoundedJson(response) : await readBody(response); if (!response.ok) throw new Error(`Custom image generation failed: ${parseError(body, response.status)}`); return { buffer: imageBufferFromOpenAiResult(body), mimeType: "image/png" }; }
+async function runCloudflare(provider: StoredImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png", signal?: AbortSignal): Promise<{ buffer: Buffer; mimeType: string }> { const credentials = (await readStore()).cloudflare; if (!credentials) throw new Error("Cloudflare Workers AI is not configured"); const validation = await validateCloudflareCredentials(credentials.accountId, key); if (!validation.valid) throw new Error(`Cloudflare credentials rejected: ${validation.reason}`); const form = new FormData(); form.append("prompt", prompt); form.append("width", "1024"); form.append("height", "768"); if (image) form.append("input_image_0", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png"); const model = image ? (provider.editModel ?? provider.model) : provider.model;   const response = await imageRequest(`${provider.baseURL}/${model}`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }, signal); if (!response.ok) { const errBody = await readBody(response); throw new Error(`Cloudflare Workers AI ${image ? "editing" : "generation"} failed: ${parseError(errBody, response.status)}`); } const body = signal ? await readBoundedJson(response) : await readBody(response); return { buffer: imageBufferFromCloudflareResult(body), mimeType: "image/png" }; }
+async function runCustomOpenAiCompatible(provider: StoredImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png", signal?: AbortSignal): Promise<{ buffer: Buffer; mimeType: string }> { const baseURL = provider.baseURL.replace(/\/+$/g, ""); if (image) { const form = new FormData(); form.append("model", provider.editModel ?? provider.model); form.append("prompt", prompt); form.append("image", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png");     const response = await imageRequest(`${baseURL}/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }, signal); if (!response.ok) { const errBody = await readBody(response); throw new Error(`Custom image editing failed: ${parseError(errBody, response.status)}`); } const body = signal ? await readBoundedJson(response) : await readBody(response); return { buffer: imageBufferFromOpenAiResult(body), mimeType: "image/png" }; } const response = await imageRequest(`${baseURL}/images/generations`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: provider.model, prompt, response_format: "b64_json" }) }, signal); if (!response.ok) { const errBody = await readBody(response); throw new Error(`Custom image generation failed: ${parseError(errBody, response.status)}`); } const body = signal ? await readBoundedJson(response) : await readBody(response); return { buffer: imageBufferFromOpenAiResult(body), mimeType: "image/png" }; }
 
 export async function configureImageAiProvider(id: string, apiKey: string, options?: { baseURL?: string; model?: string; editModel?: string; name?: string }, beforeSave: () => void = () => {}): Promise<void> {
   const key = apiKey.trim(); if (!key) throw new Error("API key is empty"); if (id !== CUSTOM_ID) throw new Error(`Unknown Image AI provider: ${id}`);
@@ -89,15 +90,58 @@ async function imageRequest(url: string, init: RequestInit, signal?: AbortSignal
   return fetch(url, { ...init, signal, redirect: "error" });
 }
 
-/** Dedicated chats pin one image connection. No fallback or ambiguous POST retry. */
-export async function runImageForChat(profile: ImageChatProfile, prompt: string, image: MediaImage | undefined, signal: AbortSignal): Promise<MediaImage> {
-  const provider = (await getActiveImageAiProviders()).find(p => p.id === profile.imageProviderID);
-  if (!provider || !provider.capabilities.includes(image ? "edit" : "generate") || provider.baseURL !== profile.imageEndpoint || provider.model !== profile.imageModelID || (provider.editModel ?? provider.model) !== profile.imageEditModelID) throw new Error("Image connection changed or is unavailable. Update the Topic image settings.");
+export async function runImageForSelection(
+  selection: ImageModelSelection,
+  prompt: string,
+  image: ImageBinary | undefined,
+  signal: AbortSignal,
+  worktree = process.cwd(),
+): Promise<ImageBinary> {
+  if (image && detectImageMimeType(image.buffer) !== image.mimeType) {
+    throw new Error("Only valid PNG, JPEG and WebP images are supported");
+  }
+
   signal.throwIfAborted();
-  const result = provider.id === CUSTOM_ID
-    ? await runCustomOpenAiCompatible(provider, provider.apiKey, prompt, image?.buffer, image?.mimeType, signal)
-    : await runCloudflare(provider, provider.apiKey, prompt, image?.buffer, image?.mimeType, signal);
-  const mimeType = detectImageMimeType(result.buffer);
-  if (!mimeType) throw new Error("Image provider returned an unsupported image format");
-  return { buffer: result.buffer, mimeType };
+
+  const provider = (await getActiveImageAiProviders()).find((candidate) =>
+    candidate.id === selection.providerID);
+
+  if (provider) {
+    if (
+      provider.model !== selection.modelID
+      || (provider.editModel ?? provider.model) !== (selection.editModelID ?? selection.modelID)
+      || !provider.capabilities.includes(image ? "edit" : "generate")
+    ) {
+      throw new Error("The selected Image Model is unavailable or changed. Choose it again in Settings.");
+    }
+    const result = provider.id === CUSTOM_ID
+      ? await runCustomOpenAiCompatible(
+        provider,
+        provider.apiKey,
+        prompt,
+        image?.buffer,
+        image?.mimeType,
+        signal,
+      )
+      : provider.id === CLOUDFLARE_ID
+        ? await runCloudflare(
+          provider,
+          provider.apiKey,
+          prompt,
+          image?.buffer,
+          image?.mimeType,
+          signal,
+        )
+        : (() => { throw new Error("Unsupported legacy Image Model provider."); })();
+
+    const mimeType = detectImageMimeType(result.buffer);
+    if (!mimeType) throw new Error("Image provider returned an unsupported image format");
+    return { buffer: result.buffer, mimeType };
+  }
+
+  // Normal AI providers are executed through OpenCode itself. This keeps the
+  // image path provider-agnostic (Gemini/OpenRouter/custom gateways/etc.).
+  return runOpenCodeImageModel(selection, prompt, image, signal, worktree);
 }
+
+/** Dedicated chats pin one image connection. No fallback or ambiguous POST retry. */

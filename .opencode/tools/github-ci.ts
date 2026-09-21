@@ -42,7 +42,7 @@ async function gh(args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhRes
     const { stdout, stderr } = await execFileAsync(GH_BIN, args, {
       timeout: timeoutMs,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GH_PAGER: "cat", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+      env: { ...process.env, GH_PAGER: "cat", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1", GH_PROMPT_DISABLED: "1" },
     });
     return { ok: true, stdout, stderr, timedOut: false };
   } catch (error) {
@@ -59,6 +59,30 @@ async function gh(args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhRes
       : (e.stderr || e.message || String(error)).trim();
     return { ok: false, stdout: e.stdout ?? "", stderr, timedOut };
   }
+}
+
+function baseRepoFromEnvOrGit(base: string): string {
+  const fromEnv = (process.env.GITHUB_REPOSITORY || "").trim();
+  if (/^[^/]+\/[^/]+$/.test(fromEnv)) return fromEnv;
+  const remotes = process.env.GH_REPO || process.env.GITHUB_REPO || "";
+  if (/^[^/]+\/[^/]+$/.test(remotes.trim())) return remotes.trim();
+  return "";
+}
+
+async function resolveBaseRepo(base: string): Promise<string> {
+  const direct = baseRepoFromEnvOrGit(base);
+  if (direct) return direct;
+  try {
+    const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], {
+      cwd: base,
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const remote = stdout.trim().replace(/\.git$/u, "");
+    const match = /(?:^|[:/])([^/]+\/[^/]+)$/u.exec(remote);
+    if (match) return match[1]!;
+  } catch { /* fall through */ }
+  return "";
 }
 
 function clip(text: string): string {
@@ -129,18 +153,19 @@ function nextStepHint(run: RunSummary): string {
 
 export default tool({
   description:
-    "Bounded GitHub Actions companion for the repository test suite: read the latest CI run status, wait briefly for completion, fetch failed test logs, or verify in one call (wait + auto-fetch failure logs). verify is fail-closed: only completed+success is accepted as green. Every call returns within a fixed time budget and always produces text output. Use this after pushing test or source changes to validate on GitHub instead of running heavy local test toolchains on constrained runtimes.",
+    "Bounded GitHub Actions companion: inspect runs/jobs, dispatch an existing workflow on an explicit ref, watch/verify CI, fetch failed logs, rerun failed jobs, or cancel a run. Dispatch never creates or edits workflow files. verify is fail-closed: only completed+success is accepted as green.",
   args: {
-    action: tool.schema.string().describe("One of: status | watch | logs | verify"),
+    action: tool.schema.string().describe("One of: status | jobs | dispatch | watch | logs | verify | rerun-failed | cancel"),
     branch: tool.schema
       .string()
       .optional()
       .describe("Filter the latest run by branch name (default: any recent)."),
-    workflow: tool.schema.string().optional().describe("Workflow name filter (default: 'CI')."),
+    workflow: tool.schema.string().optional().describe("Existing workflow name/file (default: 'CI')."),
     repo: tool.schema
       .string()
       .optional()
       .describe("Repository owner/name for gh (default: inferred from the current git checkout)."),
+    ref: tool.schema.string().optional().describe("Explicit branch/tag/SHA for dispatch. Required for action=dispatch."),
     commit: tool.schema
       .string()
       .optional()
@@ -156,20 +181,29 @@ export default tool({
         `For watch/verify: total wait budget in ms, default ${DEFAULT_WATCH_BUDGET_MS}, capped at ${MAX_WATCH_BUDGET_MS}.`,
       ),
   },
-  async execute(args) {
+  async execute(args, context) {
     const action = String(args.action ?? "").trim().toLowerCase();
-    const validActions = ["status", "watch", "logs", "verify"];
+    const validActions = ["status", "jobs", "dispatch", "watch", "logs", "verify", "rerun-failed", "cancel"];
     if (!validActions.includes(action)) {
       return result({ ok: false, error: `action must be one of: ${validActions.join(" | ")}` });
     }
 
+    const base = context.directory || context.worktree || process.cwd();
     const workflowName = (args.workflow ?? "CI").trim() || "CI";
     const branch = args.branch?.trim() || "";
     const commit = args.commit?.trim() || "";
-    const repo = args.repo?.trim() || "";
+    const repo = args.repo?.trim() || await resolveBaseRepo(base);
     const repoArgs = repo ? ["--repo", repo] : [];
     let runId = String(args.runId ?? "").trim();
     let run: RunSummary | null = null;
+
+    if (action === "dispatch") {
+      const ref = args.ref?.trim() || "";
+      if (!ref) return result({ ok: false, error: "dispatch requires ref (branch/tag/SHA)." });
+      const dispatched = await gh(["workflow", "run", workflowName, ...repoArgs, "--ref", ref]);
+      if (!dispatched.ok) return result({ ok: false, error: `Could not dispatch workflow ${workflowName}: ${clip(dispatched.stderr || dispatched.stdout)}` });
+      return result({ ok: true, workflow: workflowName, ref, hint: "Workflow dispatch accepted. Call action=status or action=jobs after GitHub creates the run." });
+    }
 
     if (!runId) {
       const listArgs = [
@@ -188,10 +222,13 @@ export default tool({
 
       const list = await gh(listArgs);
       if (!list.ok) {
+        const repoHint = repo
+          ? "Check gh authentication, the workflow name, and the requested branch/commit filters."
+          : "No git remote or GITHUB_REPOSITORY is available to infer the repository. Pass repo=\"OWNER/REPO\" explicitly.";
         return result({
           ok: false,
           error: `Could not list workflow runs: ${clip(list.stderr || list.stdout)}`,
-          hint: "Check gh authentication, the workflow name, and the requested branch/commit filters.",
+          hint: repoHint,
         });
       }
 
@@ -222,6 +259,23 @@ export default tool({
       if (!runId) {
         return result({ ok: false, run, error: "Resolved workflow run has no database id." });
       }
+    }
+
+    if (action === "jobs") {
+      const jobsView = await gh(["run", "view", runId, ...repoArgs, "--json", "databaseId,name,status,conclusion,jobs,url"]);
+      if (!jobsView.ok) return result({ ok: false, runId, error: `Could not inspect jobs for run ${runId}: ${clip(jobsView.stderr || jobsView.stdout)}` });
+      try { return result({ ok: true, run: JSON.parse(jobsView.stdout) }); }
+      catch { return result({ ok: false, runId, error: "GitHub returned invalid job JSON." }); }
+    }
+
+    if (action === "rerun-failed") {
+      const rerun = await gh(["run", "rerun", runId, ...repoArgs, "--failed"]);
+      return result(rerun.ok ? { ok: true, runId, rerun: "failed" } : { ok: false, runId, error: clip(rerun.stderr || rerun.stdout) });
+    }
+
+    if (action === "cancel") {
+      const cancelled = await gh(["run", "cancel", runId, ...repoArgs]);
+      return result(cancelled.ok ? { ok: true, runId, cancelled: true } : { ok: false, runId, error: clip(cancelled.stderr || cancelled.stdout) });
     }
 
     if (action === "logs") {

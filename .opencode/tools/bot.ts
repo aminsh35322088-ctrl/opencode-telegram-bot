@@ -208,6 +208,7 @@ interface RailwayIntegrationModule {
   removeRailwayAccount(id: string): Promise<boolean>;
 }
 interface VersionModule { getVersionSnapshot(): Promise<unknown>; }
+
 interface ConfigModule { config: { bot: { taskLimit: number } }; }
 
 async function load<T>(relativePath: string): Promise<T> {
@@ -335,6 +336,7 @@ export default tool({
   },
   async execute(args, context) {
     const action = args.action as BotAction;
+    const base = context.directory || context.worktree || process.cwd();
 
     if (action === "capabilities.list") {
       return json({ actions: BOT_ACTIONS, settings: SETTINGS, notes: {
@@ -352,7 +354,7 @@ export default tool({
     }
     if (action === "worktree.context") {
       const service = await load<WorktreeModule>("app/services/worktree-service.js");
-      return json(await service.getGitWorktreeContext(context.worktree));
+      return json(await service.getGitWorktreeContext(base));
     }
 
     if (action.startsWith("models.")) {
@@ -378,7 +380,17 @@ export default tool({
 
     if (action.startsWith("agents.")) {
       const service = await load<AgentModule>("app/services/agent-selection-service.js");
-      if (action === "agents.list") return json(await service.getAvailableAgents());
+      if (action === "agents.list") {
+        // The raw agent objects embed the full permission rule arrays, which
+        // are large and useless for tool callers. Return the compact shape.
+        const agents = await service.getAvailableAgents();
+        return json(agents.map((agent) => ({
+          name: agent.name,
+          description: agent.description,
+          mode: agent.mode,
+          native: agent.native,
+        })));
+      }
       if (action === "agents.current") return json({ agent: await service.fetchCurrentAgent() });
       const name = required(args.agent, "agent", action);
       const agents = await service.getAvailableAgents();
@@ -402,7 +414,7 @@ export default tool({
 
     if (action.startsWith("skills.")) {
       const catalog = await load<SkillsCatalogModule>("app/services/skills-catalog-service.js");
-      if (action === "skills.list") return json(await catalog.loadSkillsCatalog(context.worktree));
+      if (action === "skills.list") return json(await catalog.loadSkillsCatalog(base));
       const manager = await load<SkillManageModule>("app/services/skill-manage-service.js");
       if (action === "skills.delete") {
         const name = required(args.name, "name", action);
@@ -427,20 +439,20 @@ export default tool({
 
     if (action === "commands.list") {
       const service = await load<CommandCatalogModule>("app/services/command-catalog-service.js");
-      return json(await service.loadCommandCatalog(context.worktree));
+      return json(await service.loadCommandCatalog(base));
     }
 
     if (action.startsWith("mcp.")) {
       const service = await load<McpModule>("app/services/mcp-catalog-service.js");
-      if (action === "mcp.list") return json(await service.loadMcpCatalog(context.worktree));
+      if (action === "mcp.list") return json(await service.loadMcpCatalog(base));
       const name = required(args.name, "name", action);
       if (action === "mcp.enable" || action === "mcp.disable") {
-        await service.toggleMcpCatalogServer(context.worktree, name, action === "mcp.enable");
+        await service.toggleMcpCatalogServer(base, name, action === "mcp.enable");
         return json({ ok: true, name, enabled: action === "mcp.enable" });
       }
       const value = required(args.value, "value", action);
       const type = action === "mcp.add-remote" ? "remote" : "local";
-      await service.addMcpCatalogServer({ projectDirectory: context.worktree, name, type, value });
+      await service.addMcpCatalogServer({ projectDirectory: base, name, type, value });
       return json({ ok: true, name, type });
     }
 
@@ -472,18 +484,18 @@ export default tool({
       }
       const scheduleText = required(args.schedule, "schedule", action);
       const parser = await load<TaskParserModule>("app/services/scheduled-task-schedule-parser-service.js");
-      const parsed = await parser.parseTaskSchedule(scheduleText, context.worktree);
+      const parsed = await parser.parseTaskSchedule(scheduleText, base);
       validateScheduleFrequency(parsed);
       if (action === "tasks.parse") return json(parsed);
       const prompt = required(args.prompt, "prompt", action);
       const configModule = await load<ConfigModule>("config.js");
       if (store.listScheduledTasks().length >= configModule.config.bot.taskLimit) throw new Error(`Scheduled-task limit reached (${configModule.config.bot.taskLimit}).`);
       const projects = await load<ProjectModule>("app/services/project-service.js");
-      let projectId = `worktree:${context.worktree}`;
-      try { projectId = (await projects.getProjectByWorktree(context.worktree)).id; } catch { /* worktree is still a valid execution target */ }
+      let projectId = `worktree:${base}`;
+      try { projectId = (await projects.getProjectByWorktree(base)).id; } catch { /* worktree is still a valid execution target */ }
       const models = await load<ModelModule>("app/services/model-selection-service.js");
       const agents = await load<AgentModule>("app/services/agent-selection-service.js");
-      const task = buildTask({ projectId, worktree: context.worktree, agent: agents.getStoredAgent(), model: models.getStoredModel(), scheduleText, schedule: parsed, prompt });
+      const task = buildTask({ projectId, worktree: base, agent: agents.getStoredAgent(), model: models.getStoredModel(), scheduleText, schedule: parsed, prompt });
       await store.addScheduledTask(task);
       (await load<TaskRuntimeModule>("app/services/scheduled-task-runtime-service.js")).scheduledTaskRuntime.registerTask(task);
       return json({ ok: true, task });
@@ -520,10 +532,10 @@ export default tool({
     if (action.startsWith("memory.")) {
       const service = await load<MemoryModule>("app/services/memory-service.js");
       if (action === "memory.list") return json(await service.listMemories(args.scope as MemoryScope | undefined, args.project_id?.trim()));
-      if (action === "memory.search") return json(await service.searchRelevantMemories({ query: required(args.query, "query", action), projectId: args.project_id?.trim(), projectDirectory: context.worktree, maxChars: args.max_chars }));
+      if (action === "memory.search") return json(await service.searchRelevantMemories({ query: required(args.query, "query", action), projectId: args.project_id?.trim(), projectDirectory: base, maxChars: args.max_chars }));
       if (action === "memory.add") {
         const scope = (args.scope ?? "user") as MemoryScope;
-        return json(await service.addMemory({ scope, content: required(args.content, "content", action), projectId: args.project_id?.trim(), projectDirectory: scope === "project" ? context.worktree : undefined }));
+        return json(await service.addMemory({ scope, content: required(args.content, "content", action), projectId: args.project_id?.trim(), projectDirectory: scope === "project" ? base : undefined }));
       }
       if (action === "memory.remove") { const id = required(args.id, "id", action); return json({ ok: await service.removeMemory(id), id }); }
       return json({ ok: true, removed: await service.clearAllMemories() });

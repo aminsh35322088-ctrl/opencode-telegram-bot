@@ -23,9 +23,10 @@ export default tool({
     timeoutMs: tool.schema.number().optional().describe("Timeout in milliseconds, default 120000."),
   },
   async execute(args, context) {
+    const base = context.directory || context.worktree || process.cwd();
     const url = assertHttpUrl(args.url);
-    const destination = path.resolve(context.worktree, args.filename);
-    const relative = path.relative(context.worktree, destination);
+    const destination = path.resolve(base, args.filename);
+    const relative = path.relative(base, destination);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
       throw new Error("Download destination must stay inside the current worktree.");
     }

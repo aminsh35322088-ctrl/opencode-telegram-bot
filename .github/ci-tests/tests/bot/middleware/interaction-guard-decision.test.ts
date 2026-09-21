@@ -128,6 +128,13 @@ describe("interaction guard", () => {
     expect(decision.command).toBe("/help");
   });
 
+  it("allows keyboard recovery without clearing a pending interaction", () => {
+    interactionManager.start({ kind: "inline", expectedInput: "callback", allowedCommands: [] });
+    const decision = resolveInteractionGuardDecision(createContext({ text: "/keyboard" }));
+    expect(decision.allow).toBe(true);
+    expect(interactionManager.getSnapshot()?.kind).toBe("inline");
+  });
+
   it("clears state and blocks when interaction is expired", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));

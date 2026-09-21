@@ -30,6 +30,7 @@ export default tool({
   },
   async execute(args, context) {
     if (!ALLOWED_ACTIONS.has(args.action)) throw new Error(`Unsupported browser action: ${args.action}`);
+    const base = context.directory || context.worktree || process.cwd();
     const command: string[] = [...sessionArgs(args.session)];
     command.push(args.action);
 
@@ -50,21 +51,27 @@ export default tool({
     }
 
     if ((args.action === "screenshot" || args.action === "pdf") && args.filename) {
-      const output = path.resolve(context.worktree, args.filename);
+      const output = path.resolve(base, args.filename);
       await fs.mkdir(path.dirname(output), { recursive: true });
       command.push(`--filename=${output}`);
     }
 
-    const { stdout, stderr } = await execFileAsync("playwright-cli", command, {
-      cwd: context.worktree,
-      env: {
-        ...process.env,
-        PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || "/data/.cache/ms-playwright",
-      },
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: 120_000,
-    });
+    try {
+      const { stdout, stderr } = await execFileAsync("playwright-cli", command, {
+        cwd: base,
+        env: {
+          ...process.env,
+          PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || "/data/.cache/ms-playwright",
+        },
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 120_000,
+      });
 
-    return [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+      return [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+    } catch (error) {
+      const e = error as { stderr?: string; message?: string; code?: string | number };
+      if (e.code === "ENOENT") throw new Error("playwright-cli is not installed. Install it with: npm install -g playwright-cli");
+      throw new Error(e.stderr || e.message || "Browser command failed");
+    }
   },
 });

@@ -31,7 +31,7 @@ export function getUnscopedTelegramApi(api: ApiLike): ApiLike {
   return current;
 }
 
-function createTopicAwareApi(api: ApiLike, explicitTopic?: TelegramTopicContext): ApiLike {
+export function createTopicAwareApi(api: ApiLike, explicitTopic?: TelegramTopicContext): ApiLike {
   const proxy = new Proxy(api, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver);

@@ -305,7 +305,6 @@ export const ru: I18nDictionary = {
   "queue.removed": "🗑 Сообщение удалено из очереди.",
   "queue.not_found": "Этого сообщения больше нет в очереди.",
   "queue.disabled_hint": "Очередь сообщений включается в /settings.",
-  "keyboard.updated": "⌨️ Клавиатура обновлена",
 
   "pinned.default_session_title": "новая сессия",
   "pinned.unknown": "Неизвестно",

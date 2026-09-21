@@ -23,6 +23,7 @@ import { getCurrentSession } from "../../app/services/session-service.js";
 // list still applies.
 const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
   "/abort",
+  "/keyboard",
   "/stop",
   "/detach",
   "/status",
@@ -99,7 +100,7 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
     return createBusyBlockDecision(inputType, scopedState, "expected_text", command);
   }
   if (!scopedState) return createAllowDecision(inputType, null, command);
-  if (inputType === "command") { if (command === "/start") return createAllowDecision(inputType, scopedState, command); if (command && scopedState.allowedCommands.includes(command)) return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "command_not_allowed", command); }
+  if (inputType === "command") { if (command === "/start" || command === "/keyboard") return createAllowDecision(inputType, scopedState, command); if (command && scopedState.allowedCommands.includes(command)) return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "command_not_allowed", command); }
   if (scopedState.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, scopedState, command); return createBlockDecision(inputType, scopedState, "expected_text", command); }
   if (inputType === "callback" && (isAllowedRenameCancelCallback(ctx, scopedState) || isAllowedTaskCallback(ctx, scopedState))) return createAllowDecision(inputType, scopedState, command);
   if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command);
