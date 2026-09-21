@@ -17,7 +17,7 @@ import { updateTopicRuntimeStateSync } from "../../app/stores/topic-runtime-stat
 
 type SessionState = "idle" | "busy" | "retry" | "not-found";
 export type AbortResult = "confirmed" | "unconfirmed" | "maybe-finished" | "timeout" | "error" | "no-session";
-interface AbortCurrentOperationOptions { notifyUser?: boolean; }
+interface AbortCurrentOperationOptions { notifyUser?: boolean; restoreControls?: boolean; }
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 function abortLocalStreaming(): void { clearAllInteractionState("abort_command"); }
 function setTopicRunState(runState: "idle" | "running" | "paused" | "aborting"): void { const context = getTopicRuntimeContext(); if (context) updateTopicRuntimeStateSync(context.chatId, context.threadId, { runState }); }
@@ -27,6 +27,7 @@ async function pollSessionStatus(sessionId: string, directory: string, maxWaitMs
 
 export async function abortCurrentOperation(ctx: Context, options: AbortCurrentOperationOptions = {}): Promise<AbortResult> {
   const notifyUser = options.notifyUser ?? true;
+  const restoreControls = options.restoreControls ?? true;
   try {
     abortLocalStreaming(); promptQueue.clear("abort_command"); promptAttachment.clear("abort_command");
     const currentSession = await getEffectiveCurrentSession();
@@ -43,7 +44,7 @@ export async function abortCurrentOperation(ctx: Context, options: AbortCurrentO
       if (abortError) { setTopicRunState("running"); logger.warn("[Abort] Abort request failed; preserving local busy state because remote abort is unconfirmed:", abortError); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_unconfirmed")); return "unconfirmed"; }
       if (abortResult !== true) { const finalStatus = await pollSessionStatus(currentSession.id, currentSession.directory, 1500); if (finalStatus !== "busy" && finalStatus !== "retry") await releaseAbortBusyState(currentSession.id, "abort_maybe_finished"); else setTopicRunState("running"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_maybe_finished")); return finalStatus === "busy" || finalStatus === "retry" ? "unconfirmed" : "maybe-finished"; }
       const finalStatus = await pollSessionStatus(currentSession.id, currentSession.directory, 5000); logger.info(`[Abort] Final session status after abort: session=${currentSession.id}, status=${finalStatus}`);
-      if (finalStatus === "idle" || finalStatus === "not-found") { await releaseAbortBusyState(currentSession.id, "abort_confirmed"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success")); await restoreControlsAfterAbort(ctx, currentSession.id); return "confirmed"; }
+      if (finalStatus === "idle" || finalStatus === "not-found") { await releaseAbortBusyState(currentSession.id, "abort_confirmed"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success")); if (restoreControls) await restoreControlsAfterAbort(ctx, currentSession.id); return "confirmed"; }
       setTopicRunState("running"); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_still_busy")); return "unconfirmed";
     } catch (error) { clearTimeout(timeoutId); setTopicRunState("running"); if (error instanceof Error && error.name === "AbortError") { logger.warn(`[Abort] Abort API request timed out: session=${currentSession.id}; preserving local busy state`); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_timeout")); return "timeout"; } logger.error("[Abort] Error while aborting session; preserving local busy state:", error); if (notifyUser && chatId !== null && waitingMessageId !== null) await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_local_only")); return "error"; }
   } catch (error) { setTopicRunState("idle"); logger.error("[Abort] Unexpected error:", error); if (options.notifyUser ?? true) await ctx.reply(t("stop.error")); return "error"; }
