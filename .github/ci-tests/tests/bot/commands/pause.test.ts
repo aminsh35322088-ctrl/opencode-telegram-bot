@@ -10,6 +10,8 @@ const mocked = vi.hoisted(() => ({
   isChatPaused: vi.fn(),
   getKeyboard: vi.fn(),
   setPaused: vi.fn(),
+  getState: vi.fn(),
+  updateTopicRuntimeStateSync: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -35,8 +37,14 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
   keyboardManager: {
     getKeyboard: mocked.getKeyboard,
     setPaused: mocked.setPaused,
+    getState: mocked.getState,
     sendKeyboardUpdate: vi.fn(),
+    markKeyboardDelivered: vi.fn(),
   },
+}));
+
+vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
+  updateTopicRuntimeStateSync: mocked.updateTopicRuntimeStateSync,
 }));
 
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({
@@ -60,6 +68,17 @@ vi.mock("../../../src/utils/logger.js", () => ({
 }));
 
 describe("bot/commands/pause", () => {
+  it("recovers the Resume keyboard when the confirmed-pause notification is rejected", async () => {
+    const reply = vi.fn().mockRejectedValueOnce(new Error("Bad Request: can't parse entities")).mockResolvedValue({ message_id: 89 });
+    await pauseCurrentChat({ chat: { id: 777 }, reply } as unknown as Context);
+    expect(reply).toHaveBeenCalledTimes(2);
+    expect(reply).toHaveBeenLastCalledWith(
+      "⏸️ Chat paused. Tap ▶️ Resume to continue.",
+      { reply_markup: mocked.getKeyboard() },
+    );
+    expect(mocked.setPaused).not.toHaveBeenCalledWith(false, "session-1");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.status.mockResolvedValue({ data: { "session-1": { type: "busy" } }, error: null });
@@ -67,6 +86,7 @@ describe("bot/commands/pause", () => {
     mocked.abort.mockResolvedValue("confirmed");
     mocked.isChatPaused.mockReturnValue(false);
     mocked.getKeyboard.mockReturnValue({ keyboard: [[{ text: "▶️ Resume" }]] });
+    mocked.getState.mockReturnValue({ chatId: 777, threadId: 42 });
   });
 
   it("delivers a confirmed pause and its Resume keyboard in one user-visible message", async () => {
@@ -83,5 +103,6 @@ describe("bot/commands/pause", () => {
     );
     expect(editMessageText).not.toHaveBeenCalled();
     expect(mocked.abort).toHaveBeenCalledWith(ctx, { notifyUser: false, restoreControls: false });
+    expect(mocked.updateTopicRuntimeStateSync).toHaveBeenCalledWith(777, 42, { runState: "paused" });
   });
 });
