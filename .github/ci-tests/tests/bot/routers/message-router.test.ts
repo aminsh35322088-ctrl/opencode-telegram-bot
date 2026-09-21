@@ -130,6 +130,22 @@ describe("bot/routers/message-router", () => {
       expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
     });
 
+    it("lets RustDesk secure input consume slash-prefixed credentials before generic commands", async () => {
+      secureInputMock.handleRustDeskSecureInputMessage.mockResolvedValueOnce(true);
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "/credential-value", message_thread_id: 42 },
+      });
+      const next = vi.fn();
+
+      await handler(ctx, next);
+
+      expect(secureInputMock.handleRustDeskSecureInputMessage).toHaveBeenCalledWith(ctx);
+      expect(next).not.toHaveBeenCalled();
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+    });
+
     it("keeps AI Topics and private chats unaffected", async () => {
       const handler = registerAndGetTextHandler();
       const topicCtx = makeTextContext({
