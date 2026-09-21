@@ -258,10 +258,11 @@ describe("bot/commands/new", () => {
       message_thread_id: 42,
       reply_markup: { keyboard: true },
     });
-    const summaryMessageId = 700;
     expect(createdCall?.[2]).toMatchObject({
       reply_parameters: {
-        message_id: summaryMessageId,
+        // Telegram uses the Topic creation service message (whose id is the
+        // thread id) to render its native "Continue last thread" affordance.
+        message_id: 42,
         allow_sending_without_reply: false,
       },
     });
