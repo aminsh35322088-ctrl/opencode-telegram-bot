@@ -10,7 +10,7 @@ RUN npm prune --omit=dev
 
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS runtime
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends dumb-init ca-certificates curl wget git git-lfs unzip zip jq ripgrep fd-find tree file less rsync openssh-client procps strace ltrace gdb lsof iproute2 dnsutils iputils-ping tmux htop fzf python3 python3-pip python3-venv sqlite3 build-essential pkg-config ffmpeg imagemagick && git lfs install --system && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends dumb-init ca-certificates curl wget git git-lfs unzip zip jq ripgrep fd-find tree file less rsync openssh-client procps strace ltrace gdb lsof iproute2 dnsutils iputils-ping tmux htop fzf python3 python3-pip python3-venv sqlite3 build-essential pkg-config ffmpeg imagemagick libx11-6 libxfixes3 libglib2.0-0 libpulse0 libxkbcommon0 libxtst6 libopus0 libxcb1 libxcb-shm0 libxcb-randr0 libvpx7 libaom3 libyuv0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libdbus-1-3 libunwind8 libx11-xcb1 libxext6 libxdo3 && git lfs install --system && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 COPY .opencode-version ./
 RUN OPENCODE_VERSION="$(tr -d '\r\n' < .opencode-version)" && test -n "${OPENCODE_VERSION}" && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm install -g "@playwright/cli@0.1.18" && RAILWAY_VERSION="$(npm view @railway/cli version 2>/dev/null)" && curl -fsSL "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_VERSION}/railway-v${RAILWAY_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin/ railway && chmod +x /usr/local/bin/railway && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright playwright-cli install-browser chromium --with-deps && npm cache clean --force
@@ -23,6 +23,7 @@ COPY --chown=node:node AGENTS.md ./AGENTS.md
 COPY --chown=node:node docs/release-notes ./docs/release-notes
 COPY --chown=node:node opencode.json ./opencode.json
 COPY --chown=node:node .opencode/tools ./.opencode/tools
+COPY --chown=root:root rustdesk-bridge.lock ./rustdesk-bridge.lock
 COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 RUN chmod +x ./railway-entrypoint.sh
 ENTRYPOINT ["dumb-init", "--"]
