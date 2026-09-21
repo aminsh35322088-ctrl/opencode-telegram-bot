@@ -10,6 +10,10 @@ vi.mock("../../../src/app/services/mcp-catalog-service.js", () => ({
   loadMcpCatalog: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../../../src/app/stores/settings-store.js", () => ({
+  getMainNavigationMessageId: () => 4242,
+}));
+
 import {
   clearMcpAddWizard,
   dismissMcpAddWizard,
@@ -47,7 +51,7 @@ describe("MCP add wizard UX", () => {
     expect(ctx.reply).not.toHaveBeenCalled();
     expect(ctx.api.editMessageText).toHaveBeenCalledWith(
       777,
-      500,
+      4242,
       expect.stringContaining("1/3 · Server name"),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
@@ -55,7 +59,7 @@ describe("MCP add wizard UX", () => {
     const state = interactionManager.getSnapshot();
     expect(state?.expectedInput).toBe("mixed");
     expect(state?.metadata.stage).toBe("add");
-    expect(state?.metadata.messageId).toBe(500);
+    expect(state?.metadata.messageId).toBe(4242);
     expect(state?.metadata.parentMessageId).toBeUndefined();
   });
 

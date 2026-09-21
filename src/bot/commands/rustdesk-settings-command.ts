@@ -152,6 +152,40 @@ function isMessageNotModified(error: unknown): boolean {
   return message.toLowerCase().includes("message is not modified");
 }
 
+const SETTLED_CONNECTION_STATUSES = new Set([
+  "connected",
+  "failed",
+  "waiting_remote_approval",
+  "credential_required",
+  "disconnected",
+]);
+
+async function settleConnectionStatus(
+  client: ReturnType<typeof createRustDeskBridgeClientFromEnv>,
+  connection: RustDeskConnectionView,
+): Promise<RustDeskConnectionView> {
+  if (!connection.connectionId || SETTLED_CONNECTION_STATUSES.has(connection.status ?? "")) {
+    return connection;
+  }
+  let current = connection;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 350));
+    const livePayload = await client.execute({
+      action: "connection.status",
+      connectionId: connection.connectionId,
+    });
+    const live = connectionFromResponse(livePayload);
+    current = {
+      ...current,
+      ...live,
+      connectionId: live.connectionId ?? current.connectionId,
+      status: live.status ?? current.status,
+    };
+    if (SETTLED_CONNECTION_STATUSES.has(current.status ?? "")) break;
+  }
+  return current;
+}
+
 async function deleteInput(ctx: Context): Promise<void> {
   const messageId = ctx.message?.message_id;
   if (ctx.chat?.id && messageId) {
@@ -652,28 +686,10 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
         async () => {},
       );
       let connection = connectionFromResponse(payload);
-      if (connection.connectionId && connection.status !== "credential_required") {
-        try {
-          for (let attempt = 0; attempt < 3; attempt += 1) {
-            if (attempt > 0 && connection.status === "connecting") {
-              await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
-            }
-            const livePayload = await client.execute({
-              action: "connection.status",
-              connectionId: connection.connectionId,
-            });
-            const live = connectionFromResponse(livePayload);
-            connection = {
-              ...connection,
-              ...live,
-              connectionId: live.connectionId ?? connection.connectionId,
-              status: live.status ?? connection.status,
-            };
-            if (connection.status !== "connecting") break;
-          }
-        } catch (error) {
-          logger.warn("[RustDeskSettings] Initial connection status check failed:", error);
-        }
+      try {
+        connection = await settleConnectionStatus(client, connection);
+      } catch (error) {
+        logger.warn("[RustDeskSettings] Connection status polling failed:", error);
       }
       const status = connection.status ?? "connecting";
       const connectionId = connection.connectionId;

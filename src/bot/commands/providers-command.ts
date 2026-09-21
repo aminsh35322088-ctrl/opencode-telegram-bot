@@ -26,9 +26,10 @@ export function clearProviderWizard(): void { providerWizard.clear(); }
 async function deleteInput(ctx: Context) { if (ctx.chat && ctx.message) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
 async function render(ctx: Context, text: string, keyboard: InlineKeyboard, id?: number) {
   const options = { reply_markup: appendHomeNavigation(keyboard) };
-  if (id !== undefined && ctx.chat) {
+  const targetId = id ?? messageId(ctx);
+  if (targetId !== undefined && ctx.chat) {
     try {
-      await ctx.api.editMessageText(ctx.chat.id, id, text.slice(0, 4000), options);
+      await ctx.api.editMessageText(ctx.chat.id, targetId, text.slice(0, 4000), options);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.toLowerCase().includes("message is not modified")) throw error;

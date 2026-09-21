@@ -64,6 +64,11 @@ vi.mock("../../../src/app/services/ai-role-selection-service.js", () => ({
   setAiRoleSelection: vi.fn(),
 }));
 
+vi.mock("../../../src/app/stores/settings-store.js", () => ({
+  getMainNavigationMessageId: () => 4242,
+  setDefaultCapabilityModel: vi.fn(),
+}));
+
 import {
   clearProviderWizard,
   handleProviderCallback,
@@ -140,7 +145,7 @@ describe("provider wizard General panel contract", () => {
     expect(input.api.deleteMessage).toHaveBeenCalledWith(777, 601);
     expect(input.api.editMessageText).toHaveBeenCalledWith(
       777,
-      500,
+      4242,
       expect.stringContaining("Setup expired"),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
@@ -164,7 +169,7 @@ describe("provider wizard General panel contract", () => {
     expect(duplicate.api.deleteMessage).toHaveBeenCalledWith(777, 604);
     expect(duplicate.api.editMessageText).toHaveBeenCalledWith(
       777,
-      500,
+      4242,
       expect.stringContaining("Verification is already running"),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
