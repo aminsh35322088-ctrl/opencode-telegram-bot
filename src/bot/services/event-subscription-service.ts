@@ -1387,7 +1387,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       clearToolActivity(sessionId);
       promptQueue.clear("session_error", sessionId);
       promptAttachment.clear("session_error", sessionId);
-      clearPausedSession(sessionId);
       clearAllInteractionState("session_error");
 
       const normalizedMessage = message.trim() || t("common.unknown_error");
@@ -1405,12 +1404,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         foregroundSessionState.markIdle(sessionId);
         const keyboardState = keyboardManager.getState(sessionId);
         if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
-          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "idle" });
+          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: isChatPaused(sessionId) ? "paused" : "idle" });
         }
         await scheduledTaskRuntime.flushDeferredDeliveries();
         return;
       }
 
+      clearPausedSession(sessionId);
       if (!this.botInstance || !this.chatIdInstance) {
         clearPromptResponseMode(sessionId);
         this.clearAssistantResponseSession(sessionId, "session_error_no_bot_context");
