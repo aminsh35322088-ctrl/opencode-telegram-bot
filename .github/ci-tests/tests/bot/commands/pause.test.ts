@@ -10,6 +10,8 @@ const mocked = vi.hoisted(() => ({
   isChatPaused: vi.fn(),
   getKeyboard: vi.fn(),
   setPaused: vi.fn(),
+  getState: vi.fn(),
+  updateTopicRuntimeStateSync: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -35,9 +37,14 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
   keyboardManager: {
     getKeyboard: mocked.getKeyboard,
     setPaused: mocked.setPaused,
+    getState: mocked.getState,
     sendKeyboardUpdate: vi.fn(),
     markKeyboardDelivered: vi.fn(),
   },
+}));
+
+vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
+  updateTopicRuntimeStateSync: mocked.updateTopicRuntimeStateSync,
 }));
 
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({
@@ -79,6 +86,7 @@ describe("bot/commands/pause", () => {
     mocked.abort.mockResolvedValue("confirmed");
     mocked.isChatPaused.mockReturnValue(false);
     mocked.getKeyboard.mockReturnValue({ keyboard: [[{ text: "▶️ Resume" }]] });
+    mocked.getState.mockReturnValue({ chatId: 777, threadId: 42 });
   });
 
   it("delivers a confirmed pause and its Resume keyboard in one user-visible message", async () => {
@@ -95,5 +103,6 @@ describe("bot/commands/pause", () => {
     );
     expect(editMessageText).not.toHaveBeenCalled();
     expect(mocked.abort).toHaveBeenCalledWith(ctx, { notifyUser: false, restoreControls: false });
+    expect(mocked.updateTopicRuntimeStateSync).toHaveBeenCalledWith(777, 42, { runState: "paused" });
   });
 });
