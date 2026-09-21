@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { rustDeskSecureInputManager } from "../../../src/app/managers/rustdesk-secure-input-manager.js";
+import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { handleRustDeskSecureInputMessage } from "../../../src/bot/handlers/rustdesk-secure-input-handler.js";
 import { t } from "../../../src/i18n/index.js";
 
@@ -37,6 +38,16 @@ describe("RustDesk secure input handler", () => {
   beforeEach(() => {
     mocks.submitCredential.mockReset().mockResolvedValue({ ok: true });
     rustDeskSecureInputManager.__resetForTests();
+    interactionManager.clear("test_setup");
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "text",
+      metadata: {
+        flow: "rustdesk-secure-input",
+        sessionId: "session-1",
+        credentialRequestId: "cred-1",
+      },
+    });
     rustDeskSecureInputManager.start({
       sessionId: "session-1",
       callId: "call-1",
@@ -62,6 +73,7 @@ describe("RustDesk secure input handler", () => {
     expect(ctx.api.deleteMessage).toHaveBeenCalledWith(42, 55);
     expect(ctx.reply).toHaveBeenCalledWith(t("rustdesk.secure_input.submitted"));
     expect(rustDeskSecureInputManager.isActive("session-1")).toBe(false);
+    expect(interactionManager.getSnapshot()).toBeNull();
   });
 
   it("keeps the challenge active when bridge submission fails", async () => {
@@ -72,6 +84,7 @@ describe("RustDesk secure input handler", () => {
 
     expect(ctx.reply).toHaveBeenCalledWith(t("rustdesk.secure_input.failed"));
     expect(rustDeskSecureInputManager.isActive("session-1")).toBe(true);
+    expect(interactionManager.getSnapshot()).toMatchObject({ kind: "custom" });
   });
 
   it("lets control commands pass through instead of treating them as credentials", async () => {

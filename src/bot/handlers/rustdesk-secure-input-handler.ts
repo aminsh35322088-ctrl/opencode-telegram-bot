@@ -2,6 +2,7 @@
 
 import type { Context } from "grammy";
 import { rustDeskSecureInputManager } from "../../app/managers/rustdesk-secure-input-manager.js";
+import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { createRustDeskBridgeClientFromEnv } from "../../app/services/rustdesk-bridge-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -62,6 +63,15 @@ export async function handleRustDeskSecureInputMessage(ctx: Context): Promise<bo
     });
 
     rustDeskSecureInputManager.clear(sessionId, challenge.credentialRequestId);
+    const interaction = interactionManager.getSnapshot();
+    if (
+      interaction?.kind === "custom" &&
+      interaction.metadata.flow === "rustdesk-secure-input" &&
+      interaction.metadata.sessionId === sessionId &&
+      interaction.metadata.credentialRequestId === challenge.credentialRequestId
+    ) {
+      interactionManager.clear("rustdesk_secure_input_submitted");
+    }
     if (challenge.promptMessageId) {
       await ctx.api.deleteMessage(challenge.chatId, challenge.promptMessageId).catch(() => {});
     }
