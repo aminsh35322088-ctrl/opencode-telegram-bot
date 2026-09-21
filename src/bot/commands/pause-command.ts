@@ -44,7 +44,20 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
     const keyboard = keyboardManager.getKeyboard(session.id);
     await ctx.reply(["⏸️ <b>Chat paused</b>", "", `💬 ${session.title}`, `🤖 ${displayModel}`, "", "The current run was interrupted safely. Your session, files, and history are still intact.", "", "Send a new prompt to continue from here, or tap <b>▶️ Resume</b> to continue without additional instructions."].join("\n"), { parse_mode: "HTML", ...(keyboard ? { reply_markup: keyboard } : {}) });
     keyboardManager.markKeyboardDelivered(session.id);
-  } catch (error) { if (pauseStateArmed && !pauseConfirmed) { clearPausedSession(session.id); keyboardManager.setPaused(false, session.id); } logger.error("[Pause] Failed to pause current chat:", error); if (!pauseConfirmed) await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption."); }
+  } catch (error) {
+    if (pauseStateArmed && !pauseConfirmed) { clearPausedSession(session.id); keyboardManager.setPaused(false, session.id); }
+    logger.error("[Pause] Failed to pause current chat:", error);
+    if (pauseConfirmed) {
+      // Keep the confirmed stop and recover controls if the formatted notice fails.
+      const keyboard = keyboardManager.getKeyboard(session.id);
+      try {
+        await ctx.reply("⏸️ Chat paused. Tap ▶️ Resume to continue.", { ...(keyboard ? { reply_markup: keyboard } : {}) });
+        keyboardManager.markKeyboardDelivered(session.id);
+      } catch (deliveryError) { logger.error("[Pause] Failed to deliver paused controls:", deliveryError); }
+    } else {
+      await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption.");
+    }
+  }
 }
 
 export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): Promise<void> {
