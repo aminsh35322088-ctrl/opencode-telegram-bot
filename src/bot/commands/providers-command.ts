@@ -12,22 +12,30 @@ import { buildSettingsMenuView } from "../menus/settings-menu.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
-import { setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
+import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 
 const CAPABILITIES: AiCapability[] = ["general", "stt"];
 const LABEL: Record<AiCapability, string> = { general: "🤖 AI Models", coding: "🤖 AI Models", image: "🤖 AI Models", stt: "🎙️ Transcription" };
 type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
-function messageId(ctx: Context): number | undefined { return ctx.callbackQuery?.message?.message_id; }
+function messageId(ctx: Context): number | undefined { const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined; return canonical ?? ctx.callbackQuery?.message?.message_id; }
 function wizardKeyboard() { return new InlineKeyboard().text("❌ Cancel", "provider:cancel").text("← Connections", "provider:connections"); }
 export function isProviderWizardActive(): boolean { return providerWizard.isActive(); }
 export function clearProviderWizard(): void { providerWizard.clear(); }
 async function deleteInput(ctx: Context) { if (ctx.chat && ctx.message) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
 async function render(ctx: Context, text: string, keyboard: InlineKeyboard, id?: number) {
   const options = { reply_markup: appendHomeNavigation(keyboard) };
-  if (id !== undefined && ctx.chat) await ctx.api.editMessageText(ctx.chat.id, id, text.slice(0, 4000), options);
-  else await ctx.reply(text.slice(0, 4000), options);
+  if (id !== undefined && ctx.chat) {
+    try {
+      await ctx.api.editMessageText(ctx.chat.id, id, text.slice(0, 4000), options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.toLowerCase().includes("message is not modified")) throw error;
+    }
+  } else {
+    await ctx.reply(text.slice(0, 4000), options);
+  }
 }
 async function editWizard(ctx: Context, id: number, text: string) { await render(ctx, text, wizardKeyboard(), id); }
 async function start(ctx: Context, step: Step, text: string, capability?: AiCapability): Promise<void> {

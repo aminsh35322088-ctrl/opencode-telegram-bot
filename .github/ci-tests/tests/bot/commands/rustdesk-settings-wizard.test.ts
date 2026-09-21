@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   deleteDevice: vi.fn(),
   submitCredential: vi.fn(),
   factory: vi.fn(),
+  canonicalMessageId: 777,
   actions: [
     "bridge.health", "servers.list", "servers.get", "servers.test",
     "devices.list", "devices.get", "devices.connect", "session.connectTemporary",
@@ -23,10 +24,14 @@ const mocks = vi.hoisted(() => ({
   ],
 }));
 
+vi.mock("../../../src/app/stores/settings-store.js", () => ({
+  getMainNavigationMessageId: () => mocks.canonicalMessageId,
+}));
+
 vi.mock("../../../src/app/services/rustdesk-bridge-service.js", () => ({
   createRustDeskBridgeClientFromEnv: mocks.factory,
   RUSTDESK_ACTIONS: mocks.actions,
-  RUSTDESK_BRIDGE_CONTRACT_VERSION: 2,
+  RUSTDESK_BRIDGE_CONTRACT_VERSION: 3,
 }));
 
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -112,6 +117,13 @@ describe("RustDesk settings wizard", () => {
       }),
     );
     expect(secretCtx.api.deleteMessage).toHaveBeenCalledWith(42, 105);
+    expect(secretCtx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("✅ Server profile added."),
+      expect.any(Object),
+    );
+    expect(secretCtx.reply).not.toHaveBeenCalled();
   });
 
   it("adds a permanent public-server device with a Bridge-only credential", async () => {
@@ -134,13 +146,22 @@ describe("RustDesk settings wizard", () => {
       }),
     );
     expect(secretCtx.api.deleteMessage).toHaveBeenCalledWith(42, 203);
+    expect(secretCtx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("✅ Permanent device added."),
+      expect.any(Object),
+    );
+    expect(secretCtx.reply).not.toHaveBeenCalled();
   });
 
   it("creates a temporary manual-approval connection from Settings", async () => {
     mocks.connectTemporaryFromSettings.mockResolvedValue({
       ok: true,
-      connectionId: "conn-1",
-      status: "waiting_remote_approval",
+      connection: {
+        connectionId: "conn-1",
+        status: "connecting",
+      },
     });
 
     await handleRustDeskSettingsCallback(callbackCtx("integration:rd:temp"));
@@ -154,5 +175,109 @@ describe("RustDesk settings wizard", () => {
       authMode: "manual-approval",
       serverKey: undefined,
     });
+  });
+
+  it("always edits the canonical General Panel instead of the callback message", async () => {
+    const ctx = callbackCtx("integration:rd:d:add");
+
+    await handleRustDeskSettingsCallback(ctx);
+
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("Permanent RustDesk Device"),
+      expect.any(Object),
+    );
+    expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
+  it("parses nested saved-device connection responses without showing unknown", async () => {
+    mocks.executeAuthorized.mockResolvedValue({
+      ok: true,
+      connection: {
+        connectionId: "conn-saved-1",
+        status: "connecting",
+      },
+    });
+    mocks.execute.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "connection.status") {
+        return {
+          ok: true,
+          connection: {
+            connectionId: "conn-saved-1",
+            status: "connected",
+            error: null,
+          },
+        };
+      }
+      if (request.action === "devices.get") {
+        return {
+          ok: true,
+          device: {
+            id: "dev-1",
+            name: "Phone",
+            rustdeskId: "123456789",
+            serverProfileId: "rustdesk-public",
+            credentialConfigured: true,
+            online: null,
+          },
+        };
+      }
+      throw new Error(`unexpected action: ${request.action}`);
+    });
+    const ctx = callbackCtx("integration:rd:d:connect:dev-1");
+
+    await handleRustDeskSettingsCallback(ctx);
+
+    const calls = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls;
+    const rendered = calls.map((call) => String(call[2] ?? "")).join("\n");
+    expect(rendered).toContain("connected");
+    expect(rendered).toContain("conn-saved-1");
+    expect(rendered).not.toContain("unknown");
+    expect(rendered).not.toContain("Online: Unknown");
+  });
+
+  it("treats Telegram message-not-modified as an idempotent panel refresh", async () => {
+    mocks.execute.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "devices.get") {
+        return {
+          ok: true,
+          device: {
+            id: "dev-1",
+            name: "Phone",
+            rustdeskId: "123456789",
+            serverProfileId: "rustdesk-public",
+            credentialConfigured: true,
+          },
+        };
+      }
+      throw new Error(`unexpected action: ${request.action}`);
+    });
+    const ctx = callbackCtx("integration:rd:d:view:dev-1");
+    (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("400: Bad Request: message is not modified"),
+    );
+
+    await expect(handleRustDeskSettingsCallback(ctx)).resolves.toBe(true);
+  });
+
+  it("renders wizard errors into the canonical panel instead of replying with a new message", async () => {
+    mocks.upsertDevice.mockRejectedValueOnce(new Error("Bridge rejected credential"));
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:d:add"));
+    await handleRustDeskSettingsMessage(messageCtx("My PC", 401));
+    await handleRustDeskSettingsMessage(messageCtx("123456789", 402));
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:w:server:rustdesk-public"));
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:w:relay:no"));
+    const secretCtx = messageCtx("bad-secret", 403);
+
+    await handleRustDeskSettingsMessage(secretCtx);
+
+    expect(secretCtx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("Bridge rejected credential"),
+      expect.any(Object),
+    );
+    expect(secretCtx.reply).not.toHaveBeenCalled();
   });
 });

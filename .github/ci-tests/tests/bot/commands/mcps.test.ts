@@ -18,6 +18,7 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentSession: mocked.getCurrentSessionMock,
   setCurrentSession: vi.fn(),
   clearSession: vi.fn(),
+  getMainNavigationMessageId: vi.fn(() => undefined),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({

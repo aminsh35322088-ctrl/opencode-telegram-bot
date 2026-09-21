@@ -7,6 +7,7 @@ import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
+import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 import {
   clearRustDeskSettingsWizard,
   handleRustDeskSettingsCallback,
@@ -21,6 +22,13 @@ interface PendingState { github?: PendingGithub; railway?: PendingRailway; }
 
 const integrationWizard = new TopicScopedValue<PendingState>();
 function callbackMessageId(ctx: Context): number | null {
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  if (typeof chatId === "number") {
+    const canonical = getMainNavigationMessageId(chatId);
+    if (typeof canonical === "number" && Number.isInteger(canonical) && canonical > 0) {
+      return canonical;
+    }
+  }
   const message = ctx.callbackQuery?.message;
   if (!message || !("message_id" in message)) return null;
   return typeof message.message_id === "number" ? message.message_id : null;
@@ -52,7 +60,15 @@ function railwayValidationSuccess(validation: RailwayTokenValidation): string {
   return `✅ Token verified · Account token${identity ? `\n${identity}` : ""}`;
 }
 async function deleteInput(ctx: Context): Promise<void> { const messageId = ctx.message?.message_id; if (ctx.chat?.id && messageId) await ctx.api.deleteMessage(ctx.chat.id, messageId).catch(() => {}); }
-async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> { await ctx.api.editMessageText(ctx.chat!.id, messageId, text, { reply_markup: wizardKeyboard() }); }
+async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> {
+  try {
+    await ctx.api.editMessageText(ctx.chat!.id, callbackMessageId(ctx) ?? messageId, text, { reply_markup: wizardKeyboard() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("message is not modified")) return;
+    throw error;
+  }
+}
 export async function showIntegrationsMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
   const githubAccounts = await listGithubAccounts();
   const githubActive = await getActiveGithubAccount();
@@ -71,8 +87,16 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   const rustDeskConfigured = Boolean(process.env.RUSTDESK_BRIDGE_URL?.trim());
   const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}\n\nRustDesk: ${rustDeskConfigured ? "Configured" : "Not configured"}`;
   const text = notice ? `${notice}\n\n${body}` : body;
-  const targetMessageId = messageId ?? callbackMessageId(ctx);
-  if (targetMessageId !== null && ctx.chat?.id) { await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard }); return; }
+  const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
+  if (targetMessageId !== null && ctx.chat?.id) {
+    try {
+      await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.toLowerCase().includes("message is not modified")) throw error;
+    }
+    return;
+  }
   await ctx.reply(text, { reply_markup: keyboard });
 }
 export async function integrationsCommand(ctx: CommandContext<Context>): Promise<void> { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx as Context); }

@@ -33,6 +33,7 @@ const mocked = vi.hoisted(() => ({
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
   getCurrentSession: vi.fn(() => mocked.currentSession),
+  getMainNavigationMessageId: vi.fn(() => undefined),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({

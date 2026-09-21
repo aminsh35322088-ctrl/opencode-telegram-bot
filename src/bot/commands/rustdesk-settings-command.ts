@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
+import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 import {
   createRustDeskBridgeClientFromEnv,
   RUSTDESK_ACTIONS,
@@ -77,6 +78,13 @@ type RustDeskWizard = ServerWizard | DeviceWizard | TempWizard | ConnectionCrede
 const wizard = new TopicScopedValue<RustDeskWizard>();
 
 function callbackMessageId(ctx: Context): number | null {
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  if (typeof chatId === "number") {
+    const canonical = getMainNavigationMessageId(chatId);
+    if (typeof canonical === "number" && Number.isInteger(canonical) && canonical > 0) {
+      return canonical;
+    }
+  }
   const message = ctx.callbackQuery?.message;
   if (!message || !("message_id" in message)) return null;
   return typeof message.message_id === "number" ? message.message_id : null;
@@ -116,6 +124,34 @@ function deviceFromResponse(value: unknown): RustDeskDevice | null {
     : null;
 }
 
+interface RustDeskConnectionView {
+  connectionId?: string;
+  status?: string;
+  credentialRequestId?: string;
+  credentialKind?: string;
+  error?: string;
+}
+
+function connectionFromResponse(value: unknown): RustDeskConnectionView {
+  const root = record(value);
+  const nested = record(root.connection);
+  const source = Object.keys(nested).length > 0 ? nested : root;
+  return {
+    connectionId: typeof source.connectionId === "string" ? source.connectionId : undefined,
+    status: typeof source.status === "string" ? source.status : undefined,
+    credentialRequestId:
+      typeof source.credentialRequestId === "string" ? source.credentialRequestId : undefined,
+    credentialKind:
+      typeof source.credentialKind === "string" ? source.credentialKind : undefined,
+    error: typeof source.error === "string" && source.error.trim() ? source.error.trim() : undefined,
+  };
+}
+
+function isMessageNotModified(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("message is not modified");
+}
+
 async function deleteInput(ctx: Context): Promise<void> {
   const messageId = ctx.message?.message_id;
   if (ctx.chat?.id && messageId) {
@@ -125,12 +161,21 @@ async function deleteInput(ctx: Context): Promise<void> {
 
 async function edit(
   ctx: Context,
-  messageId: number,
+  messageId: number | null | undefined,
   text: string,
   keyboard: InlineKeyboard,
 ): Promise<void> {
-  if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard });
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  const targetMessageId = callbackMessageId(ctx) ?? messageId;
+  if (typeof chatId !== "number" || typeof targetMessageId !== "number") {
+    throw new Error("General Panel is unavailable; reopen Settings from the pinned Main panel");
+  }
+  try {
+    await ctx.api.editMessageText(chatId, targetMessageId, text, { reply_markup: keyboard });
+  } catch (error) {
+    if (isMessageNotModified(error)) return;
+    throw error;
+  }
 }
 
 function navigationKeyboard(back = "integration:rustdesk"): InlineKeyboard {
@@ -244,14 +289,7 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
     lines.push("", "Saved server/device inventory is owned by the RustDesk Bridge control plane.");
   }
 
-  const messageId = callbackMessageId(ctx);
-  if (messageId !== null && ctx.chat?.id) {
-    await ctx.api.editMessageText(ctx.chat.id, messageId, lines.join("\n"), {
-      reply_markup: keyboard,
-    });
-    return;
-  }
-  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+  await edit(ctx, callbackMessageId(ctx), lines.join("\n"), keyboard);
 }
 
 async function showServersMenu(ctx: Context, notice?: string): Promise<void> {
@@ -268,9 +306,7 @@ async function showServersMenu(ctx: Context, notice?: string): Promise<void> {
     "",
     "RustDesk Public is built in. Saved self-hosted profiles may include an ID server, relay, API endpoint, and an optional private key kept only in the Bridge secret store.",
   ].filter(Boolean).join("\n\n");
-  const messageId = callbackMessageId(ctx);
-  if (messageId !== null) await edit(ctx, messageId, text, keyboard);
-  else await ctx.reply(text, { reply_markup: keyboard });
+  await edit(ctx, callbackMessageId(ctx), text, keyboard);
 }
 
 async function showDevicesMenu(ctx: Context, notice?: string): Promise<void> {
@@ -290,9 +326,7 @@ async function showDevicesMenu(ctx: Context, notice?: string): Promise<void> {
       ? "Select a device to connect, edit, or remove it."
       : "No permanent devices are saved yet.",
   ].filter(Boolean).join("\n\n");
-  const messageId = callbackMessageId(ctx);
-  if (messageId !== null) await edit(ctx, messageId, text, keyboard);
-  else await ctx.reply(text, { reply_markup: keyboard });
+  await edit(ctx, callbackMessageId(ctx), text, keyboard);
 }
 
 async function showServerDetail(ctx: Context, id: string, notice?: string): Promise<void> {
@@ -321,8 +355,7 @@ async function showServerDetail(ctx: Context, id: string, notice?: string): Prom
     server.apiServer ? `API: ${server.apiServer}` : undefined,
     `Private key: ${server.keyConfigured ? "Configured 🔐" : "Not configured"}`,
   ].filter(Boolean).join("\n");
-  const messageId = callbackMessageId(ctx);
-  if (messageId !== null) await edit(ctx, messageId, text, keyboard);
+  await edit(ctx, callbackMessageId(ctx), text, keyboard);
 }
 
 async function showDeviceDetail(ctx: Context, id: string, notice?: string): Promise<void> {
@@ -345,10 +378,9 @@ async function showDeviceDetail(ctx: Context, id: string, notice?: string): Prom
     `RustDesk ID: ${device.rustdeskId ?? "Unknown"}`,
     `Server profile: ${device.serverProfileId ?? "Unknown"}`,
     `Permanent password: ${device.credentialConfigured ? "Configured 🔐" : "Missing"}`,
-    `Online: ${device.online === true ? "Yes" : device.online === false ? "No" : "Unknown"}`,
+    device.online === true ? "Online: Yes" : device.online === false ? "Online: No" : undefined,
   ].filter(Boolean).join("\n");
-  const messageId = callbackMessageId(ctx);
-  if (messageId !== null) await edit(ctx, messageId, text, keyboard);
+  await edit(ctx, callbackMessageId(ctx), text, keyboard);
 }
 
 async function showServerChoice(ctx: Context, messageId: number, back: string): Promise<void> {
@@ -407,12 +439,10 @@ async function connectTemporary(ctx: Context, state: TempWizard): Promise<void> 
     authMode: state.authMode,
     serverKey: state.oneTimeServerKey,
   });
-  const result = record(payload);
-  const connectionId =
-    typeof result.connectionId === "string" ? result.connectionId : undefined;
-  const status = typeof result.status === "string" ? result.status : "unknown";
-  const credentialRequestId =
-    typeof result.credentialRequestId === "string" ? result.credentialRequestId : undefined;
+  const connection = connectionFromResponse(payload);
+  const connectionId = connection.connectionId;
+  const status = connection.status ?? "connecting";
+  const credentialRequestId = connection.credentialRequestId;
 
   if (status === "credential_required" && connectionId && credentialRequestId) {
     state.step = "credential";
@@ -621,12 +651,33 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
         { action: "devices.connect", deviceId: id },
         async () => {},
       );
-      const result = record(payload);
-      const status = typeof result.status === "string" ? result.status : "unknown";
-      const connectionId =
-        typeof result.connectionId === "string" ? result.connectionId : undefined;
-      const credentialRequestId =
-        typeof result.credentialRequestId === "string" ? result.credentialRequestId : undefined;
+      let connection = connectionFromResponse(payload);
+      if (connection.connectionId && connection.status !== "credential_required") {
+        try {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (attempt > 0 && connection.status === "connecting") {
+              await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+            }
+            const livePayload = await client.execute({
+              action: "connection.status",
+              connectionId: connection.connectionId,
+            });
+            const live = connectionFromResponse(livePayload);
+            connection = {
+              ...connection,
+              ...live,
+              connectionId: live.connectionId ?? connection.connectionId,
+              status: live.status ?? connection.status,
+            };
+            if (connection.status !== "connecting") break;
+          }
+        } catch (error) {
+          logger.warn("[RustDeskSettings] Initial connection status check failed:", error);
+        }
+      }
+      const status = connection.status ?? "connecting";
+      const connectionId = connection.connectionId;
+      const credentialRequestId = connection.credentialRequestId;
       if (status === "credential_required" && connectionId && credentialRequestId) {
         const messageId = callbackMessageId(ctx);
         if (messageId !== null) {
@@ -645,7 +696,12 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
         }
         return true;
       }
-      await showDeviceDetail(ctx, id, `✅ Connect requested · ${status}${connectionId ? ` · ${connectionId}` : ""}`);
+      const detail = [
+        `✅ Connection · ${status}`,
+        connectionId ? `Connection: ${connectionId}` : undefined,
+        connection.error ? `Error: ${connection.error}` : undefined,
+      ].filter(Boolean).join("\n");
+      await showDeviceDetail(ctx, id, detail);
       return true;
     }
 
@@ -896,9 +952,14 @@ export async function handleRustDeskSettingsMessage(ctx: Context): Promise<boole
     return true;
   } catch (error) {
     logger.error("[RustDeskSettings] wizard failed:", error);
-    await ctx.reply(
+    await edit(
+      ctx,
+      state.messageId,
       `❌ ${error instanceof Error ? error.message : "RustDesk setup failed"}\n\nFix the value and try again, or press Cancel.`,
-    );
+      cancelKeyboard("integration:rustdesk"),
+    ).catch((editError) => {
+      logger.error("[RustDeskSettings] failed to render wizard error in General Panel:", editError);
+    });
     return true;
   }
 }

@@ -12,6 +12,7 @@ import {
   buildMcpsWizardKeyboard,
 } from "../menus/mcp-catalog-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
+import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
 interface PendingMcpAdd {
   step: "name" | "type" | "value";
@@ -24,6 +25,9 @@ interface PendingMcpAdd {
 const mcpAddWizard = new TopicScopedValue<PendingMcpAdd>();
 
 function callbackMessageId(ctx: Context): number | null {
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined;
+  if (typeof canonical === "number") return canonical;
   const message = ctx.callbackQuery?.message;
   if (!message || !("message_id" in message)) return null;
   return typeof message.message_id === "number" ? message.message_id : null;
@@ -42,7 +46,9 @@ async function renderWizard(
   keyboard: InlineKeyboard = buildMcpsWizardKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard });
+  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
+    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
+  });
 }
 
 function isMcpAddInteractionActive(): boolean {
