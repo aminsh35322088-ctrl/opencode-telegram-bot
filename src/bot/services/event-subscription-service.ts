@@ -895,8 +895,34 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       if (toolInfo.tool === "rustdesk") {
+        const activeChallenge = rustDeskSecureInputManager.get(toolInfo.sessionId);
+        if (
+          (status === "completed" || status === "error") &&
+          activeChallenge?.callId === toolInfo.callId
+        ) {
+          rustDeskSecureInputManager.clear(
+            toolInfo.sessionId,
+            activeChallenge.credentialRequestId,
+          );
+          const activeInteraction = interactionManager.getSnapshot();
+          if (
+            activeInteraction?.kind === "custom" &&
+            activeInteraction.metadata.flow === "rustdesk-secure-input" &&
+            activeInteraction.metadata.sessionId === toolInfo.sessionId &&
+            activeInteraction.metadata.credentialRequestId ===
+              activeChallenge.credentialRequestId
+          ) {
+            interactionManager.clear("rustdesk_secure_input_tool_finished");
+          }
+          if (activeChallenge.promptMessageId && this.botInstance) {
+            void this.botInstance.api
+              .deleteMessage(activeChallenge.chatId, activeChallenge.promptMessageId)
+              .catch(() => {});
+          }
+        }
+
         const secureSignal = parseRustDeskSecureInputSignal(toolInfo.metadata);
-        if (secureSignal) {
+        if (secureSignal && status !== "completed" && status !== "error") {
           const chatId = this.getChatIdForSession(toolInfo.sessionId);
           if (secureSignal.state === "required" && chatId && secureSignal.connectionId) {
             const started = rustDeskSecureInputManager.start({
@@ -929,14 +955,44 @@ class EventSubscriptionService implements BotEventSubscriptionService {
                   { disable_notification: true },
                 )
                 .then((message) => {
-                  rustDeskSecureInputManager.setPromptMessageId(
-                    toolInfo.sessionId,
-                    secureSignal.credentialRequestId,
-                    message.message_id,
-                  );
+                  const challenge = rustDeskSecureInputManager.get(toolInfo.sessionId);
+                  if (
+                    challenge?.callId === toolInfo.callId &&
+                    challenge.credentialRequestId === secureSignal.credentialRequestId
+                  ) {
+                    rustDeskSecureInputManager.setPromptMessageId(
+                      toolInfo.sessionId,
+                      secureSignal.credentialRequestId,
+                      message.message_id,
+                    );
+                    return;
+                  }
+                  void this.botInstance?.api
+                    .deleteMessage(chatId, message.message_id)
+                    .catch(() => {});
                 })
                 .catch((error) => {
                   logger.error("[RustDesk] Failed to show secure credential prompt:", error);
+                  const challenge = rustDeskSecureInputManager.get(toolInfo.sessionId);
+                  if (
+                    challenge?.callId === toolInfo.callId &&
+                    challenge.credentialRequestId === secureSignal.credentialRequestId
+                  ) {
+                    rustDeskSecureInputManager.clear(
+                      toolInfo.sessionId,
+                      secureSignal.credentialRequestId,
+                    );
+                    const state = interactionManager.getSnapshot();
+                    if (
+                      state?.kind === "custom" &&
+                      state.metadata.flow === "rustdesk-secure-input" &&
+                      state.metadata.sessionId === toolInfo.sessionId &&
+                      state.metadata.credentialRequestId ===
+                        secureSignal.credentialRequestId
+                    ) {
+                      interactionManager.clear("rustdesk_secure_input_prompt_failed");
+                    }
+                  }
                 });
             }
           } else if (secureSignal.state === "resolved") {
