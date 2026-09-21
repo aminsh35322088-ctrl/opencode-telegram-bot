@@ -1,3 +1,5 @@
+[Reading 165 lines from start (total: 165 lines, 0 remaining)]
+
 import { describe, expect, it } from "vitest";
 
 import * as path from "node:path";
@@ -5,12 +7,38 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 
 import {
+  buildAgentEnvironment,
   createOpencodeServeSpawnCommand,
   findUnixListeningPidInSs,
   findWindowsListeningPidInNetstat,
 } from "../../src/opencode/process.js";
 
 describe("opencode/process", () => {
+  it("strips trusted control-plane credentials from the OpenCode child environment", () => {
+    const originalTelegram = process.env.TELEGRAM_BOT_TOKEN;
+    const originalRustDeskControl = process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN;
+    const originalRustDeskAction = process.env.RUSTDESK_BRIDGE_TOKEN;
+
+    try {
+      process.env.TELEGRAM_BOT_TOKEN = "telegram-fixture";
+      process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN = "control-fixture";
+      process.env.RUSTDESK_BRIDGE_TOKEN = "action-fixture";
+
+      const environment = buildAgentEnvironment();
+
+      expect(environment.TELEGRAM_BOT_TOKEN).toBeUndefined();
+      expect(environment.RUSTDESK_BRIDGE_CONTROL_TOKEN).toBeUndefined();
+      expect(environment.RUSTDESK_BRIDGE_TOKEN).toBe("action-fixture");
+    } finally {
+      if (originalTelegram === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = originalTelegram;
+      if (originalRustDeskControl === undefined) delete process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN;
+      else process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN = originalRustDeskControl;
+      if (originalRustDeskAction === undefined) delete process.env.RUSTDESK_BRIDGE_TOKEN;
+      else process.env.RUSTDESK_BRIDGE_TOKEN = originalRustDeskAction;
+    }
+  });
+
   it("matches the exact local port on Windows netstat output", async () => {
     const stdout = [
       "  TCP    127.0.0.1:40960      0.0.0.0:0      LISTENING       1111",
@@ -137,3 +165,5 @@ describe("opencode/process", () => {
     }
   });
 });
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

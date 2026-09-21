@@ -1,3 +1,5 @@
+[Reading 614 lines from start (total: 614 lines, 0 remaining)]
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, InlineKeyboard } from "grammy";
 import type { PermissionRequest } from "../../../src/app/types/permission.js";
@@ -10,11 +12,18 @@ import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
   permissionReplyMock: vi.fn(),
+  rustDeskGrantPermissionMock: vi.fn(),
   currentProject: {
     id: "project-1",
     worktree: "D:/repo",
   } as { id: string; worktree: string } | undefined,
   currentSession: null as { id: string; title: string; directory: string } | null,
+}));
+
+vi.mock("../../../src/app/services/rustdesk-bridge-service.js", () => ({
+  createRustDeskBridgeClientFromEnv: () => ({
+    grantPermission: mocked.rustDeskGrantPermissionMock,
+  }),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -123,6 +132,12 @@ describe("bot permission menu/callbacks", () => {
 
     mocked.permissionReplyMock.mockReset();
     mocked.permissionReplyMock.mockResolvedValue({ error: null });
+    mocked.rustDeskGrantPermissionMock.mockReset();
+    mocked.rustDeskGrantPermissionMock.mockResolvedValue({
+      ok: true,
+      permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      scope: "once",
+    });
 
     mocked.currentProject = {
       id: "project-1",
@@ -160,6 +175,66 @@ describe("bot permission menu/callbacks", () => {
     expect(state?.expectedInput).toBe("callback");
     expect(state?.metadata.requestID).toBe("perm-1");
     expect(state?.metadata.messageId).toBe(500);
+  });
+
+  it("shows only one-shot allow and reject for RustDesk permissions", async () => {
+    const botApi = createBotApi(505);
+    const request = createPermissionRequest("rustdesk-perm-1", {
+      permission: "rustdesk.terminal.exec",
+      patterns: ["terminal.exec:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+
+    const sendMessageMock = botApi.sendMessage as unknown as ReturnType<typeof vi.fn>;
+    const call = defined(sendMessageMock.mock.calls[0]);
+    const [, , options] = call;
+    const replyMarkup = (options as { reply_markup: InlineKeyboard }).reply_markup;
+
+    expect(replyMarkup.inline_keyboard).toHaveLength(2);
+    expect(getCallbackData(replyMarkup.inline_keyboard[0]?.[0])).toBe("permission:once");
+    expect(getCallbackData(replyMarkup.inline_keyboard[1]?.[0])).toBe("permission:reject");
+  });
+
+  it("mints the exact RustDesk one-shot grant before releasing OpenCode", async () => {
+    const botApi = createBotApi(506);
+    const request = createPermissionRequest("rustdesk-perm-2", {
+      permission: "rustdesk.terminal.exec",
+      patterns: ["terminal.exec:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "terminal.exec",
+        connectionId: "conn-1",
+        permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+    const ctx = createPermissionCallbackContext("permission:once", 506);
+    await handlePermissionCallback(ctx);
+
+    expect(mocked.rustDeskGrantPermissionMock).toHaveBeenCalledWith({
+      action: "terminal.exec",
+      connectionId: "conn-1",
+      scope: "once",
+      permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
+    });
+    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
+      requestID: "rustdesk-perm-2",
+      directory: "D:/repo",
+      reply: "once",
+    });
+    expect(
+      mocked.rustDeskGrantPermissionMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocked.permissionReplyMock.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER);
   });
 
   it("keeps multiple active permission requests without deleting previous messages", async () => {
@@ -539,3 +614,5 @@ describe("bot permission menu/callbacks", () => {
     expect(options).not.toHaveProperty("parse_mode");
   });
 });
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]
