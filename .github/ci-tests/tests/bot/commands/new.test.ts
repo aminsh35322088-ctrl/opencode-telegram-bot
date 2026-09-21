@@ -246,26 +246,14 @@ describe("bot/commands/new", () => {
       },
       ensureEventSubscription: mocked.ensureEventSubscriptionMock,
     });
-    // The New Chat confirmation must be a plain message: the Main keyboard
-    // panel belongs exclusively to the pinned welcome/anchor message.
-    const createdCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("Chat #01"));
-    expect(createdCall).toBeDefined();
-    expect(createdCall?.[2] ?? {}).not.toHaveProperty("reply_markup");
-
     const summaryCall = deps.sendMessageMock.mock.calls.find((call) => String(call[1]).includes("New AI Topic ready"));
     expect(summaryCall).toBeDefined();
     expect(summaryCall?.[2]).toMatchObject({
       message_thread_id: 42,
       reply_markup: { keyboard: true },
     });
-    expect(createdCall?.[2]).toMatchObject({
-      reply_parameters: {
-        // Telegram uses the Topic creation service message (whose id is the
-        // thread id) to render its native "Continue last thread" affordance.
-        message_id: 42,
-        allow_sending_without_reply: false,
-      },
-    });
+    expect(deps.sendMessageMock.mock.calls.at(-1)?.[2]).toMatchObject({ message_thread_id: 42 });
+    expect(deps.sendMessageMock.mock.calls.every(call => !call[2]?.reply_parameters)).toBe(true);
     expect(mocked.buildModelRoutingSummaryMock).toHaveBeenCalledWith(
       expect.objectContaining({ providerID: "openai", modelID: "gpt-5" }),
       "/repo",
@@ -275,27 +263,15 @@ describe("bot/commands/new", () => {
     );
   });
 
-  it("keeps the new Topic when Telegram rejects the native service-message reply", async () => {
-    mocked.sessionCreateMock.mockResolvedValueOnce({
-      data: { id: "session-2", title: "Session Two" },
-      error: null,
-    });
-    const ctx = createContext();
+  it("publishes Main navigation before the final Topic message for native Continue", async () => {
+    mocked.sessionCreateMock.mockResolvedValueOnce({ data: { id: "session-2", title: "Two" } });
+    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
     const deps = createDeps();
-    deps.sendMessageMock.mockImplementation(async (_chatId, _text, options) => {
-      const replyMessageId = (options as { reply_parameters?: { message_id?: number } } | undefined)?.reply_parameters?.message_id;
-      if (replyMessageId === 42) throw new Error("400: Bad Request: message to be replied not found");
-      return { message_id: replyMessageId ? 702 : 700 };
+    vi.mocked(keyboardManager.sendMainInlineKeyboard).mockImplementationOnce(async () => {
+      await deps.sendMessageMock(123, "Main navigation", { reply_markup: { inline_keyboard: [] } });
     });
-
-    await newCommand(ctx as never, deps);
-
-    const confirmationCalls = deps.sendMessageMock.mock.calls.filter((call) => String(call[1]).includes("Chat #01"));
-    expect(confirmationCalls).toHaveLength(2);
-    expect(confirmationCalls[1]?.[2]).toMatchObject({
-      reply_parameters: { message_id: 700, allow_sending_without_reply: false },
-    });
-    expect(ctx.reply).not.toHaveBeenCalled();
+    await newCommand(createContext() as never, deps);
+    expect(deps.sendMessageMock.mock.calls.at(-1)?.[2]).toMatchObject({ message_thread_id: 42 });
   });
 
   it("allows concurrent session creation", async () => {
