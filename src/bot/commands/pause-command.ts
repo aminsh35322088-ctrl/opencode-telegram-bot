@@ -20,6 +20,7 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
   const session = await getEffectiveCurrentSession();
   if (!session) { await ctx.reply("ℹ️ There is no active chat to pause. Tap 💬 New Chat to start one."); return; }
   if (isChatPaused(session.id)) { await ctx.reply("⏸️ This chat is already paused."); return; }
+  let pauseStateArmed = false;
   try {
     const { data, error } = await opencodeClient.session.status({ directory: session.directory });
     const state = (data as Record<string, { type?: string }> | undefined)?.[session.id];
@@ -29,15 +30,16 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
     logger.info(`[Pause] Button invoked: session=${session.id}, status=${state?.type ?? "missing"}, statusError=${error ? "yes" : "no"}, localRunActive=${localRunActive}, foregroundActive=${foregroundActive}, remoteToolActive=${remoteToolActive}`);
     if (error && !localRunActive && !foregroundActive && !remoteToolActive) throw error;
     if (!isActiveStatus(state?.type) && !localRunActive && !foregroundActive && !remoteToolActive) { await ctx.reply("ℹ️ Nothing is running right now, so there is nothing to pause."); return; }
-    const progressMessage = await ctx.reply("⏳ Pausing the current run…");
-    const abortResult = await abortCurrentOperation(ctx, { notifyUser: false });
+    // Arm the paused state before aborting so the resulting session.idle event
+    // cannot race us and publish its own footer / keyboard-update messages.
+    setPausedSession(session); keyboardManager.setPaused(true, session.id); pauseStateArmed = true;
+    const abortResult = await abortCurrentOperation(ctx, { notifyUser: false, restoreControls: false });
     logger.info(`[Pause] Abort completed: session=${session.id}, result=${abortResult}`);
-    if (abortResult !== "confirmed") { await ctx.api.editMessageText(ctx.chat!.id, progressMessage.message_id, describeAbortResult(abortResult)); return; }
-    setPausedSession(session); keyboardManager.setPaused(true, session.id);
+    if (abortResult !== "confirmed") { clearPausedSession(session.id); keyboardManager.setPaused(false, session.id); pauseStateArmed = false; await ctx.reply(describeAbortResult(abortResult)); return; }
     const model = getStoredModel(); const displayModel = formatModelForDisplay(model.providerID, model.modelID);
-    await ctx.api.editMessageText(ctx.chat!.id, progressMessage.message_id, ["⏸️ <b>Chat paused</b>", "", `💬 ${session.title}`, `🤖 ${displayModel}`, "", "The current run was interrupted safely. Your session, files, and history are still intact.", "", "Send a new prompt to continue from here, or tap <b>▶️ Resume</b> to continue without additional instructions."].join("\n"), { parse_mode: "HTML" });
-    const keyboard = keyboardManager.getKeyboard(session.id); if (keyboard) await ctx.reply("▶️ Resume is ready. Sending a prompt will resume automatically.", { reply_markup: keyboard });
-  } catch (error) { logger.error("[Pause] Failed to pause current chat:", error); await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption."); }
+    const keyboard = keyboardManager.getKeyboard(session.id);
+    await ctx.reply(["⏸️ <b>Chat paused</b>", "", `💬 ${session.title}`, `🤖 ${displayModel}`, "", "The current run was interrupted safely. Your session, files, and history are still intact.", "", "Send a new prompt to continue from here, or tap <b>▶️ Resume</b> to continue without additional instructions."].join("\n"), { parse_mode: "HTML", ...(keyboard ? { reply_markup: keyboard } : {}) });
+  } catch (error) { if (pauseStateArmed) { clearPausedSession(session.id); keyboardManager.setPaused(false, session.id); } logger.error("[Pause] Failed to pause current chat:", error); await ctx.reply("⚠️ Pause failed. Nothing was changed beyond the attempted interruption."); }
 }
 
 export async function resumePausedChat(ctx: Context, deps: ProcessPromptDeps): Promise<void> {
