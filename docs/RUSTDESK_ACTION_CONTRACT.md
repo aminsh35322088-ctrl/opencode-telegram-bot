@@ -1,5 +1,3 @@
-[Reading 601 lines from start (total: 601 lines, 0 remaining)]
-
 # RustDesk Agent Action Contract
 
 Status: design contract for PR #100. This document is the source of truth for the bot-facing RustDesk action surface before the headless bridge implementation is completed.
@@ -601,5 +599,3 @@ connection.disconnect
 ```
 
 After this works over real RustDesk transport, `terminal.exec` and the remaining capability families can be layered on without changing connection semantics.
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

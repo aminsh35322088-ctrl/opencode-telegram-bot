@@ -1,5 +1,3 @@
-[Reading 120 lines from start (total: 120 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { rustDeskSecureInputManager } from "../../../src/app/managers/rustdesk-secure-input-manager.js";
@@ -120,5 +118,3 @@ describe("RustDesk secure input handler", () => {
     expect(ctx.api.deleteMessage).not.toHaveBeenCalled();
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

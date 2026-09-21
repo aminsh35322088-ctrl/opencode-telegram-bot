@@ -1,5 +1,3 @@
-[Reading 646 lines from start (total: 646 lines, 0 remaining)]
-
 export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 2;
 
 export const RUSTDESK_ACTIONS = [
@@ -646,5 +644,3 @@ export function createRustDeskBridgeClientFromEnv(): RustDeskBridgeClient {
     timeoutMs,
   });
 }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]
