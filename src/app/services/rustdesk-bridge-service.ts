@@ -1,3 +1,7 @@
+[Reading 646 lines from start (total: 646 lines, 0 remaining)]
+
+export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 2;
+
 export const RUSTDESK_ACTIONS = [
   "bridge.health",
   "servers.list",
@@ -169,12 +173,22 @@ export interface RustDeskPermissionGrantResponse {
   expiresInSeconds?: number;
   risk?: RustDeskPermissionRisk;
   permission?: RustDeskPermissionMode;
+  idempotent?: boolean;
 }
 
 export interface RustDeskCredentialSubmission {
   credentialRequestId: string;
   credential: string;
   trustThisDevice?: boolean;
+}
+
+export interface RustDeskCredentialSubmissionResponse {
+  ok: boolean;
+  connectionId: string;
+  credentialRequestId?: string;
+  status?: RustDeskConnectionStatus;
+  accepted?: boolean;
+  idempotent?: boolean;
 }
 
 export interface RustDeskBridgeErrorPayload {
@@ -505,11 +519,27 @@ export class RustDeskBridgeClient {
     return payload as RustDeskPermissionGrantResponse;
   }
 
-  async submitCredential(request: RustDeskCredentialSubmission): Promise<unknown> {
+  async submitCredential(
+    request: RustDeskCredentialSubmission,
+  ): Promise<RustDeskCredentialSubmissionResponse> {
     if (!request.credentialRequestId.trim() || !request.credential) {
       throw new Error("RustDesk credential submission requires credentialRequestId and credential");
     }
-    return this.request("/v1/credential", request, this.requireControlToken());
+    const payload = await this.request("/v1/credential", request, this.requireControlToken());
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("RustDesk bridge returned an invalid credential submission response");
+    }
+    const response = payload as Partial<RustDeskCredentialSubmissionResponse>;
+    if (response.ok !== true || typeof response.connectionId !== "string" || !response.connectionId.trim()) {
+      throw new Error("RustDesk bridge returned an incomplete credential submission response");
+    }
+    if (
+      response.credentialRequestId !== undefined &&
+      response.credentialRequestId !== request.credentialRequestId
+    ) {
+      throw new Error("RustDesk bridge returned a mismatched credentialRequestId");
+    }
+    return payload as RustDeskCredentialSubmissionResponse;
   }
 
   async executeAuthorized(
@@ -616,3 +646,5 @@ export function createRustDeskBridgeClientFromEnv(): RustDeskBridgeClient {
     timeoutMs,
   });
 }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

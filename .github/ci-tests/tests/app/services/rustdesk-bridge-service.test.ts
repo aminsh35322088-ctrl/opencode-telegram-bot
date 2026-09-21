@@ -1,3 +1,5 @@
+[Reading 354 lines from start (total: 354 lines, 0 remaining)]
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -207,6 +209,7 @@ describe("rustdesk bridge service", () => {
           expiresInSeconds: 300,
           risk: "mutating",
           permission: "ask",
+          idempotent: true,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -225,11 +228,57 @@ describe("rustdesk bridge service", () => {
     });
 
     expect(result.permissionGrantId).toBe("perm-1");
+    expect(result.idempotent).toBe(true);
     const request = fetchMock.mock.calls[0];
     expect(request?.[0]).toBe("https://bridge.example.com/v1/permission");
     expect((request?.[1] as RequestInit | undefined)?.method).toBe("POST");
     expect((request?.[1] as RequestInit | undefined)?.body).toBe(
       JSON.stringify({ action: "terminal.exec", connectionId: "conn-1", scope: "once" }),
+    );
+  });
+
+  it("validates the credential control-plane response and preserves idempotency metadata", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          connectionId: "conn-1",
+          credentialRequestId: "credreq-1",
+          status: "connecting",
+          accepted: true,
+          idempotent: true,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await client.submitCredential({
+      credentialRequestId: "credreq-1",
+      credential: "fixture-secret",
+      trustThisDevice: false,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      connectionId: "conn-1",
+      credentialRequestId: "credreq-1",
+      accepted: true,
+      idempotent: true,
+    });
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[0]).toBe("https://bridge.example.com/v1/credential");
+    expect((request?.[1] as RequestInit | undefined)?.body).toBe(
+      JSON.stringify({
+        credentialRequestId: "credreq-1",
+        credential: "fixture-secret",
+        trustThisDevice: false,
+      }),
     );
   });
 
@@ -305,3 +354,5 @@ describe("rustdesk bridge service", () => {
     ).rejects.toThrow("RustDesk bridge HTTP 409: device is offline");
   });
 });
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

@@ -1,3 +1,5 @@
+[Reading 105 lines from start (total: 105 lines, 0 remaining)]
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 
@@ -8,6 +10,7 @@ const rustDeskMocks = vi.hoisted(() => ({
 
 vi.mock("../../../src/app/services/rustdesk-bridge-service.js", () => ({
   createRustDeskBridgeClientFromEnv: rustDeskMocks.factory,
+  RUSTDESK_BRIDGE_CONTRACT_VERSION: 2,
 }));
 
 import { showRustDeskIntegrationMenu } from "../../../src/bot/commands/integrations-command.js";
@@ -33,7 +36,7 @@ describe("RustDesk integrations settings", () => {
   it("shows bridge health and safe inventory counts", async () => {
     rustDeskMocks.execute.mockImplementation(async (request: { action: string }) => {
       if (request.action === "bridge.health") {
-        return { ok: true, controlPlaneConfigured: true };
+        return { ok: true, controlPlaneConfigured: true, contractVersion: 2 };
       }
       if (request.action === "servers.list") {
         return { ok: true, servers: [{ id: "public" }, { id: "custom" }] };
@@ -53,7 +56,27 @@ describe("RustDesk integrations settings", () => {
     expect(text).toContain("Server profiles: 2");
     expect(text).toContain("Permanent devices: 1");
     expect(text).toContain("Secure control plane: Ready");
+    expect(text).toContain("Bridge contract: v2 · matched");
     expect(text).toContain("never shown here or sent to the AI model");
+  });
+
+  it("surfaces a bridge contract mismatch without hiding health", async () => {
+    rustDeskMocks.execute.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "bridge.health") {
+        return { ok: true, controlPlaneConfigured: true, contractVersion: 1 };
+      }
+      if (request.action === "servers.list") return { ok: true, servers: [] };
+      if (request.action === "devices.list") return { ok: true, devices: [] };
+      throw new Error("unexpected action");
+    });
+    rustDeskMocks.factory.mockReturnValue({ execute: rustDeskMocks.execute });
+    const ctx = makeContext();
+
+    await showRustDeskIntegrationMenu(ctx);
+
+    const text = String((ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0]?.[2]);
+    expect(text).toContain("🟢 Bridge online");
+    expect(text).toContain("Bridge contract: v1 · expected v2");
   });
 
   it("shows a safe not-configured state", async () => {
@@ -82,3 +105,5 @@ describe("RustDesk integrations settings", () => {
     expect(text).not.toContain("fixture transport failure");
   });
 });
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

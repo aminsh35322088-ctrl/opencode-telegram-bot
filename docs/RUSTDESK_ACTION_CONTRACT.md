@@ -1,3 +1,5 @@
+[Reading 601 lines from start (total: 601 lines, 0 remaining)]
+
 # RustDesk Agent Action Contract
 
 Status: design contract for PR #100. This document is the source of truth for the bot-facing RustDesk action surface before the headless bridge implementation is completed.
@@ -189,6 +191,8 @@ When a connection needs a credential, the bridge/control plane returns only an o
 
 The UI obtains the secret through secure input and submits it outside the model action channel. After resolution, the model receives only connection state such as `connected` or a normalized failure code. The opaque request ID must be short-lived, single-purpose, scoped to the intended connection attempt, and non-secret by itself.
 
+Bridge contract v2 makes credential submission retry-safe without retaining the credential: the bridge remembers only the consumed opaque request ID for a bounded TTL. Repeating the same consumed request while no newer challenge exists returns an idempotent success; if the peer has already issued a newer authentication challenge, the old request fails with `credential_request_superseded`. The headless RustDesk adapter consumes its current auth prompt immediately before submitting password/2FA so polling cannot re-emit the same prompt as a fresh challenge.
+
 The normal `question` tool is used only for non-sensitive decisions. The permission system is used for authorization of side effects. Secure input is a third, separate mechanism.
 
 ## Permission model
@@ -208,6 +212,8 @@ final authorization decision
 ```
 
 The bridge must always enforce target-side RustDesk/OS permissions. Bot permission grants can restrict access further but can never widen what the remote side permits.
+
+Bridge contract v2 also defines permission-grant retry semantics. Re-submitting the same `permissionGrantId` with the same action, connection and scope is an idempotent success and never extends the original expiry. Reusing that ID for different grant metadata fails closed with `permission_grant_conflict`.
 
 Recommended risk classes:
 
@@ -595,3 +601,5 @@ connection.disconnect
 ```
 
 After this works over real RustDesk transport, `terminal.exec` and the remaining capability families can be layered on without changing connection semantics.
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

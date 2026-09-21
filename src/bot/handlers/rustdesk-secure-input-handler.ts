@@ -1,7 +1,15 @@
+[Reading 123 lines from start (total: 123 lines, 0 remaining)]
+
 import type { Context } from "grammy";
-import { rustDeskSecureInputManager } from "../../app/managers/rustdesk-secure-input-manager.js";
+import {
+  rustDeskSecureInputManager,
+  type RustDeskSecureInputChallenge,
+} from "../../app/managers/rustdesk-secure-input-manager.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
-import { createRustDeskBridgeClientFromEnv } from "../../app/services/rustdesk-bridge-service.js";
+import {
+  createRustDeskBridgeClientFromEnv,
+  RustDeskBridgeHttpError,
+} from "../../app/services/rustdesk-bridge-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { t } from "../../i18n/index.js";
@@ -32,6 +40,35 @@ function currentSessionId(): string | null {
   return getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id ?? null;
 }
 
+const TERMINAL_CREDENTIAL_ERROR_CODES = new Set([
+  "credential_request_not_found",
+  "credential_request_expired",
+  "credential_request_superseded",
+  "credential_request_invalid",
+  "credential_not_ready",
+]);
+
+async function clearSecureInputChallenge(
+  ctx: Context,
+  sessionId: string,
+  challenge: RustDeskSecureInputChallenge,
+  reason: string,
+): Promise<void> {
+  rustDeskSecureInputManager.clear(sessionId, challenge.credentialRequestId);
+  const interaction = interactionManager.getSnapshot();
+  if (
+    interaction?.kind === "custom" &&
+    interaction.metadata.flow === "rustdesk-secure-input" &&
+    interaction.metadata.sessionId === sessionId &&
+    interaction.metadata.credentialRequestId === challenge.credentialRequestId
+  ) {
+    interactionManager.clear(reason);
+  }
+  if (challenge.promptMessageId) {
+    await ctx.api.deleteMessage(challenge.chatId, challenge.promptMessageId).catch(() => {});
+  }
+}
+
 export async function handleRustDeskSecureInputMessage(ctx: Context): Promise<boolean> {
   const sessionId = currentSessionId();
   if (!sessionId || !ctx.chat?.id || typeof ctx.message?.text !== "string") return false;
@@ -60,24 +97,31 @@ export async function handleRustDeskSecureInputMessage(ctx: Context): Promise<bo
       trustThisDevice: false,
     });
 
-    rustDeskSecureInputManager.clear(sessionId, challenge.credentialRequestId);
-    const interaction = interactionManager.getSnapshot();
-    if (
-      interaction?.kind === "custom" &&
-      interaction.metadata.flow === "rustdesk-secure-input" &&
-      interaction.metadata.sessionId === sessionId &&
-      interaction.metadata.credentialRequestId === challenge.credentialRequestId
-    ) {
-      interactionManager.clear("rustdesk_secure_input_submitted");
-    }
-    if (challenge.promptMessageId) {
-      await ctx.api.deleteMessage(challenge.chatId, challenge.promptMessageId).catch(() => {});
-    }
+    await clearSecureInputChallenge(
+      ctx,
+      sessionId,
+      challenge,
+      "rustdesk_secure_input_submitted",
+    );
     await ctx.reply(t("rustdesk.secure_input.submitted"));
   } catch (error) {
     logger.error("[RustDesk] Secure credential submission failed:", error);
+    if (
+      error instanceof RustDeskBridgeHttpError &&
+      error.errorCode &&
+      TERMINAL_CREDENTIAL_ERROR_CODES.has(error.errorCode)
+    ) {
+      await clearSecureInputChallenge(
+        ctx,
+        sessionId,
+        challenge,
+        "rustdesk_secure_input_rejected_by_bridge",
+      );
+    }
     await ctx.reply(t("rustdesk.secure_input.failed"));
   }
 
   return true;
 }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

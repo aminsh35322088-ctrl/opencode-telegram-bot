@@ -1,3 +1,5 @@
+[Reading 212 lines from start (total: 212 lines, 0 remaining)]
+
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
@@ -7,7 +9,10 @@ import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
-import { createRustDeskBridgeClientFromEnv } from "../../app/services/rustdesk-bridge-service.js";
+import {
+  createRustDeskBridgeClientFromEnv,
+  RUSTDESK_BRIDGE_CONTRACT_VERSION,
+} from "../../app/services/rustdesk-bridge-service.js";
 
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingRailway { step: "name" | "token"; name?: string; messageId: number; }
@@ -53,6 +58,8 @@ interface RustDeskIntegrationSummary {
   servers: number;
   devices: number;
   controlPlaneConfigured: boolean;
+  contractVersion: number | null;
+  contractCompatible: boolean;
 }
 async function loadRustDeskIntegrationSummary(): Promise<RustDeskIntegrationSummary> {
   try {
@@ -69,6 +76,10 @@ async function loadRustDeskIntegrationSummary(): Promise<RustDeskIntegrationSumm
       servers: listLength(servers, "servers"),
       devices: listLength(devices, "devices"),
       controlPlaneConfigured: healthRecord.controlPlaneConfigured === true,
+      contractVersion:
+        typeof healthRecord.contractVersion === "number" ? healthRecord.contractVersion : null,
+      contractCompatible:
+        healthRecord.contractVersion === RUSTDESK_BRIDGE_CONTRACT_VERSION,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -79,6 +90,8 @@ async function loadRustDeskIntegrationSummary(): Promise<RustDeskIntegrationSumm
         servers: 0,
         devices: 0,
         controlPlaneConfigured: false,
+        contractVersion: null,
+        contractCompatible: false,
       };
     }
     logger.warn("[Integrations] RustDesk bridge summary failed:", error);
@@ -88,6 +101,8 @@ async function loadRustDeskIntegrationSummary(): Promise<RustDeskIntegrationSumm
       servers: 0,
       devices: 0,
       controlPlaneConfigured: false,
+      contractVersion: null,
+      contractCompatible: false,
     };
   }
 }
@@ -109,6 +124,12 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
     "Server profiles: " + summary.servers,
     "Permanent devices: " + summary.devices,
     "Secure control plane: " + (summary.controlPlaneConfigured ? "Ready" : "Not ready"),
+    "Bridge contract: " +
+      (summary.contractCompatible
+        ? `v${summary.contractVersion} · matched`
+        : summary.contractVersion === null
+          ? `unknown · expected v${RUSTDESK_BRIDGE_CONTRACT_VERSION}`
+          : `v${summary.contractVersion} · expected v${RUSTDESK_BRIDGE_CONTRACT_VERSION}`),
     "",
     "🔐 Passwords, 2FA codes, tokens, and private server keys are never shown here or sent to the AI model.",
   ];
@@ -191,3 +212,5 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   }
 }
 async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInput(ctx); try { await showIntegrationsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
+
+[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]
