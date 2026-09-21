@@ -61,6 +61,17 @@ vi.mock("../../../src/utils/logger.js", () => ({
 }));
 
 describe("bot/commands/pause", () => {
+  it("recovers the Resume keyboard when the confirmed-pause notification is rejected", async () => {
+    const reply = vi.fn().mockRejectedValueOnce(new Error("Bad Request: can't parse entities")).mockResolvedValue({ message_id: 89 });
+    await pauseCurrentChat({ chat: { id: 777 }, reply } as unknown as Context);
+    expect(reply).toHaveBeenCalledTimes(2);
+    expect(reply).toHaveBeenLastCalledWith(
+      "⏸️ Chat paused. Tap ▶️ Resume to continue.",
+      { reply_markup: mocked.getKeyboard() },
+    );
+    expect(mocked.setPaused).not.toHaveBeenCalledWith(false, "session-1");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.status.mockResolvedValue({ data: { "session-1": { type: "busy" } }, error: null });
