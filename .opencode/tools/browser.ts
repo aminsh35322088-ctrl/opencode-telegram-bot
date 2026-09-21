@@ -30,6 +30,7 @@ export default tool({
   },
   async execute(args, context) {
     if (!ALLOWED_ACTIONS.has(args.action)) throw new Error(`Unsupported browser action: ${args.action}`);
+    const base = context.directory || context.worktree || process.cwd();
     const command: string[] = [...sessionArgs(args.session)];
     command.push(args.action);
 
@@ -50,14 +51,14 @@ export default tool({
     }
 
     if ((args.action === "screenshot" || args.action === "pdf") && args.filename) {
-      const output = path.resolve(context.worktree, args.filename);
+      const output = path.resolve(base, args.filename);
       await fs.mkdir(path.dirname(output), { recursive: true });
       command.push(`--filename=${output}`);
     }
 
     try {
       const { stdout, stderr } = await execFileAsync("playwright-cli", command, {
-        cwd: context.worktree,
+        cwd: base,
         env: {
           ...process.env,
           PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || "/data/.cache/ms-playwright",

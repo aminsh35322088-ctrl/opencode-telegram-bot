@@ -121,7 +121,7 @@ export default tool({
     allow_sensitive: tool.schema.boolean().optional().describe("Allow reading credential or environment files. Defaults to false."),
   },
   async execute(args, context) {
-    const worktree = path.resolve(context.worktree);
+    const worktree = path.resolve(context.directory || context.worktree || process.cwd());
     const requested = resolveInside(worktree, args.path, "path");
     const support = await loadSupport();
     const guardSensitive = (label: string, target: string): void => {

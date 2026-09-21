@@ -58,7 +58,7 @@ export default tool({
     path: tool.schema.string().optional().describe("Log file or directory. Must stay inside the worktree or /data/logs."),
   },
   async execute(args, context) {
-    const worktree = path.resolve(context.worktree);
+    const worktree = path.resolve(context.directory || context.worktree || process.cwd());
     const lineCount = Math.max(1, Math.min(Math.trunc(args.lines ?? 50), 500));
 
     if (args.action === "tail") {

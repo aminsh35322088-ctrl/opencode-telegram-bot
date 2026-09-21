@@ -48,48 +48,49 @@ export default tool({
   async execute(args, context) {
     const support = await loadSupport();
     const extra = support.parseShellLikeArgs(args.args);
+    const base = context.directory || context.worktree || process.cwd();
 
     switch (args.action) {
       case "status":
-        return git(["status", "--porcelain=v1", "--branch", ...extra], context.worktree);
+        return git(["status", "--porcelain=v1", "--branch", ...extra], base);
       case "diff":
-        return git(["diff", ...extra], context.worktree);
+        return git(["diff", ...extra], base);
       case "log":
-        return git(["log", "--oneline", "-20", ...extra], context.worktree);
+        return git(["log", "--oneline", "-20", ...extra], base);
       case "commit": {
         const message = args.message?.trim();
-        if (message) return git(["commit", "-m", message, ...extra], context.worktree, 60000);
+        if (message) return git(["commit", "-m", message, ...extra], base, 60000);
         if (!extra.length) throw new Error("commit requires message or args.");
-        return git(["commit", ...extra], context.worktree, 60000);
+        return git(["commit", ...extra], base, 60000);
       }
       case "push":
         if (support.containsForcePushFlag(extra)) {
           throw new Error("Refusing to force-push. Force pushes must be requested explicitly outside this tool.");
         }
-        return git(["push", ...extra], context.worktree, 120000);
+        return git(["push", ...extra], base, 120000);
       case "pull":
-        return git(["pull", ...extra], context.worktree, 120000);
+        return git(["pull", ...extra], base, 120000);
       case "branch":
-        return git(["branch", ...extra], context.worktree);
+        return git(["branch", ...extra], base);
       case "checkout":
-        return git(["checkout", ...extra], context.worktree, 60000);
+        return git(["checkout", ...extra], base, 60000);
       case "stash":
-        return git(["stash", ...extra], context.worktree, 60000);
+        return git(["stash", ...extra], base, 60000);
       case "merge":
-        return git(["merge", ...extra], context.worktree, 120000);
+        return git(["merge", ...extra], base, 120000);
       case "rebase":
-        return git(["rebase", ...extra], context.worktree, 120000);
+        return git(["rebase", ...extra], base, 120000);
       case "blame":
         if (!extra.length) throw new Error('blame requires args, for example "src/file.ts".');
-        return git(["blame", ...extra], context.worktree);
+        return git(["blame", ...extra], base);
       case "tags":
-        return git(["tag", "-l", ...extra], context.worktree);
+        return git(["tag", "-l", ...extra], base);
       case "remote":
-        return git(["remote", "-v", ...extra], context.worktree);
+        return git(["remote", "-v", ...extra], base);
       case "fetch":
-        return git(["fetch", ...extra], context.worktree, 120000);
+        return git(["fetch", ...extra], base, 120000);
       case "reset":
-        return git(["reset", ...extra], context.worktree, 60000);
+        return git(["reset", ...extra], base, 60000);
       default:
         throw new Error(`Unknown git action: ${args.action}`);
     }

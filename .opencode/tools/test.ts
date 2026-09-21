@@ -78,7 +78,7 @@ export default tool({
     args: tool.schema.string().optional().describe("Additional arguments; quotes/backslash escapes are supported."),
   },
   async execute(args, context) {
-    const worktree = context.worktree;
+    const worktree = context.directory || context.worktree || process.cwd();
     const support = await loadSupport();
     const pkg = await packageJson(worktree);
     const pm = await detectPackageManager(worktree);

@@ -314,7 +314,7 @@ export default tool({
 
     try {
       const { stdout, stderr } = await execFileAsync(RAILWAY_BIN, command, {
-        cwd: context.worktree,
+        cwd: context.directory || context.worktree || process.cwd(),
         timeout: clampTimeout(args.timeoutMs),
         maxBuffer: 2 * 1024 * 1024,
         env: railwayEnv,

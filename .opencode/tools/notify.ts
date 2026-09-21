@@ -206,7 +206,7 @@ export default tool({
   },
   async execute(args, context) {
     await ensureRecovered();
-    const target = await currentTarget(context.worktree, context.sessionID);
+    const target = await currentTarget(context.directory || context.worktree || process.cwd(), context.sessionID);
     if (args.target?.trim() && args.target !== "current" && args.target !== String(target.chatId)) {
       throw new Error("notify can only target the current Telegram chat/topic.");
     }
