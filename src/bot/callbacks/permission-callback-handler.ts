@@ -51,6 +51,22 @@ function isPermissionReply(value: string): value is PermissionReply {
   return value === "once" || value === "always" || value === "reject";
 }
 
+function isRustDeskPermissionGrantAlreadyActive(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    errorCode?: unknown;
+    payload?: { errorCode?: unknown } | null;
+  };
+
+  return (
+    candidate.errorCode === "permission_grant_exists" ||
+    candidate.payload?.errorCode === "permission_grant_exists"
+  );
+}
+
 function isPermissionRequestNotFound(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -174,13 +190,19 @@ async function handlePermissionReply(
         permissionGrantId: rustDeskPermission.permissionGrantId,
       });
     } catch (error) {
-      logger.error("[PermissionHandler] Failed to mint RustDesk permission grant:", error);
-      await ctx.answerCallbackQuery({
-        text: t("permission.processing_error_callback"),
-        show_alert: true,
-      });
-      await ctx.api.sendMessage(chatId, t("permission.send_reply_error")).catch(() => {});
-      return;
+      if (isRustDeskPermissionGrantAlreadyActive(error)) {
+        logger.debug(
+          `[PermissionHandler] RustDesk one-shot grant already active; retrying OpenCode release: grant=${rustDeskPermission.permissionGrantId}`,
+        );
+      } else {
+        logger.error("[PermissionHandler] Failed to mint RustDesk permission grant:", error);
+        await ctx.answerCallbackQuery({
+          text: t("permission.processing_error_callback"),
+          show_alert: true,
+        });
+        await ctx.api.sendMessage(chatId, t("permission.send_reply_error")).catch(() => {});
+        return;
+      }
     }
   }
 
