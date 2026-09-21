@@ -229,6 +229,12 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
 
     if (await handlePriorityControlButton(ctx)) return;
 
+    // Secure credential input must run before generic slash-command routing so
+    // valid secrets beginning with "/" are not misclassified as bot commands.
+    // The secure-input handler itself explicitly passes through supported
+    // control commands such as /abort and /stop.
+    if (await handleRustDeskSecureInputMessage(ctx)) return;
+
     if (text.startsWith("/")) {
       await next();
       return;
@@ -243,7 +249,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
       return;
     }
 
-    if (await handleRustDeskSecureInputMessage(ctx)) return;
     if (await handleProviderWizardMessage(ctx)) return;
     if (await handleIntegrationMessage(ctx)) return;
     if (await handleSkillWizardMessage(ctx)) return;
