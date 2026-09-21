@@ -207,8 +207,14 @@ async function edit(
   try {
     await ctx.api.editMessageText(chatId, targetMessageId, text, { reply_markup: keyboard });
   } catch (error) {
-    if (isMessageNotModified(error)) return;
-    throw error;
+    if (!isMessageNotModified(error)) throw error;
+  }
+
+  const sourceMessage = ctx.callbackQuery?.message;
+  const sourceMessageId =
+    sourceMessage && "message_id" in sourceMessage ? sourceMessage.message_id : undefined;
+  if (typeof sourceMessageId === "number" && sourceMessageId !== targetMessageId) {
+    await ctx.api.deleteMessage(chatId, sourceMessageId).catch(() => {});
   }
 }
 

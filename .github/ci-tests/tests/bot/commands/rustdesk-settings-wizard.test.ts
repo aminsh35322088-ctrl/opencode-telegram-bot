@@ -189,6 +189,7 @@ describe("RustDesk settings wizard", () => {
       expect.any(Object),
     );
     expect(ctx.reply).not.toHaveBeenCalled();
+    expect(ctx.api.deleteMessage).toHaveBeenCalledWith(42, 10);
   });
 
   it("parses nested saved-device connection responses without showing unknown", async () => {
