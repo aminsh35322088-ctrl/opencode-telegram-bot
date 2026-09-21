@@ -122,15 +122,15 @@ export async function handleTelegramTopicDeleteCallback(ctx: Context): Promise<b
     );
   } catch (error) {
     logger.error(
-      `[TelegramTopics] Topic deletion completed with cleanup error: session=${binding.sessionId}, thread=${binding.threadId}`,
+      `[TelegramTopics] Topic deletion stopped at a retry-safe cleanup boundary: session=${binding.sessionId}, thread=${binding.threadId}`,
       error,
     );
     await ctx.answerCallbackQuery({
-      text: "Topic deletion completed with a cleanup error. Check logs.",
+      text: "Chat deletion could not finish safely. Retry after checking logs.",
       show_alert: true,
     }).catch(() => {});
     await ctx.editMessageText(
-      "⚠️ <b>Chat deletion completed with a cleanup error.</b>\n\nThe Telegram Topic was removed, but one or more local cleanup steps failed. Check the bot logs before taking further action.",
+      "⚠️ <b>Chat deletion could not be completed cleanly.</b>\n\nCleanup stopped at a retry-safe point. Any Topic/session metadata still needed for cleanup was kept so you can try Delete Chat again after resolving the error.",
       { parse_mode: "HTML" },
     ).catch(() => {});
   }
