@@ -908,6 +908,30 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       expect(api.sendMessage).not.toHaveBeenCalled();
     });
 
+    it("preserves Resume and Abort after the expected Pause abort error and idle", async () => {
+      const { api, summaryAggregator } = await setupService();
+      const { markUserAbortRequested } = await import("../../../src/app/managers/abort-suppression-manager.js");
+      const { setPausedSession, isChatPaused, clearPausedSession } = await import("../../../src/app/managers/paused-session-manager.js");
+      const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
+      const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
+      keyboardManager.bindTopic(api as never, 42, 7, "session-1");
+      setPausedSession({ id: "session-1", title: "Paused", directory: "D:/repo" });
+      foregroundSessionState.markBusy("session-1", "D:/repo");
+      markUserAbortRequested("session-1");
+      emitSessionError(summaryAggregator, "Aborted");
+      await vi.waitFor(() => expect(foregroundSessionState.isBusy()).toBe(false));
+      summaryAggregator.processEvent({ type: "session.idle", properties: { sessionID: "session-1" } } as unknown as Event);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(isChatPaused("session-1")).toBe(true);
+      const buttons = keyboardManager.getKeyboard("session-1")!.keyboard.flat().map(button => button.text);
+      expect(buttons).toContain("▶️ Resume");
+      expect(buttons).toContain("🛑 Abort");
+      expect(buttons).not.toContain("⏸️ Pause");
+      expect(api.sendMessage).not.toHaveBeenCalled();
+      clearPausedSession("session-1");
+      keyboardManager.clearSession("session-1");
+    });
+
     it("truncates an oversized session error", async () => {
       const { api, summaryAggregator } = await setupService();
 
