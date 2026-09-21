@@ -1,5 +1,3 @@
-[Reading 877 lines from start (total: 877 lines, 0 remaining)]
-
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -877,5 +875,3 @@ describe("bot/services/event-subscription-service", () => {
     expect(interactionManager.getSnapshot()?.kind).toBe("rename");
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

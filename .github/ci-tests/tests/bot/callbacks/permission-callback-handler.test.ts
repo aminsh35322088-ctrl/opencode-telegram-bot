@@ -1,5 +1,3 @@
-[Reading 614 lines from start (total: 614 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, InlineKeyboard } from "grammy";
 import type { PermissionRequest } from "../../../src/app/types/permission.js";
@@ -614,5 +612,3 @@ describe("bot permission menu/callbacks", () => {
     expect(options).not.toHaveProperty("parse_mode");
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

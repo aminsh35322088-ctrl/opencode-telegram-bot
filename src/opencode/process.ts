@@ -1,5 +1,3 @@
-[Reading 362 lines from start (total: 362 lines, 0 remaining)]
-
 import { exec, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, statSync, truncateSync } from "node:fs";
 import * as path from "node:path";
@@ -362,5 +360,3 @@ export async function killServerProcess(pid: number, timeoutMs: number = 5000): 
     ? killWindowsProcess(pid, timeoutMs)
     : killUnixProcess(pid, timeoutMs);
 }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

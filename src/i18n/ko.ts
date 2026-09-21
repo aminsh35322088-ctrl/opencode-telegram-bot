@@ -1,5 +1,3 @@
-[Reading 565 lines from start (total: 565 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 /**
@@ -565,5 +563,3 @@ export const ko: I18nDictionary = {
   "attachment.cancelled": "❌ 첨부가 취소되었습니다",
   "attachment.invalid": "⚠️ 첨부한 파일을 더 이상 사용할 수 없습니다. 파일 없이 메시지를 보냅니다.",
 };
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

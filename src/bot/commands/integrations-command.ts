@@ -1,5 +1,3 @@
-[Reading 193 lines from start (total: 193 lines, 0 remaining)]
-
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
@@ -193,5 +191,3 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   }
 }
 async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInput(ctx); try { await showIntegrationsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

@@ -1,5 +1,3 @@
-[Reading 73 lines from start (total: 73 lines, 0 remaining)]
-
 import type { Context } from "grammy";
 import { rustDeskSecureInputManager } from "../../app/managers/rustdesk-secure-input-manager.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
@@ -83,5 +81,3 @@ export async function handleRustDeskSecureInputMessage(ctx: Context): Promise<bo
 
   return true;
 }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

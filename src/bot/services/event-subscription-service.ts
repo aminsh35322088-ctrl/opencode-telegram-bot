@@ -1,5 +1,3 @@
-[Reading 1973 lines from start (total: 1973 lines, 0 remaining)]
-
 import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.js";
 import { promises as fs } from "fs";
 import * as path from "path";
@@ -1973,5 +1971,3 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     }
   }
 }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

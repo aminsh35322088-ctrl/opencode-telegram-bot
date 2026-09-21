@@ -1,5 +1,3 @@
-[Reading 217 lines from start (total: 217 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerMessageRouter } from "../../../src/bot/routers/message-router.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN } from "../../../src/bot/message-patterns.js";
@@ -217,5 +215,3 @@ describe("bot/routers/message-router", () => {
     });
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

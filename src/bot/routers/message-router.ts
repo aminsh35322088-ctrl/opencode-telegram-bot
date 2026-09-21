@@ -1,5 +1,3 @@
-[Reading 467 lines from start (total: 467 lines, 0 remaining)]
-
 import type { Bot, Context } from "grammy";
 import { config } from "../../config.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
@@ -467,5 +465,3 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

@@ -1,5 +1,3 @@
-[Reading 563 lines from start (total: 563 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 export const ru: I18nDictionary = {
@@ -563,5 +561,3 @@ export const ru: I18nDictionary = {
   "attachment.cancelled": "❌ Вложение отменено",
   "attachment.invalid": "⚠️ Прикреплённый файл больше недоступен. Отправляю сообщение без него.",
 };
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

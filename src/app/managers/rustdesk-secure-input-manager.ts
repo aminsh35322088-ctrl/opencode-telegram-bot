@@ -1,5 +1,3 @@
-[Reading 111 lines from start (total: 111 lines, 0 remaining)]
-
 export type RustDeskSecureInputStateValue = "required" | "resolved";
 
 export interface RustDeskSecureInputSignal {
@@ -111,5 +109,3 @@ class RustDeskSecureInputManager {
 }
 
 export const rustDeskSecureInputManager = new RustDeskSecureInputManager();
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

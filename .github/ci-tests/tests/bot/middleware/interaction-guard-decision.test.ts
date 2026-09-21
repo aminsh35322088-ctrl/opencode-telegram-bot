@@ -1,5 +1,3 @@
-[Reading 584 lines from start (total: 584 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { resolveInteractionGuardDecision } from "../../../src/bot/middleware/interaction-guard-decision.js";
@@ -584,5 +582,3 @@ describe("interaction guard: navigation commands while busy", () => {
     expect(decision.busy).toBe(true);
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

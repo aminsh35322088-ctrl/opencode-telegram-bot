@@ -1,5 +1,3 @@
-[Reading 82 lines from start (total: 82 lines, 0 remaining)]
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   parseRustDeskSecureInputSignal,
@@ -82,5 +80,3 @@ describe("rustdesk secure input manager", () => {
     expect(rustDeskSecureInputManager.get("session-1")).toBeNull();
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

@@ -1,5 +1,3 @@
-[Reading 165 lines from start (total: 165 lines, 0 remaining)]
-
 import { describe, expect, it } from "vitest";
 
 import * as path from "node:path";
@@ -165,5 +163,3 @@ describe("opencode/process", () => {
     }
   });
 });
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

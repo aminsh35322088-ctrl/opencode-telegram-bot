@@ -1,5 +1,3 @@
-[Reading 107 lines from start (total: 107 lines, 0 remaining)]
-
 import type { Context } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
@@ -107,5 +105,3 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command);
   return createBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);
 }
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

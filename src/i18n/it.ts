@@ -1,5 +1,3 @@
-[Reading 569 lines from start (total: 569 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 export const it: I18nDictionary = {
@@ -569,5 +567,3 @@ export const it: I18nDictionary = {
   "attachment.invalid":
     "⚠️ Il file allegato non è più disponibile. Invio del messaggio senza di esso.",
 };
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

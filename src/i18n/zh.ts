@@ -1,5 +1,3 @@
-[Reading 514 lines from start (total: 514 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 export const zh: I18nDictionary = {
@@ -514,5 +512,3 @@ export const zh: I18nDictionary = {
   "attachment.cancelled": "❌ 已取消附加",
   "attachment.invalid": "⚠️ 附加的文件已不可用，将不带该文件发送消息。",
 };
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

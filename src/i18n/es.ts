@@ -1,5 +1,3 @@
-[Reading 577 lines from start (total: 577 lines, 0 remaining)]
-
 import type { I18nDictionary } from "./en.js";
 
 export const es: I18nDictionary = {
@@ -577,5 +575,3 @@ export const es: I18nDictionary = {
   "attachment.invalid":
     "⚠️ El archivo adjunto ya no está disponible. Enviando el mensaje sin él.",
 };
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]

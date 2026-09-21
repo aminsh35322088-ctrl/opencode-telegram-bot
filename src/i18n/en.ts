@@ -1,5 +1,3 @@
-[Reading 559 lines from start (total: 559 lines, 0 remaining)]
-
 export const en = {
   "cmd.description.help": "Help",
 
@@ -559,5 +557,3 @@ export const en = {
 
 export type I18nKey = keyof typeof en;
 export type I18nDictionary = Record<I18nKey, string>;
-
-[executed on device: runnervmlun5p (3784ff4d-04bd-49e4-95bf-176085794429)]
