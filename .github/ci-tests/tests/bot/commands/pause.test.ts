@@ -36,6 +36,7 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     getKeyboard: mocked.getKeyboard,
     setPaused: mocked.setPaused,
     sendKeyboardUpdate: vi.fn(),
+    markKeyboardDelivered: vi.fn(),
   },
 }));
 
