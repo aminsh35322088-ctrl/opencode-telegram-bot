@@ -19,6 +19,8 @@ describe("Railway volume emergency maintenance", () => {
       '$DATA_ROOT/.local/share/opencode/tool-output',
     );
     expect(script).toContain('$PERSISTENT_REPO/node_modules');
+    expect(script).toContain("Emergency-trimmed OpenCode log");
+    expect(script).toContain("tail -c 262144");
 
     const cleanupIndex = script.indexOf("Critical free space");
     const gcIndex = script.indexOf("compacting persistent Git repository");
