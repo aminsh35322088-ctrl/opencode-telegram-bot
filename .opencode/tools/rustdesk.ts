@@ -1,21 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
-interface RustDeskPermissionChallenge {
-  action: string;
-  connectionId?: string;
-  risk?: string;
-  permission?: string;
-}
-
 interface RustDeskBridgeClient {
   execute(request: Record<string, unknown>): Promise<unknown>;
-  executeAuthorized(
-    request: Record<string, unknown>,
-    authorize: (challenge: RustDeskPermissionChallenge) => Promise<void>,
-  ): Promise<unknown>;
 }
 
 interface RustDeskBridgeModule {
@@ -104,6 +94,20 @@ function stringify(value: unknown): string {
 function getConnection(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value) || !isRecord(value.connection)) return null;
   return value.connection;
+}
+
+function permissionErrorDetails(error: unknown): { risk?: string; permission?: string } | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as {
+    errorCode?: unknown;
+    payload?: { risk?: unknown; permission?: unknown } | null;
+  };
+  if (candidate.errorCode !== "permission_required") return null;
+  return {
+    risk: typeof candidate.payload?.risk === "string" ? candidate.payload.risk : undefined,
+    permission:
+      typeof candidate.payload?.permission === "string" ? candidate.payload.permission : undefined,
+  };
 }
 
 function permissionPattern(action: string, request: Record<string, unknown>): string {
@@ -351,22 +355,33 @@ export default tool({
       request.contentBase64 = file.toString("base64");
     }
 
-    let result = await client.executeAuthorized(request, async (challenge) => {
+    let result: unknown;
+    try {
+      result = await client.execute(request);
+    } catch (error) {
+      const permission = permissionErrorDetails(error);
+      if (!permission) throw error;
+
+      const permissionGrantId = `perm_${randomUUID()}`;
       const pattern = permissionPattern(action, request);
       await context.ask({
         permission: `rustdesk.${action}`,
         patterns: [pattern],
-        always: challenge.permission === "always-ask" ? [] : [pattern],
+        always: [],
         metadata: {
           source: "rustdesk",
           action,
-          risk: challenge.risk,
+          risk: permission.risk,
+          permission: permission.permission,
+          permissionGrantId,
           connectionId: clean(args.connection_id),
           deviceId: clean(args.device_id),
           rustdeskId: clean(args.rustdesk_id),
         },
       });
-    });
+
+      result = await client.execute({ ...request, permissionGrantId });
+    }
 
     if (getConnection(result)?.status === "credential_required") {
       result = await waitForCredentialResolution(client, result, context);

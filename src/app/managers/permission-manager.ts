@@ -30,6 +30,17 @@ class PermissionManager {
   clear(): void { const scope = this.scope(); logger.debug(`[PermissionManager] Clearing permission state: key=${this.key()}, pending=${scope.state.requestsByMessageId.size}`); scope.state = emptyState(); scope.resolvedRequestIDs.clear(); scope.generation++; }
   clearSession(scopeKey: string): void { this.scopes.delete(scopeKey); }
   clearAll(): void { this.scopes.clear(); }
-  private signature(request: PermissionRequest): string { return JSON.stringify({ sessionID: request.sessionID, permission: request.permission, patterns: [...request.patterns].sort() }); }
+  private signature(request: PermissionRequest): string {
+    const rustDeskGrantId =
+      request.metadata.source === "rustdesk" && typeof request.metadata.permissionGrantId === "string"
+        ? request.metadata.permissionGrantId
+        : undefined;
+    return JSON.stringify({
+      sessionID: request.sessionID,
+      permission: request.permission,
+      patterns: [...request.patterns].sort(),
+      rustDeskGrantId,
+    });
+  }
 }
 export const permissionManager = new PermissionManager();

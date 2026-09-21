@@ -5,6 +5,10 @@ import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
+import {
+  createRustDeskBridgeClientFromEnv,
+  type RustDeskAction,
+} from "../../app/services/rustdesk-bridge-service.js";
 import { clearPermissionInteraction, syncPermissionInteractionState } from "../menus/permission-menu.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
@@ -17,6 +21,30 @@ function getCallbackMessageId(ctx: Context): number | null {
 
   const messageId = (message as { message_id?: number }).message_id;
   return typeof messageId === "number" ? messageId : null;
+}
+
+interface RustDeskPermissionMetadata {
+  action: RustDeskAction;
+  permissionGrantId: string;
+  connectionId?: string;
+}
+
+function parseRustDeskPermissionMetadata(
+  request: ReturnType<typeof permissionManager.getRequest>,
+): RustDeskPermissionMetadata | null {
+  if (!request || request.metadata.source !== "rustdesk") return null;
+  const action = request.metadata.action;
+  const permissionGrantId = request.metadata.permissionGrantId;
+  const connectionId = request.metadata.connectionId;
+  if (typeof action !== "string" || typeof permissionGrantId !== "string") return null;
+  if (!/^perm_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(permissionGrantId)) {
+    return null;
+  }
+  return {
+    action: action as RustDeskAction,
+    permissionGrantId,
+    connectionId: typeof connectionId === "string" && connectionId.trim() ? connectionId : undefined,
+  };
 }
 
 function isPermissionReply(value: string): value is PermissionReply {
@@ -112,6 +140,8 @@ async function handlePermissionReply(
   const chatId = ctx.chat?.id;
   const directory = currentSession?.directory ?? currentProject?.worktree;
   const permissionType = permissionManager.getPermissionType(callbackMessageId);
+  const visibleRequest = permissionManager.getRequest(callbackMessageId);
+  const rustDeskPermission = parseRustDeskPermissionMetadata(visibleRequest);
 
   if (!directory || !chatId) {
     await ctx.answerCallbackQuery({
@@ -127,11 +157,34 @@ async function handlePermissionReply(
     reject: t("permission.reply.reject"),
   };
 
+  const effectiveReply: PermissionReply =
+    rustDeskPermission && reply === "always" ? "once" : reply;
+
   logger.info(
-    `[PermissionHandler] Sending permission reply: ${reply}, requestIDs=${requestIDs.join(",")}`,
+    `[PermissionHandler] Sending permission reply: ${effectiveReply}, requestIDs=${requestIDs.join(",")}`,
   );
 
-  await ctx.answerCallbackQuery({ text: replyLabels[reply] });
+  if (rustDeskPermission && effectiveReply !== "reject") {
+    try {
+      const client = createRustDeskBridgeClientFromEnv();
+      await client.grantPermission({
+        action: rustDeskPermission.action,
+        connectionId: rustDeskPermission.connectionId,
+        scope: "once",
+        permissionGrantId: rustDeskPermission.permissionGrantId,
+      });
+    } catch (error) {
+      logger.error("[PermissionHandler] Failed to mint RustDesk permission grant:", error);
+      await ctx.answerCallbackQuery({
+        text: t("permission.processing_error_callback"),
+        show_alert: true,
+      });
+      await ctx.api.sendMessage(chatId, t("permission.send_reply_error")).catch(() => {});
+      return;
+    }
+  }
+
+  await ctx.answerCallbackQuery({ text: replyLabels[effectiveReply] });
 
   let firstError: unknown = null;
 
@@ -139,7 +192,7 @@ async function handlePermissionReply(
     const response = await opencodeClient.permission.reply({
       requestID,
       directory,
-      reply,
+      reply: effectiveReply,
     });
 
     if (!response.error) {
@@ -168,7 +221,7 @@ async function handlePermissionReply(
     return;
   }
 
-  if (reply === "always" && permissionType) {
+  if (effectiveReply === "always" && permissionType && !rustDeskPermission) {
     try {
       await permissionManager.rememberAlwaysAllowed(chatId, permissionType);
       logger.info(

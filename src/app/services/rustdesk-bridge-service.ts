@@ -158,6 +158,7 @@ export interface RustDeskPermissionGrantRequest {
   action: RustDeskAction;
   connectionId?: string;
   scope?: "once" | "connection";
+  permissionGrantId?: string;
 }
 
 export interface RustDeskPermissionGrantResponse {
