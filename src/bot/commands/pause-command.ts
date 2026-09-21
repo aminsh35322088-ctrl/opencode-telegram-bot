@@ -10,6 +10,7 @@ import { formatModelForDisplay } from "../../app/types/model.js";
 import { logger } from "../../utils/logger.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
+import { updateTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 
 const RESUME_PROMPT = "[resume] Continue the interrupted task from the current session state. Preserve completed work, inspect the current state, and continue only what remains. Do not restart completed work.";
 function isActiveStatus(type: string | undefined): boolean { return type === "busy" || type === "retry"; }
@@ -40,6 +41,10 @@ export async function pauseCurrentChat(ctx: Context): Promise<void> {
     pauseConfirmed = true;
     // Abort releases busy state as idle; the command owns the final paused state.
     setPausedSession(session); keyboardManager.setPaused(true, session.id);
+    const keyboardState = keyboardManager.getState(session.id);
+    if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
+      updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "paused" });
+    }
     const model = getStoredModel(); const displayModel = formatModelForDisplay(model.providerID, model.modelID);
     const keyboard = keyboardManager.getKeyboard(session.id);
     await ctx.reply(["⏸️ <b>Chat paused</b>", "", `💬 ${session.title}`, `🤖 ${displayModel}`, "", "The current run was interrupted safely. Your session, files, and history are still intact.", "", "Send a new prompt to continue from here, or tap <b>▶️ Resume</b> to continue without additional instructions."].join("\n"), { parse_mode: "HTML", ...(keyboard ? { reply_markup: keyboard } : {}) });
