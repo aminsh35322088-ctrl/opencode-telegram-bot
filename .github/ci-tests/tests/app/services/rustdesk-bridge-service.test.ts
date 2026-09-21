@@ -352,3 +352,111 @@ describe("rustdesk bridge service", () => {
     ).rejects.toThrow("RustDesk bridge HTTP 409: device is offline");
   });
 });
+
+describe("rustdesk bridge secure inventory control", () => {
+  it("uses the control token for server-profile upsert without sending it to the action endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true, server: { id: "lab", name: "Lab", kind: "custom" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await client.upsertServerProfile({
+      id: "lab",
+      name: "Lab",
+      idServer: "rd.example.test",
+      relayServer: "relay.example.test",
+      serverKey: "private-key-material",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://bridge.example.com/v1/control/server-profiles/upsert",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer control-fixture" }),
+      }),
+    );
+  });
+
+  it("keeps one-time custom server keys on the Settings control plane", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true, connection: { connectionId: "conn-1" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await client.connectTemporaryFromSettings({
+      rustdeskId: "987654321",
+      authMode: "manual-approval",
+      server: { kind: "one-time-custom", idServer: "id.example.test" },
+      serverKey: "private-server-key",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://bridge.example.com/v1/control/session/connect-temporary",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer control-fixture" }),
+        body: expect.stringContaining("private-server-key"),
+      }),
+    );
+  });
+
+  it("uses the control token for permanent-device upsert and delete", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, device: { id: "desktop-1" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, deleted: "desktop-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await client.upsertDevice({
+      id: "desktop-1",
+      name: "Desktop",
+      rustdeskId: "123456789",
+      serverProfileId: "rustdesk-public",
+      credential: "permanent-password",
+    });
+    await client.deleteDevice("desktop-1");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://bridge.example.com/v1/control/devices/upsert",
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://bridge.example.com/v1/control/devices/delete",
+    );
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit | undefined)?.headers).toMatchObject({
+        Authorization: "Bearer control-fixture",
+      });
+    }
+  });
+});

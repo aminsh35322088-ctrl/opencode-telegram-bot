@@ -54,6 +54,13 @@ if [ -f "$OPENCODE_DB-wal" ] && command -v sqlite3 >/dev/null 2>&1; then
   fi
 fi
 
+# Compact deleted SQLite pages only at startup, before OpenCode owns the DB.
+# The helper vacuums to ephemeral /tmp, verifies integrity, and only copies the
+# compact candidate back when the persistent filesystem has enough headroom.
+if [ -f "$OPENCODE_DB" ] && [ -f /app/scripts/opencode-db-maintenance.mjs ]; then
+  node /app/scripts/opencode-db-maintenance.mjs || true
+fi
+
 after_initial_mb="$(free_mb || true)"
 if [ -n "$after_initial_mb" ] && [ "$after_initial_mb" -lt "$CRITICAL_MB" ]; then
   printf '%s\n' "[railway-maintenance] Critical free space (${after_initial_mb}MB); removing rebuildable runtime artifacts"

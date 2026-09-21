@@ -29,9 +29,10 @@ describe("Railway bundled RustDesk runtime contract", () => {
 
   it("bootstraps a checksum-pinned private Core release through the existing GitHub integration", () => {
     expect(fs.existsSync(lockPath)).toBe(true);
-    expect(bridgeLock).toContain("bridge-contract-v2-e1d1368-bookworm-x86_64");
-    expect(bridgeLock).toContain("e1d1368cf8da57b48335110e74522fc92f97536a");
-    expect(bridgeLock).toContain("7543774b8053072a370be5884601bd99e5f500e3088f556bd0d126432a5714d4");
+    expect(bridgeLock).toContain("bridge-contract-v3-43cce2c-bookworm-x86_64");
+    expect(bridgeLock).toContain("43cce2c4d26fb045ea31cee53c82de9cd2d0e54c");
+    expect(bridgeLock).toContain("ca12ca7cb0433f432344741632c7a5baa2525a2632e371c6fc76aae13ad49c12");
+    expect(bridgeLock).toContain("RUSTDESK_BRIDGE_CONTRACT_VERSION=3");
     expect(dockerfile).toContain("rustdesk-bridge.lock");
     expect(dockerfile).toContain("libyuv0");
     expect(dockerfile).toContain("libgstreamer-plugins-base1.0-0");

@@ -213,6 +213,14 @@ The bridge must always enforce target-side RustDesk/OS permissions. Bot permissi
 
 Bridge contract v2 also defines permission-grant retry semantics. Re-submitting the same `permissionGrantId` with the same action, connection and scope is an idempotent success and never extends the original expiry. Reusing that ID for different grant metadata fails closed with `permission_grant_conflict`.
 
+## Bridge contract v3
+
+Contract v3 keeps the v2 retry/idempotency rules and adds trusted-runtime provisioning. Server-profile and permanent-device CRUD are exposed only through control-plane endpoints authenticated with the control token. Passwords and private server keys are stored by the bridge in owner-only secret files and persistent inventory contains only secret references.
+
+`/health` publishes the canonical model-facing RustDesk action list. The Telegram bot compares it with its own `RUSTDESK_ACTIONS` registry and surfaces a mismatch instead of silently assuming compatibility.
+
+One-time custom server keys are accepted only by the control-plane temporary-connect endpoint used by Settings. The model-facing `session.connectTemporary` action remains secret-free.
+
 Recommended risk classes:
 
 - `read`: observation only

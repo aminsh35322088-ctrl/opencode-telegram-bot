@@ -11,6 +11,7 @@ import {
   listAgentActions,
   summarizeAgentActions,
 } from "../../../src/app/services/agent-action-registry.js";
+import { RUSTDESK_ACTIONS } from "../../../src/app/services/rustdesk-bridge-service.js";
 
 describe("agent action registry", () => {
   it("registers every declared core and custom action exactly once", () => {
@@ -66,6 +67,12 @@ describe("agent action registry", () => {
     expect(getAgentAction("git.reset")?.risk).toBe("destructive");
     expect(getAgentAction("notify.send")?.risk).toBe("external");
     expect(getAgentAction("session-extended.export")?.risk).toBe("write");
+  });
+
+  it("keeps every RustDesk model action registered exactly once", () => {
+    expect([...CUSTOM_TOOL_ACTIONS.rustdesk].sort()).toEqual([...RUSTDESK_ACTIONS].sort());
+    const ids = listAgentActions({ tool: "rustdesk" }).map((item) => item.action).sort();
+    expect(ids).toEqual([...RUSTDESK_ACTIONS].sort());
   });
 
   it("supports discovery filters and summary counts", () => {

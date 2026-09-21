@@ -21,6 +21,7 @@ describe("Railway volume emergency maintenance", () => {
     expect(script).toContain('$PERSISTENT_REPO/node_modules');
     expect(script).toContain("Emergency-trimmed OpenCode log");
     expect(script).toContain("tail -c 262144");
+    expect(script).toContain("opencode-db-maintenance.mjs");
 
     const cleanupIndex = script.indexOf("Critical free space");
     const gcIndex = script.indexOf("compacting persistent Git repository");

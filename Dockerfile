@@ -26,6 +26,7 @@ COPY --chown=node:node .opencode/tools ./.opencode/tools
 COPY --chown=root:root rustdesk-bridge.lock ./rustdesk-bridge.lock
 COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 COPY --chown=root:root railway-volume-maintenance.sh ./railway-volume-maintenance.sh
+COPY --chown=root:root scripts/opencode-db-maintenance.mjs ./scripts/opencode-db-maintenance.mjs
 RUN chmod +x ./railway-entrypoint.sh ./railway-volume-maintenance.sh
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./railway-volume-maintenance.sh"]

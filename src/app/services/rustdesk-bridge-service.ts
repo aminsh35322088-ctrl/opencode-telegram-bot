@@ -1,4 +1,4 @@
-export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 2;
+export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 3;
 
 export const RUSTDESK_ACTIONS = [
   "bridge.health",
@@ -88,6 +88,44 @@ export interface RustDeskDevice {
   };
   capabilities?: RustDeskCapabilities;
 }
+
+export interface RustDeskServerProfile {
+  id: string;
+  name: string;
+  kind: "public" | "custom";
+  idServer?: string;
+  relayServer?: string;
+  apiServer?: string;
+  keyConfigured?: boolean;
+}
+
+export interface RustDeskServerProfileUpsert {
+  id: string;
+  name: string;
+  idServer: string;
+  relayServer?: string;
+  apiServer?: string;
+  serverKey?: string;
+  clearServerKey?: boolean;
+}
+
+export interface RustDeskDeviceUpsert {
+  id: string;
+  name?: string;
+  rustdeskId: string;
+  serverProfileId: string;
+  forceRelay?: boolean;
+  credential?: string;
+  clearCredential?: boolean;
+}
+
+export interface RustDeskSettingsTemporaryConnect {
+  rustdeskId: string;
+  authMode: RustDeskTemporaryAuthMode;
+  server: RustDeskServerSelector;
+  serverKey?: string;
+}
+
 
 export interface RustDeskConnection {
   connectionId: string;
@@ -503,6 +541,65 @@ export class RustDeskBridgeClient {
     validateRustDeskActionRequest(request);
     return this.request("/v1/action", request, this.token, request.timeoutMs);
   }
+
+  async upsertServerProfile(request: RustDeskServerProfileUpsert): Promise<unknown> {
+    if (!request.id.trim() || !request.name.trim() || !request.idServer.trim()) {
+      throw new Error("RustDesk server profile requires id, name, and idServer");
+    }
+    return this.request(
+      "/v1/control/server-profiles/upsert",
+      request,
+      this.requireControlToken(),
+    );
+  }
+
+  async deleteServerProfile(id: string): Promise<unknown> {
+    if (!id.trim()) throw new Error("RustDesk server profile id is required");
+    return this.request(
+      "/v1/control/server-profiles/delete",
+      { id },
+      this.requireControlToken(),
+    );
+  }
+
+  async upsertDevice(request: RustDeskDeviceUpsert): Promise<unknown> {
+    if (!request.id.trim() || !request.rustdeskId.trim() || !request.serverProfileId.trim()) {
+      throw new Error("RustDesk device requires id, rustdeskId, and serverProfileId");
+    }
+    return this.request(
+      "/v1/control/devices/upsert",
+      request,
+      this.requireControlToken(),
+    );
+  }
+
+  async deleteDevice(id: string): Promise<unknown> {
+    if (!id.trim()) throw new Error("RustDesk device id is required");
+    return this.request(
+      "/v1/control/devices/delete",
+      { id },
+      this.requireControlToken(),
+    );
+  }
+
+  async connectTemporaryFromSettings(
+    request: RustDeskSettingsTemporaryConnect,
+  ): Promise<unknown> {
+    if (!request.rustdeskId.trim()) throw new Error("RustDesk peer id is required");
+    validateServerSelector(request.server, "session.connectTemporary");
+    if (!TEMPORARY_AUTH_MODES.has(request.authMode)) {
+      throw new Error("RustDesk temporary authentication mode is invalid");
+    }
+    if (request.serverKey !== undefined && request.server.kind !== "one-time-custom") {
+      throw new Error("A one-time server key is only valid with one-time-custom routing");
+    }
+    return this.request(
+      "/v1/control/session/connect-temporary",
+      request,
+      this.requireControlToken(),
+    );
+  }
+
 
   async grantPermission(request: RustDeskPermissionGrantRequest): Promise<RustDeskPermissionGrantResponse> {
     const token = this.requireControlToken();
