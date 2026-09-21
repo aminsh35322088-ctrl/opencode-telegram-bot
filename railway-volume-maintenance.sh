@@ -3,6 +3,7 @@ set -u
 
 DATA_ROOT="/data"
 WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
+CRITICAL_MB="${OPENCODE_DATA_VOLUME_CRITICAL_MB:-100}"
 OPENCODE_DB="$DATA_ROOT/.local/share/opencode/opencode.db"
 OPENCODE_LOG="$DATA_ROOT/.local/share/opencode/log/opencode.log"
 PERSISTENT_REPO="$DATA_ROOT/opencode/opencode-telegram-bot"
@@ -51,6 +52,29 @@ if [ -f "$OPENCODE_DB-wal" ] && command -v sqlite3 >/dev/null 2>&1; then
       printf '%s\n' "[railway-maintenance] OpenCode WAL checkpoint skipped/blocked; continuing startup"
     fi
   fi
+fi
+
+after_initial_mb="$(free_mb || true)"
+if [ -n "$after_initial_mb" ] && [ "$after_initial_mb" -lt "$CRITICAL_MB" ]; then
+  printf '%s\n' "[railway-maintenance] Critical free space (${after_initial_mb}MB); removing rebuildable runtime artifacts"
+
+  # These locations contain generated or cache-only data. Keep app-state,
+  # OpenCode DB/session state, workspaces, credentials, and user files intact.
+  if [ -d "$DATA_ROOT/.cache" ]; then
+    find "$DATA_ROOT/.cache" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+  fi
+  if [ -d "$DATA_ROOT/run" ]; then
+    find "$DATA_ROOT/run" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+  fi
+  if [ -d "$DATA_ROOT/.local/share/opencode/tool-output" ]; then
+    rm -rf "$DATA_ROOT/.local/share/opencode/tool-output" || true
+  fi
+  if [ -e "$PERSISTENT_REPO/node_modules" ] || [ -L "$PERSISTENT_REPO/node_modules" ]; then
+    rm -rf "$PERSISTENT_REPO/node_modules" || true
+  fi
+
+  after_emergency_mb="$(free_mb || true)"
+  printf '%s\n' "[railway-maintenance] Emergency cleanup complete: free=${after_emergency_mb:-unknown}MB"
 fi
 
 after_cache_mb="$(free_mb || true)"
