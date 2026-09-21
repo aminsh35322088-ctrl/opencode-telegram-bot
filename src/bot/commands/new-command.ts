@@ -65,7 +65,13 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       compactOutputMode: initialCompact,
     });
 
-    const topicWelcomeMessageId = await runInTopicRuntimeContext(
+    // Android's ChatMessageCell adds Continue last thread only when the last
+    // message in All belongs to a Topic. Publish root navigation first.
+    await keyboardManager.enterTopicMode(ctx.chat.id);
+    await keyboardManager.clearMainInlineMessage(ctx.chat.id);
+    await keyboardManager.sendMainInlineKeyboard(ctx.chat.id, initialModel, true);
+
+    await runInTopicRuntimeContext(
       { chatId: ctx.chat.id, threadId: binding.threadId, sessionId: session.id },
       async () => {
         keyboardManager.bindTopic(deps.bot.api, ctx.chat.id, binding!.threadId, session.id);
@@ -90,7 +96,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         // use its explicit thread association for native Topic navigation, and carrying
         // the ReplyKeyboard on the same durable message makes the initial controls
         // reliable on Android/iOS instead of depending on a deleted control message.
-        const topicWelcome = await deps.bot.api.sendMessage(
+        await deps.bot.api.sendMessage(
           ctx.chat.id,
           `✅ New AI Topic ready.\n\n${routingSummary}`,
           { message_thread_id: binding!.threadId, reply_markup: topicKeyboard },
@@ -102,40 +108,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
           session: sessionInfo,
           ensureEventSubscription: deps.ensureEventSubscription,
         });
-        return topicWelcome.message_id;
       },
     );
-
-    await keyboardManager.enterTopicMode(ctx.chat.id);
-    await keyboardManager.clearMainInlineMessage(ctx.chat.id);
-    const successText = `${t("new.created", { title: chatTitle })}\n\nUse this Topic for the conversation.`;
-    try {
-      await deps.bot.api.sendMessage(ctx.chat.id, successText, {
-        reply_parameters: {
-          message_id: binding.threadId,
-          allow_sending_without_reply: false,
-        },
-      });
-    } catch (nativeLinkError) {
-      // Private Topics do not consistently expose their creation service
-      // message through the Bot API. Fall back to the first real Topic message
-      // and never destroy a healthy OpenCode session for cosmetic navigation.
-      logger.warn("[TelegramTopics] Native Topic service-message reply unavailable; using Topic welcome fallback", nativeLinkError);
-      try {
-        await deps.bot.api.sendMessage(ctx.chat.id, successText, {
-          reply_parameters: {
-            message_id: topicWelcomeMessageId,
-            allow_sending_without_reply: false,
-          },
-        });
-      } catch (fallbackError) {
-        logger.warn("[TelegramTopics] Could not send New Chat navigation confirmation; Topic remains available", fallbackError);
-      }
-    }
-    // The Main panel keyboard must live only under the welcome/anchor message.
-    // Reposting it under the New Chat confirmation created a second keyboard
-    // panel in General and moved the anchor away from its pinned message.
-    await keyboardManager.sendMainInlineKeyboard(ctx.chat.id, initialModel, true);
 
     logger.info(
       `[TelegramTopics] New Chat created: session=${session.id}, title=${chatTitle}, thread=${binding.threadId}; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated`,
