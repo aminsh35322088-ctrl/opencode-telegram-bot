@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -5,11 +6,20 @@ import { tool } from "@opencode-ai/plugin";
 
 interface RustDeskBridgeClient {
   execute(request: Record<string, unknown>): Promise<unknown>;
-  grantPermission(request: Record<string, unknown>): Promise<{ permissionGrantId: string }>;
+}
+
+interface RustDeskPermissionGrantHandoffRequest {
+  correlationId: string;
+  action: string;
+  sessionScope: string;
+  connectionId?: string;
 }
 
 interface RustDeskBridgeModule {
   createRustDeskBridgeClientFromEnv(): RustDeskBridgeClient;
+  consumeRustDeskPermissionGrantHandoff(
+    request: RustDeskPermissionGrantHandoffRequest,
+  ): Promise<{ permissionGrantId: string }>;
 }
 
 const DEFAULT_SERVICE_PATH = "/app/dist/app/services/rustdesk-bridge-service.js";
@@ -25,9 +35,12 @@ function servicePath(): string {
   return process.env.RUSTDESK_BRIDGE_SERVICE_PATH?.trim() || DEFAULT_SERVICE_PATH;
 }
 
+async function getBridgeModule(): Promise<RustDeskBridgeModule> {
+  return (await import(pathToFileURL(servicePath()).href)) as RustDeskBridgeModule;
+}
+
 async function getClient(): Promise<RustDeskBridgeClient> {
-  const module = (await import(pathToFileURL(servicePath()).href)) as RustDeskBridgeModule;
-  return module.createRustDeskBridgeClientFromEnv();
+  return (await getBridgeModule()).createRustDeskBridgeClientFromEnv();
 }
 
 function clean(value?: string): string | undefined {
@@ -370,6 +383,7 @@ export default tool({
       if (!permission) throw error;
 
       const pattern = permissionPattern(action, request);
+      const approvalCorrelationId = randomBytes(24).toString("hex");
       await context.ask({
         permission: `rustdesk.${action}`,
         patterns: [pattern],
@@ -382,14 +396,15 @@ export default tool({
           connectionId: clean(args.connection_id),
           deviceId: clean(args.device_id),
           rustdeskId: clean(args.rustdesk_id),
+          rustdeskApprovalCorrelationId: approvalCorrelationId,
         },
       });
 
-      const grant = await client.grantPermission({
+      const grant = await (await getBridgeModule()).consumeRustDeskPermissionGrantHandoff({
+        correlationId: approvalCorrelationId,
         action,
         connectionId: clean(args.connection_id),
         sessionScope: context.sessionID,
-        scope: "once",
       });
       result = await client.execute({ ...request, permissionGrantId: grant.permissionGrantId });
     }
