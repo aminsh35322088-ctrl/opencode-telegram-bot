@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { permissionManager } from "../../app/managers/permission-manager.js";
+import { rustDeskSessionPermissionManager } from "../../app/managers/rustdesk-session-permission-manager.js";
 import type { PermissionReply, PermissionRequest } from "../../app/types/permission.js";
 import {
   RUSTDESK_ACTIONS,
@@ -80,9 +81,9 @@ async function prepareRustDeskPermissionHandoffs(
   const rustDeskRequests = requests.filter(isRustDeskPermissionRequest);
   const prepared = new Map<string, string>();
   if (rustDeskRequests.length === 0 || reply === "reject") return prepared;
-  if (reply !== "once") {
-    throw new Error("RustDesk permissions only support one-shot approval");
-  }
+  // "Always Allow" is implemented as a Bot-owned session lease. The Bridge
+  // still receives a fresh one-shot grant for each action, so OpenCode never
+  // gets a durable control-plane grant or token.
 
   try {
     for (const request of rustDeskRequests) {
@@ -187,6 +188,10 @@ async function handlePermissionReply(
   const directory = currentSession?.directory ?? currentProject?.worktree;
   const permissionType = permissionManager.getPermissionType(callbackMessageId);
   const permissionRequests = permissionManager.getRequests(callbackMessageId);
+  const permissionRequestById = new Map(
+    permissionRequests.map((request) => [request.id, request] as const),
+  );
+  const rustDeskRequests = permissionRequests.filter(isRustDeskPermissionRequest);
 
   if (!directory || !chatId) {
     await ctx.answerCallbackQuery({
@@ -217,10 +222,13 @@ async function handlePermissionReply(
 
   try {
     for (const requestID of requestIDs) {
+      const request = permissionRequestById.get(requestID);
+      const openCodeReply =
+        reply === "always" && request && isRustDeskPermissionRequest(request) ? "once" : reply;
       const response = await opencodeClient.permission.reply({
         requestID,
         directory,
-        reply,
+        reply: openCodeReply,
       });
 
       if (!response.error) {
@@ -262,7 +270,22 @@ async function handlePermissionReply(
     return;
   }
 
-  if (reply === "always" && permissionType) {
+  if (reply === "always" && rustDeskRequests.length > 0) {
+    for (const request of rustDeskRequests) {
+      const connectionId =
+        typeof request.metadata.connectionId === "string"
+          ? request.metadata.connectionId
+          : undefined;
+      rustDeskSessionPermissionManager.grant(
+        chatId,
+        request.sessionID,
+        connectionId,
+      );
+      logger.info(
+        `[PermissionHandler] Enabled RustDesk session Always Allow: chat=${chatId} session=${request.sessionID} connection=${connectionId ?? "pending"}`,
+      );
+    }
+  } else if (reply === "always" && permissionType) {
     try {
       await permissionManager.rememberAlwaysAllowed(chatId, permissionType);
       logger.info(
