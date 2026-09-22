@@ -319,7 +319,7 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
   return text;
 }
 
-function buildPermissionKeyboard(request: PermissionRequest): InlineKeyboard {
+function buildPermissionKeyboard(_request: PermissionRequest): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   keyboard.text(t("permission.button.allow"), "permission:once").row();
