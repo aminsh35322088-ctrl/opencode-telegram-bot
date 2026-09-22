@@ -1,4 +1,4 @@
-export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 3;
+export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 4;
 
 export const RUSTDESK_ACTIONS = [
   "bridge.health",
@@ -9,6 +9,7 @@ export const RUSTDESK_ACTIONS = [
   "devices.get",
   "devices.connect",
   "session.connectTemporary",
+  "connections.list",
   "connection.status",
   "connection.disconnect",
   "terminal.open",
@@ -128,14 +129,6 @@ export interface RustDeskDeviceUpsert {
   clearCredential?: boolean;
 }
 
-export interface RustDeskSettingsTemporaryConnect {
-  rustdeskId: string;
-  authMode: RustDeskTemporaryAuthMode;
-  server: RustDeskServerSelector;
-  serverKey?: string;
-}
-
-
 export interface RustDeskConnection {
   connectionId: string;
   kind: "permanent" | "temporary";
@@ -154,6 +147,7 @@ export interface RustDeskActionRequest {
   action: RustDeskAction;
   deviceId?: string;
   connectionId?: string;
+  sessionScope?: string;
   terminalId?: string;
   rustdeskId?: string;
   serverProfileId?: string;
@@ -206,6 +200,7 @@ export interface RustDeskPermissionChallenge {
 export interface RustDeskPermissionGrantRequest {
   action: RustDeskAction;
   connectionId?: string;
+  sessionScope?: string;
   scope?: "once" | "connection";
   permissionGrantId?: string;
 }
@@ -297,6 +292,12 @@ const CONNECTION_ACTIONS = new Set<RustDeskAction>([
   "files.download",
   "system.info",
   "system.restart",
+]);
+const SESSION_SCOPED_ACTIONS = new Set<RustDeskAction>([
+  "devices.connect",
+  "session.connectTemporary",
+  "connections.list",
+  ...CONNECTION_ACTIONS,
 ]);
 const TERMINAL_ID_ACTIONS = new Set<RustDeskAction>([
   "terminal.write",
@@ -420,6 +421,7 @@ export function validateRustDeskActionRequest(request: RustDeskActionRequest): v
   if (!ACTION_SET.has(request.action)) throw new Error(`Unsupported RustDesk action: ${request.action}`);
   rejectSecretFields(request);
 
+  if (SESSION_SCOPED_ACTIONS.has(request.action)) requireText(request.sessionScope, "sessionScope", request.action);
   if (CONNECTION_ACTIONS.has(request.action)) requireText(request.connectionId, "connectionId", request.action);
   if (TERMINAL_ID_ACTIONS.has(request.action)) requireText(request.terminalId, "terminalId", request.action);
 
@@ -650,25 +652,6 @@ export class RustDeskBridgeClient {
     );
   }
 
-  async connectTemporaryFromSettings(
-    request: RustDeskSettingsTemporaryConnect,
-  ): Promise<unknown> {
-    if (!request.rustdeskId.trim()) throw new Error("RustDesk peer id is required");
-    validateServerSelector(request.server, "session.connectTemporary");
-    if (!TEMPORARY_AUTH_MODES.has(request.authMode)) {
-      throw new Error("RustDesk temporary authentication mode is invalid");
-    }
-    if (request.serverKey !== undefined && request.server.kind !== "one-time-custom") {
-      throw new Error("A one-time server key is only valid with one-time-custom routing");
-    }
-    return this.request(
-      "/v1/control/session/connect-temporary",
-      request,
-      this.requireControlToken(),
-    );
-  }
-
-
   async grantPermission(request: RustDeskPermissionGrantRequest): Promise<RustDeskPermissionGrantResponse> {
     const token = this.requireControlToken();
     const payload = await this.request("/v1/permission", request, token);
@@ -729,6 +712,7 @@ export class RustDeskBridgeClient {
       const grant = await this.grantPermission({
         action: request.action,
         connectionId: request.connectionId,
+        sessionScope: request.sessionScope,
         scope: "once",
       });
       return this.execute({ ...request, permissionGrantId: grant.permissionGrantId });

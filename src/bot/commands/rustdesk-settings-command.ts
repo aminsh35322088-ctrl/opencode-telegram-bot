@@ -11,23 +11,11 @@ import {
   type RustDeskPublicAccountStatus,
   type RustDeskPublicLoginProvider,
   type RustDeskServerProfile,
-  type RustDeskServerSelector,
-  type RustDeskTemporaryAuthMode,
 } from "../../app/services/rustdesk-bridge-service.js";
 import { logger } from "../../utils/logger.js";
 
 type ServerWizardStep = "name" | "id-server" | "relay" | "api" | "server-key";
 type DeviceWizardStep = "name" | "rustdesk-id" | "server" | "force-relay" | "credential";
-type TempWizardStep =
-  | "rustdesk-id"
-  | "server"
-  | "id-server"
-  | "relay"
-  | "api"
-  | "server-key"
-  | "auth"
-  | "credential";
-
 interface ServerWizard {
   kind: "server";
   step: ServerWizardStep;
@@ -54,29 +42,7 @@ interface DeviceWizard {
   credentialConfigured?: boolean;
 }
 
-interface TempWizard {
-  kind: "temporary";
-  step: TempWizardStep;
-  messageId: number;
-  rustdeskId?: string;
-  server?: RustDeskServerSelector;
-  authMode?: RustDeskTemporaryAuthMode;
-  oneTimeIdServer?: string;
-  oneTimeRelay?: string;
-  oneTimeApi?: string;
-  oneTimeServerKey?: string;
-  connectionId?: string;
-  credentialRequestId?: string;
-}
-
-interface ConnectionCredentialWizard {
-  kind: "connection-credential";
-  messageId: number;
-  connectionId: string;
-  credentialRequestId: string;
-}
-
-type RustDeskWizard = ServerWizard | DeviceWizard | TempWizard | ConnectionCredentialWizard;
+type RustDeskWizard = ServerWizard | DeviceWizard;
 const wizard = new TopicScopedValue<RustDeskWizard>();
 
 function callbackMessageId(ctx: Context): number | null {
@@ -126,39 +92,6 @@ function deviceFromResponse(value: unknown): RustDeskDevice | null {
     : null;
 }
 
-interface RustDeskConnectionView {
-  connectionId?: string;
-  status?: string;
-  credentialRequestId?: string;
-  credentialKind?: string;
-  error?: string;
-  serverKind?: string;
-  authMode?: string;
-  messages?: string[];
-  peerReady?: boolean;
-}
-
-function connectionFromResponse(value: unknown): RustDeskConnectionView {
-  const root = record(value);
-  const nested = record(root.connection);
-  const source = Object.keys(nested).length > 0 ? nested : root;
-  return {
-    connectionId: typeof source.connectionId === "string" ? source.connectionId : undefined,
-    status: typeof source.status === "string" ? source.status : undefined,
-    credentialRequestId:
-      typeof source.credentialRequestId === "string" ? source.credentialRequestId : undefined,
-    credentialKind:
-      typeof source.credentialKind === "string" ? source.credentialKind : undefined,
-    error: typeof source.error === "string" && source.error.trim() ? source.error.trim() : undefined,
-    serverKind: typeof source.serverKind === "string" ? source.serverKind : undefined,
-    authMode: typeof source.authMode === "string" ? source.authMode : undefined,
-    messages: Array.isArray(source.messages)
-      ? source.messages.filter((value): value is string => typeof value === "string")
-      : undefined,
-    peerReady: source.peer !== null && typeof source.peer === "object",
-  };
-}
-
 function publicAccountFromStatus(
   status: RustDeskPublicAccountStatus,
 ): RustDeskPublicAccountStatus {
@@ -187,65 +120,6 @@ async function settlePublicAccountStatus(
 function isMessageNotModified(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.toLowerCase().includes("message is not modified");
-}
-
-const SETTLED_CONNECTION_STATUSES = new Set([
-  "connected",
-  "failed",
-  "waiting_remote_approval",
-  "credential_required",
-  "disconnected",
-]);
-
-async function settleConnectionStatus(
-  client: ReturnType<typeof createRustDeskBridgeClientFromEnv>,
-  connection: RustDeskConnectionView,
-): Promise<RustDeskConnectionView> {
-  if (!connection.connectionId || SETTLED_CONNECTION_STATUSES.has(connection.status ?? "")) {
-    return connection;
-  }
-  let current = connection;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 350));
-    const livePayload = await client.execute({
-      action: "connection.status",
-      connectionId: connection.connectionId,
-    });
-    const live = connectionFromResponse(livePayload);
-    current = {
-      ...current,
-      ...live,
-      connectionId: live.connectionId ?? current.connectionId,
-      status: live.status ?? current.status,
-    };
-    if (SETTLED_CONNECTION_STATUSES.has(current.status ?? "")) break;
-  }
-  return current;
-}
-
-async function refreshConnectionStatus(
-  client: ReturnType<typeof createRustDeskBridgeClientFromEnv>,
-  connectionId: string,
-): Promise<RustDeskConnectionView> {
-  const terminal = new Set(["connected", "failed", "credential_required", "disconnected"]);
-  let current: RustDeskConnectionView = { connectionId, status: "connecting" };
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 500));
-    const payload = await client.execute({
-      action: "connection.status",
-      connectionId,
-    });
-    const live = connectionFromResponse(payload);
-    current = {
-      ...current,
-      ...live,
-      connectionId: live.connectionId ?? connectionId,
-      status: live.status ?? current.status,
-      messages: [...(current.messages ?? []), ...(live.messages ?? [])].slice(-6),
-    };
-    if (terminal.has(current.status ?? "")) break;
-  }
-  return current;
 }
 
 async function deleteInput(ctx: Context): Promise<void> {
@@ -278,12 +152,6 @@ async function edit(
   if (typeof sourceMessageId === "number" && sourceMessageId !== targetMessageId) {
     await ctx.api.deleteMessage(chatId, sourceMessageId).catch(() => {});
   }
-}
-
-function navigationKeyboard(back = "integration:rustdesk"): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("← Back", back)
-    .text("🏠 Home", "main:home");
 }
 
 function cancelKeyboard(back = "integration:rustdesk"): InlineKeyboard {
@@ -368,7 +236,6 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
   const keyboard = new InlineKeyboard()
     .text("🖥 Devices", "integration:rd:devices")
     .text("🌐 Server Profiles", "integration:rd:servers").row()
-    .text("⚡ Temporary Connection", "integration:rd:temp").row()
     .text("🔑 Public Login", "integration:rd:public-account")
     .text("🔄 Refresh", "integration:rustdesk:refresh").row()
     .text("← Integrations", "integration:menu")
@@ -496,7 +363,7 @@ async function showDevicesMenu(ctx: Context, notice?: string): Promise<void> {
     "🖥 RustDesk Permanent Devices",
     "",
     devices.length
-      ? "Select a device to connect, edit, or remove it."
+      ? "Select a device to edit its provisioning or remove it. Connections are started only from AI Topics."
       : "No permanent devices are saved yet.",
   ].filter(Boolean).join("\n\n");
   await edit(ctx, callbackMessageId(ctx), text, keyboard);
@@ -539,7 +406,6 @@ async function showDeviceDetail(ctx: Context, id: string, notice?: string): Prom
   const device = deviceFromResponse(payload);
   if (!device) throw new Error("RustDesk Bridge returned an invalid device");
   const keyboard = new InlineKeyboard()
-    .text("🔌 Connect", `integration:rd:d:connect:${id}`)
     .text("✏️ Edit", `integration:rd:d:edit:${id}`).row()
     .text("🗑 Delete", `integration:rd:d:delete:${id}`).row()
     .text("← Devices", "integration:rd:devices")
@@ -566,171 +432,9 @@ async function showServerChoice(ctx: Context, messageId: number, back: string): 
   await edit(ctx, messageId, "Choose the RustDesk server profile:", keyboard);
 }
 
-async function showTempServerChoice(ctx: Context, messageId: number): Promise<void> {
-  const servers = await listServers();
-  const keyboard = new InlineKeyboard();
-  for (const server of servers) {
-    keyboard.text(server.name, `integration:rd:w:tserver:${server.id}`).row();
-  }
-  keyboard.text("🧭 One-time Custom", "integration:rd:w:tserver:custom").row();
-  keyboard.text("❌ Cancel", "integration:rd:cancel").text("← RustDesk", "integration:rustdesk");
-  await edit(ctx, messageId, "Temporary connection · choose server routing:", keyboard);
-}
-
-async function showAuthChoice(ctx: Context, messageId: number): Promise<void> {
-  const keyboard = new InlineKeyboard()
-    .text("👆 Manual approval", "integration:rd:w:auth:manual-approval").row()
-    .text("🔐 Temporary password", "integration:rd:w:auth:temporary-password").row()
-    .text("🔐 Password OR approval", "integration:rd:w:auth:password-or-approval").row()
-    .text("❌ Cancel", "integration:rd:cancel");
-  await edit(ctx, messageId, "Temporary connection · choose authentication:", keyboard);
-}
-
 function wizardValue(text: string, current?: string): string | undefined {
   if (text === "-") return current;
   return cleanOptional(text);
-}
-
-async function finishToRustDesk(ctx: Context, messageId: number, notice: string): Promise<void> {
-  clearRustDeskSettingsWizard();
-  await edit(
-    ctx,
-    messageId,
-    notice + "\n\nOpen RustDesk settings to continue.",
-    navigationKeyboard("integration:rustdesk"),
-  );
-}
-
-function temporaryServerLabel(
-  server?: RustDeskServerSelector,
-  serverKind?: string,
-): string {
-  if (serverKind === "public" || server?.kind === "public") return "RustDesk Public";
-  if (serverKind === "saved-custom" || server?.kind === "saved-custom") return "Saved self-hosted";
-  if (serverKind === "one-time-custom" || server?.kind === "one-time-custom") return "One-time custom";
-  return "RustDesk";
-}
-
-function temporaryConnectionHeading(status: string): string {
-  switch (status) {
-    case "waiting_remote_approval":
-      return "👆 Waiting for approval";
-    case "connected":
-      return "✅ Connected";
-    case "failed":
-      return "❌ Connection failed";
-    case "credential_required":
-      return "🔐 Credential required";
-    case "disconnected":
-      return "⏹️ Disconnected";
-    default:
-      return "🟡 Connecting";
-  }
-}
-
-async function showTemporaryConnectionStatus(
-  ctx: Context,
-  messageId: number | null | undefined,
-  connection: RustDeskConnectionView,
-  serverLabel?: string,
-): Promise<void> {
-  const connectionId = connection.connectionId;
-  const status = connection.status ?? "connecting";
-  const keyboard = new InlineKeyboard();
-
-  if (connectionId && status !== "disconnected") {
-    keyboard
-      .text("🔄 Refresh Status", `integration:rd:c:s:${connectionId}`)
-      .text("🛑 Disconnect", `integration:rd:c:x:${connectionId}`)
-      .row();
-  }
-  keyboard
-    .text("← RustDesk", "integration:rustdesk")
-    .text("🏠 Home", "main:home");
-
-  const guidance =
-    status === "waiting_remote_approval"
-      ? "Approve the request on the remote RustDesk device, then tap Refresh Status."
-      : status === "connected"
-        ? "The connection is active and ready for RustDesk actions."
-        : status === "failed"
-          ? "The bridge reached a terminal connection error. Check the error below and retry."
-          : status === "credential_required"
-            ? "This connection requires a credential. Start a new connection with Temporary password or Password OR approval."
-            : status === "disconnected"
-              ? "The temporary connection has been closed."
-              : "Contacting the RustDesk public infrastructure. Tap Refresh Status if this takes more than a few seconds.";
-
-  const text = [
-    temporaryConnectionHeading(status),
-    "",
-    `Server: ${serverLabel ?? temporaryServerLabel(undefined, connection.serverKind)}`,
-    connectionId ? `Connection: ${connectionId}` : undefined,
-    `Status: ${status}`,
-    connection.error ? `Error: ${connection.error}` : undefined,
-    connection.peerReady ? "Handshake: peer metadata received ✅" : undefined,
-    connection.messages?.length
-      ? `Bridge event: ${connection.messages[connection.messages.length - 1]}`
-      : undefined,
-    "",
-    guidance,
-  ].filter(Boolean).join("\n");
-
-  await edit(ctx, messageId, text, keyboard);
-}
-
-async function connectTemporary(ctx: Context, state: TempWizard): Promise<void> {
-  if (!state.rustdeskId || !state.server || !state.authMode) {
-    throw new Error("Temporary connection wizard is incomplete");
-  }
-  const client = createRustDeskBridgeClientFromEnv();
-  const payload = await client.connectTemporaryFromSettings({
-    rustdeskId: state.rustdeskId,
-    server: state.server,
-    authMode: state.authMode,
-    serverKey: state.oneTimeServerKey,
-  });
-  let connection = connectionFromResponse(payload);
-
-  if (state.authMode === "manual-approval" && connection.connectionId) {
-    try {
-      connection = await settleConnectionStatus(client, connection);
-    } catch (error) {
-      logger.warn("[RustDeskSettings] Manual approval status polling failed:", error);
-    }
-    clearRustDeskSettingsWizard();
-    await showTemporaryConnectionStatus(
-      ctx,
-      state.messageId,
-      connection,
-      temporaryServerLabel(state.server, connection.serverKind),
-    );
-    return;
-  }
-
-  const connectionId = connection.connectionId;
-  const status = connection.status ?? "connecting";
-  const credentialRequestId = connection.credentialRequestId;
-
-  if (status === "credential_required" && connectionId && credentialRequestId) {
-    state.step = "credential";
-    state.connectionId = connectionId;
-    state.credentialRequestId = credentialRequestId;
-    wizard.set(state);
-    await edit(
-      ctx,
-      state.messageId,
-      "🔐 Temporary RustDesk credential required\n\nSend the password as your next message. It will be deleted immediately and submitted directly to the Bridge control plane.",
-      cancelKeyboard("integration:rd:temp"),
-    );
-    return;
-  }
-
-  await finishToRustDesk(
-    ctx,
-    state.messageId,
-    `✅ Temporary connection created\nConnection: ${connectionId ?? "pending"}\nStatus: ${status}`,
-  );
 }
 
 export async function handleRustDeskSettingsCallback(ctx: Context): Promise<boolean> {
@@ -786,52 +490,6 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
       await showDevicesMenu(ctx);
       return true;
     }
-    if (data === "integration:rd:temp") {
-      const messageId = callbackMessageId(ctx);
-      if (messageId === null) return true;
-      wizard.set({ kind: "temporary", step: "rustdesk-id", messageId });
-      await edit(
-        ctx,
-        messageId,
-        "⚡ Temporary RustDesk Connection\n\n1/3 · Send the RustDesk peer ID.",
-        cancelKeyboard(),
-      );
-      return true;
-    }
-    if (data.startsWith("integration:rd:c:s:")) {
-      const connectionId = data.slice("integration:rd:c:s:".length);
-      if (!connectionId) return true;
-      const client = createRustDeskBridgeClientFromEnv();
-      const connection = await refreshConnectionStatus(client, connectionId);
-      await showTemporaryConnectionStatus(
-        ctx,
-        callbackMessageId(ctx),
-        connection,
-        temporaryServerLabel(undefined, connection.serverKind),
-      );
-      return true;
-    }
-    if (data.startsWith("integration:rd:c:x:")) {
-      const connectionId = data.slice("integration:rd:c:x:".length);
-      if (!connectionId) return true;
-      const client = createRustDeskBridgeClientFromEnv();
-      const payload = await client.executeAuthorized(
-        { action: "connection.disconnect", connectionId },
-        async () => {},
-      );
-      const connection = connectionFromResponse(payload);
-      await showTemporaryConnectionStatus(
-        ctx,
-        callbackMessageId(ctx),
-        {
-          ...connection,
-          connectionId: connection.connectionId ?? connectionId,
-          status: connection.status ?? "disconnected",
-        },
-      );
-      return true;
-    }
-
     if (data === "integration:rd:s:add") {
       const messageId = callbackMessageId(ctx);
       if (messageId === null) return true;
@@ -970,49 +628,6 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
       await showDevicesMenu(ctx, "✅ Device deleted.");
       return true;
     }
-    if (data.startsWith("integration:rd:d:connect:")) {
-      const id = data.slice("integration:rd:d:connect:".length);
-      const client = createRustDeskBridgeClientFromEnv();
-      const payload = await client.executeAuthorized(
-        { action: "devices.connect", deviceId: id },
-        async () => {},
-      );
-      let connection = connectionFromResponse(payload);
-      try {
-        connection = await settleConnectionStatus(client, connection);
-      } catch (error) {
-        logger.warn("[RustDeskSettings] Connection status polling failed:", error);
-      }
-      const status = connection.status ?? "connecting";
-      const connectionId = connection.connectionId;
-      const credentialRequestId = connection.credentialRequestId;
-      if (status === "credential_required" && connectionId && credentialRequestId) {
-        const messageId = callbackMessageId(ctx);
-        if (messageId !== null) {
-          wizard.set({
-            kind: "connection-credential",
-            messageId,
-            connectionId,
-            credentialRequestId,
-          });
-          await edit(
-            ctx,
-            messageId,
-            "🔐 RustDesk credential/2FA required\n\nSend it as your next message. It will be deleted immediately and sent only to the Bridge control plane.",
-            cancelKeyboard("integration:rd:devices"),
-          );
-        }
-        return true;
-      }
-      const detail = [
-        `✅ Connection · ${status}`,
-        connectionId ? `Connection: ${connectionId}` : undefined,
-        connection.error ? `Error: ${connection.error}` : undefined,
-      ].filter(Boolean).join("\n");
-      await showDeviceDetail(ctx, id, detail);
-      return true;
-    }
-
     if (data.startsWith("integration:rd:w:server:")) {
       const state = wizard.get();
       if (!state || state.kind !== "device") return true;
@@ -1043,45 +658,7 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
       return true;
     }
 
-    if (data.startsWith("integration:rd:w:tserver:")) {
-      const state = wizard.get();
-      if (!state || state.kind !== "temporary") return true;
-      const selected = data.slice("integration:rd:w:tserver:".length);
-      if (selected === "custom") {
-        state.step = "id-server";
-        wizard.set(state);
-        await edit(ctx, state.messageId, "One-time custom server · send ID/rendezvous server:", cancelKeyboard("integration:rd:temp"));
-      } else if (selected === "rustdesk-public") {
-        const account = await createRustDeskBridgeClientFromEnv().getPublicAccountStatus();
-        if (!account.loggedIn) {
-          clearRustDeskSettingsWizard();
-          await showPublicAccountMenu(
-            ctx,
-            "RustDesk Public login is required before starting a Public connection. Log in, then start Temporary Connection again.",
-            account,
-          );
-          return true;
-        }
-        state.server = { kind: "public" };
-        state.step = "auth";
-        wizard.set(state);
-        await showAuthChoice(ctx, state.messageId);
-      } else {
-        state.server = { kind: "saved-custom", serverProfileId: selected };
-        state.step = "auth";
-        wizard.set(state);
-        await showAuthChoice(ctx, state.messageId);
-      }
-      return true;
-    }
-    if (data.startsWith("integration:rd:w:auth:")) {
-      const state = wizard.get();
-      if (!state || state.kind !== "temporary") return true;
-      state.authMode = data.slice("integration:rd:w:auth:".length) as RustDeskTemporaryAuthMode;
-      wizard.set(state);
-      await connectTemporary(ctx, state);
-      return true;
-    }
+
 
     return true;
   } catch (error) {
@@ -1191,82 +768,6 @@ export async function handleRustDeskSettingsMessage(ctx: Context): Promise<boole
       return true;
     }
 
-    if (state.kind === "temporary") {
-      await deleteInput(ctx);
-      if (state.step === "rustdesk-id") {
-        state.rustdeskId = text;
-        state.step = "server";
-        wizard.set(state);
-        await showTempServerChoice(ctx, state.messageId);
-        return true;
-      }
-      if (state.step === "id-server") {
-        state.oneTimeIdServer = text;
-        state.step = "relay";
-        wizard.set(state);
-        await edit(ctx, state.messageId, "One-time custom server · relay server (send - for none):", cancelKeyboard("integration:rd:temp"));
-        return true;
-      }
-      if (state.step === "relay") {
-        state.oneTimeRelay = text === "-" ? undefined : text;
-        state.step = "api";
-        wizard.set(state);
-        await edit(ctx, state.messageId, "One-time custom server · API server (send - for none):", cancelKeyboard("integration:rd:temp"));
-        return true;
-      }
-      if (state.step === "api") {
-        state.oneTimeApi = text === "-" ? undefined : text;
-        state.step = "server-key";
-        wizard.set(state);
-        await edit(
-          ctx,
-          state.messageId,
-          "One-time custom server · private server key (send - for none). If supplied, this message is deleted immediately and the key is sent only to the Bridge control plane.",
-          cancelKeyboard("integration:rd:temp"),
-        );
-        return true;
-      }
-      if (state.step === "server-key") {
-        state.oneTimeServerKey = text === "-" ? undefined : text;
-        state.server = {
-          kind: "one-time-custom",
-          idServer: state.oneTimeIdServer!,
-          relayServer: state.oneTimeRelay,
-          apiServer: state.oneTimeApi,
-        };
-        state.step = "auth";
-        wizard.set(state);
-        await showAuthChoice(ctx, state.messageId);
-        return true;
-      }
-      if (state.step === "credential") {
-        if (!state.credentialRequestId) throw new Error("RustDesk credential request expired");
-        const response = await createRustDeskBridgeClientFromEnv().submitCredential({
-          credentialRequestId: state.credentialRequestId,
-          credential: text,
-          trustThisDevice: false,
-        });
-        await finishToRustDesk(
-          ctx,
-          state.messageId,
-          `✅ Credential submitted\nConnection: ${response.connectionId}\nStatus: ${response.status ?? "connecting"}`,
-        );
-        return true;
-      }
-      return true;
-    }
-
-    await deleteInput(ctx);
-    const response = await createRustDeskBridgeClientFromEnv().submitCredential({
-      credentialRequestId: state.credentialRequestId,
-      credential: text,
-      trustThisDevice: false,
-    });
-    await finishToRustDesk(
-      ctx,
-      state.messageId,
-      `✅ Credential submitted\nConnection: ${response.connectionId}\nStatus: ${response.status ?? "connecting"}`,
-    );
     return true;
   } catch (error) {
     logger.error("[RustDeskSettings] wizard failed:", error);

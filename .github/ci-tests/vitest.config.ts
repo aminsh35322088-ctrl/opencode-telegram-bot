@@ -1,6 +1,12 @@
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@opencode-ai/plugin": path.resolve(process.cwd(), "tests/fixtures/opencode-plugin.ts"),
+    },
+  },
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],

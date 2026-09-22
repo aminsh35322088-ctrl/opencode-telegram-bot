@@ -31,15 +31,10 @@ class PermissionManager {
   clearSession(scopeKey: string): void { this.scopes.delete(scopeKey); }
   clearAll(): void { this.scopes.clear(); }
   private signature(request: PermissionRequest): string {
-    const rustDeskGrantId =
-      request.metadata.source === "rustdesk" && typeof request.metadata.permissionGrantId === "string"
-        ? request.metadata.permissionGrantId
-        : undefined;
     return JSON.stringify({
       sessionID: request.sessionID,
       permission: request.permission,
       patterns: [...request.patterns].sort(),
-      rustDeskGrantId,
     });
   }
 }

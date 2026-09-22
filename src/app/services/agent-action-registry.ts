@@ -78,7 +78,7 @@ export const CUSTOM_TOOL_ACTIONS = {
     "bridge.health",
     "servers.list", "servers.get", "servers.test",
     "devices.list", "devices.get", "devices.connect",
-    "session.connectTemporary", "connection.status", "connection.disconnect",
+    "session.connectTemporary", "connections.list", "connection.status", "connection.disconnect",
     "terminal.open", "terminal.write", "terminal.read", "terminal.resize", "terminal.close", "terminal.exec",
     "screen.capture",
     "mouse.move", "mouse.click", "mouse.doubleClick", "mouse.drag", "mouse.scroll",

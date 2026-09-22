@@ -47,7 +47,7 @@ describe("Railway bundled RustDesk runtime contract", () => {
     expect(values.RUSTDESK_BRIDGE_ASSET).toBe("rustdesk-controller-bridge-bookworm-x86_64");
     expect(coreCommit).toMatch(/^[0-9a-f]{40}$/);
     expect(sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(contractVersion).toBe("3");
+    expect(contractVersion).toBe("4");
     expect(releaseTag).toBe(
       `bridge-contract-v${contractVersion}-${coreCommit.slice(0, 7)}-bookworm-x86_64`,
     );

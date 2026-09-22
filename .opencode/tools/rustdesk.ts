@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -6,6 +5,7 @@ import { tool } from "@opencode-ai/plugin";
 
 interface RustDeskBridgeClient {
   execute(request: Record<string, unknown>): Promise<unknown>;
+  grantPermission(request: Record<string, unknown>): Promise<{ permissionGrantId: string }>;
 }
 
 interface RustDeskBridgeModule {
@@ -138,6 +138,7 @@ async function waitForCredentialResolution(
   client: RustDeskBridgeClient,
   initialResult: unknown,
   context: {
+    sessionID: string;
     abort: AbortSignal;
     metadata(input: { title?: string; metadata?: Record<string, unknown> }): void;
   },
@@ -196,7 +197,11 @@ async function waitForCredentialResolution(
     }
 
     await sleepWithAbort(CONNECTION_POLL_INTERVAL_MS, context.abort);
-    current = await client.execute({ action: "connection.status", connectionId });
+    current = await client.execute({
+      action: "connection.status",
+      connectionId,
+      sessionScope: context.sessionID,
+    });
   }
 
   throw new Error("RustDesk credential input timed out");
@@ -238,7 +243,7 @@ export default tool({
     "Control authorized remote devices through the RustDesk agent bridge. Permanent devices come from Settings > Integrations > RustDesk and resolve their saved server profile and permanent credential inside the trusted control plane. Temporary chat connections require an explicit RustDesk ID, connection server, and authentication mode. Use the question tool for non-sensitive choices and the permission flow for side effects. Never request or pass RustDesk passwords, 2FA codes, tokens, or private server keys through this tool; credential-required responses are completed through secure input outside model context.",
   args: {
     action: tool.schema.string().describe(
-      "Action: bridge.health, servers.list, servers.get, servers.test, devices.list, devices.get, devices.connect, session.connectTemporary, connection.status, connection.disconnect, terminal.open, terminal.write, terminal.read, terminal.resize, terminal.close, terminal.exec, screen.capture, mouse.move, mouse.click, mouse.doubleClick, mouse.drag, mouse.scroll, keyboard.type, keyboard.press, touch.tap, touch.longPress, touch.swipe, clipboard.read, clipboard.write, files.list, files.read, files.upload, files.download, system.info, system.restart.",
+      "Action: bridge.health, servers.list, servers.get, servers.test, devices.list, devices.get, devices.connect, session.connectTemporary, connections.list, connection.status, connection.disconnect, terminal.open, terminal.write, terminal.read, terminal.resize, terminal.close, terminal.exec, screen.capture, mouse.move, mouse.click, mouse.doubleClick, mouse.drag, mouse.scroll, keyboard.type, keyboard.press, touch.tap, touch.longPress, touch.swipe, clipboard.read, clipboard.write, files.list, files.read, files.upload, files.download, system.info, system.restart.",
     ),
     device_id: tool.schema.string().optional().describe("Saved permanent integration device ID for devices.get/devices.connect."),
     connection_id: tool.schema.string().optional().describe("Live RustDesk connection ID returned by devices.connect or session.connectTemporary."),
@@ -310,6 +315,7 @@ export default tool({
       action,
       deviceId: clean(args.device_id),
       connectionId: clean(args.connection_id),
+      sessionScope: context.sessionID,
       terminalId: clean(args.terminal_id),
       rustdeskId: clean(args.rustdesk_id),
       serverProfileId: clean(args.server_profile_id),
@@ -363,7 +369,6 @@ export default tool({
       const permission = permissionErrorDetails(error);
       if (!permission) throw error;
 
-      const permissionGrantId = `perm_${randomUUID()}`;
       const pattern = permissionPattern(action, request);
       await context.ask({
         permission: `rustdesk.${action}`,
@@ -374,14 +379,19 @@ export default tool({
           action,
           risk: permission.risk,
           permission: permission.permission,
-          permissionGrantId,
           connectionId: clean(args.connection_id),
           deviceId: clean(args.device_id),
           rustdeskId: clean(args.rustdesk_id),
         },
       });
 
-      result = await client.execute({ ...request, permissionGrantId });
+      const grant = await client.grantPermission({
+        action,
+        connectionId: clean(args.connection_id),
+        sessionScope: context.sessionID,
+        scope: "once",
+      });
+      result = await client.execute({ ...request, permissionGrantId: grant.permissionGrantId });
     }
 
     if (getConnection(result)?.status === "credential_required") {

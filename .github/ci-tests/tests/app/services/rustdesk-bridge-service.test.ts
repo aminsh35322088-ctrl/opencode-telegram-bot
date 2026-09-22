@@ -14,10 +14,35 @@ describe("rustdesk bridge service", () => {
     expect(() => validateRustDeskActionRequest({ action: "devices.list" })).not.toThrow();
   });
 
+  it("requires a session scope for session-owned actions", () => {
+    expect(() =>
+      validateRustDeskActionRequest({
+        action: "connections.list",
+      }),
+    ).toThrow("connections.list requires sessionScope");
+
+    expect(() =>
+      validateRustDeskActionRequest({
+        action: "devices.connect",
+        deviceId: "home-pc",
+      }),
+    ).toThrow("devices.connect requires sessionScope");
+
+    expect(() =>
+      validateRustDeskActionRequest({
+        action: "session.connectTemporary",
+        rustdeskId: "123456789",
+        server: { kind: "public" },
+        authMode: "manual-approval",
+      }),
+    ).toThrow("session.connectTemporary requires sessionScope");
+  });
+
   it("requires a connection id for connection-scoped actions", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "terminal.exec",
+        sessionScope: "topic-a",
         command: "uname -a",
       }),
     ).toThrow("terminal.exec requires connectionId");
@@ -27,6 +52,7 @@ describe("rustdesk bridge service", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "terminal.exec",
+        sessionScope: "topic-a",
         connectionId: "conn-1",
       }),
     ).toThrow("terminal.exec requires command");
@@ -34,6 +60,7 @@ describe("rustdesk bridge service", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "terminal.read",
+        sessionScope: "topic-a",
         connectionId: "conn-1",
       }),
     ).toThrow("terminal.read requires terminalId");
@@ -41,6 +68,7 @@ describe("rustdesk bridge service", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "terminal.resize",
+        sessionScope: "topic-a",
         connectionId: "conn-1",
         terminalId: "term-1",
         rows: 24,
@@ -50,12 +78,13 @@ describe("rustdesk bridge service", () => {
 
   it("keeps saved-device connection routing and auth immutable", () => {
     expect(() =>
-      validateRustDeskActionRequest({ action: "devices.connect", deviceId: "home-pc" }),
+      validateRustDeskActionRequest({ action: "devices.connect", deviceId: "home-pc", sessionScope: "topic-a" }),
     ).not.toThrow();
 
     expect(() =>
       validateRustDeskActionRequest({
         action: "devices.connect",
+        sessionScope: "topic-a",
         deviceId: "home-pc",
         server: { kind: "public" },
       }),
@@ -66,6 +95,7 @@ describe("rustdesk bridge service", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "session.connectTemporary",
+        sessionScope: "topic-a",
         rustdeskId: "123456789",
         server: { kind: "public" },
         authMode: "manual-approval",
@@ -75,6 +105,7 @@ describe("rustdesk bridge service", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "session.connectTemporary",
+        sessionScope: "topic-a",
         rustdeskId: "123456789",
         authMode: "manual-approval",
       }),
@@ -99,6 +130,7 @@ describe("rustdesk bridge service", () => {
     expect(() =>
       validateRustDeskActionRequest({
         action: "mouse.click",
+        sessionScope: "topic-a",
         connectionId: "conn-1",
         x: 100,
       }),
@@ -183,6 +215,7 @@ describe("rustdesk bridge service", () => {
     try {
       await client.execute({
         action: "terminal.exec",
+        sessionScope: "topic-a",
         connectionId: "conn-1",
         command: "uname -a",
       });
@@ -221,6 +254,7 @@ describe("rustdesk bridge service", () => {
 
     const result = await client.grantPermission({
       action: "terminal.exec",
+      sessionScope: "topic-a",
       connectionId: "conn-1",
       scope: "once",
     });
@@ -230,9 +264,13 @@ describe("rustdesk bridge service", () => {
     const request = fetchMock.mock.calls[0];
     expect(request?.[0]).toBe("https://bridge.example.com/v1/permission");
     expect((request?.[1] as RequestInit | undefined)?.method).toBe("POST");
-    expect((request?.[1] as RequestInit | undefined)?.body).toBe(
-      JSON.stringify({ action: "terminal.exec", connectionId: "conn-1", scope: "once" }),
-    );
+    const grantBody = JSON.parse(String((request?.[1] as RequestInit | undefined)?.body));
+    expect(grantBody).toEqual({
+      action: "terminal.exec",
+      sessionScope: "topic-a",
+      connectionId: "conn-1",
+      scope: "once",
+    });
   });
 
   it("validates the credential control-plane response and preserves idempotency metadata", async () => {
@@ -316,7 +354,7 @@ describe("rustdesk bridge service", () => {
     const authorize = vi.fn(async () => {});
 
     const result = await client.executeAuthorized(
-      { action: "terminal.exec", connectionId: "conn-1", command: "uname -a" },
+      { action: "terminal.exec", sessionScope: "topic-a", connectionId: "conn-1", command: "uname -a" },
       authorize,
     );
 
@@ -348,7 +386,7 @@ describe("rustdesk bridge service", () => {
     });
 
     await expect(
-      client.execute({ action: "system.info", connectionId: "conn-offline" }),
+      client.execute({ action: "system.info", sessionScope: "topic-a", connectionId: "conn-offline" }),
     ).rejects.toThrow("RustDesk bridge HTTP 409: device is offline");
   });
 });
@@ -462,35 +500,14 @@ describe("rustdesk bridge secure inventory control", () => {
     );
   });
 
-  it("keeps one-time custom server keys on the Settings control plane", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ ok: true, connection: { connectionId: "conn-1" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+  it("does not expose a Settings-only temporary connection API", () => {
     const client = new RustDeskBridgeClient({
       baseUrl: "https://bridge.example.com",
       token: "action-fixture",
       controlToken: "control-fixture",
-      fetchImpl: fetchMock as unknown as typeof fetch,
     });
 
-    await client.connectTemporaryFromSettings({
-      rustdeskId: "987654321",
-      authMode: "manual-approval",
-      server: { kind: "one-time-custom", idServer: "id.example.test" },
-      serverKey: "private-server-key",
-    });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://bridge.example.com/v1/control/session/connect-temporary",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bearer control-fixture" }),
-        body: expect.stringContaining("private-server-key"),
-      }),
-    );
+    expect("connectTemporaryFromSettings" in client).toBe(false);
   });
 
   it("uses the control token for permanent-device upsert and delete", async () => {
