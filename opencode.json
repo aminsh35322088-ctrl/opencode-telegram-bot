@@ -12,6 +12,7 @@
     "github-ci": "allow",
     "session": "allow",
     "rustdesk": "allow",
+    "rustdesk.*": "ask",
     "webfetch": "allow",
     "websearch": "allow",
     "lsp": "allow",
