@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, InlineKeyboard } from "grammy";
 import type { PermissionRequest } from "../../../src/app/types/permission.js";
 import { permissionManager } from "../../../src/app/managers/permission-manager.js";
+import { rustDeskSessionPermissionManager } from "../../../src/app/managers/rustdesk-session-permission-manager.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { showPermissionRequest } from "../../../src/bot/menus/permission-menu.js";
 import { handlePermissionCallback } from "../../../src/bot/callbacks/permission-callback-handler.js";
@@ -20,7 +21,7 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/app/services/rustdesk-bridge-service.js", () => ({
-  RUSTDESK_ACTIONS: ["terminal.exec"],
+  RUSTDESK_ACTIONS: ["terminal.exec", "session.connectTemporary", "screen.capture", "connection.disconnect"],
   grantApprovedRustDeskPermission: mocked.rustDeskGrantApprovedMock,
   discardRustDeskPermissionGrantHandoff: mocked.rustDeskDiscardHandoffMock,
 }));
@@ -35,6 +36,7 @@ vi.mock("../../../src/opencode/client.js", () => ({
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
+  getCurrentSession: vi.fn(() => undefined),
   isPermissionAlwaysAllowed: vi.fn().mockReturnValue(false),
   rememberAlwaysAllowedPermission: vi.fn().mockResolvedValue(undefined),
 }));
@@ -128,6 +130,7 @@ async function flushMicrotasks(): Promise<void> {
 describe("bot permission menu/callbacks", () => {
   beforeEach(() => {
     permissionManager.clear();
+    rustDeskSessionPermissionManager.__resetForTests();
     interactionManager.clear("test_setup");
 
     mocked.permissionReplyMock.mockReset();
@@ -175,7 +178,7 @@ describe("bot permission menu/callbacks", () => {
     expect(state?.metadata.messageId).toBe(500);
   });
 
-  it("shows only one-shot allow and reject for RustDesk permissions", async () => {
+  it("shows one-shot, always-allow, and reject for RustDesk permissions", async () => {
     const botApi = createBotApi(505);
     const request = createPermissionRequest("rustdesk-perm-1", {
       permission: "rustdesk.terminal.exec",
@@ -196,9 +199,96 @@ describe("bot permission menu/callbacks", () => {
     const [, , options] = call;
     const replyMarkup = (options as { reply_markup: InlineKeyboard }).reply_markup;
 
-    expect(replyMarkup.inline_keyboard).toHaveLength(2);
+    expect(replyMarkup.inline_keyboard).toHaveLength(3);
     expect(getCallbackData(replyMarkup.inline_keyboard[0]?.[0])).toBe("permission:once");
-    expect(getCallbackData(replyMarkup.inline_keyboard[1]?.[0])).toBe("permission:reject");
+    expect(getCallbackData(replyMarkup.inline_keyboard[1]?.[0])).toBe("permission:always");
+    expect(getCallbackData(replyMarkup.inline_keyboard[2]?.[0])).toBe("permission:reject");
+  });
+
+  it("turns RustDesk Always Allow into a Bot-owned session lease while releasing OpenCode once", async () => {
+    const botApi = createBotApi(504);
+    const correlationId = "1".repeat(48);
+    const request = createPermissionRequest("rustdesk-connect-always", {
+      permission: "rustdesk.session.connectTemporary",
+      patterns: ["session.connectTemporary:123456789"],
+      metadata: {
+        source: "rustdesk",
+        action: "session.connectTemporary",
+        rustdeskId: "123456789",
+        rustdeskApprovalCorrelationId: correlationId,
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+    const ctx = createPermissionCallbackContext("permission:always", 504);
+    await handlePermissionCallback(ctx);
+
+    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledWith({
+      correlationId,
+      action: "session.connectTemporary",
+      sessionScope: "session-1",
+      connectionId: undefined,
+    });
+    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
+      requestID: "rustdesk-connect-always",
+      directory: "D:/repo",
+      reply: "once",
+    });
+    expect(rustDeskSessionPermissionManager.has(777, "session-1")).toBe(true);
+    expect(rustDeskSessionPermissionManager.canUse(777, "session-1", "conn-1")).toBe(true);
+  });
+
+  it("auto-allows later actions in the same RustDesk connection without another Telegram prompt", async () => {
+    rustDeskSessionPermissionManager.grant(777, "session-1", "conn-1");
+    const botApi = createBotApi(505);
+    const request = createPermissionRequest("rustdesk-screen-auto", {
+      permission: "rustdesk.screen.capture",
+      patterns: ["screen.capture:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "screen.capture",
+        connectionId: "conn-1",
+        rustdeskApprovalCorrelationId: "2".repeat(48),
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+
+    expect(botApi.sendMessage).not.toHaveBeenCalled();
+    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledWith({
+      correlationId: "2".repeat(48),
+      action: "screen.capture",
+      sessionScope: "session-1",
+      connectionId: "conn-1",
+    });
+    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
+      requestID: "rustdesk-screen-auto",
+      directory: "D:/repo",
+      reply: "once",
+    });
+  });
+
+  it("revokes the RustDesk session lease when disconnect is released", async () => {
+    rustDeskSessionPermissionManager.grant(777, "session-1", "conn-1");
+    const botApi = createBotApi(506);
+    const request = createPermissionRequest("rustdesk-disconnect-auto", {
+      permission: "rustdesk.connection.disconnect",
+      patterns: ["connection.disconnect:conn-1"],
+      metadata: {
+        source: "rustdesk",
+        action: "connection.disconnect",
+        connectionId: "conn-1",
+        rustdeskApprovalCorrelationId: "3".repeat(48),
+      },
+      always: [],
+    });
+
+    await showPermissionRequest(botApi, 777, request);
+
+    expect(botApi.sendMessage).not.toHaveBeenCalled();
+    expect(rustDeskSessionPermissionManager.has(777, "session-1")).toBe(false);
   });
 
   it("mints the real RustDesk grant in the trusted Bot process before releasing OpenCode", async () => {
