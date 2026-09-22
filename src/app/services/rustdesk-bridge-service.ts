@@ -1,3 +1,6 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 export const RUSTDESK_BRIDGE_CONTRACT_VERSION = 4;
 
 export const RUSTDESK_ACTIONS = [
@@ -214,6 +217,13 @@ export interface RustDeskPermissionGrantResponse {
   risk?: RustDeskPermissionRisk;
   permission?: RustDeskPermissionMode;
   idempotent?: boolean;
+}
+
+export interface RustDeskPermissionGrantHandoffRequest {
+  correlationId: string;
+  action: RustDeskAction;
+  sessionScope: string;
+  connectionId?: string;
 }
 
 export interface RustDeskCredentialSubmission {
@@ -496,6 +506,134 @@ export function validateRustDeskActionRequest(request: RustDeskActionRequest): v
   }
 }
 
+
+const RUSTDESK_PERMISSION_HANDOFF_TTL_MS = 60_000;
+const RUSTDESK_PERMISSION_CORRELATION_RE = /^[a-f0-9]{32,128}$/u;
+
+interface RustDeskPermissionGrantHandoffRecord extends RustDeskPermissionGrantHandoffRequest {
+  permissionGrantId: string;
+  expiresAt: number;
+}
+
+function rustDeskPermissionHandoffDir(): string {
+  const home = process.env.OPENCODE_TELEGRAM_HOME?.trim() || process.cwd();
+  return path.join(home, "run", "rustdesk-permission-grants");
+}
+
+function validateRustDeskPermissionCorrelationId(correlationId: string): string {
+  const value = correlationId.trim().toLowerCase();
+  if (!RUSTDESK_PERMISSION_CORRELATION_RE.test(value)) {
+    throw new Error("Invalid RustDesk permission approval correlation id");
+  }
+  return value;
+}
+
+function rustDeskPermissionHandoffPath(correlationId: string): string {
+  return path.join(
+    rustDeskPermissionHandoffDir(),
+    `${validateRustDeskPermissionCorrelationId(correlationId)}.json`,
+  );
+}
+
+export async function writeRustDeskPermissionGrantHandoff(
+  request: RustDeskPermissionGrantHandoffRequest,
+  grant: RustDeskPermissionGrantResponse,
+): Promise<void> {
+  if (!request.sessionScope.trim()) {
+    throw new Error("RustDesk permission handoff requires sessionScope");
+  }
+  if (!grant.permissionGrantId?.trim()) {
+    throw new Error("RustDesk permission handoff requires a Bridge permissionGrantId");
+  }
+
+  const directory = rustDeskPermissionHandoffDir();
+  const filePath = rustDeskPermissionHandoffPath(request.correlationId);
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const record: RustDeskPermissionGrantHandoffRecord = {
+    correlationId: validateRustDeskPermissionCorrelationId(request.correlationId),
+    action: request.action,
+    sessionScope: request.sessionScope,
+    connectionId: request.connectionId,
+    permissionGrantId: grant.permissionGrantId,
+    expiresAt: Date.now() + RUSTDESK_PERMISSION_HANDOFF_TTL_MS,
+  };
+
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  await fs.chmod(directory, 0o700).catch(() => {});
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await fs.rename(tempPath, filePath);
+    await fs.chmod(filePath, 0o600).catch(() => {});
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => {});
+    throw error;
+  }
+}
+
+export async function discardRustDeskPermissionGrantHandoff(correlationId: string): Promise<void> {
+  await fs.unlink(rustDeskPermissionHandoffPath(correlationId)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+export async function consumeRustDeskPermissionGrantHandoff(
+  request: RustDeskPermissionGrantHandoffRequest,
+): Promise<{ permissionGrantId: string }> {
+  const filePath = rustDeskPermissionHandoffPath(request.correlationId);
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("RustDesk permission approval handoff was not found");
+    }
+    throw error;
+  }
+
+  await fs.unlink(filePath).catch(() => {});
+
+  let record: RustDeskPermissionGrantHandoffRecord;
+  try {
+    record = JSON.parse(raw) as RustDeskPermissionGrantHandoffRecord;
+  } catch {
+    throw new Error("RustDesk permission approval handoff is invalid");
+  }
+
+  const expectedCorrelationId = validateRustDeskPermissionCorrelationId(request.correlationId);
+  if (
+    record.correlationId !== expectedCorrelationId ||
+    record.action !== request.action ||
+    record.sessionScope !== request.sessionScope ||
+    (record.connectionId ?? undefined) !== (request.connectionId ?? undefined)
+  ) {
+    throw new Error("RustDesk permission approval handoff does not match the requested action scope");
+  }
+  if (!Number.isFinite(record.expiresAt) || record.expiresAt < Date.now()) {
+    throw new Error("RustDesk permission approval handoff expired");
+  }
+  if (typeof record.permissionGrantId !== "string" || !record.permissionGrantId.trim()) {
+    throw new Error("RustDesk permission approval handoff is missing permissionGrantId");
+  }
+  return { permissionGrantId: record.permissionGrantId };
+}
+
+export async function grantApprovedRustDeskPermission(
+  request: RustDeskPermissionGrantHandoffRequest,
+): Promise<void> {
+  const client = createRustDeskBridgeClientFromEnv();
+  const grant = await client.grantPermission({
+    action: request.action,
+    connectionId: request.connectionId,
+    sessionScope: request.sessionScope,
+    scope: "once",
+  });
+  await writeRustDeskPermissionGrantHandoff(request, grant);
+}
+
 function normalizeBaseUrl(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -721,7 +859,7 @@ export class RustDeskBridgeClient {
 
   private requireControlToken(): string {
     if (!this.controlToken) {
-      throw new Error("RUSTDESK_BRIDGE_CONTROL_TOKEN is required for RustDesk secure control-plane operations");
+      throw new Error("RustDesk trusted control plane is unavailable in this process");
     }
     return this.controlToken;
   }
