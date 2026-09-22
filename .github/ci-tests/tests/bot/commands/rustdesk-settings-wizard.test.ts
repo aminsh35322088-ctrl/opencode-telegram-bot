@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   deleteServerProfile: vi.fn(),
   deleteDevice: vi.fn(),
   submitCredential: vi.fn(),
+  getPublicAccountStatus: vi.fn(),
+  startPublicAccountLogin: vi.fn(),
+  cancelPublicAccountLogin: vi.fn(),
   factory: vi.fn(),
   canonicalMessageId: 777,
   actions: [
@@ -54,6 +57,9 @@ function client() {
     deleteServerProfile: mocks.deleteServerProfile,
     deleteDevice: mocks.deleteDevice,
     submitCredential: mocks.submitCredential,
+    getPublicAccountStatus: mocks.getPublicAccountStatus,
+    startPublicAccountLogin: mocks.startPublicAccountLogin,
+    cancelPublicAccountLogin: mocks.cancelPublicAccountLogin,
   };
 }
 
@@ -96,6 +102,13 @@ describe("RustDesk settings wizard", () => {
     });
     mocks.upsertServerProfile.mockResolvedValue({ ok: true });
     mocks.upsertDevice.mockResolvedValue({ ok: true });
+    mocks.getPublicAccountStatus.mockResolvedValue({ loggedIn: true });
+    mocks.startPublicAccountLogin.mockResolvedValue({
+      loggedIn: false,
+      state: "Waiting account auth",
+      authUrl: "https://github.com/login/oauth/authorize?fixture=1",
+    });
+    mocks.cancelPublicAccountLogin.mockResolvedValue({ loggedIn: false });
   });
 
   it("adds a self-hosted server and deletes the private-key Telegram message", async () => {
@@ -153,6 +166,80 @@ describe("RustDesk settings wizard", () => {
       expect.any(Object),
     );
     expect(secretCtx.reply).not.toHaveBeenCalled();
+  });
+
+  it("shows official Public login controls in the canonical General Panel", async () => {
+    mocks.getPublicAccountStatus.mockResolvedValueOnce({
+      loggedIn: false,
+      state: "Waiting account auth",
+      authUrl: "https://github.com/login/oauth/authorize?fixture=1",
+    });
+    const ctx = callbackCtx("integration:rd:public-account");
+
+    await handleRustDeskSettingsCallback(ctx);
+
+    expect(mocks.getPublicAccountStatus).toHaveBeenCalledOnce();
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("RustDesk Public Account"),
+      expect.any(Object),
+    );
+    expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before Public dispatch when the Railway identity is not logged in", async () => {
+    mocks.getPublicAccountStatus.mockResolvedValueOnce({ loggedIn: false });
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:temp"));
+    await handleRustDeskSettingsMessage(messageCtx("987654321", 290));
+    const ctx = callbackCtx("integration:rd:w:tserver:rustdesk-public");
+
+    await handleRustDeskSettingsCallback(ctx);
+
+    expect(mocks.connectTemporaryFromSettings).not.toHaveBeenCalled();
+    const rendered = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => String(call[2] ?? ""))
+      .join("\n");
+    expect(rendered).toContain("login is required");
+    expect(rendered).toContain("RustDesk Public Account");
+  });
+
+  it("keeps saved custom Foojan routing independent from Public login", async () => {
+    mocks.execute.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "servers.list") {
+        return {
+          ok: true,
+          servers: [
+            { id: "rustdesk-public", name: "RustDesk Public", kind: "public" },
+            { id: "foojan", name: "Foojan", kind: "custom" },
+          ],
+        };
+      }
+      if (request.action === "devices.list") return { ok: true, devices: [] };
+      throw new Error(`unexpected action: ${request.action}`);
+    });
+    mocks.getPublicAccountStatus.mockResolvedValue({ loggedIn: false });
+    mocks.connectTemporaryFromSettings.mockResolvedValue({
+      ok: true,
+      connection: {
+        connectionId: "conn-foojan",
+        status: "waiting_remote_approval",
+        serverKind: "saved-custom",
+      },
+    });
+
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:temp"));
+    await handleRustDeskSettingsMessage(messageCtx("987654321", 295));
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:w:tserver:foojan"));
+    await handleRustDeskSettingsCallback(callbackCtx("integration:rd:w:auth:manual-approval"));
+
+    expect(mocks.getPublicAccountStatus).not.toHaveBeenCalled();
+    expect(mocks.connectTemporaryFromSettings).toHaveBeenCalledWith({
+      rustdeskId: "987654321",
+      server: { kind: "saved-custom", serverProfileId: "foojan" },
+      authMode: "manual-approval",
+      serverKey: undefined,
+    });
   });
 
   it("creates and tracks a public manual-approval connection from Settings", async () => {
