@@ -262,7 +262,7 @@ describe("bot permission menu/callbacks", () => {
     });
   });
 
-  it("groups equivalent RustDesk permissions without depending on legacy local grant metadata", async () => {
+  it("groups equivalent RustDesk permissions while retaining per-request approval correlations", async () => {
     const botApi = createBotApi(508);
     const common = {
       permission: "rustdesk.terminal.exec",
@@ -275,7 +275,12 @@ describe("bot permission menu/callbacks", () => {
       777,
       createPermissionRequest("rustdesk-group-1", {
         ...common,
-        metadata: { source: "rustdesk", action: "terminal.exec", permissionGrantId: "legacy-a" },
+        metadata: {
+          source: "rustdesk",
+          action: "terminal.exec",
+          connectionId: "conn-1",
+          rustdeskApprovalCorrelationId: "c".repeat(48),
+        },
       }),
     );
     await showPermissionRequest(
@@ -283,12 +288,59 @@ describe("bot permission menu/callbacks", () => {
       777,
       createPermissionRequest("rustdesk-group-2", {
         ...common,
-        metadata: { source: "rustdesk", action: "terminal.exec", permissionGrantId: "legacy-b" },
+        metadata: {
+          source: "rustdesk",
+          action: "terminal.exec",
+          connectionId: "conn-1",
+          rustdeskApprovalCorrelationId: "d".repeat(48),
+        },
       }),
     );
 
     expect(botApi.sendMessage).toHaveBeenCalledTimes(1);
     expect(permissionManager.getRequestIDs(508)).toEqual(["rustdesk-group-1", "rustdesk-group-2"]);
+  });
+
+  it("preserves both RustDesk handoffs when OpenCode coalesces a grouped approval", async () => {
+    const botApi = createBotApi(509);
+    mocked.permissionReplyMock
+      .mockResolvedValueOnce({ error: null })
+      .mockResolvedValueOnce({
+        error: {
+          _tag: "PermissionNotFoundError",
+          requestID: "rustdesk-group-2",
+          message: "Permission request not found: rustdesk-group-2",
+        },
+      });
+
+    for (const [id, correlationId] of [
+      ["rustdesk-group-1", "e".repeat(48)],
+      ["rustdesk-group-2", "f".repeat(48)],
+    ] as const) {
+      await showPermissionRequest(
+        botApi,
+        777,
+        createPermissionRequest(id, {
+          permission: "rustdesk.terminal.exec",
+          patterns: ["terminal.exec:conn-1"],
+          metadata: {
+            source: "rustdesk",
+            action: "terminal.exec",
+            connectionId: "conn-1",
+            rustdeskApprovalCorrelationId: correlationId,
+          },
+          always: [],
+        }),
+      );
+    }
+
+    const ctx = createPermissionCallbackContext("permission:once", 509);
+    await handlePermissionCallback(ctx);
+
+    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledTimes(2);
+    expect(mocked.permissionReplyMock).toHaveBeenCalledTimes(2);
+    expect(mocked.rustDeskDiscardHandoffMock).not.toHaveBeenCalled();
+    expect(permissionManager.isActive()).toBe(false);
   });
 
   it("keeps multiple active permission requests without deleting previous messages", async () => {
