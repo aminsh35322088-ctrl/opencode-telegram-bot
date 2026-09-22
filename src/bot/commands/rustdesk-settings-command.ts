@@ -134,6 +134,8 @@ interface RustDeskConnectionView {
   error?: string;
   serverKind?: string;
   authMode?: string;
+  messages?: string[];
+  peerReady?: boolean;
 }
 
 function connectionFromResponse(value: unknown): RustDeskConnectionView {
@@ -150,6 +152,10 @@ function connectionFromResponse(value: unknown): RustDeskConnectionView {
     error: typeof source.error === "string" && source.error.trim() ? source.error.trim() : undefined,
     serverKind: typeof source.serverKind === "string" ? source.serverKind : undefined,
     authMode: typeof source.authMode === "string" ? source.authMode : undefined,
+    messages: Array.isArray(source.messages)
+      ? source.messages.filter((value): value is string => typeof value === "string")
+      : undefined,
+    peerReady: source.peer !== null && typeof source.peer === "object",
   };
 }
 
@@ -213,6 +219,31 @@ async function settleConnectionStatus(
       status: live.status ?? current.status,
     };
     if (SETTLED_CONNECTION_STATUSES.has(current.status ?? "")) break;
+  }
+  return current;
+}
+
+async function refreshConnectionStatus(
+  client: ReturnType<typeof createRustDeskBridgeClientFromEnv>,
+  connectionId: string,
+): Promise<RustDeskConnectionView> {
+  const terminal = new Set(["connected", "failed", "credential_required", "disconnected"]);
+  let current: RustDeskConnectionView = { connectionId, status: "connecting" };
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 500));
+    const payload = await client.execute({
+      action: "connection.status",
+      connectionId,
+    });
+    const live = connectionFromResponse(payload);
+    current = {
+      ...current,
+      ...live,
+      connectionId: live.connectionId ?? connectionId,
+      status: live.status ?? current.status,
+      messages: [...(current.messages ?? []), ...(live.messages ?? [])].slice(-6),
+    };
+    if (terminal.has(current.status ?? "")) break;
   }
   return current;
 }
@@ -637,6 +668,10 @@ async function showTemporaryConnectionStatus(
     connectionId ? `Connection: ${connectionId}` : undefined,
     `Status: ${status}`,
     connection.error ? `Error: ${connection.error}` : undefined,
+    connection.peerReady ? "Handshake: peer metadata received ✅" : undefined,
+    connection.messages?.length
+      ? `Bridge event: ${connection.messages[connection.messages.length - 1]}`
+      : undefined,
     "",
     guidance,
   ].filter(Boolean).join("\n");
@@ -767,11 +802,7 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
       const connectionId = data.slice("integration:rd:c:s:".length);
       if (!connectionId) return true;
       const client = createRustDeskBridgeClientFromEnv();
-      const payload = await client.execute({
-        action: "connection.status",
-        connectionId,
-      });
-      const connection = connectionFromResponse(payload);
+      const connection = await refreshConnectionStatus(client, connectionId);
       await showTemporaryConnectionStatus(
         ctx,
         callbackMessageId(ctx),
