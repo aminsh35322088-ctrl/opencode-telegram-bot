@@ -8,6 +8,8 @@ import {
   RUSTDESK_ACTIONS,
   RUSTDESK_BRIDGE_CONTRACT_VERSION,
   type RustDeskDevice,
+  type RustDeskPublicAccountStatus,
+  type RustDeskPublicLoginProvider,
   type RustDeskServerProfile,
   type RustDeskServerSelector,
   type RustDeskTemporaryAuthMode,
@@ -151,6 +153,31 @@ function connectionFromResponse(value: unknown): RustDeskConnectionView {
   };
 }
 
+function publicAccountFromStatus(
+  status: RustDeskPublicAccountStatus,
+): RustDeskPublicAccountStatus {
+  return {
+    loggedIn: status.loggedIn,
+    state: cleanOptional(status.state),
+    failedMessage: cleanOptional(status.failedMessage),
+    authUrl: cleanOptional(status.authUrl),
+  };
+}
+
+async function settlePublicAccountStatus(
+  client: ReturnType<typeof createRustDeskBridgeClientFromEnv>,
+  initial: RustDeskPublicAccountStatus,
+): Promise<RustDeskPublicAccountStatus> {
+  let current = publicAccountFromStatus(initial);
+  if (current.loggedIn || current.authUrl || current.failedMessage) return current;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    current = publicAccountFromStatus(await client.getPublicAccountStatus());
+    if (current.loggedIn || current.authUrl || current.failedMessage) break;
+  }
+  return current;
+}
+
 function isMessageNotModified(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.toLowerCase().includes("message is not modified");
@@ -255,6 +282,7 @@ export function clearRustDeskSettingsWizard(): void {
 export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
   let configured = true;
   let healthy = false;
+  let publicAccount: "logged-in" | "login-required" | "unavailable" = "unavailable";
   let controlPlaneConfigured = false;
   let contractVersion: number | null = null;
   let servers = 0;
@@ -286,6 +314,15 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
           ? "matched"
           : "mismatch";
     }
+
+    if (controlPlaneConfigured) {
+      try {
+        const account = await client.getPublicAccountStatus();
+        publicAccount = account.loggedIn ? "logged-in" : "login-required";
+      } catch (error) {
+        logger.warn("[Integrations] RustDesk Public account status failed:", error);
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     configured = !message.includes("RUSTDESK_BRIDGE_URL");
@@ -301,6 +338,7 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
     .text("🖥 Devices", "integration:rd:devices")
     .text("🌐 Server Profiles", "integration:rd:servers").row()
     .text("⚡ Temporary Connection", "integration:rd:temp").row()
+    .text("🔑 Public Login", "integration:rd:public-account")
     .text("🔄 Refresh", "integration:rustdesk:refresh").row()
     .text("← Integrations", "integration:menu")
     .text("🏠 Home", "main:home");
@@ -312,6 +350,12 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
     "Server profiles: " + servers,
     "Permanent devices: " + devices,
     "Secure control plane: " + (controlPlaneConfigured ? "Ready" : "Not ready"),
+    "RustDesk Public account: " +
+      (publicAccount === "logged-in"
+        ? "Logged in ✅"
+        : publicAccount === "login-required"
+          ? "Login required"
+          : "Unavailable"),
     "Bridge contract: " +
       (contractVersion === RUSTDESK_BRIDGE_CONTRACT_VERSION
         ? `v${contractVersion} · matched`
@@ -334,6 +378,60 @@ export async function showRustDeskIntegrationMenu(ctx: Context): Promise<void> {
   }
 
   await edit(ctx, callbackMessageId(ctx), lines.join("\n"), keyboard);
+}
+
+async function showPublicAccountMenu(
+  ctx: Context,
+  notice?: string,
+  suppliedStatus?: RustDeskPublicAccountStatus,
+): Promise<void> {
+  const client = createRustDeskBridgeClientFromEnv();
+  const status = publicAccountFromStatus(
+    suppliedStatus ?? (await client.getPublicAccountStatus()),
+  );
+  const keyboard = new InlineKeyboard();
+
+  if (status.loggedIn) {
+    keyboard.text("🔄 Refresh", "integration:rd:public-refresh").row();
+  } else {
+    keyboard
+      .text("GitHub", "integration:rd:public-login:github")
+      .text("Google", "integration:rd:public-login:google")
+      .row()
+      .text("Microsoft", "integration:rd:public-login:microsoft")
+      .row();
+    if (status.authUrl) {
+      keyboard.url("🌐 Open RustDesk Login", status.authUrl).row();
+    }
+    keyboard
+      .text("🔄 Refresh", "integration:rd:public-refresh")
+      .text("✖ Cancel Login", "integration:rd:public-cancel")
+      .row();
+  }
+  keyboard.text("← RustDesk", "integration:rustdesk").text("🏠 Home", "main:home");
+
+  const text = [
+    notice,
+    "🔑 RustDesk Public Account",
+    "",
+    status.loggedIn
+      ? "Status: Logged in ✅"
+      : status.failedMessage
+        ? "Status: Login failed"
+        : status.authUrl
+          ? "Status: Waiting for browser authorization"
+          : "Status: Login required",
+    status.state ? `State: ${status.state}` : undefined,
+    status.failedMessage ? `Error: ${status.failedMessage}` : undefined,
+    "",
+    status.loggedIn
+      ? "This Railway RustDesk identity can now use RustDesk Public for Manual Approval connections."
+      : status.authUrl
+        ? "Open the official RustDesk login link, authorize it in your browser, then tap Refresh."
+        : "Choose a provider. The access token remains inside RustDesk Core on the persistent Railway volume and is never shown to the AI model.",
+  ].filter(Boolean).join("\n");
+
+  await edit(ctx, callbackMessageId(ctx), text, keyboard);
 }
 
 async function showServersMenu(ctx: Context, notice?: string): Promise<void> {
@@ -618,6 +716,31 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
       await showRustDeskIntegrationMenu(ctx);
       return true;
     }
+    if (data === "integration:rd:public-account" || data === "integration:rd:public-refresh") {
+      clearRustDeskSettingsWizard();
+      await showPublicAccountMenu(ctx);
+      return true;
+    }
+    if (data.startsWith("integration:rd:public-login:")) {
+      clearRustDeskSettingsWizard();
+      const provider = data.slice("integration:rd:public-login:".length) as RustDeskPublicLoginProvider;
+      if (!["github", "google", "microsoft"].includes(provider)) {
+        throw new Error("Unsupported RustDesk Public login provider");
+      }
+      const client = createRustDeskBridgeClientFromEnv();
+      const status = await settlePublicAccountStatus(
+        client,
+        await client.startPublicAccountLogin(provider),
+      );
+      await showPublicAccountMenu(ctx, undefined, status);
+      return true;
+    }
+    if (data === "integration:rd:public-cancel") {
+      clearRustDeskSettingsWizard();
+      const status = await createRustDeskBridgeClientFromEnv().cancelPublicAccountLogin();
+      await showPublicAccountMenu(ctx, "RustDesk Public login request cancelled.", status);
+      return true;
+    }
     if (data === "integration:rd:servers") {
       clearRustDeskSettingsWizard();
       await showServersMenu(ctx);
@@ -898,6 +1021,16 @@ export async function handleRustDeskSettingsCallback(ctx: Context): Promise<bool
         wizard.set(state);
         await edit(ctx, state.messageId, "One-time custom server · send ID/rendezvous server:", cancelKeyboard("integration:rd:temp"));
       } else if (selected === "rustdesk-public") {
+        const account = await createRustDeskBridgeClientFromEnv().getPublicAccountStatus();
+        if (!account.loggedIn) {
+          clearRustDeskSettingsWizard();
+          await showPublicAccountMenu(
+            ctx,
+            "RustDesk Public login is required before starting a Public connection. Log in, then start Temporary Connection again.",
+            account,
+          );
+          return true;
+        }
         state.server = { kind: "public" };
         state.step = "auth";
         wizard.set(state);
