@@ -1,6 +1,12 @@
 import type { Context } from "grammy";
 import { permissionManager } from "../../app/managers/permission-manager.js";
-import type { PermissionReply } from "../../app/types/permission.js";
+import type { PermissionReply, PermissionRequest } from "../../app/types/permission.js";
+import {
+  RUSTDESK_ACTIONS,
+  discardRustDeskPermissionGrantHandoff,
+  grantApprovedRustDeskPermission,
+  type RustDeskAction,
+} from "../../app/services/rustdesk-bridge-service.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
@@ -21,6 +27,74 @@ function getCallbackMessageId(ctx: Context): number | null {
 
 function isPermissionReply(value: string): value is PermissionReply {
   return value === "once" || value === "always" || value === "reject";
+}
+
+const RUSTDESK_ACTION_SET = new Set<string>(RUSTDESK_ACTIONS);
+
+function isRustDeskPermissionRequest(request: PermissionRequest): boolean {
+  return request.metadata.source === "rustdesk";
+}
+
+function getRustDeskApprovalHandoffRequest(request: PermissionRequest): {
+  correlationId: string;
+  action: RustDeskAction;
+  sessionScope: string;
+  connectionId?: string;
+} {
+  const correlationId = request.metadata.rustdeskApprovalCorrelationId;
+  const action = request.metadata.action;
+  const connectionId = request.metadata.connectionId;
+
+  if (typeof correlationId !== "string" || !correlationId.trim()) {
+    throw new Error("RustDesk permission request is missing approval correlation metadata");
+  }
+  if (typeof action !== "string" || !RUSTDESK_ACTION_SET.has(action)) {
+    throw new Error("RustDesk permission request has an invalid action");
+  }
+  if (connectionId !== undefined && typeof connectionId !== "string") {
+    throw new Error("RustDesk permission request has an invalid connection id");
+  }
+
+  return {
+    correlationId,
+    action: action as RustDeskAction,
+    sessionScope: request.sessionID,
+    connectionId,
+  };
+}
+
+async function discardPreparedRustDeskHandoffs(
+  prepared: Map<string, string>,
+): Promise<void> {
+  await Promise.all(
+    [...prepared.values()].map((correlationId) =>
+      discardRustDeskPermissionGrantHandoff(correlationId).catch(() => {}),
+    ),
+  );
+}
+
+async function prepareRustDeskPermissionHandoffs(
+  requests: PermissionRequest[],
+  reply: PermissionReply,
+): Promise<Map<string, string>> {
+  const rustDeskRequests = requests.filter(isRustDeskPermissionRequest);
+  const prepared = new Map<string, string>();
+  if (rustDeskRequests.length === 0 || reply === "reject") return prepared;
+  if (reply !== "once") {
+    throw new Error("RustDesk permissions only support one-shot approval");
+  }
+
+  try {
+    for (const request of rustDeskRequests) {
+      const handoffRequest = getRustDeskApprovalHandoffRequest(request);
+      await grantApprovedRustDeskPermission(handoffRequest);
+      prepared.set(request.id, handoffRequest.correlationId);
+    }
+    return prepared;
+  } catch (error) {
+    await discardPreparedRustDeskHandoffs(prepared);
+    throw error;
+  }
 }
 
 function isPermissionRequestNotFound(error: unknown): boolean {
@@ -112,6 +186,7 @@ async function handlePermissionReply(
   const chatId = ctx.chat?.id;
   const directory = currentSession?.directory ?? currentProject?.worktree;
   const permissionType = permissionManager.getPermissionType(callbackMessageId);
+  const permissionRequests = permissionManager.getRequests(callbackMessageId);
 
   if (!directory || !chatId) {
     await ctx.answerCallbackQuery({
@@ -131,32 +206,48 @@ async function handlePermissionReply(
     `[PermissionHandler] Sending permission reply: ${reply}, requestIDs=${requestIDs.join(",")}`,
   );
 
+  const preparedRustDeskHandoffs = await prepareRustDeskPermissionHandoffs(
+    permissionRequests,
+    reply,
+  );
+
   await ctx.answerCallbackQuery({ text: replyLabels[reply] });
 
   let firstError: unknown = null;
 
-  for (const requestID of requestIDs) {
-    const response = await opencodeClient.permission.reply({
-      requestID,
-      directory,
-      reply,
-    });
+  try {
+    for (const requestID of requestIDs) {
+      const response = await opencodeClient.permission.reply({
+        requestID,
+        directory,
+        reply,
+      });
 
-    if (!response.error) {
-      continue;
+      if (!response.error) {
+        continue;
+      }
+
+      if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
+        const correlationId = preparedRustDeskHandoffs.get(requestID);
+        if (correlationId) {
+          await discardRustDeskPermissionGrantHandoff(correlationId).catch(() => {});
+          preparedRustDeskHandoffs.delete(requestID);
+        }
+        logger.debug(
+          `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
+        );
+        continue;
+      }
+
+      firstError ??= response.error;
     }
-
-    if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
-      logger.debug(
-        `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
-      );
-      continue;
-    }
-
-    firstError ??= response.error;
+  } catch (error) {
+    await discardPreparedRustDeskHandoffs(preparedRustDeskHandoffs);
+    throw error;
   }
 
   if (firstError) {
+    await discardPreparedRustDeskHandoffs(preparedRustDeskHandoffs);
     logger.error("[PermissionHandler] Failed to send permission reply:", firstError);
     syncPermissionInteractionState({
       lastReplyError: true,
