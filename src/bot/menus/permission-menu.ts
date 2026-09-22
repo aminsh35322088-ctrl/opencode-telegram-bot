@@ -1,5 +1,12 @@
 import { Context, InlineKeyboard } from "grammy";
 import { permissionManager } from "../../app/managers/permission-manager.js";
+import { rustDeskSessionPermissionManager } from "../../app/managers/rustdesk-session-permission-manager.js";
+import {
+  RUSTDESK_ACTIONS,
+  discardRustDeskPermissionGrantHandoff,
+  grantApprovedRustDeskPermission,
+  type RustDeskAction,
+} from "../../app/services/rustdesk-bridge-service.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { getCurrentProject, getCurrentSession } from "../../app/stores/settings-store.js";
@@ -75,12 +82,105 @@ export function syncPermissionInteractionState(metadata: Record<string, unknown>
   });
 }
 
+const RUSTDESK_ACTION_SET = new Set<string>(RUSTDESK_ACTIONS);
+
+function rustDeskApprovalRequest(request: PermissionRequest): {
+  correlationId: string;
+  action: RustDeskAction;
+  sessionScope: string;
+  connectionId?: string;
+} | null {
+  if (request.metadata.source !== "rustdesk") return null;
+  const correlationId = request.metadata.rustdeskApprovalCorrelationId;
+  const action = request.metadata.action;
+  const connectionId = request.metadata.connectionId;
+  if (typeof correlationId !== "string" || !correlationId.trim()) return null;
+  if (typeof action !== "string" || !RUSTDESK_ACTION_SET.has(action)) return null;
+  if (connectionId !== undefined && typeof connectionId !== "string") return null;
+  return {
+    correlationId,
+    action: action as RustDeskAction,
+    sessionScope: request.sessionID,
+    connectionId,
+  };
+}
+
+async function autoAllowRustDeskSessionPermission(
+  chatId: number,
+  request: PermissionRequest,
+): Promise<boolean> {
+  const handoffRequest = rustDeskApprovalRequest(request);
+  if (!handoffRequest?.connectionId) return false;
+  if (
+    !rustDeskSessionPermissionManager.canUse(
+      chatId,
+      request.sessionID,
+      handoffRequest.connectionId,
+    )
+  ) {
+    return false;
+  }
+
+  const currentProject = getCurrentProject();
+  const currentSession = getCurrentSession();
+  const directory = currentSession?.directory ?? currentProject.worktree;
+  if (!directory) return false;
+
+  try {
+    await grantApprovedRustDeskPermission(handoffRequest);
+    const response = await opencodeClient.permission.reply({
+      requestID: request.id,
+      directory,
+      // Keep OpenCode itself on one-shot semantics. The Bot lease is what
+      // suppresses future prompts and mints a fresh Bridge grant per action.
+      reply: "once",
+    });
+    if (response.error) {
+      await discardRustDeskPermissionGrantHandoff(handoffRequest.correlationId).catch(() => {});
+      logger.warn(
+        `[PermissionHandler] RustDesk session auto-allow reply failed: requestID=${request.id}`,
+        response.error,
+      );
+      return false;
+    }
+
+    rustDeskSessionPermissionManager.bindConnection(
+      chatId,
+      request.sessionID,
+      handoffRequest.connectionId,
+    );
+    if (handoffRequest.action === "connection.disconnect") {
+      rustDeskSessionPermissionManager.revoke(
+        chatId,
+        request.sessionID,
+        handoffRequest.connectionId,
+      );
+    }
+    logger.info(
+      `[PermissionHandler] Auto-allowed RustDesk session action: chat=${chatId} session=${request.sessionID} action=${handoffRequest.action}`,
+    );
+    return true;
+  } catch (error) {
+    await discardRustDeskPermissionGrantHandoff(handoffRequest.correlationId).catch(() => {});
+    rustDeskSessionPermissionManager.revoke(
+      chatId,
+      request.sessionID,
+      handoffRequest.connectionId,
+    );
+    logger.warn(
+      `[PermissionHandler] RustDesk session lease no longer valid; showing prompt: requestID=${request.id}`,
+      error,
+    );
+    return false;
+  }
+}
+
 async function autoAllowRememberedPermission(
   chatId: number,
   request: PermissionRequest,
 ): Promise<boolean> {
   if (request.metadata.source === "rustdesk") {
-    return false;
+    return autoAllowRustDeskSessionPermission(chatId, request);
   }
   if (!permissionManager.isAlwaysAllowed(chatId, request)) {
     return false;
@@ -219,13 +319,11 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
   return text;
 }
 
-function buildPermissionKeyboard(request: PermissionRequest): InlineKeyboard {
+function buildPermissionKeyboard(_request: PermissionRequest): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   keyboard.text(t("permission.button.allow"), "permission:once").row();
-  if (request.metadata.source !== "rustdesk") {
-    keyboard.text(t("permission.button.always"), "permission:always").row();
-  }
+  keyboard.text(t("permission.button.always"), "permission:always").row();
   keyboard.text(t("permission.button.reject"), "permission:reject");
 
   return keyboard;

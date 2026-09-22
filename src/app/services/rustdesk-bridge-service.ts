@@ -580,6 +580,47 @@ export async function discardRustDeskPermissionGrantHandoff(correlationId: strin
   });
 }
 
+export async function discardRustDeskPermissionGrantHandoffsForSession(input: {
+  sessionScope: string;
+  connectionId?: string;
+}): Promise<number> {
+  const directory = rustDeskPermissionHandoffDir();
+  let entries: string[];
+  try {
+    entries = await fs.readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+
+  let removed = 0;
+  await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry) => {
+        const filePath = path.join(directory, entry);
+        let record: RustDeskPermissionGrantHandoffRecord;
+        try {
+          record = JSON.parse(await fs.readFile(filePath, "utf8")) as RustDeskPermissionGrantHandoffRecord;
+        } catch {
+          return;
+        }
+        if (record.sessionScope !== input.sessionScope) return;
+        if (
+          input.connectionId !== undefined &&
+          (record.connectionId ?? undefined) !== input.connectionId
+        ) {
+          return;
+        }
+        await fs.unlink(filePath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+        removed += 1;
+      }),
+  );
+  return removed;
+}
+
 export async function consumeRustDeskPermissionGrantHandoff(
   request: RustDeskPermissionGrantHandoffRequest,
 ): Promise<{ permissionGrantId: string }> {

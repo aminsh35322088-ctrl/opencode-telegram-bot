@@ -7,6 +7,7 @@ import {
   RustDeskBridgeClient,
   RustDeskBridgeHttpError,
   consumeRustDeskPermissionGrantHandoff,
+  discardRustDeskPermissionGrantHandoffsForSession,
   type RustDeskActionRequest,
   validateRustDeskActionRequest,
   writeRustDeskPermissionGrantHandoff,
@@ -600,6 +601,63 @@ describe("rustdesk permission grant handoff", () => {
           connectionId: "conn-1",
         }),
       ).rejects.toThrow("handoff was not found");
+    } finally {
+      if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+      else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes only handoffs that belong to the disconnected RustDesk session", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rustdesk-handoff-"));
+    const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+    process.env.OPENCODE_TELEGRAM_HOME = root;
+
+    try {
+      for (const [correlationId, sessionScope, connectionId] of [
+        ["c".repeat(48), "topic-a", "conn-1"],
+        ["d".repeat(48), "topic-a", "conn-2"],
+        ["e".repeat(48), "topic-b", "conn-1"],
+      ] as const) {
+        await writeRustDeskPermissionGrantHandoff(
+          {
+            correlationId,
+            action: "terminal.exec",
+            sessionScope,
+            connectionId,
+          },
+          {
+            ok: true,
+            permissionGrantId: `perm-${correlationId[0]}`,
+            scope: "once",
+          },
+        );
+      }
+
+      await expect(
+        discardRustDeskPermissionGrantHandoffsForSession({
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        }),
+      ).resolves.toBe(1);
+
+      await expect(
+        consumeRustDeskPermissionGrantHandoff({
+          correlationId: "c".repeat(48),
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        }),
+      ).rejects.toThrow("handoff was not found");
+
+      await expect(
+        consumeRustDeskPermissionGrantHandoff({
+          correlationId: "d".repeat(48),
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-2",
+        }),
+      ).resolves.toEqual({ permissionGrantId: "perm-d" });
     } finally {
       if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
       else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
