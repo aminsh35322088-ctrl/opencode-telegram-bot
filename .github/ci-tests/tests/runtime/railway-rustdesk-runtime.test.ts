@@ -29,10 +29,28 @@ describe("Railway bundled RustDesk runtime contract", () => {
 
   it("bootstraps a checksum-pinned private Core release through the existing GitHub integration", () => {
     expect(fs.existsSync(lockPath)).toBe(true);
-    expect(bridgeLock).toContain("bridge-contract-v3-43cce2c-bookworm-x86_64");
-    expect(bridgeLock).toContain("43cce2c4d26fb045ea31cee53c82de9cd2d0e54c");
-    expect(bridgeLock).toContain("ca12ca7cb0433f432344741632c7a5baa2525a2632e371c6fc76aae13ad49c12");
-    expect(bridgeLock).toContain("RUSTDESK_BRIDGE_CONTRACT_VERSION=3");
+    const values = Object.fromEntries(
+      bridgeLock
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => {
+          const index = line.indexOf("=");
+          return [line.slice(0, index), line.slice(index + 1)];
+        }),
+    );
+    const coreCommit = values.RUSTDESK_BRIDGE_CORE_COMMIT ?? "";
+    const releaseTag = values.RUSTDESK_BRIDGE_RELEASE_TAG ?? "";
+    const sha256 = values.RUSTDESK_BRIDGE_SHA256 ?? "";
+    const contractVersion = values.RUSTDESK_BRIDGE_CONTRACT_VERSION ?? "";
+
+    expect(values.RUSTDESK_BRIDGE_REPOSITORY).toBe("aminsh35322088-ctrl/RustDesk-Core-Lab");
+    expect(values.RUSTDESK_BRIDGE_ASSET).toBe("rustdesk-controller-bridge-bookworm-x86_64");
+    expect(coreCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(contractVersion).toBe("3");
+    expect(releaseTag).toBe(
+      `bridge-contract-v${contractVersion}-${coreCommit.slice(0, 7)}-bookworm-x86_64`,
+    );
     expect(dockerfile).toContain("rustdesk-bridge.lock");
     expect(dockerfile).toContain("libyuv0");
     expect(dockerfile).toContain("libgstreamer-plugins-base1.0-0");
