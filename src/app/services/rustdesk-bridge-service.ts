@@ -48,6 +48,15 @@ export type RustDeskAuthMode =
 
 export type RustDeskTemporaryAuthMode = Exclude<RustDeskAuthMode, "permanent-password">;
 
+export type RustDeskPublicLoginProvider = "github" | "google" | "microsoft";
+
+export interface RustDeskPublicAccountStatus {
+  loggedIn: boolean;
+  state?: string;
+  failedMessage?: string;
+  authUrl?: string;
+}
+
 export type RustDeskServerSelector =
   | { kind: "public" }
   | { kind: "saved-custom"; serverProfileId: string }
@@ -507,6 +516,33 @@ function clampTimeout(value: number | undefined): number {
   return Math.max(1_000, Math.min(Math.trunc(value ?? DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS));
 }
 
+function parsePublicAccountStatus(payload: unknown): RustDeskPublicAccountStatus {
+  const root =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const raw = root.account;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("RustDesk bridge returned an invalid public account response");
+  }
+  const account = raw as Record<string, unknown>;
+  if (typeof account.loggedIn !== "boolean") {
+    throw new Error("RustDesk bridge returned public account status without loggedIn");
+  }
+  return {
+    loggedIn: account.loggedIn,
+    state: typeof account.state === "string" && account.state.trim() ? account.state.trim() : undefined,
+    failedMessage:
+      typeof account.failedMessage === "string" && account.failedMessage.trim()
+        ? account.failedMessage.trim()
+        : undefined,
+    authUrl:
+      typeof account.authUrl === "string" && /^https:\/\//i.test(account.authUrl.trim())
+        ? account.authUrl.trim()
+        : undefined,
+  };
+}
+
 function errorMessageFromPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const value = payload as { error?: unknown; message?: unknown };
@@ -579,6 +615,38 @@ export class RustDeskBridgeClient {
       "/v1/control/devices/delete",
       { id },
       this.requireControlToken(),
+    );
+  }
+
+  async getPublicAccountStatus(): Promise<RustDeskPublicAccountStatus> {
+    return parsePublicAccountStatus(
+      await this.request(
+        "/v1/control/public-account/status",
+        {},
+        this.requireControlToken(),
+      ),
+    );
+  }
+
+  async startPublicAccountLogin(
+    provider: RustDeskPublicLoginProvider,
+  ): Promise<RustDeskPublicAccountStatus> {
+    return parsePublicAccountStatus(
+      await this.request(
+        "/v1/control/public-account/login",
+        { provider },
+        this.requireControlToken(),
+      ),
+    );
+  }
+
+  async cancelPublicAccountLogin(): Promise<RustDeskPublicAccountStatus> {
+    return parsePublicAccountStatus(
+      await this.request(
+        "/v1/control/public-account/cancel",
+        {},
+        this.requireControlToken(),
+      ),
     );
   }
 
