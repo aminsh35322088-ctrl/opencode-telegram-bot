@@ -1,10 +1,15 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   RustDeskBridgeClient,
   RustDeskBridgeHttpError,
+  consumeRustDeskPermissionGrantHandoff,
   type RustDeskActionRequest,
   validateRustDeskActionRequest,
+  writeRustDeskPermissionGrantHandoff,
 } from "../../../src/app/services/rustdesk-bridge-service.js";
 
 describe("rustdesk bridge service", () => {
@@ -551,6 +556,99 @@ describe("rustdesk bridge secure inventory control", () => {
       expect((call[1] as RequestInit | undefined)?.headers).toMatchObject({
         Authorization: "Bearer control-fixture",
       });
+    }
+  });
+});
+
+
+describe("rustdesk permission grant handoff", () => {
+  it("delivers a Bridge-minted one-shot grant without sharing the control token", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rustdesk-handoff-"));
+    const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+    process.env.OPENCODE_TELEGRAM_HOME = root;
+    const correlationId = "a".repeat(48);
+
+    try {
+      await writeRustDeskPermissionGrantHandoff(
+        {
+          correlationId,
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        },
+        {
+          ok: true,
+          permissionGrantId: "perm-real-from-bridge",
+          scope: "once",
+        },
+      );
+
+      await expect(
+        consumeRustDeskPermissionGrantHandoff({
+          correlationId,
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        }),
+      ).resolves.toEqual({ permissionGrantId: "perm-real-from-bridge" });
+
+      await expect(
+        consumeRustDeskPermissionGrantHandoff({
+          correlationId,
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        }),
+      ).rejects.toThrow("handoff was not found");
+    } finally {
+      if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+      else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("consumes and rejects a handoff that does not match the approved session scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rustdesk-handoff-"));
+    const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+    process.env.OPENCODE_TELEGRAM_HOME = root;
+    const correlationId = "b".repeat(48);
+
+    try {
+      await writeRustDeskPermissionGrantHandoff(
+        {
+          correlationId,
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        },
+        {
+          ok: true,
+          permissionGrantId: "perm-real-from-bridge",
+          scope: "once",
+        },
+      );
+
+      await expect(
+        consumeRustDeskPermissionGrantHandoff({
+          correlationId,
+          action: "terminal.exec",
+          sessionScope: "topic-b",
+          connectionId: "conn-1",
+        }),
+      ).rejects.toThrow("does not match the requested action scope");
+
+      await expect(
+        consumeRustDeskPermissionGrantHandoff({
+          correlationId,
+          action: "terminal.exec",
+          sessionScope: "topic-a",
+          connectionId: "conn-1",
+        }),
+      ).rejects.toThrow("handoff was not found");
+    } finally {
+      if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+      else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
     }
   });
 });
