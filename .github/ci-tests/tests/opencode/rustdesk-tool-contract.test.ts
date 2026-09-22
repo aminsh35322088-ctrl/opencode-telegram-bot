@@ -14,14 +14,16 @@ describe("RustDesk OpenCode tool contract", () => {
     expect(toolActions).toContain("connections.list");
 
     expect(source).toContain("sessionScope: context.sessionID");
-    expect(source).toContain("client.grantPermission({");
+    expect(source).toContain("consumeRustDeskPermissionGrantHandoff({");
+    expect(source).not.toContain("RUSTDESK_BRIDGE_CONTROL_TOKEN");
+    expect(source).not.toContain("client.grantPermission({");
     expect(source).toContain("sessionScope: context.sessionID,");
     expect(source).toContain("permissionGrantId: grant.permissionGrantId");
     expect(source).not.toContain("randomUUID");
     expect(source).not.toContain("perm_${");
 
     const ask = source.indexOf("await context.ask({");
-    const grant = source.indexOf("await client.grantPermission({");
+    const grant = source.indexOf("consumeRustDeskPermissionGrantHandoff({");
     const retry = source.indexOf("permissionGrantId: grant.permissionGrantId");
     expect(ask).toBeGreaterThanOrEqual(0);
     expect(grant).toBeGreaterThan(ask);
