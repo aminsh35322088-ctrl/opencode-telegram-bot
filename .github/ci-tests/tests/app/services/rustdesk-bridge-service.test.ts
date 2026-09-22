@@ -385,6 +385,83 @@ describe("rustdesk bridge secure inventory control", () => {
     );
   });
 
+  it("uses the control plane for RustDesk Public login status and provider start", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            account: {
+              loggedIn: false,
+              state: "Waiting account auth",
+              authUrl: "https://github.com/login/oauth/authorize?fixture=1",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            account: {
+              loggedIn: false,
+              state: "Waiting account auth",
+              authUrl: "https://github.com/login/oauth/authorize?fixture=2",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const status = await client.getPublicAccountStatus();
+    const started = await client.startPublicAccountLogin("github");
+
+    expect(status.loggedIn).toBe(false);
+    expect(started.authUrl).toContain("https://github.com/login/oauth/authorize");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://bridge.example.com/v1/control/public-account/status",
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://bridge.example.com/v1/control/public-account/login",
+    );
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.body).toBe(
+      JSON.stringify({ provider: "github" }),
+    );
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit | undefined)?.headers).toMatchObject({
+        Authorization: "Bearer control-fixture",
+      });
+    }
+  });
+
+  it("rejects malformed Public account responses", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true, account: { state: "missing loggedIn" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const client = new RustDeskBridgeClient({
+      baseUrl: "https://bridge.example.com",
+      token: "action-fixture",
+      controlToken: "control-fixture",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await expect(client.getPublicAccountStatus()).rejects.toThrow(
+      "public account status without loggedIn",
+    );
+  });
+
   it("keeps one-time custom server keys on the Settings control plane", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ ok: true, connection: { connectionId: "conn-1" } }), {
