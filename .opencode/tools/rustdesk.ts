@@ -20,6 +20,10 @@ interface RustDeskBridgeModule {
   consumeRustDeskPermissionGrantHandoff(
     request: RustDeskPermissionGrantHandoffRequest,
   ): Promise<{ permissionGrantId: string }>;
+  discardRustDeskPermissionGrantHandoffsForSession(input: {
+    sessionScope: string;
+    connectionId?: string;
+  }): Promise<number>;
 }
 
 const DEFAULT_SERVICE_PATH = "/app/dist/app/services/rustdesk-bridge-service.js";
@@ -46,6 +50,44 @@ async function getClient(): Promise<RustDeskBridgeClient> {
 function clean(value?: string): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function safePathPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function rustDeskSessionTempDir(
+  worktree: string,
+  sessionId: string,
+  connectionId: string,
+): string {
+  return resolveInsideWorktree(
+    worktree,
+    path.join(
+      ".opencode",
+      "rustdesk",
+      "sessions",
+      safePathPart(sessionId),
+      safePathPart(connectionId),
+    ),
+  );
+}
+
+async function cleanupRustDeskSessionArtifacts(
+  worktree: string,
+  sessionId: string,
+  connectionId: string,
+): Promise<void> {
+  await fs.rm(rustDeskSessionTempDir(worktree, sessionId, connectionId), {
+    recursive: true,
+    force: true,
+  });
+  await (await getBridgeModule())
+    .discardRustDeskPermissionGrantHandoffsForSession({
+      sessionScope: sessionId,
+      connectionId,
+    })
+    .catch(() => {});
 }
 
 function parseKeys(value?: string): string[] | undefined {
@@ -379,6 +421,18 @@ export default tool({
     try {
       result = await client.execute(request);
     } catch (error) {
+      const errorCode =
+        error && typeof error === "object" && "errorCode" in error
+          ? (error as { errorCode?: unknown }).errorCode
+          : undefined;
+      if (errorCode === "connection_not_found") {
+        const connectionId = clean(args.connection_id);
+        if (connectionId) {
+          await cleanupRustDeskSessionArtifacts(base, context.sessionID, connectionId).catch(() => {});
+        }
+        throw error;
+      }
+
       const permission = permissionErrorDetails(error);
       if (!permission) throw error;
 
@@ -422,15 +476,32 @@ export default tool({
           throw new Error(`Screenshot exceeds RUSTDESK_MAX_TRANSFER_BYTES (${maxBytes} bytes)`);
         }
         const requestedPath = clean(args.local_path);
-        const targetPart =
-          clean(args.device_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") ||
-          clean(args.connection_id)?.replace(/[^a-zA-Z0-9._-]+/g, "_") ||
-          "device";
-        const localPath = requestedPath ?? `.opencode/rustdesk/${targetPart}-screen-${Date.now()}${imageExtension(result)}`;
+        const connectionPart = clean(args.connection_id);
+        const targetPart = safePathPart(
+          connectionPart || clean(args.device_id) || "device",
+        );
+        const localPath =
+          requestedPath ??
+          path.join(
+            ".opencode",
+            "rustdesk",
+            "sessions",
+            safePathPart(context.sessionID),
+            targetPart,
+            "screens",
+            `screen-${Date.now()}${imageExtension(result)}`,
+          );
         const absolute = resolveInsideWorktree(base, localPath);
         await fs.mkdir(path.dirname(absolute), { recursive: true });
         await fs.writeFile(absolute, image);
         return stringify({ ...resultWithoutBinary(result), localPath, bytes: image.byteLength });
+      }
+    }
+
+    if (action === "connection.disconnect") {
+      const connectionId = clean(args.connection_id);
+      if (connectionId) {
+        await cleanupRustDeskSessionArtifacts(base, context.sessionID, connectionId);
       }
     }
 
