@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -124,4 +125,77 @@ describe("OpenCode RustDesk tool v4 contract", () => {
     });
     expect(result).toContain('"ok": true');
   });
+  it("stores automatic screenshots under the RustDesk session and removes them on disconnect", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rustdesk-tool-session-"));
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        mimeType: "image/png",
+        imageBase64: Buffer.from("fixture-image").toString("base64"),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        connectionId: "conn-1",
+        status: "disconnected",
+      });
+    const consumePermissionHandoff = vi.fn();
+    installBridgeClient({ execute }, consumePermissionHandoff);
+
+    const context = {
+      sessionID: "topic-session-cleanup",
+      directory: root,
+      worktree: root,
+      abort: new AbortController().signal,
+      ask: vi.fn(),
+      metadata: vi.fn(),
+    };
+    const toolExecute = (rustdeskTool as {
+      execute(args: Record<string, unknown>, context: Record<string, unknown>): Promise<string>;
+    }).execute.bind(rustdeskTool);
+
+    const capture = await toolExecute(
+      {
+        action: "screen.capture",
+        connection_id: "conn-1",
+      },
+      context,
+    );
+    const localPath = (JSON.parse(capture) as { localPath: string }).localPath;
+    expect(localPath).toContain(
+      path.join(
+        ".opencode",
+        "rustdesk",
+        "sessions",
+        "topic-session-cleanup",
+        "conn-1",
+        "screens",
+      ),
+    );
+    expect(fs.existsSync(path.join(root, localPath))).toBe(true);
+
+    await toolExecute(
+      {
+        action: "connection.disconnect",
+        connection_id: "conn-1",
+      },
+      context,
+    );
+
+    expect(
+      fs.existsSync(
+        path.join(
+          root,
+          ".opencode",
+          "rustdesk",
+          "sessions",
+          "topic-session-cleanup",
+          "conn-1",
+        ),
+      ),
+    ).toBe(false);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
 });
