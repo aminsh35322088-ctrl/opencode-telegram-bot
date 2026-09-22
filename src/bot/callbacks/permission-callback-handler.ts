@@ -224,15 +224,18 @@ async function handlePermissionReply(
       });
 
       if (!response.error) {
+        // The OpenCode ask has been released. Leave this request's one-shot
+        // handoff in place for the resumed RustDesk tool to consume.
+        preparedRustDeskHandoffs.delete(requestID);
         continue;
       }
 
       if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
-        const correlationId = preparedRustDeskHandoffs.get(requestID);
-        if (correlationId) {
-          await discardRustDeskPermissionGrantHandoff(correlationId).catch(() => {});
-          preparedRustDeskHandoffs.delete(requestID);
-        }
+        // OpenCode can coalesce equivalent permission requests: replying to the
+        // first may release a grouped sibling and make its explicit reply return
+        // NotFound. Treat that as released too; deleting its handoff here races
+        // the resumed tool.
+        preparedRustDeskHandoffs.delete(requestID);
         logger.debug(
           `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
         );
