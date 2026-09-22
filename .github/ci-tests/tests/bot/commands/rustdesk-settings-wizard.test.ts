@@ -242,6 +242,58 @@ describe("RustDesk settings wizard", () => {
     });
   });
 
+  it("settles an approved manual session when Refresh is tapped during the connecting race", async () => {
+    vi.useFakeTimers();
+    mocks.execute
+      .mockResolvedValueOnce({
+        ok: true,
+        connection: {
+          connectionId: "conn-approved",
+          status: "connecting",
+          serverKind: "public",
+          messages: [],
+          peer: null,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        connection: {
+          connectionId: "conn-approved",
+          status: "connected",
+          serverKind: "public",
+          messages: ["success: Successful: Connected, waiting for image..."],
+          peer: { platform: "Android" },
+        },
+      });
+
+    const ctx = callbackCtx("integration:rd:c:s:conn-approved");
+    const promise = handleRustDeskSettingsCallback(ctx);
+    await vi.advanceTimersByTimeAsync(600);
+    await promise;
+    vi.useRealTimers();
+
+    expect(mocks.execute).toHaveBeenNthCalledWith(1, {
+      action: "connection.status",
+      connectionId: "conn-approved",
+    });
+    expect(mocks.execute).toHaveBeenNthCalledWith(2, {
+      action: "connection.status",
+      connectionId: "conn-approved",
+    });
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("✅ Connected"),
+      expect.any(Object),
+    );
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      42,
+      777,
+      expect.stringContaining("Handshake: peer metadata received ✅"),
+      expect.any(Object),
+    );
+  });
+
   it("creates and tracks a public manual-approval connection from Settings", async () => {
     mocks.connectTemporaryFromSettings.mockResolvedValue({
       ok: true,
