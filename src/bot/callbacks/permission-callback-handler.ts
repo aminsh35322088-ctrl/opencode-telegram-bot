@@ -216,6 +216,24 @@ async function handlePermissionReply(
     reply,
   );
 
+  const grantedRustDeskLeases: Array<{
+    sessionId: string;
+    connectionId?: string;
+  }> = [];
+  if (reply === "always") {
+    for (const request of rustDeskRequests) {
+      const connectionId =
+        typeof request.metadata.connectionId === "string"
+          ? request.metadata.connectionId
+          : undefined;
+      rustDeskSessionPermissionManager.grant(chatId, request.sessionID, connectionId);
+      grantedRustDeskLeases.push({ sessionId: request.sessionID, connectionId });
+      logger.info(
+        `[PermissionHandler] Enabled RustDesk session Always Allow: chat=${chatId} session=${request.sessionID} connection=${connectionId ?? "pending"}`,
+      );
+    }
+  }
+
   await ctx.answerCallbackQuery({ text: replyLabels[reply] });
 
   let firstError: unknown = null;
@@ -254,11 +272,17 @@ async function handlePermissionReply(
     }
   } catch (error) {
     await discardPreparedRustDeskHandoffs(preparedRustDeskHandoffs);
+    for (const lease of grantedRustDeskLeases) {
+      rustDeskSessionPermissionManager.revoke(chatId, lease.sessionId, lease.connectionId);
+    }
     throw error;
   }
 
   if (firstError) {
     await discardPreparedRustDeskHandoffs(preparedRustDeskHandoffs);
+    for (const lease of grantedRustDeskLeases) {
+      rustDeskSessionPermissionManager.revoke(chatId, lease.sessionId, lease.connectionId);
+    }
     logger.error("[PermissionHandler] Failed to send permission reply:", firstError);
     syncPermissionInteractionState({
       lastReplyError: true,
@@ -270,22 +294,7 @@ async function handlePermissionReply(
     return;
   }
 
-  if (reply === "always" && rustDeskRequests.length > 0) {
-    for (const request of rustDeskRequests) {
-      const connectionId =
-        typeof request.metadata.connectionId === "string"
-          ? request.metadata.connectionId
-          : undefined;
-      rustDeskSessionPermissionManager.grant(
-        chatId,
-        request.sessionID,
-        connectionId,
-      );
-      logger.info(
-        `[PermissionHandler] Enabled RustDesk session Always Allow: chat=${chatId} session=${request.sessionID} connection=${connectionId ?? "pending"}`,
-      );
-    }
-  } else if (reply === "always" && permissionType) {
+  if (reply === "always" && rustDeskRequests.length === 0 && permissionType) {
     try {
       await permissionManager.rememberAlwaysAllowed(chatId, permissionType);
       logger.info(
