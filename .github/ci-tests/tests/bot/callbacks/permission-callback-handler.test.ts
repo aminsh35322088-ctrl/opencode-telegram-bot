@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, InlineKeyboard } from "grammy";
 import type { PermissionRequest } from "../../../src/app/types/permission.js";
 import { permissionManager } from "../../../src/app/managers/permission-manager.js";
-import { rustDeskSessionPermissionManager } from "../../../src/app/managers/rustdesk-session-permission-manager.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { showPermissionRequest } from "../../../src/bot/menus/permission-menu.js";
 import { handlePermissionCallback } from "../../../src/bot/callbacks/permission-callback-handler.js";
@@ -11,19 +10,11 @@ import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
   permissionReplyMock: vi.fn(),
-  rustDeskGrantApprovedMock: vi.fn(),
-  rustDeskDiscardHandoffMock: vi.fn(),
   currentProject: {
     id: "project-1",
     worktree: "D:/repo",
   } as { id: string; worktree: string } | undefined,
   currentSession: null as { id: string; title: string; directory: string } | null,
-}));
-
-vi.mock("../../../src/app/services/rustdesk-bridge-service.js", () => ({
-  RUSTDESK_ACTIONS: ["terminal.exec", "session.connectTemporary", "screen.capture", "connection.disconnect"],
-  grantApprovedRustDeskPermission: mocked.rustDeskGrantApprovedMock,
-  discardRustDeskPermissionGrantHandoff: mocked.rustDeskDiscardHandoffMock,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -130,15 +121,10 @@ async function flushMicrotasks(): Promise<void> {
 describe("bot permission menu/callbacks", () => {
   beforeEach(() => {
     permissionManager.clear();
-    rustDeskSessionPermissionManager.__resetForTests();
     interactionManager.clear("test_setup");
 
     mocked.permissionReplyMock.mockReset();
     mocked.permissionReplyMock.mockResolvedValue({ error: null });
-    mocked.rustDeskGrantApprovedMock.mockReset();
-    mocked.rustDeskGrantApprovedMock.mockResolvedValue(undefined);
-    mocked.rustDeskDiscardHandoffMock.mockReset();
-    mocked.rustDeskDiscardHandoffMock.mockResolvedValue(undefined);
 
     mocked.currentProject = {
       id: "project-1",
@@ -176,265 +162,6 @@ describe("bot permission menu/callbacks", () => {
     expect(state?.expectedInput).toBe("callback");
     expect(state?.metadata.requestID).toBe("perm-1");
     expect(state?.metadata.messageId).toBe(500);
-  });
-
-  it("shows one-shot, always-allow, and reject for RustDesk permissions", async () => {
-    const botApi = createBotApi(505);
-    const request = createPermissionRequest("rustdesk-perm-1", {
-      permission: "rustdesk.terminal.exec",
-      patterns: ["terminal.exec:conn-1"],
-      metadata: {
-        source: "rustdesk",
-        action: "terminal.exec",
-        connectionId: "conn-1",
-        permissionGrantId: "perm_550e8400-e29b-41d4-a716-446655440000",
-      },
-      always: [],
-    });
-
-    await showPermissionRequest(botApi, 777, request);
-
-    const sendMessageMock = botApi.sendMessage as unknown as ReturnType<typeof vi.fn>;
-    const call = defined(sendMessageMock.mock.calls[0]);
-    const [, , options] = call;
-    const replyMarkup = (options as { reply_markup: InlineKeyboard }).reply_markup;
-
-    expect(replyMarkup.inline_keyboard).toHaveLength(3);
-    expect(getCallbackData(replyMarkup.inline_keyboard[0]?.[0])).toBe("permission:once");
-    expect(getCallbackData(replyMarkup.inline_keyboard[1]?.[0])).toBe("permission:always");
-    expect(getCallbackData(replyMarkup.inline_keyboard[2]?.[0])).toBe("permission:reject");
-  });
-
-  it("turns RustDesk Always Allow into a Bot-owned session lease while releasing OpenCode once", async () => {
-    const botApi = createBotApi(504);
-    const correlationId = "1".repeat(48);
-    const request = createPermissionRequest("rustdesk-connect-always", {
-      permission: "rustdesk.session.connectTemporary",
-      patterns: ["session.connectTemporary:123456789"],
-      metadata: {
-        source: "rustdesk",
-        action: "session.connectTemporary",
-        rustdeskId: "123456789",
-        rustdeskApprovalCorrelationId: correlationId,
-      },
-      always: [],
-    });
-
-    await showPermissionRequest(botApi, 777, request);
-    mocked.permissionReplyMock.mockImplementationOnce(async () => {
-      expect(rustDeskSessionPermissionManager.has(777, "session-1")).toBe(false);
-      return { error: null };
-    });
-    const ctx = createPermissionCallbackContext("permission:always", 504);
-    await handlePermissionCallback(ctx);
-
-    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledWith({
-      correlationId,
-      action: "session.connectTemporary",
-      sessionScope: "session-1",
-      connectionId: undefined,
-    });
-    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
-      requestID: "rustdesk-connect-always",
-      directory: "D:/repo",
-      reply: "once",
-    });
-    expect(rustDeskSessionPermissionManager.has(777, "session-1")).toBe(true);
-    expect(rustDeskSessionPermissionManager.canUse(777, "session-1", "conn-1")).toBe(true);
-  });
-
-  it("auto-allows later actions in the same RustDesk connection without another Telegram prompt", async () => {
-    rustDeskSessionPermissionManager.grant(777, "session-1", "conn-1");
-    const botApi = createBotApi(505);
-    const request = createPermissionRequest("rustdesk-screen-auto", {
-      permission: "rustdesk.screen.capture",
-      patterns: ["screen.capture:conn-1"],
-      metadata: {
-        source: "rustdesk",
-        action: "screen.capture",
-        connectionId: "conn-1",
-        rustdeskApprovalCorrelationId: "2".repeat(48),
-      },
-      always: [],
-    });
-
-    await showPermissionRequest(botApi, 777, request);
-
-    expect(botApi.sendMessage).not.toHaveBeenCalled();
-    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledWith({
-      correlationId: "2".repeat(48),
-      action: "screen.capture",
-      sessionScope: "session-1",
-      connectionId: "conn-1",
-    });
-    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
-      requestID: "rustdesk-screen-auto",
-      directory: "D:/repo",
-      reply: "once",
-    });
-  });
-
-  it("revokes the RustDesk session lease when disconnect is released", async () => {
-    rustDeskSessionPermissionManager.grant(777, "session-1", "conn-1");
-    const botApi = createBotApi(506);
-    const request = createPermissionRequest("rustdesk-disconnect-auto", {
-      permission: "rustdesk.connection.disconnect",
-      patterns: ["connection.disconnect:conn-1"],
-      metadata: {
-        source: "rustdesk",
-        action: "connection.disconnect",
-        connectionId: "conn-1",
-        rustdeskApprovalCorrelationId: "3".repeat(48),
-      },
-      always: [],
-    });
-
-    await showPermissionRequest(botApi, 777, request);
-
-    expect(botApi.sendMessage).not.toHaveBeenCalled();
-    expect(rustDeskSessionPermissionManager.has(777, "session-1")).toBe(false);
-  });
-
-  it("mints the real RustDesk grant in the trusted Bot process before releasing OpenCode", async () => {
-    const botApi = createBotApi(506);
-    const correlationId = "a".repeat(48);
-    const request = createPermissionRequest("rustdesk-perm-2", {
-      permission: "rustdesk.terminal.exec",
-      patterns: ["terminal.exec:conn-1"],
-      metadata: {
-        source: "rustdesk",
-        action: "terminal.exec",
-        connectionId: "conn-1",
-        rustdeskApprovalCorrelationId: correlationId,
-      },
-      always: [],
-    });
-
-    await showPermissionRequest(botApi, 777, request);
-    const ctx = createPermissionCallbackContext("permission:once", 506);
-    await handlePermissionCallback(ctx);
-
-    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledWith({
-      correlationId,
-      action: "terminal.exec",
-      sessionScope: "session-1",
-      connectionId: "conn-1",
-    });
-    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
-      requestID: "rustdesk-perm-2",
-      directory: "D:/repo",
-      reply: "once",
-    });
-    expect(
-      mocked.rustDeskGrantApprovedMock.mock.invocationCallOrder[0],
-    ).toBeLessThan(mocked.permissionReplyMock.mock.invocationCallOrder[0]!);
-  });
-
-  it("never mints a RustDesk grant when the user rejects the OpenCode permission", async () => {
-    const botApi = createBotApi(507);
-    const request = createPermissionRequest("rustdesk-perm-reject", {
-      permission: "rustdesk.terminal.exec",
-      patterns: ["terminal.exec:conn-1"],
-      metadata: {
-        source: "rustdesk",
-        action: "terminal.exec",
-        connectionId: "conn-1",
-        rustdeskApprovalCorrelationId: "b".repeat(48),
-      },
-      always: [],
-    });
-
-    await showPermissionRequest(botApi, 777, request);
-    const ctx = createPermissionCallbackContext("permission:reject", 507);
-    await handlePermissionCallback(ctx);
-
-    expect(mocked.rustDeskGrantApprovedMock).not.toHaveBeenCalled();
-    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
-      requestID: "rustdesk-perm-reject",
-      directory: "D:/repo",
-      reply: "reject",
-    });
-  });
-
-  it("groups equivalent RustDesk permissions while retaining per-request approval correlations", async () => {
-    const botApi = createBotApi(508);
-    const common = {
-      permission: "rustdesk.terminal.exec",
-      patterns: ["terminal.exec:conn-1"],
-      always: [],
-    };
-
-    await showPermissionRequest(
-      botApi,
-      777,
-      createPermissionRequest("rustdesk-group-1", {
-        ...common,
-        metadata: {
-          source: "rustdesk",
-          action: "terminal.exec",
-          connectionId: "conn-1",
-          rustdeskApprovalCorrelationId: "c".repeat(48),
-        },
-      }),
-    );
-    await showPermissionRequest(
-      botApi,
-      777,
-      createPermissionRequest("rustdesk-group-2", {
-        ...common,
-        metadata: {
-          source: "rustdesk",
-          action: "terminal.exec",
-          connectionId: "conn-1",
-          rustdeskApprovalCorrelationId: "d".repeat(48),
-        },
-      }),
-    );
-
-    expect(botApi.sendMessage).toHaveBeenCalledTimes(1);
-    expect(permissionManager.getRequestIDs(508)).toEqual(["rustdesk-group-1", "rustdesk-group-2"]);
-  });
-
-  it("preserves both RustDesk handoffs when OpenCode coalesces a grouped approval", async () => {
-    const botApi = createBotApi(509);
-    mocked.permissionReplyMock
-      .mockResolvedValueOnce({ error: null })
-      .mockResolvedValueOnce({
-        error: {
-          _tag: "PermissionNotFoundError",
-          requestID: "rustdesk-group-2",
-          message: "Permission request not found: rustdesk-group-2",
-        },
-      });
-
-    for (const [id, correlationId] of [
-      ["rustdesk-group-1", "e".repeat(48)],
-      ["rustdesk-group-2", "f".repeat(48)],
-    ] as const) {
-      await showPermissionRequest(
-        botApi,
-        777,
-        createPermissionRequest(id, {
-          permission: "rustdesk.terminal.exec",
-          patterns: ["terminal.exec:conn-1"],
-          metadata: {
-            source: "rustdesk",
-            action: "terminal.exec",
-            connectionId: "conn-1",
-            rustdeskApprovalCorrelationId: correlationId,
-          },
-          always: [],
-        }),
-      );
-    }
-
-    const ctx = createPermissionCallbackContext("permission:once", 509);
-    await handlePermissionCallback(ctx);
-
-    expect(mocked.rustDeskGrantApprovedMock).toHaveBeenCalledTimes(2);
-    expect(mocked.permissionReplyMock).toHaveBeenCalledTimes(2);
-    expect(mocked.rustDeskDiscardHandoffMock).not.toHaveBeenCalled();
-    expect(permissionManager.isActive()).toBe(false);
   });
 
   it("keeps multiple active permission requests without deleting previous messages", async () => {

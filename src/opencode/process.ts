@@ -124,7 +124,6 @@ export function buildAgentEnvironment(): NodeJS.ProcessEnv {
     "TELEGRAM_PROXY_URL",
     "TELEGRAM_PROXY_SECRET",
     "TELEGRAM_API_ROOT",
-    "RUSTDESK_BRIDGE_CONTROL_TOKEN",
   ]) {
     delete environment[key];
   }

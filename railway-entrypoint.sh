@@ -32,16 +32,6 @@ GLOBAL_TOOLS_DIR="$GLOBAL_OPENCODE_DIR/tools"
 INTEGRATION_STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 INTEGRATION_BIN_DIR="/data/run/integration-bin"
 GH_ACCOUNTS_DIR="/data/.config/gh/accounts"
-RUSTDESK_BRIDGE_LOCK="/app/rustdesk-bridge.lock"
-RUSTDESK_BRIDGE_BIN_DIR="/data/bin"
-RUSTDESK_BRIDGE_BINARY="/data/bin/rustdesk-controller-bridge"
-RUSTDESK_BRIDGE_DOWNLOAD_DIR="/data/run/rustdesk-bridge-download"
-RUSTDESK_STATE_DIR="/data/rustdesk"
-RUSTDESK_CONFIG_FILE="/data/rustdesk/config.json"
-RUSTDESK_IDENTITY_DIR="/data/rustdesk/identity"
-RUSTDESK_AUDIT_DIR="/data/rustdesk/audit"
-RUSTDESK_AUDIT_FILE="/data/rustdesk/audit/audit.jsonl"
-RUSTDESK_LOG_FILE="/data/logs/rustdesk-bridge.log"
 mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /data/opencode /data/workspace "$GLOBAL_TOOLS_DIR" "$INTEGRATION_BIN_DIR" "$GH_ACCOUNTS_DIR"
 
 rm -rf /data/.cache/npm /data/.npm /data/.cache/tsx /data/.cache/opencode
@@ -167,121 +157,6 @@ EOF
 chmod 700 "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
 chown node:node "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
 
-bootstrap_rustdesk_bridge() {
-  if [ ! -r "$RUSTDESK_BRIDGE_LOCK" ]; then
-    printf '%s\n' "[railway] WARNING: RustDesk bridge lock file is missing; RustDesk integration is disabled" >&2
-    return 1
-  fi
-
-  # This file is image-owned and contains only immutable release metadata.
-  # shellcheck disable=SC1090
-  . "$RUSTDESK_BRIDGE_LOCK"
-
-  if [ -z "${RUSTDESK_BRIDGE_REPOSITORY:-}" ] || \
-     [ -z "${RUSTDESK_BRIDGE_RELEASE_TAG:-}" ] || \
-     [ -z "${RUSTDESK_BRIDGE_CORE_COMMIT:-}" ] || \
-     [ -z "${RUSTDESK_BRIDGE_ASSET:-}" ] || \
-     [ -z "${RUSTDESK_BRIDGE_SHA256:-}" ] || \
-     [ -z "${RUSTDESK_BRIDGE_CONTRACT_VERSION:-}" ]; then
-    printf '%s\n' "[railway] WARNING: RustDesk bridge lock metadata is incomplete; RustDesk integration is disabled" >&2
-    return 1
-  fi
-
-  mkdir -p "$RUSTDESK_BRIDGE_BIN_DIR" "$RUSTDESK_STATE_DIR" "$RUSTDESK_IDENTITY_DIR" "$RUSTDESK_AUDIT_DIR"
-  chown -R node:node "$RUSTDESK_BRIDGE_BIN_DIR" "$RUSTDESK_STATE_DIR"
-  chmod 700 "$RUSTDESK_STATE_DIR" "$RUSTDESK_IDENTITY_DIR" "$RUSTDESK_AUDIT_DIR"
-
-  if [ ! -f "$RUSTDESK_CONFIG_FILE" ]; then
-    printf '%s\n' '{"serverProfiles":[],"devices":[]}' > "$RUSTDESK_CONFIG_FILE"
-    chown node:node "$RUSTDESK_CONFIG_FILE"
-    chmod 600 "$RUSTDESK_CONFIG_FILE"
-  fi
-
-  if [ -x "$RUSTDESK_BRIDGE_BINARY" ]; then
-    if printf '%s  %s\n' "$RUSTDESK_BRIDGE_SHA256" "$RUSTDESK_BRIDGE_BINARY" | sha256sum -c - >/dev/null 2>&1; then
-      printf '%s\n' "[railway] RustDesk bridge artifact cache verified (${RUSTDESK_BRIDGE_CORE_COMMIT})"
-      return 0
-    fi
-    printf '%s\n' "[railway] WARNING: cached RustDesk bridge checksum mismatch; removing it" >&2
-    rm -f "$RUSTDESK_BRIDGE_BINARY"
-  fi
-
-  rm -rf "$RUSTDESK_BRIDGE_DOWNLOAD_DIR"
-  mkdir -p "$RUSTDESK_BRIDGE_DOWNLOAD_DIR"
-  chown node:node "$RUSTDESK_BRIDGE_DOWNLOAD_DIR"
-
-  if ! su -s /bin/sh node -c "/data/run/integration-bin/gh release download '$RUSTDESK_BRIDGE_RELEASE_TAG' --repo '$RUSTDESK_BRIDGE_REPOSITORY' --pattern '$RUSTDESK_BRIDGE_ASSET' --dir '$RUSTDESK_BRIDGE_DOWNLOAD_DIR'"; then
-    printf '%s\n' "[railway] WARNING: RustDesk bridge artifact download failed; connect the GitHub integration and restart to enable RustDesk" >&2
-    rm -rf "$RUSTDESK_BRIDGE_DOWNLOAD_DIR"
-    return 1
-  fi
-
-  RUSTDESK_DOWNLOADED_BINARY="$RUSTDESK_BRIDGE_DOWNLOAD_DIR/$RUSTDESK_BRIDGE_ASSET"
-  if [ ! -f "$RUSTDESK_DOWNLOADED_BINARY" ] || \
-     ! printf '%s  %s\n' "$RUSTDESK_BRIDGE_SHA256" "$RUSTDESK_DOWNLOADED_BINARY" | sha256sum -c - >/dev/null 2>&1; then
-    printf '%s\n' "[railway] WARNING: RustDesk bridge artifact checksum verification failed" >&2
-    rm -rf "$RUSTDESK_BRIDGE_DOWNLOAD_DIR"
-    return 1
-  fi
-
-  install -m 0755 -o node -g node "$RUSTDESK_DOWNLOADED_BINARY" "$RUSTDESK_BRIDGE_BINARY"
-  rm -rf "$RUSTDESK_BRIDGE_DOWNLOAD_DIR"
-  printf '%s\n' "[railway] RustDesk bridge artifact verified (${RUSTDESK_BRIDGE_CORE_COMMIT})"
-  return 0
-}
-
-start_rustdesk_bridge() {
-  if ! bootstrap_rustdesk_bridge; then
-    unset RUSTDESK_BRIDGE_URL RUSTDESK_BRIDGE_TOKEN RUSTDESK_BRIDGE_CONTROL_TOKEN 2>/dev/null || true
-    return 0
-  fi
-
-  RUSTDESK_BRIDGE_URL=http://127.0.0.1:21119
-  RUSTDESK_BRIDGE_BIND=127.0.0.1:21119
-  RUSTDESK_BRIDGE_CONFIG_FILE="$RUSTDESK_CONFIG_FILE"
-  RUSTDESK_BRIDGE_IDENTITY_DIR="$RUSTDESK_IDENTITY_DIR"
-  RUSTDESK_BRIDGE_AUDIT_FILE="$RUSTDESK_AUDIT_FILE"
-  RUSTDESK_BRIDGE_TOKEN="$(head -c 48 /dev/urandom | base64 | tr -d '\n')"
-  RUSTDESK_BRIDGE_CONTROL_TOKEN="$(head -c 48 /dev/urandom | base64 | tr -d '\n')"
-  export RUSTDESK_BRIDGE_URL RUSTDESK_BRIDGE_BIND RUSTDESK_BRIDGE_CONFIG_FILE
-  export RUSTDESK_BRIDGE_IDENTITY_DIR RUSTDESK_BRIDGE_AUDIT_FILE
-  export RUSTDESK_BRIDGE_TOKEN RUSTDESK_BRIDGE_CONTROL_TOKEN
-
-  : > "$RUSTDESK_LOG_FILE"
-  chown node:node "$RUSTDESK_LOG_FILE"
-  chmod 600 "$RUSTDESK_LOG_FILE"
-
-  su -s /bin/sh node -c "exec '$RUSTDESK_BRIDGE_BINARY'" >>"$RUSTDESK_LOG_FILE" 2>&1 &
-  RUSTDESK_BRIDGE_PID=$!
-
-  RUSTDESK_READY=0
-  RUSTDESK_ATTEMPT=0
-  while [ "$RUSTDESK_ATTEMPT" -lt 50 ]; do
-    if ! kill -0 "$RUSTDESK_BRIDGE_PID" 2>/dev/null; then
-      break
-    fi
-    if curl -fsS -H "Authorization: Bearer $RUSTDESK_BRIDGE_TOKEN" "$RUSTDESK_BRIDGE_URL/health" \
-      | jq -e ".ok == true and .service == \"rustdesk-controller-bridge\" and .contractVersion == $RUSTDESK_BRIDGE_CONTRACT_VERSION" >/dev/null 2>&1; then
-      RUSTDESK_READY=1
-      break
-    fi
-    RUSTDESK_ATTEMPT=$((RUSTDESK_ATTEMPT + 1))
-    sleep 0.1
-  done
-
-  if [ "$RUSTDESK_READY" -ne 1 ]; then
-    printf '%s\n' "[railway] WARNING: RustDesk bridge failed readiness; RustDesk integration is disabled" >&2
-    kill "$RUSTDESK_BRIDGE_PID" 2>/dev/null || true
-    wait "$RUSTDESK_BRIDGE_PID" 2>/dev/null || true
-    unset RUSTDESK_BRIDGE_URL RUSTDESK_BRIDGE_BIND RUSTDESK_BRIDGE_CONFIG_FILE
-    unset RUSTDESK_BRIDGE_IDENTITY_DIR RUSTDESK_BRIDGE_AUDIT_FILE
-    unset RUSTDESK_BRIDGE_TOKEN RUSTDESK_BRIDGE_CONTROL_TOKEN
-    return 0
-  fi
-
-  printf '%s\n' "[railway] RustDesk bridge ready: loopback contract v${RUSTDESK_BRIDGE_CONTRACT_VERSION}, pid=${RUSTDESK_BRIDGE_PID}"
-}
-
 cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
 set -eu
@@ -303,7 +178,6 @@ chown -R node:node /data
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
-start_rustdesk_bridge
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
 printf '%s\n' "[railway] OpenCode CLI: $(su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"

@@ -12,28 +12,23 @@ import {
 } from "../../src/opencode/process.js";
 
 describe("opencode/process", () => {
-  it("strips trusted control-plane credentials from the OpenCode child environment", () => {
+  it("strips Telegram credentials from the OpenCode child environment", () => {
     const originalTelegram = process.env.TELEGRAM_BOT_TOKEN;
-    const originalRustDeskControl = process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN;
-    const originalRustDeskAction = process.env.RUSTDESK_BRIDGE_TOKEN;
+    const originalAllowedUser = process.env.TELEGRAM_ALLOWED_USER_ID;
 
     try {
       process.env.TELEGRAM_BOT_TOKEN = "telegram-fixture";
-      process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN = "control-fixture";
-      process.env.RUSTDESK_BRIDGE_TOKEN = "action-fixture";
+      process.env.TELEGRAM_ALLOWED_USER_ID = "123456";
 
       const environment = buildAgentEnvironment();
 
       expect(environment.TELEGRAM_BOT_TOKEN).toBeUndefined();
-      expect(environment.RUSTDESK_BRIDGE_CONTROL_TOKEN).toBeUndefined();
-      expect(environment.RUSTDESK_BRIDGE_TOKEN).toBe("action-fixture");
+      expect(environment.TELEGRAM_ALLOWED_USER_ID).toBeUndefined();
     } finally {
       if (originalTelegram === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
       else process.env.TELEGRAM_BOT_TOKEN = originalTelegram;
-      if (originalRustDeskControl === undefined) delete process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN;
-      else process.env.RUSTDESK_BRIDGE_CONTROL_TOKEN = originalRustDeskControl;
-      if (originalRustDeskAction === undefined) delete process.env.RUSTDESK_BRIDGE_TOKEN;
-      else process.env.RUSTDESK_BRIDGE_TOKEN = originalRustDeskAction;
+      if (originalAllowedUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
+      else process.env.TELEGRAM_ALLOWED_USER_ID = originalAllowedUser;
     }
   });
 

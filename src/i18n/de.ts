@@ -11,9 +11,6 @@ export const de: I18nDictionary = {
   "error.load_variants": "❌ Variantenliste konnte nicht geladen werden",
   "error.context_button": "❌ Kontext-Button konnte nicht verarbeitet werden",
   "error.generic": "🔴 Etwas ist schiefgelaufen.",
-  "rustdesk.secure_input.request": "🔐 RustDesk benötigt {kind}. Sende es in deiner nächsten Nachricht. Diese Nachricht wird als sichere Eingabe verarbeitet und nicht an das KI-Modell weitergeleitet.",
-  "rustdesk.secure_input.submitted": "✅ RustDesk-Zugangsdaten wurden sicher übermittelt.",
-  "rustdesk.secure_input.failed": "❌ RustDesk hat die sichere Eingabe abgelehnt oder die Bridge ist nicht verfügbar. Sende sie erneut oder verwende /abort.",
 
   "interaction.blocked.expired": "⚠️ Diese Interaktion ist abgelaufen. Bitte starte sie erneut.",
   "interaction.blocked.expected_callback":
