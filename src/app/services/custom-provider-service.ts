@@ -560,40 +560,65 @@ export async function deleteCustomProvider(id: string): Promise<boolean> {
   return true;
 }
 
-export async function refreshCustomProviderToolCapabilities(): Promise<void> {
-  const store = await readStore();
-  let changed = false;
-  const providers: StoredProvider[] = [];
+interface ToolCapabilityUpdate {
+  providerId: string;
+  providerUpdatedAt: string;
+  providerBaseURL: string;
+  providerApiKey: string;
+  modelId: string;
+  toolCall: boolean;
+}
 
-  for (const provider of store.providers) {
-    if (provider.id === LEGACY_GEMINI_IMAGE_ID || provider.capability === "stt" || !provider.apiKey.trim()) {
-      providers.push(provider);
-      continue;
-    }
+export async function refreshCustomProviderToolCapabilities(): Promise<boolean> {
+  const snapshot = await readStore();
+  const updates: ToolCapabilityUpdate[] = [];
 
-    const models: CustomProviderModel[] = [];
+  for (const provider of snapshot.providers) {
+    if (provider.id === LEGACY_GEMINI_IMAGE_ID || provider.capability === "stt" || !provider.apiKey.trim()) continue;
     for (const model of provider.models) {
-      if (model.toolCallVerified === true || !isChatModelMetadata(model)) {
-        models.push(model);
-        continue;
-      }
-
+      if (model.toolCallVerified === true || !isChatModelMetadata(model)) continue;
       const toolCall = await probeToolCallSupport(provider.baseURL, provider.apiKey, model.id);
-      if (toolCall === null) {
-        models.push(model);
-        continue;
-      }
-
-      changed = true;
-      models.push({ ...model, toolCall, toolCallVerified: true });
+      if (toolCall === null) continue;
+      updates.push({
+        providerId: provider.id,
+        providerUpdatedAt: provider.updatedAt,
+        providerBaseURL: provider.baseURL,
+        providerApiKey: provider.apiKey,
+        modelId: model.id,
+        toolCall,
+      });
     }
-
-    providers.push({ ...provider, models });
   }
 
-  if (!changed) return;
-  await writeStore({ ...store, providers });
-  logger.info("[CustomProvider] Persisted verified tool-call capabilities");
+  if (!updates.length) return false;
+
+  let changed = false;
+  await updateAppState((state) => {
+    const current = normalizeStore(state.customProviders);
+    const providers = current.providers.map((provider) => {
+      const matching = updates.filter((update) =>
+        update.providerId === provider.id &&
+        update.providerUpdatedAt === provider.updatedAt &&
+        update.providerBaseURL === provider.baseURL &&
+        update.providerApiKey === provider.apiKey
+      );
+      if (!matching.length) return provider;
+
+      let providerChanged = false;
+      const models = provider.models.map((model) => {
+        const update = matching.find((candidate) => candidate.modelId === model.id);
+        if (!update || model.toolCallVerified === true) return model;
+        providerChanged = true;
+        changed = true;
+        return { ...model, toolCall: update.toolCall, toolCallVerified: true };
+      });
+      return providerChanged ? { ...provider, models } : provider;
+    });
+    return changed ? { customProviders: normalizeStore({ ...current, providers }) } : {};
+  });
+
+  if (changed) logger.info("[CustomProvider] Persisted verified tool-call capabilities");
+  return changed;
 }
 
 export async function buildOpenCodeCustomConfig(): Promise<string> {
@@ -635,16 +660,78 @@ export async function syncOpenCodeCustomConfig(): Promise<string> {
 
 let toolCapabilityRefreshInFlight: Promise<void> | null = null;
 
+const TOOL_CAPABILITY_RELOAD_RETRY_MS = 2_000;
+let toolCapabilityReloadPending = false;
+let toolCapabilityReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleToolCapabilityRuntimeReload(): void {
+  if (toolCapabilityReloadTimer) return;
+  toolCapabilityReloadTimer = setTimeout(() => {
+    toolCapabilityReloadTimer = null;
+    void tryApplyToolCapabilityRuntimeReload();
+  }, TOOL_CAPABILITY_RELOAD_RETRY_MS);
+  toolCapabilityReloadTimer.unref?.();
+}
+
+async function tryApplyToolCapabilityRuntimeReload(): Promise<void> {
+  if (!toolCapabilityReloadPending) return;
+  try {
+    const {
+      getOpenCodeActivityState,
+      isAnyForegroundBusy,
+      reconcileAllForegroundBusyState,
+    } = await import("./run-control-service.js");
+    const { scheduledTaskRuntime } = await import("./scheduled-task-runtime-service.js");
+    await reconcileAllForegroundBusyState();
+    if (isAnyForegroundBusy() || scheduledTaskRuntime.hasRunningTasks()) {
+      scheduleToolCapabilityRuntimeReload();
+      return;
+    }
+
+    const activity = await getOpenCodeActivityState();
+    if (activity === "busy") {
+      scheduleToolCapabilityRuntimeReload();
+      return;
+    }
+    if (activity === "unavailable") {
+      toolCapabilityReloadPending = false;
+      logger.info("[CustomProvider] OpenCode activity could not be verified; config staged for next startup");
+      return;
+    }
+
+    const { opencodeClient } = await import("../../opencode/client.js");
+    const { error } = await opencodeClient.global.dispose();
+    if (error) {
+      toolCapabilityReloadPending = false;
+      logger.info("[CustomProvider] OpenCode is not ready for capability reload; config staged for next startup");
+      return;
+    }
+
+    toolCapabilityReloadPending = false;
+    logger.info("[CustomProvider] Reloaded idle OpenCode instances with verified tool-call capabilities");
+  } catch (error) {
+    toolCapabilityReloadPending = false;
+    logger.info("[CustomProvider] OpenCode capability reload deferred to next startup");
+    logger.debug("[CustomProvider] Capability reload detail:", error);
+  }
+}
+
+export async function refreshAndApplyCustomProviderToolCapabilities(configPath: string): Promise<boolean> {
+  const changed = await refreshCustomProviderToolCapabilities();
+  if (!changed) return false;
+
+  await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
+  toolCapabilityReloadPending = true;
+  await tryApplyToolCapabilityRuntimeReload();
+  return true;
+}
+
 function scheduleToolCapabilityRefresh(configPath: string): void {
   if (toolCapabilityRefreshInFlight) return;
-  toolCapabilityRefreshInFlight = (async () => {
-    try {
-      await refreshCustomProviderToolCapabilities();
-      await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
-    } catch (error) {
-      logger.warn("[CustomProvider] Background tool-call capability refresh failed:", error);
-    } finally {
+  toolCapabilityRefreshInFlight = refreshAndApplyCustomProviderToolCapabilities(configPath)
+    .then(() => undefined)
+    .catch((error) => logger.warn("[CustomProvider] Background tool-call capability refresh failed:", error))
+    .finally(() => {
       toolCapabilityRefreshInFlight = null;
-    }
-  })();
+    });
 }

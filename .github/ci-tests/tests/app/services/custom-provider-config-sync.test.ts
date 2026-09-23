@@ -33,7 +33,7 @@ describe("custom-provider config sync boot path", () => {
     originalHome = process.env.OPENCODE_TELEGRAM_HOME;
     process.env.OPENCODE_TELEGRAM_HOME = home;
 
-    const store = {
+    let store = {
       providers: [
         {
           id: "slow-provider",
