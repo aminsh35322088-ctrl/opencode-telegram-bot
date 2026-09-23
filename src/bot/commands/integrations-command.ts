@@ -146,7 +146,8 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   } catch (error) {
     logger.error("[Integrations] wizard failed:", error);
     const messageId = github?.messageId ?? railway?.messageId ?? cloudflare?.messageId; const kind = github ? "GitHub" : railway ? "Railway" : "Cloudflare Access";
-    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
+    const credentialStep = cloudflare ? "3/3 · Service Token Client Secret" : "2/2 · Token";
+    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n${credentialStep}\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the credential again to retry, or press Cancel.`).catch(() => {});
     return true;
   }
 }
