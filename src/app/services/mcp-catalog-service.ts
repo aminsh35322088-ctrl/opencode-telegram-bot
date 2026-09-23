@@ -1,9 +1,15 @@
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import type { McpStatus } from "@opencode-ai/sdk/v2";
+import type { McpRemoteConfig, McpStatus } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
 import { isRecord } from "../../utils/type-guards.js";
+import {
+  listMcpCredentials,
+  loadMcpCredential,
+  saveMcpCredential,
+  type McpCredentialRecord,
+} from "./mcp-credential-store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +41,146 @@ export async function loadMcpCatalog(projectDirectory: string): Promise<McpCatal
   if (error || !data) throw error || new Error("No MCP status data received");
   const servers = parseMcpCatalogServers(data); if (!servers) throw new Error("Invalid MCP status data format");
   return servers;
+}
+
+export type McpAuthSummary = {
+  configured: true;
+  mode: McpCredentialRecord["mode"];
+  headerName?: string;
+};
+
+const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
+
+function assertSafeHeaderName(value: string): string {
+  const name = value.trim();
+  if (!name || !HTTP_HEADER_NAME.test(name)) {
+    throw new Error("MCP authentication header name is invalid.");
+  }
+  return name;
+}
+
+function assertSafeHeaderValue(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error("MCP authentication header value is required.");
+  if (/[\r\n]/u.test(normalized)) {
+    throw new Error("MCP authentication header value must not contain CR or LF.");
+  }
+  return normalized;
+}
+
+function assertSecureRemoteUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("MCP remote URL must be an absolute HTTP(S) URL.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("MCP remote URL must be an absolute HTTP(S) URL.");
+  }
+  return value.trim();
+}
+
+function buildSecureMcpConfig(record: McpCredentialRecord): McpRemoteConfig {
+  const url = assertSecureRemoteUrl(record.remoteUrl);
+
+  if (record.mode === "bearer") {
+    return {
+      type: "remote",
+      url,
+      oauth: false,
+      headers: { Authorization: `Bearer ${assertSafeHeaderValue(record.secret)}` },
+    };
+  }
+
+  if (record.mode === "api-key" || record.mode === "custom-header") {
+    return {
+      type: "remote",
+      url,
+      oauth: false,
+      headers: {
+        [assertSafeHeaderName(record.headerName)]: assertSafeHeaderValue(record.secret),
+      },
+    };
+  }
+
+  const clientId = record.clientId.trim();
+  if (!clientId) throw new Error("MCP OAuth client ID is required.");
+  const clientSecret = record.clientSecret?.trim();
+  const scope = record.scope?.trim();
+  return {
+    type: "remote",
+    url,
+    oauth: {
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+      ...(scope ? { scope } : {}),
+    },
+  };
+}
+
+async function addSecureMcpDefinition(record: McpCredentialRecord): Promise<McpCatalogServerItem> {
+  const name = record.serverName.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  const { data, error } = await opencodeClient.mcp.add({
+    directory: normalizeDirectoryForMcpApi(record.projectDirectory),
+    name,
+    config: buildSecureMcpConfig(record),
+  });
+  if (error || !data) {
+    throw new Error(`OpenCode could not configure secure MCP server "${name}".`);
+  }
+  const parsed = parseMcpCatalogServers(data);
+  const server = parsed?.find((item) => item.name === name);
+  if (!server) throw new Error(`OpenCode returned an invalid status for MCP server "${name}".`);
+  return server;
+}
+
+export async function configureSecureMcpAuth(
+  record: McpCredentialRecord,
+): Promise<McpCatalogServerItem> {
+  const server = await addSecureMcpDefinition(record);
+  await saveMcpCredential(record);
+  return server;
+}
+
+export async function restoreSecureMcpConnections(): Promise<{ restored: number; failed: number }> {
+  let records: McpCredentialRecord[];
+  try {
+    records = await listMcpCredentials();
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    logger.warn(`[McpCatalog] Secure MCP credentials could not be opened (error=${errorName})`);
+    return { restored: 0, failed: 1 };
+  }
+
+  let restored = 0;
+  let failed = 0;
+  for (const record of records) {
+    try {
+      await addSecureMcpDefinition(record);
+      restored += 1;
+    } catch (error) {
+      failed += 1;
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      logger.warn(
+        `[McpCatalog] Failed to restore secure MCP "${record.serverName}" (error=${errorName})`,
+      );
+    }
+  }
+  return { restored, failed };
+}
+
+export async function getMcpAuthSummary(
+  projectDirectory: string,
+  serverName: string,
+): Promise<McpAuthSummary | null> {
+  const record = await loadMcpCredential(projectDirectory, serverName);
+  if (!record) return null;
+  if (record.mode === "api-key" || record.mode === "custom-header") {
+    return { configured: true, mode: record.mode, headerName: record.headerName };
+  }
+  return { configured: true, mode: record.mode };
 }
 
 export async function startMcpOAuth(projectDirectory: string, serverName: string): Promise<McpOAuthStartResult> {
