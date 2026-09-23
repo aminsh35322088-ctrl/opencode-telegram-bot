@@ -26,6 +26,16 @@ describe("SSH + Cloudflare tool contract", () => {
     expect(dockerfile).toContain("sha256sum -c -");
   });
 
+  it("keeps SSH setup discoverable in the existing Integrations panel", async () => {
+    const source = await fs.readFile(path.join(process.cwd(), "src", "bot", "commands", "integrations-command.ts"), "utf8");
+
+    expect(source).toContain("☁️ Add Cloudflare SSH");
+    expect(source).toContain("🔑 SSH Public Key");
+    expect(source).toContain("integration:ssh:key");
+    expect(source).toContain("OPENCODE_BOT_SSH_PUBLIC_KEY");
+    expect(source).toContain("editMessageText");
+  });
+
   it("registers the SSH tool in OpenCode permissions", async () => {
     const config = JSON.parse(await fs.readFile(path.join(process.cwd(), "opencode.json"), "utf8")) as {
       permission?: Record<string, unknown>;
