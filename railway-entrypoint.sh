@@ -36,17 +36,6 @@ mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /dat
 
 rm -rf /data/.cache/npm /data/.npm /data/.cache/tsx /data/.cache/opencode
 
-# One-time/idempotent cleanup for the removed RustDesk integration.
-rm -f \
-  /data/bin/rustdesk-controller-bridge \
-  /data/logs/rustdesk-bridge.log \
-  /data/.config/opencode/tools/rustdesk.ts 2>/dev/null || true
-rm -rf \
-  /data/run/rustdesk-bridge-download \
-  /data/run/rustdesk-permission-grants \
-  /data/rustdesk \
-  /data/workspace/.opencode/rustdesk
-
 DATA_FREE_KB="$(df -Pk /data | awk 'NR==2 {print $4}')"
 DATA_USED_KB="$(df -Pk /data | awk 'NR==2 {print $3}')"
 DATA_TOTAL_KB="$(df -Pk /data | awk 'NR==2 {print $2}')"

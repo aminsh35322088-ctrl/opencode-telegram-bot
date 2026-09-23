@@ -410,9 +410,8 @@ describe("interaction guard", () => {
       kind: "custom",
       expectedInput: "text",
       metadata: {
-        flow: "rustdesk-secure-input",
+        flow: "generic-custom-flow",
         sessionId: "session-1",
-        credentialRequestId: "cred-1",
       },
     });
 

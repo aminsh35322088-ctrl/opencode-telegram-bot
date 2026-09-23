@@ -101,7 +101,6 @@ const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. 
 • actions — discover all available actions. action="list", action="describe", action="summary".
 • full-diagnostics / system-diagnostics / logs-observability — health and logs.
 • network-diagnostics / storage-health — network and storage checks.
-• rustdesk — remote device control. action="devices.list", action="terminal.exec".
 
 Tool invocation pattern: each tool has an "action" parameter. Check the tool's action enum to see all available actions before deciding.
 

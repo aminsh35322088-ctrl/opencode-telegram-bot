@@ -37,7 +37,7 @@ const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
 ]);
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && ALWAYS_REACHABLE_CONTROL_COMMANDS.has(command)); }
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
-function allowsBusyInteraction(state: InteractionState | null): boolean { return Boolean(state && (state.kind === "question" || state.kind === "permission" || (state.kind === "custom" && state.metadata.flow === "rustdesk-secure-input"))); }
+function allowsBusyInteraction(state: InteractionState | null): boolean { return Boolean(state && (state.kind === "question" || state.kind === "permission")); }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
 function resolveCurrentSessionBusy(): boolean {
   const topic = getTopicRuntimeContext();

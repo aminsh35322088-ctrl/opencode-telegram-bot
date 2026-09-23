@@ -59,12 +59,6 @@ Credential enrollment remains UI-only. API keys and GitHub/Railway tokens are ne
 
 The `media` tool reuses the bot's configured AI connections instead of asking the model for credentials. Audio transcription reads a bounded file inside the active worktree. Image generation/editing uses the resolved default Image Chat profile and writes the resulting image back into the active worktree.
 
-
-
-The `rustdesk` tool delegates transport/control to a separate bridge. Device discovery returns OS and capability metadata; the model decides whether terminal, GUI, touch, clipboard, or file actions are appropriate instead of relying on hard-coded OS routing.
-
-See [`RUSTDESK_AGENT_TOOL.md`](./RUSTDESK_AGENT_TOOL.md) for the bridge contract and security boundary.
-
 ## Risk metadata vs runtime permissions
 
 Registry risk metadata (`read`, `write`, `external`, `mutating`, `destructive`) helps the agent and future policy layers reason about side effects. It does **not** replace OpenCode's runtime permission configuration. Runtime permission rules remain authoritative.

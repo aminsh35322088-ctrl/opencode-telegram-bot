@@ -343,7 +343,6 @@ export default tool({
         secretConfiguration: "API keys/tokens remain Telegram-UI-only; this tool never accepts or returns credentials.",
         media: "Use the media tool for STT and configured image generation/editing.",
         sessionRecovery: "Use session-recovery for inspect/abort/continue.",
-        remoteControl: "Use rustdesk for authorized remote-device control.",
         dynamicMcpTools: "Connected MCP servers expose their model tools directly through OpenCode.",
       } });
     }

@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   hasActiveRunMock: vi.fn(() => false),
   assistantClearAllMock: vi.fn(),
   foregroundClearAllMock: vi.fn(),
-  rustDeskClearAllMock: vi.fn(),
   toolActivityClearAllMock: vi.fn(),
   deleteTopicMock: vi.fn(async () => {}),
   listBindingsMock: vi.fn(),
@@ -51,9 +50,6 @@ vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({
 }));
 vi.mock("../../../src/app/managers/foreground-session-state-manager.js", () => ({
   foregroundSessionState: { clearAll: mocks.foregroundClearAllMock },
-}));
-vi.mock("../../../src/app/managers/rustdesk-secure-input-manager.js", () => ({
-  rustDeskSecureInputManager: { clearAll: mocks.rustDeskClearAllMock },
 }));
 vi.mock("../../../src/app/managers/tool-activity-manager.js", () => ({
   clearAllToolActivity: mocks.toolActivityClearAllMock,
@@ -186,7 +182,6 @@ describe("telegram-reset-service", () => {
     expect(mocks.clearAllMemoriesMock).not.toHaveBeenCalled();
     expect(mocks.assistantClearAllMock).not.toHaveBeenCalled();
     expect(mocks.foregroundClearAllMock).not.toHaveBeenCalled();
-    expect(mocks.rustDeskClearAllMock).not.toHaveBeenCalled();
     expect(mocks.toolActivityClearAllMock).not.toHaveBeenCalled();
   });
   it("flushes the session-directory cache update before reporting history reset success", async () => {
