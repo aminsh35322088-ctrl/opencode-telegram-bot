@@ -101,6 +101,11 @@ function isMcpAuthInteractionActive(): boolean {
   return state?.kind === "custom" && state.metadata.flow === "mcps" && state.metadata.stage === "auth";
 }
 
+function isMcpCredentialInteractionActive(): boolean {
+  const state = interactionManager.getSnapshot();
+  return state?.kind === "custom" && state.metadata.flow === "mcps" && state.metadata.stage === "auth_setup";
+}
+
 async function renderMcpList(
   ctx: Context,
   messageId: number,
@@ -128,6 +133,58 @@ async function renderMcpList(
   });
 }
 
+export async function renderMcpDetailView(
+  ctx: Context,
+  messageId: number,
+  projectDirectory: string,
+  serverName: string,
+): Promise<void> {
+  if (!ctx.chat?.id) return;
+  const servers = await loadMcpCatalog(projectDirectory);
+  const server = servers.find((item) => item.name === serverName);
+  if (!server) {
+    await renderMcpList(ctx, messageId, projectDirectory);
+    return;
+  }
+
+  let authLine = "";
+  try {
+    const summary = await getMcpAuthSummary(projectDirectory, serverName);
+    if (summary) {
+      const label =
+        summary.mode === "bearer" ? "Bearer Token"
+        : summary.mode === "api-key" ? `API Key · ${summary.headerName ?? "X-API-Key"}`
+        : summary.mode === "custom-header" ? `Custom Header · ${summary.headerName ?? "Configured"}`
+        : "OAuth Client";
+      authLine = `\n\n🔐 Authentication: ${label}\nCredentials: securely stored by the bot`;
+    }
+  } catch {
+    authLine = "\n\n⚠️ Stored authentication needs reconfiguration.";
+  }
+
+  await ctx.api.editMessageText(
+    ctx.chat.id,
+    messageId,
+    `${buildMcpsDetailText(server)}${authLine}`,
+    { reply_markup: buildMcpsDetailKeyboard(server) },
+  ).catch((error) => {
+    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
+  });
+
+  interactionManager.start({
+    kind: "custom",
+    expectedInput: "callback",
+    metadata: {
+      flow: "mcps",
+      stage: "detail",
+      messageId,
+      projectDirectory,
+      serverName,
+      servers,
+    },
+  });
+}
+
 function transitionMcpWizard(pending: PendingMcpAdd, expectedInput: "mixed" | "callback" = "mixed"): void {
   interactionManager.transition({
     expectedInput,
@@ -150,12 +207,20 @@ export function isMcpAuthWizardActive(): boolean {
   return mcpAuthWizard.isActive();
 }
 
+export function isMcpCredentialWizardActive(): boolean {
+  return mcpCredentialWizard.isActive();
+}
+
 export function clearMcpAddWizard(): void {
   mcpAddWizard.clear();
 }
 
 export function clearMcpAuthWizard(): void {
   mcpAuthWizard.clear();
+}
+
+export function clearMcpCredentialWizard(): void {
+  mcpCredentialWizard.clear();
 }
 
 export async function dismissMcpAddWizard(ctx: Context, restoreList = false): Promise<boolean> {
