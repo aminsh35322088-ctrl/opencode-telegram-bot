@@ -24,6 +24,10 @@ export interface CustomProviderModel {
   name: string;
   attachment?: boolean;
   modalities?: CustomProviderModelModalities;
+  /** Provider/model claims tool calling is supported. */
+  toolCall?: boolean;
+  /** True only after the bot completed an actual OpenAI-compatible tool-call round trip. */
+  toolCallVerified?: boolean;
 }
 
 export interface CustomProvider {
@@ -56,6 +60,8 @@ const LEGACY_GEMINI_IMAGE_ID = "gemini-image";
 const PROVIDER_ENV_PREFIX = "OPENCODE_TELEGRAM_PROVIDER_";
 const DEFAULT_CUSTOM_MODEL_INPUT_MODALITIES = ["text", "image"] as const;
 const DEFAULT_CUSTOM_MODEL_OUTPUT_MODALITIES = ["text"] as const;
+const TOOL_CALL_PROBE_NAME = "opencode_action_probe";
+const TOOL_CALL_PROBE_TIMEOUT_MS = 12_000;
 
 const SUPPORTED_MODALITIES = new Set(["text", "audio", "image", "video", "pdf"]);
 
@@ -112,6 +118,29 @@ function readAttachmentFlag(raw: DiscoveredModelRecord, modalities?: CustomProvi
   return undefined;
 }
 
+function readToolCallFlag(raw: DiscoveredModelRecord): boolean | undefined {
+  const capabilities =
+    raw.capabilities && typeof raw.capabilities === "object" && !Array.isArray(raw.capabilities)
+      ? raw.capabilities as Record<string, unknown>
+      : undefined;
+
+  for (const value of [
+    raw.tool_call,
+    raw.toolcall,
+    raw.toolCall,
+    raw.supports_tools,
+    raw.supportsTools,
+    capabilities?.tools,
+    capabilities?.tool_call,
+    capabilities?.toolcall,
+    capabilities?.toolCall,
+  ]) {
+    if (typeof value === "boolean") return value;
+  }
+
+  return undefined;
+}
+
 /**
  * Normalize an arbitrary OpenAI-compatible /models entry.
  *
@@ -127,12 +156,14 @@ export function normalizeDiscoveredModel(raw: DiscoveredModelRecord): CustomProv
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
   const modalities = readModalities(raw);
   const attachment = readAttachmentFlag(raw, modalities);
+  const toolCall = readToolCallFlag(raw);
 
   return {
     id,
     name,
     ...(attachment !== undefined ? { attachment } : {}),
     ...(modalities ? { modalities } : {}),
+    ...(toolCall !== undefined ? { toolCall } : {}),
   };
 }
 
@@ -156,6 +187,9 @@ export function getOpenCodeCustomModelConfig(model: CustomProviderModel): Record
   return {
     name: model.name,
     attachment,
+    // Fail closed: OpenCode must only expose agent tools through a custom
+    // provider after a real tool-call probe succeeded for this exact model.
+    tool_call: model.toolCall === true && model.toolCallVerified === true,
     modalities: {
       input,
       output,
@@ -180,6 +214,8 @@ function normalizeStore(value: unknown): ProviderStoreFile {
                   name: typeof model.name === "string" && model.name.trim() ? model.name : model.id,
                   ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
                   ...(model.modalities ? { modalities: model.modalities } : {}),
+                  ...(typeof model.toolCall === "boolean" ? { toolCall: model.toolCall } : {}),
+                  ...(typeof model.toolCallVerified === "boolean" ? { toolCallVerified: model.toolCallVerified } : {}),
                 }))
             : [],
         }))
@@ -283,6 +319,130 @@ export async function discoverModels(baseURL: string, apiKey: string): Promise<C
   return models;
 }
 
+function hasProbeToolCall(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices)) return false;
+
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object" || Array.isArray(choice)) continue;
+    const message = (choice as { message?: unknown }).message;
+    if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+    const record = message as Record<string, unknown>;
+
+    if (Array.isArray(record.tool_calls)) {
+      const matched = record.tool_calls.some((call) => {
+        if (!call || typeof call !== "object" || Array.isArray(call)) return false;
+        const fn = (call as { function?: unknown }).function;
+        return Boolean(
+          fn &&
+          typeof fn === "object" &&
+          !Array.isArray(fn) &&
+          (fn as { name?: unknown }).name === TOOL_CALL_PROBE_NAME,
+        );
+      });
+      if (matched) return true;
+    }
+
+    const legacy = record.function_call;
+    if (
+      legacy &&
+      typeof legacy === "object" &&
+      !Array.isArray(legacy) &&
+      (legacy as { name?: unknown }).name === TOOL_CALL_PROBE_NAME
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Verify the exact model can complete the OpenAI-compatible function-calling
+ * contract used by OpenCode. null means the provider could not be verified
+ * (for example a temporary transport error); false means it answered normally
+ * but did not produce the required tool call.
+ */
+export async function probeToolCallSupport(
+  baseURL: string,
+  apiKey: string,
+  modelID: string,
+): Promise<boolean | null> {
+  const normalizedURL = normalizeBaseURL(baseURL);
+  const key = apiKey.trim();
+  const model = modelID.trim();
+  if (!key || !model) return null;
+
+  const tool = {
+    type: "function",
+    function: {
+      name: TOOL_CALL_PROBE_NAME,
+      description: "Compatibility probe. Call this function exactly once.",
+      parameters: {
+        type: "object",
+        properties: { ping: { type: "string" } },
+        required: ["ping"],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  const toolChoices: unknown[] = [
+    { type: "function", function: { name: TOOL_CALL_PROBE_NAME } },
+    "required",
+    "auto",
+  ];
+  let receivedCompatibleResponse = false;
+
+  for (const toolChoice of toolChoices) {
+    try {
+      const response = await fetch(`${normalizedURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: `Call ${TOOL_CALL_PROBE_NAME} exactly once with ping set to ok. Do not answer with normal text.`,
+            },
+          ],
+          tools: [tool],
+          tool_choice: toolChoice,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(TOOL_CALL_PROBE_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      receivedCompatibleResponse = true;
+      const payload = await response.json().catch(() => null);
+      if (hasProbeToolCall(payload)) {
+        logger.info(`[CustomProvider] Verified tool calling: model=${model}`);
+        return true;
+      }
+    } catch (error) {
+      logger.debug(`[CustomProvider] Tool-call probe transport failure: model=${model}`, error);
+      return null;
+    }
+  }
+
+  if (receivedCompatibleResponse) {
+    logger.warn(`[CustomProvider] Model did not complete required tool-call probe: model=${model}`);
+    return false;
+  }
+
+  logger.warn(`[CustomProvider] Could not verify tool calling against provider endpoint: model=${model}`);
+  return null;
+}
+
 export async function configureGroqStt(apiKey: string, beforeSave: () => void = () => {}): Promise<void> {
   const key = apiKey.trim();
   if (!key) throw new Error("API key is empty");
@@ -347,6 +507,8 @@ export async function saveCustomProvider(input: {
           name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : model.id.trim(),
           ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
           ...(model.modalities ? { modalities: model.modalities } : {}),
+          ...(typeof model.toolCall === "boolean" ? { toolCall: model.toolCall } : {}),
+          ...(typeof model.toolCallVerified === "boolean" ? { toolCallVerified: model.toolCallVerified } : {}),
         }))
     : [];
   if (!requestedModels.length) throw new Error("At least one provider model is required");
@@ -358,6 +520,15 @@ export async function saveCustomProvider(input: {
     .filter((model): model is CustomProviderModel => Boolean(model));
   if (!verifiedModels.length) throw new Error("None of the configured models were returned by the provider");
 
+  const modelsWithToolCapability: CustomProviderModel[] = [];
+  for (const model of verifiedModels) {
+    const toolCall = await probeToolCallSupport(baseURL, key, model.id);
+    modelsWithToolCapability.push({
+      ...model,
+      ...(toolCall === null ? {} : { toolCall, toolCallVerified: true }),
+    });
+  }
+
   const now = new Date().toISOString();
   const store = await readStore();
   const existing = store.providers.find((provider) => provider.id === id);
@@ -366,7 +537,7 @@ export async function saveCustomProvider(input: {
     id,
     name,
     baseURL,
-    models: verifiedModels,
+    models: modelsWithToolCapability,
     capability,
     apiKey: key,
     createdAt: existing?.createdAt ?? now,
@@ -387,6 +558,42 @@ export async function deleteCustomProvider(id: string): Promise<boolean> {
   await writeStore(next);
   applyProviderEnvironment(next);
   return true;
+}
+
+export async function refreshCustomProviderToolCapabilities(): Promise<void> {
+  const store = await readStore();
+  let changed = false;
+  const providers: StoredProvider[] = [];
+
+  for (const provider of store.providers) {
+    if (provider.id === LEGACY_GEMINI_IMAGE_ID || provider.capability === "stt" || !provider.apiKey.trim()) {
+      providers.push(provider);
+      continue;
+    }
+
+    const models: CustomProviderModel[] = [];
+    for (const model of provider.models) {
+      if (model.toolCallVerified === true || !isChatModelMetadata(model)) {
+        models.push(model);
+        continue;
+      }
+
+      const toolCall = await probeToolCallSupport(provider.baseURL, provider.apiKey, model.id);
+      if (toolCall === null) {
+        models.push(model);
+        continue;
+      }
+
+      changed = true;
+      models.push({ ...model, toolCall, toolCallVerified: true });
+    }
+
+    providers.push({ ...provider, models });
+  }
+
+  if (!changed) return;
+  await writeStore({ ...store, providers });
+  logger.info("[CustomProvider] Persisted verified tool-call capabilities");
 }
 
 export async function buildOpenCodeCustomConfig(): Promise<string> {
@@ -415,6 +622,11 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
 }
 
 export async function syncOpenCodeCustomConfig(): Promise<string> {
+  // Existing providers created before tool-call verification are migrated at
+  // startup. Unreachable/ambiguous providers remain fail-closed and are retried
+  // on the next sync instead of being trusted optimistically.
+  await refreshCustomProviderToolCapabilities();
+
   const configDir = path.join(getRuntimePaths().appHome, ".config", "opencode-telegram");
   const configPath = path.join(configDir, "custom-providers.json");
   await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
