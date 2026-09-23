@@ -27,7 +27,8 @@ export async function listImageModelCatalog(): Promise<ImageModelCatalogEntry[]>
         capabilities: editable ? ["generate", "edit"] : ["generate"],
         source: "unified-model-catalog" as const,
       };
-    });
+    })
+    .sort((a, b) => a.providerID.localeCompare(b.providerID) || a.modelID.localeCompare(b.modelID));
 }
 
 export function imageCatalogSelection(entry: ImageModelCatalogEntry): ImageModelSelection {
