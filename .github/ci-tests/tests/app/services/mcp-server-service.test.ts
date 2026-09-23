@@ -594,6 +594,20 @@ describe("app/services/mcp-server-service", () => {
     expect(() => parseMcpCommandLine('npx "unterminated')).toThrow(/unmatched quote/i);
   });
 
+  it("preserves Windows and UNC paths while still supporting escaped spaces", () => {
+    expect(
+      parseMcpCommandLine(
+        'C:\\tools\\server.exe --root "C:\\Program Files\\Repo" \\\\server\\share path\\ with\\ spaces',
+      ),
+    ).toEqual([
+      "C:\\tools\\server.exe",
+      "--root",
+      "C:\\Program Files\\Repo",
+      "\\\\server\\share",
+      "path with spaces",
+    ]);
+  });
+
   it("adds remote MCP through the typed OpenCode API and persists only its clean definition", async () => {
     mocked.add.mockResolvedValue({
       data: { context7: { status: "connected" } },
