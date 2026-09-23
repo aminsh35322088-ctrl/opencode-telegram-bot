@@ -306,7 +306,7 @@ export default tool({
       if (!command) return json({ ok: false, action, error: "command is required" });
       const completed = await runProcess(
         SSH_BIN,
-        [...commonOptions(port), "-T", target, "--", command],
+        [...commonOptions(port), "-T", target, command],
         timeoutMs,
       );
       return json({
@@ -321,7 +321,7 @@ export default tool({
     if (action === "read") {
       const completed = await runProcess(
         SSH_BIN,
-        [...commonOptions(port), "-T", target, "--", `cat -- ${shellQuote(remotePath)}`],
+        [...commonOptions(port), "-T", target, `cat -- ${shellQuote(remotePath)}`],
         timeoutMs,
       );
       return json({
@@ -336,7 +336,7 @@ export default tool({
       if (args.content === undefined) return json({ ok: false, action, error: "content is required" });
       const completed = await runProcess(
         SSH_BIN,
-        [...commonOptions(port), "-T", target, "--", `umask 077; cat > ${shellQuote(remotePath)}`],
+        [...commonOptions(port), "-T", target, `umask 077; cat > ${shellQuote(remotePath)}`],
         timeoutMs,
         args.content,
       );
@@ -359,7 +359,7 @@ export default tool({
       }
       const completed = await runProcess(
         SCP_BIN,
-        [...commonOptions(port, true), "--", localPath, `${transferTarget}:${transferRemotePath}`],
+        [...commonOptions(port, true), localPath, `${transferTarget}:${transferRemotePath}`],
         timeoutMs,
       );
       return json({
@@ -373,7 +373,7 @@ export default tool({
     await mkdir(path.dirname(localPath), { recursive: true });
     const completed = await runProcess(
       SCP_BIN,
-      [...commonOptions(port, true), "--", `${transferTarget}:${transferRemotePath}`, localPath],
+      [...commonOptions(port, true), `${transferTarget}:${transferRemotePath}`, localPath],
       timeoutMs,
     );
     return json({
