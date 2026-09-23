@@ -74,7 +74,6 @@ export const CUSTOM_TOOL_ACTIONS = {
   telegram: ["context.current", "reply.resolve", "forward.inspect", "media.fetch"],
   "network-diagnostics": ["dns", "http", "tcp"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
-  ssh: ["status", "key.ensure", "key.public", "exec", "read", "write", "upload", "download"],
   "safe-download": ["download"],
   "send-file": ["send"],
   session: ["current", "messages", "latest-assistant", "fork", "revert", "unrevert", "summarize", "abort", "diff", "todo", "children"],
@@ -96,7 +95,7 @@ const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
   actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
   notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
   "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
-  media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment", ssh: "remote-access",
+  media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment",
   "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
   "system-diagnostics": "diagnostics",
 };
@@ -135,9 +134,6 @@ const DESCRIPTIONS: Record<string, string> = {
   "session-extended.create": "Create an OpenCode session without rebinding the current Telegram Topic.",
   "session-extended.delete": "Delete a non-current OpenCode session.",
   "test.test": "Run the project's configured tests or local test runner without downloading tools.",
-  "ssh.status": "Inspect local SSH/Cloudflare client readiness without exposing credentials.",
-  "ssh.key.public": "Return the bot-owned SSH public key for authorizing a remote host.",
-  "ssh.exec": "Execute a command on an SSH host using direct or Cloudflare Access transport.",
 };
 
 const BOT_READ = new Set([
@@ -191,10 +187,6 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     return action === "pdf" ? "write" : "external";
   }
   if (tool === "railway" && ["deploy", "deploy-latest"].includes(action)) return "mutating";
-  if (tool === "ssh") {
-    if (["key.ensure", "write", "upload", "download"].includes(action)) return "write";
-    return "external";
-  }
   if (tool === "session") {
     if (["revert", "abort"].includes(action)) return "destructive";
     if (["fork", "unrevert", "summarize"].includes(action)) return "mutating";
