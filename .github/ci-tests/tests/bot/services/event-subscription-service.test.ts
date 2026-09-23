@@ -488,6 +488,11 @@ describe("bot/services/event-subscription-service", () => {
         expect.objectContaining({
           disable_notification: true,
           message_thread_id: 7,
+          reply_markup: expect.objectContaining({
+            force_reply: true,
+            selective: true,
+            input_field_placeholder: "RustDesk password",
+          }),
         }),
       );
     });
