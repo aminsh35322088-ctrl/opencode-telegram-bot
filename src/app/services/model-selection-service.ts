@@ -148,15 +148,25 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
               : env.providerID === "opencode"
         )
       );
-      if (envAllowed && env) { valid.add(getModelKey(env.providerID, env.modelID)); all.push(env); }
-      if (envAllowed && !providers.some((provider) => provider.id === env.providerID)) {
-        providers.push({ id: env.providerID, name: env.providerID === "opencode" ? "OpenCode" : env.providerID, modelCount: 1 });
-        byProvider.set(env.providerID, [env]);
-        logger.warn(`[ModelManager] Catalog omitted configured provider ${env.providerID}; preserving its configured default model for UI/recovery.`);
-      } else if (envAllowed && !(byProvider.get(env.providerID) ?? []).some((model) => model.modelID === env.modelID)) {
-        const merged = dedupeModels([...(byProvider.get(env.providerID) ?? []), env]);
-        byProvider.set(env.providerID, merged);
-        providers.find((provider) => provider.id === env.providerID)!.modelCount = merged.length;
+      if (env && envAllowed) {
+        valid.add(getModelKey(env.providerID, env.modelID));
+        all.push(env);
+
+        if (!providers.some((provider) => provider.id === env.providerID)) {
+          providers.push({
+            id: env.providerID,
+            name: env.providerID === "opencode" ? "OpenCode" : env.providerID,
+            modelCount: 1,
+          });
+          byProvider.set(env.providerID, [env]);
+          logger.warn(
+            `[ModelManager] Catalog omitted configured provider ${env.providerID}; preserving its configured default model for UI/recovery.`,
+          );
+        } else if (!(byProvider.get(env.providerID) ?? []).some((model) => model.modelID === env.modelID)) {
+          const merged = dedupeModels([...(byProvider.get(env.providerID) ?? []), env]);
+          byProvider.set(env.providerID, merged);
+          providers.find((provider) => provider.id === env.providerID)!.modelCount = merged.length;
+        }
       }
 
       providers.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
