@@ -24,6 +24,8 @@ const RUNNER_ACTIONS = new Set([
   "status",
   "exec",
   "job.start",
+  "job.status",
+  "job.logs",
   "job.wait",
   "job.stop",
   "file.read",
