@@ -22,7 +22,7 @@ export default tool({
     action: tool.schema
       .string()
       .describe(
-        "One of: status | exec | job.start | job.wait | job.stop | file.read | file.write | file.list | file.search | workspace.prepare | validate",
+        "One of: status | exec | job.start | job.status | job.logs | job.wait | job.stop | file.read | file.write | file.list | file.search | workspace.prepare | validate",
       ),
     command: tool.schema.string().optional().describe("Shell command for exec or job.start."),
     cwd: tool.schema.string().optional().describe("Working directory on the runner."),
@@ -30,7 +30,7 @@ export default tool({
       .number()
       .optional()
       .describe("Bounded action timeout in milliseconds, capped at 15 minutes."),
-    jobId: tool.schema.string().optional().describe("Detached runner job id for job.wait/job.stop."),
+    jobId: tool.schema.string().optional().describe("Detached runner job id for job.status/job.logs/job.wait/job.stop."),
     path: tool.schema.string().optional().describe("Remote path for file operations."),
     content: tool.schema.string().optional().describe("File content for file.write."),
     query: tool.schema.string().optional().describe("Search query for file.search."),
