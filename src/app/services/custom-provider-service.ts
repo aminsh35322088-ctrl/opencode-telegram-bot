@@ -1,5 +1,5 @@
 import { fetchProviderCatalog } from "./provider-catalog-service.js";
-import { isChatModelMetadata } from "./model-eligibility-service.js";
+import { isAgentToolCapableModelMetadata, isChatModelMetadata } from "./model-eligibility-service.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -284,7 +284,7 @@ export async function listCustomProvidersByCapability(capability: AiCapability):
     return general.filter((provider) => provider.models.some(isImageModelMetadata));
   }
   if (capability === "coding") {
-    return general.filter((provider) => provider.models.some(isChatModelMetadata));
+    return general.filter((provider) => provider.models.some(isAgentToolCapableModelMetadata));
   }
   return general;
 }
