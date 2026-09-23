@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   authCallback: vi.fn(),
   authRemove: vi.fn(),
   disconnect: vi.fn(),
+  add: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -16,13 +17,29 @@ vi.mock("../../../src/opencode/client.js", () => ({
         remove: mocked.authRemove,
       },
       disconnect: mocked.disconnect,
+      add: mocked.add,
     },
   },
 }));
 
+const mockedCredentials = vi.hoisted(() => ({
+  save: vi.fn(),
+  load: vi.fn(),
+  list: vi.fn(),
+}));
+
+vi.mock("../../../src/app/services/mcp-credential-store.js", () => ({
+  saveMcpCredential: mockedCredentials.save,
+  loadMcpCredential: mockedCredentials.load,
+  listMcpCredentials: mockedCredentials.list,
+}));
+
 import {
   completeMcpOAuth,
+  configureSecureMcpAuth,
+  getMcpAuthSummary,
   parseMcpCatalogServers,
+  restoreSecureMcpConnections,
   startMcpOAuth,
 } from "../../../src/app/services/mcp-catalog-service.js";
 import { logger } from "../../../src/utils/logger.js";
@@ -34,6 +51,10 @@ describe("app/services/mcp-catalog-service", () => {
     mocked.authCallback.mockReset();
     mocked.authRemove.mockReset();
     mocked.disconnect.mockReset();
+    mocked.add.mockReset();
+    mockedCredentials.save.mockReset();
+    mockedCredentials.load.mockReset();
+    mockedCredentials.list.mockReset();
   });
 
   it("parses a dictionary-form catalog", () => {
@@ -146,4 +167,205 @@ describe("app/services/mcp-catalog-service", () => {
       code: "oauth-code",
     });
   });
+  it("configures a bearer token only through OpenCode's in-memory MCP add API", async () => {
+    mocked.add.mockResolvedValue({
+      data: { secure: { status: "connected" } },
+      error: undefined,
+    });
+    mockedCredentials.save.mockResolvedValue(undefined);
+
+    const record = {
+      projectDirectory: "C:\\repo",
+      serverName: "secure",
+      remoteUrl: "https://mcp.example.com/mcp",
+      mode: "bearer" as const,
+      secret: "bearer-secret",
+    };
+
+    await expect(configureSecureMcpAuth(record)).resolves.toEqual({
+      name: "secure",
+      status: { status: "connected" },
+    });
+
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "C:/repo",
+      name: "secure",
+      config: {
+        type: "remote",
+        url: "https://mcp.example.com/mcp",
+        oauth: false,
+        headers: { Authorization: "Bearer bearer-secret" },
+      },
+    });
+    expect(mockedCredentials.save).toHaveBeenCalledWith(record);
+  });
+
+  it("configures API-key headers in memory and rejects header injection", async () => {
+    mocked.add.mockResolvedValue({
+      data: { context: { status: "connected" } },
+      error: undefined,
+    });
+    mockedCredentials.save.mockResolvedValue(undefined);
+
+    await configureSecureMcpAuth({
+      projectDirectory: "/repo",
+      serverName: "context",
+      remoteUrl: "https://context.example/mcp",
+      mode: "api-key",
+      headerName: "X-API-Key",
+      secret: "api-secret",
+    });
+
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/repo",
+      name: "context",
+      config: {
+        type: "remote",
+        url: "https://context.example/mcp",
+        oauth: false,
+        headers: { "X-API-Key": "api-secret" },
+      },
+    });
+
+    await expect(configureSecureMcpAuth({
+      projectDirectory: "/repo",
+      serverName: "unsafe",
+      remoteUrl: "https://unsafe.example/mcp",
+      mode: "custom-header",
+      headerName: "X-Token\r\nAuthorization",
+      secret: "secret",
+    })).rejects.toThrow(/header name/i);
+  });
+
+  it("rejects CRLF in custom header secret values", async () => {
+    await expect(configureSecureMcpAuth({
+      projectDirectory: "/repo",
+      serverName: "unsafe",
+      remoteUrl: "https://unsafe.example/mcp",
+      mode: "custom-header",
+      headerName: "X-Service-Token",
+      secret: "abc\r\nInjected: yes",
+    })).rejects.toThrow(/header value/i);
+    expect(mocked.add).not.toHaveBeenCalled();
+    expect(mockedCredentials.save).not.toHaveBeenCalled();
+  });
+
+  it("configures a pre-registered OAuth client in OpenCode memory", async () => {
+    mocked.add.mockResolvedValue({
+      data: { sentry: { status: "needs_auth" } },
+      error: undefined,
+    });
+    mockedCredentials.save.mockResolvedValue(undefined);
+
+    const record = {
+      projectDirectory: "/repo",
+      serverName: "sentry",
+      remoteUrl: "https://mcp.sentry.example/mcp",
+      mode: "oauth-client" as const,
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      scope: "tools.read",
+    };
+
+    await expect(configureSecureMcpAuth(record)).resolves.toEqual({
+      name: "sentry",
+      status: { status: "needs_auth" },
+    });
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/repo",
+      name: "sentry",
+      config: {
+        type: "remote",
+        url: "https://mcp.sentry.example/mcp",
+        oauth: {
+          clientId: "client-id",
+          clientSecret: "client-secret",
+          scope: "tools.read",
+        },
+      },
+    });
+    expect(mockedCredentials.save).toHaveBeenCalledWith(record);
+  });
+
+  it("restores secure MCP definitions after OpenCode restart without rewriting credentials", async () => {
+    mockedCredentials.list.mockResolvedValue([
+      {
+        projectDirectory: "/repo",
+        serverName: "one",
+        remoteUrl: "https://one.example/mcp",
+        mode: "bearer",
+        secret: "one-secret",
+      },
+      {
+        projectDirectory: "/repo",
+        serverName: "two",
+        remoteUrl: "https://two.example/mcp",
+        mode: "oauth-client",
+        clientId: "two-client",
+        clientSecret: "two-secret",
+      },
+    ]);
+    mocked.add
+      .mockResolvedValueOnce({ data: { one: { status: "connected" } }, error: undefined })
+      .mockResolvedValueOnce({ data: { two: { status: "needs_auth" } }, error: undefined });
+
+    await expect(restoreSecureMcpConnections()).resolves.toEqual({ restored: 2, failed: 0 });
+    expect(mocked.add).toHaveBeenCalledTimes(2);
+    expect(mockedCredentials.save).not.toHaveBeenCalled();
+  });
+
+  it("continues restoring other MCPs when one secure definition fails", async () => {
+    mockedCredentials.list.mockResolvedValue([
+      {
+        projectDirectory: "/repo",
+        serverName: "broken",
+        remoteUrl: "https://broken.example/mcp",
+        mode: "bearer",
+        secret: "never-log-this",
+      },
+      {
+        projectDirectory: "/repo",
+        serverName: "healthy",
+        remoteUrl: "https://healthy.example/mcp",
+        mode: "bearer",
+        secret: "healthy-secret",
+      },
+    ]);
+    mocked.add
+      .mockResolvedValueOnce({ data: undefined, error: { message: "connection failed" } })
+      .mockResolvedValueOnce({ data: { healthy: { status: "connected" } }, error: undefined });
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    await expect(restoreSecureMcpConnections()).resolves.toEqual({ restored: 1, failed: 1 });
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain("never-log-this");
+  });
+
+  it("fails closed without crashing startup when the encrypted credential set cannot be opened", async () => {
+    mockedCredentials.list.mockRejectedValue(new Error("Unable to decrypt stored MCP credential."));
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    await expect(restoreSecureMcpConnections()).resolves.toEqual({ restored: 0, failed: 1 });
+    expect(mocked.add).not.toHaveBeenCalled();
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain("secret");
+  });
+
+  it("returns a non-secret auth summary for UI and model-safe status surfaces", async () => {
+    mockedCredentials.load.mockResolvedValue({
+      projectDirectory: "/repo",
+      serverName: "secure",
+      remoteUrl: "https://secure.example/mcp",
+      mode: "custom-header",
+      headerName: "X-Service-Token",
+      secret: "hidden-value",
+    });
+
+    const summary = await getMcpAuthSummary("/repo", "secure");
+    expect(summary).toEqual({
+      mode: "custom-header",
+      headerName: "X-Service-Token",
+      configured: true,
+    });
+    expect(JSON.stringify(summary)).not.toContain("hidden-value");
+  });
+
 });
