@@ -14,12 +14,12 @@ import {
 } from "./custom-provider-service.js";
 import {
   __resetUnifiedModelCatalogForTests,
-  ensureUnifiedAgentModelReady,
   getUnifiedRuntimePriceMetadata,
-  listUnifiedAgentCandidates,
-  listUnifiedAgentModels,
-  listUnifiedAgentProviders,
-  listUnifiedAgentReadyRefs,
+  isUnifiedChatModelSelectable,
+  listUnifiedChatModels,
+  listUnifiedChatModelsForProvider,
+  listUnifiedChatProviders,
+  listUnifiedChatRefs,
   refreshUnifiedModelCatalog,
 } from "./unified-model-catalog-service.js";
 
@@ -33,7 +33,7 @@ const SEARCH_RESULTS_LIMIT = 10;
 export interface ModelFallbackEvent {
   previous: string;
   next: string;
-  reason: "unavailable_or_not_tool_capable";
+  reason: "unavailable_or_not_chat_capable";
 }
 
 type ModelFallbackListener = (event: ModelFallbackEvent) => void;
@@ -141,12 +141,12 @@ function enrichNames(
   });
 }
 
-function filterReady(
+function filterSelectable(
   models: FavoriteModel[],
-  ready: Set<string>,
+  selectable: Set<string>,
 ): FavoriteModel[] {
   return models.filter((model) =>
-    ready.has(getModelKey(model.providerID, model.modelID)),
+    selectable.has(getModelKey(model.providerID, model.modelID)),
   );
 }
 
@@ -155,13 +155,13 @@ export function getCachedProviderPriceMetadata(providerID: string) {
 }
 
 export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
-  const [readyModels, candidates] = await Promise.all([
-    listUnifiedAgentReadyRefs(),
-    listUnifiedAgentCandidates(),
+  const [selectableModels, candidates] = await Promise.all([
+    listUnifiedChatRefs(),
+    listUnifiedChatModels(),
   ]);
 
-  const ready = new Set(
-    readyModels.map((model) =>
+  const selectable = new Set(
+    selectableModels.map((model) =>
       getModelKey(model.providerID, model.modelID),
     ),
   );
@@ -177,7 +177,7 @@ export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
   const configured = getEnvDefaultModel();
   const env =
     configured &&
-    ready.has(
+    selectable.has(
       getModelKey(configured.providerID, configured.modelID),
     )
       ? configured
@@ -192,15 +192,15 @@ export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
     const favorites = enrichNames(
       env
         ? dedupeModels([
-            ...filterReady(normalizeFavoriteModels(state), ready),
+            ...filterSelectable(normalizeFavoriteModels(state), selectable),
             env,
           ])
-        : filterReady(normalizeFavoriteModels(state), ready),
+        : filterSelectable(normalizeFavoriteModels(state), selectable),
       candidateRefs,
     );
 
     const recent = enrichNames(
-      filterReady(normalizeRecentModels(state), ready),
+      filterSelectable(normalizeRecentModels(state), selectable),
       candidateRefs,
     );
 
@@ -241,52 +241,35 @@ export async function reconcileStoredModelSelection(options?: {
   const current = getCurrentModel();
   if (!current?.providerID || !current.modelID) return;
 
-  let readyModels = await listUnifiedAgentReadyRefs();
-  let ready = new Set(
-    readyModels.map((model) =>
+  const selectableModels = await listUnifiedChatRefs();
+  const selectable = new Set(
+    selectableModels.map((model) =>
       getModelKey(model.providerID, model.modelID),
     ),
   );
-
   const currentKey = getModelKey(
     current.providerID,
     current.modelID,
   );
 
-  if (ready.has(currentKey)) return;
-
-  if (
-    await ensureUnifiedAgentModelReady(
-      current.providerID,
-      current.modelID,
-    )
-  ) {
-    return;
-  }
-
-  readyModels = await listUnifiedAgentReadyRefs();
-  ready = new Set(
-    readyModels.map((model) =>
-      getModelKey(model.providerID, model.modelID),
-    ),
-  );
+  if (selectable.has(currentKey)) return;
 
   const configuredFallback = getEnvDefaultModel();
   const fallback =
     configuredFallback &&
-    ready.has(
+    selectable.has(
       getModelKey(
         configuredFallback.providerID,
         configuredFallback.modelID,
       ),
     )
       ? configuredFallback
-      : readyModels[0] ?? null;
+      : selectableModels[0] ?? null;
 
   if (!fallback) return;
 
   logger.warn(
-    "[ModelManager] Stored model is unavailable or not tool-capable; falling back to " +
+    "[ModelManager] Stored model is unavailable or not chat-capable; falling back to " +
       getModelKey(fallback.providerID, fallback.modelID),
   );
 
@@ -302,7 +285,7 @@ export async function reconcileStoredModelSelection(options?: {
         fallback.providerID,
         fallback.modelID,
       ),
-      reason: "unavailable_or_not_tool_capable",
+      reason: "unavailable_or_not_chat_capable",
     });
   } catch (error) {
     logger.warn(
@@ -326,7 +309,7 @@ export async function getFavoriteModels(): Promise<FavoriteModel[]> {
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
-  return listUnifiedAgentProviders();
+  return listUnifiedChatProviders();
 }
 
 export async function getProvidersForCapability(
@@ -366,13 +349,13 @@ export async function getProvidersForCapability(
     );
   }
 
-  return listUnifiedAgentProviders();
+  return listUnifiedChatProviders();
 }
 
 export async function getProviderModels(
   providerID: string,
 ): Promise<FavoriteModel[]> {
-  return listUnifiedAgentModels(providerID);
+  return listUnifiedChatModelsForProvider(providerID);
 }
 
 export async function getProviderModelsForCapability(
@@ -406,7 +389,7 @@ export async function getProviderModelsForCapability(
       }));
   }
 
-  return listUnifiedAgentModels(providerID);
+  return listUnifiedChatModelsForProvider(providerID);
 }
 
 export async function resolveCatalogModel(
@@ -418,7 +401,7 @@ export async function resolveCatalogModel(
     await refreshUnifiedModelCatalog();
   }
 
-  const candidates = await listUnifiedAgentCandidates();
+  const candidates = await listUnifiedChatModels();
 
   const exact = candidates.find(
     (model) =>
@@ -427,17 +410,12 @@ export async function resolveCatalogModel(
   );
 
   if (exact) {
-    return (await ensureUnifiedAgentModelReady(
-      exact.providerID,
-      exact.modelID,
-    ))
-      ? {
-          providerID: exact.providerID,
-          modelID: exact.modelID,
-          name: exact.modelName,
-          variant: "default",
-        }
-      : null;
+    return {
+      providerID: exact.providerID,
+      modelID: exact.modelID,
+      name: exact.modelName,
+      variant: "default",
+    };
   }
 
   const matches = candidates.filter(
@@ -447,17 +425,12 @@ export async function resolveCatalogModel(
   if (matches.length !== 1) return null;
 
   const match = matches[0]!;
-  return (await ensureUnifiedAgentModelReady(
-    match.providerID,
-    match.modelID,
-  ))
-    ? {
-        providerID: match.providerID,
-        modelID: match.modelID,
-        name: match.modelName,
-        variant: "default",
-      }
-    : null;
+  return {
+    providerID: match.providerID,
+    modelID: match.modelID,
+    name: match.modelName,
+    variant: "default",
+  };
 }
 
 export async function searchModels(
@@ -466,7 +439,7 @@ export async function searchModels(
   const normalized = query.trim().toLowerCase();
   if (!normalized) return [];
 
-  return (await listUnifiedAgentCandidates())
+  return (await listUnifiedChatModels())
     .filter((model) =>
       (model.modelID + " " + model.modelName)
         .toLowerCase()
@@ -486,7 +459,7 @@ export async function isSelectableChatModel(
   providerID: string,
   modelID: string,
 ): Promise<boolean> {
-  return ensureUnifiedAgentModelReady(providerID, modelID);
+  return isUnifiedChatModelSelectable(providerID, modelID);
 }
 
 export function fetchCurrentModel(): ModelInfo {

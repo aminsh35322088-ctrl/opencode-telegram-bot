@@ -25,7 +25,7 @@ import {
   resolveModelCenterFavoriteTarget,
   type ModelCenterFavoriteTarget,
 } from "../menus/model-center-menu.js";
-import { fetchCurrentModel, getProviderModels, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
+import { fetchCurrentModel, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
@@ -36,7 +36,6 @@ import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
-import { findUnifiedModel } from "../../app/services/unified-model-catalog-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
@@ -97,7 +96,8 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
         return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
       }
       if (!(await isSelectableChatModel(model.providerID, model.modelID))) {
-        return await refreshUnavailableModelAction(ctx, model, target);
+        await ctx.answerCallbackQuery({ text: "Model Center refreshed.", show_alert: false }).catch(() => {});
+        return await renderFavoriteTarget(ctx, target);
       }
       const added = await toggleFavoriteModel(model);
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
@@ -112,7 +112,10 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
         return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
       }
       if (!(await isSelectableChatModel(model.providerID, model.modelID))) {
-        return await refreshUnavailableModelAction(ctx, model, target);
+        await ctx.answerCallbackQuery({ text: "Model Center refreshed.", show_alert: false }).catch(() => {});
+        return target
+          ? await renderFavoriteTarget(ctx, target)
+          : await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
       }
       await applyModelSelectionAndNotify(ctx, model);
       return true;
@@ -127,30 +130,6 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     await ctx.answerCallbackQuery({ text: "Model Center action failed.", show_alert: true }).catch(() => {});
     return true;
   }
-}
-
-async function refreshUnavailableModelAction(
-  ctx: Context,
-  model: ModelInfo,
-  target: ModelCenterFavoriteTarget | null,
-): Promise<boolean> {
-  const [entry, currentModels] = await Promise.all([
-    findUnifiedModel(model.providerID, model.modelID, { force: true }),
-    getProviderModels(model.providerID),
-  ]);
-  const stillListed = currentModels.some((candidate) => candidate.modelID === model.modelID);
-  const message = entry?.agentReadiness?.state === "unsupported"
-    ? "This model was verified as incompatible with agent/tool use. The page was refreshed."
-    : stillListed
-      ? "Tool compatibility could not be verified right now. The model remains unchecked and the page was refreshed."
-      : "The provider model catalog changed after this page opened. The page was refreshed.";
-
-  await ctx.answerCallbackQuery({ text: message, show_alert: true }).catch(() => {});
-  if (target) return await renderFavoriteTarget(ctx, target);
-
-  const provider = (await getProviders()).find((item) => item.id === model.providerID);
-  if (provider) return await render(ctx, await buildModelCenterProvider(provider, 0, fetchCurrentModel()));
-  return await render(ctx, await buildModelCenterProviders());
 }
 
 async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTarget): Promise<boolean> {

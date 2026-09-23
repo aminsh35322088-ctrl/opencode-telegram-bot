@@ -162,7 +162,7 @@ describe("unified model catalog", () => {
     });
   });
 
-  it("hides custom models that were verified as tool-incompatible", async () => {
+  it("keeps a tool-incompatible chat model selectable while excluding it from agent-ready models", async () => {
     fixture.setCustomProviders([{
       id: "gateway",
       name: "Gateway",
@@ -170,20 +170,25 @@ describe("unified model catalog", () => {
       models: [{
         id: "plain",
         name: "Plain",
-        modalities: { output: ["text"] },
+        modalities: { input: ["text"], output: ["text"] },
         toolCall: false,
         toolCallVerified: true,
       }],
     }]);
 
     expect(await listUnifiedAgentModels("gateway")).toEqual([]);
+    const { listUnifiedChatModelsForProvider, isUnifiedChatModelSelectable } =
+      await import("../../../src/app/services/unified-model-catalog-service.js");
+    expect(await listUnifiedChatModelsForProvider("gateway")).toEqual([
+      { providerID: "gateway", modelID: "plain", name: "Plain" },
+    ]);
+    await expect(isUnifiedChatModelSelectable("gateway", "plain")).resolves.toBe(true);
 
     const entry = (await listUnifiedModelCatalog()).find(
       (item) =>
         item.providerID === "gateway" &&
         item.modelID === "plain",
     );
-
     expect(entry?.agentReadiness?.state).toBe("unsupported");
   });
 

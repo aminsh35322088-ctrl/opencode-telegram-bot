@@ -221,6 +221,18 @@ describe("advertised text price evidence", () => {
 ])("classifies %j as %s", (record, group) => {
     expect(classifyModelPrice(record).group).toBe(group);
   });
+  it("understands Models.dev reasoning and audio price dimensions", () => {
+    expect(classifyModelPrice({
+      pricing: { input: 0, output: 0, reasoning: 1 },
+    }).group).toBe("paid");
+    expect(classifyModelPrice({
+      pricing: { input: 0, output: 0, reasoning: 0 },
+    }).group).toBe("free");
+    expect(classifyModelPrice({
+      pricing: { input: 0, output: 0, input_audio: 5, output_audio: 7 },
+    }).group).toBe("free");
+  });
+
   it("trusts the suffix only with the provider contract and checks contradictions", () => {
     expect(classifyModelPrice({ id: "model:free" }, { officialFreeSuffix: true }).group).toBe("free");
     expect(classifyModelPrice({ id: "model:free", is_free: false }, { officialFreeSuffix: true }).group).toBe("conflict");

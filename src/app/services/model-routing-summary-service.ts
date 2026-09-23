@@ -11,8 +11,14 @@ function refName(ref: ModelRef | undefined, catalog: UnifiedModelCatalogEntry[])
 function routeBadge(route: CapabilityRoute): string {
   if (route.routeSource === "primary-native") return "✅";
   if (route.routeSource === "topic-override") return "✅ ⚙️";
-  if (route.routeSource === "main-default") return "✅ ↪️";
+  if (route.routeSource === "main-default") return "↪️";
   return "❌";
+}
+
+function capabilityBadge(state: true | false | "unknown" | undefined): string {
+  if (state === true) return "✅";
+  if (state === false) return "❌";
+  return "❔";
 }
 
 export async function buildModelRoutingSummary(primary: ModelInfo, worktree?: string): Promise<string> {
@@ -24,7 +30,11 @@ export async function buildModelRoutingSummary(primary: ModelInfo, worktree?: st
   const tts = routes.get("textToSpeech")!;
   const ref = { providerID: primary.providerID, modelID: primary.modelID };
   const entry = catalog.find((item) => item.providerID === ref.providerID && item.modelID === ref.modelID);
-  const chat = entry?.capabilities.operations.chat === true ? "✅" : "❌";
+  const chat = capabilityBadge(entry?.capabilities.operations.chat);
+  const toolCall = capabilityBadge(entry?.capabilities.agent.toolCalling);
+  const agentMode = entry?.capabilities.operations.chat === false
+    ? "❌"
+    : capabilityBadge(entry?.capabilities.agent.toolCalling);
 
   return [
     `🧠 ${refName(ref, catalog)}`,
@@ -34,5 +44,7 @@ export async function buildModelRoutingSummary(primary: ModelInfo, worktree?: st
     `🎙️ Voice → Text ${routeBadge(voice)}`,
     `🎨 Image AI ${routeBadge(image)}`,
     `🔊 Text → Voice ${routeBadge(tts)}`,
+    `🛠️ Tool Call ${toolCall}`,
+    `🤖 Agent Mode ${agentMode}`,
   ].join("\n");
 }

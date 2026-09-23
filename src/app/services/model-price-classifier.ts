@@ -49,14 +49,17 @@ export function classifyModelPrice(raw: unknown, options: { officialFreeSuffix?:
     }
     // Optional non-text features do not price plain text. Unrecognized
     // dimensions prevent a free verdict instead of being silently ignored.
-    const known = new Set([...fields.flat(), "image", "audio", "video", "web_search", "internal_reasoning", "discount"]);
+    const known = new Set([...fields.flat(), "image", "audio", "video", "input_audio", "output_audio", "web_search", "internal_reasoning", "reasoning", "discount"]);
     if (Object.keys(price).some((key) => !known.has(key))) invalid = true;
-    if (price.internal_reasoning !== undefined) {
-      const reasoning = number(price.internal_reasoning);
-      if (reasoning === undefined) invalid = true;
-      else if (reasoning > 0) positive = true;
-    }
-    const zero = values[0] === 0 && values[1] === 0 && values.every((v) => v === undefined || v === 0) && (price.internal_reasoning === undefined || number(price.internal_reasoning) === 0);
+    const reasoningValues = ["internal_reasoning", "reasoning"]
+      .filter((key) => price[key] !== undefined)
+      .map((key) => number(price[key]));
+    if (reasoningValues.some((value) => value === undefined)) invalid = true;
+    const validReasoning = reasoningValues.filter((value): value is number => value !== undefined);
+    if (new Set(validReasoning).size > 1) conflicting = true;
+    if (validReasoning.some((value) => value > 0)) positive = true;
+    const reasoningZero = validReasoning.length === 0 || validReasoning.every((value) => value === 0);
+    const zero = values[0] === 0 && values[1] === 0 && values.every((v) => v === undefined || v === 0) && reasoningZero;
     zeroTier ||= zero;
     completeZero &&= zero;
   }

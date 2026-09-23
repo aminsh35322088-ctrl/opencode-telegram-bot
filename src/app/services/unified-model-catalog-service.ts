@@ -126,7 +126,11 @@ function customMetadata(model: CustomProviderModel): Record<string, unknown> {
     name: model.name,
     attachment: model.attachment,
     modalities: model.modalities,
-    tool_call: model.toolCallVerified === true ? model.toolCall === true : undefined,
+    tool_call: model.toolCall === false
+      ? false
+      : model.toolCallVerified === true
+        ? model.toolCall === true
+        : undefined,
   };
 }
 
@@ -429,6 +433,59 @@ export async function findUnifiedModel(
   );
 }
 
+export async function listUnifiedChatModels(): Promise<UnifiedModelCatalogEntry[]> {
+  return (await listUnifiedModelCatalog()).filter((entry) =>
+    entry.origin !== "adapter" &&
+    entry.availability !== "unavailable" &&
+    entry.capabilities.operations.chat !== false,
+  );
+}
+
+export async function listUnifiedChatProviders(): Promise<ProviderInfo[]> {
+  const providers = new Map<string, ProviderInfo>();
+  for (const entry of await listUnifiedChatModels()) {
+    const current = providers.get(entry.providerID) ?? {
+      id: entry.providerID,
+      name: entry.providerName,
+      modelCount: 0,
+    };
+    current.modelCount += 1;
+    providers.set(entry.providerID, current);
+  }
+  return [...providers.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
+}
+
+export async function listUnifiedChatModelsForProvider(providerID: string): Promise<FavoriteModel[]> {
+  return (await listUnifiedChatModels())
+    .filter((entry) => entry.providerID === providerID)
+    .map((entry) => ({
+      providerID: entry.providerID,
+      modelID: entry.modelID,
+      ...(entry.modelName !== entry.modelID ? { name: entry.modelName } : {}),
+    }))
+    .sort((a, b) => a.modelID.localeCompare(b.modelID));
+}
+
+export async function listUnifiedChatRefs(): Promise<FavoriteModel[]> {
+  return (await listUnifiedChatModels()).map((entry) => ({
+    providerID: entry.providerID,
+    modelID: entry.modelID,
+    ...(entry.modelName !== entry.modelID ? { name: entry.modelName } : {}),
+  }));
+}
+
+export async function isUnifiedChatModelSelectable(providerID: string, modelID: string): Promise<boolean> {
+  const entry = await findUnifiedModel(providerID, modelID);
+  return Boolean(
+    entry &&
+    entry.origin !== "adapter" &&
+    entry.availability !== "unavailable" &&
+    entry.capabilities.operations.chat !== false,
+  );
+}
+
 export async function listUnifiedAgentCandidates(): Promise<
   UnifiedModelCatalogEntry[]
 > {
@@ -568,8 +625,6 @@ export async function getUnifiedProviderRevisionData(
       modelID: entry.modelID,
       availability: entry.availability,
       origin: entry.origin,
-      agentState: entry.agentReadiness?.state,
-      toolCalling: entry.capabilities.agent.toolCalling,
     }))
     .sort((a, b) =>
       String(a.modelID).localeCompare(String(b.modelID)),
