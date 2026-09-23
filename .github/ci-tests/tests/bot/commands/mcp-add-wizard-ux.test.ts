@@ -44,6 +44,7 @@ import {
   dismissMcpAddWizard,
   handleMcpsMessage,
   selectMcpCredentialMode,
+  skipMcpCredentialOptionalStep,
   startMcpAddWizard,
   startMcpAuthWizard,
   startMcpCredentialWizard,
@@ -307,6 +308,76 @@ describe("MCP add wizard UX", () => {
       headerName: "X-Service-Token",
       secret: "custom-secret",
     });
+  });
+
+  it("collects a pre-registered OAuth client and then opens native OAuth login", async () => {
+    const startCtx = createContext();
+    mockedMcp.configureSecureMcpAuth.mockResolvedValueOnce({
+      name: "secure",
+      status: { status: "needs_auth" },
+    });
+
+    await startMcpCredentialWizard(startCtx, {
+      serverName: "secure",
+      projectDirectory: "/work/repo",
+      messageId: 4242,
+      preferredMode: "oauth-client",
+    });
+
+    const clientIdCtx = createTextContext("client-id");
+    expect(await handleMcpsMessage(clientIdCtx)).toBe(true);
+    expect(clientIdCtx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("client-secret");
+
+    const secretCtx = createTextContext("client-secret");
+    expect(await handleMcpsMessage(secretCtx)).toBe(true);
+    expect(secretCtx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("scope");
+
+    const scopeCtx = createTextContext("tools.read");
+    expect(await handleMcpsMessage(scopeCtx)).toBe(true);
+    expect(scopeCtx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
+    expect(mockedMcp.configureSecureMcpAuth).toHaveBeenCalledWith({
+      projectDirectory: "/work/repo",
+      serverName: "secure",
+      remoteUrl: "https://mcp.example.com/mcp",
+      mode: "oauth-client",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      scope: "tools.read",
+    });
+    expect(mockedMcp.startMcpOAuth).toHaveBeenCalledWith("/work/repo", "secure");
+    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("auth");
+  });
+
+  it("supports public OAuth clients by skipping Client Secret and scope", async () => {
+    const startCtx = createContext();
+    mockedMcp.configureSecureMcpAuth.mockResolvedValueOnce({
+      name: "secure",
+      status: { status: "needs_auth" },
+    });
+    await startMcpCredentialWizard(startCtx, {
+      serverName: "secure",
+      projectDirectory: "/work/repo",
+      messageId: 4242,
+      preferredMode: "oauth-client",
+    });
+
+    const clientIdCtx = createTextContext("public-client");
+    expect(await handleMcpsMessage(clientIdCtx)).toBe(true);
+
+    expect(await skipMcpCredentialOptionalStep(startCtx, "secret")).toBe(true);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("scope");
+    expect(await skipMcpCredentialOptionalStep(startCtx, "scope")).toBe(true);
+
+    expect(mockedMcp.configureSecureMcpAuth).toHaveBeenCalledWith({
+      projectDirectory: "/work/repo",
+      serverName: "secure",
+      remoteUrl: "https://mcp.example.com/mcp",
+      mode: "oauth-client",
+      clientId: "public-client",
+    });
+    expect(mockedMcp.startMcpOAuth).toHaveBeenCalledWith("/work/repo", "secure");
   });
 
 });
