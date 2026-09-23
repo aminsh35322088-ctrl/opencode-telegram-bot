@@ -253,7 +253,8 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
   } catch (error) {
     if (providerWizard.get() !== s) return true;
     s.busy = false;
-    logger.warn(`[Providers] Setup failed at ${s.step}; saved=${saved}`);
+    const safeError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    logger.warn(`[Providers] Setup failed at ${s.step}; saved=${saved}; error=${safeError}`);
     const message = error instanceof Error && error.name !== "TypeError" ? error.message : "Connection verification failed";
     await editWizard(ctx, s.messageId, `❌ ${message}\n\n${saved ? "The credential is saved. Reopen AI Providers." : "The credential was not saved. Try again or Cancel."}`).catch(() => {});
   }
