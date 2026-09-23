@@ -73,6 +73,15 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "network-diagnostics.dns": { icon: "🌐", label: "Check DNS" },
   "network-diagnostics.http": { icon: "🌐", label: "Check HTTP" },
   "network-diagnostics.tcp": { icon: "🔌", label: "Check TCP" },
+
+  "ssh.status": { icon: "🔌", label: "Check SSH Client" },
+  "ssh.key.ensure": { icon: "🔑", label: "Prepare SSH Key" },
+  "ssh.key.public": { icon: "🔑", label: "Show SSH Public Key" },
+  "ssh.exec": { icon: "🖥️", label: "Run on Server" },
+  "ssh.read": { icon: "📖", label: "Read Remote File" },
+  "ssh.write": { icon: "✍️", label: "Write Remote File" },
+  "ssh.upload": { icon: "📤", label: "Upload to Server" },
+  "ssh.download": { icon: "📥", label: "Download from Server" },
 };
 
 const TOOL_ICONS: Record<string, string> = {
@@ -88,6 +97,7 @@ const TOOL_ICONS: Record<string, string> = {
   telegram: "💬",
   "network-diagnostics": "🌐",
   railway: "🚆",
+  ssh: "🔐",
   "safe-download": "📥",
   "send-file": "📤",
   session: "💬",
