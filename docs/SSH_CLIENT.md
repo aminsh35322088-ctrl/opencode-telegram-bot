@@ -26,8 +26,8 @@ No SSH password or private key is entered into Telegram or exposed to the model.
 
 The private key is stored under `/data/.ssh/opencode_ed25519` on the persistent Railway volume with mode 0600. The tool forces `BatchMode=yes` and `IdentitiesOnly=yes`, so password/passphrase prompts and unrelated agent keys are not used.
 
-Host verification uses `StrictHostKeyChecking=accept-new` with a persistent `known_hosts` file. OpenSSH therefore accepts a host the first time but rejects a changed host key on later connections. citeturn256082search0
+Host verification uses `StrictHostKeyChecking=accept-new` with a persistent `known_hosts` file. OpenSSH therefore accepts a host the first time but rejects a changed host key on later connections. See the OpenSSH `ssh_config(5)` manual: https://man.openbsd.org/ssh_config.
 
 Local upload/download paths are restricted to the active worktree. Remote transfer paths use a conservative character allowlist. Remote command/file operations have a hard maximum timeout of 120 seconds.
 
-This tool is intentionally transport-neutral and direct-only. It contains no RustDesk, Cloudflare, Tailscale, Runner Bridge, or remote-desktop integration.
+This tool is intentionally direct-only and has no remote-desktop or tunnel transport layer.
