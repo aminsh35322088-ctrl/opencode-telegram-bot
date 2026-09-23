@@ -66,3 +66,11 @@ Registry risk metadata (`read`, `write`, `external`, `mutating`, `destructive`) 
 ## Runtime dependency policy
 
 Railway is production only. Dependency changes are made in source control and resolved by the normal GitHub/container build. The running bot must not mutate its application dependency graph on demand.
+
+## Custom provider capability verification
+
+Custom OpenAI-compatible connections keep the exact user-supplied HTTP(S) base URL (for example a path-prefixed /v1 endpoint); the bot does not rewrite hosts or maintain provider-specific endpoint exceptions. Model discovery uses the provider's /models catalog only and never runs inference across the discovered catalog.
+
+Agent tool-calling capability is fail-closed for custom models. Provider-advertised tool metadata is treated as a hint, not proof: a model becomes selectable for agent-mode chat/coding only after that exact provider/model completes the bounded live tool-call verification. Verification is triggered on demand for the model being selected, not by a startup or catalog-wide background scan.
+
+Provider discovery errors are surfaced generically with bounded status/code/message/request metadata where available. Stored API keys are redacted from those diagnostics.
