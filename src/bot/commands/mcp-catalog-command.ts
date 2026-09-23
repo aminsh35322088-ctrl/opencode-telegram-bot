@@ -238,16 +238,44 @@ export async function dismissMcpAddWizard(ctx: Context, restoreList = false): Pr
   return true;
 }
 
-export async function dismissMcpAuthWizard(ctx: Context, restoreList = false): Promise<boolean> {
+export async function dismissMcpAuthWizard(ctx: Context, restoreDetail = false): Promise<boolean> {
   const pending = mcpAuthWizard.get();
   if (!pending) return false;
   mcpAuthWizard.clear();
   if (isMcpAuthInteractionActive()) interactionManager.clear("mcp_auth_dismissed");
-  if (restoreList) {
+  if (restoreDetail) {
     try {
-      await renderMcpList(ctx, pending.messageId, pending.projectDirectory);
+      await renderMcpDetailView(
+        ctx,
+        pending.messageId,
+        pending.projectDirectory,
+        pending.serverName,
+      );
     } catch (error) {
-      logger.warn("[Mcps] Failed to restore MCP list after dismissing OAuth:", error);
+      logger.warn("[Mcps] Failed to restore MCP detail after dismissing OAuth:", error);
+    }
+  }
+  return true;
+}
+
+export async function dismissMcpCredentialWizard(
+  ctx: Context,
+  restoreDetail = false,
+): Promise<boolean> {
+  const pending = mcpCredentialWizard.get();
+  if (!pending) return false;
+  mcpCredentialWizard.clear();
+  if (isMcpCredentialInteractionActive()) interactionManager.clear("mcp_credential_dismissed");
+  if (restoreDetail) {
+    try {
+      await renderMcpDetailView(
+        ctx,
+        pending.messageId,
+        pending.projectDirectory,
+        pending.serverName,
+      );
+    } catch (error) {
+      logger.warn("[Mcps] Failed to restore MCP detail after dismissing auth setup:", error);
     }
   }
   return true;
