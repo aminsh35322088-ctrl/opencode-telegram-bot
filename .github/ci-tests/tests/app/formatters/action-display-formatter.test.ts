@@ -20,6 +20,13 @@ describe("friendly action display", () => {
     expect(getFriendlyActionDisplay("media", { action: "image.edit" })).toEqual({ icon: "✨", label: "Edit Image" });
   });
 
+  it("renders SSH actions with human-friendly names", () => {
+    expect(getFriendlyActionDisplay("ssh", { action: "status" })).toEqual({ icon: "🔌", label: "Check SSH Client" });
+    expect(getFriendlyActionDisplay("ssh", { action: "key.public" })).toEqual({ icon: "🔑", label: "Show SSH Public Key" });
+    expect(getFriendlyActionDisplay("ssh", { action: "exec" })).toEqual({ icon: "🖥️", label: "Run on Server" });
+    expect(getFriendlyActionDisplay("ssh", { action: "upload" })).toEqual({ icon: "📤", label: "Upload to Server" });
+  });
+
   it("never leaks the technical action name through the generic details fallback", () => {
     const text = formatToolInfo({
       sessionId: "s1",

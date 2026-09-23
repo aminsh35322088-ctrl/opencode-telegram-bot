@@ -65,6 +65,11 @@ describe("agent action registry", () => {
     expect(getAgentAction("git.reset")?.risk).toBe("destructive");
     expect(getAgentAction("notify.send")?.risk).toBe("external");
     expect(getAgentAction("session-extended.export")?.risk).toBe("write");
+    expect(getAgentAction("ssh.status")?.risk).toBe("read");
+    expect(getAgentAction("ssh.key.public")?.risk).toBe("read");
+    expect(getAgentAction("ssh.exec")?.risk).toBe("mutating");
+    expect(getAgentAction("ssh.read")?.risk).toBe("external");
+    expect(getAgentAction("ssh.upload")?.risk).toBe("mutating");
   });
 
   it("supports discovery filters and summary counts", () => {
