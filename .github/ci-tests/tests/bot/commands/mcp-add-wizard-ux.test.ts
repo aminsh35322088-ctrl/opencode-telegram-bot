@@ -191,11 +191,16 @@ describe("MCP add wizard UX", () => {
       messageId: 4242,
     });
 
+    mockedMcp.loadMcpCatalog.mockResolvedValue([
+      { name: "sentry", status: { status: "connected" } },
+    ]);
+
     const ctx = createTextContext("http://127.0.0.1/callback?code=secret-code&state=oauth-state");
     expect(await handleMcpsMessage(ctx)).toBe(true);
     expect(mockedMcp.completeMcpOAuth).toHaveBeenCalledWith("/work/repo", "sentry", "secret-code");
     expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
-    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("list");
+    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("detail");
+    expect(interactionManager.getSnapshot()?.metadata.serverName).toBe("sentry");
   });
   it("opens credential auth choices by editing only the canonical General panel", async () => {
     const ctx = createContext();
