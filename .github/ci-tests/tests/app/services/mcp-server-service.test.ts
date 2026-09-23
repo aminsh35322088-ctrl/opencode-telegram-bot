@@ -42,15 +42,15 @@ import {
   completeMcpOAuth,
   configureSecureMcpAuth,
   getMcpAuthSummary,
-  parseMcpCatalogServers,
+  parseMcpServerItems,
   resetMcpAuthToAuto,
   resolveMcpRemoteUrl,
   restoreSecureMcpConnections,
   startMcpOAuth,
-} from "../../../src/app/services/mcp-catalog-service.js";
+} from "../../../src/app/services/mcp-server-service.js";
 import { logger } from "../../../src/utils/logger.js";
 
-describe("app/services/mcp-catalog-service", () => {
+describe("app/services/mcp-server-service", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     mocked.authStart.mockReset();
@@ -66,7 +66,7 @@ describe("app/services/mcp-catalog-service", () => {
   });
 
   it("parses a dictionary-form catalog", () => {
-    const servers = parseMcpCatalogServers({
+    const servers = parseMcpServerItems({
       "server-a": { status: "connected" },
       "server-b": { status: "disabled" },
     });
@@ -78,7 +78,7 @@ describe("app/services/mcp-catalog-service", () => {
   });
 
   it("parses an array-form catalog", () => {
-    const servers = parseMcpCatalogServers([
+    const servers = parseMcpServerItems([
       { name: "server-a", status: { status: "needs_auth" } },
     ]);
 
@@ -86,7 +86,7 @@ describe("app/services/mcp-catalog-service", () => {
   });
 
   it("keeps the error on failed servers", () => {
-    const servers = parseMcpCatalogServers({
+    const servers = parseMcpServerItems({
       "server-broken": { status: "failed", error: "boom" },
     });
 
@@ -96,7 +96,7 @@ describe("app/services/mcp-catalog-service", () => {
   });
 
   it("normalizes a missing error on failed servers to an empty string", () => {
-    const servers = parseMcpCatalogServers({
+    const servers = parseMcpServerItems({
       "server-broken": { status: "failed" },
     });
 
@@ -107,23 +107,23 @@ describe("app/services/mcp-catalog-service", () => {
 
   it("skips servers with an unknown status string but keeps the rest", () => {
     const warnSpy = vi.spyOn(logger, "debug");
-    const servers = parseMcpCatalogServers({
+    const servers = parseMcpServerItems({
       "server-future": { status: "connecting" },
       "server-ok": { status: "connected" },
     });
 
     expect(servers).toEqual([{ name: "server-ok", status: { status: "connected" } }]);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[McpCatalog] Unknown MCP status "connecting", skipping server',
+      '[McpServer] Unknown MCP status "connecting", skipping server',
     );
   });
 
   it("returns null for structurally broken input", () => {
-    expect(parseMcpCatalogServers(null)).toBeNull();
-    expect(parseMcpCatalogServers(42)).toBeNull();
-    expect(parseMcpCatalogServers({ "server-a": "not-an-object" })).toBeNull();
-    expect(parseMcpCatalogServers({ "server-a": { status: 42 } })).toBeNull();
-    expect(parseMcpCatalogServers([{ name: "server-a", status: null }])).toBeNull();
+    expect(parseMcpServerItems(null)).toBeNull();
+    expect(parseMcpServerItems(42)).toBeNull();
+    expect(parseMcpServerItems({ "server-a": "not-an-object" })).toBeNull();
+    expect(parseMcpServerItems({ "server-a": { status: 42 } })).toBeNull();
+    expect(parseMcpServerItems([{ name: "server-a", status: null }])).toBeNull();
   });
 
   it("starts MCP OAuth through OpenCode and preserves state", async () => {

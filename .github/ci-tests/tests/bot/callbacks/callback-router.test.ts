@@ -59,7 +59,7 @@ vi.mock("../../../src/bot/callbacks/file-browser-callback-handler.js", () => ({
 vi.mock("../../../src/bot/callbacks/inline-menu-cancel-callback-handler.js", () => ({
   handleInlineMenuCancel: mocked.handleInlineMenuCancel,
 }));
-vi.mock("../../../src/bot/callbacks/mcp-catalog-callback-handler.js", () => ({
+vi.mock("../../../src/bot/callbacks/mcp-server-callback-handler.js", () => ({
   handleMcpsCallback: mocked.handleMcpsCallback,
 }));
 vi.mock("../../../src/bot/callbacks/message-history-callback-handler.js", () => ({
@@ -105,7 +105,7 @@ vi.mock("../../../src/bot/menus/file-browser-menu.js", () => ({
   clearOpenPathIndex: mocked.clearOpenPathIndex,
 }));
 
-vi.mock("../../../src/bot/commands/mcp-catalog-command.js", () => ({
+vi.mock("../../../src/bot/commands/mcp-server-command.js", () => ({
   clearMcpAddWizard: mocked.clearMcpAddWizard,
   clearMcpAuthWizard: mocked.clearMcpAuthWizard,
   clearMcpCredentialWizard: mocked.clearMcpCredentialWizard,

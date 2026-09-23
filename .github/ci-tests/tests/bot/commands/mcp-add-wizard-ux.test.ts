@@ -6,8 +6,8 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
 }));
 
 const mockedMcp = vi.hoisted(() => ({
-  addMcpCatalogServer: vi.fn(),
-  loadMcpCatalog: vi.fn(),
+  createMcpServerFromInput: vi.fn(),
+  loadMcpServers: vi.fn(),
   startMcpOAuth: vi.fn().mockResolvedValue({
     authorizationUrl: "https://login.example/authorize?state=oauth-state",
     oauthState: "oauth-state",
@@ -22,9 +22,9 @@ const mockedMcp = vi.hoisted(() => ({
   resetMcpAuthToAuto: vi.fn(),
 }));
 
-vi.mock("../../../src/app/services/mcp-catalog-service.js", () => ({
-  addMcpCatalogServer: mockedMcp.addMcpCatalogServer,
-  loadMcpCatalog: mockedMcp.loadMcpCatalog,
+vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
+  createMcpServerFromInput: mockedMcp.createMcpServerFromInput,
+  loadMcpServers: mockedMcp.loadMcpServers,
   startMcpOAuth: mockedMcp.startMcpOAuth,
   completeMcpOAuth: mockedMcp.completeMcpOAuth,
   resolveMcpRemoteUrl: mockedMcp.resolveMcpRemoteUrl,
@@ -51,7 +51,7 @@ import {
   startMcpAddWizard,
   startMcpAuthWizard,
   startMcpCredentialWizard,
-} from "../../../src/bot/commands/mcp-catalog-command.js";
+} from "../../../src/bot/commands/mcp-server-command.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { t } from "../../../src/i18n/index.js";
 
@@ -84,8 +84,8 @@ function createTextContext(text: string): Context {
 
 describe("MCP add wizard UX", () => {
   beforeEach(() => {
-    mockedMcp.addMcpCatalogServer.mockResolvedValue(undefined);
-    mockedMcp.loadMcpCatalog.mockResolvedValue([]);
+    mockedMcp.createMcpServerFromInput.mockResolvedValue(undefined);
+    mockedMcp.loadMcpServers.mockResolvedValue([]);
     mockedMcp.startMcpOAuth.mockResolvedValue({
       authorizationUrl: "https://login.example/authorize?state=oauth-state",
       oauthState: "oauth-state",
@@ -110,8 +110,8 @@ describe("MCP add wizard UX", () => {
     clearMcpAddWizard();
     clearMcpAuthWizard();
     clearMcpCredentialWizard();
-    mockedMcp.addMcpCatalogServer.mockClear();
-    mockedMcp.loadMcpCatalog.mockClear();
+    mockedMcp.createMcpServerFromInput.mockClear();
+    mockedMcp.loadMcpServers.mockClear();
     mockedMcp.startMcpOAuth.mockClear();
     mockedMcp.completeMcpOAuth.mockClear();
     mockedMcp.resolveMcpRemoteUrl.mockClear();
@@ -236,7 +236,7 @@ describe("MCP add wizard UX", () => {
       messageId: 4242,
     });
 
-    mockedMcp.loadMcpCatalog.mockResolvedValue([
+    mockedMcp.loadMcpServers.mockResolvedValue([
       { name: "sentry", status: { status: "connected" } },
     ]);
 
@@ -277,7 +277,7 @@ describe("MCP add wizard UX", () => {
       messageId: 4242,
     });
     await selectMcpCredentialMode(startCtx, "bearer");
-    mockedMcp.loadMcpCatalog.mockResolvedValue([
+    mockedMcp.loadMcpServers.mockResolvedValue([
       { name: "secure", status: { status: "connected" } },
     ]);
 
@@ -307,7 +307,7 @@ describe("MCP add wizard UX", () => {
       messageId: 4242,
     });
     await selectMcpCredentialMode(startCtx, "api-key");
-    mockedMcp.loadMcpCatalog.mockResolvedValue([
+    mockedMcp.loadMcpServers.mockResolvedValue([
       { name: "secure", status: { status: "connected" } },
     ]);
 
@@ -338,7 +338,7 @@ describe("MCP add wizard UX", () => {
     expect(headerCtx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
     expect(interactionManager.getSnapshot()?.metadata.step).toBe("secret");
 
-    mockedMcp.loadMcpCatalog.mockResolvedValue([
+    mockedMcp.loadMcpServers.mockResolvedValue([
       { name: "secure", status: { status: "connected" } },
     ]);
     const secretCtx = createTextContext("custom-secret");

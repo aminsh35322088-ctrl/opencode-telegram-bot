@@ -11,7 +11,7 @@ import { clearPausedSession } from "../../app/managers/paused-session-manager.js
 import { getBotUpdateNotice, markBotVersionNotified } from "../../app/services/version-info-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
-import { dismissMcpAddWizard } from "./mcp-catalog-command.js";
+import { dismissMcpAddWizard } from "./mcp-server-command.js";
 
 async function normalizeStartContext(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;

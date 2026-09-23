@@ -141,13 +141,6 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "test.test-file": { icon: "🧪", label: "Run File Tests" },
   "test.lint-fix": { icon: "🧹", label: "Fix Lint Issues" },
 
-  "ssh.connect": { icon: "🔐", label: "Connect over SSH" },
-  "ssh.exec": { icon: "💻", label: "Run SSH Command" },
-  "ssh.upload": { icon: "📤", label: "Upload over SSH" },
-  "ssh.download": { icon: "📥", label: "Download over SSH" },
-  "ssh.list": { icon: "🖥️", label: "List SSH Targets" },
-  "ssh.status": { icon: "🔐", label: "Check SSH Status" },
-
   "session-recovery.inspect": { icon: "🛟", label: "Inspect Session Recovery" },
   "session-recovery.abort": { icon: "🛑", label: "Abort Stuck Session" },
   "session-recovery.continue": { icon: "▶️", label: "Continue Recovered Session" },
@@ -242,7 +235,6 @@ const TOOL_META: Record<string, FriendlyActionDisplay> = {
   monitoring: { icon: "📊", label: "Monitoring" },
   notify: { icon: "🔔", label: "Notification" },
   security: { icon: "🛡️", label: "Security" },
-  ssh: { icon: "🔐", label: "SSH" },
   "session-extended": { icon: "🧭", label: "Session" },
   test: { icon: "🧪", label: "Tests" },
   browser: { icon: "🌐", label: "Browser" },

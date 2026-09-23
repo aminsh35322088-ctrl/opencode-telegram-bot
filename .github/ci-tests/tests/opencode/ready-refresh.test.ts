@@ -26,7 +26,7 @@ vi.mock("../../src/app/services/model-selection-service.js", () => ({
   reconcileStoredModelSelection: mocked.reconcileStoredModelSelectionMock,
 }));
 
-vi.mock("../../src/app/services/mcp-catalog-service.js", () => ({
+vi.mock("../../src/app/services/mcp-server-service.js", () => ({
   restoreSecureMcpConnections: mocked.restoreSecureMcpConnectionsMock,
 }));
 

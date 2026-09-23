@@ -2,15 +2,15 @@ import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import {
-  addMcpCatalogServer,
+  createMcpServerFromInput,
   completeMcpOAuth,
   configureSecureMcpAuth,
   getMcpAuthSummary,
-  loadMcpCatalog,
+  loadMcpServers,
   resetMcpAuthToAuto,
   resolveMcpRemoteUrl,
   startMcpOAuth,
-} from "../../app/services/mcp-catalog-service.js";
+} from "../../app/services/mcp-server-service.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import type { McpCredentialRecord } from "../../app/services/mcp-credential-store.js";
 import { t } from "../../i18n/index.js";
@@ -26,7 +26,7 @@ import {
   buildMcpsEmptyKeyboard,
   buildMcpsListKeyboard,
   buildMcpsWizardKeyboard,
-} from "../menus/mcp-catalog-menu.js";
+} from "../menus/mcp-server-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
@@ -113,10 +113,8 @@ async function renderMcpList(
   projectDirectory: string,
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  const servers = await loadMcpCatalog(projectDirectory);
-  const text = servers.length > 0
-    ? t("mcps.select")
-    : "🔌 MCP Servers\n\nNo MCP servers are configured for this workspace yet.\n\nAdd one to make external tools available to OpenCode.";
+  const servers = await loadMcpServers(projectDirectory);
+  const text = servers.length > 0 ? t("mcps.select") : t("mcps.empty");
   const keyboard = servers.length > 0 ? buildMcpsListKeyboard(servers) : buildMcpsEmptyKeyboard();
   await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
     if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
@@ -141,7 +139,7 @@ export async function renderMcpDetailView(
   serverName: string,
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  const servers = await loadMcpCatalog(projectDirectory);
+  const servers = await loadMcpServers(projectDirectory);
   const server = servers.find((item) => item.name === serverName);
   if (!server) {
     await renderMcpList(ctx, messageId, projectDirectory);
@@ -152,15 +150,15 @@ export async function renderMcpDetailView(
   try {
     const summary = await getMcpAuthSummary(projectDirectory, serverName);
     if (summary) {
+      const modeLabel = credentialModeLabel(summary.mode);
       const label =
-        summary.mode === "bearer" ? "Bearer Token"
-        : summary.mode === "api-key" ? `API Key · ${summary.headerName ?? "X-API-Key"}`
-        : summary.mode === "custom-header" ? `Custom Header · ${summary.headerName ?? "Configured"}`
-        : "OAuth Client";
-      authLine = `\n\n🔐 Authentication: ${label}\nCredentials: securely stored by the bot`;
+        summary.mode === "api-key" || summary.mode === "custom-header"
+          ? `${modeLabel} · ${summary.headerName ?? "X-API-Key"}`
+          : modeLabel;
+      authLine = `\n\n${t("mcps.auth.summary", { mode: label })}`;
     }
   } catch {
-    authLine = "\n\n⚠️ Stored authentication needs reconfiguration.";
+    authLine = `\n\n${t("mcps.auth.reconfigure")}`;
   }
 
   await ctx.api.editMessageText(
@@ -639,7 +637,7 @@ export async function startMcpAddWizard(ctx: Context): Promise<void> {
   const projectDirectory = getCurrentSessionDirectory();
   const messageId = callbackMessageId(ctx);
   if (messageId === null || !ctx.chat?.id) {
-    await ctx.answerCallbackQuery({ text: "This menu has expired. Please open MCP Servers again.", show_alert: true }).catch(() => {});
+    await ctx.answerCallbackQuery({ text: t("mcps.add.expired"), show_alert: true }).catch(() => {});
     return;
   }
 
@@ -652,11 +650,7 @@ export async function startMcpAddWizard(ctx: Context): Promise<void> {
     expectedInput: "mixed",
     metadata: { flow: "mcps", stage: "add", messageId, projectDirectory },
   });
-  await renderWizard(
-    ctx,
-    messageId,
-    "➕ Add MCP Server\n\n1/3 · Server name\n\nSend a unique name for this MCP server.",
-  );
+  await renderWizard(ctx, messageId, t("mcps.add.name_prompt"));
 }
 
 export async function backMcpAddWizard(ctx: Context): Promise<boolean> {
@@ -670,7 +664,7 @@ export async function backMcpAddWizard(ctx: Context): Promise<boolean> {
     await renderWizard(
       ctx,
       pending.messageId,
-      "➕ Add MCP Server\n\n2/3 · Server type\n\nChoose how OpenCode should connect to this server.",
+      t("mcps.add.type_prompt"),
       buildMcpsAddTypeKeyboard(),
     );
     transitionMcpWizard(pending);
@@ -684,7 +678,7 @@ export async function backMcpAddWizard(ctx: Context): Promise<boolean> {
     await renderWizard(
       ctx,
       pending.messageId,
-      "➕ Add MCP Server\n\n1/3 · Server name\n\nSend a unique name for this MCP server.",
+      t("mcps.add.name_prompt"),
     );
     transitionMcpWizard(pending);
     return true;
@@ -702,9 +696,8 @@ export async function selectMcpAddType(ctx: Context, type: "local" | "remote"): 
   wizard.type = type;
   wizard.step = "value";
   await ctx.answerCallbackQuery().catch(() => {});
-  const prompt = type === "remote"
-    ? "➕ Add Remote MCP Server\n\n3/3 · Server URL\n\nSend the absolute MCP Streamable HTTP URL.\n\nExample: https://mcp.example.com/mcp"
-    : "➕ Add Local MCP Server\n\n3/3 · Command\n\nSend the command OpenCode should run.\n\nExample: npx -y @modelcontextprotocol/server-everything";
+  const prompt =
+    type === "remote" ? t("mcps.add.remote_prompt") : t("mcps.add.local_prompt");
   await renderWizard(ctx, wizard.messageId, prompt, buildMcpsAddValueKeyboard());
   transitionMcpWizard(wizard);
 }
@@ -784,7 +777,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
       await renderWizard(
         ctx,
         pendingAuth.messageId,
-        "🔐 MCP Login\n\n❌ Send the full callback URL from your browser address bar, including both code and state.",
+        t("mcps.auth.invalid_callback_url"),
         buildMcpOAuthKeyboard(pendingAuth.authorizationUrl),
       );
       return true;
@@ -809,7 +802,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
       await renderWizard(
         ctx,
         pendingAuth.messageId,
-        "🔐 MCP Login\n\n❌ Invalid OAuth callback. The callback must contain the matching code and state from this login attempt.",
+        t("mcps.auth.invalid_callback"),
         buildMcpOAuthKeyboard(pendingAuth.authorizationUrl),
       );
       return true;
@@ -861,7 +854,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
       await renderWizard(
         ctx,
         pending.messageId,
-        "➕ Add MCP Server\n\n1/3 · Server name\n\n❌ Name must be 128 characters or fewer. Send another name.",
+        t("mcps.add.name_too_long"),
       );
       transitionMcpWizard(pending);
       return true;
@@ -871,7 +864,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
     await renderWizard(
       ctx,
       pending.messageId,
-      "➕ Add MCP Server\n\n2/3 · Server type\n\nChoose how OpenCode should connect to this server.",
+      t("mcps.add.type_prompt"),
       buildMcpsAddTypeKeyboard(),
     );
     transitionMcpWizard(pending);
@@ -880,7 +873,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
 
   if (pending.step !== "value" || !pending.type || !pending.name) return false;
   try {
-    await addMcpCatalogServer({
+    await createMcpServerFromInput({
       projectDirectory: pending.projectDirectory,
       name: pending.name,
       type: pending.type,
@@ -894,7 +887,13 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
     await renderWizard(
       ctx,
       pending.messageId,
-      `➕ Add MCP Server\n\n3/3 · ${pending.type === "remote" ? "Server URL" : "Command"}\n\n❌ ${message}\n\nSend a corrected value to retry, or go Back.`,
+      t("mcps.add.retry", {
+        field:
+          pending.type === "remote"
+            ? t("mcps.add.field.remote_url")
+            : t("mcps.add.field.command"),
+        error: message,
+      }),
       buildMcpsAddValueKeyboard(),
     );
     transitionMcpWizard(pending);
@@ -905,13 +904,11 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
 export async function mcpsCommand(ctx: Context): Promise<void> {
   try {
     const projectDirectory = getCurrentSessionDirectory();
-    const servers = await loadMcpCatalog(projectDirectory);
+    const servers = await loadMcpServers(projectDirectory);
     const callbackMessageIdValue = callbackMessageId(ctx);
     let messageId: number;
 
-    const text = servers.length > 0
-      ? t("mcps.select")
-      : "🔌 MCP Servers\n\nNo MCP servers are configured for this workspace yet.\n\nAdd one to make external tools available to OpenCode.";
+    const text = servers.length > 0 ? t("mcps.select") : t("mcps.empty");
     const keyboard = servers.length > 0 ? buildMcpsListKeyboard(servers) : buildMcpsEmptyKeyboard();
 
     if (callbackMessageIdValue !== null && ctx.chat?.id) {
