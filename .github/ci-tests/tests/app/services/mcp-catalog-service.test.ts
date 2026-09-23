@@ -6,10 +6,12 @@ const mocked = vi.hoisted(() => ({
   authRemove: vi.fn(),
   disconnect: vi.fn(),
   add: vi.fn(),
+  configGet: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: {
+    config: { get: mocked.configGet },
     mcp: {
       auth: {
         start: mocked.authStart,
@@ -26,12 +28,14 @@ const mockedCredentials = vi.hoisted(() => ({
   save: vi.fn(),
   load: vi.fn(),
   list: vi.fn(),
+  remove: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/mcp-credential-store.js", () => ({
   saveMcpCredential: mockedCredentials.save,
   loadMcpCredential: mockedCredentials.load,
   listMcpCredentials: mockedCredentials.list,
+  removeMcpCredential: mockedCredentials.remove,
 }));
 
 import {
@@ -39,6 +43,8 @@ import {
   configureSecureMcpAuth,
   getMcpAuthSummary,
   parseMcpCatalogServers,
+  resetMcpAuthToAuto,
+  resolveMcpRemoteUrl,
   restoreSecureMcpConnections,
   startMcpOAuth,
 } from "../../../src/app/services/mcp-catalog-service.js";
@@ -52,9 +58,11 @@ describe("app/services/mcp-catalog-service", () => {
     mocked.authRemove.mockReset();
     mocked.disconnect.mockReset();
     mocked.add.mockReset();
+    mocked.configGet.mockReset();
     mockedCredentials.save.mockReset();
     mockedCredentials.load.mockReset();
     mockedCredentials.list.mockReset();
+    mockedCredentials.remove.mockReset();
   });
 
   it("parses a dictionary-form catalog", () => {
@@ -366,6 +374,78 @@ describe("app/services/mcp-catalog-service", () => {
       configured: true,
     });
     expect(JSON.stringify(summary)).not.toContain("hidden-value");
+  });
+
+  it("resolves the remote URL from the encrypted credential store before reading OpenCode config", async () => {
+    mockedCredentials.load.mockResolvedValue({
+      projectDirectory: "/repo",
+      serverName: "secure",
+      remoteUrl: "https://secure.example/mcp",
+      mode: "bearer",
+      secret: "hidden",
+    });
+
+    await expect(resolveMcpRemoteUrl("/repo", "secure")).resolves.toBe("https://secure.example/mcp");
+    expect(mocked.configGet).not.toHaveBeenCalled();
+  });
+
+  it("resolves an uncredentialed remote URL from OpenCode config", async () => {
+    mockedCredentials.load.mockResolvedValue(null);
+    mocked.configGet.mockResolvedValue({
+      data: {
+        mcp: {
+          context7: { type: "remote", url: "https://mcp.context7.example/mcp" },
+        },
+      },
+      error: undefined,
+    });
+
+    await expect(resolveMcpRemoteUrl("/repo", "context7")).resolves.toBe(
+      "https://mcp.context7.example/mcp",
+    );
+    expect(mocked.configGet).toHaveBeenCalledWith({ directory: "/repo" });
+  });
+
+  it("supports the nested mcp.servers config shape when resolving a remote URL", async () => {
+    mockedCredentials.load.mockResolvedValue(null);
+    mocked.configGet.mockResolvedValue({
+      data: {
+        mcp: {
+          servers: {
+            nested: { type: "remote", url: "https://nested.example/mcp" },
+          },
+        },
+      },
+      error: undefined,
+    });
+
+    await expect(resolveMcpRemoteUrl("/repo", "nested")).resolves.toBe(
+      "https://nested.example/mcp",
+    );
+  });
+
+  it("resets secure auth to native auto/OAuth in memory and removes the stored credential", async () => {
+    mocked.add.mockResolvedValue({
+      data: { secure: { status: "needs_auth" } },
+      error: undefined,
+    });
+    mockedCredentials.remove.mockResolvedValue(true);
+
+    await expect(resetMcpAuthToAuto({
+      projectDirectory: "/repo",
+      serverName: "secure",
+      remoteUrl: "https://secure.example/mcp",
+    })).resolves.toEqual({
+      name: "secure",
+      status: { status: "needs_auth" },
+    });
+
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/repo",
+      name: "secure",
+      config: { type: "remote", url: "https://secure.example/mcp" },
+    });
+    expect(mockedCredentials.remove).toHaveBeenCalledWith("/repo", "secure");
   });
 
 });
