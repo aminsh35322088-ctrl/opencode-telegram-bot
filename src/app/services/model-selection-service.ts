@@ -6,7 +6,7 @@ import { isServerUnavailableError } from "../../utils/opencode-error.js";
 import { logger } from "../../utils/logger.js";
 import type { ModelInfo, FavoriteModel, ModelSelectionLists, ProviderInfo } from "../types/model.js";
 import path from "node:path";
-import { isChatModelMetadata } from "./model-eligibility-service.js";
+import { isAgentToolCapableModelMetadata } from "./model-eligibility-service.js";
 
 const cachedPriceMetadata = new Map<string, { fetchedAt: number; models: Array<[string, unknown]> }>();
 export function getCachedProviderPriceMetadata(providerID: string) { return cachedPriceMetadata.get(providerID); }
@@ -107,7 +107,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
         if (provider.id === COPILOT_PROVIDER_ID || customProviderIds.has(provider.id)) continue;
 
         priceMetadata.set(provider.id, { fetchedAt: Date.now(), models: Object.entries(provider.models) });
-        const providerModels: FavoriteModel[] = Object.entries(provider.models).filter(([, metadata]) => isChatModelMetadata(metadata)).map(([modelID, metadata]) => ({
+        const providerModels: FavoriteModel[] = Object.entries(provider.models).filter(([, metadata]) => isAgentToolCapableModelMetadata(metadata)).map(([modelID, metadata]) => ({
           providerID: provider.id,
           modelID,
           name: getAdvertisedModelName(metadata),
@@ -124,7 +124,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
 
       for (const provider of customProviders) {
         const providerModels = dedupeModels(
-          provider.models.filter(isChatModelMetadata).map((model) => ({ providerID: provider.id, modelID: model.id, name: model.name })),
+          provider.models.filter(isAgentToolCapableModelMetadata).map((model) => ({ providerID: provider.id, modelID: model.id, name: model.name })),
         );
         byProvider.set(provider.id, providerModels);
         for (const model of providerModels) {
@@ -137,8 +137,18 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       const env = getEnvDefaultModel();
       const envProvider = response.data.providers.find((p) => p.id === env?.providerID);
       const envCustom = (await listCustomProviders()).find((p) => p.id === env?.providerID);
-      const envAllowed = env && (!envCustom || (envCustom.capability !== "stt" && isChatModelMetadata(envCustom.models.find((m) => m.id === env.modelID)))) && (!envProvider?.models[env.modelID] || isChatModelMetadata(envProvider.models[env.modelID]));
-      if (envAllowed) { valid.add(getModelKey(env.providerID, env.modelID)); all.push(env); }
+      const envProviderModel = env && envProvider?.models[env.modelID];
+      const envCustomModel = env && envCustom?.models.find((m) => m.id === env.modelID);
+      const envAllowed = Boolean(
+        env && (
+          envCustom
+            ? envCustom.capability !== "stt" && isAgentToolCapableModelMetadata(envCustomModel)
+            : envProviderModel
+              ? isAgentToolCapableModelMetadata(envProviderModel)
+              : env.providerID === "opencode"
+        )
+      );
+      if (envAllowed && env) { valid.add(getModelKey(env.providerID, env.modelID)); all.push(env); }
       if (envAllowed && !providers.some((provider) => provider.id === env.providerID)) {
         providers.push({ id: env.providerID, name: env.providerID === "opencode" ? "OpenCode" : env.providerID, modelCount: 1 });
         byProvider.set(env.providerID, [env]);
@@ -227,9 +237,15 @@ export async function reconcileStoredModelSelection(options?: { forceCatalogRefr
   const valid = options?.forceCatalogRefresh ? await getValidModelKeys({ force: true }) : await getValidModelKeys();
   const current = getCurrentModel();
   if (!current?.providerID || !current.modelID || !valid || valid.has(getModelKey(current.providerID, current.modelID))) return;
-  const fallback = getEnvDefaultModel();
-  if (fallback && valid.has(getModelKey(fallback.providerID, fallback.modelID))) {
-    logger.warn(`[ModelManager] Stored model unavailable; falling back to ${getModelKey(fallback.providerID, fallback.modelID)}`);
+  const configuredFallback = getEnvDefaultModel();
+  const fallback =
+    configuredFallback && valid.has(getModelKey(configuredFallback.providerID, configuredFallback.modelID))
+      ? configuredFallback
+      : cachedAllModels?.find((model) => valid.has(getModelKey(model.providerID, model.modelID))) ?? null;
+  if (fallback) {
+    logger.warn(
+      `[ModelManager] Stored model is unavailable or not tool-capable; falling back to ${getModelKey(fallback.providerID, fallback.modelID)}`,
+    );
     setCurrentModel({ ...fallback, variant: "default" });
   }
 }
