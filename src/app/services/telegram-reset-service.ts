@@ -15,7 +15,6 @@ import { clearAllTopicRuntimeStates, listTopicRuntimeStates } from "../stores/to
 import { getPersistentStatePaths } from "./persistent-state-registry.js";
 import { scheduledTaskRuntime } from "./scheduled-task-runtime-service.js";
 import { foregroundSessionState } from "../managers/foreground-session-state-manager.js";
-import { rustDeskSecureInputManager } from "../managers/rustdesk-secure-input-manager.js";
 import { clearAllToolActivity } from "../managers/tool-activity-manager.js";
 import { logger } from "../../utils/logger.js";
 
@@ -139,7 +138,6 @@ function clearTransientState(reason: string): void {
   detachAttachedSession(reason);
   assistantRunState.clearAll(reason);
   foregroundSessionState.clearAll(reason);
-  rustDeskSecureInputManager.clearAll();
   clearAllToolActivity();
 }
 

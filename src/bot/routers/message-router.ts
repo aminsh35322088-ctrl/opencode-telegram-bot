@@ -9,7 +9,6 @@ import { handleProviderWizardMessage, isProviderWizardActive, clearProviderWizar
 import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
 import { handleModelSearchTextInput } from "../callbacks/model-center-callback-handler.js";
 import { handleQuestionTextAnswer } from "../callbacks/question-callback-handler.js";
-import { handleRustDeskSecureInputMessage } from "../handlers/rustdesk-secure-input-handler.js";
 import { handleRenameTextAnswer } from "../callbacks/rename-callback-handler.js";
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
@@ -228,12 +227,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
     logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`);
 
     if (await handlePriorityControlButton(ctx)) return;
-
-    // Secure credential input must run before generic slash-command routing so
-    // valid secrets beginning with "/" are not misclassified as bot commands.
-    // The secure-input handler itself explicitly passes through supported
-    // control commands such as /abort and /stop.
-    if (await handleRustDeskSecureInputMessage(ctx)) return;
 
     if (text.startsWith("/")) {
       await next();

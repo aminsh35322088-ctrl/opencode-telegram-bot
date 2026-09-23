@@ -42,7 +42,6 @@ These are registry aliases for discovery only; the model still invokes the nativ
 | `railway` | project/status/log/variable/deploy operations |
 | `storage-health` | persistent-volume inspection and safe cache cleanup |
 | `session-recovery` | inspect/abort/continue stalled OpenCode sessions |
-| `rustdesk` | authorized device discovery, terminal, screen, input, touch, clipboard, files, and system actions |
 
 All custom tools use an explicit `action` discriminator, including formerly single-purpose tools.
 
@@ -60,7 +59,7 @@ Credential enrollment remains UI-only. API keys and GitHub/Railway tokens are ne
 
 The `media` tool reuses the bot's configured AI connections instead of asking the model for credentials. Audio transcription reads a bounded file inside the active worktree. Image generation/editing uses the resolved default Image Chat profile and writes the resulting image back into the active worktree.
 
-## RustDesk remote-device actions
+
 
 The `rustdesk` tool delegates transport/control to a separate bridge. Device discovery returns OS and capability metadata; the model decides whether terminal, GUI, touch, clipboard, or file actions are appropriate instead of relying on hard-coded OS routing.
 

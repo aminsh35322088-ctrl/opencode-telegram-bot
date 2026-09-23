@@ -8,14 +8,6 @@ import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
-import {
-  clearRustDeskSettingsWizard,
-  handleRustDeskSettingsCallback,
-  handleRustDeskSettingsMessage,
-  isRustDeskSettingsWizardActive,
-} from "./rustdesk-settings-command.js";
-export { showRustDeskIntegrationMenu } from "./rustdesk-settings-command.js";
-
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingRailway { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingState { github?: PendingGithub; railway?: PendingRailway; }
@@ -38,11 +30,10 @@ function wizardKeyboard(): InlineKeyboard {
 }
 export function isIntegrationWizardActive(): boolean {
   const pending = integrationWizard.get();
-  return Boolean(pending?.github || pending?.railway) || isRustDeskSettingsWizardActive();
+  return Boolean(pending?.github || pending?.railway);
 }
 export function clearIntegrationWizard(): void {
   integrationWizard.clear();
-  clearRustDeskSettingsWizard();
 }
 function railwayValidationError(validation: RailwayTokenValidation): Error {
   switch (validation.reason) {
@@ -74,7 +65,7 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   const githubActive = await getActiveGithubAccount();
   const railwayAccounts = await listRailwayAccounts();
   const railwayActive = await getActiveRailwayAccount();
-  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add").row().text("🖥️ RustDesk", "integration:rustdesk");
+  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add");
   for (const account of githubAccounts) {
     const label = account.id === githubActive?.id ? `✅ ${account.name}` : account.name;
     keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
@@ -84,8 +75,7 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
     keyboard.row().text(label, `integration:railway:select:${account.id}`).text("🗑️", `integration:railway:remove:${account.id}`);
   }
   keyboard.row().text("← Advanced", "integration:advanced").text("🏠 Home", "main:home");
-  const rustDeskConfigured = Boolean(process.env.RUSTDESK_BRIDGE_URL?.trim());
-  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}\n\nRustDesk: ${rustDeskConfigured ? "Configured" : "Not configured"}`;
+  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}`;
   const text = notice ? `${notice}\n\n${body}` : body;
   const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
   if (targetMessageId !== null && ctx.chat?.id) {
@@ -105,14 +95,6 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (!data.startsWith("integration:")) return false;
   const chatId = ctx.chat?.id;
   if (!chatId) return true;
-  if (
-    data === "integration:rustdesk" ||
-    data === "integration:rustdesk:refresh" ||
-    data.startsWith("integration:rd:")
-  ) {
-    clearProviderWizard();
-    return handleRustDeskSettingsCallback(ctx);
-  }
   if (data === "integration:close") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
   if (data === "integration:advanced") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
@@ -127,7 +109,6 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   return true;
 }
 export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
-  if (await handleRustDeskSettingsMessage(ctx)) return true;
   const text = ctx.message?.text?.trim();
   const state = integrationWizard.get();
   if (!ctx.chat?.id || !text || !state) return false;

@@ -11,9 +11,6 @@ export const ru: I18nDictionary = {
   "error.load_variants": "❌ Ошибка при загрузке списка вариантов",
   "error.context_button": "❌ Ошибка при обработке кнопки контекста",
   "error.generic": "🔴 Произошла ошибка.",
-  "rustdesk.secure_input.request": "🔐 RustDesk требует {kind}. Отправьте это следующим сообщением. Оно обрабатывается как защищённый ввод и не передаётся ИИ-модели.",
-  "rustdesk.secure_input.submitted": "✅ Учётные данные RustDesk безопасно отправлены.",
-  "rustdesk.secure_input.failed": "❌ RustDesk отклонил защищённый ввод или bridge недоступен. Отправьте данные снова или используйте /abort.",
 
   "interaction.blocked.expired": "⚠️ Текущая интеракция устарела. Запустите ее снова.",
   "interaction.blocked.expected_callback":
