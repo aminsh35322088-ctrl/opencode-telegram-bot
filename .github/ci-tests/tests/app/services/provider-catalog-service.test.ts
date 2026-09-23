@@ -18,6 +18,35 @@ describe("shared provider catalog", () => {
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty("method", "POST");
   });
 
+
+  it("retries a timed-out model discovery request once", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "model-after-retry" }] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const catalog = await fetchProviderCatalog(url, "key");
+
+    expect(catalog.records.map((record) => record.id)).toEqual(["model-after-retry"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows provider model discovery up to 30 seconds per attempt", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "slow-model" }] }))));
+
+    await fetchProviderCatalog(url, "key");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+  });
+
+  it("reports a clear error after both discovery attempts time out", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchProviderCatalog(url, "key")).rejects.toThrow("Model discovery timed out after 30 seconds (2 attempts)");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("force refresh bypasses a fresh cached catalog", async () => {
     const first = { data: [{ id: "old-model" }] };
     const second = { data: [{ id: "old-model" }, { id: "new-model" }] };
