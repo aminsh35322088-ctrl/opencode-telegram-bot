@@ -98,7 +98,15 @@ function createProvidersResponse(modelsByProvider: Record<string, string[]>) {
     data: {
       providers: Object.entries(modelsByProvider).map(([providerID, modelIDs]) => ({
         id: providerID,
-        models: Object.fromEntries(modelIDs.map((modelID) => [modelID, { id: modelID }])),
+        models: Object.fromEntries(
+          modelIDs.map((modelID) => [
+            modelID,
+            {
+              id: modelID,
+              capabilities: { toolcall: true, output: { text: true } },
+            },
+          ]),
+        ),
       })),
     },
     error: null,
@@ -575,7 +583,16 @@ describe("app/services/model-selection-service", () => {
       providersMock.mockResolvedValueOnce({
         data: {
           providers: [
-            { id: "openai", name: "OpenAI", models: { "gpt-4o": { id: "gpt-4o" } } },
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-4o": {
+                  id: "gpt-4o",
+                  capabilities: { toolcall: true, output: { text: true } },
+                },
+              },
+            },
             { id: "anthropic", name: "Anthropic", models: {} },
           ],
         },
