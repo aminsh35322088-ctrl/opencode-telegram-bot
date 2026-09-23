@@ -1,11 +1,17 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
-import { addMcpCatalogServer, loadMcpCatalog } from "../../app/services/mcp-catalog-service.js";
+import {
+  addMcpCatalogServer,
+  completeMcpOAuth,
+  loadMcpCatalog,
+  startMcpOAuth,
+} from "../../app/services/mcp-catalog-service.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import {
+  buildMcpOAuthKeyboard,
   buildMcpsAddTypeKeyboard,
   buildMcpsEmptyKeyboard,
   buildMcpsListKeyboard,
@@ -22,7 +28,16 @@ interface PendingMcpAdd {
   projectDirectory: string;
 }
 
+interface PendingMcpAuth {
+  serverName: string;
+  oauthState: string;
+  authorizationUrl: string;
+  messageId: number;
+  projectDirectory: string;
+}
+
 const mcpAddWizard = new TopicScopedValue<PendingMcpAdd>();
+const mcpAuthWizard = new TopicScopedValue<PendingMcpAuth>();
 
 function callbackMessageId(ctx: Context): number | null {
   const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
@@ -54,6 +69,11 @@ async function renderWizard(
 function isMcpAddInteractionActive(): boolean {
   const state = interactionManager.getSnapshot();
   return state?.kind === "custom" && state.metadata.flow === "mcps" && state.metadata.stage === "add";
+}
+
+function isMcpAuthInteractionActive(): boolean {
+  const state = interactionManager.getSnapshot();
+  return state?.kind === "custom" && state.metadata.flow === "mcps" && state.metadata.stage === "auth";
 }
 
 async function renderMcpList(
@@ -101,8 +121,16 @@ export function isMcpAddWizardActive(): boolean {
   return mcpAddWizard.isActive();
 }
 
+export function isMcpAuthWizardActive(): boolean {
+  return mcpAuthWizard.isActive();
+}
+
 export function clearMcpAddWizard(): void {
   mcpAddWizard.clear();
+}
+
+export function clearMcpAuthWizard(): void {
+  mcpAuthWizard.clear();
 }
 
 export async function dismissMcpAddWizard(ctx: Context, restoreList = false): Promise<boolean> {
@@ -118,6 +146,67 @@ export async function dismissMcpAddWizard(ctx: Context, restoreList = false): Pr
     }
   }
   return true;
+}
+
+export async function dismissMcpAuthWizard(ctx: Context, restoreList = false): Promise<boolean> {
+  const pending = mcpAuthWizard.get();
+  if (!pending) return false;
+  mcpAuthWizard.clear();
+  if (isMcpAuthInteractionActive()) interactionManager.clear("mcp_auth_dismissed");
+  if (restoreList) {
+    try {
+      await renderMcpList(ctx, pending.messageId, pending.projectDirectory);
+    } catch (error) {
+      logger.warn("[Mcps] Failed to restore MCP list after dismissing OAuth:", error);
+    }
+  }
+  return true;
+}
+
+export async function startMcpAuthWizard(ctx: Context, options: {
+  serverName: string;
+  projectDirectory: string;
+  messageId: number;
+}): Promise<void> {
+  const result = await startMcpOAuth(options.projectDirectory, options.serverName);
+  if (!result.authorizationUrl) {
+    await renderMcpList(ctx, options.messageId, options.projectDirectory);
+    return;
+  }
+
+  const pending: PendingMcpAuth = {
+    serverName: options.serverName,
+    oauthState: result.oauthState,
+    authorizationUrl: result.authorizationUrl,
+    messageId: options.messageId,
+    projectDirectory: options.projectDirectory,
+  };
+  mcpAuthWizard.set(pending);
+  interactionManager.transition({
+    expectedInput: "mixed",
+    metadata: {
+      flow: "mcps",
+      stage: "auth",
+      messageId: options.messageId,
+      projectDirectory: options.projectDirectory,
+      serverName: options.serverName,
+    },
+  });
+
+  await renderWizard(
+    ctx,
+    options.messageId,
+    [
+      `🔐 Sign in to ${options.serverName}`,
+      "",
+      "1. Tap Open Login and finish authorization in your browser.",
+      "2. If the browser ends on an unavailable localhost page, copy the full URL from the address bar.",
+      "3. Send that full callback URL here.",
+      "",
+      "The authorization code is deleted from Telegram immediately and is never sent to the model.",
+    ].join("\n"),
+    buildMcpOAuthKeyboard(result.authorizationUrl),
+  );
 }
 
 export async function startMcpAddWizard(ctx: Context): Promise<void> {
@@ -161,9 +250,71 @@ export async function selectMcpAddType(ctx: Context, type: "local" | "remote"): 
 }
 
 export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
-  const pending = mcpAddWizard.get();
   const text = ctx.message?.text?.trim();
-  if (!pending || !text || !ctx.chat?.id || !isMcpAddInteractionActive()) return false;
+  if (!text || !ctx.chat?.id) return false;
+
+  const pendingAuth = mcpAuthWizard.get();
+  if (pendingAuth && isMcpAuthInteractionActive()) {
+    await deleteInput(ctx);
+
+    let callbackUrl: URL;
+    try {
+      callbackUrl = new URL(text);
+    } catch {
+      await renderWizard(
+        ctx,
+        pendingAuth.messageId,
+        "🔐 MCP Login\n\n❌ Send the full callback URL from your browser address bar, including both code and state.",
+        buildMcpOAuthKeyboard(pendingAuth.authorizationUrl),
+      );
+      return true;
+    }
+
+    const oauthError = callbackUrl.searchParams.get("error");
+    if (oauthError) {
+      mcpAuthWizard.clear();
+      interactionManager.clear("mcp_auth_provider_error");
+      await renderMcpList(ctx, pendingAuth.messageId, pendingAuth.projectDirectory);
+      return true;
+    }
+
+    const code = callbackUrl.searchParams.get("code");
+    const state = callbackUrl.searchParams.get("state");
+    if (!code || !state || state !== pendingAuth.oauthState) {
+      await renderWizard(
+        ctx,
+        pendingAuth.messageId,
+        "🔐 MCP Login\n\n❌ Invalid OAuth callback. The callback must contain the matching code and state from this login attempt.",
+        buildMcpOAuthKeyboard(pendingAuth.authorizationUrl),
+      );
+      return true;
+    }
+
+    try {
+      const completed = await completeMcpOAuth(
+        pendingAuth.projectDirectory,
+        pendingAuth.serverName,
+        code,
+      );
+      mcpAuthWizard.clear();
+      interactionManager.clear("mcp_auth_completed");
+      if (completed.status.status !== "connected") {
+        logger.warn(
+          `[Mcps] OAuth completed without connected status: server=${pendingAuth.serverName}, status=${completed.status.status}`,
+        );
+      }
+      await renderMcpList(ctx, pendingAuth.messageId, pendingAuth.projectDirectory);
+    } catch (error) {
+      mcpAuthWizard.clear();
+      interactionManager.clear("mcp_auth_failed");
+      logger.warn(`[Mcps] OAuth completion failed for ${pendingAuth.serverName}:`, error);
+      await renderMcpList(ctx, pendingAuth.messageId, pendingAuth.projectDirectory);
+    }
+    return true;
+  }
+
+  const pending = mcpAddWizard.get();
+  if (!pending || !isMcpAddInteractionActive()) return false;
 
   await deleteInput(ctx);
 
