@@ -6,9 +6,32 @@ import type { InteractionState } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
-import { buildMcpsDetailKeyboard, buildMcpsDetailText, buildMcpsListKeyboard, MCPS_CALLBACK_ADD, MCPS_CALLBACK_ADD_LOCAL, MCPS_CALLBACK_ADD_REMOTE, MCPS_CALLBACK_BACK, MCPS_CALLBACK_CANCEL, MCPS_CALLBACK_PREFIX, MCPS_CALLBACK_SELECT_PREFIX, MCPS_CALLBACK_TOGGLE, parseMcpSelectCallback } from "../menus/mcp-catalog-menu.js";
+import {
+  buildMcpsDetailKeyboard,
+  buildMcpsDetailText,
+  buildMcpsListKeyboard,
+  MCPS_CALLBACK_ADD,
+  MCPS_CALLBACK_ADD_LOCAL,
+  MCPS_CALLBACK_ADD_REMOTE,
+  MCPS_CALLBACK_AUTH_CANCEL,
+  MCPS_CALLBACK_AUTH_START,
+  MCPS_CALLBACK_BACK,
+  MCPS_CALLBACK_CANCEL,
+  MCPS_CALLBACK_PREFIX,
+  MCPS_CALLBACK_SELECT_PREFIX,
+  MCPS_CALLBACK_TOGGLE,
+  parseMcpSelectCallback,
+} from "../menus/mcp-catalog-menu.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
-import { startMcpAddWizard, selectMcpAddType, clearMcpAddWizard, dismissMcpAddWizard } from "../commands/mcp-catalog-command.js";
+import {
+  startMcpAddWizard,
+  startMcpAuthWizard,
+  selectMcpAddType,
+  clearMcpAddWizard,
+  clearMcpAuthWizard,
+  dismissMcpAddWizard,
+  dismissMcpAuthWizard,
+} from "../commands/mcp-catalog-command.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 
@@ -76,6 +99,19 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) return false;
 
+  if (data === MCPS_CALLBACK_AUTH_CANCEL) {
+    const dismissed = await dismissMcpAuthWizard(ctx, true);
+    if (!dismissed) {
+      clearMcpAuthWizard();
+      if (!(await recoverMcpsListInteraction(ctx))) {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
+      }
+      return true;
+    }
+    await ctx.answerCallbackQuery({ text: "MCP login cancelled." }).catch(() => {});
+    return true;
+  }
+
   if (data === MCPS_CALLBACK_CANCEL) {
     const dismissed = await dismissMcpAddWizard(ctx, true);
     if (!dismissed) {
@@ -139,6 +175,25 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
       return true;
     }
 
+    if (data === MCPS_CALLBACK_AUTH_START) {
+      if (metadata.stage !== "detail") {
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      const server = metadata.servers.find((item) => item.name === metadata.serverName);
+      if (!server || server.status.status !== "needs_auth") {
+        await ctx.answerCallbackQuery({ text: "This MCP server is not waiting for OAuth login.", show_alert: true });
+        return true;
+      }
+      await ctx.answerCallbackQuery({ text: "Opening secure MCP login…" }).catch(() => {});
+      await startMcpAuthWizard(ctx, {
+        serverName: metadata.serverName,
+        projectDirectory: metadata.projectDirectory,
+        messageId: metadata.messageId,
+      });
+      return true;
+    }
+
     if (data === MCPS_CALLBACK_TOGGLE) {
       if (metadata.stage !== "detail") {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
@@ -187,6 +242,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     logger.error("[Mcps] Error handling MCP callback:", error);
     clearMcpsInteraction("mcps_callback_error");
     clearMcpAddWizard();
+    clearMcpAuthWizard();
     await ctx.answerCallbackQuery({ text: t("mcps.toggle_error") }).catch(() => {});
     return true;
   }
