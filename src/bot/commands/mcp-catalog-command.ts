@@ -182,16 +182,25 @@ export async function startMcpAuthWizard(ctx: Context, options: {
     projectDirectory: options.projectDirectory,
   };
   mcpAuthWizard.set(pending);
-  interactionManager.transition({
-    expectedInput: "mixed",
-    metadata: {
-      flow: "mcps",
-      stage: "auth",
-      messageId: options.messageId,
-      projectDirectory: options.projectDirectory,
-      serverName: options.serverName,
-    },
-  });
+  const authMetadata = {
+    flow: "mcps",
+    stage: "auth",
+    messageId: options.messageId,
+    projectDirectory: options.projectDirectory,
+    serverName: options.serverName,
+  };
+  if (interactionManager.getSnapshot()) {
+    interactionManager.transition({
+      expectedInput: "mixed",
+      metadata: authMetadata,
+    });
+  } else {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: authMetadata,
+    });
+  }
 
   await renderWizard(
     ctx,
