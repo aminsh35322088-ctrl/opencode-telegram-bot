@@ -113,12 +113,13 @@
 - [x] Check Railway production logs/status; do not add or modify Railway variables.
 
 ### Task 6: Complete MCP Server management rework
-(**Files:**
+
+**Files:**
 - Rename/replace: `mcp-catalog-*` surfaces with `mcp-server-*` services, commands, menus, callbacks, and tests.
 - Create: `src/app/services/mcp-server-store.ts`
 - Modify: `.opencode/tools/bot.ts`, `src/opencode/ready-refresh.ts`
 
-**Interfaces:*)
+**Interfaces:**
 - Normal MCP definitions are structured local/remote configs, not shell CLI strings.
 - Local commands are parsed into argv without losing quoted, escaped, empty, or padded arguments.
 - Remote/local definitions persist without secrets and are restored after OpenCode restart.
