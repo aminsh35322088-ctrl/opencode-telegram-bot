@@ -376,6 +376,8 @@ async function renderMcpCredentialMenu(ctx: Context, pending: PendingMcpCredenti
     [
       `🔐 Authentication · ${pending.serverName}`,
       "",
+      `Server: ${pending.remoteUrl}`,
+      "",
       "Choose how this remote MCP server authenticates.",
       "",
       "✨ Auto / OAuth — recommended when the server supports browser sign-in",
@@ -426,7 +428,15 @@ async function renderMcpCredentialStep(ctx: Context, pending: PendingMcpCredenti
   await renderWizard(
     ctx,
     pending.messageId,
-    [title, "", body, "", "🔒 Credentials stay outside model context."].join("\n"),
+    [
+      title,
+      "",
+      `Server: ${pending.remoteUrl}`,
+      "",
+      body,
+      "",
+      "🔒 Credentials stay outside model context.",
+    ].join("\n"),
     keyboard,
   );
   transitionMcpCredentialWizard(pending, "mixed");
@@ -779,7 +789,10 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
     } catch (error) {
       mcpAuthWizard.clear();
       interactionManager.clear("mcp_auth_failed");
-      logger.warn(`[Mcps] OAuth completion failed for ${pendingAuth.serverName}:`, error);
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      logger.warn(
+        `[Mcps] OAuth completion failed: server=${pendingAuth.serverName}, error=${errorName}`,
+      );
       await renderMcpDetailView(
         ctx,
         pendingAuth.messageId,
