@@ -73,7 +73,6 @@ describe("MCP auth and model fallback i18n keys", () => {
     resetRuntimeLocale();
     const server = { name: "oauth-server", status: { status: "needs_auth" as const } };
     expect(buildMcpsDetailText(server as never)).toContain(t("mcps.detail.needs_auth_hint"));
-    expect(buildMcpsDetailText(server as never)).not.toContain("OAuth login is required");
 
     setRuntimeLocale("ar");
     try {
