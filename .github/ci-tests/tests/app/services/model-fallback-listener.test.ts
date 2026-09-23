@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   configMock,
   providersMock,
+  listCustomProvidersMock,
   getCurrentModelMock,
   setCurrentModelMock,
   setCurrentModelState,
@@ -22,6 +23,7 @@ const {
       },
     },
     providersMock: vi.fn(),
+    listCustomProvidersMock: vi.fn(),
     getCurrentModelMock,
     setCurrentModelMock,
     setCurrentModelState: (modelInfo?: { providerID: string; modelID: string; variant?: string }) => {
@@ -54,7 +56,7 @@ vi.mock("../../../src/utils/logger.js", () => ({
   },
 }));
 vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
-  listCustomProviders: vi.fn().mockResolvedValue([]),
+  listCustomProviders: listCustomProvidersMock,
   listCustomProvidersByCapability: vi.fn().mockResolvedValue([]),
 }));
 
@@ -87,6 +89,8 @@ describe("model-selection fallback listener", () => {
     __resetModelCatalogCacheForTests();
     setModelFallbackListener(null);
     providersMock.mockReset();
+    listCustomProvidersMock.mockReset();
+    listCustomProvidersMock.mockResolvedValue([]);
     providersMock.mockResolvedValue(
       createProvidersResponse({
         opencode: ["big-pickle"],

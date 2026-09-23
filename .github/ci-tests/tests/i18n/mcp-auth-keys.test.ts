@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { en, type I18nKey } from "../../../src/i18n/en.js";
-import { ar } from "../../../src/i18n/ar.js";
-import { de } from "../../../src/i18n/de.js";
-import { es } from "../../../src/i18n/es.js";
-import { fr } from "../../../src/i18n/fr.js";
-import { it as itLocale } from "../../../src/i18n/it.js";
-import { ko } from "../../../src/i18n/ko.js";
-import { pt } from "../../../src/i18n/pt.js";
-import { ru } from "../../../src/i18n/ru.js";
-import { zh } from "../../../src/i18n/zh.js";
-import { t, setRuntimeLocale, resetRuntimeLocale } from "../../../src/i18n/index.js";
-import { buildMcpsDetailText } from "../../../src/bot/menus/mcp-catalog-menu.js";
+import { en, type I18nKey } from "../../src/i18n/en.js";
+import { ar } from "../../src/i18n/ar.js";
+import { de } from "../../src/i18n/de.js";
+import { es } from "../../src/i18n/es.js";
+import { fr } from "../../src/i18n/fr.js";
+import { it as itLocale } from "../../src/i18n/it.js";
+import { ko } from "../../src/i18n/ko.js";
+import { pt } from "../../src/i18n/pt.js";
+import { ru } from "../../src/i18n/ru.js";
+import { zh } from "../../src/i18n/zh.js";
+import { t, setRuntimeLocale, resetRuntimeLocale } from "../../src/i18n/index.js";
+import { buildMcpsDetailText } from "../../src/bot/menus/mcp-catalog-menu.js";
 
 const REQUIRED_KEYS = [
   "mcps.detail.needs_auth_hint",
@@ -100,7 +100,7 @@ describe("MCP auth and model fallback i18n keys", () => {
   });
 
   it("source files route MCP auth user-facing strings through t()", () => {
-    const root = path.resolve(__dirname, "../../../src/bot");
+    const root = path.resolve(__dirname, "../../src/bot");
     const files = [
       path.join(root, "menus/mcp-catalog-menu.ts"),
       path.join(root, "callbacks/mcp-catalog-callback-handler.ts"),
