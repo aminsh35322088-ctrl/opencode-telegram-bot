@@ -691,6 +691,8 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
   });
 }
 
+// Explicit targets are mandatory: catalog discovery/refresh paths must never
+// fan out inference probes across every model exposed by a provider.
 export async function refreshCustomProviderToolCapabilities(
   targets: readonly ToolCapabilityTarget[],
 ): Promise<boolean> {
