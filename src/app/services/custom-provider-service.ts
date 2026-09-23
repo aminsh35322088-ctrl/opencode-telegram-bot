@@ -240,8 +240,14 @@ async function readStore(): Promise<ProviderStoreFile> {
   return normalizeStore(state.customProviders);
 }
 
+async function invalidateUnifiedCatalog(): Promise<void> {
+  const { invalidateUnifiedModelCatalog } = await import("./unified-model-catalog-service.js");
+  invalidateUnifiedModelCatalog();
+}
+
 async function writeStore(store: ProviderStoreFile, beforeSave: () => void = () => {}): Promise<void> {
   await updateAppState(() => { beforeSave(); return { customProviders: normalizeStore(store) }; });
+  await invalidateUnifiedCatalog();
 }
 
 function normalizeId(value: string): string {
@@ -653,16 +659,19 @@ async function persistToolCapabilityUpdates(updates: readonly ToolCapabilityUpda
     return changed ? { customProviders: normalizeStore({ ...current, providers }) } : {};
   });
 
-  if (changed) logger.info("[CustomProvider] Persisted verified tool-call capabilities");
+  if (changed) {
+    await invalidateUnifiedCatalog();
+    logger.info("[CustomProvider] Persisted verified tool-call capabilities");
+  }
   return changed;
 }
 
 async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpdate[]): Promise<void> {
   if (!updates.length) return;
 
+  let changed = false;
   await updateAppState((state) => {
     const current = normalizeStore(state.customProviders);
-    let changed = false;
     const providers = current.providers.map((provider) => {
       const matching = updates.filter((update) =>
         update.providerId === provider.id &&
@@ -689,6 +698,7 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
     });
     return changed ? { customProviders: normalizeStore({ ...current, providers }) } : {};
   });
+  if (changed) await invalidateUnifiedCatalog();
 }
 
 // Explicit targets are mandatory: catalog discovery/refresh paths must never

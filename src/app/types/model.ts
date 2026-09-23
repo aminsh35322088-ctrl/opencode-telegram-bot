@@ -24,6 +24,8 @@ export interface ProviderInfo {
   id: string;
   name: string;
   modelCount: number;
+  readyModelCount?: number;
+  unverifiedModelCount?: number;
 }
 
 export interface ModelSelectionLists {

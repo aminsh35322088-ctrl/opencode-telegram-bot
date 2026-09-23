@@ -39,6 +39,10 @@ export interface ModelExecutionCapabilities {
   nativeAudioMimeTypes: string[];
 }
 
+export type ModelCatalogOrigin = "opencode-runtime" | "custom-provider" | "adapter";
+export type AgentModelReadiness = "ready" | "unverified" | "unsupported";
+export type AgentReadinessSource = "opencode-runtime" | "live-probe" | "provider-metadata" | "adapter";
+
 export interface UnifiedModelCatalogEntry {
   providerID: string;
   providerName: string;
@@ -50,6 +54,12 @@ export interface UnifiedModelCatalogEntry {
   capabilityDetection: {
     source: CapabilityDetectionSource;
     confidence: CapabilityConfidence;
+  };
+  origin?: ModelCatalogOrigin;
+  agentReadiness?: {
+    state: AgentModelReadiness;
+    source: AgentReadinessSource;
+    reason?: string;
   };
   availability: "available" | "unavailable" | "unknown";
   experimentalFreeDetection?: {
