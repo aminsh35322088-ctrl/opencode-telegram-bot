@@ -736,7 +736,12 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
     if (oauthError) {
       mcpAuthWizard.clear();
       interactionManager.clear("mcp_auth_provider_error");
-      await renderMcpList(ctx, pendingAuth.messageId, pendingAuth.projectDirectory);
+      await renderMcpDetailView(
+        ctx,
+        pendingAuth.messageId,
+        pendingAuth.projectDirectory,
+        pendingAuth.serverName,
+      );
       return true;
     }
 
