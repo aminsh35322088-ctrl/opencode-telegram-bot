@@ -81,6 +81,21 @@ async function loadConfiguredTypeIndex(projectDirectory: string): Promise<Map<st
     logger.warn("[McpServer] Failed to read managed MCP definitions:", error);
   }
   try {
+    const normalizedDirectory = normalizeDirectoryForMcpApi(projectDirectory).replace(/\/+$/u, "");
+    const credentials = await listMcpCredentials();
+    for (const credential of credentials) {
+      const credentialDirectory = normalizeDirectoryForMcpApi(credential.projectDirectory).replace(
+        /\/+$/u,
+        "",
+      );
+      if (credentialDirectory === normalizedDirectory && !index.has(credential.serverName)) {
+        index.set(credential.serverName, "remote");
+      }
+    }
+  } catch (error) {
+    logger.debug("[McpServer] Secure MCP metadata unavailable while enriching server types", error);
+  }
+  try {
     const { data, error } = await opencodeClient.config.get({
       directory: normalizeDirectoryForMcpApi(projectDirectory),
     });
@@ -275,6 +290,11 @@ export async function restoreSecureMcpConnections(): Promise<{ restored: number;
     try {
       const server = await addSecureMcpDefinition(record);
       assertAcceptedSecureMcpStatus(record, server);
+      await saveManagedMcpServer({
+        projectDirectory: record.projectDirectory,
+        name: record.serverName,
+        config: { type: "remote", url: record.remoteUrl },
+      });
       restored += 1;
     } catch (error) {
       await scrubSecureMcpDefinition(record);

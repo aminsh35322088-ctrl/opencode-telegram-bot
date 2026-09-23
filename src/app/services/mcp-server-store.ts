@@ -171,20 +171,3 @@ export async function listManagedMcpServers(projectDirectory?: string): Promise<
     (server) => normalizedDirectory === null || server.projectDirectory === normalizedDirectory,
   );
 }
-
-export async function removeManagedMcpServer(
-  projectDirectory: string,
-  name: string,
-): Promise<boolean> {
-  const id = serverId(projectDirectory, name);
-  let removed = false;
-  await updateAppState((state) => {
-    const current = parseState(state[STORE_KEY]);
-    if (!current.records[id]) return { [STORE_KEY]: current };
-    const records = { ...current.records };
-    delete records[id];
-    removed = true;
-    return { [STORE_KEY]: { version: 1, records } };
-  });
-  return removed;
-}

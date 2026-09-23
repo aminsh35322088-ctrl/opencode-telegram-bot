@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -5,6 +7,8 @@ const mocked = vi.hoisted(() => ({
   authCallback: vi.fn(),
   authRemove: vi.fn(),
   disconnect: vi.fn(),
+  connect: vi.fn(),
+  status: vi.fn(),
   add: vi.fn(),
   configGet: vi.fn(),
 }));
@@ -19,6 +23,8 @@ vi.mock("../../../src/opencode/client.js", () => ({
         remove: mocked.authRemove,
       },
       disconnect: mocked.disconnect,
+      connect: mocked.connect,
+      status: mocked.status,
       add: mocked.add,
     },
   },
@@ -38,13 +44,30 @@ vi.mock("../../../src/app/services/mcp-credential-store.js", () => ({
   removeMcpCredential: mockedCredentials.remove,
 }));
 
+const mockedManaged = vi.hoisted(() => ({
+  save: vi.fn(),
+  load: vi.fn(),
+  list: vi.fn(),
+}));
+
+vi.mock("../../../src/app/services/mcp-server-store.js", () => ({
+  saveManagedMcpServer: mockedManaged.save,
+  loadManagedMcpServer: mockedManaged.load,
+  listManagedMcpServers: mockedManaged.list,
+}));
+
 import {
   completeMcpOAuth,
   configureSecureMcpAuth,
+  createMcpServerFromInput,
   getMcpAuthSummary,
+  loadMcpServers,
+  parseMcpCommandLine,
   parseMcpServerItems,
   resetMcpAuthToAuto,
   resolveMcpRemoteUrl,
+  restoreManagedMcpServers,
+  restoreMcpRuntime,
   restoreSecureMcpConnections,
   startMcpOAuth,
 } from "../../../src/app/services/mcp-server-service.js";
@@ -57,12 +80,17 @@ describe("app/services/mcp-server-service", () => {
     mocked.authCallback.mockReset();
     mocked.authRemove.mockReset();
     mocked.disconnect.mockReset();
+    mocked.connect.mockReset();
+    mocked.status.mockReset();
     mocked.add.mockReset();
     mocked.configGet.mockReset();
     mockedCredentials.save.mockReset();
     mockedCredentials.load.mockReset();
     mockedCredentials.list.mockReset();
     mockedCredentials.remove.mockReset();
+    mockedManaged.save.mockReset();
+    mockedManaged.load.mockReset().mockResolvedValue(null);
+    mockedManaged.list.mockReset().mockResolvedValue([]);
   });
 
   it("parses a dictionary-form catalog", () => {
@@ -72,8 +100,8 @@ describe("app/services/mcp-server-service", () => {
     });
 
     expect(servers).toEqual([
-      { name: "server-a", status: { status: "connected" } },
-      { name: "server-b", status: { status: "disabled" } },
+      { name: "server-a", status: { status: "connected" }, type: "unknown" },
+      { name: "server-b", status: { status: "disabled" }, type: "unknown" },
     ]);
   });
 
@@ -82,7 +110,7 @@ describe("app/services/mcp-server-service", () => {
       { name: "server-a", status: { status: "needs_auth" } },
     ]);
 
-    expect(servers).toEqual([{ name: "server-a", status: { status: "needs_auth" } }]);
+    expect(servers).toEqual([{ name: "server-a", status: { status: "needs_auth" }, type: "unknown" }]);
   });
 
   it("keeps the error on failed servers", () => {
@@ -91,7 +119,7 @@ describe("app/services/mcp-server-service", () => {
     });
 
     expect(servers).toEqual([
-      { name: "server-broken", status: { status: "failed", error: "boom" } },
+      { name: "server-broken", status: { status: "failed", error: "boom" }, type: "unknown" },
     ]);
   });
 
@@ -101,7 +129,7 @@ describe("app/services/mcp-server-service", () => {
     });
 
     expect(servers).toEqual([
-      { name: "server-broken", status: { status: "failed", error: "" } },
+      { name: "server-broken", status: { status: "failed", error: "" }, type: "unknown" },
     ]);
   });
 
@@ -112,7 +140,7 @@ describe("app/services/mcp-server-service", () => {
       "server-ok": { status: "connected" },
     });
 
-    expect(servers).toEqual([{ name: "server-ok", status: { status: "connected" } }]);
+    expect(servers).toEqual([{ name: "server-ok", status: { status: "connected" }, type: "unknown" }]);
     expect(warnSpy).toHaveBeenCalledWith(
       '[McpServer] Unknown MCP status "connecting", skipping server',
     );
@@ -168,6 +196,7 @@ describe("app/services/mcp-server-service", () => {
     await expect(completeMcpOAuth("/repo", "sentry", "oauth-code")).resolves.toEqual({
       name: "sentry",
       status: { status: "connected" },
+      type: "remote",
     });
     expect(mocked.authCallback).toHaveBeenCalledWith({
       name: "sentry",
@@ -181,6 +210,7 @@ describe("app/services/mcp-server-service", () => {
       error: undefined,
     });
     mockedCredentials.save.mockResolvedValue(undefined);
+    mockedManaged.save.mockResolvedValue(undefined);
 
     const record = {
       projectDirectory: "C:\\repo",
@@ -193,6 +223,7 @@ describe("app/services/mcp-server-service", () => {
     await expect(configureSecureMcpAuth(record)).resolves.toEqual({
       name: "secure",
       status: { status: "connected" },
+      type: "remote",
     });
 
     expect(mocked.add).toHaveBeenCalledWith({
@@ -278,6 +309,7 @@ describe("app/services/mcp-server-service", () => {
     await expect(configureSecureMcpAuth(record)).resolves.toEqual({
       name: "sentry",
       status: { status: "needs_auth" },
+      type: "remote",
     });
     expect(mocked.add).toHaveBeenCalledWith({
       directory: "/repo",
@@ -439,6 +471,7 @@ describe("app/services/mcp-server-service", () => {
     })).resolves.toEqual({
       name: "secure",
       status: { status: "needs_auth" },
+      type: "remote",
     });
 
     expect(mocked.add).toHaveBeenCalledWith({
@@ -544,6 +577,122 @@ describe("app/services/mcp-server-service", () => {
     })).rejects.toThrow(/client registration/i);
 
     expect(mockedCredentials.save).not.toHaveBeenCalled();
+  });
+
+  it("parses local MCP commands without destroying quotes or escaped spaces", () => {
+    expect(
+      parseMcpCommandLine('npx -y "@scope/server package" --label "hello world" path\\ with\\ spaces'),
+    ).toEqual(["npx", "-y", "@scope/server package", "--label", "hello world", "path with spaces"]);
+    expect(() => parseMcpCommandLine('npx "unterminated')).toThrow(/unmatched quote/i);
+  });
+
+  it("adds remote MCP through the typed OpenCode API and persists only its clean definition", async () => {
+    mocked.add.mockResolvedValue({
+      data: { context7: { status: "connected" } },
+      error: undefined,
+    });
+
+    await expect(createMcpServerFromInput({
+      projectDirectory: "C:\\repo",
+      name: "context7",
+      type: "remote",
+      value: "https://mcp.context7.example/mcp",
+    })).resolves.toEqual({
+      name: "context7",
+      status: { status: "connected" },
+      type: "remote",
+    });
+
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "C:/repo",
+      name: "context7",
+      config: { type: "remote", url: "https://mcp.context7.example/mcp" },
+    });
+    expect(mockedManaged.save).toHaveBeenCalledWith({
+      projectDirectory: "C:\\repo",
+      name: "context7",
+      config: { type: "remote", url: "https://mcp.context7.example/mcp" },
+    });
+  });
+
+  it("adds local MCP through the typed API with a structured command array", async () => {
+    mocked.add.mockResolvedValue({
+      data: { local: { status: "connected" } },
+      error: undefined,
+    });
+
+    await createMcpServerFromInput({
+      projectDirectory: "/repo",
+      name: "local",
+      type: "local",
+      value: 'node "./tools/mcp server.js" --flag "hello world"',
+    });
+
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/repo",
+      name: "local",
+      config: {
+        type: "local",
+        command: ["node", "./tools/mcp server.js", "--flag", "hello world"],
+      },
+    });
+  });
+
+  it("restores managed definitions before secure credential overlays", async () => {
+    mockedManaged.list.mockResolvedValue([
+      {
+        projectDirectory: "/repo",
+        name: "plain",
+        config: { type: "remote", url: "https://plain.example/mcp" },
+      },
+    ]);
+    mockedCredentials.list.mockResolvedValue([
+      {
+        projectDirectory: "/repo",
+        serverName: "secure",
+        remoteUrl: "https://secure.example/mcp",
+        mode: "bearer",
+        secret: "hidden",
+      },
+    ]);
+    mocked.add
+      .mockResolvedValueOnce({ data: { plain: { status: "connected" } }, error: undefined })
+      .mockResolvedValueOnce({ data: { secure: { status: "connected" } }, error: undefined });
+
+    await expect(restoreMcpRuntime()).resolves.toEqual({
+      managed: { restored: 1, failed: 0 },
+      secure: { restored: 1, failed: 0 },
+    });
+    expect(mocked.add).toHaveBeenCalledTimes(2);
+  });
+
+  it("enriches runtime status with the managed server type", async () => {
+    mocked.status.mockResolvedValue({
+      data: { local: { status: "connected" } },
+      error: undefined,
+    });
+    mockedManaged.list.mockResolvedValue([
+      {
+        projectDirectory: "/repo",
+        name: "local",
+        config: { type: "local", command: ["node", "server.js"] },
+      },
+    ]);
+    mocked.configGet.mockResolvedValue({ data: {}, error: undefined });
+
+    await expect(loadMcpServers("/repo")).resolves.toEqual([
+      { name: "local", status: { status: "connected" }, type: "local" },
+    ]);
+  });
+
+  it("contains no legacy OpenCode CLI subprocess path", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "src/app/services/mcp-server-service.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("node:child_process");
+    expect(source).not.toContain("execFileAsync");
+    expect(source).not.toMatch(/["']opencode["']\\s*,\\s*\\[?["']mcp["']/u);
   });
 
 });
