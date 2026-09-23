@@ -40,7 +40,6 @@ These are registry aliases for discovery only; the model still invokes the nativ
 | `send-file` | Telegram artifact delivery |
 | `github-ci` | workflow status/watch/logs/verification |
 | `railway` | project/status/log/variable/deploy operations |
-| `ssh` | direct SSH exec, file read/write/transfer, persistent public-key identity |
 | `storage-health` | persistent-volume inspection and safe cache cleanup |
 | `session-recovery` | inspect/abort/continue stalled OpenCode sessions |
 
@@ -54,7 +53,7 @@ MCP servers are runtime-defined. Their tool names and schemas are intentionally 
 
 The `bot` tool exposes capabilities that are useful to an autonomous coding agent without exposing stored credentials. It can inspect or switch existing model/agent/variant selections, manage scheduled tasks, safe settings, skills, MCP state, memory, and existing GitHub/Railway account selections.
 
-Credential enrollment remains UI-only. API keys and GitHub/Railway tokens are never returned by model-facing actions and are not accepted as tool arguments. The `ssh` tool uses a bot-owned persistent SSH identity and only exposes its public key through the UI/tool surface.
+Credential enrollment remains UI-only. API keys and GitHub/Railway tokens are never returned by model-facing actions and are not accepted as tool arguments.
 
 ## Media actions
 
