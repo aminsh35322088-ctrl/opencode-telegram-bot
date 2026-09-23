@@ -66,7 +66,6 @@ import {
   parseMcpServerItems,
   resetMcpAuthToAuto,
   resolveMcpRemoteUrl,
-  restoreManagedMcpServers,
   restoreMcpRuntime,
   restoreSecureMcpConnections,
   startMcpOAuth,
@@ -581,9 +580,32 @@ describe("app/services/mcp-server-service", () => {
 
   it("parses local MCP commands without destroying quotes or escaped spaces", () => {
     expect(
-      parseMcpCommandLine('npx -y "@scope/server package" --label "hello world" path\\ with\\ spaces'),
-    ).toEqual(["npx", "-y", "@scope/server package", "--label", "hello world", "path with spaces"]);
+      parseMcpCommandLine('npx -y "@scope/server package" --label "hello world" path\\ with\\ spaces "" " padded "'),
+    ).toEqual([
+      "npx",
+      "-y",
+      "@scope/server package",
+      "--label",
+      "hello world",
+      "path with spaces",
+      "",
+      " padded ",
+    ]);
     expect(() => parseMcpCommandLine('npx "unterminated')).toThrow(/unmatched quote/i);
+  });
+
+  it("preserves Windows and UNC paths while still supporting escaped spaces", () => {
+    expect(
+      parseMcpCommandLine(
+        'C:\\tools\\server.exe --root "C:\\Program Files\\Repo" \\\\server\\share path\\ with\\ spaces',
+      ),
+    ).toEqual([
+      "C:\\tools\\server.exe",
+      "--root",
+      "C:\\Program Files\\Repo",
+      "\\\\server\\share",
+      "path with spaces",
+    ]);
   });
 
   it("adds remote MCP through the typed OpenCode API and persists only its clean definition", async () => {

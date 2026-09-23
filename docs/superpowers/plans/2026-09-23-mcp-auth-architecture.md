@@ -10,11 +10,13 @@
 
 **Spec:** docs/superpowers/specs/2026-09-23-mcp-auth-architecture.md
 
+**Completion note (2026-09-23):** The follow-up audit completed the broader MCP Server rework that PR #122 originally left split between legacy CLI management and SDK auth. MCP creation/connect/disconnect/auth now use the typed OpenCode SDK path only; non-secret local/remote definitions are persisted in bot-owned state and restored on OpenCode ready, while secrets remain in the separate encrypted credential store. Legacy OpenCode config shapes are read only for migration/compatibility.
+
 ## Global Constraints
 - Add no new Railway variables.
 - Wizards must edit the existing canonical General panel; do not send wizard messages.
 - Navigation must provide correct Back/Cancel/Home behavior.
-- Keep UI copy concise, clean, English, and explanatory where needed.
+- Keep UI copy concise, i18n-backed, and explanatory where needed; English remains the fallback dictionary.
 - Raw secrets must not be returned through model-facing actions, logs, or OpenCode project config.
 - OAuth remains OpenCode-native.
 - Existing MCP canonical action IDs remain stable.
@@ -39,11 +41,11 @@
 - Produces: saveMcpCredential(record), loadMcpCredential(projectDirectory, serverName), listMcpCredentials(), removeMcpCredential(...)
 - Credential modes: bearer, api-key, custom-header, oauth-client
 
-- [ ] Write failing tests for encryption-at-rest, scope separation, removal, tamper failure, and token-rotation failure.
-- [ ] Run targeted tests and confirm RED.
-- [ ] Implement AES-256-GCM encryption using a key derived from existing config.telegram.token; persist only ciphertext metadata in app-state.
-- [ ] Run targeted tests and confirm GREEN.
-- [ ] Commit.
+- [x] Write failing tests for encryption-at-rest, scope separation, removal, tamper failure, and token-rotation failure.
+- [x] Run targeted tests and confirm RED.
+- [x] Implement AES-256-GCM encryption using a key derived from existing config.telegram.token; persist only ciphertext metadata in app-state.
+- [x] Run targeted tests and confirm GREEN.
+- [x] Commit.
 
 ### Task 2: Dynamic secure MCP connection service
 
@@ -55,11 +57,11 @@
 - Consumes encrypted credential records.
 - Produces configureSecureMcpAuth(...), restoreSecureMcpConnections(), getMcpAuthSummary(...).
 
-- [ ] Write failing tests proving bearer/API-key/custom headers and OAuth client credentials go through opencodeClient.mcp.add and not CLI/config/env.
-- [ ] Run targeted tests and confirm RED.
-- [ ] Implement dynamic in-memory MCP configs and reconnect/restore behavior.
-- [ ] Run targeted tests and confirm GREEN.
-- [ ] Commit.
+- [x] Write failing tests proving bearer/API-key/custom headers and OAuth client credentials go through opencodeClient.mcp.add and not CLI/config/env.
+- [x] Run targeted tests and confirm RED.
+- [x] Implement dynamic in-memory MCP configs and reconnect/restore behavior.
+- [x] Run targeted tests and confirm GREEN.
+- [x] Commit.
 
 ### Task 3: Same-message auth wizard and navigation
 
@@ -77,11 +79,11 @@
 - Secret inputs are deleted immediately and never included in display text.
 - Back returns to auth choices or server detail; Cancel returns to server detail; Home remains main:home.
 
-- [ ] Write failing UX/navigation tests first.
-- [ ] Run targeted tests and confirm RED.
-- [ ] Implement clean auth menus and input steps using only editMessageText on canonical panel.
-- [ ] Run targeted tests and confirm GREEN.
-- [ ] Commit.
+- [x] Write failing UX/navigation tests first.
+- [x] Run targeted tests and confirm RED.
+- [x] Implement clean auth menus and input steps using only editMessageText on canonical panel.
+- [x] Run targeted tests and confirm GREEN.
+- [x] Commit.
 
 ### Task 4: Restart restoration and model-facing safety
 
@@ -96,16 +98,38 @@
 - On OpenCode ready, secure MCP definitions are re-added from encrypted bot store.
 - Model-facing MCP actions can observe status/auth mode but cannot set or retrieve secrets.
 
-- [ ] Write failing restart/safety tests.
-- [ ] Run targeted tests and confirm RED.
-- [ ] Implement ready lifecycle restoration and safety filtering.
-- [ ] Run targeted tests and confirm GREEN.
-- [ ] Commit.
+- [x] Write failing restart/safety tests.
+- [x] Run targeted tests and confirm RED.
+- [x] Implement ready lifecycle restoration and safety filtering.
+- [x] Run targeted tests and confirm GREEN.
+- [x] Commit.
 
 ### Task 5: Whole-branch verification
 
-- [ ] Run lint, typecheck, build, and full Vitest suite.
-- [ ] Run whole-branch review against the spec and address Critical/Important findings with tests.
-- [ ] Sync with latest main if needed and rerun full CI.
-- [ ] Verify PR mergeability.
-- [ ] Check Railway production logs/status; do not add or modify Railway variables.
+- [x] Run lint, typecheck, build, and full Vitest suite.
+- [x] Run whole-branch review against the spec and address Critical/Important findings with tests.
+- [x] Sync with latest main if needed and rerun full CI.
+- [x] Verify PR mergeability.
+- [x] Check Railway production logs/status; do not add or modify Railway variables.
+
+### Task 6: Complete MCP Server management rework
+(**Files:**
+- Rename/replace: `mcp-catalog-*` surfaces with `mcp-server-*` services, commands, menus, callbacks, and tests.
+- Create: `src/app/services/mcp-server-store.ts`
+- Modify: `.opencode/tools/bot.ts`, `src/opencode/ready-refresh.ts`
+
+**Interfaces:*)
+- Normal MCP definitions are structured local/remote configs, not shell CLI strings.
+- Local commands are parsed into argv without losing quoted, escaped, empty, or padded arguments.
+- Remote/local definitions persist without secrets and are restored after OpenCode restart.
+- Authenticated remotes overlay encrypted credentials only at runtime.
+- Legacy direct `mcp[name]` and current nested `mcp.servers[name]` config shapes are read for compatibility.
+
+- [x] Remove the `opencode mcp add` child-process path and whitespace-splitting command parser.
+- [x] Route add/connect/disconnect/auth through the typed OpenCode SDK.
+- [x] Persist clean non-secret MCP definitions in bot-owned state.
+- [x] Backfill clean definitions from pre-existing encrypted PR #122 credentials during restore.
+- [x] Restore managed definitions before secure credential overlays on every OpenCode-ready lifecycle.
+- [x] Remove dead SSH action-display mappings and legacy `mcp-catalog-*` naming.
+- [x] Add regression coverage for quoted argv, empty/padded args, SDK-only add, restart restore, type enrichment, and CLI-path absence.
+- [x] Re-run lint, typecheck, build, targeted tests, and the full suite.

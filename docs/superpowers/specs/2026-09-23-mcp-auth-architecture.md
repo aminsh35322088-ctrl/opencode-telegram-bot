@@ -18,6 +18,13 @@ No new Railway variables are created. Raw secrets are not stored in OpenCode pro
 
 For authenticated remote MCPs, the bot reconstructs the connection using OpenCode's dynamic in-memory MCP add API. OpenCode receives the secret only in process memory for the MCP connection. On OpenCode restart, the bot restores these dynamic definitions from its encrypted credential store.
 
+## Server management boundary
+MCP server management uses the OpenCode SDK/API directly; the bot must not shell out to `opencode mcp add`. Local server commands are represented as structured argv so quoting, escaping, and intentional empty/whitespace-bearing arguments survive round trips.
+
+Non-secret server definitions are persisted in bot-owned application state separately from encrypted credentials. On OpenCode ready, clean managed definitions are restored first and secure credential overlays are applied second. Existing encrypted PR #122 credentials are backfilled into clean managed definitions after a successful restore, so upgrades are migration-safe without exposing secrets.
+
+For compatibility, the bot may read both the legacy direct MCP config map and the newer nested `mcp.servers` shape when discovering existing server metadata. New bot-managed runtime definitions use the installed OpenCode SDK contract.
+
 ## Visibility
 Models may see MCP connection status and non-secret auth mode. Models must never receive API keys, bearer tokens, custom header values, OAuth client secrets, authorization codes, access tokens, or refresh tokens through the bot action surface.
 

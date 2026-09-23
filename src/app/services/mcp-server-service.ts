@@ -449,7 +449,6 @@ export function parseMcpCommandLine(value: string): string[] {
   const result: string[] = [];
   let token = "";
   let quote: "'" | '"' | null = null;
-  let escaping = false;
   let started = false;
 
   const push = () => {
@@ -459,38 +458,51 @@ export function parseMcpCommandLine(value: string): string[] {
     started = false;
   };
 
-  for (const char of input) {
-    if (escaping) {
-      token += char;
-      started = true;
-      escaping = false;
-      continue;
-    }
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index] ?? "";
+    const next = input[index + 1];
+
     if (char === "\\" && quote !== "'") {
-      escaping = true;
+      const escapesNext =
+        next !== undefined &&
+        (quote === '"'
+          ? next === '"'
+          : /\s/u.test(next) || next === '"' || next === "'");
+
+      if (escapesNext) {
+        token += next;
+        started = true;
+        index += 1;
+        continue;
+      }
+
+      token += "\\";
       started = true;
       continue;
     }
+
     if (quote) {
       if (char === quote) quote = null;
       else token += char;
       started = true;
       continue;
     }
+
     if (char === "'" || char === '"') {
       quote = char;
       started = true;
       continue;
     }
+
     if (/\s/u.test(char)) {
       push();
       continue;
     }
+
     token += char;
     started = true;
   }
 
-  if (escaping) throw new Error("MCP local command ends with an incomplete escape.");
   if (quote) throw new Error("MCP local command contains an unmatched quote.");
   push();
   if (result.length === 0 || !result[0]?.trim()) {
@@ -522,7 +534,7 @@ function normalizeManagedConfig(config: ManagedMcpConfig): McpLocalConfig | McpR
   };
 }
 
-export async function createMcpServer(options: {
+async function createMcpServer(options: {
   projectDirectory: string;
   name: string;
   config: ManagedMcpConfig;
@@ -577,7 +589,7 @@ export async function createMcpServerFromInput(options: {
   });
 }
 
-export async function restoreManagedMcpServers(): Promise<{
+async function restoreManagedMcpServers(): Promise<{
   restored: number;
   failed: number;
 }> {
@@ -620,7 +632,7 @@ export async function restoreMcpRuntime(): Promise<{
   return { managed, secure };
 }
 
-export async function verifyMcpServerConnection(
+async function verifyMcpServerConnection(
   projectDirectory: string,
   serverName: string,
 ): Promise<McpServerItem> {
