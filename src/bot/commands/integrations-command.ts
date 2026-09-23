@@ -3,6 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
 import { addCloudflareAccessAccount, getActiveCloudflareAccessAccount, listCloudflareAccessAccounts, removeCloudflareAccessAccount, setActiveCloudflareAccessAccount } from "../../app/services/cloudflare-integration-service.js";
+import { getSshPublicKey } from "../../app/services/ssh-identity-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -73,7 +74,9 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
     .text("🐙 Add GitHub", "integration:github:add")
     .text("🚂 Add Railway", "integration:railway:add")
     .row()
-    .text("☁️ Add Cloudflare SSH", "integration:cloudflare:add");
+    .text("☁️ Add Cloudflare SSH", "integration:cloudflare:add")
+    .row()
+    .text("🔑 SSH Public Key", "integration:ssh:key");
   for (const account of githubAccounts) {
     const label = account.id === githubActive?.id ? `✅ 🐙 ${account.name}` : `🐙 ${account.name}`;
     keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
@@ -126,6 +129,19 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
   if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ railway: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
+  if (data === "integration:ssh:key") {
+    const publicKey = await getSshPublicKey();
+    const messageId = callbackMessageId(ctx);
+    if (messageId === null) return true;
+    const keyboard = appendHomeNavigation(new InlineKeyboard().text("← Integrations", "integration:menu"));
+    await ctx.api.editMessageText(
+      chatId,
+      messageId,
+      `🔑 Bot SSH Public Key\n\nAdd this key to the remote account's ~/.ssh/authorized_keys or save it as the Runner Lab secret OPENCODE_BOT_SSH_PUBLIC_KEY.\n\n${publicKey}`,
+      { reply_markup: keyboard },
+    );
+    return true;
+  }
   if (data === "integration:cloudflare:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ cloudflare: { step: "name", messageId } }); await editWizard(ctx, messageId, "☁️ Cloudflare SSH\n\nStep 1 of 3 · Profile name\n\nA friendly name used only inside the bot.\nExample: Runner Lab"); return true; }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "GitHub account removed" : "GitHub account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
