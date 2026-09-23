@@ -14,7 +14,6 @@ export const MCPS_CALLBACK_ADD_LOCAL = `${MCPS_CALLBACK_PREFIX}add:local`;
 export const MCPS_CALLBACK_ADD_REMOTE = `${MCPS_CALLBACK_PREFIX}add:remote`;
 export const MCPS_CALLBACK_AUTH_START = `${MCPS_CALLBACK_PREFIX}auth:start`;
 export const MCPS_CALLBACK_AUTH_CANCEL = `${MCPS_CALLBACK_PREFIX}auth:cancel`;
-export const MCPS_CALLBACK_AUTH_LOGOUT = `${MCPS_CALLBACK_PREFIX}auth:logout`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
@@ -85,7 +84,6 @@ export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKey
   let hasToggleButton = false;
   if (server.status.status === "connected") {
     keyboard.text(t("mcps.button.disable"), MCPS_CALLBACK_TOGGLE);
-    keyboard.text("🔓 Forget Login", MCPS_CALLBACK_AUTH_LOGOUT);
     hasToggleButton = true;
   } else if (server.status.status === "needs_auth") {
     keyboard.text("🔐 Sign In", MCPS_CALLBACK_AUTH_START);
