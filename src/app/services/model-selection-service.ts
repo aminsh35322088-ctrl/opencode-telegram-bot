@@ -272,9 +272,18 @@ export async function getModelSelectionLists(): Promise<ModelSelectionLists> {
 }
 
 export async function reconcileStoredModelSelection(options?: { forceCatalogRefresh?: boolean }) {
-  const valid = options?.forceCatalogRefresh ? await getValidModelKeys({ force: true }) : await getValidModelKeys();
+  let valid = options?.forceCatalogRefresh ? await getValidModelKeys({ force: true }) : await getValidModelKeys();
   const current = getCurrentModel();
   if (!current?.providerID || !current.modelID || !valid || valid.has(getModelKey(current.providerID, current.modelID))) return;
+
+  // Legacy custom selections from before live capability verification are
+  // migrated one exact model at a time before considering any fallback.
+  if (await isSelectableChatModel(current.providerID, current.modelID)) {
+    const refreshed = await getValidModelKeys({ force: true });
+    if (refreshed?.has(getModelKey(current.providerID, current.modelID))) return;
+    if (refreshed) valid = refreshed;
+  }
+
   const configuredFallback = getEnvDefaultModel();
   const fallback =
     configuredFallback && valid.has(getModelKey(configuredFallback.providerID, configuredFallback.modelID))

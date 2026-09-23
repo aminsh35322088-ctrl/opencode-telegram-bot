@@ -92,6 +92,23 @@ describe("shared provider catalog", () => {
     expect(peekProviderCatalog(url, "key")).toBeUndefined();
   });
 
+  it("redacts the configured API key from provider discovery errors", async () => {
+    const secret = "sk-super-secret";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { message: "Rejected key " + secret, code: "invalid_" + secret } }),
+        { status: 401, headers: { "x-request-id": "req-" + secret } },
+      ),
+    ));
+
+    await expect(fetchProviderCatalog("https://gateway.example/v1", secret)).rejects.toThrow(
+      /\[REDACTED\]/,
+    );
+    await expect(fetchProviderCatalog("https://gateway.example/v1", secret)).rejects.not.toThrow(
+      new RegExp(secret),
+    );
+  });
+
   it("surfaces provider error code, message and request id for failed discovery", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       new Response(

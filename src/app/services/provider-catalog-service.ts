@@ -44,7 +44,12 @@ async function fetchCatalogResponse(baseURL: string, apiKey: string): Promise<Re
   throw new Error("Model discovery failed before receiving a response");
 }
 
-function providerErrorDetail(response: Response, raw: string): string {
+function redactCredential(value: string, apiKey: string): string {
+  const secret = apiKey.trim();
+  return secret ? value.split(secret).join("[REDACTED]") : value;
+}
+
+function providerErrorDetail(response: Response, raw: string, apiKey: string): string {
   let message = "";
   let code = "";
   try {
@@ -67,9 +72,9 @@ function providerErrorDetail(response: Response, raw: string): string {
     response.headers.get("x-request-id") ??
     response.headers.get("request-id");
   const parts = [
-    code ? "code=" + code : "",
-    message ? message.slice(0, 180) : "",
-    requestId ? "request=" + requestId : "",
+    code ? "code=" + redactCredential(code, apiKey) : "",
+    message ? redactCredential(message, apiKey).slice(0, 180) : "",
+    requestId ? "request=" + redactCredential(requestId, apiKey) : "",
   ].filter(Boolean);
   return parts.length ? " — " + parts.join(" · ") : "";
 }
@@ -100,7 +105,7 @@ export async function fetchProviderCatalog(
     const response = await fetchCatalogResponse(baseURL, apiKey);
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
-      throw new Error("Model discovery failed: HTTP " + response.status + providerErrorDetail(response, raw));
+      throw new Error("Model discovery failed: HTTP " + response.status + providerErrorDetail(response, raw, apiKey));
     }
 
     const payload: unknown = await response.json();
