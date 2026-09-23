@@ -5,6 +5,8 @@ export interface ProviderCatalog { records: CatalogRecord[]; fetchedAt: number; 
 export interface ProviderCatalogFetchOptions { force?: boolean; }
 
 const TTL_MS = 5 * 60_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_ATTEMPTS = 2;
 const MAX_CATALOGS = 32;
 const catalogs = new Map<string, ProviderCatalog>();
 const pending = new Map<string, Promise<ProviderCatalog>>();
@@ -16,6 +18,30 @@ function catalogKey(baseURL: string, apiKey: string): string {
 
 export function peekProviderCatalog(baseURL: string, apiKey: string): ProviderCatalog | undefined {
   return catalogs.get(catalogKey(baseURL, apiKey));
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+}
+
+async function fetchCatalogResponse(baseURL: string, apiKey: string): Promise<Response> {
+  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetch(baseURL.replace(/\/$/, "") + "/models", {
+        headers: { Authorization: "Bearer " + apiKey.trim() },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (!isTimeoutError(error)) throw error;
+      if (attempt === REQUEST_ATTEMPTS) {
+        throw new Error(
+          `Model discovery timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds (${REQUEST_ATTEMPTS} attempts)`,
+        );
+      }
+    }
+  }
+
+  throw new Error("Model discovery failed before receiving a response");
 }
 
 /** Shared discovery/refresh cache. No timer, credential persistence or inference. */
@@ -41,10 +67,7 @@ export async function fetchProviderCatalog(
   }
 
   const request = (async () => {
-    const response = await fetch(baseURL.replace(/\/$/, "") + "/models", {
-      headers: { Authorization: "Bearer " + apiKey.trim() },
-      signal: AbortSignal.timeout(10_000),
-    });
+    const response = await fetchCatalogResponse(baseURL, apiKey);
     if (!response.ok) throw new Error("Model discovery failed: HTTP " + response.status);
 
     const payload: unknown = await response.json();
