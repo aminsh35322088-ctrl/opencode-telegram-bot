@@ -45,7 +45,6 @@ vi.mock("../../../src/config.js", () => ({
 import {
   ensureCustomProviderModelToolCapability,
   refreshAndApplyCustomProviderToolCapabilities,
-  refreshCustomProviderToolCapabilities,
   saveCustomProvider,
 } from "../../../src/app/services/custom-provider-service.js";
 import { __resetProviderCatalogForTests } from "../../../src/app/services/provider-catalog-service.js";
