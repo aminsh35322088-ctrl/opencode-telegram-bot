@@ -404,7 +404,7 @@ describe("interaction guard", () => {
     expect(blockedCommand.reason).toBe("command_not_allowed");
   });
 
-  it("allows RustDesk secure input text while busy", () => {
+  it("blocks custom interaction text while busy", () => {
     foregroundSessionState.markBusy("session-1", "D:\Projects\Repo");
     interactionManager.start({
       kind: "custom",
@@ -422,7 +422,7 @@ describe("interaction guard", () => {
       createContext({ callbackData: "settings:advanced" }),
     );
 
-    expect(textDecision.allow).toBe(true);
+    expect(textDecision.allow).toBe(false);
     expect(textDecision.busy).toBe(true);
     expect(commandDecision.allow).toBe(true);
     expect(blockedCallback.allow).toBe(false);
