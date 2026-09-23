@@ -25,7 +25,7 @@ import {
   resolveModelCenterFavoriteTarget,
   type ModelCenterFavoriteTarget,
 } from "../menus/model-center-menu.js";
-import { fetchCurrentModel, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
+import { fetchCurrentModel, getProviders, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
@@ -95,10 +95,6 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
         await ctx.answerCallbackQuery({ text: "Model Center was refreshed.", show_alert: false }).catch(() => {});
         return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
       }
-      if (!(await isSelectableChatModel(model.providerID, model.modelID))) {
-        await ctx.answerCallbackQuery({ text: "Model Center refreshed.", show_alert: false }).catch(() => {});
-        return await renderFavoriteTarget(ctx, target);
-      }
       const added = await toggleFavoriteModel(model);
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
       return await renderFavoriteTarget(ctx, target);
@@ -106,16 +102,9 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
       const token = data.slice(MODEL_CENTER_SELECT_PREFIX.length);
       const model = resolveModelCenterAction(token);
-      const target = resolveModelCenterFavoriteTarget(token);
       if (!model) {
         await ctx.answerCallbackQuery({ text: "Model Center was refreshed.", show_alert: false }).catch(() => {});
         return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
-      }
-      if (!(await isSelectableChatModel(model.providerID, model.modelID))) {
-        await ctx.answerCallbackQuery({ text: "Model Center refreshed.", show_alert: false }).catch(() => {});
-        return target
-          ? await renderFavoriteTarget(ctx, target)
-          : await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
       }
       await applyModelSelectionAndNotify(ctx, model);
       return true;

@@ -16,9 +16,7 @@ function routeBadge(route: CapabilityRoute): string {
 }
 
 function capabilityBadge(state: true | false | "unknown" | undefined): string {
-  if (state === true) return "✅";
-  if (state === false) return "❌";
-  return "❔";
+  return state === true ? "✅" : "❌";
 }
 
 export async function buildModelRoutingSummary(primary: ModelInfo, worktree?: string): Promise<string> {
