@@ -30,6 +30,15 @@ describe("shared provider catalog", () => {
     expect(catalog.records.map((record) => record.id)).toEqual(["model-after-retry"]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("allows provider model discovery up to 30 seconds per attempt", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "slow-model" }] }))));
+
+    await fetchProviderCatalog(url, "key");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+  });
   it("force refresh bypasses a fresh cached catalog", async () => {
     const first = { data: [{ id: "old-model" }] };
     const second = { data: [{ id: "old-model" }, { id: "new-model" }] };
