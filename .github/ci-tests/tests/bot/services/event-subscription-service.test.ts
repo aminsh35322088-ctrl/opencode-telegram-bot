@@ -469,12 +469,15 @@ describe("bot/services/event-subscription-service", () => {
     return { api, summaryAggregator };
   }
 
-  it("creates and resolves a RustDesk secure-input interaction from tool metadata", async () => {
+  it("creates and resolves a RustDesk secure-input interaction inside the owning AI Topic", async () => {
     const { api, summaryAggregator } = await setupService(false);
-    const [{ rustDeskSecureInputManager }, { interactionManager }] = await Promise.all([
-      import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
-      import("../../../src/app/managers/interaction-manager.js"),
-    ]);
+    const [{ rustDeskSecureInputManager }, { interactionManager }, { keyboardManager }] =
+      await Promise.all([
+        import("../../../src/app/managers/rustdesk-secure-input-manager.js"),
+        import("../../../src/app/managers/interaction-manager.js"),
+        import("../../../src/bot/keyboards/keyboard-manager.js"),
+      ]);
+    keyboardManager.bindTopic(api as never, 42, 7, "session-1");
 
     emitRustDeskSecureInputTool(summaryAggregator, "required");
 
@@ -482,7 +485,10 @@ describe("bot/services/event-subscription-service", () => {
       expect(api.sendMessage).toHaveBeenCalledWith(
         42,
         expect.stringContaining("RustDesk password"),
-        expect.objectContaining({ disable_notification: true }),
+        expect.objectContaining({
+          disable_notification: true,
+          message_thread_id: 7,
+        }),
       );
     });
     expect(rustDeskSecureInputManager.get("session-1")).toMatchObject({
@@ -507,6 +513,7 @@ describe("bot/services/event-subscription-service", () => {
       expect(interactionManager.getSnapshot()).toBeNull();
     });
     expect(api.deleteMessage).toHaveBeenCalledWith(42, 100);
+    keyboardManager.clearSession("session-1");
   });
 
   it("clears RustDesk secure-input state if the Telegram prompt cannot be delivered", async () => {
