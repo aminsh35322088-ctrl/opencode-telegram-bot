@@ -45,8 +45,14 @@ export async function startMcpOAuth(projectDirectory: string, serverName: string
     directory: normalizeDirectoryForMcpApi(projectDirectory),
   });
   if (error || !data) throw error || new Error("OpenCode did not return an MCP OAuth authorization URL.");
-  if (typeof data.authorizationUrl !== "string" || typeof data.oauthState !== "string") {
+  if (typeof data.authorizationUrl !== "string" || typeof data.oauthState !== "string" || !data.oauthState.trim()) {
     throw new Error("OpenCode returned an invalid MCP OAuth response.");
+  }
+  if (data.authorizationUrl) {
+    const authorizationUrl = new URL(data.authorizationUrl);
+    if (authorizationUrl.protocol !== "https:" && authorizationUrl.protocol !== "http:") {
+      throw new Error("MCP OAuth authorization URL must use HTTPS or HTTP.");
+    }
   }
   return { authorizationUrl: data.authorizationUrl, oauthState: data.oauthState };
 }
