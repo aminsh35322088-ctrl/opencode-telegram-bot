@@ -20,7 +20,6 @@ describe("custom-provider model capability normalization", () => {
       id: "vision-model",
       name: "Vision Model",
       attachment: true,
-      tool_call: false,
       modalities: { input: ["text", "image"], output: ["text"] },
     });
   });
@@ -59,6 +58,7 @@ describe("custom-provider model capability normalization", () => {
     expect(getOpenCodeCustomModelConfig(model!)).toEqual({
       name: "unknown-model",
       attachment: true,
+      tool_call: false,
       modalities: { input: ["text", "image"], output: ["text"] },
     });
   });
