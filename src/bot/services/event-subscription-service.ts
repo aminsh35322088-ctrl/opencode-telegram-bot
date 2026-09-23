@@ -977,7 +977,14 @@ class EventSubscriptionService implements BotEventSubscriptionService {
                 .sendMessage(
                   chatId,
                   t("rustdesk.secure_input.request", { kind: label }),
-                  { disable_notification: true },
+                  {
+                    disable_notification: true,
+                    reply_markup: {
+                      force_reply: true,
+                      selective: true,
+                      input_field_placeholder: label,
+                    },
+                  },
                 )
                 .then((message) => {
                   logger.info(
