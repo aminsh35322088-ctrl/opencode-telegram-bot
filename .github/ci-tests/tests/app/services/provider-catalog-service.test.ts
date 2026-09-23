@@ -47,6 +47,28 @@ describe("shared provider catalog", () => {
     await expect(fetchProviderCatalog(url, "key")).rejects.toThrow("Model discovery timed out after 30 seconds (2 attempts)");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("retries transient network failures once", async () => {
+    const transient = new TypeError("fetch failed");
+    Object.assign(transient, { cause: Object.assign(new Error("dns lookup failed"), { code: "EAI_AGAIN" }) });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(transient)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "model-after-network-retry" }] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const catalog = await fetchProviderCatalog(url, "key");
+
+    expect(catalog.records.map((record) => record.id)).toEqual(["model-after-network-retry"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports the network error code after repeated transport failures", async () => {
+    const transient = new TypeError("fetch failed");
+    Object.assign(transient, { cause: Object.assign(new Error("dns lookup failed"), { code: "EAI_AGAIN" }) });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(transient));
+
+    await expect(fetchProviderCatalog(url, "key")).rejects.toThrow("Model discovery connection failed (EAI_AGAIN) after 2 attempts");
+  });
   it("force refresh bypasses a fresh cached catalog", async () => {
     const first = { data: [{ id: "old-model" }] };
     const second = { data: [{ id: "old-model" }, { id: "new-model" }] };
