@@ -2,6 +2,8 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
+import { addCloudflareAccessAccount, getActiveCloudflareAccessAccount, listCloudflareAccessAccounts, removeCloudflareAccessAccount, setActiveCloudflareAccessAccount } from "../../app/services/cloudflare-integration-service.js";
+import { getSshPublicKey } from "../../app/services/ssh-identity-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -10,7 +12,8 @@ import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingRailway { step: "name" | "token"; name?: string; messageId: number; }
-interface PendingState { github?: PendingGithub; railway?: PendingRailway; }
+interface PendingCloudflare { step: "name" | "clientId" | "clientSecret"; name?: string; clientId?: string; messageId: number; }
+interface PendingState { github?: PendingGithub; railway?: PendingRailway; cloudflare?: PendingCloudflare; }
 
 const integrationWizard = new TopicScopedValue<PendingState>();
 function callbackMessageId(ctx: Context): number | null {
@@ -30,7 +33,7 @@ function wizardKeyboard(): InlineKeyboard {
 }
 export function isIntegrationWizardActive(): boolean {
   const pending = integrationWizard.get();
-  return Boolean(pending?.github || pending?.railway);
+  return Boolean(pending?.github || pending?.railway || pending?.cloudflare);
 }
 export function clearIntegrationWizard(): void {
   integrationWizard.clear();
@@ -65,17 +68,41 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   const githubActive = await getActiveGithubAccount();
   const railwayAccounts = await listRailwayAccounts();
   const railwayActive = await getActiveRailwayAccount();
-  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add");
+  const cloudflareAccounts = await listCloudflareAccessAccounts();
+  const cloudflareActive = await getActiveCloudflareAccessAccount();
+  const keyboard = new InlineKeyboard()
+    .text("🐙 Add GitHub", "integration:github:add")
+    .text("🚂 Add Railway", "integration:railway:add")
+    .row()
+    .text("☁️ Add Cloudflare SSH", "integration:cloudflare:add")
+    .row()
+    .text("🔑 SSH Public Key", "integration:ssh:key");
   for (const account of githubAccounts) {
-    const label = account.id === githubActive?.id ? `✅ ${account.name}` : account.name;
+    const label = account.id === githubActive?.id ? `✅ 🐙 ${account.name}` : `🐙 ${account.name}`;
     keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
   }
   for (const account of railwayAccounts) {
-    const label = account.id === railwayActive?.id ? `✅ ${account.name}` : account.name;
+    const label = account.id === railwayActive?.id ? `✅ 🚂 ${account.name}` : `🚂 ${account.name}`;
     keyboard.row().text(label, `integration:railway:select:${account.id}`).text("🗑️", `integration:railway:remove:${account.id}`);
   }
+  for (const account of cloudflareAccounts) {
+    const label = account.id === cloudflareActive?.id ? `✅ ☁️ ${account.name}` : `☁️ ${account.name}`;
+    keyboard.row().text(label, `integration:cloudflare:select:${account.id}`).text("🗑️", `integration:cloudflare:remove:${account.id}`);
+  }
   keyboard.row().text("← Advanced", "integration:advanced").text("🏠 Home", "main:home");
-  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}`;
+  const body = [
+    "🔌 Integrations",
+    "",
+    `🐙 GitHub · ${githubAccounts.length} saved`,
+    `Active: ${githubActive?.name ?? "None"}`,
+    "",
+    `🚂 Railway · ${railwayAccounts.length} saved`,
+    `Active: ${railwayActive?.name ?? "None"}`,
+    "",
+    `☁️ Cloudflare SSH · ${cloudflareAccounts.length ? `${cloudflareAccounts.length} saved` : "Not configured"}`,
+    `Active: ${cloudflareActive?.name ?? "None"}`,
+    "Private SSH transport for Runner/VPS access.",
+  ].join("\n");
   const text = notice ? `${notice}\n\n${body}` : body;
   const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
   if (targetMessageId !== null && ctx.chat?.id) {
@@ -98,14 +125,30 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:close") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
   if (data === "integration:advanced") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
-  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx, state?.github?.messageId ?? state?.railway?.messageId, "❌ Setup cancelled."); return true; }
+  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx, state?.github?.messageId ?? state?.railway?.messageId ?? state?.cloudflare?.messageId, "❌ Setup cancelled."); return true; }
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
   if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ railway: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
+  if (data === "integration:ssh:key") {
+    const publicKey = await getSshPublicKey();
+    const messageId = callbackMessageId(ctx);
+    if (messageId === null) return true;
+    const keyboard = appendHomeNavigation(new InlineKeyboard().text("← Integrations", "integration:menu"));
+    await ctx.api.editMessageText(
+      chatId,
+      messageId,
+      `🔑 Bot SSH Public Key\n\nAdd this key to the remote account's ~/.ssh/authorized_keys or save it as the Runner Lab secret OPENCODE_BOT_SSH_PUBLIC_KEY.\n\n${publicKey}`,
+      { reply_markup: keyboard },
+    );
+    return true;
+  }
+  if (data === "integration:cloudflare:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ cloudflare: { step: "name", messageId } }); await editWizard(ctx, messageId, "☁️ Cloudflare SSH\n\nStep 1 of 3 · Profile name\n\nA friendly name used only inside the bot.\nExample: Runner Lab"); return true; }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "GitHub account removed" : "GitHub account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:railway:select:")) { const account = await setActiveRailwayAccount(data.slice("integration:railway:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:railway:remove:")) { const removed = await removeRailwayAccount(data.slice("integration:railway:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "Railway account removed" : "Railway account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
+  if (data.startsWith("integration:cloudflare:select:")) { const account = await setActiveCloudflareAccessAccount(data.slice("integration:cloudflare:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
+  if (data.startsWith("integration:cloudflare:remove:")) { const removed = await removeCloudflareAccessAccount(data.slice("integration:cloudflare:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "Cloudflare Access account removed" : "Cloudflare Access account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   return true;
 }
 export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
@@ -114,6 +157,7 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   if (!ctx.chat?.id || !text || !state) return false;
   const github = state.github;
   const railway = state.railway;
+  const cloudflare = state.cloudflare;
   try {
     if (github) {
       if (github.step === "name") { github.name = text; github.step = "token"; await deleteInput(ctx); await editWizard(ctx, github.messageId, "➕ Add GitHub Account\n\n2/2 · Personal Access Token\n\nSend the token as a message. Telegram will delete it when possible."); return true; }
@@ -125,11 +169,17 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
       if (!validation.valid) { await editWizard(ctx, railway.messageId, `➕ Add Railway Account\n\n2/2 · API Token\n\n❌ ${railwayValidationError(validation).message}\n\nThe token was not saved. Send a valid token to retry, or press Cancel.`); return true; }
       const account = await addRailwayAccount(railway.name!, text, validation.tokenType!); await finishWizard(ctx, railway.messageId, `${railwayValidationSuccess(validation)}\n\n✅ Railway account “${account.name}” added and selected.`); return true;
     }
+    if (cloudflare) {
+      if (cloudflare.step === "name") { cloudflare.name = text; cloudflare.step = "clientId"; await deleteInput(ctx); await editWizard(ctx, cloudflare.messageId, "☁️ Cloudflare SSH\n\nStep 2 of 3 · Service Token Client ID\n\nCloudflare Zero Trust → Access → Service Tokens\nSend the Client ID. Telegram will delete the message when possible."); return true; }
+      if (cloudflare.step === "clientId") { cloudflare.clientId = text; cloudflare.step = "clientSecret"; await deleteInput(ctx); await editWizard(ctx, cloudflare.messageId, "☁️ Cloudflare SSH\n\nStep 3 of 3 · Client Secret\n\nSend the matching Service Token secret. Telegram will delete the message when possible."); return true; }
+      await deleteInput(ctx); const account = await addCloudflareAccessAccount(cloudflare.name!, cloudflare.clientId!, text); await finishWizard(ctx, cloudflare.messageId, `✅ Cloudflare SSH profile “${account.name}” saved and selected.`); return true;
+    }
     return false;
   } catch (error) {
     logger.error("[Integrations] wizard failed:", error);
-    const messageId = github?.messageId ?? railway?.messageId; const kind = github ? "GitHub" : "Railway";
-    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
+    const messageId = github?.messageId ?? railway?.messageId ?? cloudflare?.messageId; const kind = github ? "GitHub" : railway ? "Railway" : "Cloudflare SSH";
+    const credentialStep = cloudflare ? "Step 3 of 3 · Client Secret" : "2/2 · Token";
+    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n${credentialStep}\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the credential again to retry, or press Cancel.`).catch(() => {});
     return true;
   }
 }
