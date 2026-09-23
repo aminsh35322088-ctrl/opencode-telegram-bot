@@ -30,6 +30,11 @@ async function main(): Promise<void> {
   const { initializeLogger } = await import("./utils/logger.js");
   await initializeLogger();
 
+  if (process.env.RAILWAY_SERVICE_ID) {
+    const { startRunnerBridgeServer } = await import("./app/services/runner-bridge-server.js");
+    await startRunnerBridgeServer();
+  }
+
   const { startBotApp } = await import("./app/bootstrap/start-bot-app.js");
   await startBotApp();
 }
