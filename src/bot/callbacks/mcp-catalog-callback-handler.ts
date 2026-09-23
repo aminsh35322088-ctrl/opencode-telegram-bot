@@ -126,13 +126,13 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   if (data === MCPS_CALLBACK_AUTH_CANCEL) {
     const credentialDismissed = await dismissMcpCredentialWizard(ctx, true);
     if (credentialDismissed) {
-      await ctx.answerCallbackQuery({ text: "Authentication setup cancelled." }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: t("mcps.auth.cancelled") }).catch(() => {});
       return true;
     }
 
     const oauthDismissed = await dismissMcpAuthWizard(ctx, true);
     if (oauthDismissed) {
-      await ctx.answerCallbackQuery({ text: "MCP login cancelled." }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: t("mcps.auth.login_cancelled") }).catch(() => {});
       return true;
     }
 
@@ -192,7 +192,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
       await cancelMenu(ctx);
       return true;
     }
-    await ctx.answerCallbackQuery({ text: "MCP setup cancelled." }).catch(() => {});
+    await ctx.answerCallbackQuery({ text: t("mcps.auth.setup_cancelled") }).catch(() => {});
     return true;
   }
 
@@ -282,10 +282,10 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
       }
       const server = metadata.servers.find((item) => item.name === metadata.serverName);
       if (!server || server.status.status !== "needs_auth") {
-        await ctx.answerCallbackQuery({ text: "This MCP server is not waiting for OAuth login.", show_alert: true });
+        await ctx.answerCallbackQuery({ text: t("mcps.auth.not_waiting_oauth"), show_alert: true });
         return true;
       }
-      await ctx.answerCallbackQuery({ text: "Opening secure MCP login…" }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: t("mcps.auth.opening_login") }).catch(() => {});
       await startMcpAuthWizard(ctx, {
         serverName: metadata.serverName,
         projectDirectory: metadata.projectDirectory,

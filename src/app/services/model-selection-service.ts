@@ -30,6 +30,20 @@ let modelCatalogCacheExpiresAt = 0;
 let modelCatalogFetchInFlight: Promise<Set<string> | null> | null = null;
 const SEARCH_RESULTS_LIMIT = 10;
 
+export interface ModelFallbackEvent {
+  previous: string;
+  next: string;
+  reason: "unavailable_or_not_tool_capable";
+}
+
+type ModelFallbackListener = (event: ModelFallbackEvent) => void;
+
+let modelFallbackListener: ModelFallbackListener | null = null;
+
+export function setModelFallbackListener(listener: ModelFallbackListener | null): void {
+  modelFallbackListener = listener;
+}
+
 function getModelKey(providerID: string, modelID: string) {
   return `${providerID}/${modelID}`;
 }
@@ -257,6 +271,18 @@ export async function reconcileStoredModelSelection(options?: { forceCatalogRefr
       `[ModelManager] Stored model is unavailable or not tool-capable; falling back to ${getModelKey(fallback.providerID, fallback.modelID)}`,
     );
     setCurrentModel({ ...fallback, variant: "default" });
+    const listener = modelFallbackListener;
+    if (listener) {
+      try {
+        listener({
+          previous: getModelKey(current.providerID, current.modelID),
+          next: getModelKey(fallback.providerID, fallback.modelID),
+          reason: "unavailable_or_not_tool_capable",
+        });
+      } catch (error) {
+        logger.warn("[ModelManager] Model fallback listener failed:", error);
+      }
+    }
   }
 }
 
@@ -272,6 +298,7 @@ export function __resetModelCatalogCacheForTests() {
   cachedModelsByProvider = null;
   modelCatalogCacheExpiresAt = 0;
   modelCatalogFetchInFlight = null;
+  modelFallbackListener = null;
 }
 
 export async function getFavoriteModels() {

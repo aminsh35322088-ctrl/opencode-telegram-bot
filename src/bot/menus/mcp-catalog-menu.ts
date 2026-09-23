@@ -154,11 +154,11 @@ export function buildMcpsDetailText(server: McpCatalogServerItem): string {
   }
   if (server.status.status === "needs_auth") {
     lines.push("");
-    lines.push("🔐 OAuth login is required. Tap Sign In below to authorize this MCP server.");
+    lines.push(t("mcps.detail.needs_auth_hint"));
   }
   if (server.status.status === "needs_client_registration") {
     lines.push("");
-    lines.push("🪪 This server requires a pre-registered OAuth client. Configure its Client ID and optional Client Secret here, then continue with Sign In.");
+    lines.push(t("mcps.detail.needs_client_registration_hint"));
   }
   return lines.join("\n");
 }

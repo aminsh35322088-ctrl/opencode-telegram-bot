@@ -350,7 +350,7 @@ describe("bot/commands/mcps", () => {
 
     expect(handled).toBe(true);
     expect(ctx.editMessageText).toHaveBeenCalledWith(
-      expect.stringContaining("OAuth login is required"),
+      expect.stringContaining(t("mcps.detail.needs_auth_hint")),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
 

@@ -622,14 +622,29 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
 }
 
 export async function syncOpenCodeCustomConfig(): Promise<string> {
-  // Existing providers created before tool-call verification are migrated at
-  // startup. Unreachable/ambiguous providers remain fail-closed and are retried
-  // on the next sync instead of being trusted optimistically.
-  await refreshCustomProviderToolCapabilities();
-
+  // Write a fail-closed config immediately so boot never waits on network
+  // probes. Unverified models keep tool_call: false until the background
+  // refresh rewrites the file with verified results.
   const configDir = path.join(getRuntimePaths().appHome, ".config", "opencode-telegram");
   const configPath = path.join(configDir, "custom-providers.json");
   await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
   await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
+  scheduleToolCapabilityRefresh(configPath);
   return configPath;
+}
+
+let toolCapabilityRefreshInFlight: Promise<void> | null = null;
+
+function scheduleToolCapabilityRefresh(configPath: string): void {
+  if (toolCapabilityRefreshInFlight) return;
+  toolCapabilityRefreshInFlight = (async () => {
+    try {
+      await refreshCustomProviderToolCapabilities();
+      await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
+    } catch (error) {
+      logger.warn("[CustomProvider] Background tool-call capability refresh failed:", error);
+    } finally {
+      toolCapabilityRefreshInFlight = null;
+    }
+  })();
 }

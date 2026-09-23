@@ -53,6 +53,7 @@ import {
   startMcpCredentialWizard,
 } from "../../../src/bot/commands/mcp-catalog-command.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
+import { t } from "../../../src/i18n/index.js";
 
 function createContext(): Context {
   return {
@@ -205,7 +206,7 @@ describe("MCP add wizard UX", () => {
     expect(ctx.api.editMessageText).toHaveBeenCalledWith(
       777,
       4242,
-      expect.stringContaining("The authorization code is deleted from Telegram immediately"),
+      expect.stringContaining(t("mcps.auth.sign_in_steps")),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
     expect(interactionManager.getSnapshot()?.metadata.stage).toBe("auth");

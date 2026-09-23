@@ -496,7 +496,48 @@ export const en = {
   "mcps.button.enable": "🟢 Enable",
   "mcps.button.disable": "🔴 Disable",
   "mcps.button.back": "⬅️ Back",
-  "mcps.auth_required": "This server requires authorization and cannot be enabled from the bot.",
+  "mcps.detail.needs_auth_hint":
+    "🔐 OAuth login is required. Tap Sign In below to authorize this MCP server.",
+  "mcps.detail.needs_client_registration_hint":
+    "🪪 This server requires a pre-registered OAuth client. Configure its Client ID and optional Client Secret here, then continue with Sign In.",
+  "mcps.auth.sign_in_title": "🔐 Sign in to {name}",
+  "mcps.auth.sign_in_steps":
+    "1. Tap Open Login and finish authorization in your browser.\n2. If the browser ends on an unavailable localhost page, copy the full URL from the address bar.\n3. Send that full callback URL here.\n\nThe authorization code is deleted from Telegram immediately and is never sent to the model.",
+  "mcps.auth.cancelled": "Authentication setup cancelled.",
+  "mcps.auth.login_cancelled": "MCP login cancelled.",
+  "mcps.auth.setup_cancelled": "MCP setup cancelled.",
+  "mcps.auth.not_waiting_oauth": "This MCP server is not waiting for OAuth login.",
+  "mcps.auth.opening_login": "Opening secure MCP login…",
+  "mcps.auth.menu_title": "🔐 Authentication · {name}",
+  "mcps.auth.server_line": "Server: {url}",
+  "mcps.auth.menu_prompt": "Choose how this remote MCP server authenticates.",
+  "mcps.auth.menu_options":
+    "✨ Auto / OAuth — recommended when the server supports browser sign-in\n🔑 Bearer Token — Authorization: Bearer …\n🗝 API Key — X-API-Key by default\n🧩 Custom Header — for provider-specific headers\n🪪 OAuth Client — pre-registered Client ID / Secret",
+  "mcps.auth.secrets_note": "Secrets are encrypted by the bot and are never shown to the model.",
+  "mcps.auth.outside_context": "🔒 Credentials stay outside model context.",
+  "mcps.auth.header_name_prompt":
+    "Send the HTTP header name used by this MCP server.\n\nExample: X-Service-Token",
+  "mcps.auth.bearer_prompt":
+    "Send the bearer token.\n\nThe message will be deleted immediately.",
+  "mcps.auth.api_key_prompt":
+    "Send the API key for X-API-Key.\n\nThe message will be deleted immediately.",
+  "mcps.auth.custom_header_prompt":
+    "Send the value for {header}.\n\nThe message will be deleted immediately.",
+  "mcps.auth.client_id_prompt": "Send the pre-registered OAuth Client ID.",
+  "mcps.auth.client_secret_prompt":
+    "Send the Client Secret, or tap Skip Secret if this is a public client.\n\nThe message will be deleted immediately.",
+  "mcps.auth.scope_prompt":
+    "Send the OAuth scope requested by the provider, or tap Skip Scope to use the server default.",
+  "mcps.auth.configure_failed":
+    "❌ Authentication could not be configured.\nCheck the credential or provider settings and try again.\n\nThe submitted secret was not displayed or logged.",
+  "mcps.auth.mode.bearer": "Bearer Token",
+  "mcps.auth.mode.api_key": "API Key",
+  "mcps.auth.mode.custom_header": "Custom Header",
+  "mcps.auth.mode.oauth_client": "OAuth Client",
+  "mcps.auth.step_title": "🔐 {mode} · {name}",
+  "mcps.auth.step_title_client": "🪪 OAuth Client · {name}",
+  "model.fallback.notice":
+    "⚠️ Selected model {previous} is unavailable or not agent-capable. Switched to {next}.",
 
 
 

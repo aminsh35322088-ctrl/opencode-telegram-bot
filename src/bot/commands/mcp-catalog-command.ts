@@ -325,13 +325,9 @@ export async function startMcpAuthWizard(ctx: Context, options: {
     ctx,
     options.messageId,
     [
-      `🔐 Sign in to ${options.serverName}`,
+      t("mcps.auth.sign_in_title", { name: options.serverName }),
       "",
-      "1. Tap Open Login and finish authorization in your browser.",
-      "2. If the browser ends on an unavailable localhost page, copy the full URL from the address bar.",
-      "3. Send that full callback URL here.",
-      "",
-      "The authorization code is deleted from Telegram immediately and is never sent to the model.",
+      t("mcps.auth.sign_in_steps"),
     ].join("\n"),
     buildMcpOAuthKeyboard(result.authorizationUrl),
   );
@@ -359,10 +355,10 @@ function transitionMcpCredentialWizard(
 }
 
 function credentialModeLabel(mode: McpCredentialMode): string {
-  if (mode === "bearer") return "Bearer Token";
-  if (mode === "api-key") return "API Key";
-  if (mode === "custom-header") return "Custom Header";
-  return "OAuth Client";
+  if (mode === "bearer") return t("mcps.auth.mode.bearer");
+  if (mode === "api-key") return t("mcps.auth.mode.api_key");
+  if (mode === "custom-header") return t("mcps.auth.mode.custom_header");
+  return t("mcps.auth.mode.oauth_client");
 }
 
 async function renderMcpCredentialMenu(ctx: Context, pending: PendingMcpCredential): Promise<void> {
@@ -375,19 +371,15 @@ async function renderMcpCredentialMenu(ctx: Context, pending: PendingMcpCredenti
     ctx,
     pending.messageId,
     [
-      `🔐 Authentication · ${pending.serverName}`,
+      t("mcps.auth.menu_title", { name: pending.serverName }),
       "",
-      `Server: ${pending.remoteUrl}`,
+      t("mcps.auth.server_line", { url: pending.remoteUrl }),
       "",
-      "Choose how this remote MCP server authenticates.",
+      t("mcps.auth.menu_prompt"),
       "",
-      "✨ Auto / OAuth — recommended when the server supports browser sign-in",
-      "🔑 Bearer Token — Authorization: Bearer …",
-      "🗝 API Key — X-API-Key by default",
-      "🧩 Custom Header — for provider-specific headers",
-      "🪪 OAuth Client — pre-registered Client ID / Secret",
+      t("mcps.auth.menu_options"),
       "",
-      "Secrets are encrypted by the bot and are never shown to the model.",
+      t("mcps.auth.secrets_note"),
     ].join("\n"),
     buildMcpAuthOptionsKeyboard(),
   );
@@ -401,28 +393,28 @@ async function renderMcpCredentialStep(ctx: Context, pending: PendingMcpCredenti
     return;
   }
 
-  let title = `🔐 ${credentialModeLabel(mode)} · ${pending.serverName}`;
+  let title = t("mcps.auth.step_title", { mode: credentialModeLabel(mode), name: pending.serverName });
   let body = "";
   let keyboard = buildMcpCredentialInputKeyboard();
 
   if (pending.step === "header-name") {
-    body = "Send the HTTP header name used by this MCP server.\n\nExample: X-Service-Token";
+    body = t("mcps.auth.header_name_prompt");
   } else if (pending.step === "secret") {
     body = mode === "bearer"
-      ? "Send the bearer token.\n\nThe message will be deleted immediately."
+      ? t("mcps.auth.bearer_prompt")
       : mode === "api-key"
-        ? "Send the API key for X-API-Key.\n\nThe message will be deleted immediately."
-        : `Send the value for ${pending.headerName ?? "the custom header"}.\n\nThe message will be deleted immediately.`;
+        ? t("mcps.auth.api_key_prompt")
+        : t("mcps.auth.custom_header_prompt", { header: pending.headerName ?? "the custom header" });
   } else if (pending.step === "client-id") {
-    title = `🪪 OAuth Client · ${pending.serverName}`;
-    body = "Send the pre-registered OAuth Client ID.";
+    title = t("mcps.auth.step_title_client", { name: pending.serverName });
+    body = t("mcps.auth.client_id_prompt");
   } else if (pending.step === "client-secret") {
-    title = `🪪 OAuth Client · ${pending.serverName}`;
-    body = "Send the Client Secret, or tap Skip Secret if this is a public client.\n\nThe message will be deleted immediately.";
+    title = t("mcps.auth.step_title_client", { name: pending.serverName });
+    body = t("mcps.auth.client_secret_prompt");
     keyboard = buildMcpCredentialInputKeyboard({ allowSkip: "secret" });
   } else if (pending.step === "scope") {
-    title = `🪪 OAuth Client · ${pending.serverName}`;
-    body = "Send the OAuth scope requested by the provider, or tap Skip Scope to use the server default.";
+    title = t("mcps.auth.step_title_client", { name: pending.serverName });
+    body = t("mcps.auth.scope_prompt");
     keyboard = buildMcpCredentialInputKeyboard({ allowSkip: "scope" });
   }
 
@@ -432,11 +424,11 @@ async function renderMcpCredentialStep(ctx: Context, pending: PendingMcpCredenti
     [
       title,
       "",
-      `Server: ${pending.remoteUrl}`,
+      t("mcps.auth.server_line", { url: pending.remoteUrl }),
       "",
       body,
       "",
-      "🔒 Credentials stay outside model context.",
+      t("mcps.auth.outside_context"),
     ].join("\n"),
     keyboard,
   );
@@ -554,12 +546,9 @@ async function applyMcpCredential(
       ctx,
       pending.messageId,
       [
-        `🔐 Authentication · ${pending.serverName}`,
+        t("mcps.auth.menu_title", { name: pending.serverName }),
         "",
-        "❌ Authentication could not be configured.",
-        "Check the credential or provider settings and try again.",
-        "",
-        "The submitted secret was not displayed or logged.",
+        t("mcps.auth.configure_failed"),
       ].join("\n"),
       buildMcpCredentialInputKeyboard(),
     );
