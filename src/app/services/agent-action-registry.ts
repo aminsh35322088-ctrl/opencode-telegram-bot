@@ -135,9 +135,9 @@ const DESCRIPTIONS: Record<string, string> = {
   "session-extended.create": "Create an OpenCode session without rebinding the current Telegram Topic.",
   "session-extended.delete": "Delete a non-current OpenCode session.",
   "test.test": "Run the project's configured tests or local test runner without downloading tools.",
-  "ssh.status": "Inspect local SSH/Cloudflare client readiness without exposing credentials.",
+  "ssh.status": "Inspect the local direct SSH client and persistent key readiness.",
   "ssh.key.public": "Return the bot-owned SSH public key for authorizing a remote host.",
-  "ssh.exec": "Execute a command on an SSH host using direct or Cloudflare Access transport.",
+  "ssh.exec": "Execute a command on a directly reachable SSH host.",
 };
 
 const BOT_READ = new Set([
