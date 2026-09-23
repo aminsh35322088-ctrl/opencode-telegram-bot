@@ -39,6 +39,14 @@ describe("shared provider catalog", () => {
 
     expect(timeoutSpy).toHaveBeenCalledWith(30_000);
   });
+
+  it("reports a clear error after both discovery attempts time out", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchProviderCatalog(url, "key")).rejects.toThrow("Model discovery timed out after 30 seconds (2 attempts)");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("force refresh bypasses a fresh cached catalog", async () => {
     const first = { data: [{ id: "old-model" }] };
     const second = { data: [{ id: "old-model" }, { id: "new-model" }] };
