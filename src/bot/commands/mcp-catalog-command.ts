@@ -4,15 +4,24 @@ import { interactionManager } from "../../app/managers/interaction-manager.js";
 import {
   addMcpCatalogServer,
   completeMcpOAuth,
+  configureSecureMcpAuth,
+  getMcpAuthSummary,
   loadMcpCatalog,
+  resetMcpAuthToAuto,
+  resolveMcpRemoteUrl,
   startMcpOAuth,
 } from "../../app/services/mcp-catalog-service.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
+import type { McpCredentialRecord } from "../../app/services/mcp-credential-store.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import {
+  buildMcpAuthOptionsKeyboard,
+  buildMcpCredentialInputKeyboard,
   buildMcpOAuthKeyboard,
   buildMcpsAddTypeKeyboard,
+  buildMcpsDetailKeyboard,
+  buildMcpsDetailText,
   buildMcpsEmptyKeyboard,
   buildMcpsListKeyboard,
   buildMcpsWizardKeyboard,
@@ -36,8 +45,24 @@ interface PendingMcpAuth {
   projectDirectory: string;
 }
 
+export type McpCredentialMode = "bearer" | "api-key" | "custom-header" | "oauth-client";
+type McpCredentialStep = "menu" | "header-name" | "secret" | "client-id" | "client-secret" | "scope";
+
+interface PendingMcpCredential {
+  serverName: string;
+  projectDirectory: string;
+  remoteUrl: string;
+  messageId: number;
+  step: McpCredentialStep;
+  mode?: McpCredentialMode;
+  headerName?: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
 const mcpAddWizard = new TopicScopedValue<PendingMcpAdd>();
 const mcpAuthWizard = new TopicScopedValue<PendingMcpAuth>();
+const mcpCredentialWizard = new TopicScopedValue<PendingMcpCredential>();
 
 function callbackMessageId(ctx: Context): number | null {
   const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
