@@ -1,4 +1,5 @@
 import { reconcileStoredModelSelection } from "../app/services/model-selection-service.js";
+import { refreshAndApplyCustomProviderToolCapabilities } from "../app/services/custom-provider-service.js";
 import { restoreSecureMcpConnections } from "../app/services/mcp-catalog-service.js";
 import { warmupSessionDirectoryCache } from "../app/services/session-cache-service.js";
 import { logger } from "../utils/logger.js";
@@ -17,6 +18,13 @@ export async function isOpencodeServerHealthy(): Promise<boolean> {
 }
 
 export async function refreshSessionCacheAfterOpencodeReady(reason: string): Promise<void> {
+  try {
+    const migrated = await refreshAndApplyCustomProviderToolCapabilities();
+    logger.debug(`[OpenCodeReady] Active custom-model capability migration: reason=${reason}, applied=${migrated}`);
+  } catch (error) {
+    logger.warn(`[OpenCodeReady] Active custom-model capability migration failed: reason=${reason}`, error);
+  }
+
   try {
     const restored = await restoreSecureMcpConnections();
     logger.debug(

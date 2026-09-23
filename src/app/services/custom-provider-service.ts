@@ -1,5 +1,5 @@
 import { fetchProviderCatalog } from "./provider-catalog-service.js";
-import { isAgentToolCapableModelMetadata, isChatModelMetadata } from "./model-eligibility-service.js";
+import { isChatModelMetadata } from "./model-eligibility-service.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -38,6 +38,15 @@ export interface CustomProvider {
   capability: AiCapability;
   createdAt: string;
   updatedAt: string;
+}
+
+function isVerifiedCustomAgentModel(model: CustomProviderModel | undefined): boolean {
+  return Boolean(
+    model &&
+    model.toolCall === true &&
+    model.toolCallVerified === true &&
+    isChatModelMetadata(model)
+  );
 }
 
 interface StoredProvider extends CustomProvider {
@@ -284,7 +293,7 @@ export async function listCustomProvidersByCapability(capability: AiCapability):
     return general.filter((provider) => provider.models.some(isImageModelMetadata));
   }
   if (capability === "coding") {
-    return general.filter((provider) => provider.models.some(isAgentToolCapableModelMetadata));
+    return general.filter((provider) => provider.models.some(isVerifiedCustomAgentModel));
   }
   return general;
 }
@@ -515,29 +524,31 @@ export async function saveCustomProvider(input: {
 
   const discovered = await discoverModels(baseURL, key);
   const discoveredById = new Map(discovered.map((model) => [model.id, model]));
-  const verifiedModels = requestedModels
+  const catalogModels = requestedModels
     .map((model) => discoveredById.get(model.id))
     .filter((model): model is CustomProviderModel => Boolean(model));
-  if (!verifiedModels.length) throw new Error("None of the configured models were returned by the provider");
-
-  const modelsWithToolCapability: CustomProviderModel[] = [];
-  for (const model of verifiedModels) {
-    const toolCall = await probeToolCallSupport(baseURL, key, model.id);
-    modelsWithToolCapability.push({
-      ...model,
-      ...(toolCall === null ? {} : { toolCall, toolCallVerified: true }),
-    });
-  }
+  if (!catalogModels.length) throw new Error("None of the configured models were returned by the provider");
 
   const now = new Date().toISOString();
   const store = await readStore();
   const existing = store.providers.find((provider) => provider.id === id);
   if (existing && !input.id) throw new Error("A provider with this name already exists. Choose a different name.");
+
+  const preserveVerification = Boolean(existing && existing.baseURL === baseURL && existing.apiKey === key);
+  const previousModels = preserveVerification
+    ? new Map(existing!.models.map((model) => [model.id, model]))
+    : new Map<string, CustomProviderModel>();
+  const modelsWithPreservedVerification = catalogModels.map((model) => {
+    const previous = previousModels.get(model.id);
+    if (previous?.toolCallVerified !== true) return model;
+    return { ...model, toolCall: previous.toolCall === true, toolCallVerified: true };
+  });
+
   const provider: StoredProvider = {
     id,
     name,
     baseURL,
-    models: modelsWithToolCapability,
+    models: modelsWithPreservedVerification,
     capability,
     apiKey: key,
     createdAt: existing?.createdAt ?? now,
@@ -546,7 +557,7 @@ export async function saveCustomProvider(input: {
   const next = { ...store, providers: [...store.providers.filter((item) => item.id !== id), provider] };
   await writeStore(next, input.beforeSave);
   applyProviderEnvironment(next);
-  logger.info(`[CustomProvider] Saved verified provider ${id} capability=${capability} models=${provider.models.length}`);
+  logger.info(`[CustomProvider] Saved provider ${id} capability=${capability} models=${provider.models.length}`);
   return toPublicProvider(provider);
 }
 
@@ -560,6 +571,11 @@ export async function deleteCustomProvider(id: string): Promise<boolean> {
   return true;
 }
 
+export interface ToolCapabilityTarget {
+  providerID: string;
+  modelID: string;
+}
+
 interface ToolCapabilityUpdate {
   providerId: string;
   providerUpdatedAt: string;
@@ -567,29 +583,107 @@ interface ToolCapabilityUpdate {
   providerApiKey: string;
   modelId: string;
   toolCall: boolean;
+  previousToolCall?: boolean;
 }
 
-export async function refreshCustomProviderToolCapabilities(): Promise<boolean> {
-  const snapshot = await readStore();
-  const updates: ToolCapabilityUpdate[] = [];
+function readToolCapabilityTarget(value: unknown): ToolCapabilityTarget | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as { providerID?: unknown; modelID?: unknown };
+  if (typeof candidate.providerID !== "string" || !candidate.providerID.trim()) return null;
+  if (typeof candidate.modelID !== "string" || !candidate.modelID.trim()) return null;
+  return { providerID: candidate.providerID.trim(), modelID: candidate.modelID.trim() };
+}
 
-  for (const provider of snapshot.providers) {
-    if (provider.id === LEGACY_GEMINI_IMAGE_ID || provider.capability === "stt" || !provider.apiKey.trim()) continue;
-    for (const model of provider.models) {
-      if (model.toolCallVerified === true || !isChatModelMetadata(model)) continue;
-      const toolCall = await probeToolCallSupport(provider.baseURL, provider.apiKey, model.id);
-      if (toolCall === null) continue;
-      updates.push({
-        providerId: provider.id,
-        providerUpdatedAt: provider.updatedAt,
-        providerBaseURL: provider.baseURL,
-        providerApiKey: provider.apiKey,
-        modelId: model.id,
-        toolCall,
-      });
-    }
+async function collectActiveToolCapabilityTargets(snapshot: ProviderStoreFile): Promise<ToolCapabilityTarget[]> {
+  const customProviderIds = new Set(
+    snapshot.providers
+      .filter((provider) => provider.id !== LEGACY_GEMINI_IMAGE_ID && provider.capability !== "stt")
+      .map((provider) => provider.id),
+  );
+  const targets = new Map<string, ToolCapabilityTarget>();
+  const add = (value: unknown): void => {
+    const target = readToolCapabilityTarget(value);
+    if (!target || !customProviderIds.has(target.providerID)) return;
+    targets.set(`${target.providerID}/${target.modelID}`, target);
+  };
+
+  try {
+    const state = await readAppState();
+    const settings =
+      state.settings && typeof state.settings === "object" && !Array.isArray(state.settings)
+        ? state.settings as Record<string, unknown>
+        : undefined;
+    add(settings?.currentModel);
+    const topicDefaults =
+      settings?.topicDefaults && typeof settings.topicDefaults === "object" && !Array.isArray(settings.topicDefaults)
+        ? settings.topicDefaults as Record<string, unknown>
+        : undefined;
+    add(topicDefaults?.model);
+  } catch (error) {
+    logger.debug("[CustomProvider] Could not read active global model selection for capability migration", error);
   }
 
+  try {
+    const { listTopicRuntimeStates } = await import("../stores/topic-runtime-state-store.js");
+    for (const state of await listTopicRuntimeStates()) add(state.settings.model);
+  } catch (error) {
+    logger.debug("[CustomProvider] Could not read Topic model selections for capability migration", error);
+  }
+
+  try {
+    const { config } = await import("../../config.js");
+    add({
+      providerID: config.opencode.model.provider,
+      modelID: config.opencode.model.modelId,
+    });
+  } catch (error) {
+    logger.debug("[CustomProvider] Could not read configured default model for capability migration", error);
+  }
+
+  return [...targets.values()];
+}
+
+async function collectToolCapabilityUpdates(
+  snapshot: ProviderStoreFile,
+  targets?: readonly ToolCapabilityTarget[],
+): Promise<ToolCapabilityUpdate[]> {
+  const requested = targets ?? await collectActiveToolCapabilityTargets(snapshot);
+  if (!requested.length) return [];
+
+  const unique = new Map(requested.map((target) => [`${target.providerID}/${target.modelID}`, target]));
+  const updates: ToolCapabilityUpdate[] = [];
+
+  for (const target of unique.values()) {
+    const provider = snapshot.providers.find((item) => item.id === target.providerID);
+    if (
+      !provider ||
+      provider.id === LEGACY_GEMINI_IMAGE_ID ||
+      provider.capability === "stt" ||
+      !provider.apiKey.trim()
+    ) {
+      continue;
+    }
+
+    const model = provider.models.find((item) => item.id === target.modelID);
+    if (!model || model.toolCallVerified === true || !isChatModelMetadata(model)) continue;
+
+    const toolCall = await probeToolCallSupport(provider.baseURL, provider.apiKey, model.id);
+    if (toolCall === null) continue;
+    updates.push({
+      providerId: provider.id,
+      providerUpdatedAt: provider.updatedAt,
+      providerBaseURL: provider.baseURL,
+      providerApiKey: provider.apiKey,
+      modelId: model.id,
+      toolCall,
+      ...(typeof model.toolCall === "boolean" ? { previousToolCall: model.toolCall } : {}),
+    });
+  }
+
+  return updates;
+}
+
+async function persistToolCapabilityUpdates(updates: readonly ToolCapabilityUpdate[]): Promise<boolean> {
   if (!updates.length) return false;
 
   let changed = false;
@@ -621,6 +715,48 @@ export async function refreshCustomProviderToolCapabilities(): Promise<boolean> 
   return changed;
 }
 
+async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpdate[]): Promise<void> {
+  if (!updates.length) return;
+
+  await updateAppState((state) => {
+    const current = normalizeStore(state.customProviders);
+    let changed = false;
+    const providers = current.providers.map((provider) => {
+      const matching = updates.filter((update) =>
+        update.providerId === provider.id &&
+        update.providerUpdatedAt === provider.updatedAt &&
+        update.providerBaseURL === provider.baseURL &&
+        update.providerApiKey === provider.apiKey
+      );
+      if (!matching.length) return provider;
+
+      let providerChanged = false;
+      const models = provider.models.map((model) => {
+        const update = matching.find((candidate) => candidate.modelId === model.id);
+        if (!update || model.toolCallVerified !== true || model.toolCall !== update.toolCall) return model;
+
+        providerChanged = true;
+        changed = true;
+        const restored: CustomProviderModel = { ...model };
+        delete restored.toolCallVerified;
+        if (typeof update.previousToolCall === "boolean") restored.toolCall = update.previousToolCall;
+        else delete restored.toolCall;
+        return restored;
+      });
+      return providerChanged ? { ...provider, models } : provider;
+    });
+    return changed ? { customProviders: normalizeStore({ ...current, providers }) } : {};
+  });
+}
+
+export async function refreshCustomProviderToolCapabilities(
+  targets?: readonly ToolCapabilityTarget[],
+): Promise<boolean> {
+  const snapshot = await readStore();
+  const updates = await collectToolCapabilityUpdates(snapshot, targets);
+  return persistToolCapabilityUpdates(updates);
+}
+
 export async function buildOpenCodeCustomConfig(): Promise<string> {
   const store = await readStore();
   applyProviderEnvironment(store);
@@ -646,35 +782,20 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
   return JSON.stringify({ $schema: "https://opencode.ai/config.json", provider: providers }, null, 2);
 }
 
+async function writeOpenCodeCustomConfigFile(configPath?: string): Promise<string> {
+  const target = configPath ?? path.join(getRuntimePaths().appHome, ".config", "opencode-telegram", "custom-providers.json");
+  await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await fs.writeFile(target, await buildOpenCodeCustomConfig(), { mode: 0o600 });
+  return target;
+}
+
 export async function syncOpenCodeCustomConfig(): Promise<string> {
-  // Write a fail-closed config immediately so boot never waits on network
-  // probes. Unverified models keep tool_call: false until the background
-  // refresh rewrites the file with verified results.
-  const configDir = path.join(getRuntimePaths().appHome, ".config", "opencode-telegram");
-  const configPath = path.join(configDir, "custom-providers.json");
-  await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
-  scheduleToolCapabilityRefresh(configPath);
-  return configPath;
+  // Config sync is intentionally network-free. Unverified custom models remain
+  // fail-closed until an active/selected model is verified explicitly.
+  return writeOpenCodeCustomConfigFile();
 }
 
-let toolCapabilityRefreshInFlight: Promise<void> | null = null;
-
-const TOOL_CAPABILITY_RELOAD_RETRY_MS = 2_000;
-let toolCapabilityReloadPending = false;
-let toolCapabilityReloadTimer: ReturnType<typeof setTimeout> | null = null;
-
-function scheduleToolCapabilityRuntimeReload(): void {
-  if (toolCapabilityReloadTimer) return;
-  toolCapabilityReloadTimer = setTimeout(() => {
-    toolCapabilityReloadTimer = null;
-    void tryApplyToolCapabilityRuntimeReload();
-  }, TOOL_CAPABILITY_RELOAD_RETRY_MS);
-  toolCapabilityReloadTimer.unref?.();
-}
-
-async function tryApplyToolCapabilityRuntimeReload(): Promise<void> {
-  if (!toolCapabilityReloadPending) return;
+async function isToolCapabilityRuntimeIdle(): Promise<boolean> {
   try {
     const {
       getOpenCodeActivityState,
@@ -683,55 +804,73 @@ async function tryApplyToolCapabilityRuntimeReload(): Promise<void> {
     } = await import("./run-control-service.js");
     const { scheduledTaskRuntime } = await import("./scheduled-task-runtime-service.js");
     await reconcileAllForegroundBusyState();
-    if (isAnyForegroundBusy() || scheduledTaskRuntime.hasRunningTasks()) {
-      scheduleToolCapabilityRuntimeReload();
-      return;
-    }
-
-    const activity = await getOpenCodeActivityState();
-    if (activity === "busy") {
-      scheduleToolCapabilityRuntimeReload();
-      return;
-    }
-    if (activity === "unavailable") {
-      toolCapabilityReloadPending = false;
-      logger.info("[CustomProvider] OpenCode activity could not be verified; config staged for next startup");
-      return;
-    }
-
-    const { opencodeClient } = await import("../../opencode/client.js");
-    const { error } = await opencodeClient.global.dispose();
-    if (error) {
-      toolCapabilityReloadPending = false;
-      logger.info("[CustomProvider] OpenCode is not ready for capability reload; config staged for next startup");
-      return;
-    }
-
-    toolCapabilityReloadPending = false;
-    logger.info("[CustomProvider] Reloaded idle OpenCode instances with verified tool-call capabilities");
+    if (isAnyForegroundBusy() || scheduledTaskRuntime.hasRunningTasks()) return false;
+    return await getOpenCodeActivityState() === "idle";
   } catch (error) {
-    toolCapabilityReloadPending = false;
-    logger.info("[CustomProvider] OpenCode capability reload deferred to next startup");
-    logger.debug("[CustomProvider] Capability reload detail:", error);
+    logger.debug("[CustomProvider] Could not verify idle OpenCode state for tool capability update", error);
+    return false;
   }
 }
 
-export async function refreshAndApplyCustomProviderToolCapabilities(configPath: string): Promise<boolean> {
-  const changed = await refreshCustomProviderToolCapabilities();
+export async function refreshAndApplyCustomProviderToolCapabilities(
+  configPath?: string,
+  targets?: readonly ToolCapabilityTarget[],
+): Promise<boolean> {
+  // Never mutate capability state while another Topic/session/task may be
+  // executing against the current OpenCode instance configuration.
+  if (!(await isToolCapabilityRuntimeIdle())) return false;
+
+  const snapshot = await readStore();
+  const updates = await collectToolCapabilityUpdates(snapshot, targets);
+  if (!updates.length) return false;
+
+  // Probes can take seconds. Re-check after the network round-trip so a run
+  // that started meanwhile cannot be interrupted by the instance reload.
+  if (!(await isToolCapabilityRuntimeIdle())) return false;
+
+  const changed = await persistToolCapabilityUpdates(updates);
   if (!changed) return false;
 
-  await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
-  toolCapabilityReloadPending = true;
-  await tryApplyToolCapabilityRuntimeReload();
-  return true;
+  const positiveUpdates = updates.filter((update) => update.toolCall);
+  if (!positiveUpdates.length) {
+    // Negative verification remains fail-closed and does not require a runtime
+    // reload because the existing OpenCode config already exposes tool_call=false.
+    return true;
+  }
+
+  try {
+    await writeOpenCodeCustomConfigFile(configPath);
+    const { opencodeClient } = await import("../../opencode/client.js");
+    const { error } = await opencodeClient.global.dispose();
+    if (error) throw error;
+    logger.info("[CustomProvider] Reloaded idle OpenCode instances with verified tool-call capabilities");
+    return true;
+  } catch (error) {
+    // Never leave a positive capability persisted when the live instance could
+    // not reload the matching config. Roll it back so selection stays fail-closed.
+    await rollbackToolCapabilityUpdates(positiveUpdates);
+    await writeOpenCodeCustomConfigFile(configPath).catch(() => {});
+    logger.warn("[CustomProvider] Rolled back verified capability after OpenCode reload failure", error);
+    return false;
+  }
 }
 
-function scheduleToolCapabilityRefresh(configPath: string): void {
-  if (toolCapabilityRefreshInFlight) return;
-  toolCapabilityRefreshInFlight = refreshAndApplyCustomProviderToolCapabilities(configPath)
-    .then(() => undefined)
-    .catch((error) => logger.warn("[CustomProvider] Background tool-call capability refresh failed:", error))
-    .finally(() => {
-      toolCapabilityRefreshInFlight = null;
-    });
+export async function ensureCustomProviderModelToolCapability(
+  providerID: string,
+  modelID: string,
+): Promise<boolean> {
+  const snapshot = await readStore();
+  const provider = snapshot.providers.find((item) => item.id === providerID && item.capability !== "stt");
+  const model = provider?.models.find((item) => item.id === modelID);
+  if (!provider || !model || !isChatModelMetadata(model)) return false;
+  if (model.toolCallVerified === true) return model.toolCall === true;
+
+  const applied = await refreshAndApplyCustomProviderToolCapabilities(undefined, [{ providerID, modelID }]);
+  if (!applied) return false;
+
+  const refreshed = await readStore();
+  const verified = refreshed.providers
+    .find((item) => item.id === providerID)
+    ?.models.find((item) => item.id === modelID);
+  return verified?.toolCallVerified === true && verified.toolCall === true;
 }

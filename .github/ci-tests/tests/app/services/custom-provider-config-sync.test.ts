@@ -65,14 +65,7 @@ describe("custom-provider config sync boot path", () => {
       if (result.customProviders) store = result.customProviders as typeof store;
     });
 
-    // Probe HTTP call that never settles until aborted — models sequential boot probes.
-    fetchMock = vi.fn(
-      () =>
-        new Promise((_resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error("timeout")), 30_000);
-          void timer;
-        }),
-    );
+    fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -95,18 +88,13 @@ describe("custom-provider config sync boot path", () => {
     expect(written).toContain("slow-provider");
     // Unverified model must stay fail-closed in the immediately written config.
     expect(written).toContain('"tool_call": false');
-    // Probe may still be in flight; config path must not depend on it.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not await probes before returning the config path", async () => {
-    let returned = false;
-    const syncPromise = syncOpenCodeCustomConfig().then((value) => {
-      returned = true;
-      return value;
-    });
+  it("never starts tool-call probes during config sync", async () => {
+    const configPath = await syncOpenCodeCustomConfig();
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(returned).toBe(true);
-    await syncPromise;
+    expect(typeof configPath).toBe("string");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

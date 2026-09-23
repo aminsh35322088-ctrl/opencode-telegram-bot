@@ -91,4 +91,26 @@ describe("shared provider catalog", () => {
     await expect(fetchProviderCatalog(url, "key")).rejects.toThrow();
     expect(peekProviderCatalog(url, "key")).toBeUndefined();
   });
+
+  it("surfaces provider error code, message and request id for failed discovery", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "No API key provided.",
+            type: "authentication_error",
+            code: "missing_api_key",
+          },
+        }),
+        {
+          status: 401,
+          headers: { "x-request-id": "req_test_123" },
+        },
+      ),
+    ));
+
+    await expect(fetchProviderCatalog("https://gateway.example/v1", "bad-key")).rejects.toThrow(
+      /HTTP 401.*missing_api_key.*No API key provided.*req_test_123/,
+    );
+  });
 });

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   reconcileBusy: vi.fn(),
   scheduledBusy: vi.fn(),
   opencodeActivity: vi.fn(),
+  topicStates: vi.fn(),
 }));
 
 vi.mock("../../../src/app/stores/app-state-store.js", () => ({
@@ -34,11 +35,19 @@ vi.mock("../../../src/app/services/run-control-service.js", () => ({
 vi.mock("../../../src/app/services/scheduled-task-runtime-service.js", () => ({
   scheduledTaskRuntime: { hasRunningTasks: mocks.scheduledBusy },
 }));
+vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
+  listTopicRuntimeStates: mocks.topicStates,
+}));
+vi.mock("../../../src/config.js", () => ({
+  config: { opencode: { model: { provider: "", modelId: "" } } },
+}));
 
 import {
   refreshAndApplyCustomProviderToolCapabilities,
   refreshCustomProviderToolCapabilities,
+  saveCustomProvider,
 } from "../../../src/app/services/custom-provider-service.js";
+import { __resetProviderCatalogForTests } from "../../../src/app/services/provider-catalog-service.js";
 
 function providerStore() {
   return {
@@ -69,10 +78,12 @@ function toolCallResponse() {
 
 describe("custom-provider capability refresh", () => {
   let state: ReturnType<typeof providerStore>;
+  let settings: Record<string, unknown>;
 
   beforeEach(() => {
     state = providerStore();
-    mocks.readAppState.mockReset().mockImplementation(async () => ({ customProviders: state }));
+    settings = {};
+    mocks.readAppState.mockReset().mockImplementation(async () => ({ customProviders: state, settings }));
     mocks.updateAppState.mockReset().mockImplementation(async (patch: unknown) => {
       const fn = patch as (current: { customProviders: typeof state }) => { customProviders?: typeof state };
       const result = fn({ customProviders: state });
@@ -83,6 +94,8 @@ describe("custom-provider capability refresh", () => {
     mocks.reconcileBusy.mockReset().mockResolvedValue(undefined);
     mocks.scheduledBusy.mockReset().mockReturnValue(false);
     mocks.opencodeActivity.mockReset().mockResolvedValue("idle");
+    mocks.topicStates.mockReset().mockResolvedValue([]);
+    __resetProviderCatalogForTests();
   });
 
   it("does not resurrect a provider deleted while its probe is in flight", async () => {
@@ -90,7 +103,7 @@ describe("custom-provider capability refresh", () => {
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const refresh = refreshCustomProviderToolCapabilities();
+    const refresh = refreshCustomProviderToolCapabilities([{ providerID: "race-provider", modelID: "agent-model" }]);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     state = { providers: [] };
     release(toolCallResponse());
@@ -105,71 +118,168 @@ describe("custom-provider capability refresh", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capability-refresh-"));
     const configPath = path.join(dir, "custom-providers.json");
 
-    await expect(refreshAndApplyCustomProviderToolCapabilities(configPath)).resolves.toBe(true);
+    await expect(
+      refreshAndApplyCustomProviderToolCapabilities(configPath, [{ providerID: "race-provider", modelID: "agent-model" }]),
+    ).resolves.toBe(true);
 
     expect(state.providers[0]?.models[0]).toMatchObject({ toolCall: true, toolCallVerified: true });
     expect(await fs.readFile(configPath, "utf8")).toContain('"tool_call": true');
-    expect(mocks.reconcileBusy).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcileBusy).toHaveBeenCalledTimes(2);
     expect(mocks.globalDispose).toHaveBeenCalledTimes(1);
 
     await fs.rm(dir, { recursive: true, force: true });
     vi.unstubAllGlobals();
   });
 
-  it("defers the runtime reload until active runs become idle", async () => {
-    vi.useFakeTimers();
+  it("rolls back a positive verification if the live OpenCode config cannot reload", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(toolCallResponse()));
+    mocks.globalDispose.mockResolvedValue({ data: null, error: new Error("reload failed") });
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capability-rollback-"));
+    const configPath = path.join(dir, "custom-providers.json");
+
+    await expect(
+      refreshAndApplyCustomProviderToolCapabilities(configPath, [{ providerID: "race-provider", modelID: "agent-model" }]),
+    ).resolves.toBe(false);
+
+    expect(state.providers[0]?.models[0]).toMatchObject({ toolCall: true });
+    expect(state.providers[0]?.models[0]?.toolCallVerified).toBeUndefined();
+    expect(await fs.readFile(configPath, "utf8")).toContain('"tool_call": false');
+
+    await fs.rm(dir, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("persists a negative verification without reloading OpenCode", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: "plain text" } }] }), { status: 200 }),
+    ));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capability-negative-"));
+    const configPath = path.join(dir, "custom-providers.json");
+
+    await expect(
+      refreshAndApplyCustomProviderToolCapabilities(configPath, [{ providerID: "race-provider", modelID: "agent-model" }]),
+    ).resolves.toBe(true);
+
+    expect(state.providers[0]?.models[0]).toMatchObject({ toolCall: false, toolCallVerified: true });
+    expect(mocks.globalDispose).not.toHaveBeenCalled();
+
+    await fs.rm(dir, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses capability mutation while a foreground run is active", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(toolCallResponse());
+    vi.stubGlobal("fetch", fetchMock);
     mocks.anyBusy.mockReturnValue(true);
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capability-reload-"));
-    const configPath = path.join(dir, "custom-providers.json");
 
-    await expect(refreshAndApplyCustomProviderToolCapabilities(configPath)).resolves.toBe(true);
+    await expect(
+      refreshAndApplyCustomProviderToolCapabilities(undefined, [{ providerID: "race-provider", modelID: "agent-model" }]),
+    ).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.globalDispose).not.toHaveBeenCalled();
-
-    mocks.anyBusy.mockReturnValue(false);
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(mocks.globalDispose).toHaveBeenCalledTimes(1);
-
-    await fs.rm(dir, { recursive: true, force: true });
     vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 
-  it("defers the runtime reload while a scheduled task is running", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(toolCallResponse()));
+  it("refuses capability mutation while a scheduled task is active", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(toolCallResponse());
+    vi.stubGlobal("fetch", fetchMock);
     mocks.scheduledBusy.mockReturnValue(true);
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capability-scheduled-"));
-    const configPath = path.join(dir, "custom-providers.json");
 
-    await expect(refreshAndApplyCustomProviderToolCapabilities(configPath)).resolves.toBe(true);
+    await expect(
+      refreshAndApplyCustomProviderToolCapabilities(undefined, [{ providerID: "race-provider", modelID: "agent-model" }]),
+    ).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.globalDispose).not.toHaveBeenCalled();
-
-    mocks.scheduledBusy.mockReturnValue(false);
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(mocks.globalDispose).toHaveBeenCalledTimes(1);
-
-    await fs.rm(dir, { recursive: true, force: true });
     vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 
-  it("defers the runtime reload while OpenCode reports a background session busy", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(toolCallResponse()));
+  it("refuses capability mutation while OpenCode reports a background session busy", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(toolCallResponse());
+    vi.stubGlobal("fetch", fetchMock);
     mocks.opencodeActivity.mockResolvedValue("busy");
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "capability-background-"));
-    const configPath = path.join(dir, "custom-providers.json");
 
-    await expect(refreshAndApplyCustomProviderToolCapabilities(configPath)).resolves.toBe(true);
+    await expect(
+      refreshAndApplyCustomProviderToolCapabilities(undefined, [{ providerID: "race-provider", modelID: "agent-model" }]),
+    ).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.globalDispose).not.toHaveBeenCalled();
-
-    mocks.opencodeActivity.mockResolvedValue("idle");
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(mocks.globalDispose).toHaveBeenCalledTimes(1);
-
-    await fs.rm(dir, { recursive: true, force: true });
     vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
+
+  it("does not probe an inactive large custom-provider catalog", async () => {
+    state = {
+      providers: [{
+        ...providerStore().providers[0],
+        models: Array.from({ length: 250 }, (_, index) => ({
+          id: "model-" + index,
+          name: "Model " + index,
+          toolCall: true,
+          toolCallVerified: false,
+          modalities: { input: ["text"], output: ["text"] },
+        })),
+      }],
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(refreshCustomProviderToolCapabilities()).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("probes only the active model from a large legacy catalog", async () => {
+    state = {
+      providers: [{
+        ...providerStore().providers[0],
+        models: Array.from({ length: 250 }, (_, index) => ({
+          id: "model-" + index,
+          name: "Model " + index,
+          toolCall: true,
+          toolCallVerified: false,
+          modalities: { input: ["text"], output: ["text"] },
+        })),
+      }],
+    };
+    settings = { currentModel: { providerID: "race-provider", modelID: "model-149" } };
+    const fetchMock = vi.fn().mockResolvedValue(toolCallResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(refreshCustomProviderToolCapabilities()).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(state.providers[0]?.models.filter((model) => model.toolCallVerified === true)).toHaveLength(1);
+    expect(state.providers[0]?.models[149]).toMatchObject({ id: "model-149", toolCallVerified: true, toolCall: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("saves a large OpenAI-compatible catalog with one /models request and zero tool probes", async () => {
+    state = { providers: [] };
+    const models = Array.from({ length: 200 }, (_, index) => ({
+      id: "vendor/model-" + index,
+      name: "Model " + index,
+      modalities: { input: ["text"], output: ["text"] },
+    }));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: models }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveCustomProvider({
+      name: "Large Gateway",
+      baseURL: "https://gateway.example/v1",
+      apiKey: "sk-test",
+      models,
+      capability: "general",
+    })).resolves.toMatchObject({ id: "large-gateway" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://gateway.example/v1/models");
+    expect(state.providers[0]?.models).toHaveLength(200);
+    expect(state.providers[0]?.models.some((model) => model.toolCallVerified === true)).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
 });

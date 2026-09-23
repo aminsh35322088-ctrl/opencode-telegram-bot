@@ -1,12 +1,12 @@
 import { getCurrentModel, setCurrentModel } from "../stores/settings-store.js";
 import { config } from "../../config.js";
 import { opencodeClient } from "../../opencode/client.js";
-import { listCustomProviders, listCustomProvidersByCapability, type AiCapability } from "./custom-provider-service.js";
+import { ensureCustomProviderModelToolCapability, listCustomProviders, listCustomProvidersByCapability, type AiCapability } from "./custom-provider-service.js";
 import { isServerUnavailableError } from "../../utils/opencode-error.js";
 import { logger } from "../../utils/logger.js";
 import type { ModelInfo, FavoriteModel, ModelSelectionLists, ProviderInfo } from "../types/model.js";
 import path from "node:path";
-import { isAgentToolCapableModelMetadata } from "./model-eligibility-service.js";
+import { isAgentToolCapableModelMetadata, isChatModelMetadata } from "./model-eligibility-service.js";
 
 const cachedPriceMetadata = new Map<string, { fetchedAt: number; models: Array<[string, unknown]> }>();
 export function getCachedProviderPriceMetadata(providerID: string) { return cachedPriceMetadata.get(providerID); }
@@ -137,12 +137,26 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       }
 
       for (const provider of customProviders) {
+        // Keep the full chat-capable catalog visible. Custom models become
+        // selectable only after ensureCustomProviderModelToolCapability()
+        // completes a live tool-call verification for the exact model.
         const providerModels = dedupeModels(
-          provider.models.filter(isAgentToolCapableModelMetadata).map((model) => ({ providerID: provider.id, modelID: model.id, name: model.name })),
+          provider.models.filter(isChatModelMetadata).map((model) => ({
+            providerID: provider.id,
+            modelID: model.id,
+            name: model.name,
+          })),
+        );
+        const verifiedKeys = new Set(
+          provider.models
+            .filter((model) => model.toolCall === true && model.toolCallVerified === true && isChatModelMetadata(model))
+            .map((model) => getModelKey(provider.id, model.id)),
         );
         byProvider.set(provider.id, providerModels);
         for (const model of providerModels) {
-          valid.add(getModelKey(model.providerID, model.modelID));
+          if (verifiedKeys.has(getModelKey(model.providerID, model.modelID))) {
+            valid.add(getModelKey(model.providerID, model.modelID));
+          }
           all.push(model);
         }
         providers.push({ id: provider.id, name: provider.name, modelCount: providerModels.length });
@@ -156,7 +170,7 @@ async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<str
       const envAllowed = Boolean(
         env && (
           envCustom
-            ? envCustom.capability !== "stt" && isAgentToolCapableModelMetadata(envCustomModel)
+            ? envCustom.capability !== "stt" && envCustomModel?.toolCall === true && envCustomModel.toolCallVerified === true && isChatModelMetadata(envCustomModel)
             : envProviderModel
               ? isAgentToolCapableModelMetadata(envProviderModel)
               : env.providerID === "opencode"
@@ -356,10 +370,15 @@ export async function resolveCatalogModel(providerID: string, modelID: string, o
   const valid = await getValidModelKeys({ force: options?.forceRefresh === true });
   if (!valid || !cachedAllModels) return null;
   const exact = cachedAllModels.find((model) => model.providerID === providerID && model.modelID === modelID);
-  if (exact) return { ...exact, variant: "default" };
+  if (exact) {
+    return await isSelectableChatModel(exact.providerID, exact.modelID)
+      ? { ...exact, variant: "default" }
+      : null;
+  }
   const exactMatches = cachedAllModels.filter((model) => model.modelID === modelID);
   const match = exactMatches.length === 1 ? exactMatches[0] : undefined;
-  return match ? { ...match, variant: "default" } : null;
+  if (!match || !(await isSelectableChatModel(match.providerID, match.modelID))) return null;
+  return { ...match, variant: "default" };
 }
 
 export async function searchModels(query: string) {
@@ -373,7 +392,19 @@ export async function searchModels(query: string) {
 }
 
 export async function isSelectableChatModel(providerID: string, modelID: string): Promise<boolean> {
-  return (await getProviderModels(providerID)).some((model) => model.modelID === modelID);
+  const valid = await getValidModelKeys();
+  const key = getModelKey(providerID, modelID);
+  if (valid?.has(key)) return true;
+
+  const customProvider = (await listCustomProviders()).find((provider) => provider.id === providerID);
+  const customModel = customProvider?.models.find((model) => model.id === modelID);
+  if (!customProvider || !customModel || customProvider.capability === "stt" || !isChatModelMetadata(customModel)) {
+    return false;
+  }
+
+  if (!(await ensureCustomProviderModelToolCapability(providerID, modelID))) return false;
+  const refreshed = await getValidModelKeys({ force: true });
+  return refreshed?.has(key) ?? false;
 }
 
 export function fetchCurrentModel(): ModelInfo {

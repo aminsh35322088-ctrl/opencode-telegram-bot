@@ -44,6 +44,36 @@ async function fetchCatalogResponse(baseURL: string, apiKey: string): Promise<Re
   throw new Error("Model discovery failed before receiving a response");
 }
 
+function providerErrorDetail(response: Response, raw: string): string {
+  let message = "";
+  let code = "";
+  try {
+    const payload = raw ? JSON.parse(raw) as unknown : null;
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const error = (payload as { error?: unknown }).error;
+      if (error && typeof error === "object" && !Array.isArray(error)) {
+        const record = error as { message?: unknown; code?: unknown };
+        if (typeof record.message === "string") message = record.message.trim();
+        if (typeof record.code === "string") code = record.code.trim();
+      } else if (typeof error === "string") {
+        message = error.trim();
+      }
+    }
+  } catch {
+    message = raw.trim().replace(/\s+/g, " ").slice(0, 180);
+  }
+
+  const requestId =
+    response.headers.get("x-request-id") ??
+    response.headers.get("request-id");
+  const parts = [
+    code ? "code=" + code : "",
+    message ? message.slice(0, 180) : "",
+    requestId ? "request=" + requestId : "",
+  ].filter(Boolean);
+  return parts.length ? " — " + parts.join(" · ") : "";
+}
+
 /** Shared discovery/refresh cache. No timer, credential persistence or inference. */
 export async function fetchProviderCatalog(
   baseURL: string,
@@ -68,7 +98,10 @@ export async function fetchProviderCatalog(
 
   const request = (async () => {
     const response = await fetchCatalogResponse(baseURL, apiKey);
-    if (!response.ok) throw new Error("Model discovery failed: HTTP " + response.status);
+    if (!response.ok) {
+      const raw = await response.text().catch(() => "");
+      throw new Error("Model discovery failed: HTTP " + response.status + providerErrorDetail(response, raw));
+    }
 
     const payload: unknown = await response.json();
     const data = payload && typeof payload === "object" && "data" in payload ? payload.data : undefined;
