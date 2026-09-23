@@ -137,10 +137,28 @@ async function addSecureMcpDefinition(record: McpCredentialRecord): Promise<McpC
   return server;
 }
 
+function assertAcceptedSecureMcpStatus(
+  record: McpCredentialRecord,
+  server: McpCatalogServerItem,
+): void {
+  if (record.mode === "oauth-client") {
+    if (server.status.status === "connected" || server.status.status === "needs_auth") return;
+    if (server.status.status === "needs_client_registration") {
+      throw new Error("MCP OAuth client registration was not accepted.");
+    }
+    throw new Error("MCP OAuth client did not connect.");
+  }
+
+  if (server.status.status !== "connected") {
+    throw new Error("MCP credential did not authenticate.");
+  }
+}
+
 export async function configureSecureMcpAuth(
   record: McpCredentialRecord,
 ): Promise<McpCatalogServerItem> {
   const server = await addSecureMcpDefinition(record);
+  assertAcceptedSecureMcpStatus(record, server);
   await saveMcpCredential(record);
   return server;
 }
@@ -159,7 +177,8 @@ export async function restoreSecureMcpConnections(): Promise<{ restored: number;
   let failed = 0;
   for (const record of records) {
     try {
-      await addSecureMcpDefinition(record);
+      const server = await addSecureMcpDefinition(record);
+      assertAcceptedSecureMcpStatus(record, server);
       restored += 1;
     } catch (error) {
       failed += 1;
