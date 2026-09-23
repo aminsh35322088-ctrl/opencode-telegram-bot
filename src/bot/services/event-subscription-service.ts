@@ -450,19 +450,21 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private finalizeLiveToolLine(toolInfo: ToolInfo, failed: boolean, durationMs?: number): void {
     const livePrefix = this.getLiveToolPrefix(toolInfo.callId);
     const streamKey = this.getToolStreamKey(toolInfo.tool);
-    const message = failed && durationMs !== undefined ? formatToolInfo(toolInfo) : "";
+    const message = formatToolInfo(toolInfo);
 
-    if (!message || durationMs === undefined) {
-      this.toolCallStreamer.removeByPrefix(toolInfo.sessionId, livePrefix, streamKey);
+    if (failed && message) {
+      const failedMessage =
+        durationMs === undefined ? message : appendDuration(message, formatDuration(durationMs));
+      this.toolCallStreamer.replaceByPrefix(
+        toolInfo.sessionId,
+        livePrefix,
+        `❌ ${failedMessage}`,
+        streamKey,
+      );
       return;
     }
 
-    this.toolCallStreamer.replaceByPrefix(
-      toolInfo.sessionId,
-      livePrefix,
-      appendDuration(message, formatDuration(durationMs)),
-      streamKey,
-    );
+    this.toolCallStreamer.removeByPrefix(toolInfo.sessionId, livePrefix, streamKey);
   }
 
   private async refreshSubagentCards(sessionId: string): Promise<void> {
@@ -926,9 +928,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       const compactMode = isCompactProgressMode();
-      // In full mode the subagent card already reports what the child agent is
-      // doing, so a live line for the task tool itself would duplicate it.
-      const tracksElapsed = compactMode || toolInfo.tool !== "task";
+      // Every model-facing tool call must remain visible to the user, including
+      // task delegation. Track all tools so the live label cannot disappear
+      // merely because another UI surface (for example a subagent card) exists.
+      const tracksElapsed = true;
 
       // A failed call is just as finished as a successful one: leaving it tracked
       // would keep its timer ticking for a tool that already stopped running.
@@ -961,10 +964,36 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           this.getToolCacheKey(toolInfo.sessionId, toolInfo.callId),
           toolInfo,
         );
+
+        // Do not wait for the elapsed-time threshold before showing what the
+        // agent invoked. Fast calls must be visible just like long-running ones.
+        if (!compactMode) {
+          const message = formatToolInfo(toolInfo);
+          if (message) {
+            this.toolCallStreamer.replaceByPrefix(
+              toolInfo.sessionId,
+              this.getLiveToolPrefix(toolInfo.callId),
+              `${RUNNING_ICON} ${message}`,
+              this.getToolStreamKey(toolInfo.tool),
+            );
+          }
+        }
       }
 
       if (!compactMode) {
         return;
+      }
+
+      // Compact mode edits a single progress message and very fast tools can
+      // otherwise complete before that edit reaches Telegram. Persist one
+      // friendly action announcement per call so no tool invocation is hidden.
+      const compactAnnouncement = formatToolInfo(toolInfo);
+      if (compactAnnouncement) {
+        this.toolMessageBatcher.enqueueUniqueByPrefix(
+          toolInfo.sessionId,
+          compactAnnouncement,
+          `tool-call:${toolInfo.callId}`,
+        );
       }
 
       const activity = this.getCompactToolActivity(toolInfo);
@@ -998,15 +1027,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       if (isCompactProgressMode()) {
-        return;
-      }
-
-      const shouldSendToolFileAttachment =
-        toolInfo.hasFileAttachment &&
-        getSendDiffFileAttachments() &&
-        (toolInfo.tool === "write" || toolInfo.tool === "edit" || toolInfo.tool === "apply_patch");
-
-      if (shouldSendToolFileAttachment || toolInfo.tool === "task") {
         return;
       }
 
