@@ -448,4 +448,44 @@ describe("app/services/mcp-catalog-service", () => {
     expect(mockedCredentials.remove).toHaveBeenCalledWith("/repo", "secure");
   });
 
+  it("does not persist a rejected bearer credential", async () => {
+    mocked.add.mockResolvedValue({
+      data: { secure: { status: "failed", error: "Unauthorized" } },
+      error: undefined,
+    });
+
+    await expect(configureSecureMcpAuth({
+      projectDirectory: "/repo",
+      serverName: "secure",
+      remoteUrl: "https://secure.example/mcp",
+      mode: "bearer",
+      secret: "wrong-secret",
+    })).rejects.toThrow(/did not authenticate/i);
+
+    expect(mockedCredentials.save).not.toHaveBeenCalled();
+  });
+
+  it("does not persist an OAuth client that still requires client registration", async () => {
+    mocked.add.mockResolvedValue({
+      data: {
+        enterprise: {
+          status: "needs_client_registration",
+          error: "Client registration required",
+        },
+      },
+      error: undefined,
+    });
+
+    await expect(configureSecureMcpAuth({
+      projectDirectory: "/repo",
+      serverName: "enterprise",
+      remoteUrl: "https://enterprise.example/mcp",
+      mode: "oauth-client",
+      clientId: "invalid-client",
+      clientSecret: "invalid-secret",
+    })).rejects.toThrow(/client registration/i);
+
+    expect(mockedCredentials.save).not.toHaveBeenCalled();
+  });
+
 });
