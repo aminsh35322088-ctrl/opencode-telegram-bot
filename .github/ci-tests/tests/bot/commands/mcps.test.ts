@@ -332,7 +332,7 @@ describe("bot/commands/mcps", () => {
     expect(interactionManager.getSnapshot()).toBeNull();
   });
 
-  it("does not show enable button for needs_auth status", async () => {
+  it("shows Sign In instead of enable for needs_auth status", async () => {
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
@@ -350,7 +350,7 @@ describe("bot/commands/mcps", () => {
 
     expect(handled).toBe(true);
     expect(ctx.editMessageText).toHaveBeenCalledWith(
-      expect.stringContaining(t("mcps.auth_required")),
+      expect.stringContaining("OAuth login is required"),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
 
@@ -363,6 +363,10 @@ describe("bot/commands/mcps", () => {
       row.some((btn) => btn.callback_data === "mcps:toggle"),
     );
     expect(hasToggleButton).toBe(false);
+    const hasSignInButton = options.reply_markup.inline_keyboard.some((row) =>
+      row.some((btn) => btn.callback_data === "mcps:auth:start"),
+    );
+    expect(hasSignInButton).toBe(true);
     expect(options.reply_markup.inline_keyboard.every((row) => row.length > 0)).toBe(true);
   });
 
