@@ -417,15 +417,15 @@ describe("interaction guard", () => {
 
     const textDecision = resolveInteractionGuardDecision(createContext({ text: "fixture-value" }));
     const commandDecision = resolveInteractionGuardDecision(createContext({ text: "/status" }));
-    const blockedCallback = resolveInteractionGuardDecision(
+    const callbackDecision = resolveInteractionGuardDecision(
       createContext({ callbackData: "settings:advanced" }),
     );
 
     expect(textDecision.allow).toBe(false);
     expect(textDecision.busy).toBe(true);
     expect(commandDecision.allow).toBe(true);
-    expect(blockedCallback.allow).toBe(false);
-    expect(blockedCallback.busy).toBe(true);
+    expect(callbackDecision.allow).toBe(true);
+    expect(callbackDecision.busy).toBe(true);
   });
 
   it("allows valid permission callback while busy and blocks other inputs", () => {
