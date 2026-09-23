@@ -36,6 +36,7 @@ import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
+import { findUnifiedModel } from "../../app/services/unified-model-catalog-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { logger } from "../../utils/logger.js";
 import { getCurrentTopicSettings, updateTopicDefaults } from "../../app/stores/settings-store.js";
@@ -133,11 +134,16 @@ async function refreshUnavailableModelAction(
   model: ModelInfo,
   target: ModelCenterFavoriteTarget | null,
 ): Promise<boolean> {
-  const currentModels = await getProviderModels(model.providerID);
+  const [entry, currentModels] = await Promise.all([
+    findUnifiedModel(model.providerID, model.modelID, { force: true }),
+    getProviderModels(model.providerID),
+  ]);
   const stillListed = currentModels.some((candidate) => candidate.modelID === model.modelID);
-  const message = stillListed
-    ? "This model is listed by the provider but is not verified for agent/tool use. The page was refreshed."
-    : "The provider model catalog changed after this page opened. The page was refreshed.";
+  const message = entry?.agentReadiness?.state === "unsupported"
+    ? "This model was verified as incompatible with agent/tool use. The page was refreshed."
+    : stillListed
+      ? "Tool compatibility could not be verified right now. The model remains unchecked and the page was refreshed."
+      : "The provider model catalog changed after this page opened. The page was refreshed.";
 
   await ctx.answerCallbackQuery({ text: message, show_alert: true }).catch(() => {});
   if (target) return await renderFavoriteTarget(ctx, target);

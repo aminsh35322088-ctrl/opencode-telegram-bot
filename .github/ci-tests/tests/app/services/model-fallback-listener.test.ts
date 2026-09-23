@@ -56,8 +56,14 @@ vi.mock("../../../src/utils/logger.js", () => ({
   },
 }));
 vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
+  ensureCustomProviderModelToolCapability: async () => false,
+  getCustomProvider: async () => undefined,
+  getGroqSttConfig: async () => undefined,
   listCustomProviders: listCustomProvidersMock,
-  listCustomProvidersByCapability: vi.fn().mockResolvedValue([]),
+  listCustomProvidersByCapability: async () => [],
+}));
+vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
+  listImageAiProviders: async () => [],
 }));
 
 import {

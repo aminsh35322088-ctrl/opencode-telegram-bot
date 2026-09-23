@@ -2,12 +2,27 @@ import { createHash } from "node:crypto";
 import { getCustomProviderConfig } from "./custom-provider-service.js";
 import { peekProviderCatalog } from "./provider-catalog-service.js";
 import { classifyModelPrice, type ModelPrice } from "./model-price-classifier.js";
-import { getCachedProviderPriceMetadata } from "./model-selection-service.js";
+import { getUnifiedProviderRevisionData, getUnifiedRuntimePriceMetadata } from "./unified-model-catalog-service.js";
 
 const MAX_PRICE_AGE_MS = 15 * 60_000;
 export async function getProviderPriceRevision(providerID: string): Promise<string> {
-  const config = await getCustomProviderConfig(providerID);
-  return createHash("sha256").update(JSON.stringify(config ?? null)).digest("hex");
+  const [config, catalog] = await Promise.all([
+    getCustomProviderConfig(providerID),
+    getUnifiedProviderRevisionData(providerID),
+  ]);
+  const custom = config
+    ? {
+        apiUrl: config.apiUrl,
+        capability: config.capability,
+        models: config.models.map((model) => ({
+          id: model.id,
+          toolCall: model.toolCall,
+          toolCallVerified: model.toolCallVerified,
+          modalities: model.modalities,
+        })),
+      }
+    : null;
+  return createHash("sha256").update(JSON.stringify({ custom, catalog })).digest("hex");
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -63,7 +78,7 @@ export async function getProviderModelPrices(providerID: string): Promise<Map<st
     }
     return result;
   }
-  const catalog = getCachedProviderPriceMetadata(providerID);
+  const catalog = getUnifiedRuntimePriceMetadata(providerID);
   if (!catalog || Date.now() - catalog.fetchedAt > MAX_PRICE_AGE_MS) return result;
   for (const [id, metadata] of catalog.models) {
     const raw = record(metadata) ?? {};

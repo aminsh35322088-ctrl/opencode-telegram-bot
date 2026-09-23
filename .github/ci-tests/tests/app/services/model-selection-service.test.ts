@@ -69,6 +69,18 @@ vi.mock("../../../src/opencode/client.js", () => ({
   },
 }));
 
+vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
+  ensureCustomProviderModelToolCapability: vi.fn(async () => false),
+  getCustomProvider: vi.fn(async () => undefined),
+  getGroqSttConfig: vi.fn(async () => undefined),
+  listCustomProviders: vi.fn(async () => []),
+  listCustomProvidersByCapability: vi.fn(async () => []),
+}));
+
+vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
+  listImageAiProviders: vi.fn(async () => []),
+}));
+
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentModel: getCurrentModelMock,
   setCurrentModel: setCurrentModelMock,
@@ -444,10 +456,10 @@ describe("app/services/model-selection-service", () => {
       await reconcileStoredModelSelection();
 
       expect(loggerWarnMock).toHaveBeenCalledWith(
-        "[ModelManager] OpenCode server is not running; skipping model catalog refresh",
+        "[UnifiedCatalog] OpenCode server is not running; using custom/adapter catalog only",
       );
       expect(loggerWarnMock).not.toHaveBeenCalledWith(
-        "[ModelManager] Failed to refresh model catalog:",
+        "[UnifiedCatalog] Runtime catalog refresh failed; using custom/adapter catalog only",
         expect.any(Error),
       );
       expect(setCurrentModelMock).not.toHaveBeenCalled();
@@ -601,11 +613,11 @@ describe("app/services/model-selection-service", () => {
 
       const providers = await getProviders();
 
-      // The configured default (opencode/big-pickle) is preserved so UI/recovery
-      // can still resolve it even though the catalog omits it.
+      // Model Center now treats the live OpenCode runtime catalog as the
+      // execution authority. A configured default omitted by that catalog is
+      // not synthesized back into the selectable provider list.
       expect(providers).toEqual([
         { id: "openai", name: "OpenAI", modelCount: 1 },
-        { id: "opencode", name: "OpenCode", modelCount: 1 },
       ]);
     });
 
