@@ -191,7 +191,7 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable), ssh=$(/usr/bin/ssh -V 2>&1 | head -1 || echo unavailable), cloudflared=$(/usr/local/bin/cloudflared --version 2>/dev/null | head -1 || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable), ssh=$(/usr/bin/ssh -V 2>&1 | head -1 || echo unavailable)"
 printf '%s\n' "[railway] Runtime dependencies: ${OPENCODE_RUNTIME_NODE_DEPS}"
 printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
 
