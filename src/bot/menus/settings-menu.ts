@@ -144,7 +144,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "",
       "🧠 <b>Default Model Center</b> · Primary + capability helpers in one place.",
       "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
-      "🔌 <b>AI Providers</b> · Manage API connections only.",
+      "🔌 <b>API Connections</b> · Add and manage model API connections.",
       "🔗 <b>Integrations</b> · Manage connected services.",
       "🧪 <b>Experimental</b> · Optional features under evaluation.",
       "🧰 <b>Advanced</b> · OpenCode tools and destructive data controls.",
@@ -152,7 +152,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
     keyboard: new InlineKeyboard()
       .text("🧠 Default Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
       .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
-      .text("🔌 AI Providers", "provider:menu").row()
+      .text("🔌 API Connections", "provider:menu").row()
       .text("🔗 Integrations", "integration:menu").row()
       .text("🧪 Experimental", SETTINGS_EXPERIMENTAL_CALLBACK).row()
       .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
