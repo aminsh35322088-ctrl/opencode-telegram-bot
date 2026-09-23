@@ -7,6 +7,7 @@ import { isRecord } from "../../utils/type-guards.js";
 import {
   listMcpCredentials,
   loadMcpCredential,
+  removeMcpCredential,
   saveMcpCredential,
   type McpCredentialRecord,
 } from "./mcp-credential-store.js";
@@ -181,6 +182,71 @@ export async function getMcpAuthSummary(
     return { configured: true, mode: record.mode, headerName: record.headerName };
   }
   return { configured: true, mode: record.mode };
+}
+
+export async function resolveMcpRemoteUrl(
+  projectDirectory: string,
+  serverName: string,
+): Promise<string> {
+  try {
+    const stored = await loadMcpCredential(projectDirectory, serverName);
+    if (stored) return assertSecureRemoteUrl(stored.remoteUrl);
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    logger.warn(
+      `[McpCatalog] Stored auth could not be opened while resolving MCP URL for "${serverName}" (error=${errorName})`,
+    );
+  }
+
+  const directory = normalizeDirectoryForMcpApi(projectDirectory);
+  const { data, error } = await opencodeClient.config.get({ directory });
+  if (error || !data) {
+    throw new Error(`OpenCode config is unavailable for MCP server "${serverName}".`);
+  }
+
+  const configValue = data as unknown;
+  if (!isRecord(configValue) || !isRecord(configValue.mcp)) {
+    throw new Error(`MCP server "${serverName}" is not a configured remote server.`);
+  }
+
+  const mcpConfig = configValue.mcp;
+  const direct = mcpConfig[serverName];
+  const nestedServers = isRecord(mcpConfig.servers) ? mcpConfig.servers : null;
+  const nested = nestedServers?.[serverName];
+
+  for (const candidate of [direct, nested]) {
+    if (!isRecord(candidate) || candidate.type !== "remote" || typeof candidate.url !== "string") {
+      continue;
+    }
+    return assertSecureRemoteUrl(candidate.url);
+  }
+
+  throw new Error(`MCP server "${serverName}" is not a configured remote server.`);
+}
+
+export async function resetMcpAuthToAuto(options: {
+  projectDirectory: string;
+  serverName: string;
+  remoteUrl: string;
+}): Promise<McpCatalogServerItem> {
+  const name = options.serverName.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  const { data, error } = await opencodeClient.mcp.add({
+    directory: normalizeDirectoryForMcpApi(options.projectDirectory),
+    name,
+    config: {
+      type: "remote",
+      url: assertSecureRemoteUrl(options.remoteUrl),
+    },
+  });
+  if (error || !data) {
+    throw new Error(`OpenCode could not reset authentication for MCP server "${name}".`);
+  }
+  const parsed = parseMcpCatalogServers(data);
+  const server = parsed?.find((item) => item.name === name);
+  if (!server) throw new Error(`OpenCode returned an invalid status for MCP server "${name}".`);
+  await removeMcpCredential(options.projectDirectory, name);
+  return server;
 }
 
 export async function startMcpOAuth(projectDirectory: string, serverName: string): Promise<McpOAuthStartResult> {
