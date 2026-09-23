@@ -220,19 +220,18 @@ async function handlePermissionReply(
     sessionId: string;
     connectionId?: string;
   }> = [];
-  if (reply === "always") {
-    for (const request of rustDeskRequests) {
-      const connectionId =
-        typeof request.metadata.connectionId === "string"
-          ? request.metadata.connectionId
-          : undefined;
-      rustDeskSessionPermissionManager.grant(chatId, request.sessionID, connectionId);
-      grantedRustDeskLeases.push({ sessionId: request.sessionID, connectionId });
-      logger.info(
-        `[PermissionHandler] Enabled RustDesk session Always Allow: chat=${chatId} session=${request.sessionID} connection=${connectionId ?? "pending"}`,
-      );
-    }
-  }
+  const enableRustDeskLease = (request: PermissionRequest | undefined): void => {
+    if (reply !== "always" || !request || !isRustDeskPermissionRequest(request)) return;
+    const connectionId =
+      typeof request.metadata.connectionId === "string"
+        ? request.metadata.connectionId
+        : undefined;
+    rustDeskSessionPermissionManager.grant(chatId, request.sessionID, connectionId);
+    grantedRustDeskLeases.push({ sessionId: request.sessionID, connectionId });
+    logger.info(
+      `[PermissionHandler] Enabled RustDesk session Always Allow after permission release: chat=${chatId} session=${request.sessionID} connection=${connectionId ?? "pending"}`,
+    );
+  };
 
   await ctx.answerCallbackQuery({ text: replyLabels[reply] });
 
@@ -253,6 +252,7 @@ async function handlePermissionReply(
         // The OpenCode ask has been released. Leave this request's one-shot
         // handoff in place for the resumed RustDesk tool to consume.
         preparedRustDeskHandoffs.delete(requestID);
+        enableRustDeskLease(request);
         continue;
       }
 
@@ -262,6 +262,7 @@ async function handlePermissionReply(
         // NotFound. Treat that as released too; deleting its handoff here races
         // the resumed tool.
         preparedRustDeskHandoffs.delete(requestID);
+        enableRustDeskLease(request);
         logger.debug(
           `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
         );

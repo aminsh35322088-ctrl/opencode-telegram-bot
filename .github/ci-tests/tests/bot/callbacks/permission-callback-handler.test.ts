@@ -221,6 +221,10 @@ describe("bot permission menu/callbacks", () => {
     });
 
     await showPermissionRequest(botApi, 777, request);
+    mocked.permissionReplyMock.mockImplementationOnce(async () => {
+      expect(rustDeskSessionPermissionManager.has(777, "session-1")).toBe(false);
+      return { error: null };
+    });
     const ctx = createPermissionCallbackContext("permission:always", 504);
     await handlePermissionCallback(ctx);
 

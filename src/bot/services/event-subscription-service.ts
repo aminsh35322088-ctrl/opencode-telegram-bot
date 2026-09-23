@@ -970,13 +970,26 @@ class EventSubscriptionService implements BotEventSubscriptionService {
                 },
                 expiresInMs: 5 * 60 * 1000,
               });
-              void this.botInstance.api
+              logger.info(
+                `[RustDesk] Secure credential requested: session=${toolInfo.sessionId} connection=${secureSignal.connectionId} kind=${secureSignal.credentialKind ?? "rustdesk-password"}`,
+              );
+              void this.sessionScopedApi(toolInfo.sessionId)
                 .sendMessage(
                   chatId,
                   t("rustdesk.secure_input.request", { kind: label }),
-                  { disable_notification: true },
+                  {
+                    disable_notification: true,
+                    reply_markup: {
+                      force_reply: true,
+                      selective: true,
+                      input_field_placeholder: label,
+                    },
+                  },
                 )
                 .then((message) => {
+                  logger.info(
+                    `[RustDesk] Secure credential prompt shown: session=${toolInfo.sessionId} connection=${secureSignal.connectionId} messageId=${message.message_id}`,
+                  );
                   const challenge = rustDeskSecureInputManager.get(toolInfo.sessionId);
                   if (
                     challenge?.callId === toolInfo.callId &&
