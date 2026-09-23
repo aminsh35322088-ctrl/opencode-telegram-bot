@@ -6,6 +6,8 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
 }));
 
 const mockedMcp = vi.hoisted(() => ({
+  addMcpCatalogServer: vi.fn(),
+  loadMcpCatalog: vi.fn(),
   startMcpOAuth: vi.fn().mockResolvedValue({
     authorizationUrl: "https://login.example/authorize?state=oauth-state",
     oauthState: "oauth-state",
@@ -17,8 +19,8 @@ const mockedMcp = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/app/services/mcp-catalog-service.js", () => ({
-  addMcpCatalogServer: vi.fn(),
-  loadMcpCatalog: vi.fn().mockResolvedValue([]),
+  addMcpCatalogServer: mockedMcp.addMcpCatalogServer,
+  loadMcpCatalog: mockedMcp.loadMcpCatalog,
   startMcpOAuth: mockedMcp.startMcpOAuth,
   completeMcpOAuth: mockedMcp.completeMcpOAuth,
 }));
@@ -66,6 +68,8 @@ function createTextContext(text: string): Context {
 
 describe("MCP add wizard UX", () => {
   beforeEach(() => {
+    mockedMcp.addMcpCatalogServer.mockResolvedValue(undefined);
+    mockedMcp.loadMcpCatalog.mockResolvedValue([]);
     mockedMcp.startMcpOAuth.mockResolvedValue({
       authorizationUrl: "https://login.example/authorize?state=oauth-state",
       oauthState: "oauth-state",
@@ -79,6 +83,8 @@ describe("MCP add wizard UX", () => {
   afterEach(() => {
     clearMcpAddWizard();
     clearMcpAuthWizard();
+    mockedMcp.addMcpCatalogServer.mockClear();
+    mockedMcp.loadMcpCatalog.mockClear();
     mockedMcp.startMcpOAuth.mockClear();
     mockedMcp.completeMcpOAuth.mockClear();
     interactionManager.clear("test_cleanup");
