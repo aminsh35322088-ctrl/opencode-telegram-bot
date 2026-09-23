@@ -4,9 +4,10 @@ vi.mock("../../../src/app/services/custom-provider-service.js", async (original)
   ...await original<typeof import("../../../src/app/services/custom-provider-service.js")>(),
   getCustomProviderConfig: async () => fixture.config,
 }));
-vi.mock("../../../src/app/services/model-selection-service.js", async (original) => ({
-  ...await original<typeof import("../../../src/app/services/model-selection-service.js")>(),
-  getCachedProviderPriceMetadata: () => fixture.native,
+vi.mock("../../../src/app/services/unified-model-catalog-service.js", async (original) => ({
+  ...await original<typeof import("../../../src/app/services/unified-model-catalog-service.js")>(),
+  getUnifiedRuntimePriceMetadata: () => fixture.native,
+  getUnifiedProviderRevisionData: async () => [],
 }));
 import { fetchProviderCatalog, __resetProviderCatalogForTests } from "../../../src/app/services/provider-catalog-service.js";
 import { getProviderModelPrices } from "../../../src/app/services/model-price-service.js";

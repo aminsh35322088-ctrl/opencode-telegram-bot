@@ -41,8 +41,13 @@ vi.mock("../../../src/opencode/client.js", () => ({
 }));
 vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
   ensureCustomProviderModelToolCapability: mocks.ensure,
+  getCustomProvider: async (id: string) => (await mocks.providers()).find((provider) => provider.id === id),
+  getGroqSttConfig: async () => undefined,
   listCustomProviders: mocks.providers,
   listCustomProvidersByCapability: mocks.providers,
+}));
+vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
+  listImageAiProviders: async () => [],
 }));
 vi.mock("../../../src/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -63,7 +68,23 @@ describe("custom-provider model verification wiring", () => {
     mocks.setCurrentModel.mockClear();
     mocks.ensure.mockClear();
     mocks.providers.mockClear();
-    mocks.configProviders.mockReset().mockResolvedValue({ data: { providers: [] }, error: null });
+    mocks.configProviders.mockReset().mockImplementation(async () => ({
+      data: {
+        providers: mocks.verified()
+          ? [{
+              id: "gateway",
+              name: "Gateway",
+              models: {
+                coder: {
+                  name: "Coder",
+                  capabilities: { toolcall: true, output: { text: true } },
+                },
+              },
+            }]
+          : [],
+      },
+      error: null,
+    }));
     __resetModelCatalogCacheForTests();
   });
 
