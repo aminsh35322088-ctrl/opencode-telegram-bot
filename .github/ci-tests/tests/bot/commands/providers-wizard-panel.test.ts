@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   saveCustomProvider: vi.fn(),
   isGroqSttConfigured: vi.fn(),
   listImageAiProviders: vi.fn(),
+  loggerWarn: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
@@ -45,7 +46,7 @@ vi.mock("../../../src/opencode/process.js", () => ({
 }));
 
 vi.mock("../../../src/utils/logger.js", () => ({
-  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: mocks.loggerWarn, error: vi.fn() },
 }));
 
 vi.mock("../../../src/bot/commands/integrations-command.js", () => ({
@@ -121,6 +122,7 @@ describe("provider wizard General panel contract", () => {
     mocks.saveCustomProvider.mockReset().mockResolvedValue(undefined);
     mocks.isGroqSttConfigured.mockReset().mockResolvedValue(false);
     mocks.listImageAiProviders.mockReset().mockResolvedValue([]);
+    mocks.loggerWarn.mockReset();
   });
 
   afterEach(() => {
@@ -180,6 +182,26 @@ describe("provider wizard General panel contract", () => {
   });
 
 
+
+  it("logs safe provider verification failure details without credentials", async () => {
+    const start = callbackContext("provider:add:general", 500);
+    expect(await handleProviderCallback(start)).toBe(true);
+    expect(await handleProviderWizardMessage(textContext("APMix", 601))).toBe(true);
+    expect(await handleProviderWizardMessage(textContext("https://api.apmix.ai/v1", 602))).toBe(true);
+
+    mocks.discoverModels.mockRejectedValueOnce(new Error("Model discovery connection failed (EAI_AGAIN) after 2 attempts"));
+    const input = textContext("apx_live_super_secret", 603);
+    expect(await handleProviderWizardMessage(input)).toBe(true);
+
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.stringContaining("Model discovery connection failed (EAI_AGAIN) after 2 attempts"));
+    expect(mocks.loggerWarn.mock.calls.flat().join(" ")).not.toContain("apx_live_super_secret");
+    expect(input.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      4242,
+      expect.stringContaining("Model discovery connection failed (EAI_AGAIN) after 2 attempts"),
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
+  });
   it("shows generic AI + transcription slots instead of separate chat/image provider slots", async () => {
     const ctx = callbackContext("provider:connections", 500);
     expect(await handleProviderCallback(ctx)).toBe(true);
