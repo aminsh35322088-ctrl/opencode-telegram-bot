@@ -50,7 +50,7 @@ describe("mcp server store", () => {
       name: "local",
       config: {
         type: "local",
-        command: [" node ", "", "server.js"],
+        command: [" node ", "", "server.js", " padded "],
         cwd: " ./tools ",
         environment: { " NODE_ENV ": "test", "": "ignored" },
         timeout: 1234.4,
@@ -62,7 +62,7 @@ describe("mcp server store", () => {
       name: "local",
       config: {
         type: "local",
-        command: ["node", "server.js"],
+        command: ["node", "", "server.js", " padded "],
         cwd: "./tools",
         environment: { NODE_ENV: "test" },
         timeout: 1234,
