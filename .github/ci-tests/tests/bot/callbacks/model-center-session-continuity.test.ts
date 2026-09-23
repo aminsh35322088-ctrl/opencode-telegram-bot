@@ -23,4 +23,11 @@ describe("Model Center session continuity", () => {
     expect(handlerSource).not.toContain("stopTopicEventSubscription(");
     expect(handlerSource).not.toContain("retireSessionRuntime(");
   });
+
+  it("refreshes expired or changed model pages instead of leaving stale buttons", () => {
+    expect(handlerSource).not.toContain("This model button is stale");
+    expect(handlerSource).toContain("refreshUnavailableModelAction");
+    expect(handlerSource).toContain("The provider model catalog changed after this page opened.");
+    expect(handlerSource).toContain("Model Center was refreshed.");
+  });
 });
