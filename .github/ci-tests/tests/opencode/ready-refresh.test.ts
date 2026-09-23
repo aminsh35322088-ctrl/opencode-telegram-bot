@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   healthMock: vi.fn(),
   warmupSessionDirectoryCacheMock: vi.fn(),
   reconcileStoredModelSelectionMock: vi.fn(),
+  restoreSecureMcpConnectionsMock: vi.fn(),
   loggerDebugMock: vi.fn(),
   loggerWarnMock: vi.fn(),
 }));
@@ -25,6 +26,10 @@ vi.mock("../../src/app/services/model-selection-service.js", () => ({
   reconcileStoredModelSelection: mocked.reconcileStoredModelSelectionMock,
 }));
 
+vi.mock("../../src/app/services/mcp-catalog-service.js", () => ({
+  restoreSecureMcpConnections: mocked.restoreSecureMcpConnectionsMock,
+}));
+
 vi.mock("../../src/utils/logger.js", () => ({
   logger: {
     debug: mocked.loggerDebugMock,
@@ -44,11 +49,13 @@ describe("opencode/ready-refresh", () => {
     mocked.healthMock.mockReset();
     mocked.warmupSessionDirectoryCacheMock.mockReset();
     mocked.reconcileStoredModelSelectionMock.mockReset();
+    mocked.restoreSecureMcpConnectionsMock.mockReset();
     mocked.loggerDebugMock.mockReset();
     mocked.loggerWarnMock.mockReset();
 
     mocked.warmupSessionDirectoryCacheMock.mockResolvedValue(undefined);
     mocked.reconcileStoredModelSelectionMock.mockResolvedValue(undefined);
+    mocked.restoreSecureMcpConnectionsMock.mockResolvedValue({ restored: 0, failed: 0 });
   });
 
   it("skips refresh with a short warning when OpenCode server is unavailable", async () => {
@@ -59,6 +66,7 @@ describe("opencode/ready-refresh", () => {
     expect(refreshed).toBe(false);
     expect(mocked.warmupSessionDirectoryCacheMock).not.toHaveBeenCalled();
     expect(mocked.reconcileStoredModelSelectionMock).not.toHaveBeenCalled();
+    expect(mocked.restoreSecureMcpConnectionsMock).not.toHaveBeenCalled();
     expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
       "[OpenCodeReady] OpenCode server is not running; skipping session cache refresh: reason=startup",
     );
@@ -74,6 +82,7 @@ describe("opencode/ready-refresh", () => {
     expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
+    expect(mocked.restoreSecureMcpConnectionsMock).toHaveBeenCalledTimes(1);
   });
 
   it("logs refresh failures without throwing", async () => {
@@ -104,4 +113,31 @@ describe("opencode/ready-refresh", () => {
       expect.any(Error),
     );
   });
+  it("restores secure MCP definitions whenever OpenCode becomes ready", async () => {
+    mocked.restoreSecureMcpConnectionsMock.mockResolvedValueOnce({ restored: 2, failed: 0 });
+
+    await refreshSessionCacheAfterOpencodeReady("auto_restart_startup");
+
+    expect(mocked.restoreSecureMcpConnectionsMock).toHaveBeenCalledTimes(1);
+    expect(mocked.loggerDebugMock).toHaveBeenCalledWith(
+      "[OpenCodeReady] Secure MCP connections restored: reason=auto_restart_startup, restored=2, failed=0",
+    );
+  });
+
+  it("does not fail ready handling when secure MCP restoration fails", async () => {
+    mocked.restoreSecureMcpConnectionsMock.mockRejectedValueOnce(new Error("credential restore failed"));
+
+    await expect(
+      refreshSessionCacheAfterOpencodeReady("auto_restart_interval"),
+    ).resolves.toBeUndefined();
+
+    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
+      "[OpenCodeReady] Failed to restore secure MCP connections: reason=auto_restart_interval",
+      expect.any(Error),
+    );
+    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+      forceCatalogRefresh: true,
+    });
+  });
+
 });
