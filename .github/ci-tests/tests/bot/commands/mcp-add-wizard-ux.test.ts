@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
@@ -65,6 +65,17 @@ function createTextContext(text: string): Context {
 }
 
 describe("MCP add wizard UX", () => {
+  beforeEach(() => {
+    mockedMcp.startMcpOAuth.mockResolvedValue({
+      authorizationUrl: "https://login.example/authorize?state=oauth-state",
+      oauthState: "oauth-state",
+    });
+    mockedMcp.completeMcpOAuth.mockResolvedValue({
+      name: "sentry",
+      status: { status: "connected" },
+    });
+  });
+
   afterEach(() => {
     clearMcpAddWizard();
     clearMcpAuthWizard();
