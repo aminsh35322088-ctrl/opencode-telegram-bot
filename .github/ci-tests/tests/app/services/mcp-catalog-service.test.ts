@@ -341,6 +341,7 @@ describe("app/services/mcp-catalog-service", () => {
     ]);
     mocked.add
       .mockResolvedValueOnce({ data: undefined, error: { message: "connection failed" } })
+      .mockResolvedValueOnce({ data: { broken: { status: "needs_auth" } }, error: undefined })
       .mockResolvedValueOnce({ data: { healthy: { status: "connected" } }, error: undefined });
     const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
@@ -463,6 +464,63 @@ describe("app/services/mcp-catalog-service", () => {
     })).rejects.toThrow(/did not authenticate/i);
 
     expect(mockedCredentials.save).not.toHaveBeenCalled();
+    expect(mocked.add).toHaveBeenCalledTimes(2);
+    expect(mocked.add).toHaveBeenLastCalledWith({
+      directory: "/repo",
+      name: "secure",
+      config: { type: "remote", url: "https://secure.example/mcp" },
+    });
+  });
+
+  it("scrubs a secret-bearing dynamic definition when the initial secure MCP add errors", async () => {
+    mocked.add
+      .mockResolvedValueOnce({ data: undefined, error: { message: "transport failed" } })
+      .mockResolvedValueOnce({ data: { secure: { status: "needs_auth" } }, error: undefined });
+
+    await expect(configureSecureMcpAuth({
+      projectDirectory: "/repo",
+      serverName: "secure",
+      remoteUrl: "https://secure.example/mcp",
+      mode: "bearer",
+      secret: "must-not-remain-in-memory",
+    })).rejects.toThrow(/could not configure secure MCP/i);
+
+    expect(mockedCredentials.save).not.toHaveBeenCalled();
+    expect(mocked.add).toHaveBeenCalledTimes(2);
+    expect(mocked.add).toHaveBeenLastCalledWith({
+      directory: "/repo",
+      name: "secure",
+      config: { type: "remote", url: "https://secure.example/mcp" },
+    });
+  });
+
+  it("scrubs an expired stored credential when secure MCP restoration is rejected", async () => {
+    mockedCredentials.list.mockResolvedValue([
+      {
+        projectDirectory: "/repo",
+        serverName: "expired",
+        remoteUrl: "https://expired.example/mcp",
+        mode: "bearer",
+        secret: "expired-secret",
+      },
+    ]);
+    mocked.add
+      .mockResolvedValueOnce({
+        data: { expired: { status: "failed", error: "Unauthorized" } },
+        error: undefined,
+      })
+      .mockResolvedValueOnce({
+        data: { expired: { status: "needs_auth" } },
+        error: undefined,
+      });
+
+    await expect(restoreSecureMcpConnections()).resolves.toEqual({ restored: 0, failed: 1 });
+    expect(mocked.add).toHaveBeenCalledTimes(2);
+    expect(mocked.add).toHaveBeenLastCalledWith({
+      directory: "/repo",
+      name: "expired",
+      config: { type: "remote", url: "https://expired.example/mcp" },
+    });
   });
 
   it("does not persist an OAuth client that still requires client registration", async () => {

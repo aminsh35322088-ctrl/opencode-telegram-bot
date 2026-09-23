@@ -39,6 +39,7 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 import {
   backMcpAddWizard,
+  backMcpCredentialWizard,
   clearMcpAddWizard,
   clearMcpAuthWizard,
   clearMcpCredentialWizard,
@@ -390,6 +391,32 @@ describe("MCP add wizard UX", () => {
     });
     expect(mockedMcp.startMcpOAuth).toHaveBeenCalledWith("/work/repo", "secure");
     expect(interactionManager.getSnapshot()?.metadata.stage).toBe("auth");
+  });
+
+  it("moves Back through OAuth-client credential steps before returning to the auth menu", async () => {
+    const startCtx = createContext();
+    await startMcpCredentialWizard(startCtx, {
+      serverName: "secure",
+      projectDirectory: "/work/repo",
+      messageId: 4242,
+      preferredMode: "oauth-client",
+    });
+
+    expect(await handleMcpsMessage(createTextContext("client-id"))).toBe(true);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("client-secret");
+
+    expect(await handleMcpsMessage(createTextContext("client-secret"))).toBe(true);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("scope");
+
+    expect(await backMcpCredentialWizard(startCtx)).toBe(true);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("client-secret");
+
+    expect(await backMcpCredentialWizard(startCtx)).toBe(true);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("client-id");
+
+    expect(await backMcpCredentialWizard(startCtx)).toBe(true);
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("menu");
+    expect(startCtx.reply).not.toHaveBeenCalled();
   });
 
   it("supports public OAuth clients by skipping Client Secret and scope", async () => {

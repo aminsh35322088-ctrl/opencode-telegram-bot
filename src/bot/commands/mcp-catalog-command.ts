@@ -492,6 +492,30 @@ export async function backMcpCredentialWizard(ctx: Context): Promise<boolean> {
   const pending = mcpCredentialWizard.get();
   if (!pending) return false;
   await ctx.answerCallbackQuery().catch(() => {});
+
+  if (pending.mode === "oauth-client") {
+    if (pending.step === "scope") {
+      pending.step = "client-secret";
+      pending.clientSecret = undefined;
+      await renderMcpCredentialStep(ctx, pending);
+      return true;
+    }
+    if (pending.step === "client-secret") {
+      pending.step = "client-id";
+      pending.clientId = undefined;
+      pending.clientSecret = undefined;
+      await renderMcpCredentialStep(ctx, pending);
+      return true;
+    }
+  }
+
+  if (pending.mode === "custom-header" && pending.step === "secret") {
+    pending.step = "header-name";
+    pending.headerName = undefined;
+    await renderMcpCredentialStep(ctx, pending);
+    return true;
+  }
+
   await renderMcpCredentialMenu(ctx, pending);
   return true;
 }

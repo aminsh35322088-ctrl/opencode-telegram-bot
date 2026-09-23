@@ -120,13 +120,16 @@ function buildSecureMcpConfig(record: McpCredentialRecord): McpRemoteConfig {
   };
 }
 
-async function addSecureMcpDefinition(record: McpCredentialRecord): Promise<McpCatalogServerItem> {
+async function addSecureMcpDefinition(
+  record: McpCredentialRecord,
+  config: McpRemoteConfig = buildSecureMcpConfig(record),
+): Promise<McpCatalogServerItem> {
   const name = record.serverName.trim();
   if (!name) throw new Error("MCP server name is required.");
   const { data, error } = await opencodeClient.mcp.add({
     directory: normalizeDirectoryForMcpApi(record.projectDirectory),
     name,
-    config: buildSecureMcpConfig(record),
+    config,
   });
   if (error || !data) {
     throw new Error(`OpenCode could not configure secure MCP server "${name}".`);
@@ -135,6 +138,23 @@ async function addSecureMcpDefinition(record: McpCredentialRecord): Promise<McpC
   const server = parsed?.find((item) => item.name === name);
   if (!server) throw new Error(`OpenCode returned an invalid status for MCP server "${name}".`);
   return server;
+}
+
+async function scrubSecureMcpDefinition(record: McpCredentialRecord): Promise<void> {
+  const name = record.serverName.trim();
+  if (!name) return;
+  try {
+    await opencodeClient.mcp.add({
+      directory: normalizeDirectoryForMcpApi(record.projectDirectory),
+      name,
+      config: {
+        type: "remote",
+        url: assertSecureRemoteUrl(record.remoteUrl),
+      },
+    });
+  } catch {
+    // Best-effort secret scrubbing must never mask the original auth/storage failure.
+  }
 }
 
 function assertAcceptedSecureMcpStatus(
@@ -157,10 +177,16 @@ function assertAcceptedSecureMcpStatus(
 export async function configureSecureMcpAuth(
   record: McpCredentialRecord,
 ): Promise<McpCatalogServerItem> {
-  const server = await addSecureMcpDefinition(record);
-  assertAcceptedSecureMcpStatus(record, server);
-  await saveMcpCredential(record);
-  return server;
+  const secureConfig = buildSecureMcpConfig(record);
+  try {
+    const server = await addSecureMcpDefinition(record, secureConfig);
+    assertAcceptedSecureMcpStatus(record, server);
+    await saveMcpCredential(record);
+    return server;
+  } catch (error) {
+    await scrubSecureMcpDefinition(record);
+    throw error;
+  }
 }
 
 export async function restoreSecureMcpConnections(): Promise<{ restored: number; failed: number }> {
@@ -181,6 +207,7 @@ export async function restoreSecureMcpConnections(): Promise<{ restored: number;
       assertAcceptedSecureMcpStatus(record, server);
       restored += 1;
     } catch (error) {
+      await scrubSecureMcpDefinition(record);
       failed += 1;
       const errorName = error instanceof Error ? error.name : "UnknownError";
       logger.warn(
