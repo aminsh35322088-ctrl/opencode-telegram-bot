@@ -25,7 +25,7 @@ import {
   resolveModelCenterFavoriteTarget,
   type ModelCenterFavoriteTarget,
 } from "../menus/model-center-menu.js";
-import { fetchCurrentModel, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
+import { fetchCurrentModel, getProviderModels, getProviders, isSelectableChatModel, selectModel } from "../../app/services/model-selection-service.js";
 import { recordRecentModel, toggleFavoriteModel } from "../../app/services/model-preferences-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
@@ -91,14 +91,28 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
       const token = data.slice(MODEL_CENTER_FAVORITE_PREFIX.length);
       const model = resolveModelCenterAction(token);
       const target = resolveModelCenterFavoriteTarget(token);
-      if (!model || !target || !(await isSelectableChatModel(model.providerID, model.modelID))) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
+      if (!model || !target) {
+        await ctx.answerCallbackQuery({ text: "Model Center was refreshed.", show_alert: false }).catch(() => {});
+        return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
+      }
+      if (!(await isSelectableChatModel(model.providerID, model.modelID))) {
+        return await refreshUnavailableModelAction(ctx, model, target);
+      }
       const added = await toggleFavoriteModel(model);
       await ctx.answerCallbackQuery({ text: added ? "Added to favorites." : "Removed from favorites." }).catch(() => {});
       return await renderFavoriteTarget(ctx, target);
     }
     if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
-      const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
-      if (!model || !(await isSelectableChatModel(model.providerID, model.modelID))) { await ctx.answerCallbackQuery({ text: "This model button is stale. Reopen Model Center.", show_alert: true }).catch(() => {}); return true; }
+      const token = data.slice(MODEL_CENTER_SELECT_PREFIX.length);
+      const model = resolveModelCenterAction(token);
+      const target = resolveModelCenterFavoriteTarget(token);
+      if (!model) {
+        await ctx.answerCallbackQuery({ text: "Model Center was refreshed.", show_alert: false }).catch(() => {});
+        return await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
+      }
+      if (!(await isSelectableChatModel(model.providerID, model.modelID))) {
+        return await refreshUnavailableModelAction(ctx, model, target);
+      }
       await applyModelSelectionAndNotify(ctx, model);
       return true;
     }
@@ -112,6 +126,25 @@ export async function handleModelCenterCallback(ctx: Context): Promise<boolean> 
     await ctx.answerCallbackQuery({ text: "Model Center action failed.", show_alert: true }).catch(() => {});
     return true;
   }
+}
+
+async function refreshUnavailableModelAction(
+  ctx: Context,
+  model: ModelInfo,
+  target: ModelCenterFavoriteTarget | null,
+): Promise<boolean> {
+  const currentModels = await getProviderModels(model.providerID);
+  const stillListed = currentModels.some((candidate) => candidate.modelID === model.modelID);
+  const message = stillListed
+    ? "This model is listed by the provider but is not verified for agent/tool use. The page was refreshed."
+    : "The provider model catalog changed after this page opened. The page was refreshed.";
+
+  await ctx.answerCallbackQuery({ text: message, show_alert: true }).catch(() => {});
+  if (target) return await renderFavoriteTarget(ctx, target);
+
+  const provider = (await getProviders()).find((item) => item.id === model.providerID);
+  if (provider) return await render(ctx, await buildModelCenterProvider(provider, 0, fetchCurrentModel()));
+  return await render(ctx, await buildModelCenterProviders());
 }
 
 async function renderFavoriteTarget(ctx: Context, target: ModelCenterFavoriteTarget): Promise<boolean> {

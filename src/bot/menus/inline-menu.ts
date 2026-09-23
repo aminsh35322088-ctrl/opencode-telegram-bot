@@ -32,6 +32,10 @@ function getTopicThreadId(ctx: Context): number | null {
   return typeof message?.message_thread_id === "number" ? message.message_thread_id : null;
 }
 function menuKey(chatId: number, threadId?: number): string { return `${chatId}:${threadId ?? 0}`; }
+function isMessageNotModifiedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("message is not modified");
+}
 function isHomeButton(button: CallbackNavigationButton): boolean {
   return button.text === INLINE_MENU_HOME_LABEL && button.callback_data === INLINE_MENU_HOME_CALLBACK;
 }
@@ -132,7 +136,38 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
       await ctx.api.editMessageText(chatId, callbackMessageId, messageText, preserveMainStatus ? { reply_markup: keyboard, parse_mode: "HTML" } : replyOptions);
       messageId = callbackMessageId;
     } catch (error) {
-      logger.debug("[InlineMenu] Could not edit callback message; falling back to reply", error);
+      if (isMessageNotModifiedError(error)) {
+        messageId = callbackMessageId;
+      } else {
+        logger.debug("[InlineMenu] Could not edit callback message; falling back to reply", error);
+        const message = await ctx.reply(options.text, {
+          ...replyOptions,
+          ...(threadId !== null ? { message_thread_id: threadId } : {}),
+        } as never);
+        messageId = message.message_id;
+      }
+    }
+  } else if (chatId !== null && threadId !== null && threadId > 1) {
+    const active = activeInlineMenus.get(menuKey(chatId, threadId));
+    if (active) {
+      try {
+        await ctx.api.editMessageText(chatId, active.messageId, options.text, replyOptions);
+        messageId = active.messageId;
+        logger.debug(`[InlineMenu] Reused canonical inline panel: previousKind=${active.menuKind}, nextKind=${options.menuKind}, messageId=${messageId}, chatId=${chatId}, threadId=${threadId ?? "main"}`);
+      } catch (error) {
+        if (isMessageNotModifiedError(error)) {
+          messageId = active.messageId;
+        } else {
+          logger.debug("[InlineMenu] Could not reuse canonical inline panel; creating a replacement", error);
+          activeInlineMenus.delete(menuKey(chatId, threadId ?? undefined));
+          const message = await ctx.reply(options.text, {
+            ...replyOptions,
+            ...(threadId !== null ? { message_thread_id: threadId } : {}),
+          } as never);
+          messageId = message.message_id;
+        }
+      }
+    } else {
       const message = await ctx.reply(options.text, {
         ...replyOptions,
         ...(threadId !== null ? { message_thread_id: threadId } : {}),
@@ -140,10 +175,7 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
       messageId = message.message_id;
     }
   } else {
-    const message = await ctx.reply(options.text, {
-      ...replyOptions,
-      ...(threadId !== null ? { message_thread_id: threadId } : {}),
-    } as never);
+    const message = await ctx.reply(options.text, replyOptions);
     messageId = message.message_id;
   }
 
@@ -167,6 +199,7 @@ export async function ensureActiveInlineMenu(ctx: Context, menuKind: InlineMenuK
 
   if (chatId !== null && callbackMessageId !== null && (callbackData.startsWith(`${menuKind}:`) || callbackData.startsWith(`${INLINE_MENU_CANCEL_PREFIX}${menuKind}`))) {
     activeInlineMenus.set(menuKey(chatId, threadId ?? undefined), { menuKind, messageId: callbackMessageId, ...(threadId !== null ? { threadId } : {}) });
+    interactionManager.transition({ expiresInMs: DEFAULT_INLINE_MENU_TTL_MS });
     logger.debug(`[InlineMenu] Rehydrated menu from callback: kind=${menuKind}, messageId=${callbackMessageId}, chatId=${chatId}, threadId=${threadId ?? "main"}`);
     return true;
   }
