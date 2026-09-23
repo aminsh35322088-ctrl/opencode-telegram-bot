@@ -770,12 +770,22 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
           `[Mcps] OAuth completed without connected status: server=${pendingAuth.serverName}, status=${completed.status.status}`,
         );
       }
-      await renderMcpList(ctx, pendingAuth.messageId, pendingAuth.projectDirectory);
+      await renderMcpDetailView(
+        ctx,
+        pendingAuth.messageId,
+        pendingAuth.projectDirectory,
+        pendingAuth.serverName,
+      );
     } catch (error) {
       mcpAuthWizard.clear();
       interactionManager.clear("mcp_auth_failed");
       logger.warn(`[Mcps] OAuth completion failed for ${pendingAuth.serverName}:`, error);
-      await renderMcpList(ctx, pendingAuth.messageId, pendingAuth.projectDirectory);
+      await renderMcpDetailView(
+        ctx,
+        pendingAuth.messageId,
+        pendingAuth.projectDirectory,
+        pendingAuth.serverName,
+      );
     }
     return true;
   }
