@@ -655,6 +655,66 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text?.trim();
   if (!text || !ctx.chat?.id) return false;
 
+  const pendingCredential = mcpCredentialWizard.get();
+  if (pendingCredential && isMcpCredentialInteractionActive()) {
+    await deleteInput(ctx);
+
+    if (pendingCredential.step === "header-name" && pendingCredential.mode === "custom-header") {
+      pendingCredential.headerName = text;
+      pendingCredential.step = "secret";
+      await renderMcpCredentialStep(ctx, pendingCredential);
+      return true;
+    }
+
+    if (pendingCredential.step === "client-id" && pendingCredential.mode === "oauth-client") {
+      pendingCredential.clientId = text;
+      pendingCredential.step = "client-secret";
+      await renderMcpCredentialStep(ctx, pendingCredential);
+      return true;
+    }
+
+    if (pendingCredential.step === "client-secret" && pendingCredential.mode === "oauth-client") {
+      pendingCredential.clientSecret = text;
+      pendingCredential.step = "scope";
+      await renderMcpCredentialStep(ctx, pendingCredential);
+      return true;
+    }
+
+    if (pendingCredential.step === "scope" && pendingCredential.mode === "oauth-client") {
+      await completeOAuthClientCredential(ctx, pendingCredential, text);
+      return true;
+    }
+
+    if (pendingCredential.step === "secret" && pendingCredential.mode) {
+      if (pendingCredential.mode === "bearer") {
+        await applyMcpCredential(ctx, pendingCredential, {
+          projectDirectory: pendingCredential.projectDirectory,
+          serverName: pendingCredential.serverName,
+          remoteUrl: pendingCredential.remoteUrl,
+          mode: "bearer",
+          secret: text,
+        });
+        return true;
+      }
+
+      if (pendingCredential.mode === "api-key" || pendingCredential.mode === "custom-header") {
+        const headerName = pendingCredential.headerName ?? (pendingCredential.mode === "api-key" ? "X-API-Key" : "");
+        await applyMcpCredential(ctx, pendingCredential, {
+          projectDirectory: pendingCredential.projectDirectory,
+          serverName: pendingCredential.serverName,
+          remoteUrl: pendingCredential.remoteUrl,
+          mode: pendingCredential.mode,
+          headerName,
+          secret: text,
+        });
+        return true;
+      }
+    }
+
+    await renderMcpCredentialStep(ctx, pendingCredential);
+    return true;
+  }
+
   const pendingAuth = mcpAuthWizard.get();
   if (pendingAuth && isMcpAuthInteractionActive()) {
     await deleteInput(ctx);
