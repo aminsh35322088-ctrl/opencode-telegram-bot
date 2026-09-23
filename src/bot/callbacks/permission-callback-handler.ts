@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { permissionManager } from "../../app/managers/permission-manager.js";
-import type { PermissionReply, PermissionRequest } from "../../app/types/permission.js";
+import type { PermissionReply } from "../../app/types/permission.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
