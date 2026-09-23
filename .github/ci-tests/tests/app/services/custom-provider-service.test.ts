@@ -95,7 +95,7 @@ describe("custom-provider model capability normalization", () => {
           message: {
             tool_calls: [{
               type: "function",
-              function: { name: "opencode_action_probe", arguments: "{\\"ping\\":\\"ok\\"}" },
+              function: { name: "opencode_action_probe", arguments: JSON.stringify({ ping: "ok" }) },
             }],
           },
         }],
