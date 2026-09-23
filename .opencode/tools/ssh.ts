@@ -54,7 +54,7 @@ function clampTimeout(value?: number): number {
 function validateHost(value: string | undefined): string {
   const host = value?.trim() ?? "";
   if (!host) throw new Error("host is required");
-  if (host.length > 253 || !/^[A-Za-z0-9._:-]+$/.test(host)) throw new Error("host contains unsupported characters");
+  if (host.length > 253 || !/^[A-Za-z0-9._-]+$/.test(host)) throw new Error("host contains unsupported characters");
   return host;
 }
 
@@ -69,6 +69,21 @@ function validatePort(value?: number): number {
   const port = Math.trunc(value ?? 22);
   if (port < 1 || port > 65535) throw new Error("port must be between 1 and 65535");
   return port;
+}
+
+function validateRemotePath(value: string): string {
+  const remotePath = value.trim();
+  if (!remotePath) throw new Error("remotePath is required");
+  if (remotePath.length > 4096 || /[\0\r\n]/.test(remotePath)) throw new Error("remotePath contains unsupported characters");
+  return remotePath;
+}
+
+function validateTransferRemotePath(value: string): string {
+  const remotePath = validateRemotePath(value);
+  if (!/^[A-Za-z0-9_./~+@-]+$/.test(remotePath)) {
+    throw new Error("upload/download remotePath is limited to safe path characters");
+  }
+  return remotePath;
 }
 
 function shellQuote(value: string): string {
@@ -251,8 +266,9 @@ export default tool({
       return result({ ok: completed.code === 0, action, transport, host, user, port, exitCode: completed.code, stdout: clip(completed.stdout), stderr: clip(completed.stderr) });
     }
 
-    const remotePath = args.remotePath?.trim();
-    if (!remotePath) return result({ ok: false, action, error: "remotePath is required" });
+    const rawRemotePath = args.remotePath;
+    if (!rawRemotePath?.trim()) return result({ ok: false, action, error: "remotePath is required" });
+    const remotePath = validateRemotePath(rawRemotePath);
 
     if (action === "read") {
       const completed = await runProcess(SSH_BIN, [...sshOptions(transport, port), target, `cat -- ${shellQuote(remotePath)}`], env, timeoutMs);
@@ -276,12 +292,17 @@ export default tool({
     if (!localPath) return result({ ok: false, action, error: "localPath is required" });
     const resolvedLocalPath = resolveLocalPath(base, localPath);
 
+    const transferRemotePath = validateTransferRemotePath(remotePath);
+
     if (action === "upload") {
-      const completed = await runProcess(SCP_BIN, [...scpOptions(transport, port), resolvedLocalPath, `${target}:${remotePath}`], env, timeoutMs);
-      return result({ ok: completed.code === 0, action, transport, host, localPath: resolvedLocalPath, remotePath, exitCode: completed.code, stderr: clip(completed.stderr) });
+      const localStat = await stat(resolvedLocalPath).catch(() => null);
+      if (!localStat?.isFile()) return result({ ok: false, action, error: "localPath must reference an existing file" });
+      const completed = await runProcess(SCP_BIN, [...scpOptions(transport, port), resolvedLocalPath, `${target}:${transferRemotePath}`], env, timeoutMs);
+      return result({ ok: completed.code === 0, action, transport, host, localPath: resolvedLocalPath, remotePath: transferRemotePath, exitCode: completed.code, stderr: clip(completed.stderr) });
     }
 
-    const completed = await runProcess(SCP_BIN, [...scpOptions(transport, port), `${target}:${remotePath}`, resolvedLocalPath], env, timeoutMs);
-    return result({ ok: completed.code === 0, action, transport, host, localPath: resolvedLocalPath, remotePath, exitCode: completed.code, stderr: clip(completed.stderr) });
+    await mkdir(path.dirname(resolvedLocalPath), { recursive: true });
+    const completed = await runProcess(SCP_BIN, [...scpOptions(transport, port), `${target}:${transferRemotePath}`, resolvedLocalPath], env, timeoutMs);
+    return result({ ok: completed.code === 0, action, transport, host, localPath: resolvedLocalPath, remotePath: transferRemotePath, exitCode: completed.code, stderr: clip(completed.stderr) });
   },
 });
