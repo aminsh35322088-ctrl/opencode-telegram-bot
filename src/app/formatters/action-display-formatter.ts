@@ -88,7 +88,6 @@ const TOOL_ICONS: Record<string, string> = {
   telegram: "💬",
   "network-diagnostics": "🌐",
   railway: "🚆",
-  rustdesk: "🖥️",
   "safe-download": "📥",
   "send-file": "📤",
   session: "💬",
@@ -147,7 +146,6 @@ function titleCaseToken(value: string): string {
       if (lower === "tcp") return "TCP";
       if (lower === "github") return "GitHub";
       if (lower === "railway") return "Railway";
-      if (lower === "rustdesk") return "RustDesk";
       return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
     })
     .join(" ");
