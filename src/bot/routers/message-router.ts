@@ -35,7 +35,7 @@ import { queuePromptForMerging } from "../handlers/message-merger.js";
 import { handleCatalogTextArguments } from "../handlers/text-message-handler.js";
 import { handleVoiceMessage } from "../handlers/voice-handler.js";
 import { unknownCommandMiddleware } from "../middleware/unknown-command.js";
-import { isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
+import { isMcpAddWizardActive, isMcpAuthWizardActive } from "../commands/mcp-catalog-command.js";
 import { clearSkillWizard, handleSkillWizardMessage, isSkillWizardActive } from "../commands/skills-wizard.js";
 import { clearSkillImportFlow, handleSkillImportMessage, isSkillImportActive } from "../commands/skills-import-flow.js";
 import { newCommand } from "../commands/new-command.js";
@@ -200,6 +200,7 @@ function isBotAwaitingTextInput(): boolean {
     isProviderWizardActive() ||
     isIntegrationWizardActive() ||
     isMcpAddWizardActive() ||
+    isMcpAuthWizardActive() ||
     isSkillWizardActive() ||
     isSkillImportActive()
   );
