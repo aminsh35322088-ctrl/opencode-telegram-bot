@@ -165,6 +165,30 @@ describe("provider wizard General panel contract", () => {
     );
   });
 
+  it("renders provider wizards with Cancel as the only inline action", async () => {
+    const ctx = callbackContext("provider:add:general", 500);
+    expect(await handleProviderCallback(ctx)).toBe(true);
+
+    const call = (ctx.api.editMessageText as any).mock.calls.at(-1);
+    expect(call?.[2]).toContain("Step 1 of 3");
+    const callbacks = call?.[3]?.reply_markup.inline_keyboard
+      .flat()
+      .map((button: { callback_data?: string }) => button.callback_data);
+    expect(callbacks).toEqual(["provider:cancel"]);
+  });
+
+  it("returns Cancel to the API Connections hub", async () => {
+    const start = callbackContext("provider:add:general", 500);
+    expect(await handleProviderCallback(start)).toBe(true);
+    expect(isProviderWizardActive()).toBe(true);
+
+    const cancel = callbackContext("provider:cancel", 500);
+    expect(await handleProviderCallback(cancel)).toBe(true);
+    expect(isProviderWizardActive()).toBe(false);
+    const call = (cancel.api.editMessageText as any).mock.calls.at(-1);
+    expect(call?.[2]).toContain("API Connections");
+  });
+
   it("renders busy verification feedback on the original panel without replying", async () => {
     const start = callbackContext("provider:add:stt", 500);
     expect(await handleProviderCallback(start)).toBe(true);
@@ -194,16 +218,31 @@ describe("provider wizard General panel contract", () => {
   });
 
 
-  it("shows generic AI + transcription slots instead of separate chat/image provider slots", async () => {
+  it("renders API Connections as the direct provider hub without a Manage Connections layer", async () => {
     const ctx = callbackContext("provider:connections", 500);
     expect(await handleProviderCallback(ctx)).toBe(true);
 
-    const keyboard = (ctx.api.editMessageText as any).mock.calls[0]?.[3]?.reply_markup;
+    const call = (ctx.api.editMessageText as any).mock.calls.at(-1);
+    expect(call?.[2]).toContain("API Connections");
+    const keyboard = call?.[3]?.reply_markup;
     const callbacks = keyboard.inline_keyboard.flat().map((button: { callback_data?: string }) => button.callback_data);
-    expect(callbacks).toContain("provider:slot:general");
+    expect(callbacks).toContain("provider:add:general");
     expect(callbacks).toContain("provider:slot:stt");
-    expect(callbacks).not.toContain("provider:slot:coding");
-    expect(callbacks).not.toContain("provider:slot:image");
+    expect(callbacks).toContain("provider:image:engines");
+    expect(callbacks).not.toContain("provider:slot:general");
+  });
+
+  it("exposes the dedicated OpenAI-compatible image API from Image APIs", async () => {
+    const ctx = callbackContext("provider:image:engines", 500);
+    expect(await handleProviderCallback(ctx)).toBe(true);
+
+    const call = (ctx.api.editMessageText as any).mock.calls.at(-1);
+    expect(call?.[2]).toContain("Image APIs");
+    const callbacks = call?.[3]?.reply_markup.inline_keyboard
+      .flat()
+      .map((button: { callback_data?: string }) => button.callback_data);
+    expect(callbacks).toContain("provider:image:custom:configure");
+    expect(callbacks).toContain("provider:image:cloudflare:configure");
   });
 
   it("migrates legacy add:image flow into one generic AI provider catalog", async () => {

@@ -48,7 +48,7 @@ export async function buildVoiceModelSettingsView(ctx: Context, notice = ""): Pr
     const selected = same(topic ? override : mainDefault, ref);
     keyboard.text(`${selected ? "✅" : "🎙️"} ${entry.providerName} · ${entry.modelName}${selected ? " ✓" : ""}`, token(ctx, ref)).row();
   }
-  keyboard.text("🔌 Manage AI providers", MANAGE_CONNECTIONS_CALLBACK).row();
+  keyboard.text("🔌 API Connections", MANAGE_CONNECTIONS_CALLBACK).row();
   keyboard.text(topic ? "← Topic Model Center" : "← Default Models", topic ? SETTINGS_BACK_CALLBACK : SETTINGS_DEFAULT_MODELS_CALLBACK);
 
   const current = topic ? (override ? `${format(override)} · Topic Override` : `Auto · Verified Primary native audio → otherwise ${format(mainDefault)}`) : format(mainDefault);

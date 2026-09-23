@@ -146,7 +146,7 @@ export async function buildImageModelSettingsView(
     ).row();
   }
 
-  keyboard.text("🔌 Manage AI providers", MANAGE_CONNECTIONS_CALLBACK).row();
+  keyboard.text("🔌 API Connections", MANAGE_CONNECTIONS_CALLBACK).row();
   keyboard.text(
     topic ? "← Topic Settings" : "← Default Models",
     topic ? SETTINGS_BACK_CALLBACK : SETTINGS_DEFAULT_MODELS_CALLBACK,
