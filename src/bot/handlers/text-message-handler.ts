@@ -2,7 +2,7 @@ import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { t } from "../../i18n/index.js";
-import { handleMcpsMessage } from "../commands/mcp-catalog-command.js";
+import { handleMcpsMessage } from "../commands/mcp-server-command.js";
 import {
   clearCommandsInteraction,
   clearCommandsMenu,

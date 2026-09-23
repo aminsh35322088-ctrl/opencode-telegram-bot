@@ -12,7 +12,7 @@ import { pt } from "../../src/i18n/pt.js";
 import { ru } from "../../src/i18n/ru.js";
 import { zh } from "../../src/i18n/zh.js";
 import { t, setRuntimeLocale, resetRuntimeLocale } from "../../src/i18n/index.js";
-import { buildMcpsDetailText } from "../../src/bot/menus/mcp-catalog-menu.js";
+import { buildMcpsDetailText } from "../../src/bot/menus/mcp-server-menu.js";
 
 const REQUIRED_KEYS = [
   "mcps.detail.needs_auth_hint",
@@ -101,24 +101,24 @@ describe("MCP auth and model fallback i18n keys", () => {
   it("source files route MCP auth user-facing strings through t()", () => {
     const root = path.resolve(__dirname, "../../src/bot");
     const files = [
-      path.join(root, "menus/mcp-catalog-menu.ts"),
-      path.join(root, "callbacks/mcp-catalog-callback-handler.ts"),
-      path.join(root, "commands/mcp-catalog-command.ts"),
+      path.join(root, "menus/mcp-server-menu.ts"),
+      path.join(root, "callbacks/mcp-server-callback-handler.ts"),
+      path.join(root, "commands/mcp-server-command.ts"),
     ];
     for (const file of files) {
       const source = fs.readFileSync(file, "utf8");
       expect(source).not.toMatch(/Authentication setup cancelled\.|Opening secure MCP login|not waiting for OAuth login|Choose how this remote MCP server|Credentials stay outside model context|OAuth login is required\. Tap Sign In/);
       // Hardcoded English OAuth detail lines must be gone (replaced by keys).
-      if (file.endsWith("mcp-catalog-menu.ts")) {
+      if (file.endsWith("mcp-server-menu.ts")) {
         expect(source).not.toContain("Tap Sign In below to authorize");
         expect(source).toContain("mcps.detail.needs_auth_hint");
       }
-      if (file.endsWith("mcp-catalog-callback-handler.ts")) {
+      if (file.endsWith("mcp-server-callback-handler.ts")) {
         expect(source).toContain('t("mcps.auth.cancelled")');
         expect(source).toContain('t("mcps.auth.opening_login")');
         expect(source).toContain('t("mcps.auth.not_waiting_oauth")');
       }
-      if (file.endsWith("mcp-catalog-command.ts")) {
+      if (file.endsWith("mcp-server-command.ts")) {
         expect(source).toContain('t("mcps.auth.menu_prompt")');
         expect(source).toContain('t("mcps.auth.bearer_prompt")');
         expect(source).toContain('t("mcps.auth.outside_context")');

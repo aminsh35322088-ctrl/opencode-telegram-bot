@@ -6,7 +6,7 @@ import { shouldSuggestPromptQueue, tryEnqueuePrompt } from "../handlers/prompt-q
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { isReplyKeyboardControl } from "../interaction-classifier.js";
-import { handleMcpsMessage, isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
+import { handleMcpsMessage, isMcpAddWizardActive } from "../commands/mcp-server-command.js";
 
 function getInteractionBlockedMessage(reason: BlockReason | undefined, interactionKind: InteractionKind | undefined): string {
   if (interactionKind === "permission") {

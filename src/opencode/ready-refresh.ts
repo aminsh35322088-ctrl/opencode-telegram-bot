@@ -1,5 +1,5 @@
 import { reconcileStoredModelSelection } from "../app/services/model-selection-service.js";
-import { restoreSecureMcpConnections } from "../app/services/mcp-catalog-service.js";
+import { restoreMcpRuntime } from "../app/services/mcp-server-service.js";
 import { warmupSessionDirectoryCache } from "../app/services/session-cache-service.js";
 import { logger } from "../utils/logger.js";
 import { opencodeClient } from "./client.js";
@@ -18,12 +18,12 @@ export async function isOpencodeServerHealthy(): Promise<boolean> {
 
 export async function refreshSessionCacheAfterOpencodeReady(reason: string): Promise<void> {
   try {
-    const restored = await restoreSecureMcpConnections();
+    const restored = await restoreMcpRuntime();
     logger.debug(
-      `[OpenCodeReady] Secure MCP connections restored: reason=${reason}, restored=${restored.restored}, failed=${restored.failed}`,
+      `[OpenCodeReady] MCP runtime restored: reason=${reason}, managed=${restored.managed.restored}/${restored.managed.failed}, secure=${restored.secure.restored}/${restored.secure.failed}`,
     );
   } catch (error) {
-    logger.warn(`[OpenCodeReady] Failed to restore secure MCP connections: reason=${reason}`, error);
+    logger.warn(`[OpenCodeReady] Failed to restore MCP runtime: reason=${reason}`, error);
   }
 
   try {

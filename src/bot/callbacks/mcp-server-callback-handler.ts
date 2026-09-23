@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
-import type { McpCatalogServerItem } from "../../app/services/mcp-catalog-service.js";
-import { loadMcpCatalog, parseMcpCatalogServers, toggleMcpCatalogServer } from "../../app/services/mcp-catalog-service.js";
+import type { McpServerItem } from "../../app/services/mcp-server-service.js";
+import { loadMcpServers, parseMcpServerItems, setMcpServerEnabled } from "../../app/services/mcp-server-service.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
@@ -27,11 +27,12 @@ import {
   MCPS_CALLBACK_AUTH_START,
   MCPS_CALLBACK_BACK,
   MCPS_CALLBACK_CANCEL,
+  MCPS_CALLBACK_PARENT_BACK,
   MCPS_CALLBACK_PREFIX,
   MCPS_CALLBACK_SELECT_PREFIX,
   MCPS_CALLBACK_TOGGLE,
   parseMcpSelectCallback,
-} from "../menus/mcp-catalog-menu.js";
+} from "../menus/mcp-server-menu.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import {
   backMcpAddWizard,
@@ -49,12 +50,12 @@ import {
   dismissMcpCredentialWizard,
   resetMcpCredentialAuthToAuto,
   skipMcpCredentialOptionalStep,
-} from "../commands/mcp-catalog-command.js";
+} from "../commands/mcp-server-command.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 
-interface McpsListMetadata { flow: "mcps"; stage: "list"; messageId: number; projectDirectory: string; servers: McpCatalogServerItem[]; }
-interface McpsDetailMetadata { flow: "mcps"; stage: "detail"; messageId: number; projectDirectory: string; serverName: string; servers: McpCatalogServerItem[]; }
+interface McpsListMetadata { flow: "mcps"; stage: "list"; messageId: number; projectDirectory: string; servers: McpServerItem[]; }
+interface McpsDetailMetadata { flow: "mcps"; stage: "detail"; messageId: number; projectDirectory: string; serverName: string; servers: McpServerItem[]; }
 type McpsMetadata = McpsListMetadata | McpsDetailMetadata;
 
 function getCallbackMessageId(ctx: Context): number | null {
@@ -71,7 +72,7 @@ function parseMcpsMetadata(state: InteractionState | null): McpsMetadata | null 
   const messageId = state.metadata.messageId;
   const projectDirectory = state.metadata.projectDirectory;
   if (flow !== "mcps" || typeof messageId !== "number" || typeof projectDirectory !== "string") return null;
-  const servers = parseMcpCatalogServers(state.metadata.servers);
+  const servers = parseMcpServerItems(state.metadata.servers);
   if (!servers) return null;
   if (stage === "list") return { flow, stage, messageId, projectDirectory, servers };
   if (stage === "detail") {
@@ -96,9 +97,9 @@ async function recoverMcpsListInteraction(ctx: Context): Promise<boolean> {
   if (messageId === null || !ctx.chat?.id) return false;
   const projectDirectory = getCurrentSessionDirectory();
   if (!projectDirectory) return false;
-  let servers: McpCatalogServerItem[];
+  let servers: McpServerItem[];
   try {
-    servers = await loadMcpCatalog(projectDirectory);
+    servers = await loadMcpServers(projectDirectory);
   } catch (error) {
     logger.warn("[Mcps] Failed to recover MCP list interaction:", error);
     return false;
@@ -196,7 +197,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     return true;
   }
 
-  if (data === "mcps:parent_back") {
+  if (data === MCPS_CALLBACK_PARENT_BACK) {
     await dismissMcpAddWizard(ctx);
     clearMcpAddWizard();
     await ctx.answerCallbackQuery().catch(() => {});
@@ -239,7 +240,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-      const servers = await loadMcpCatalog(metadata.projectDirectory);
+      const servers = await loadMcpServers(metadata.projectDirectory);
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(t("mcps.select"), { reply_markup: buildMcpsListKeyboard(servers) });
       interactionManager.transition({ expectedInput: "callback", metadata: { flow: "mcps", stage: "list", messageId: metadata.messageId, projectDirectory: metadata.projectDirectory, servers } });
@@ -306,8 +307,8 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
       }
       const enable = server.status.status !== "connected";
       await ctx.answerCallbackQuery({ text: enable ? t("mcps.enabling") : t("mcps.disabling") });
-      await toggleMcpCatalogServer(metadata.projectDirectory, metadata.serverName, enable);
-      const updatedServers = await loadMcpCatalog(metadata.projectDirectory);
+      await setMcpServerEnabled(metadata.projectDirectory, metadata.serverName, enable);
+      const updatedServers = await loadMcpServers(metadata.projectDirectory);
       const updatedServer = updatedServers.find((item) => item.name === metadata.serverName);
       if (!updatedServer) {
         await ctx.editMessageText(t("mcps.select"), { reply_markup: buildMcpsListKeyboard(updatedServers) });

@@ -7,7 +7,7 @@ import { handleCommandsCallback } from "./command-catalog-callback-handler.js";
 import { handleCompactConfirm } from "./context-control-callback-handler.js";
 import { handleLsCallback, handleOpenCallback } from "./file-browser-callback-handler.js";
 import { handleInlineMenuCancel } from "./inline-menu-cancel-callback-handler.js";
-import { handleMcpsCallback } from "./mcp-catalog-callback-handler.js";
+import { handleMcpsCallback } from "./mcp-server-callback-handler.js";
 import { handleMessagesCallback } from "./message-history-callback-handler.js";
 import { handleModelCenterCallback } from "./model-center-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
@@ -20,7 +20,7 @@ import {
   clearMcpAddWizard,
   clearMcpAuthWizard,
   clearMcpCredentialWizard,
-} from "../commands/mcp-catalog-command.js";
+} from "../commands/mcp-server-command.js";
 import { clearIntegrationWizard, handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { clearSkillWizard } from "../commands/skills-wizard.js";
 import { clearSkillImportFlow } from "../commands/skills-import-flow.js";

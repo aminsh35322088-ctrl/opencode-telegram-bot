@@ -1,6 +1,6 @@
 import type { McpStatus } from "@opencode-ai/sdk/v2";
 import { InlineKeyboard } from "grammy";
-import type { McpCatalogServerItem } from "../../app/services/mcp-catalog-service.js";
+import type { McpServerItem } from "../../app/services/mcp-server-service.js";
 import { t } from "../../i18n/index.js";
 
 export const MCPS_CALLBACK_PREFIX = "mcps:";
@@ -47,8 +47,15 @@ function getStatusEmoji(status: McpStatus): string {
     default: return "❓";
   }
 }
-function formatMcpButtonLabel(server: McpCatalogServerItem): string {
-  const rawLabel = `${getStatusEmoji(server.status)} ${server.name}`;
+function getTypeLabel(type: McpServerItem["type"]): string {
+  if (type === "local") return t("mcps.type.local");
+  if (type === "remote") return t("mcps.type.remote");
+  return t("mcps.type.unknown");
+}
+
+function formatMcpButtonLabel(server: McpServerItem): string {
+  const rawLabel =
+    `${getStatusEmoji(server.status)} ${server.name} · ${getTypeLabel(server.type)}`;
   if (rawLabel.length <= MAX_INLINE_BUTTON_LABEL_LENGTH) return rawLabel;
   return `${rawLabel.slice(0, MAX_INLINE_BUTTON_LABEL_LENGTH - 3)}...`;
 }
@@ -58,97 +65,114 @@ export function parseMcpSelectCallback(data: string): number | null {
   if (!Number.isInteger(index) || index < 0) return null;
   return index;
 }
-export function buildMcpsListKeyboard(servers: McpCatalogServerItem[]): InlineKeyboard {
+export function buildMcpsListKeyboard(servers: McpServerItem[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   servers.forEach((server, index) => { keyboard.text(formatMcpButtonLabel(server), `${MCPS_CALLBACK_SELECT_PREFIX}${index}`).row(); });
-  keyboard.text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row();
-  keyboard.text("← Back", MCPS_CALLBACK_PARENT_BACK).text("🏠 Home", "main:home");
+  keyboard.text(t("mcps.button.add"), MCPS_CALLBACK_ADD).row();
+  keyboard
+    .text(t("mcps.button.back"), MCPS_CALLBACK_PARENT_BACK)
+    .text(t("mcps.button.home"), "main:home");
   return keyboard;
 }
 export function buildMcpsEmptyKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("➕ Add MCP Server", MCPS_CALLBACK_ADD).row()
-    .text("← Back", MCPS_CALLBACK_PARENT_BACK).text("🏠 Home", "main:home");
+    .text(t("mcps.button.add"), MCPS_CALLBACK_ADD).row()
+    .text(t("mcps.button.back"), MCPS_CALLBACK_PARENT_BACK)
+    .text(t("mcps.button.home"), "main:home");
 }
 export function buildMcpsWizardKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("← MCP Servers", MCPS_CALLBACK_CANCEL)
-    .text("🏠 Home", "main:home");
+    .text(t("mcps.button.back"), MCPS_CALLBACK_CANCEL)
+    .text(t("mcps.button.home"), "main:home");
 }
 
 export function buildMcpOAuthKeyboard(authorizationUrl: string): InlineKeyboard {
   return new InlineKeyboard()
-    .url("🔐 Open Login", authorizationUrl).row()
-    .text("← Server", MCPS_CALLBACK_AUTH_CANCEL)
-    .text("🏠 Home", "main:home");
+    .url(t("mcps.button.open_login"), authorizationUrl).row()
+    .text(t("mcps.button.back"), MCPS_CALLBACK_AUTH_CANCEL)
+    .text(t("mcps.button.home"), "main:home");
 }
 
 export function buildMcpAuthOptionsKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✨ Auto / OAuth", MCPS_CALLBACK_AUTH_AUTO).row()
-    .text("🔑 Bearer Token", MCPS_CALLBACK_AUTH_BEARER)
-    .text("🗝 API Key", MCPS_CALLBACK_AUTH_API_KEY).row()
-    .text("🧩 Custom Header", MCPS_CALLBACK_AUTH_CUSTOM_HEADER)
-    .text("🪪 OAuth Client", MCPS_CALLBACK_AUTH_CLIENT).row()
-    .text("← Server", MCPS_CALLBACK_AUTH_CANCEL)
-    .text("🏠 Home", "main:home");
+    .text(t("mcps.button.auto_oauth"), MCPS_CALLBACK_AUTH_AUTO).row()
+    .text(`🔑 ${t("mcps.auth.mode.bearer")}`, MCPS_CALLBACK_AUTH_BEARER)
+    .text(`🗝 ${t("mcps.auth.mode.api_key")}`, MCPS_CALLBACK_AUTH_API_KEY).row()
+    .text(`🧩 ${t("mcps.auth.mode.custom_header")}`, MCPS_CALLBACK_AUTH_CUSTOM_HEADER)
+    .text(`🪪 ${t("mcps.auth.mode.oauth_client")}`, MCPS_CALLBACK_AUTH_CLIENT).row()
+    .text(t("mcps.button.back"), MCPS_CALLBACK_AUTH_CANCEL)
+    .text(t("mcps.button.home"), "main:home");
 }
 
 export function buildMcpCredentialInputKeyboard(options?: {
   allowSkip?: "secret" | "scope";
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  if (options?.allowSkip === "secret") keyboard.text("Skip Secret", MCPS_CALLBACK_AUTH_SKIP_SECRET).row();
-  if (options?.allowSkip === "scope") keyboard.text("Skip Scope", MCPS_CALLBACK_AUTH_SKIP_SCOPE).row();
+  if (options?.allowSkip === "secret") {
+    keyboard.text(t("mcps.button.skip_secret"), MCPS_CALLBACK_AUTH_SKIP_SECRET).row();
+  }
+  if (options?.allowSkip === "scope") {
+    keyboard.text(t("mcps.button.skip_scope"), MCPS_CALLBACK_AUTH_SKIP_SCOPE).row();
+  }
   keyboard
-    .text("← Back", MCPS_CALLBACK_AUTH_BACK)
-    .text("✖ Cancel", MCPS_CALLBACK_AUTH_CANCEL).row()
-    .text("🏠 Home", "main:home");
+    .text(t("mcps.button.back"), MCPS_CALLBACK_AUTH_BACK)
+    .text(t("mcps.button.cancel"), MCPS_CALLBACK_AUTH_CANCEL).row()
+    .text(t("mcps.button.home"), "main:home");
   return keyboard;
 }
 export function buildMcpsAddTypeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💻 Local", MCPS_CALLBACK_ADD_LOCAL)
-    .text("🌐 Remote", MCPS_CALLBACK_ADD_REMOTE).row()
-    .text("← Back", MCPS_CALLBACK_ADD_BACK)
-    .text("✖ Cancel", MCPS_CALLBACK_CANCEL).row()
-    .text("🏠 Home", "main:home");
+    .text(t("mcps.button.local"), MCPS_CALLBACK_ADD_LOCAL)
+    .text(t("mcps.button.remote"), MCPS_CALLBACK_ADD_REMOTE).row()
+    .text(t("mcps.button.back"), MCPS_CALLBACK_ADD_BACK)
+    .text(t("mcps.button.cancel"), MCPS_CALLBACK_CANCEL).row()
+    .text(t("mcps.button.home"), "main:home");
 }
 
 export function buildMcpsAddValueKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("← Back", MCPS_CALLBACK_ADD_BACK)
-    .text("✖ Cancel", MCPS_CALLBACK_CANCEL).row()
-    .text("🏠 Home", "main:home");
+    .text(t("mcps.button.back"), MCPS_CALLBACK_ADD_BACK)
+    .text(t("mcps.button.cancel"), MCPS_CALLBACK_CANCEL).row()
+    .text(t("mcps.button.home"), "main:home");
 }
-export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKeyboard {
+export function buildMcpsDetailKeyboard(server: McpServerItem): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  let hasToggleButton = false;
+  const supportsRemoteAuth = server.type !== "local";
+  let hasActionRow = false;
+
   if (server.status.status === "connected") {
     keyboard.text(t("mcps.button.disable"), MCPS_CALLBACK_TOGGLE);
-    keyboard.text("🔐 Auth", MCPS_CALLBACK_AUTH_OPTIONS);
-    hasToggleButton = true;
+    if (supportsRemoteAuth) {
+      keyboard.text(t("mcps.button.auth"), MCPS_CALLBACK_AUTH_OPTIONS);
+    }
+    hasActionRow = true;
   } else if (server.status.status === "needs_auth") {
-    keyboard.text("🔐 Sign In", MCPS_CALLBACK_AUTH_START);
-    keyboard.text("⚙️ Other Auth", MCPS_CALLBACK_AUTH_OPTIONS);
-    hasToggleButton = true;
+    keyboard.text(t("mcps.button.sign_in"), MCPS_CALLBACK_AUTH_START);
+    keyboard.text(t("mcps.button.other_auth"), MCPS_CALLBACK_AUTH_OPTIONS);
+    hasActionRow = true;
   } else if (server.status.status === "needs_client_registration") {
-    keyboard.text("🪪 OAuth Client", MCPS_CALLBACK_AUTH_CLIENT);
-    hasToggleButton = true;
+    keyboard.text(`🪪 ${t("mcps.auth.mode.oauth_client")}`, MCPS_CALLBACK_AUTH_CLIENT);
+    hasActionRow = true;
   } else if (server.status.status === "disabled" || server.status.status === "failed") {
     keyboard.text(t("mcps.button.enable"), MCPS_CALLBACK_TOGGLE);
-    keyboard.text("🔐 Authentication", MCPS_CALLBACK_AUTH_OPTIONS);
-    hasToggleButton = true;
+    if (supportsRemoteAuth) {
+      keyboard.text(t("mcps.button.authentication"), MCPS_CALLBACK_AUTH_OPTIONS);
+    }
+    hasActionRow = true;
   }
-  if (hasToggleButton) keyboard.row();
-  keyboard.text(t("mcps.button.back"), MCPS_CALLBACK_BACK).text("🏠 Home", "main:home");
+
+  if (hasActionRow) keyboard.row();
+  keyboard
+    .text(t("mcps.button.back"), MCPS_CALLBACK_BACK)
+    .text(t("mcps.button.home"), "main:home");
   return keyboard;
 }
-export function buildMcpsDetailText(server: McpCatalogServerItem): string {
+export function buildMcpsDetailText(server: McpServerItem): string {
   const lines: string[] = [];
   lines.push(t("mcps.detail.title", { name: server.name }));
   lines.push("");
   lines.push(t("mcps.detail.status", { status: getStatusLabel(server.status) }));
+  lines.push(t("mcps.detail.type", { type: getTypeLabel(server.type) }));
   if (server.status.status === "failed" || server.status.status === "needs_client_registration") {
     lines.push(t("mcps.detail.error", { error: server.status.error }));
   }

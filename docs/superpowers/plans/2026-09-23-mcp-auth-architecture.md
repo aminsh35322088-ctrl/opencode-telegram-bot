@@ -48,8 +48,8 @@
 ### Task 2: Dynamic secure MCP connection service
 
 **Files:**
-- Modify: src/app/services/mcp-catalog-service.ts
-- Test: .github/ci-tests/tests/app/services/mcp-catalog-service.test.ts
+- Modify: src/app/services/mcp-server-service.ts
+- Test: .github/ci-tests/tests/app/services/mcp-server-service.test.ts
 
 **Interfaces:**
 - Consumes encrypted credential records.
@@ -64,12 +64,12 @@
 ### Task 3: Same-message auth wizard and navigation
 
 **Files:**
-- Modify: src/bot/commands/mcp-catalog-command.ts
-- Modify: src/bot/callbacks/mcp-catalog-callback-handler.ts
-- Modify: src/bot/menus/mcp-catalog-menu.ts
+- Modify: src/bot/commands/mcp-server-command.ts
+- Modify: src/bot/callbacks/mcp-server-callback-handler.ts
+- Modify: src/bot/menus/mcp-server-menu.ts
 - Modify: src/bot/routers/message-router.ts
 - Test: .github/ci-tests/tests/bot/commands/mcp-add-wizard-ux.test.ts
-- Test: .github/ci-tests/tests/bot/callbacks/mcp-catalog-callback-handler.test.ts
+- Test: .github/ci-tests/tests/bot/callbacks/mcp-server-callback-handler.test.ts
 - Test: .github/ci-tests/tests/bot/commands/mcps.test.ts
 
 **Interfaces:**

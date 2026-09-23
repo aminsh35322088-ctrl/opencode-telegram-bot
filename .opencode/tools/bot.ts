@@ -143,9 +143,9 @@ interface SkillImportModule {
 }
 interface CommandCatalogModule { loadCommandCatalog(projectDirectory: string): Promise<unknown[]>; }
 interface McpModule {
-  loadMcpCatalog(projectDirectory: string): Promise<unknown[]>;
-  addMcpCatalogServer(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<void>;
-  toggleMcpCatalogServer(projectDirectory: string, serverName: string, enable: boolean): Promise<void>;
+  loadMcpServers(projectDirectory: string): Promise<unknown[]>;
+  createMcpServerFromInput(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<void>;
+  setMcpServerEnabled(projectDirectory: string, serverName: string, enable: boolean): Promise<void>;
 }
 interface SessionModule {
   getEffectiveCurrentSession(): Promise<{ id: string; title: string; directory: string } | null>;
@@ -442,16 +442,16 @@ export default tool({
     }
 
     if (action.startsWith("mcp.")) {
-      const service = await load<McpModule>("app/services/mcp-catalog-service.js");
-      if (action === "mcp.list") return json(await service.loadMcpCatalog(base));
+      const service = await load<McpModule>("app/services/mcp-server-service.js");
+      if (action === "mcp.list") return json(await service.loadMcpServers(base));
       const name = required(args.name, "name", action);
       if (action === "mcp.enable" || action === "mcp.disable") {
-        await service.toggleMcpCatalogServer(base, name, action === "mcp.enable");
+        await service.setMcpServerEnabled(base, name, action === "mcp.enable");
         return json({ ok: true, name, enabled: action === "mcp.enable" });
       }
       const value = required(args.value, "value", action);
       const type = action === "mcp.add-remote" ? "remote" : "local";
-      await service.addMcpCatalogServer({ projectDirectory: base, name, type, value });
+      await service.createMcpServerFromInput({ projectDirectory: base, name, type, value });
       return json({ ok: true, name, type });
     }
 

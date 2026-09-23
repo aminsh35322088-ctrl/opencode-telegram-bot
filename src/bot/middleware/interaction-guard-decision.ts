@@ -7,7 +7,7 @@ import { attachManager } from "../../app/managers/attach-manager.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN, isReplyKeyboardButtonText } from "../message-patterns.js";
 import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
-import { isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
+import { isMcpAddWizardActive } from "../commands/mcp-server-command.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";

@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 
 const mocked = vi.hoisted(() => ({
-  loadMcpCatalog: vi.fn(),
-  parseMcpCatalogServers: vi.fn((value: unknown) => value),
-  toggleMcpCatalogServer: vi.fn(),
+  loadMcpServers: vi.fn(),
+  parseMcpServerItems: vi.fn((value: unknown) => value),
+  setMcpServerEnabled: vi.fn(),
   startMcpOAuth: vi.fn(),
   completeMcpOAuth: vi.fn(),
   resolveMcpRemoteUrl: vi.fn(),
@@ -14,10 +14,10 @@ const mocked = vi.hoisted(() => ({
   currentSessionDirectory: "/work/repo" as string | null,
 }));
 
-vi.mock("../../../src/app/services/mcp-catalog-service.js", () => ({
-  loadMcpCatalog: mocked.loadMcpCatalog,
-  parseMcpCatalogServers: mocked.parseMcpCatalogServers,
-  toggleMcpCatalogServer: mocked.toggleMcpCatalogServer,
+vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
+  loadMcpServers: mocked.loadMcpServers,
+  parseMcpServerItems: mocked.parseMcpServerItems,
+  setMcpServerEnabled: mocked.setMcpServerEnabled,
   startMcpOAuth: mocked.startMcpOAuth,
   completeMcpOAuth: mocked.completeMcpOAuth,
   resolveMcpRemoteUrl: mocked.resolveMcpRemoteUrl,
@@ -30,7 +30,7 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
   getCurrentSessionDirectory: vi.fn(() => mocked.currentSessionDirectory),
 }));
 
-import { handleMcpsCallback } from "../../../src/bot/callbacks/mcp-catalog-callback-handler.js";
+import { handleMcpsCallback } from "../../../src/bot/callbacks/mcp-server-callback-handler.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 
 function createCallbackContext(data: string, messageId: number): Context {
@@ -60,7 +60,7 @@ function answerTexts(ctx: Context): string[] {
 describe("mcp catalog callback recovery", () => {
   beforeEach(() => {
     interactionManager.clear("test_setup");
-    mocked.loadMcpCatalog.mockReset();
+    mocked.loadMcpServers.mockReset();
     mocked.resolveMcpRemoteUrl.mockReset();
     mocked.resolveMcpRemoteUrl.mockResolvedValue("https://mcp.example.com/mcp");
     mocked.getMcpAuthSummary.mockReset();
@@ -72,7 +72,7 @@ describe("mcp catalog callback recovery", () => {
 
   it("self-heals a clobbered interaction by re-rendering the server list", async () => {
     const servers = [{ name: "context7", status: { status: "connected" } }];
-    mocked.loadMcpCatalog.mockResolvedValue(servers);
+    mocked.loadMcpServers.mockResolvedValue(servers);
     interactionManager.start({
       kind: "inline",
       expectedInput: "callback",
@@ -93,7 +93,7 @@ describe("mcp catalog callback recovery", () => {
   });
 
   it("falls back to the inactive alert when recovery cannot load the catalog", async () => {
-    mocked.loadMcpCatalog.mockRejectedValue(new Error("server gone"));
+    mocked.loadMcpServers.mockRejectedValue(new Error("server gone"));
 
     const ctx = createCallbackContext("mcps:select:0", 777);
     const handled = await handleMcpsCallback(ctx);
@@ -105,7 +105,7 @@ describe("mcp catalog callback recovery", () => {
 
   it("keeps a valid list interaction working without recovery", async () => {
     const servers = [{ name: "context7", status: { status: "connected" } }];
-    mocked.loadMcpCatalog.mockResolvedValue(servers);
+    mocked.loadMcpServers.mockResolvedValue(servers);
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
@@ -117,11 +117,11 @@ describe("mcp catalog callback recovery", () => {
 
     expect(handled).toBe(true);
     expect(answerTexts(ctx).some((text) => text.includes("inactive"))).toBe(false);
-    expect(mocked.loadMcpCatalog).not.toHaveBeenCalled();
+    expect(mocked.loadMcpServers).not.toHaveBeenCalled();
   });
   it("opens the auth-method menu in the same MCP detail panel", async () => {
     const servers = [{ name: "secure", status: { status: "failed", error: "Unauthorized" } }];
-    mocked.loadMcpCatalog.mockResolvedValue(servers);
+    mocked.loadMcpServers.mockResolvedValue(servers);
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
@@ -183,7 +183,7 @@ describe("mcp catalog callback recovery", () => {
 
   it("cancels credential setup back to the same server detail instead of creating a message", async () => {
     const servers = [{ name: "secure", status: { status: "failed", error: "Unauthorized" } }];
-    mocked.loadMcpCatalog.mockResolvedValue(servers);
+    mocked.loadMcpServers.mockResolvedValue(servers);
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
