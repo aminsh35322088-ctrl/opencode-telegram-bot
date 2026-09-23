@@ -5,6 +5,8 @@ const mocked = vi.hoisted(() => ({
   loadMcpCatalog: vi.fn(),
   parseMcpCatalogServers: vi.fn((value: unknown) => value),
   toggleMcpCatalogServer: vi.fn(),
+  startMcpOAuth: vi.fn(),
+  completeMcpOAuth: vi.fn(),
   currentSessionDirectory: "/work/repo" as string | null,
 }));
 
@@ -12,6 +14,8 @@ vi.mock("../../../src/app/services/mcp-catalog-service.js", () => ({
   loadMcpCatalog: mocked.loadMcpCatalog,
   parseMcpCatalogServers: mocked.parseMcpCatalogServers,
   toggleMcpCatalogServer: mocked.toggleMcpCatalogServer,
+  startMcpOAuth: mocked.startMcpOAuth,
+  completeMcpOAuth: mocked.completeMcpOAuth,
 }));
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
