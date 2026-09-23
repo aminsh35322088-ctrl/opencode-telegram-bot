@@ -66,7 +66,6 @@ import {
   parseMcpServerItems,
   resetMcpAuthToAuto,
   resolveMcpRemoteUrl,
-  restoreManagedMcpServers,
   restoreMcpRuntime,
   restoreSecureMcpConnections,
   startMcpOAuth,
@@ -581,8 +580,17 @@ describe("app/services/mcp-server-service", () => {
 
   it("parses local MCP commands without destroying quotes or escaped spaces", () => {
     expect(
-      parseMcpCommandLine('npx -y "@scope/server package" --label "hello world" path\\ with\\ spaces'),
-    ).toEqual(["npx", "-y", "@scope/server package", "--label", "hello world", "path with spaces"]);
+      parseMcpCommandLine('npx -y "@scope/server package" --label "hello world" path\\ with\\ spaces "" " padded "'),
+    ).toEqual([
+      "npx",
+      "-y",
+      "@scope/server package",
+      "--label",
+      "hello world",
+      "path with spaces",
+      "",
+      " padded ",
+    ]);
     expect(() => parseMcpCommandLine('npx "unterminated')).toThrow(/unmatched quote/i);
   });
 

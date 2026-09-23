@@ -43,6 +43,7 @@ vi.mock("../../../src/config.js", () => ({
 }));
 
 import {
+  ensureCustomProviderModelToolCapability,
   refreshAndApplyCustomProviderToolCapabilities,
   refreshCustomProviderToolCapabilities,
   saveCustomProvider,
@@ -103,7 +104,9 @@ describe("custom-provider capability refresh", () => {
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const refresh = refreshCustomProviderToolCapabilities([{ providerID: "race-provider", modelID: "agent-model" }]);
+    const refresh = refreshAndApplyCustomProviderToolCapabilities(undefined, [
+      { providerID: "race-provider", modelID: "agent-model" },
+    ]);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     state = { providers: [] };
     release(toolCallResponse());
@@ -226,12 +229,31 @@ describe("custom-provider capability refresh", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      refreshCustomProviderToolCapabilities([{ providerID: "race-provider", modelID: "model-149" }]),
+      refreshAndApplyCustomProviderToolCapabilities(undefined, [
+        { providerID: "race-provider", modelID: "model-149" },
+      ]),
     ).resolves.toBe(true);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(state.providers[0]?.models.filter((model) => model.toolCallVerified === true)).toHaveLength(1);
     expect(state.providers[0]?.models[149]).toMatchObject({ id: "model-149", toolCallVerified: true, toolCall: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("single-flights concurrent verification for the same custom model", async () => {
+    let release!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = ensureCustomProviderModelToolCapability("race-provider", "agent-model");
+    const second = ensureCustomProviderModelToolCapability("race-provider", "agent-model");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    release(toolCallResponse());
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.globalDispose).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 

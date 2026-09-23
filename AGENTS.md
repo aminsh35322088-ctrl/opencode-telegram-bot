@@ -104,7 +104,7 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 ### Custom provider tool calling
 
 - OpenCode custom-provider models stay fail-closed (`tool_call: false`) until a real tool-call probe succeeds for that exact model.
-- Startup writes the fail-closed config first; probe refresh runs in the background and rewrites the config when verification completes.
+- Startup writes the fail-closed config first. Verification is demand-driven for the exact selected/active custom model, single-flighted per provider/model, and only reloads OpenCode after a positive probe when runtime activity is safely idle.
 - When the selected model falls back because it is unavailable or not agent-capable, notify the user through i18n — do not rely on `logger.warn` alone.
 
 ### Git

@@ -71,6 +71,7 @@ const DEFAULT_CUSTOM_MODEL_INPUT_MODALITIES = ["text", "image"] as const;
 const DEFAULT_CUSTOM_MODEL_OUTPUT_MODALITIES = ["text"] as const;
 const TOOL_CALL_PROBE_NAME = "opencode_action_probe";
 const TOOL_CALL_PROBE_TIMEOUT_MS = 12_000;
+const toolCapabilityVerificationFlights = new Map<string, Promise<boolean>>();
 
 const SUPPORTED_MODALITIES = new Set(["text", "audio", "image", "video", "pdf"]);
 
@@ -703,14 +704,6 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
 
 // Explicit targets are mandatory: catalog discovery/refresh paths must never
 // fan out inference probes across every model exposed by a provider.
-export async function refreshCustomProviderToolCapabilities(
-  targets: readonly ToolCapabilityTarget[],
-): Promise<boolean> {
-  const snapshot = await readStore();
-  const updates = await collectToolCapabilityUpdates(snapshot, targets);
-  return persistToolCapabilityUpdates(updates);
-}
-
 export async function buildOpenCodeCustomConfig(): Promise<string> {
   const store = await readStore();
   applyProviderEnvironment(store);
@@ -809,7 +802,7 @@ export async function refreshAndApplyCustomProviderToolCapabilities(
   }
 }
 
-export async function ensureCustomProviderModelToolCapability(
+async function ensureCustomProviderModelToolCapabilityInternal(
   providerID: string,
   modelID: string,
 ): Promise<boolean> {
@@ -827,4 +820,23 @@ export async function ensureCustomProviderModelToolCapability(
     .find((item) => item.id === providerID)
     ?.models.find((item) => item.id === modelID);
   return verified?.toolCallVerified === true && verified.toolCall === true;
+}
+
+export async function ensureCustomProviderModelToolCapability(
+  providerID: string,
+  modelID: string,
+): Promise<boolean> {
+  const key = JSON.stringify([providerID.trim(), modelID.trim()]);
+  const existing = toolCapabilityVerificationFlights.get(key);
+  if (existing) return existing;
+
+  const flight = ensureCustomProviderModelToolCapabilityInternal(providerID, modelID);
+  toolCapabilityVerificationFlights.set(key, flight);
+  try {
+    return await flight;
+  } finally {
+    if (toolCapabilityVerificationFlights.get(key) === flight) {
+      toolCapabilityVerificationFlights.delete(key);
+    }
+  }
 }
