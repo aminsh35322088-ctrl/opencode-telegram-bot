@@ -24,6 +24,23 @@ function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }
 
+function getTransportErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const directCode = (error as NodeJS.ErrnoException).code;
+  if (typeof directCode === "string" && directCode) return directCode;
+
+  const cause = error.cause;
+  if (cause && typeof cause === "object" && "code" in cause) {
+    const causeCode = (cause as { code?: unknown }).code;
+    if (typeof causeCode === "string" && causeCode) return causeCode;
+  }
+  return undefined;
+}
+
+function isRetryableTransportError(error: unknown): boolean {
+  return isTimeoutError(error) || error instanceof TypeError;
+}
+
 async function fetchCatalogResponse(baseURL: string, apiKey: string): Promise<Response> {
   for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
     try {
@@ -32,11 +49,16 @@ async function fetchCatalogResponse(baseURL: string, apiKey: string): Promise<Re
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      if (!isTimeoutError(error)) throw error;
+      if (!isRetryableTransportError(error)) throw error;
       if (attempt === REQUEST_ATTEMPTS) {
-        throw new Error(
-          `Model discovery timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds (${REQUEST_ATTEMPTS} attempts)`,
-        );
+        if (isTimeoutError(error)) {
+          throw new Error(
+            `Model discovery timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds (${REQUEST_ATTEMPTS} attempts)`,
+          );
+        }
+
+        const code = getTransportErrorCode(error) ?? "NETWORK_ERROR";
+        throw new Error(`Model discovery connection failed (${code}) after ${REQUEST_ATTEMPTS} attempts`);
       }
     }
   }
