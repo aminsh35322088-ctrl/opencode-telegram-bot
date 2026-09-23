@@ -62,8 +62,11 @@ function normalizeConfig(config: ManagedMcpConfig): ManagedMcpConfig {
     };
   }
 
-  const command = config.command.map((part) => part.trim()).filter(Boolean);
-  if (command.length === 0) throw new Error("MCP local command is required.");
+  const command = [...config.command];
+  if (command.length === 0 || !command[0]?.trim()) {
+    throw new Error("MCP local command is required.");
+  }
+  command[0] = command[0].trim();
   const cwd = config.cwd?.trim();
   const environment = config.environment
     ? Object.fromEntries(

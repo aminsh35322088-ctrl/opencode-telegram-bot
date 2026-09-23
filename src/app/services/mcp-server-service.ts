@@ -522,7 +522,7 @@ function normalizeManagedConfig(config: ManagedMcpConfig): McpLocalConfig | McpR
   };
 }
 
-export async function createMcpServer(options: {
+async function createMcpServer(options: {
   projectDirectory: string;
   name: string;
   config: ManagedMcpConfig;
@@ -577,7 +577,7 @@ export async function createMcpServerFromInput(options: {
   });
 }
 
-export async function restoreManagedMcpServers(): Promise<{
+async function restoreManagedMcpServers(): Promise<{
   restored: number;
   failed: number;
 }> {
@@ -620,7 +620,7 @@ export async function restoreMcpRuntime(): Promise<{
   return { managed, secure };
 }
 
-export async function verifyMcpServerConnection(
+async function verifyMcpServerConnection(
   projectDirectory: string,
   serverName: string,
 ): Promise<McpServerItem> {
