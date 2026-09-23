@@ -12,6 +12,18 @@ export const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
 export const MCPS_CALLBACK_ADD = `${MCPS_CALLBACK_PREFIX}add`;
 export const MCPS_CALLBACK_ADD_LOCAL = `${MCPS_CALLBACK_PREFIX}add:local`;
 export const MCPS_CALLBACK_ADD_REMOTE = `${MCPS_CALLBACK_PREFIX}add:remote`;
+export const MCPS_CALLBACK_ADD_BACK = `${MCPS_CALLBACK_PREFIX}add:back`;
+export const MCPS_CALLBACK_AUTH_START = `${MCPS_CALLBACK_PREFIX}auth:start`;
+export const MCPS_CALLBACK_AUTH_OPTIONS = `${MCPS_CALLBACK_PREFIX}auth:options`;
+export const MCPS_CALLBACK_AUTH_CANCEL = `${MCPS_CALLBACK_PREFIX}auth:cancel`;
+export const MCPS_CALLBACK_AUTH_BACK = `${MCPS_CALLBACK_PREFIX}auth:back`;
+export const MCPS_CALLBACK_AUTH_AUTO = `${MCPS_CALLBACK_PREFIX}auth:auto`;
+export const MCPS_CALLBACK_AUTH_BEARER = `${MCPS_CALLBACK_PREFIX}auth:bearer`;
+export const MCPS_CALLBACK_AUTH_API_KEY = `${MCPS_CALLBACK_PREFIX}auth:api-key`;
+export const MCPS_CALLBACK_AUTH_CUSTOM_HEADER = `${MCPS_CALLBACK_PREFIX}auth:custom`;
+export const MCPS_CALLBACK_AUTH_CLIENT = `${MCPS_CALLBACK_PREFIX}auth:client`;
+export const MCPS_CALLBACK_AUTH_SKIP_SECRET = `${MCPS_CALLBACK_PREFIX}auth:skip-secret`;
+export const MCPS_CALLBACK_AUTH_SKIP_SCOPE = `${MCPS_CALLBACK_PREFIX}auth:skip-scope`;
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 
@@ -63,11 +75,50 @@ export function buildMcpsWizardKeyboard(): InlineKeyboard {
     .text("← MCP Servers", MCPS_CALLBACK_CANCEL)
     .text("🏠 Home", "main:home");
 }
+
+export function buildMcpOAuthKeyboard(authorizationUrl: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .url("🔐 Open Login", authorizationUrl).row()
+    .text("← Server", MCPS_CALLBACK_AUTH_CANCEL)
+    .text("🏠 Home", "main:home");
+}
+
+export function buildMcpAuthOptionsKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✨ Auto / OAuth", MCPS_CALLBACK_AUTH_AUTO).row()
+    .text("🔑 Bearer Token", MCPS_CALLBACK_AUTH_BEARER)
+    .text("🗝 API Key", MCPS_CALLBACK_AUTH_API_KEY).row()
+    .text("🧩 Custom Header", MCPS_CALLBACK_AUTH_CUSTOM_HEADER)
+    .text("🪪 OAuth Client", MCPS_CALLBACK_AUTH_CLIENT).row()
+    .text("← Server", MCPS_CALLBACK_AUTH_CANCEL)
+    .text("🏠 Home", "main:home");
+}
+
+export function buildMcpCredentialInputKeyboard(options?: {
+  allowSkip?: "secret" | "scope";
+}): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  if (options?.allowSkip === "secret") keyboard.text("Skip Secret", MCPS_CALLBACK_AUTH_SKIP_SECRET).row();
+  if (options?.allowSkip === "scope") keyboard.text("Skip Scope", MCPS_CALLBACK_AUTH_SKIP_SCOPE).row();
+  keyboard
+    .text("← Back", MCPS_CALLBACK_AUTH_BACK)
+    .text("✖ Cancel", MCPS_CALLBACK_AUTH_CANCEL).row()
+    .text("🏠 Home", "main:home");
+  return keyboard;
+}
 export function buildMcpsAddTypeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("💻 Local", MCPS_CALLBACK_ADD_LOCAL)
     .text("🌐 Remote", MCPS_CALLBACK_ADD_REMOTE).row()
-    .text("← MCP Servers", MCPS_CALLBACK_CANCEL)
+    .text("← Back", MCPS_CALLBACK_ADD_BACK)
+    .text("✖ Cancel", MCPS_CALLBACK_CANCEL).row()
+    .text("🏠 Home", "main:home");
+}
+
+export function buildMcpsAddValueKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("← Back", MCPS_CALLBACK_ADD_BACK)
+    .text("✖ Cancel", MCPS_CALLBACK_CANCEL).row()
     .text("🏠 Home", "main:home");
 }
 export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKeyboard {
@@ -75,9 +126,18 @@ export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKey
   let hasToggleButton = false;
   if (server.status.status === "connected") {
     keyboard.text(t("mcps.button.disable"), MCPS_CALLBACK_TOGGLE);
+    keyboard.text("🔐 Auth", MCPS_CALLBACK_AUTH_OPTIONS);
+    hasToggleButton = true;
+  } else if (server.status.status === "needs_auth") {
+    keyboard.text("🔐 Sign In", MCPS_CALLBACK_AUTH_START);
+    keyboard.text("⚙️ Other Auth", MCPS_CALLBACK_AUTH_OPTIONS);
+    hasToggleButton = true;
+  } else if (server.status.status === "needs_client_registration") {
+    keyboard.text("🪪 OAuth Client", MCPS_CALLBACK_AUTH_CLIENT);
     hasToggleButton = true;
   } else if (server.status.status === "disabled" || server.status.status === "failed") {
     keyboard.text(t("mcps.button.enable"), MCPS_CALLBACK_TOGGLE);
+    keyboard.text("🔐 Authentication", MCPS_CALLBACK_AUTH_OPTIONS);
     hasToggleButton = true;
   }
   if (hasToggleButton) keyboard.row();
@@ -89,7 +149,16 @@ export function buildMcpsDetailText(server: McpCatalogServerItem): string {
   lines.push(t("mcps.detail.title", { name: server.name }));
   lines.push("");
   lines.push(t("mcps.detail.status", { status: getStatusLabel(server.status) }));
-  if (server.status.status === "failed" || server.status.status === "needs_client_registration") lines.push(t("mcps.detail.error", { error: server.status.error }));
-  if (server.status.status === "needs_auth" || server.status.status === "needs_client_registration") { lines.push(""); lines.push(t("mcps.auth_required")); }
+  if (server.status.status === "failed" || server.status.status === "needs_client_registration") {
+    lines.push(t("mcps.detail.error", { error: server.status.error }));
+  }
+  if (server.status.status === "needs_auth") {
+    lines.push("");
+    lines.push(t("mcps.detail.needs_auth_hint"));
+  }
+  if (server.status.status === "needs_client_registration") {
+    lines.push("");
+    lines.push(t("mcps.detail.needs_client_registration_hint"));
+  }
   return lines.join("\n");
 }

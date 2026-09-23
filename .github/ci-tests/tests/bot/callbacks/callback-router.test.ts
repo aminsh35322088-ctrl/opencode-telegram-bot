@@ -27,6 +27,9 @@ const mocked = vi.hoisted(() => ({
   handleWorktreeCallback: vi.fn(),
   clearLsPathIndex: vi.fn(),
   clearOpenPathIndex: vi.fn(),
+  clearMcpAddWizard: vi.fn(),
+  clearMcpAuthWizard: vi.fn(),
+  clearMcpCredentialWizard: vi.fn(),
 }));
 
 vi.mock("../../../src/app/managers/interaction-manager.js", async (importOriginal) => ({
@@ -100,6 +103,12 @@ vi.mock("../../../src/bot/callbacks/worktree-callback-handler.js", () => ({
 vi.mock("../../../src/bot/menus/file-browser-menu.js", () => ({
   clearLsPathIndex: mocked.clearLsPathIndex,
   clearOpenPathIndex: mocked.clearOpenPathIndex,
+}));
+
+vi.mock("../../../src/bot/commands/mcp-catalog-command.js", () => ({
+  clearMcpAddWizard: mocked.clearMcpAddWizard,
+  clearMcpAuthWizard: mocked.clearMcpAuthWizard,
+  clearMcpCredentialWizard: mocked.clearMcpCredentialWizard,
 }));
 
 import { registerCallbackRouter } from "../../../src/bot/callbacks/callback-router.js";
@@ -272,6 +281,16 @@ describe("bot/callbacks/callback-router", () => {
       "callback_handler_error",
     );
   });
+  it("clears every MCP wizard state when Home is pressed", async () => {
+    const callback = registerAndGetCallback();
+
+    await callback(createCallbackContext("main:home"));
+
+    expect(mocked.clearMcpAddWizard).toHaveBeenCalledTimes(1);
+    expect(mocked.clearMcpAuthWizard).toHaveBeenCalledTimes(1);
+    expect(mocked.clearMcpCredentialWizard).toHaveBeenCalledTimes(1);
+  });
+
 });
 
 function registerAndGetCallback() {

@@ -16,7 +16,11 @@ import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { clearProviderWizard, handleProviderCallback } from "../commands/providers-command.js";
-import { clearMcpAddWizard } from "../commands/mcp-catalog-command.js";
+import {
+  clearMcpAddWizard,
+  clearMcpAuthWizard,
+  clearMcpCredentialWizard,
+} from "../commands/mcp-catalog-command.js";
 import { clearIntegrationWizard, handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { clearSkillWizard } from "../commands/skills-wizard.js";
 import { clearSkillImportFlow } from "../commands/skills-import-flow.js";
@@ -54,6 +58,8 @@ function clearGeneralPanelWizardState(reason: string): void {
   clearProviderWizard();
   clearIntegrationWizard();
   clearMcpAddWizard();
+  clearMcpAuthWizard();
+  clearMcpCredentialWizard();
   clearSkillWizard();
   clearSkillImportFlow();
   const state = interactionManager.getSnapshot();

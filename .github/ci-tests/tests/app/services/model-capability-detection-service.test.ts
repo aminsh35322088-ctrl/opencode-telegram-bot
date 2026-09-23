@@ -33,6 +33,14 @@ describe("model capability detection", () => {
     expect(result.detection.source).toBe("adapter");
   });
 
+  it("reads verified custom-provider camelCase tool metadata", () => {
+    const result = detectModelCapabilities({
+      modalities: { input: ["text"], output: ["text"] },
+      toolCall: true,
+    });
+    expect(result.capabilities.agent.toolCalling).toBe(true);
+  });
+
   it("reads OpenCode V2 capability arrays and tools flag", () => {
     const result = detectModelCapabilities({ capabilities: { tools: true, input: ["text", "image"], output: ["text"] } });
     expect(result.capabilities.modalities.input.image).toBe(true);

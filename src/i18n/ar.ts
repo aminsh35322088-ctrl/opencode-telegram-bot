@@ -481,7 +481,46 @@ export const ar: I18nDictionary = {
   "mcps.button.enable": "🟢 تفعيل",
   "mcps.button.disable": "🔴 تعطيل",
   "mcps.button.back": "⬅️ رجوع",
-  "mcps.auth_required": "هذا الخادم يحتاج إلى تسجيل دخول، ولا يمكن تفعيله من داخل البوت.",
+  "mcps.detail.needs_auth_hint":
+    "🔐 تسجيل دخول OAuth مطلوب. اضغط «تسجيل الدخول» بالأسفل لتفويض خادم MCP هذا.",
+  "mcps.detail.needs_client_registration_hint":
+    "🪪 هذا الخادم يحتاج إلى عميل OAuth مسجّل مسبقًا. اضبط Client ID وClient Secret الاختياري هنا، ثم تابع بتسجيل الدخول.",
+  "mcps.auth.sign_in_title": "🔐 تسجيل الدخول إلى {name}",
+  "mcps.auth.sign_in_steps":
+    "1. اضغط «فتح تسجيل الدخول» وأكمل التفويض في المتصفح.\n2. إذا انتهى المتصفح في صفحة localhost غير متاحة، انسخ الرابط الكامل من شريط العنوان.\n3. أرسل رابط الاستجابة الكامل هنا.\n\nيُحذف رمز التفويج من تيليجرام فورًا ولا يُرسل إلى النموذج أبدًا.",
+  "mcps.auth.cancelled": "أُلغي إعداد المصادقة.",
+  "mcps.auth.login_cancelled": "أُلغي تسجيل دخول MCP.",
+  "mcps.auth.setup_cancelled": "أُلغي إعداد MCP.",
+  "mcps.auth.not_waiting_oauth": "خادم MCP هذا ليس بانتظار تسجيل دخول OAuth.",
+  "mcps.auth.opening_login": "جارٍ فتح تسجيل دخول MCP الآمن…",
+  "mcps.auth.menu_title": "🔐 المصادقة · {name}",
+  "mcps.auth.server_line": "الخادم: {url}",
+  "mcps.auth.menu_prompt": "اختر كيفية مصادقة خادم MCP البعيد هذا.",
+  "mcps.auth.menu_options":
+    "✨ تلقائي / OAuth — مُوصى به عندما يدعم الخادم تسجيل الدخول بالمتصفح\n🔑 رمز Bearer — Authorization: Bearer …\n🗝 مفتاح API — X-API-Key افتراضيًا\n🧩 ترويسة مخصصة — لترويسات المزوّد\n🪪 عميل OAuth — Client ID / Secret مسجّل مسبقًا",
+  "mcps.auth.secrets_note": "تُشفَّر الأسرار بواسطة البوت ولا تُعرض للنموذج أبدًا.",
+  "mcps.auth.outside_context": "🔒 تبقى بيانات الاعتماد خارج سياق النموذج.",
+  "mcps.auth.header_name_prompt":
+    "أرسل اسم ترويسة HTTP الذي يستخدمه خادم MCP هذا.\n\nمثال: X-Service-Token",
+  "mcps.auth.bearer_prompt": "أرسل رمز Bearer.\n\nسيُحذف الرسالة فورًا.",
+  "mcps.auth.api_key_prompt": "أرسل مفتاح API لـ X-API-Key.\n\nسيُحذف الرسالة فورًا.",
+  "mcps.auth.custom_header_prompt":
+    "أرسل قيمة {header}.\n\nسيُحذف الرسالة فورًا.",
+  "mcps.auth.client_id_prompt": "أرسل Client ID المسجّل مسبقًا لـ OAuth.",
+  "mcps.auth.client_secret_prompt":
+    "أرسل Client Secret، أو اضغط تخطي السر إذا كان العميل عامًا.\n\nسيُحذف الرسالة فورًا.",
+  "mcps.auth.scope_prompt":
+    "أرسل نطاق OAuth الذي يطلبه المزوّد، أو اضغط تخطي النطاق لاستخدام افتراضي الخادم.",
+  "mcps.auth.configure_failed":
+    "❌ تعذر إعداد المصادقة.\nتحقق من بيانات الاعتماد أو إعدادات المزوّد ثم أعد المحاولة.\n\nلم يُعرض أو يُسجَّل السر المُرسل.",
+  "mcps.auth.mode.bearer": "رمز Bearer",
+  "mcps.auth.mode.api_key": "مفتاح API",
+  "mcps.auth.mode.custom_header": "ترويسة مخصصة",
+  "mcps.auth.mode.oauth_client": "عميل OAuth",
+  "mcps.auth.step_title": "🔐 {mode} · {name}",
+  "mcps.auth.step_title_client": "🪪 عميل OAuth · {name}",
+  "model.fallback.notice":
+    "⚠️ النموذج المحدد {previous} غير متاح أو غير مؤهل كوكيل. تم التبديل إلى {next}.",
 
 
   "stt.uncertain": "🎤 قد تكون بعض الكلمات غير صحيحة. راجع النص وأرسل التصحيح للمتابعة:",

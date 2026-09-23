@@ -5,6 +5,12 @@ const mocked = vi.hoisted(() => ({
   loadMcpCatalog: vi.fn(),
   parseMcpCatalogServers: vi.fn((value: unknown) => value),
   toggleMcpCatalogServer: vi.fn(),
+  startMcpOAuth: vi.fn(),
+  completeMcpOAuth: vi.fn(),
+  resolveMcpRemoteUrl: vi.fn(),
+  getMcpAuthSummary: vi.fn(),
+  configureSecureMcpAuth: vi.fn(),
+  resetMcpAuthToAuto: vi.fn(),
   currentSessionDirectory: "/work/repo" as string | null,
 }));
 
@@ -12,6 +18,12 @@ vi.mock("../../../src/app/services/mcp-catalog-service.js", () => ({
   loadMcpCatalog: mocked.loadMcpCatalog,
   parseMcpCatalogServers: mocked.parseMcpCatalogServers,
   toggleMcpCatalogServer: mocked.toggleMcpCatalogServer,
+  startMcpOAuth: mocked.startMcpOAuth,
+  completeMcpOAuth: mocked.completeMcpOAuth,
+  resolveMcpRemoteUrl: mocked.resolveMcpRemoteUrl,
+  getMcpAuthSummary: mocked.getMcpAuthSummary,
+  configureSecureMcpAuth: mocked.configureSecureMcpAuth,
+  resetMcpAuthToAuto: mocked.resetMcpAuthToAuto,
 }));
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
@@ -49,6 +61,12 @@ describe("mcp catalog callback recovery", () => {
   beforeEach(() => {
     interactionManager.clear("test_setup");
     mocked.loadMcpCatalog.mockReset();
+    mocked.resolveMcpRemoteUrl.mockReset();
+    mocked.resolveMcpRemoteUrl.mockResolvedValue("https://mcp.example.com/mcp");
+    mocked.getMcpAuthSummary.mockReset();
+    mocked.getMcpAuthSummary.mockResolvedValue(null);
+    mocked.configureSecureMcpAuth.mockReset();
+    mocked.resetMcpAuthToAuto.mockReset();
     mocked.currentSessionDirectory = "/work/repo";
   });
 
@@ -101,4 +119,98 @@ describe("mcp catalog callback recovery", () => {
     expect(answerTexts(ctx).some((text) => text.includes("inactive"))).toBe(false);
     expect(mocked.loadMcpCatalog).not.toHaveBeenCalled();
   });
+  it("opens the auth-method menu in the same MCP detail panel", async () => {
+    const servers = [{ name: "secure", status: { status: "failed", error: "Unauthorized" } }];
+    mocked.loadMcpCatalog.mockResolvedValue(servers);
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "mcps",
+        stage: "detail",
+        messageId: 777,
+        projectDirectory: "/work/repo",
+        serverName: "secure",
+        servers,
+      },
+    });
+
+    const ctx = createCallbackContext("mcps:auth:options", 777);
+    expect(await handleMcpsCallback(ctx)).toBe(true);
+
+    expect(ctx.editMessageText).not.toHaveBeenCalled();
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      777,
+      expect.stringContaining("Authentication · secure"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("auth_setup");
+    expect(interactionManager.getSnapshot()?.metadata.step).toBe("menu");
+  });
+
+  it("starts OAuth client setup directly for needs_client_registration", async () => {
+    const servers = [{
+      name: "enterprise",
+      status: { status: "needs_client_registration", error: "Client registration required" },
+    }];
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "mcps",
+        stage: "detail",
+        messageId: 777,
+        projectDirectory: "/work/repo",
+        serverName: "enterprise",
+        servers,
+      },
+    });
+
+    const ctx = createCallbackContext("mcps:auth:client", 777);
+    expect(await handleMcpsCallback(ctx)).toBe(true);
+
+    expect(ctx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      777,
+      expect.stringContaining("OAuth Client ID"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("auth_setup");
+    expect(interactionManager.getSnapshot()?.metadata.mode).toBe("oauth-client");
+    expect(interactionManager.getSnapshot()?.expectedInput).toBe("mixed");
+  });
+
+  it("cancels credential setup back to the same server detail instead of creating a message", async () => {
+    const servers = [{ name: "secure", status: { status: "failed", error: "Unauthorized" } }];
+    mocked.loadMcpCatalog.mockResolvedValue(servers);
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "mcps",
+        stage: "detail",
+        messageId: 777,
+        projectDirectory: "/work/repo",
+        serverName: "secure",
+        servers,
+      },
+    });
+
+    const openCtx = createCallbackContext("mcps:auth:options", 777);
+    await handleMcpsCallback(openCtx);
+
+    const cancelCtx = createCallbackContext("mcps:auth:cancel", 777);
+    expect(await handleMcpsCallback(cancelCtx)).toBe(true);
+
+    expect(cancelCtx.reply).not.toHaveBeenCalled();
+    expect(cancelCtx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      777,
+      expect.stringContaining("secure"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+    expect(interactionManager.getSnapshot()?.metadata.stage).toBe("detail");
+  });
+
 });

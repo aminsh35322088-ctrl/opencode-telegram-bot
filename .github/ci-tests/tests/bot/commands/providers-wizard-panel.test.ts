@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   saveCustomProvider: vi.fn(),
   isGroqSttConfigured: vi.fn(),
   listImageAiProviders: vi.fn(),
+  resolveLocalOpencodeTarget: vi.fn(),
+  findServerPid: vi.fn(),
+  killServerProcess: vi.fn(),
+  startLocalOpencodeServer: vi.fn(),
+  waitForOpencodeReadyAndRefresh: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
@@ -38,10 +43,14 @@ vi.mock("../../../src/config.js", () => ({
 }));
 
 vi.mock("../../../src/opencode/process.js", () => ({
-  findServerPid: vi.fn(),
-  killServerProcess: vi.fn(),
-  resolveLocalOpencodeTarget: vi.fn(() => null),
-  startLocalOpencodeServer: vi.fn(),
+  findServerPid: mocks.findServerPid,
+  killServerProcess: mocks.killServerProcess,
+  resolveLocalOpencodeTarget: mocks.resolveLocalOpencodeTarget,
+  startLocalOpencodeServer: mocks.startLocalOpencodeServer,
+}));
+
+vi.mock("../../../src/opencode/ready-refresh.js", () => ({
+  waitForOpencodeReadyAndRefresh: mocks.waitForOpencodeReadyAndRefresh,
 }));
 
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -121,6 +130,11 @@ describe("provider wizard General panel contract", () => {
     mocks.saveCustomProvider.mockReset().mockResolvedValue(undefined);
     mocks.isGroqSttConfigured.mockReset().mockResolvedValue(false);
     mocks.listImageAiProviders.mockReset().mockResolvedValue([]);
+    mocks.resolveLocalOpencodeTarget.mockReset().mockReturnValue(null);
+    mocks.findServerPid.mockReset().mockResolvedValue(null);
+    mocks.killServerProcess.mockReset().mockResolvedValue(true);
+    mocks.startLocalOpencodeServer.mockReset().mockReturnValue({ unref: vi.fn() });
+    mocks.waitForOpencodeReadyAndRefresh.mockReset().mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -216,4 +230,20 @@ describe("provider wizard General panel contract", () => {
       ]),
     }));
   });
+
+  it("restores secure MCP runtime state after a local OpenCode provider restart", async () => {
+    mocks.resolveLocalOpencodeTarget.mockReturnValue({ host: "127.0.0.1", port: 4096 });
+    const start = callbackContext("provider:add:general", 500);
+    expect(await handleProviderCallback(start)).toBe(true);
+
+    expect(await handleProviderWizardMessage(textContext("Restart API", 601))).toBe(true);
+    expect(await handleProviderWizardMessage(textContext("https://api.example.com/v1", 602))).toBe(true);
+    mocks.discoverModels.mockResolvedValueOnce([{ id: "test-model" }]);
+
+    expect(await handleProviderWizardMessage(textContext("secret-key", 603))).toBe(true);
+
+    expect(mocks.startLocalOpencodeServer).toHaveBeenCalledTimes(1);
+    expect(mocks.waitForOpencodeReadyAndRefresh).toHaveBeenCalledWith("provider_change");
+  });
+
 });
