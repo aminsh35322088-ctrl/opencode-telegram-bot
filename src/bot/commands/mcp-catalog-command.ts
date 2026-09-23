@@ -336,6 +336,281 @@ export async function startMcpAuthWizard(ctx: Context, options: {
   );
 }
 
+
+function transitionMcpCredentialWizard(
+  pending: PendingMcpCredential,
+  expectedInput: "mixed" | "callback",
+): void {
+  const metadata = {
+    flow: "mcps",
+    stage: "auth_setup",
+    messageId: pending.messageId,
+    projectDirectory: pending.projectDirectory,
+    serverName: pending.serverName,
+    mode: pending.mode,
+    step: pending.step,
+  };
+  if (interactionManager.getSnapshot()) {
+    interactionManager.transition({ expectedInput, metadata });
+  } else {
+    interactionManager.start({ kind: "custom", expectedInput, metadata });
+  }
+}
+
+function credentialModeLabel(mode: McpCredentialMode): string {
+  if (mode === "bearer") return "Bearer Token";
+  if (mode === "api-key") return "API Key";
+  if (mode === "custom-header") return "Custom Header";
+  return "OAuth Client";
+}
+
+async function renderMcpCredentialMenu(ctx: Context, pending: PendingMcpCredential): Promise<void> {
+  pending.step = "menu";
+  pending.mode = undefined;
+  pending.headerName = undefined;
+  pending.clientId = undefined;
+  pending.clientSecret = undefined;
+  await renderWizard(
+    ctx,
+    pending.messageId,
+    [
+      `🔐 Authentication · ${pending.serverName}`,
+      "",
+      "Choose how this remote MCP server authenticates.",
+      "",
+      "✨ Auto / OAuth — recommended when the server supports browser sign-in",
+      "🔑 Bearer Token — Authorization: Bearer …",
+      "🗝 API Key — X-API-Key by default",
+      "🧩 Custom Header — for provider-specific headers",
+      "🪪 OAuth Client — pre-registered Client ID / Secret",
+      "",
+      "Secrets are encrypted by the bot and are never shown to the model.",
+    ].join("\n"),
+    buildMcpAuthOptionsKeyboard(),
+  );
+  transitionMcpCredentialWizard(pending, "callback");
+}
+
+async function renderMcpCredentialStep(ctx: Context, pending: PendingMcpCredential): Promise<void> {
+  const mode = pending.mode;
+  if (!mode) {
+    await renderMcpCredentialMenu(ctx, pending);
+    return;
+  }
+
+  let title = `🔐 ${credentialModeLabel(mode)} · ${pending.serverName}`;
+  let body = "";
+  let keyboard = buildMcpCredentialInputKeyboard();
+
+  if (pending.step === "header-name") {
+    body = "Send the HTTP header name used by this MCP server.\n\nExample: X-Service-Token";
+  } else if (pending.step === "secret") {
+    body = mode === "bearer"
+      ? "Send the bearer token.\n\nThe message will be deleted immediately."
+      : mode === "api-key"
+        ? "Send the API key for X-API-Key.\n\nThe message will be deleted immediately."
+        : `Send the value for ${pending.headerName ?? "the custom header"}.\n\nThe message will be deleted immediately.`;
+  } else if (pending.step === "client-id") {
+    title = `🪪 OAuth Client · ${pending.serverName}`;
+    body = "Send the pre-registered OAuth Client ID.";
+  } else if (pending.step === "client-secret") {
+    title = `🪪 OAuth Client · ${pending.serverName}`;
+    body = "Send the Client Secret, or tap Skip Secret if this is a public client.\n\nThe message will be deleted immediately.";
+    keyboard = buildMcpCredentialInputKeyboard({ allowSkip: "secret" });
+  } else if (pending.step === "scope") {
+    title = `🪪 OAuth Client · ${pending.serverName}`;
+    body = "Send the OAuth scope requested by the provider, or tap Skip Scope to use the server default.";
+    keyboard = buildMcpCredentialInputKeyboard({ allowSkip: "scope" });
+  }
+
+  await renderWizard(
+    ctx,
+    pending.messageId,
+    [title, "", body, "", "🔒 Credentials stay outside model context."].join("\n"),
+    keyboard,
+  );
+  transitionMcpCredentialWizard(pending, "mixed");
+}
+
+export async function startMcpCredentialWizard(ctx: Context, options: {
+  serverName: string;
+  projectDirectory: string;
+  messageId: number;
+  preferredMode?: McpCredentialMode;
+}): Promise<void> {
+  const remoteUrl = await resolveMcpRemoteUrl(options.projectDirectory, options.serverName);
+  const pending: PendingMcpCredential = {
+    serverName: options.serverName,
+    projectDirectory: options.projectDirectory,
+    remoteUrl,
+    messageId: options.messageId,
+    step: "menu",
+  };
+  mcpCredentialWizard.set(pending);
+
+  if (options.preferredMode) {
+    await selectMcpCredentialMode(ctx, options.preferredMode);
+    return;
+  }
+  await renderMcpCredentialMenu(ctx, pending);
+}
+
+export async function selectMcpCredentialMode(
+  ctx: Context,
+  mode: McpCredentialMode,
+): Promise<void> {
+  const pending = mcpCredentialWizard.get();
+  if (!pending) {
+    await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
+    return;
+  }
+
+  pending.mode = mode;
+  pending.headerName = mode === "api-key" ? "X-API-Key" : undefined;
+  pending.clientId = undefined;
+  pending.clientSecret = undefined;
+  pending.step =
+    mode === "custom-header" ? "header-name"
+    : mode === "oauth-client" ? "client-id"
+    : "secret";
+  await ctx.answerCallbackQuery().catch(() => {});
+  await renderMcpCredentialStep(ctx, pending);
+}
+
+export async function backMcpCredentialWizard(ctx: Context): Promise<boolean> {
+  const pending = mcpCredentialWizard.get();
+  if (!pending) return false;
+  await ctx.answerCallbackQuery().catch(() => {});
+  await renderMcpCredentialMenu(ctx, pending);
+  return true;
+}
+
+async function applyMcpCredential(
+  ctx: Context,
+  pending: PendingMcpCredential,
+  record: McpCredentialRecord,
+): Promise<void> {
+  try {
+    const server = await configureSecureMcpAuth(record);
+    mcpCredentialWizard.clear();
+    if (isMcpCredentialInteractionActive()) interactionManager.clear("mcp_credential_completed");
+
+    if (record.mode === "oauth-client" && server.status.status === "needs_auth") {
+      await startMcpAuthWizard(ctx, {
+        serverName: pending.serverName,
+        projectDirectory: pending.projectDirectory,
+        messageId: pending.messageId,
+      });
+      return;
+    }
+
+    await renderMcpDetailView(
+      ctx,
+      pending.messageId,
+      pending.projectDirectory,
+      pending.serverName,
+    );
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    logger.warn(
+      `[Mcps] Secure auth setup failed: server=${pending.serverName}, mode=${pending.mode ?? "unknown"}, error=${errorName}`,
+    );
+    await renderWizard(
+      ctx,
+      pending.messageId,
+      [
+        `🔐 Authentication · ${pending.serverName}`,
+        "",
+        "❌ Authentication could not be configured.",
+        "Check the credential or provider settings and try again.",
+        "",
+        "The submitted secret was not displayed or logged.",
+      ].join("\n"),
+      buildMcpCredentialInputKeyboard(),
+    );
+    transitionMcpCredentialWizard(pending, "mixed");
+  }
+}
+
+async function completeOAuthClientCredential(
+  ctx: Context,
+  pending: PendingMcpCredential,
+  scope?: string,
+): Promise<void> {
+  if (!pending.clientId) {
+    pending.step = "client-id";
+    await renderMcpCredentialStep(ctx, pending);
+    return;
+  }
+  await applyMcpCredential(ctx, pending, {
+    projectDirectory: pending.projectDirectory,
+    serverName: pending.serverName,
+    remoteUrl: pending.remoteUrl,
+    mode: "oauth-client",
+    clientId: pending.clientId,
+    ...(pending.clientSecret ? { clientSecret: pending.clientSecret } : {}),
+    ...(scope?.trim() ? { scope: scope.trim() } : {}),
+  });
+}
+
+export async function skipMcpCredentialOptionalStep(
+  ctx: Context,
+  kind: "secret" | "scope",
+): Promise<boolean> {
+  const pending = mcpCredentialWizard.get();
+  if (!pending || pending.mode !== "oauth-client") return false;
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  if (kind === "secret" && pending.step === "client-secret") {
+    pending.clientSecret = undefined;
+    pending.step = "scope";
+    await renderMcpCredentialStep(ctx, pending);
+    return true;
+  }
+  if (kind === "scope" && pending.step === "scope") {
+    await completeOAuthClientCredential(ctx, pending);
+    return true;
+  }
+  return false;
+}
+
+export async function resetMcpCredentialAuthToAuto(ctx: Context): Promise<boolean> {
+  const pending = mcpCredentialWizard.get();
+  if (!pending) return false;
+  await ctx.answerCallbackQuery().catch(() => {});
+  try {
+    const server = await resetMcpAuthToAuto({
+      projectDirectory: pending.projectDirectory,
+      serverName: pending.serverName,
+      remoteUrl: pending.remoteUrl,
+    });
+    mcpCredentialWizard.clear();
+    if (isMcpCredentialInteractionActive()) interactionManager.clear("mcp_auth_auto");
+
+    if (server.status.status === "needs_auth") {
+      await startMcpAuthWizard(ctx, {
+        serverName: pending.serverName,
+        projectDirectory: pending.projectDirectory,
+        messageId: pending.messageId,
+      });
+      return true;
+    }
+
+    await renderMcpDetailView(
+      ctx,
+      pending.messageId,
+      pending.projectDirectory,
+      pending.serverName,
+    );
+    return true;
+  } catch (error) {
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    logger.warn(`[Mcps] Failed to reset MCP auth to auto: server=${pending.serverName}, error=${errorName}`);
+    await renderMcpCredentialMenu(ctx, pending);
+    return true;
+  }
+}
+
 export async function startMcpAddWizard(ctx: Context): Promise<void> {
   const projectDirectory = getCurrentSessionDirectory();
   const messageId = callbackMessageId(ctx);
