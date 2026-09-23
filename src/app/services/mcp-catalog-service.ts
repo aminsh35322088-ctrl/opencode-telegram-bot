@@ -8,6 +8,7 @@ import { isRecord } from "../../utils/type-guards.js";
 const execFileAsync = promisify(execFile);
 
 export interface McpCatalogServerItem { name: string; status: McpStatus; }
+export interface McpOAuthStartResult { authorizationUrl: string; oauthState: string; }
 function normalizeDirectoryForMcpApi(directory: string): string { return directory.replace(/\\/g, "/"); }
 const MCP_STATUS_NAMES = ["connected", "disabled", "failed", "needs_auth", "needs_client_registration"] as const;
 function isMcpStatusName(value: unknown): value is (typeof MCP_STATUS_NAMES)[number] { return typeof value === "string" && MCP_STATUS_NAMES.some((name) => name === value); }
@@ -34,6 +35,52 @@ export async function loadMcpCatalog(projectDirectory: string): Promise<McpCatal
   if (error || !data) throw error || new Error("No MCP status data received");
   const servers = parseMcpCatalogServers(data); if (!servers) throw new Error("Invalid MCP status data format");
   return servers;
+}
+
+export async function startMcpOAuth(projectDirectory: string, serverName: string): Promise<McpOAuthStartResult> {
+  const name = serverName.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  const { data, error } = await opencodeClient.mcp.auth.start({
+    name,
+    directory: normalizeDirectoryForMcpApi(projectDirectory),
+  });
+  if (error || !data) throw error || new Error("OpenCode did not return an MCP OAuth authorization URL.");
+  if (typeof data.authorizationUrl !== "string" || typeof data.oauthState !== "string") {
+    throw new Error("OpenCode returned an invalid MCP OAuth response.");
+  }
+  return { authorizationUrl: data.authorizationUrl, oauthState: data.oauthState };
+}
+
+export async function completeMcpOAuth(
+  projectDirectory: string,
+  serverName: string,
+  authorizationCode: string,
+): Promise<McpCatalogServerItem> {
+  const name = serverName.trim();
+  const code = authorizationCode.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  if (!code) throw new Error("OAuth authorization code is required.");
+
+  const { data, error } = await opencodeClient.mcp.auth.callback({
+    name,
+    directory: normalizeDirectoryForMcpApi(projectDirectory),
+    code,
+  });
+  if (error || !data) throw error || new Error("OpenCode did not complete MCP OAuth.");
+
+  const parsed = parseMcpCatalogServers({ [name]: data });
+  const server = parsed?.[0];
+  if (!server) throw new Error("OpenCode returned an invalid MCP OAuth completion status.");
+  return server;
+}
+
+export async function removeMcpOAuth(projectDirectory: string, serverName: string): Promise<void> {
+  const name = serverName.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  const params = { name, directory: normalizeDirectoryForMcpApi(projectDirectory) };
+  const { error } = await opencodeClient.mcp.auth.remove(params);
+  if (error) throw error;
+  await opencodeClient.mcp.disconnect(params).catch(() => {});
 }
 export async function verifyMcpServerConnection(projectDirectory: string, serverName: string): Promise<McpCatalogServerItem> {
   const servers = await loadMcpCatalog(projectDirectory);
