@@ -81,7 +81,16 @@ export function detectModelCapabilities(metadataValue: unknown, options: Detecti
   const chat = output.text;
 
   const capabilitiesRecord = record(metadata.capabilities);
-  const toolCalling = explicitBoolean(capabilitiesRecord?.tools, capabilitiesRecord?.toolcall, capabilitiesRecord?.tool_call, metadata.tools, metadata.toolcall, metadata.tool_call);
+  const toolCalling = explicitBoolean(
+    capabilitiesRecord?.tools,
+    capabilitiesRecord?.toolcall,
+    capabilitiesRecord?.tool_call,
+    capabilitiesRecord?.toolCall,
+    metadata.tools,
+    metadata.toolcall,
+    metadata.tool_call,
+    metadata.toolCall,
+  );
   const reasoning = explicitBoolean(capabilitiesRecord?.reasoning, metadata.reasoning);
   const structuredOutput = explicitBoolean(capabilitiesRecord?.structuredOutput, capabilitiesRecord?.structured_output, metadata.structured_output);
 
