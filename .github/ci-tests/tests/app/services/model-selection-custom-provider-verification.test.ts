@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   let verified = false;
+  let currentModel: { providerID: string; modelID: string; variant?: string } | undefined;
   return {
     verified: () => verified,
     resetVerified: () => { verified = false; },
+    getCurrentModel: vi.fn(() => currentModel),
+    setCurrentModel: vi.fn((value: { providerID: string; modelID: string; variant?: string }) => { currentModel = value; }),
+    setCurrentModelState: (value?: { providerID: string; modelID: string; variant?: string }) => { currentModel = value; },
     ensure: vi.fn(async () => { verified = true; return true; }),
     providers: vi.fn(async () => [{
       id: "gateway",
@@ -29,8 +33,8 @@ vi.mock("../../../src/config.js", () => ({
   config: { opencode: { model: { provider: "", modelId: "" } } },
 }));
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
-  getCurrentModel: vi.fn(() => undefined),
-  setCurrentModel: vi.fn(),
+  getCurrentModel: mocks.getCurrentModel,
+  setCurrentModel: mocks.setCurrentModel,
 }));
 vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: { config: { providers: mocks.configProviders } },
@@ -48,11 +52,15 @@ import {
   __resetModelCatalogCacheForTests,
   getProviderModels,
   isSelectableChatModel,
+  reconcileStoredModelSelection,
 } from "../../../src/app/services/model-selection-service.js";
 
 describe("custom-provider model verification wiring", () => {
   beforeEach(() => {
     mocks.resetVerified();
+    mocks.setCurrentModelState(undefined);
+    mocks.getCurrentModel.mockClear();
+    mocks.setCurrentModel.mockClear();
     mocks.ensure.mockClear();
     mocks.providers.mockClear();
     mocks.configProviders.mockReset().mockResolvedValue({ data: { providers: [] }, error: null });
@@ -73,5 +81,15 @@ describe("custom-provider model verification wiring", () => {
     await expect(isSelectableChatModel("gateway", "coder")).resolves.toBe(true);
     expect(mocks.ensure).toHaveBeenCalledTimes(1);
     expect(mocks.ensure).toHaveBeenCalledWith("gateway", "coder");
+  });
+
+  it("migrates the one stored custom model before considering fallback", async () => {
+    mocks.setCurrentModelState({ providerID: "gateway", modelID: "coder", variant: "high" });
+
+    await reconcileStoredModelSelection({ forceCatalogRefresh: true });
+
+    expect(mocks.ensure).toHaveBeenCalledTimes(1);
+    expect(mocks.ensure).toHaveBeenCalledWith("gateway", "coder");
+    expect(mocks.setCurrentModel).not.toHaveBeenCalled();
   });
 });

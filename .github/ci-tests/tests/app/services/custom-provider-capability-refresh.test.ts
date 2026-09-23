@@ -209,7 +209,7 @@ describe("custom-provider capability refresh", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not probe an inactive large custom-provider catalog", async () => {
+  it("probes only the explicitly selected model from a large catalog", async () => {
     state = {
       providers: [{
         ...providerStore().providers[0],
@@ -222,32 +222,12 @@ describe("custom-provider capability refresh", () => {
         })),
       }],
     };
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(refreshCustomProviderToolCapabilities()).resolves.toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
-
-  it("probes only the active model from a large legacy catalog", async () => {
-    state = {
-      providers: [{
-        ...providerStore().providers[0],
-        models: Array.from({ length: 250 }, (_, index) => ({
-          id: "model-" + index,
-          name: "Model " + index,
-          toolCall: true,
-          toolCallVerified: false,
-          modalities: { input: ["text"], output: ["text"] },
-        })),
-      }],
-    };
-    settings = { currentModel: { providerID: "race-provider", modelID: "model-149" } };
     const fetchMock = vi.fn().mockResolvedValue(toolCallResponse());
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(refreshCustomProviderToolCapabilities()).resolves.toBe(true);
+    await expect(
+      refreshCustomProviderToolCapabilities([{ providerID: "race-provider", modelID: "model-149" }]),
+    ).resolves.toBe(true);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(state.providers[0]?.models.filter((model) => model.toolCallVerified === true)).toHaveLength(1);

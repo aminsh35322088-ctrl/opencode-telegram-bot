@@ -586,71 +586,13 @@ interface ToolCapabilityUpdate {
   previousToolCall?: boolean;
 }
 
-function readToolCapabilityTarget(value: unknown): ToolCapabilityTarget | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = value as { providerID?: unknown; modelID?: unknown };
-  if (typeof candidate.providerID !== "string" || !candidate.providerID.trim()) return null;
-  if (typeof candidate.modelID !== "string" || !candidate.modelID.trim()) return null;
-  return { providerID: candidate.providerID.trim(), modelID: candidate.modelID.trim() };
-}
-
-async function collectActiveToolCapabilityTargets(snapshot: ProviderStoreFile): Promise<ToolCapabilityTarget[]> {
-  const customProviderIds = new Set(
-    snapshot.providers
-      .filter((provider) => provider.id !== LEGACY_GEMINI_IMAGE_ID && provider.capability !== "stt")
-      .map((provider) => provider.id),
-  );
-  const targets = new Map<string, ToolCapabilityTarget>();
-  const add = (value: unknown): void => {
-    const target = readToolCapabilityTarget(value);
-    if (!target || !customProviderIds.has(target.providerID)) return;
-    targets.set(`${target.providerID}/${target.modelID}`, target);
-  };
-
-  try {
-    const state = await readAppState();
-    const settings =
-      state.settings && typeof state.settings === "object" && !Array.isArray(state.settings)
-        ? state.settings as Record<string, unknown>
-        : undefined;
-    add(settings?.currentModel);
-    const topicDefaults =
-      settings?.topicDefaults && typeof settings.topicDefaults === "object" && !Array.isArray(settings.topicDefaults)
-        ? settings.topicDefaults as Record<string, unknown>
-        : undefined;
-    add(topicDefaults?.model);
-  } catch (error) {
-    logger.debug("[CustomProvider] Could not read active global model selection for capability migration", error);
-  }
-
-  try {
-    const { listTopicRuntimeStates } = await import("../stores/topic-runtime-state-store.js");
-    for (const state of await listTopicRuntimeStates()) add(state.settings.model);
-  } catch (error) {
-    logger.debug("[CustomProvider] Could not read Topic model selections for capability migration", error);
-  }
-
-  try {
-    const { config } = await import("../../config.js");
-    add({
-      providerID: config.opencode.model.provider,
-      modelID: config.opencode.model.modelId,
-    });
-  } catch (error) {
-    logger.debug("[CustomProvider] Could not read configured default model for capability migration", error);
-  }
-
-  return [...targets.values()];
-}
-
 async function collectToolCapabilityUpdates(
   snapshot: ProviderStoreFile,
-  targets?: readonly ToolCapabilityTarget[],
+  targets: readonly ToolCapabilityTarget[],
 ): Promise<ToolCapabilityUpdate[]> {
-  const requested = targets ?? await collectActiveToolCapabilityTargets(snapshot);
-  if (!requested.length) return [];
+  if (!targets.length) return [];
 
-  const unique = new Map(requested.map((target) => [`${target.providerID}/${target.modelID}`, target]));
+  const unique = new Map(targets.map((target) => [`${target.providerID}/${target.modelID}`, target]));
   const updates: ToolCapabilityUpdate[] = [];
 
   for (const target of unique.values()) {
@@ -750,7 +692,7 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
 }
 
 export async function refreshCustomProviderToolCapabilities(
-  targets?: readonly ToolCapabilityTarget[],
+  targets: readonly ToolCapabilityTarget[],
 ): Promise<boolean> {
   const snapshot = await readStore();
   const updates = await collectToolCapabilityUpdates(snapshot, targets);
@@ -813,8 +755,8 @@ async function isToolCapabilityRuntimeIdle(): Promise<boolean> {
 }
 
 export async function refreshAndApplyCustomProviderToolCapabilities(
-  configPath?: string,
-  targets?: readonly ToolCapabilityTarget[],
+  configPath: string | undefined,
+  targets: readonly ToolCapabilityTarget[],
 ): Promise<boolean> {
   // Never mutate capability state while another Topic/session/task may be
   // executing against the current OpenCode instance configuration.
