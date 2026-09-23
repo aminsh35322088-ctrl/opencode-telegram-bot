@@ -42,6 +42,7 @@ vi.mock("../../src/utils/logger.js", () => ({
 import {
   refreshSessionCacheAfterOpencodeReady,
   refreshSessionCacheIfOpencodeReady,
+  waitForOpencodeReadyAndRefresh,
 } from "../../src/opencode/ready-refresh.js";
 
 describe("opencode/ready-refresh", () => {
@@ -138,6 +139,37 @@ describe("opencode/ready-refresh", () => {
     expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
+  });
+
+
+  it("waits for a restarted OpenCode server and then restores secure MCP runtime state", async () => {
+    mocked.healthMock
+      .mockResolvedValueOnce({ data: { healthy: false }, error: null })
+      .mockResolvedValueOnce({ data: { healthy: true }, error: null });
+
+    const refreshed = await waitForOpencodeReadyAndRefresh("provider_change", {
+      timeoutMs: 50,
+      pollIntervalMs: 1,
+    });
+
+    expect(refreshed).toBe(true);
+    expect(mocked.healthMock).toHaveBeenCalledTimes(2);
+    expect(mocked.restoreSecureMcpConnectionsMock).toHaveBeenCalledTimes(1);
+    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+      forceCatalogRefresh: true,
+    });
+  });
+
+  it("returns false without restoring runtime state when a restarted server never becomes healthy", async () => {
+    mocked.healthMock.mockResolvedValue({ data: { healthy: false }, error: null });
+
+    const refreshed = await waitForOpencodeReadyAndRefresh("provider_change", {
+      timeoutMs: 3,
+      pollIntervalMs: 1,
+    });
+
+    expect(refreshed).toBe(false);
+    expect(mocked.restoreSecureMcpConnectionsMock).not.toHaveBeenCalled();
   });
 
 });

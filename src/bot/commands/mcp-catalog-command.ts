@@ -20,6 +20,7 @@ import {
   buildMcpCredentialInputKeyboard,
   buildMcpOAuthKeyboard,
   buildMcpsAddTypeKeyboard,
+  buildMcpsAddValueKeyboard,
   buildMcpsDetailKeyboard,
   buildMcpsDetailText,
   buildMcpsEmptyKeyboard,
@@ -645,6 +646,40 @@ export async function startMcpAddWizard(ctx: Context): Promise<void> {
   );
 }
 
+export async function backMcpAddWizard(ctx: Context): Promise<boolean> {
+  const pending = mcpAddWizard.get();
+  if (!pending) return false;
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  if (pending.step === "value") {
+    pending.step = "type";
+    pending.type = undefined;
+    await renderWizard(
+      ctx,
+      pending.messageId,
+      "➕ Add MCP Server\n\n2/3 · Server type\n\nChoose how OpenCode should connect to this server.",
+      buildMcpsAddTypeKeyboard(),
+    );
+    transitionMcpWizard(pending);
+    return true;
+  }
+
+  if (pending.step === "type") {
+    pending.step = "name";
+    pending.name = undefined;
+    pending.type = undefined;
+    await renderWizard(
+      ctx,
+      pending.messageId,
+      "➕ Add MCP Server\n\n1/3 · Server name\n\nSend a unique name for this MCP server.",
+    );
+    transitionMcpWizard(pending);
+    return true;
+  }
+
+  return false;
+}
+
 export async function selectMcpAddType(ctx: Context, type: "local" | "remote"): Promise<void> {
   const wizard = mcpAddWizard.get();
   if (!wizard || wizard.step !== "type" || callbackMessageId(ctx) !== wizard.messageId) {
@@ -657,7 +692,7 @@ export async function selectMcpAddType(ctx: Context, type: "local" | "remote"): 
   const prompt = type === "remote"
     ? "➕ Add Remote MCP Server\n\n3/3 · Server URL\n\nSend the absolute MCP Streamable HTTP URL.\n\nExample: https://mcp.example.com/mcp"
     : "➕ Add Local MCP Server\n\n3/3 · Command\n\nSend the command OpenCode should run.\n\nExample: npx -y @modelcontextprotocol/server-everything";
-  await renderWizard(ctx, wizard.messageId, prompt);
+  await renderWizard(ctx, wizard.messageId, prompt, buildMcpsAddValueKeyboard());
   transitionMcpWizard(wizard);
 }
 
@@ -847,6 +882,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
       ctx,
       pending.messageId,
       `➕ Add MCP Server\n\n3/3 · ${pending.type === "remote" ? "Server URL" : "Command"}\n\n❌ ${message}\n\nSend a corrected value to retry, or go Back.`,
+      buildMcpsAddValueKeyboard(),
     );
     transitionMcpWizard(pending);
   }

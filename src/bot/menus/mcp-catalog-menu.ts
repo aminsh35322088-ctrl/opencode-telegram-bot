@@ -12,6 +12,7 @@ export const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
 export const MCPS_CALLBACK_ADD = `${MCPS_CALLBACK_PREFIX}add`;
 export const MCPS_CALLBACK_ADD_LOCAL = `${MCPS_CALLBACK_PREFIX}add:local`;
 export const MCPS_CALLBACK_ADD_REMOTE = `${MCPS_CALLBACK_PREFIX}add:remote`;
+export const MCPS_CALLBACK_ADD_BACK = `${MCPS_CALLBACK_PREFIX}add:back`;
 export const MCPS_CALLBACK_AUTH_START = `${MCPS_CALLBACK_PREFIX}auth:start`;
 export const MCPS_CALLBACK_AUTH_OPTIONS = `${MCPS_CALLBACK_PREFIX}auth:options`;
 export const MCPS_CALLBACK_AUTH_CANCEL = `${MCPS_CALLBACK_PREFIX}auth:cancel`;
@@ -109,7 +110,15 @@ export function buildMcpsAddTypeKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("💻 Local", MCPS_CALLBACK_ADD_LOCAL)
     .text("🌐 Remote", MCPS_CALLBACK_ADD_REMOTE).row()
-    .text("← MCP Servers", MCPS_CALLBACK_CANCEL)
+    .text("← Back", MCPS_CALLBACK_ADD_BACK)
+    .text("✖ Cancel", MCPS_CALLBACK_CANCEL).row()
+    .text("🏠 Home", "main:home");
+}
+
+export function buildMcpsAddValueKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("← Back", MCPS_CALLBACK_ADD_BACK)
+    .text("✖ Cancel", MCPS_CALLBACK_CANCEL).row()
     .text("🏠 Home", "main:home");
 }
 export function buildMcpsDetailKeyboard(server: McpCatalogServerItem): InlineKeyboard {

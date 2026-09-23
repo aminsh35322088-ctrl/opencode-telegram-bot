@@ -11,6 +11,7 @@ import {
   buildMcpsDetailText,
   buildMcpsListKeyboard,
   MCPS_CALLBACK_ADD,
+  MCPS_CALLBACK_ADD_BACK,
   MCPS_CALLBACK_ADD_LOCAL,
   MCPS_CALLBACK_ADD_REMOTE,
   MCPS_CALLBACK_AUTH_API_KEY,
@@ -33,6 +34,7 @@ import {
 } from "../menus/mcp-catalog-menu.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import {
+  backMcpAddWizard,
   backMcpCredentialWizard,
   startMcpAddWizard,
   startMcpAuthWizard,
@@ -114,6 +116,12 @@ async function recoverMcpsListInteraction(ctx: Context): Promise<boolean> {
 export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) return false;
+
+  if (data === MCPS_CALLBACK_ADD_BACK) {
+    if (await backMcpAddWizard(ctx)) return true;
+    await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
+    return true;
+  }
 
   if (data === MCPS_CALLBACK_AUTH_CANCEL) {
     const credentialDismissed = await dismissMcpCredentialWizard(ctx, true);

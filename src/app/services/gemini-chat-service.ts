@@ -1,7 +1,7 @@
 import { saveCustomProvider, syncOpenCodeCustomConfig } from "./custom-provider-service.js";
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
-import { reconcileStoredModelSelection } from "./model-selection-service.js";
+import { waitForOpencodeReadyAndRefresh } from "../../opencode/ready-refresh.js";
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const GEMINI_CHAT_MODEL = "gemini-3.1-flash-lite";
@@ -23,7 +23,8 @@ async function restartOpenCodeAfterGeminiChange(): Promise<void> {
   if (pid) await killServerProcess(pid);
   await new Promise((resolve) => setTimeout(resolve, 500));
   startLocalOpencodeServer(target).unref();
-  await reconcileStoredModelSelection({ forceCatalogRefresh: true }).catch(() => {});
+  const refreshed = await waitForOpencodeReadyAndRefresh("gemini_provider_change");
+  if (!refreshed) throw new Error("OpenCode did not become ready after Gemini provider restart.");
 }
 
 export async function verifyAndSaveGeminiChatProvider(apiKey: string): Promise<void> {

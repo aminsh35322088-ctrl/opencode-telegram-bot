@@ -54,6 +54,30 @@ export async function refreshSessionCacheIfOpencodeReady(reason: string): Promis
   return true;
 }
 
+export async function waitForOpencodeReadyAndRefresh(
+  reason: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (await isOpencodeServerHealthy()) {
+      await refreshSessionCacheAfterOpencodeReady(reason);
+      return true;
+    }
+
+    if (Date.now() - startedAt >= timeoutMs) break;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  logger.warn(
+    `[OpenCodeReady] Timed out waiting for OpenCode after restart: reason=${reason}, timeoutMs=${timeoutMs}`,
+  );
+  return false;
+}
+
 export function registerOpenCodeReadyRefreshHandler(): void {
   if (readyRefreshRegistered) {
     return;

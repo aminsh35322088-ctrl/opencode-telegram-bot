@@ -6,6 +6,7 @@ import { reconcileStoredModelSelection } from "../../app/services/model-selectio
 import { isChatModelMetadata, isImageModelMetadata } from "../../app/services/model-eligibility-service.js";
 import { config } from "../../config.js";
 import { findServerPid, killServerProcess, resolveLocalOpencodeTarget, startLocalOpencodeServer } from "../../opencode/process.js";
+import { waitForOpencodeReadyAndRefresh } from "../../opencode/ready-refresh.js";
 import { logger } from "../../utils/logger.js";
 import { clearIntegrationWizard } from "./integrations-command.js";
 import { buildSettingsMenuView } from "../menus/settings-menu.js";
@@ -50,6 +51,9 @@ async function restartOpenCodeAfterProviderChange(): Promise<void> {
   if (target) {
     const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid);
     await new Promise(r => setTimeout(r, 500)); startLocalOpencodeServer(target).unref();
+    const refreshed = await waitForOpencodeReadyAndRefresh("provider_change");
+    if (!refreshed) throw new Error("OpenCode did not become ready after provider restart.");
+    return;
   }
   await reconcileStoredModelSelection({ forceCatalogRefresh: true });
 }

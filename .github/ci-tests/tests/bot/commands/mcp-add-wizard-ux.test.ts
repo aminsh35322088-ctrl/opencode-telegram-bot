@@ -38,6 +38,7 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 }));
 
 import {
+  backMcpAddWizard,
   clearMcpAddWizard,
   clearMcpAuthWizard,
   clearMcpCredentialWizard,
@@ -45,6 +46,7 @@ import {
   handleMcpsMessage,
   selectMcpCredentialMode,
   skipMcpCredentialOptionalStep,
+  selectMcpAddType,
   startMcpAddWizard,
   startMcpAuthWizard,
   startMcpCredentialWizard,
@@ -135,6 +137,46 @@ describe("MCP add wizard UX", () => {
     expect(state?.metadata.stage).toBe("add");
     expect(state?.metadata.messageId).toBe(4242);
     expect(state?.metadata.parentMessageId).toBeUndefined();
+  });
+
+
+  it("navigates backward through add-MCP steps on the same General panel", async () => {
+    const startCtx = createContext();
+    await startMcpAddWizard(startCtx);
+
+    const nameCtx = createTextContext("demo-server");
+    expect(await handleMcpsMessage(nameCtx)).toBe(true);
+    expect(nameCtx.api.editMessageText).toHaveBeenCalledWith(
+      777,
+      4242,
+      expect.stringContaining("2/3 · Server type"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+
+    await selectMcpAddType(startCtx, "remote");
+    expect(startCtx.api.editMessageText).toHaveBeenLastCalledWith(
+      777,
+      4242,
+      expect.stringContaining("3/3 · Server URL"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+
+    expect(await backMcpAddWizard(startCtx)).toBe(true);
+    expect(startCtx.api.editMessageText).toHaveBeenLastCalledWith(
+      777,
+      4242,
+      expect.stringContaining("2/3 · Server type"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+
+    expect(await backMcpAddWizard(startCtx)).toBe(true);
+    expect(startCtx.api.editMessageText).toHaveBeenLastCalledWith(
+      777,
+      4242,
+      expect.stringContaining("1/3 · Server name"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+    expect(startCtx.reply).not.toHaveBeenCalled();
   });
 
   it("dismisses without deleting the General panel", async () => {
