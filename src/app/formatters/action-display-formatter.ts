@@ -75,25 +75,32 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "network-diagnostics.tcp": { icon: "🔌", label: "Check TCP" },
 };
 
-const TOOL_ICONS: Record<string, string> = {
-  actions: "🧰",
-  bot: "🤖",
-  browser: "🌐",
-  "database-query": "🗃️",
-  "full-diagnostics": "🩺",
-  "github-ci": "⚙️",
-  "image-inspect": "👁️",
-  "logs-observability": "🔎",
-  media: "🎬",
-  telegram: "💬",
-  "network-diagnostics": "🌐",
-  railway: "🚆",
-  "safe-download": "📥",
-  "send-file": "📤",
-  session: "💬",
-  "session-recovery": "🛟",
-  "storage-health": "💾",
-  "system-diagnostics": "🩺",
+const TOOL_META: Record<string, FriendlyActionDisplay> = {
+  actions: { icon: "🧰", label: "Actions" },
+  bot: { icon: "🤖", label: "Bot" },
+  file: { icon: "📁", label: "File" },
+  git: { icon: "🌿", label: "Git" },
+  monitoring: { icon: "📊", label: "Monitoring" },
+  notify: { icon: "🔔", label: "Notification" },
+  security: { icon: "🛡️", label: "Security" },
+  "session-extended": { icon: "🧭", label: "Session" },
+  test: { icon: "🧪", label: "Tests" },
+  browser: { icon: "🌐", label: "Browser" },
+  "database-query": { icon: "🗃️", label: "Database" },
+  "full-diagnostics": { icon: "🩺", label: "Diagnostics" },
+  "github-ci": { icon: "⚙️", label: "GitHub CI" },
+  "image-inspect": { icon: "👁️", label: "Image" },
+  "logs-observability": { icon: "🔎", label: "Logs" },
+  media: { icon: "🎬", label: "Media" },
+  telegram: { icon: "💬", label: "Telegram" },
+  "network-diagnostics": { icon: "🌐", label: "Network" },
+  railway: { icon: "🚆", label: "Railway" },
+  "safe-download": { icon: "📥", label: "Download" },
+  "send-file": { icon: "📤", label: "File" },
+  session: { icon: "💬", label: "Session" },
+  "session-recovery": { icon: "🛟", label: "Session Recovery" },
+  "storage-health": { icon: "💾", label: "Storage" },
+  "system-diagnostics": { icon: "🩺", label: "System" },
 };
 
 const VERBS: Record<string, string> = {
@@ -128,6 +135,27 @@ const VERBS: Record<string, string> = {
   verify: "Verify",
   watch: "Watch",
   cancel: "Cancel",
+  archive: "Archive",
+  export: "Export",
+  send: "Send",
+  alert: "Send Alert",
+  schedule: "Schedule",
+  copy: "Copy",
+  move: "Move",
+  query: "Query",
+  fill: "Fill",
+  type: "Type",
+  press: "Press",
+  hover: "Hover",
+  check: "Check",
+  uncheck: "Uncheck",
+  select: "Select",
+  back: "Go Back",
+  forward: "Go Forward",
+  reload: "Reload",
+  screenshot: "Take Screenshot",
+  snapshot: "Capture Snapshot",
+  download: "Download",
 };
 
 function titleCaseToken(value: string): string {
@@ -151,21 +179,89 @@ function titleCaseToken(value: string): string {
     .join(" ");
 }
 
-function humanizeAction(action: string): string {
+function singleActionLabel(tool: string, action: string): string | null {
+  const subject = TOOL_META[tool]?.label ?? titleCaseToken(tool);
+  switch (action.toLowerCase()) {
+    case "status": return `Check ${subject} Status`;
+    case "info": return `Inspect ${subject} Info`;
+    case "diff": return `View ${subject} Diff`;
+    case "log": return `View ${subject} History`;
+    case "logs": return `View ${subject} Logs`;
+    case "health": return `Check ${subject} Health`;
+    case "metrics": return `View ${subject} Metrics`;
+    case "alerts": return `Check ${subject} Alerts`;
+    case "variables": return `View ${subject} Variables`;
+    case "jobs": return `Inspect ${subject} Jobs`;
+    case "sources": return `List ${subject} Sources`;
+    case "summary": return `Summarize ${subject}`;
+    case "secrets": return `Inspect ${subject} Secrets`;
+    case "audit": return `Audit ${subject}`;
+    case "permissions": return `Inspect ${subject} Permissions`;
+    case "deps": return `Audit ${subject} Dependencies`;
+    case "commit": return "Commit Changes";
+    case "push": return "Push Changes";
+    case "pull": return "Pull Changes";
+    case "branch": return "Manage Git Branches";
+    case "checkout": return "Switch Git Branch";
+    case "stash": return "Stash Changes";
+    case "merge": return "Merge Git Branch";
+    case "rebase": return "Rebase Git Branch";
+    case "blame": return "Inspect Git Blame";
+    case "tags": return "List Git Tags";
+    case "remote": return "Inspect Git Remotes";
+    case "fetch": return tool === "git" ? "Fetch Git Updates" : `Fetch ${subject}`;
+    case "reset": return "Reset Git State";
+    case "goto": return "Open Web Page";
+    case "requests": return "Inspect Network Requests";
+    case "console": return "Inspect Browser Console";
+    case "pdf": return "Save Page as PDF";
+    case "whoami": return "Check Railway Account";
+    case "deploy-latest": return "Deploy Latest Revision";
+    case "cleanup-safe": return "Clean Storage Safely";
+    case "list-all": return "List All Sessions";
+    case "test-file": return "Run File Tests";
+    case "lint-fix": return "Fix Lint Issues";
+    case "typecheck": return "Run Type Check";
+    default: return null;
+  }
+}
+
+function humanizeAction(tool: string, action: string): string {
   const parts = action.split(".").filter(Boolean);
-  if (parts.length === 0) return "Run Action";
-  if (parts.length === 1) return titleCaseToken(parts[0] ?? action);
+  if (parts.length === 0) return `Run ${TOOL_META[tool]?.label ?? "Action"}`;
+
+  if (parts.length === 1) {
+    const single = singleActionLabel(tool, parts[0] ?? action);
+    if (single) return single;
+    const verb = VERBS[(parts[0] ?? "").toLowerCase()];
+    if (verb) return `${verb} ${TOOL_META[tool]?.label ?? titleCaseToken(tool)}`.trim();
+    return `${titleCaseToken(parts[0] ?? action)} ${TOOL_META[tool]?.label ?? ""}`.trim();
+  }
 
   const verbToken = parts.at(-1) ?? "";
-  const subject = parts.slice(0, -1).map(titleCaseToken).join(" ");
+  const subjectTokens = parts.slice(0, -1);
   const verb = VERBS[verbToken.toLowerCase()];
-  return verb ? `${verb} ${subject}`.trim() : parts.map(titleCaseToken).join(" ");
+  if (verb) {
+    return `${verb} ${subjectTokens.map(titleCaseToken).join(" ")}`.trim();
+  }
+
+  if (verbToken === "current") return `Check Current ${subjectTokens.map(titleCaseToken).join(" ")}`;
+  if (verbToken === "active") return `Check Active ${subjectTokens.map(titleCaseToken).join(" ")}`;
+  if (verbToken === "selection") return `Check ${subjectTokens.map(titleCaseToken).join(" ")} Selection`;
+  if (verbToken === "providers") return `List ${subjectTokens.map(titleCaseToken).join(" ")} Providers`;
+  if (verbToken === "context") return `Inspect ${subjectTokens.map(titleCaseToken).join(" ")} Context`;
+  if (verbToken === "stt-status") return `Check ${subjectTokens.map(titleCaseToken).join(" ")} STT Status`;
+  if (verbToken === "info") return `Inspect ${subjectTokens.map(titleCaseToken).join(" ")} Info`;
+
+  return parts.map(titleCaseToken).join(" ");
 }
 
 function fallbackToolLabel(tool: string): FriendlyActionDisplay {
   const normalized = tool.trim();
-  const icon = normalized.includes("mcp") ? "🔌" : (TOOL_ICONS[normalized] ?? "🛠️");
-  return { icon, label: titleCaseToken(normalized || "Tool") };
+  if (normalized.includes("mcp")) return { icon: "🔌", label: titleCaseToken(normalized || "MCP Tool") };
+  const known = TOOL_META[normalized];
+  if (known) return known;
+  return { icon: "🛠️", label: titleCaseToken(normalized || "Tool") };
 }
 
 export function getFriendlyActionDisplay(tool: string, input?: Record<string, unknown>): FriendlyActionDisplay {
@@ -178,8 +274,8 @@ export function getFriendlyActionDisplay(tool: string, input?: Record<string, un
     const override = ACTION_OVERRIDES[id];
     if (override) return override;
     return {
-      icon: TOOL_ICONS[tool] ?? (tool.includes("mcp") ? "🔌" : "🛠️"),
-      label: humanizeAction(action),
+      icon: TOOL_META[tool]?.icon ?? (tool.includes("mcp") ? "🔌" : "🛠️"),
+      label: humanizeAction(tool, action),
     };
   }
 
