@@ -27,3 +27,13 @@ export function isChatModelMetadata(metadataValue: unknown): boolean {
   const state = detectModelCapabilities(metadataValue).capabilities.operations.chat;
   return state !== false;
 }
+
+/**
+ * Agent-mode chat/coding requires verified tool calling. This is stricter than
+ * plain chat compatibility: unknown tool support is intentionally rejected so
+ * every selectable agent model can invoke the bot/OpenCode action surface.
+ */
+export function isAgentToolCapableModelMetadata(metadataValue: unknown): boolean {
+  const capabilities = detectModelCapabilities(metadataValue).capabilities;
+  return capabilities.operations.chat !== false && capabilities.agent.toolCalling === true;
+}
