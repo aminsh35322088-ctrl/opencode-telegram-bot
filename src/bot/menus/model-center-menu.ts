@@ -188,10 +188,7 @@ export async function buildModelCenterProviders(): Promise<{ text: string; keybo
   const providers = await getProviders();
   const keyboard = new InlineKeyboard();
   providers.forEach((provider) => {
-    const unchecked = provider.unverifiedModelCount ?? 0;
-    const ready = provider.readyModelCount ?? provider.modelCount;
-    const count = unchecked > 0 ? `${ready} ready · ${unchecked} unchecked` : `${provider.modelCount} models`;
-    keyboard.text(`🧩 ${provider.name} · ${count}`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
+    keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
   });
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
@@ -216,7 +213,7 @@ export async function buildModelCenterProvider(provider: ProviderInfo, page: num
   keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row();
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
-    text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${provider.unverifiedModelCount ? `✅ ${provider.readyModelCount ?? 0} ready · ⚪ ${provider.unverifiedModelCount} unchecked` : `${models.length} ready models`} · page ${normalizedPage + 1}/${totalPages}.\nTap a model to select it or ☆/⭐ to manage favorites.`,
+    text: `🧩 <b>${escapeHtml(provider.name)}</b>\n\n${models.length} live models · page ${normalizedPage + 1}/${totalPages}.\nTap a model to select it or ☆/⭐ to manage favorites.`,
     keyboard,
     page: normalizedPage,
   };

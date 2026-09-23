@@ -24,10 +24,11 @@ describe("Model Center session continuity", () => {
     expect(handlerSource).not.toContain("retireSessionRuntime(");
   });
 
-  it("refreshes expired or changed model pages instead of leaving stale buttons", () => {
+  it("does not block model selection on tool-call verification state", () => {
     expect(handlerSource).not.toContain("This model button is stale");
-    expect(handlerSource).toContain("refreshUnavailableModelAction");
-    expect(handlerSource).toContain("The provider model catalog changed after this page opened.");
+    expect(handlerSource).not.toContain("refreshUnavailableModelAction");
+    expect(handlerSource).not.toContain("isSelectableChatModel(");
+    expect(handlerSource).not.toContain("Tool compatibility could not be verified");
     expect(handlerSource).toContain("Model Center was refreshed.");
   });
 });

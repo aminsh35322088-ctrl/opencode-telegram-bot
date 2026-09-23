@@ -14,7 +14,7 @@ describe("model routing summary", () => {
         modelID: "muse",
         modelName: "Muse Spark 1.2 Free",
         availability: "available",
-        capabilities: { operations: { chat: true } },
+        capabilities: { operations: { chat: true }, agent: { toolCalling: false } },
       }],
       routes: new Map([
         ["vision", { routeSource: "primary-native" }],
@@ -31,8 +31,10 @@ describe("model routing summary", () => {
       "💬 Chat ✅",
       "👁️ Vision ✅",
       "🎙️ Voice → Text ❌",
-      "🎨 Image AI ✅ ↪️",
+      "🎨 Image AI ↪️",
       "🔊 Text → Voice ✅ ⚙️",
+      "🛠️ Tool Call ❌",
+      "🤖 Agent Mode ❌",
     ].join("\n"));
     expect(text).not.toContain("Active Model:");
     expect(text).not.toContain("Native  ⚙️");

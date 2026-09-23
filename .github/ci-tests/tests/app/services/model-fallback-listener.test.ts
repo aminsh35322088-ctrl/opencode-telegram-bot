@@ -125,7 +125,7 @@ describe("model-selection fallback listener", () => {
     expect(listener).toHaveBeenCalledWith({
       previous: "openai/retired",
       next: "opencode/big-pickle",
-      reason: "unavailable_or_not_tool_capable",
+      reason: "unavailable_or_not_chat_capable",
     });
   });
 

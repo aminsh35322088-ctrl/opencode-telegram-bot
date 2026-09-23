@@ -95,22 +95,20 @@ describe("custom-provider model verification wiring", () => {
     expect(mocks.ensure).not.toHaveBeenCalled();
   });
 
-  it("verifies only the model the user tries to select", async () => {
+  it("selects a chat-capable custom model without gating on tool-call verification", async () => {
     await getProviderModels("gateway");
     expect(mocks.ensure).not.toHaveBeenCalled();
 
     await expect(isSelectableChatModel("gateway", "coder")).resolves.toBe(true);
-    expect(mocks.ensure).toHaveBeenCalledTimes(1);
-    expect(mocks.ensure).toHaveBeenCalledWith("gateway", "coder");
+    expect(mocks.ensure).not.toHaveBeenCalled();
   });
 
-  it("migrates the one stored custom model before considering fallback", async () => {
+  it("keeps a stored custom chat model without forcing tool-call verification", async () => {
     mocks.setCurrentModelState({ providerID: "gateway", modelID: "coder", variant: "high" });
 
     await reconcileStoredModelSelection({ forceCatalogRefresh: true });
 
-    expect(mocks.ensure).toHaveBeenCalledTimes(1);
-    expect(mocks.ensure).toHaveBeenCalledWith("gateway", "coder");
+    expect(mocks.ensure).not.toHaveBeenCalled();
     expect(mocks.setCurrentModel).not.toHaveBeenCalled();
   });
 });
