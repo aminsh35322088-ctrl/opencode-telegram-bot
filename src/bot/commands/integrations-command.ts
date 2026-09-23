@@ -2,7 +2,6 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
-import { getSshPublicKey } from "../../app/services/ssh-identity-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -66,11 +65,7 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   const githubActive = await getActiveGithubAccount();
   const railwayAccounts = await listRailwayAccounts();
   const railwayActive = await getActiveRailwayAccount();
-  const keyboard = new InlineKeyboard()
-    .text("🐙 Add GitHub", "integration:github:add")
-    .text("🚂 Add Railway", "integration:railway:add")
-    .row()
-    .text("🔑 SSH Public Key", "integration:ssh:key");
+  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add");
   for (const account of githubAccounts) {
     const label = account.id === githubActive?.id ? `✅ ${account.name}` : account.name;
     keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
@@ -80,18 +75,7 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
     keyboard.row().text(label, `integration:railway:select:${account.id}`).text("🗑️", `integration:railway:remove:${account.id}`);
   }
   keyboard.row().text("← Advanced", "integration:advanced").text("🏠 Home", "main:home");
-  const body = [
-    "🔌 Integrations",
-    "",
-    `🐙 GitHub · ${githubAccounts.length} saved`,
-    `Active: ${githubActive?.name ?? "None"}`,
-    "",
-    `🚂 Railway · ${railwayAccounts.length} saved`,
-    `Active: ${railwayActive?.name ?? "None"}`,
-    "",
-    "🔐 SSH · Direct connections",
-    "Use the bot public key to authorize VPS or server access.",
-  ].join("\n");
+  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}`;
   const text = notice ? `${notice}\n\n${body}` : body;
   const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
   if (targetMessageId !== null && ctx.chat?.id) {
@@ -118,19 +102,6 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
   if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ railway: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
-  if (data === "integration:ssh:key") {
-    const messageId = callbackMessageId(ctx);
-    if (messageId === null) return true;
-    const publicKey = await getSshPublicKey();
-    const keyboard = appendHomeNavigation(new InlineKeyboard().text("← Integrations", "integration:menu"));
-    await ctx.api.editMessageText(
-      chatId,
-      messageId,
-      `🔑 SSH Public Key\n\nAdd this key to the remote account's ~/.ssh/authorized_keys.\n\n${publicKey}`,
-      { reply_markup: keyboard },
-    );
-    return true;
-  }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "GitHub account removed" : "GitHub account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
   if (data.startsWith("integration:railway:select:")) { const account = await setActiveRailwayAccount(data.slice("integration:railway:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
