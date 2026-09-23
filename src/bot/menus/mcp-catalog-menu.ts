@@ -101,7 +101,16 @@ export function buildMcpsDetailText(server: McpCatalogServerItem): string {
   lines.push(t("mcps.detail.title", { name: server.name }));
   lines.push("");
   lines.push(t("mcps.detail.status", { status: getStatusLabel(server.status) }));
-  if (server.status.status === "failed" || server.status.status === "needs_client_registration") lines.push(t("mcps.detail.error", { error: server.status.error }));
-  if (server.status.status === "needs_auth" || server.status.status === "needs_client_registration") { lines.push(""); lines.push(t("mcps.auth_required")); }
+  if (server.status.status === "failed" || server.status.status === "needs_client_registration") {
+    lines.push(t("mcps.detail.error", { error: server.status.error }));
+  }
+  if (server.status.status === "needs_auth") {
+    lines.push("");
+    lines.push("🔐 OAuth login is required. Tap Sign In below to authorize this MCP server.");
+  }
+  if (server.status.status === "needs_client_registration") {
+    lines.push("");
+    lines.push("🔑 This server requires a pre-registered OAuth client. Configure its client ID/secret through env-backed OpenCode MCP settings before signing in.");
+  }
   return lines.join("\n");
 }
