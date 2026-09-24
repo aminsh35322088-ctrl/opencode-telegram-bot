@@ -356,6 +356,8 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       configuredModelID: "test-model",
     });
     service.setTelegramContext(bot, 42);
+    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
+    keyboardManager.bindTopic(api as never, 42, 7, "session-1");
     await service.ensureEventSubscription("D:/repo");
     summaryAggregator.setSession("session-1");
     emitAssistantMessage(summaryAggregator);
@@ -377,6 +379,8 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       expect(hasActiveStream("session-1")).toBe(true);
       const writesBefore = countTelegramWrites(api);
 
+      const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
+      keyboardManager.clearSession("session-1");
       service.setTelegramContext(null, null);
       emitAssistantCompleted(summaryAggregator);
       await vi.waitFor(

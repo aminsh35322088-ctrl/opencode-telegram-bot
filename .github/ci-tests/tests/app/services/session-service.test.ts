@@ -14,7 +14,8 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 import { promptQueue } from "../../../src/app/managers/prompt-queue-manager.js";
 import { promptAttachment } from "../../../src/app/managers/prompt-attachment-manager.js";
-import { clearSession, setCurrentSession } from "../../../src/app/services/session-service.js";
+import { clearSession, getCurrentSession, setCurrentSession } from "../../../src/app/services/session-service.js";
+import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 
 const SESSION = { id: "session-1", title: "Session 1", directory: "D:\\Projects\\Repo" };
 
@@ -23,6 +24,14 @@ describe("app/services/session-service", () => {
     settingsSession.current = null;
     promptQueue.__resetForTests();
     promptAttachment.__resetForTests();
+  });
+
+  it("fails closed instead of inheriting the global session inside an unbound Topic", async () => {
+    settingsSession.current = SESSION;
+    await runInTopicRuntimeContext({ chatId: 42, threadId: 99 }, async () => {
+      expect(getCurrentSession()).toBeNull();
+    });
+    expect(getCurrentSession()).toEqual(SESSION);
   });
 
   it("drops queued prompts when switching to another session", () => {

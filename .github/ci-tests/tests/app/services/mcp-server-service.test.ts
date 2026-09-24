@@ -79,6 +79,7 @@ import {
   completeMcpOAuth,
   configureSecureMcpAuth,
   createMcpServerFromInput,
+  debugMcpServer,
   deleteMcpServer,
   getMcpAuthSummary,
   getMcpLoginIdentity,
@@ -178,6 +179,74 @@ describe("app/services/mcp-server-service", () => {
     expect(parseMcpServerItems({ "server-a": "not-an-object" })).toBeNull();
     expect(parseMcpServerItems({ "server-a": { status: 42 } })).toBeNull();
     expect(parseMcpServerItems([{ name: "server-a", status: null }])).toBeNull();
+  });
+
+  it("returns actionable MCP diagnostics without exposing stored credentials", async () => {
+    mockedManaged.list.mockResolvedValue([{
+      projectDirectory: "/source",
+      name: "graphify",
+      config: { type: "remote", url: "https://api.graphify.com/mcp" },
+    }]);
+    mockedCredentials.list.mockResolvedValue([{
+      projectDirectory: "/source",
+      serverName: "graphify",
+      remoteUrl: "https://api.graphify.com/mcp",
+      mode: "bearer",
+      secret: "super-secret-token",
+    }]);
+    mocked.status.mockResolvedValue({
+      data: { graphify: { status: "connected" } },
+      error: undefined,
+    });
+    mocked.configGet.mockResolvedValue({
+      data: { mcp: { graphify: { type: "remote", url: "https://api.graphify.com/mcp" } } },
+      error: undefined,
+    });
+
+    const result = await debugMcpServer("/topic", "graphify");
+
+    expect(result.runtimeStatusAvailable).toBe(true);
+    expect(result.servers[0]).toMatchObject({
+      name: "graphify",
+      type: "remote",
+      runtimePresent: true,
+      status: "connected",
+      managed: true,
+      authMode: "bearer",
+      providerHost: "api.graphify.com",
+    });
+    expect(JSON.stringify(result)).not.toContain("super-secret-token");
+    expect(result.suggestions.join(" ")).toContain("provider/index/account");
+  });
+
+  it("can safely force-resync a missing managed MCP in the current Topic runtime", async () => {
+    mockedManaged.list.mockResolvedValue([{
+      projectDirectory: "/source",
+      name: "graphify",
+      config: { type: "remote", url: "https://api.graphify.com/mcp" },
+    }]);
+    mocked.add.mockResolvedValue({
+      data: { graphify: { status: "connected" } },
+      error: undefined,
+    });
+    mocked.status.mockResolvedValue({
+      data: { graphify: { status: "connected" } },
+      error: undefined,
+    });
+    mocked.configGet.mockResolvedValue({
+      data: { mcp: { graphify: { type: "remote", url: "https://api.graphify.com/mcp" } } },
+      error: undefined,
+    });
+
+    const result = await debugMcpServer("/topic", "graphify", { repair: true });
+
+    expect(result.repairRequested).toBe(true);
+    expect(result.repair).toEqual({ restored: 1, failed: 0 });
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/topic",
+      name: "graphify",
+      config: { type: "remote", url: "https://api.graphify.com/mcp" },
+    });
   });
 
   it("starts MCP OAuth through OpenCode and preserves state", async () => {

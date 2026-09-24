@@ -107,6 +107,7 @@ import {
 } from "../../app/managers/interaction-manager.js";
 import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { findTelegramTopicBindingsByDirectory } from "../../app/services/telegram-topic-store.js";
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const SESSION_RETRY_PREFIX = "🔁";
@@ -374,8 +375,23 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     if (sessionId && chatId) this.sessionChatIds.set(sessionId, chatId);
   }
 
+  private async hydrateTopicRouteForDirectory(directory: string): Promise<void> {
+    if (!this.botInstance) return;
+    const bindings = await findTelegramTopicBindingsByDirectory(directory);
+    if (bindings.length === 0) return;
+    if (bindings.length !== 1) {
+      logger.error(`[TopicIsolation] Refusing ambiguous directory-to-Topic route: directory=${directory}, bindings=${bindings.length}`);
+      return;
+    }
+    const binding = bindings[0]!;
+    const raw = getUnscopedTelegramApi(this.botInstance.api);
+    keyboardManager.bindTopic(raw, binding.chatId, binding.threadId, binding.sessionId);
+    this.sessionChatIds.set(binding.sessionId, binding.chatId);
+    logger.debug(`[TopicIsolation] Hydrated persisted Topic route: session=${binding.sessionId}, chat=${binding.chatId}, thread=${binding.threadId}`);
+  }
+
   private getChatIdForSession(sessionId: string): number | null {
-    return this.sessionChatIds.get(sessionId) ?? this.chatIdInstance;
+    return keyboardManager.getTopicSendTarget(sessionId)?.chatId ?? this.sessionChatIds.get(sessionId) ?? null;
   }
 
   private getKeyboardForSession(sessionId: string) {
@@ -393,8 +409,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     const botApi = this.botInstance?.api;
     if (!botApi) throw new Error("Bot context missing for session-scoped send");
     const target = keyboardManager.getTopicSendTarget(sessionId);
-    const raw = getUnscopedTelegramApi(botApi);
-    return target ? createTopicAwareApi(raw, target) : raw;
+    if (!target) {
+      logger.error(`[TopicIsolation] Refusing unscoped Telegram send for AI session without Topic target: session=${sessionId}`);
+      throw new Error(`Missing Telegram Topic delivery target for session ${sessionId}`);
+    }
+    return createTopicAwareApi(getUnscopedTelegramApi(botApi), target);
   }
 
   private getLiveToolPrefix(callId: string): string {
@@ -719,6 +738,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       logger.error("No directory found for event subscription");
       return;
     }
+
+    await this.hydrateTopicRouteForDirectory(directory);
 
     summaryAggregator.setTypingIndicatorEnabled(true);
     backgroundSessionTracker.setDirectory(directory);

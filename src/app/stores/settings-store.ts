@@ -82,7 +82,12 @@ export function getEffectiveImageModel(): ImageModelSelection | undefined { retu
 export function getCurrentProject(): ProjectInfo { const session = getCurrentSession(); const directory = session?.directory ?? process.cwd(); return { id: `session:${session?.id ?? "default"}`, worktree: directory, name: path.basename(directory) || directory }; }
 export function setCurrentProject(_projectInfo: ProjectInfo): void { void writeSettingsFile(currentSettings); }
 export function clearProject(): void { void writeSettingsFile(currentSettings); }
-export function getCurrentSession(): SessionInfo | undefined { return currentTopicState()?.settings.session ?? currentSettings.currentSession; }
+export function getCurrentSession(): SessionInfo | undefined {
+  // Presence of a Topic runtime context is authoritative. An unbound/stale
+  // Topic must not fall back to the global foreground session.
+  if (getTopicRuntimeContext()) return currentTopicState()?.settings.session;
+  return currentSettings.currentSession;
+}
 export function setCurrentSession(sessionInfo: SessionInfo): void { if (getTopicRuntimeContext()) { updateTopic({ session: sessionInfo }); return; } currentSettings.currentSession = sessionInfo; void writeSettingsFile(currentSettings); }
 export function clearSession(): void { if (getTopicRuntimeContext()) { updateTopic({ session: undefined }); return; } currentSettings.currentSession = undefined; void writeSettingsFile(currentSettings); }
 export function isPermissionAlwaysAllowed(chatId: number, permission: string): boolean { return currentSettings.alwaysAllowedPermissions?.some((rule) => rule.chatId === chatId && rule.permission === permission) ?? false; }
