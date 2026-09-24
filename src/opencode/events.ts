@@ -23,7 +23,9 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
   let resolvedSessionId = sessionId ?? runtimeSessionId;
   if (!resolvedSessionId) {
     const directoryBindings = await findTelegramTopicBindingsByDirectory(directory);
-    if (directoryBindings.length === 1) resolvedSessionId = directoryBindings[0]?.sessionId;
+    if (Array.isArray(directoryBindings) && directoryBindings.length === 1) {
+      resolvedSessionId = directoryBindings[0]?.sessionId;
+    }
   }
   const key = `${normalizeDirectory(directory)}:${resolvedSessionId ?? "*"}:${String(callback)}`;
   subscriptions.get(key)?.stop();
