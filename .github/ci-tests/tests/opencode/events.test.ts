@@ -91,31 +91,27 @@ describe("opencode/events", () => {
     vi.useRealTimers();
   });
 
-  it("subscribes to the directory stream and forwards events to callback", async () => {
-    const eventA = { type: "session.status", properties: { sessionID: "s1" } } as Event;
-    const eventB = { type: "session.idle", properties: { sessionID: "s1" } } as Event;
-    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-      stream: createStream([eventA, eventB], params?.signal ?? new AbortController().signal),
+  it("does not deliver model events to a General wildcard subscriber", async () => {
+    const event = {
+      type: "message.updated",
+      properties: { sessionID: "session-a", directory: "/workspace" },
+    } as unknown as Event;
+    subscribeMock.mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
+      stream: createStream([event], params?.signal ?? new AbortController().signal),
     }));
+    bindings.bySession.mockResolvedValue(null);
+    bindings.byDirectoryList.mockResolvedValue([
+      { chatId: 100, threadId: 11, sessionId: "session-a", directory: "/workspace" },
+    ]);
 
     const callback = vi.fn();
-    const subscription = subscribeToEvents("D:/repo", callback);
+    const subscription = subscribeToEvents("/workspace", callback);
+    void subscription.catch(() => undefined);
 
-    await vi.waitFor(() => {
-      expect(callback).toHaveBeenCalledTimes(2);
-    });
-    await flushImmediate();
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
+    expect(callback).not.toHaveBeenCalled();
     stopEventListening();
-    await subscription;
-
-    expect(subscribeMock).toHaveBeenCalledWith(
-      { directory: "D:/repo" },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(callback).toHaveBeenCalledTimes(2);
-    expect(defined(callback.mock.calls[0]?.[0])).toEqual(eventA);
-    expect(defined(callback.mock.calls[1]?.[0])).toEqual(eventB);
   });
 
   it("does not resolve before the first SSE read succeeds", async () => {

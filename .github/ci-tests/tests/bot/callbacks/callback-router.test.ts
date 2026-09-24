@@ -30,6 +30,7 @@ const mocked = vi.hoisted(() => ({
   clearMcpAddWizard: vi.fn(),
   clearMcpAuthWizard: vi.fn(),
   clearMcpCredentialWizard: vi.fn(),
+  topicBindingByThread: vi.fn(),
 }));
 
 vi.mock("../../../src/app/managers/interaction-manager.js", async (importOriginal) => ({
@@ -39,6 +40,10 @@ vi.mock("../../../src/app/managers/interaction-manager.js", async (importOrigina
 vi.mock("../../../src/i18n/index.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../src/i18n/index.js")>()),
   t: (key: string) => key,
+}));
+vi.mock("../../../src/app/services/telegram-topic-store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/app/services/telegram-topic-store.js")>()),
+  findTelegramTopicBindingByThread: mocked.topicBindingByThread,
 }));
 vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -138,6 +143,7 @@ const tableHandlers = [
 describe("bot/callbacks/callback-router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.topicBindingByThread.mockResolvedValue(null);
     for (const handler of [
       ...tableHandlers,
       mocked.handleBackgroundSessionOpen,
@@ -233,6 +239,21 @@ describe("bot/callbacks/callback-router", () => {
     }
   });
 
+  it.each([
+    ["commands:list", mocked.handleCommandsCallback],
+    ["skills:list", mocked.handleSkillsCallback],
+    ["messages:list", mocked.handleMessagesCallback],
+  ] as const)("rejects unbound Topic callback %s before model-backed dispatch", async (data, handler) => {
+    const callback = registerAndGetCallback();
+    const ctx = createUnboundTopicCallbackContext(data);
+
+    await callback(ctx);
+
+    expect(mocked.topicBindingByThread).toHaveBeenCalledWith(2, 99);
+    expect(handler).not.toHaveBeenCalled();
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "general.topic_only_prompt" });
+  });
+
   it("answers callbacks without a colon as unknown", async () => {
     const callback = registerAndGetCallback();
     const ctx = createCallbackContext("noseparator");
@@ -307,6 +328,22 @@ function createCallbackContext(data = "unknown"): Context {
     callbackQuery: { data },
     from: { id: 1 },
     chat: { id: 2 },
+    answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+  } as unknown as Context;
+}
+
+function createUnboundTopicCallbackContext(data: string): Context {
+  return {
+    callbackQuery: {
+      data,
+      message: {
+        message_id: 10,
+        message_thread_id: 99,
+        chat: { id: 2, type: "private" },
+      },
+    },
+    from: { id: 1 },
+    chat: { id: 2, type: "private" },
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
   } as unknown as Context;
 }

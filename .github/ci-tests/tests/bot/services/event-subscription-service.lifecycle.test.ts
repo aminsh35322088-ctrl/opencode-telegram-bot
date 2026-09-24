@@ -391,6 +391,15 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       expect(assistantRunState.finishRun("session-1", "assertion")).toBeNull();
     });
 
+    it("does not send a late event after the session target is removed", async () => {
+      const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
+      service.setTelegramContext(null, null);
+      const writesBefore = countTelegramWrites(api);
+      emitAssistantTextPart(summaryAggregator, "late");
+      await settle();
+      expect(countTelegramWrites(api)).toBe(writesBefore);
+    });
+
     it("drops the response when the session changed while the agent was answering", async () => {
       const { api, summaryAggregator } = await setupService({ startAssistantRun: true });
       const [

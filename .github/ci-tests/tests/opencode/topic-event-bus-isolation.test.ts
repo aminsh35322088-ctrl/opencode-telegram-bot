@@ -112,6 +112,38 @@ describe("topic-event-bus session isolation", () => {
     expect(callback).not.toHaveBeenCalled();
   });
 
+  it("drops a scoped event when the binding lookup is ambiguous", async () => {
+    const event = { type: "message.updated", properties: { sessionID: "session-a", directory: "/workspace" } } as unknown as Event;
+    bindings.bySession.mockResolvedValue(null);
+    bindings.byDirectory.mockResolvedValue([
+      { chatId: 100, threadId: 11, sessionId: "session-a", directory: "/workspace" },
+      { chatId: 100, threadId: 22, sessionId: "session-b", directory: "/workspace" },
+    ]);
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, options: { signal: AbortSignal }) => ({
+      stream: createStream([event], options.signal),
+    }));
+    const callback = vi.fn();
+    const subscription = subscribeToTopicEvents("/workspace", callback, "session-a");
+    void subscription.ready.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("does not deliver a session event to a different exact session", async () => {
+    const event = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as unknown as Event;
+    bindings.bySession.mockImplementation(async (sessionId: string) => sessionId === "session-a"
+      ? { chatId: 100, threadId: 11, sessionId: "session-a", directory: "/workspace" }
+      : { chatId: 100, threadId: 22, sessionId: "session-b", directory: "/workspace" });
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, options: { signal: AbortSignal }) => ({
+      stream: createStream([event], options.signal),
+    }));
+    const callback = vi.fn();
+    const subscription = subscribeToTopicEvents("/workspace", callback, "session-a");
+    void subscription.ready.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(callback).not.toHaveBeenCalled();
+  });
+
   it("does not guess a Topic when multiple bindings share a directory and the event has no session id", async () => {
     const event = { type: "workspace.updated", properties: { directory: "/workspace" } } as unknown as Event;
     bindings.byDirectory.mockResolvedValue([

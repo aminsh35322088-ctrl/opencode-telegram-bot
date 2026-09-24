@@ -12,6 +12,24 @@ vi.mock("../../../src/bot/handlers/message-merger.js", async (importOriginal) =>
   return { ...actual, queuePromptForMerging: mergerMock.queuePromptForMerging };
 });
 
+function getMessageHandler(eventName: string): (ctx: unknown, next: () => Promise<void>) => Promise<void> {
+  const bot = { on: vi.fn(), hears: vi.fn() };
+  registerMessageRouter(bot as never, {
+    ensureEventSubscription: vi.fn(),
+    setTelegramContext: vi.fn(),
+  });
+  const call = bot.on.mock.calls.find(([event]) => event === eventName);
+  return defined(call?.[1]) as (ctx: unknown, next: () => Promise<void>) => Promise<void>;
+}
+
+function makeMediaContext({ chatId, threadId }: { chatId: number; threadId: number }) {
+  return {
+    chat: { id: chatId, type: "supergroup", is_forum: true },
+    message: { message_thread_id: threadId },
+    reply: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe("bot/routers/message-router", () => {
   it("registers all current reply-keyboard and message routes", () => {
     const bot = {
@@ -69,6 +87,16 @@ describe("bot/routers/message-router", () => {
       mergerMock.queuePromptForMerging.mockReset();
       interactionManager.clear("general_gate_test_reset");
     });
+
+    it.each(["message:voice", "message:audio", "message:photo", "message:video", "message:video_note", "message:document"])(
+      "does not dispatch %s to the model in General",
+      async (eventName) => {
+        const handler = getMessageHandler(eventName);
+        const ctx = makeMediaContext({ chatId: 42, threadId: 1 });
+        await handler(ctx, vi.fn());
+        expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+      },
+    );
 
     it("blocks free-text AI prompts in the forum General topic", async () => {
       const handler = registerAndGetTextHandler();
