@@ -406,23 +406,6 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       expect(assistantRunState.finishRun("session-1", "assertion")).toBeNull();
     });
 
-    it("does not send a late event after the session target is removed", async () => {
-      const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
-      const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
-      service.setTelegramContext(null, null);
-      const writesBefore = countTelegramWrites(api);
-      try {
-        emitAssistantTextPart(summaryAggregator, "late");
-        await flushEventDispatch();
-        expect(countTelegramWrites(api)).toBe(writesBefore);
-      } finally {
-        const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
-        assistantRunState.clearRun("session-1", "test_cleanup");
-        foregroundSessionState.__resetForTests();
-        service.clearRuntimeState("test_cleanup");
-      }
-    });
-
     it("drops the response when the session changed while the agent was answering", async () => {
       const { api, summaryAggregator } = await setupService({ startAssistantRun: true });
       const [
@@ -1099,6 +1082,23 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       await settle();
 
       expect(api.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not send a late event after the session target is removed", async () => {
+      const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
+      const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
+      const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
+      service.setTelegramContext(null, null);
+      const writesBefore = countTelegramWrites(api);
+      try {
+        emitAssistantTextPart(summaryAggregator, "late");
+        await flushEventDispatch();
+        expect(countTelegramWrites(api)).toBe(writesBefore);
+      } finally {
+        assistantRunState.clearRun("session-1", "test_cleanup");
+        foregroundSessionState.__resetForTests();
+        service.clearRuntimeState("test_cleanup");
+      }
     });
   });
 });
