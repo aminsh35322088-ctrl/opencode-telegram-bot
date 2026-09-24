@@ -270,22 +270,6 @@ function transitionMcpRenameWizard(pending: PendingMcpRename): void {
   }
 }
 
-export function isMcpAddWizardActive(): boolean {
-  return mcpAddWizard.isActive();
-}
-
-export function isMcpAuthWizardActive(): boolean {
-  return mcpAuthWizard.isActive();
-}
-
-export function isMcpCredentialWizardActive(): boolean {
-  return mcpCredentialWizard.isActive();
-}
-
-export function isMcpRenameWizardActive(): boolean {
-  return mcpRenameWizard.isActive();
-}
-
 export function isMcpTextWizardActive(): boolean {
   return (
     mcpAddWizard.isActive() ||

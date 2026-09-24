@@ -617,7 +617,6 @@ export const de: I18nDictionary = {
   "mcps.button.home": "🏠 Home",
   "mcps.button.cancel": "✖ Cancel",
   "mcps.button.open_login": "🔐 Open Login",
-  "mcps.button.auth": "🔐 Auth",
   "mcps.button.sign_in": "🔐 Sign In",
   "mcps.button.other_auth": "⚙️ Other Auth",
   "mcps.button.authentication": "🔐 Authentication",
