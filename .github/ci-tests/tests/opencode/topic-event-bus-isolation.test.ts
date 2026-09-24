@@ -56,10 +56,7 @@ describe("topic-event-bus session isolation", () => {
     subscribeMock.mockReset();
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectory.mockReset().mockResolvedValue([]);
-    logger.info.mockClear();
-    logger.debug.mockClear();
-    logger.warn.mockClear();
-    logger.error.mockClear();
+    vi.clearAllMocks();
   });
 
   afterEach(() => stopTopicEventBus());

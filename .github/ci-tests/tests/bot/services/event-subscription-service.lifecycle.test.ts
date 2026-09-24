@@ -188,12 +188,6 @@ function findFooterCalls(api: FakeBotApi): unknown[][] {
   );
 }
 
-async function flushEventDispatch(iterations = 4): Promise<void> {
-  for (let attempt = 0; attempt < iterations; attempt++) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-}
-
 /**
  * Lets the aggregator's setImmediate dispatch and the callbacks it triggers
  * run to completion. Anything that has to cross the stream throttle waits with
@@ -411,7 +405,12 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       service.setTelegramContext(null, null);
       const writesBefore = countTelegramWrites(api);
       emitAssistantTextPart(summaryAggregator, "late");
-      await flushEventDispatch();
+      await vi.waitFor(
+        () => {
+          expect(hasActiveStream("session-1")).toBe(false);
+        },
+        { timeout: STREAM_WAIT_TIMEOUT_MS },
+      );
       expect(countTelegramWrites(api)).toBe(writesBefore);
     });
 

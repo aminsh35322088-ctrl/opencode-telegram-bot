@@ -90,10 +90,7 @@ describe("opencode/events", () => {
     bindings.byDirectory.mockReset().mockResolvedValue(null);
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectoryList.mockReset().mockResolvedValue([]);
-    logger.info.mockClear();
-    logger.debug.mockClear();
-    logger.warn.mockClear();
-    logger.error.mockClear();
+    vi.clearAllMocks();
     __setSseIdleTimeoutForTests(30_000);
   });
   afterEach(() => {
