@@ -234,6 +234,7 @@ describe("opencode/events", () => {
 
     const callback = vi.fn();
     const subscription = subscribeToEvents("D:/repo", callback);
+    void subscription.catch(() => undefined);
 
     await vi.waitFor(() => {
       expect(subscribeMock).toHaveBeenCalledTimes(1);
@@ -249,7 +250,7 @@ describe("opencode/events", () => {
 
   it("stopTopicEventSubscription removes only the matching session subscription", async () => {
     subscribeMock.mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-      stream: createStream([{ type: "server.heartbeat", properties: {} }], params?.signal ?? new AbortController().signal),
+      stream: createStream([{ type: "server.heartbeat", properties: { sessionID: "other" } }], params?.signal ?? new AbortController().signal),
     }));
 
     const callbackA = vi.fn();
