@@ -199,5 +199,19 @@ printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamic
 chown -R node:node /data/.cache /data/.local 2>/dev/null || true
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
+
+if [ "${TSNET_ENABLED:-false}" = "true" ]; then
+  if [ -z "${TS_AUTHKEY:-}" ]; then
+    printf '%s\n' "[railway] WARNING: TSNET_ENABLED=true but TS_AUTHKEY is missing; bridge not started" >&2
+  elif [ -z "${TSNET_TARGET:-}" ]; then
+    printf '%s\n' "[railway] WARNING: TSNET_ENABLED=true but TSNET_TARGET is missing; bridge not started" >&2
+  elif [ ! -x /usr/local/bin/tsnet-bridge ]; then
+    printf '%s\n' "[railway] WARNING: tsnet bridge binary is missing; bridge not started" >&2
+  else
+    printf '%s\n' "[railway] tsnet bridge enabled: local=${TSNET_LOCAL_ADDR:-127.0.0.1:2222} target=${TSNET_TARGET}:${TSNET_TARGET_PORT:-22}"
+    su -s /bin/sh node -c 'exec /usr/local/bin/tsnet-bridge' &
+  fi
+fi
+
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
 exec su -s /bin/sh node -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
