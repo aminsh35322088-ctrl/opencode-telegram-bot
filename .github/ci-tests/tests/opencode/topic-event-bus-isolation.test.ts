@@ -128,7 +128,7 @@ describe("topic-event-bus session isolation", () => {
   });
 
   it("drops a scoped event when the binding lookup is ambiguous", async () => {
-    const event = { type: "message.updated", properties: { sessionID: "session-a", directory: "/workspace" } } as unknown as Event;
+    const event = { type: "message.updated", properties: { sessionID: "session-unknown", directory: "/workspace" } } as unknown as Event;
     bindings.bySession.mockResolvedValue(null);
     bindings.byDirectory.mockResolvedValue([
       { chatId: 100, threadId: 11, sessionId: "session-a", directory: "/workspace" },

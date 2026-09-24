@@ -402,16 +402,21 @@ describe("bot/services/event-subscription-service lifecycle", () => {
 
     it("does not send a late event after the session target is removed", async () => {
       const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
+      const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
       service.setTelegramContext(null, null);
       const writesBefore = countTelegramWrites(api);
-      emitAssistantTextPart(summaryAggregator, "late");
-      await vi.waitFor(
-        () => {
-          expect(hasActiveStream("session-1")).toBe(false);
-        },
-        { timeout: STREAM_WAIT_TIMEOUT_MS },
-      );
-      expect(countTelegramWrites(api)).toBe(writesBefore);
+      try {
+        emitAssistantTextPart(summaryAggregator, "late");
+        await vi.waitFor(
+          () => {
+            expect(assistantRunState.hasActiveRun("session-1")).toBe(false);
+          },
+          { timeout: STREAM_WAIT_TIMEOUT_MS },
+        );
+        expect(countTelegramWrites(api)).toBe(writesBefore);
+      } finally {
+        assistantRunState.clearRun("session-1", "test_cleanup");
+      }
     });
 
     it("drops the response when the session changed while the agent was answering", async () => {
