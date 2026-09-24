@@ -1,6 +1,6 @@
 FROM golang:1.26.6-bookworm AS tsnet-builder
 WORKDIR /src
-COPY tsnet-bridge/go.mod ./go.mod
+COPY tsnet-bridge/go.mod tsnet-bridge/go.sum ./
 RUN go mod download
 COPY tsnet-bridge/main.go ./main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tsnet-bridge .
