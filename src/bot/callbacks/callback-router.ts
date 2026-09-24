@@ -7,7 +7,7 @@ import { handleCommandsCallback } from "./command-catalog-callback-handler.js";
 import { handleCompactConfirm } from "./context-control-callback-handler.js";
 import { handleLsCallback, handleOpenCallback } from "./file-browser-callback-handler.js";
 import { handleInlineMenuCancel } from "./inline-menu-cancel-callback-handler.js";
-import { handleMcpsCallback } from "./mcp-catalog-callback-handler.js";
+import { handleMcpsCallback } from "./mcp-server-callback-handler.js";
 import { handleMessagesCallback } from "./message-history-callback-handler.js";
 import { handleModelCenterCallback } from "./model-center-callback-handler.js";
 import { handlePermissionCallback } from "./permission-callback-handler.js";
@@ -16,7 +16,11 @@ import { handleQuestionCallback } from "./question-callback-handler.js";
 import { handleRenameCancel } from "./rename-callback-handler.js";
 import { handleSettingsCallback } from "./settings-callback-handler.js";
 import { clearProviderWizard, handleProviderCallback } from "../commands/providers-command.js";
-import { clearMcpAddWizard } from "../commands/mcp-catalog-command.js";
+import {
+  clearMcpAddWizard,
+  clearMcpAuthWizard,
+  clearMcpCredentialWizard,
+} from "../commands/mcp-server-command.js";
 import { clearIntegrationWizard, handleIntegrationsCallback } from "../commands/integrations-command.js";
 import { clearSkillWizard } from "../commands/skills-wizard.js";
 import { clearSkillImportFlow } from "../commands/skills-import-flow.js";
@@ -54,6 +58,8 @@ function clearGeneralPanelWizardState(reason: string): void {
   clearProviderWizard();
   clearIntegrationWizard();
   clearMcpAddWizard();
+  clearMcpAuthWizard();
+  clearMcpCredentialWizard();
   clearSkillWizard();
   clearSkillImportFlow();
   const state = interactionManager.getSnapshot();

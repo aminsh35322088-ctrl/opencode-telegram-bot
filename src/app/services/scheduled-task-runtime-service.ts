@@ -133,6 +133,32 @@ export class ScheduledTaskRuntime {
     this.deliveryQueue = this.deliveryQueue.filter((delivery) => delivery.taskId !== taskId);
   }
 
+  hasRunningTasks(): boolean {
+    return this.runningTaskIds.size > 0;
+  }
+
+  clearAll(reason: string): boolean {
+    if (this.runningTaskIds.size > 0) {
+      logger.warn(
+        `[ScheduledTaskRuntime] Refusing runtime clear while tasks are running: reason=${reason}, running=${this.runningTaskIds.size}`,
+      );
+      return false;
+    }
+
+    for (const timer of this.timersByTaskId.values()) {
+      clearTimeout(timer);
+    }
+    const timers = this.timersByTaskId.size;
+    const deliveries = this.deliveryQueue.length;
+    this.timersByTaskId.clear();
+    this.deliveryQueue = [];
+    this.flushInProgress = false;
+    logger.info(
+      `[ScheduledTaskRuntime] Cleared runtime state: reason=${reason}, timers=${timers}, deferredDeliveries=${deliveries}`,
+    );
+    return true;
+  }
+
   async flushDeferredDeliveries(): Promise<void> {
     if (
       this.flushInProgress ||

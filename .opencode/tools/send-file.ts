@@ -28,9 +28,10 @@ export default tool({
     caption: tool.schema.string().optional().describe("Optional short Telegram caption."),
   },
   async execute(args, context) {
+    const base = context.directory || context.worktree || process.cwd();
     const filePath = path.isAbsolute(args.path)
       ? path.normalize(args.path)
-      : path.resolve(context.worktree, args.path);
+      : path.resolve(base, args.path);
 
     if (isSensitive(filePath)) {
       throw new Error("Refusing to send a sensitive or credential-like file.");

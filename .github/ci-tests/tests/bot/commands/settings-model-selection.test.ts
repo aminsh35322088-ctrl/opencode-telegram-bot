@@ -21,7 +21,7 @@ vi.mock("../../../src/app/services/model-selection-service.js", () => ({
   fetchCurrentModel: vi.fn(),
 }));
 
-vi.mock("../../../src/bot/commands/mcp-catalog-command.js", () => ({ mcpsCommand: vi.fn() }));
+vi.mock("../../../src/bot/commands/mcp-server-command.js", () => ({ mcpsCommand: vi.fn() }));
 vi.mock("../../../src/bot/commands/skills-catalog-command.js", () => ({ skillsCommand: vi.fn() }));
 vi.mock("../../../src/bot/commands/command-catalog-command.js", () => ({ commandsCommand: vi.fn() }));
 vi.mock("../../../src/app/stores/settings-store.js", () => ({

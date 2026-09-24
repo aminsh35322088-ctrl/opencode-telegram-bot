@@ -3,22 +3,33 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { reconcileTopicWorkspaces } from "../../../src/app/services/telegram-topic-workspace-service.js";
+import {
+  deleteTelegramTopicWorkspace,
+  isTelegramTopicWorkspace,
+  reconcileTopicWorkspaces,
+} from "../../../src/app/services/telegram-topic-workspace-service.js";
 
 describe("telegram-topic-workspace-service reconcile", () => {
   let root: string;
+  let appHome: string;
   let previous: string | undefined;
+  let previousHome: string | undefined;
 
   beforeEach(async () => {
     previous = process.env.OPENCODE_TOPIC_WORKSPACES_DIR;
-    root = await mkdtemp(path.join(os.tmpdir(), "topic-workspace-reconcile-"));
+    previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+    appHome = await mkdtemp(path.join(os.tmpdir(), "topic-workspace-home-"));
+    root = path.join(appHome, "opencode", "topic-workspaces");
     process.env.OPENCODE_TOPIC_WORKSPACES_DIR = root;
+    process.env.OPENCODE_TELEGRAM_HOME = appHome;
   });
 
   afterEach(async () => {
     if (previous === undefined) delete process.env.OPENCODE_TOPIC_WORKSPACES_DIR;
     else process.env.OPENCODE_TOPIC_WORKSPACES_DIR = previous;
-    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+    else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+    await rm(appHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   async function makeWorkspace(chatId: number, sessionId: string): Promise<string> {
@@ -66,8 +77,51 @@ describe("telegram-topic-workspace-service reconcile", () => {
     }
   });
 
-  it("is a no-op when the workspace root does not exist yet", async () => {
+  it("reconciles legacy persistent-root workspaces without touching referenced current workspaces", async () => {
+    const live = await makeWorkspace(100, "sess-live");
+    const legacy = path.join(appHome, "topic-workspaces", "100", "sess-legacy");
+    await mkdir(legacy, { recursive: true });
+    await writeFile(path.join(legacy, "README.md"), "# legacy\n", "utf-8");
+
+    expect(isTelegramTopicWorkspace(legacy)).toBe(true);
+
+    const removed = await reconcileTopicWorkspaces(new Set([live]));
+
+    expect(removed).toContain(legacy);
+    expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(live)).toBe(true);
+  });
+
+  it("deletes a legacy workspace through the same guarded delete API", async () => {
+    const legacy = path.join(appHome, "topic-workspaces", "100", "sess-legacy");
+    const outside = path.join(appHome, "outside", "100", "sess");
+    await mkdir(legacy, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await writeFile(path.join(legacy, "README.md"), "# legacy\n", "utf-8");
+    await writeFile(path.join(outside, "README.md"), "# outside\n", "utf-8");
+
+    await expect(deleteTelegramTopicWorkspace(legacy)).resolves.toBeUndefined();
+    await expect(deleteTelegramTopicWorkspace(outside)).rejects.toThrow(/refusing to delete/i);
+
+    expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(outside)).toBe(true);
+  });
+
+  it("keeps path guards strict across current and legacy roots", async () => {
+    const validLegacy = path.join(appHome, "topic-workspaces", "100", "sess-legacy");
+    const malformedLegacy = path.join(appHome, "topic-workspaces", "not-a-chat", "sess");
+    const tooDeepLegacy = path.join(appHome, "topic-workspaces", "100", "sess", "nested");
+    const outside = path.join(appHome, "unmanaged", "100", "sess");
+
+    expect(isTelegramTopicWorkspace(validLegacy)).toBe(true);
+    expect(isTelegramTopicWorkspace(malformedLegacy)).toBe(false);
+    expect(isTelegramTopicWorkspace(tooDeepLegacy)).toBe(false);
+    expect(isTelegramTopicWorkspace(outside)).toBe(false);
+  });
+
+  it("is a no-op when the workspace roots do not exist yet", async () => {
     await rm(root, { recursive: true, force: true });
+    await rm(path.join(appHome, "topic-workspaces"), { recursive: true, force: true });
     const removed = await reconcileTopicWorkspaces(new Set());
     expect(removed).toEqual([]);
   });

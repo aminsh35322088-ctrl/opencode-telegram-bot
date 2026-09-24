@@ -23,4 +23,12 @@ describe("Model Center session continuity", () => {
     expect(handlerSource).not.toContain("stopTopicEventSubscription(");
     expect(handlerSource).not.toContain("retireSessionRuntime(");
   });
+
+  it("does not block model selection on tool-call verification state", () => {
+    expect(handlerSource).not.toContain("This model button is stale");
+    expect(handlerSource).not.toContain("refreshUnavailableModelAction");
+    expect(handlerSource).not.toContain("isSelectableChatModel(");
+    expect(handlerSource).not.toContain("Tool compatibility could not be verified");
+    expect(handlerSource).toContain("Model Center was refreshed.");
+  });
 });

@@ -6,6 +6,7 @@ import { fetchSkillFromGitHub, resolveSkillSource } from "../../app/services/ski
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearSkillWizard } from "./skills-wizard.js";
+import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
 export const SKILLS_IMPORT_CALLBACK_PREFIX = "skills:imp_";
 export const SKILLS_IMPORT_CALLBACK_CONFIRM = `${SKILLS_IMPORT_CALLBACK_PREFIX}confirm`;
@@ -24,6 +25,9 @@ interface SkillImportState {
 let state: SkillImportState | null = null;
 
 function callbackMessageId(ctx: Context): number | null {
+  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined;
+  if (typeof canonical === "number") return canonical;
   const message = ctx.callbackQuery?.message;
   if (!message || !("message_id" in message)) return null;
   return typeof message.message_id === "number" ? message.message_id : null;
@@ -59,7 +63,9 @@ async function editImportPanel(
   keyboard: InlineKeyboard = navigationKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard });
+  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
+    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
+  });
 }
 
 async function deleteInput(ctx: Context): Promise<void> {
@@ -153,9 +159,12 @@ export async function handleSkillImportCallback(ctx: Context, data: string): Pro
   if (data === SKILLS_IMPORT_CALLBACK_CANCEL) {
     clearSkillImportFlow();
     await ctx.answerCallbackQuery({ text: t("common.cancelled") }).catch(() => {});
-    await ctx.editMessageText(t("skills.import.cancelled"), {
-      reply_markup: new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home"),
-    }).catch(() => {});
+    await editImportPanel(
+      ctx,
+      current.messageId,
+      t("skills.import.cancelled"),
+      new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home"),
+    ).catch(() => {});
     return true;
   }
 
@@ -184,9 +193,12 @@ export async function handleSkillImportCallback(ctx: Context, data: string): Pro
       await renderCandidateList(ctx, current.messageId, remaining);
     } else {
       clearSkillImportFlow();
-      await ctx.editMessageText(`${t("skills.imported", { name: skill.name })}\n\n${t("skills.restart_hint")}`, {
-        reply_markup: new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home"),
-      }).catch(() => {});
+      await editImportPanel(
+        ctx,
+        current.messageId,
+        `${t("skills.imported", { name: skill.name })}\n\n${t("skills.restart_hint")}`,
+        new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home"),
+      ).catch(() => {});
     }
     return true;
   }

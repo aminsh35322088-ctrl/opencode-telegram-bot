@@ -42,7 +42,6 @@ These are registry aliases for discovery only; the model still invokes the nativ
 | `railway` | project/status/log/variable/deploy operations |
 | `storage-health` | persistent-volume inspection and safe cache cleanup |
 | `session-recovery` | inspect/abort/continue stalled OpenCode sessions |
-| `rustdesk` | authorized device discovery, terminal, screen, input, touch, clipboard, files, and system actions |
 
 All custom tools use an explicit `action` discriminator, including formerly single-purpose tools.
 
@@ -60,12 +59,6 @@ Credential enrollment remains UI-only. API keys and GitHub/Railway tokens are ne
 
 The `media` tool reuses the bot's configured AI connections instead of asking the model for credentials. Audio transcription reads a bounded file inside the active worktree. Image generation/editing uses the resolved default Image Chat profile and writes the resulting image back into the active worktree.
 
-## RustDesk remote-device actions
-
-The `rustdesk` tool delegates transport/control to a separate bridge. Device discovery returns OS and capability metadata; the model decides whether terminal, GUI, touch, clipboard, or file actions are appropriate instead of relying on hard-coded OS routing.
-
-See [`RUSTDESK_AGENT_TOOL.md`](./RUSTDESK_AGENT_TOOL.md) for the bridge contract and security boundary.
-
 ## Risk metadata vs runtime permissions
 
 Registry risk metadata (`read`, `write`, `external`, `mutating`, `destructive`) helps the agent and future policy layers reason about side effects. It does **not** replace OpenCode's runtime permission configuration. Runtime permission rules remain authoritative.
@@ -73,3 +66,11 @@ Registry risk metadata (`read`, `write`, `external`, `mutating`, `destructive`) 
 ## Runtime dependency policy
 
 Railway is production only. Dependency changes are made in source control and resolved by the normal GitHub/container build. The running bot must not mutate its application dependency graph on demand.
+
+## Custom provider capability verification
+
+Custom OpenAI-compatible connections keep the exact user-supplied HTTP(S) base URL (for example a path-prefixed /v1 endpoint); the bot does not rewrite hosts or maintain provider-specific endpoint exceptions. Model discovery uses the provider's /models catalog only and never runs inference across the discovered catalog.
+
+Agent tool-calling capability is fail-closed for custom models. Provider-advertised tool metadata is treated as a hint, not proof: a model becomes selectable for agent-mode chat/coding only after that exact provider/model completes the bounded live tool-call verification. Verification is triggered on demand for the model being selected, not by a startup or catalog-wide background scan.
+
+Provider discovery errors are surfaced generically with bounded status/code/message/request metadata where available. Stored API keys are redacted from those diagnostics.

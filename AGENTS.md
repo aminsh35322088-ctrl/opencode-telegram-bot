@@ -93,6 +93,19 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 - Reply in the same language the user uses.
 - User-facing Telegram text must use the existing i18n system.
 - Do not expose internal stack traces to users.
+- Prefer static bot actions/menus (the `.opencode/tools` catalog and Telegram UI flows) over raw `bash` when the bot already exposes the same capability.
+
+### MCP credentials and OAuth
+
+- MCP OAuth/client secrets are derived from the bot token key material and stored encrypted by the bot. They must never appear in OpenCode config files, model prompts, logs, or user-facing error text.
+- Rotating `TELEGRAM_BOT_TOKEN` invalidates stored MCP secret encryption; re-enter credentials after rotation.
+- OAuth callback URLs and authorization codes are deleted from Telegram immediately after use and are never sent to the model.
+
+### Custom provider tool calling
+
+- OpenCode custom-provider models stay fail-closed (`tool_call: false`) until a real tool-call probe succeeds for that exact model.
+- Startup writes the fail-closed config first. Verification is demand-driven for the exact selected/active custom model, single-flighted per provider/model, and only reloads OpenCode after a positive probe when runtime activity is safely idle.
+- When the selected model falls back because it is unavailable or not agent-capable, notify the user through i18n — do not rely on `logger.warn` alone.
 
 ### Git
 

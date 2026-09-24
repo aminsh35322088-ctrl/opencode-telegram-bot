@@ -1,12 +1,13 @@
 import { clearProviderPriceViews } from "../menus/provider-price-view.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { mcpsCommand } from "../commands/mcp-catalog-command.js";
+import { mcpsCommand } from "../commands/mcp-server-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
 import { getFreeModelDetectionEnabled, setFreeModelDetectionEnabled, getCompactOutputMode, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, getCurrentTopicSettings, setCompactOutputMode, setMessageFormatMode, setPromptQueueEnabled, setResponseStreamingMode, setSendDiffFileAttachments, setShowAssistantRunFooter, setShowThinkingContent, updateTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import { scheduleModelsDevPriceRefresh } from "../../app/services/models-dev-price-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
@@ -137,12 +138,15 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "both"); return true;
       case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "both"); return true;
       case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
-      case SETTINGS_FREE_DETECTION_CALLBACK:
+      case SETTINGS_FREE_DETECTION_CALLBACK: {
         await ctx.answerCallbackQuery();
-        await setFreeModelDetectionEnabled(!getFreeModelDetectionEnabled());
+        const enabled = !getFreeModelDetectionEnabled();
+        await setFreeModelDetectionEnabled(enabled);
         clearProviderPriceViews();
+        if (enabled) scheduleModelsDevPriceRefresh();
         await renderSettingsView(ctx, buildExperimentalSettingsView(), "back");
         return true;
+      }
       case SETTINGS_ADVANCED_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
       case SETTINGS_TOPIC_DEFAULTS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicDefaultsSettingsView(), "back"); return true;
       case SETTINGS_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx as never); return true;

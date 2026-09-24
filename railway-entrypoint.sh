@@ -178,6 +178,7 @@ chown -R node:node /data
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
+
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
 printf '%s\n' "[railway] OpenCode CLI: $(su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"

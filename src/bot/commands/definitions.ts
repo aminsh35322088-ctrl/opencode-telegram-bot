@@ -14,7 +14,7 @@ const COMMAND_DEFINITIONS: BotCommandDefinition[] = [
   { command: "session", description: "🧭 OpenCode session dashboard" },
   { command: "settings", description: "⚙️ Configure bot settings" },
   { command: "topic_settings", description: "⚙️ Open AI Topic settings" },
-  { command: "providers", description: "🔌 Manage AI providers" },
+  { command: "providers", description: "🔌 Manage API connections" },
   { command: "rename", description: "🏷️ Rename the current session" },
   { command: "abort", description: "🛑 Stop the current task" },
   { command: "stop", description: "🛑 Alias for /abort" },

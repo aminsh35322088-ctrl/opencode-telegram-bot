@@ -10,6 +10,8 @@ export interface AppState {
   customProviders?: Record<string, unknown>;
   imageAi?: Record<string, unknown>;
   integrations?: Record<string, unknown>;
+  mcpCredentials?: Record<string, unknown>;
+  mcpServers?: Record<string, unknown>;
   aiRoles?: Record<string, unknown>;
   [key: string]: unknown;
 }

@@ -32,7 +32,11 @@ function getStore(state: Awaited<ReturnType<typeof readAppState>>): ImageAiStore
   return cloudflare ? { providers, cloudflare } : { providers };
 }
 async function readStore(): Promise<ImageAiStore> { return getStore(await readAppState()); }
-async function writeStore(store: ImageAiStore, beforeSave: () => void = () => {}): Promise<void> { await updateAppState(() => { beforeSave(); return { imageAi: store }; }); }
+async function writeStore(store: ImageAiStore, beforeSave: () => void = () => {}): Promise<void> {
+  await updateAppState(() => { beforeSave(); return { imageAi: store }; });
+  const { invalidateUnifiedModelCatalog } = await import("./unified-model-catalog-service.js");
+  invalidateUnifiedModelCatalog();
+}
 function status(provider: StoredImageAiProvider, defaultId?: string): ImageAiProviderStatus { const result: ImageAiProviderStatus = { id: provider.id, name: provider.name, model: provider.model, capabilities: provider.capabilities, active: provider.active, default: provider.active && provider.id === defaultId }; if (provider.editModel) result.editModel = provider.editModel; return result; }
 async function cloudflareProvider(): Promise<StoredImageAiProvider | null> { const credentials = (await readStore()).cloudflare; if (!credentials) return null; return { id: CLOUDFLARE_ID, name: "Cloudflare Workers AI", baseURL: `${CLOUDFLARE_BASE_URL}/accounts/${credentials.accountId}/ai/run`, model: CLOUDFLARE_MODEL, capabilities: ["generate", "edit"], active: true, default: true, apiKey: credentials.token, updatedAt: new Date().toISOString() }; }
 

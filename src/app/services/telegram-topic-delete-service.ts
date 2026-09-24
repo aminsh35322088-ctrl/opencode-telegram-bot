@@ -1,6 +1,7 @@
 import type { Api } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession } from "./session-service.js";
+import { detachAttachedSession } from "./attach-service.js";
 import { removeTelegramTopicBinding, listTelegramTopicBindings, type TelegramTopicBinding } from "./telegram-topic-store.js";
 import { deleteTelegramTopicWorkspace, isTelegramTopicWorkspace } from "./telegram-topic-workspace-service.js";
 import { removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
@@ -58,8 +59,49 @@ async function deleteForumTopicWithRetry(api: Api, chatId: number, threadId: num
   }
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const candidate = error as {
+      message?: unknown;
+      name?: unknown;
+      _tag?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      data?: { message?: unknown; name?: unknown; _tag?: unknown; status?: unknown };
+      response?: { status?: unknown };
+    };
+    const message = candidate.message ?? candidate.data?.message;
+    if (typeof message === "string" && message.trim()) return message;
+    try { return JSON.stringify(error); } catch { /* fall through */ }
+  }
+  return String(error);
+}
+
+export function isOpencodeSessionNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return /session.*not found|not found.*session/i.test(errorMessage(error));
+  const candidate = error as {
+    name?: unknown;
+    _tag?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    data?: { message?: unknown; name?: unknown; _tag?: unknown; status?: unknown };
+    response?: { status?: unknown };
+  };
+  const status = candidate.status ?? candidate.statusCode ?? candidate.data?.status ?? candidate.response?.status;
+  if (status === 404) return true;
+  const descriptor = [
+    candidate.name,
+    candidate._tag,
+    candidate.data?.name,
+    candidate.data?._tag,
+    errorMessage(error),
+  ].filter((value): value is string => typeof value === "string").join(" ");
+  return /NotFoundError|SessionNotFound|session.*not found|not found.*session/i.test(descriptor);
+}
+
 function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
+  return error instanceof Error ? error : new Error(errorMessage(error));
 }
 
 export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopicBinding): Promise<void> {
@@ -78,42 +120,44 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
     cleanupErrors.push(new Error(`Refused to delete unmanaged directory: ${binding.directory}`));
   }
 
-  // Telegram Topic deletion is best-effort and idempotent. A failure here (for
-  // example missing permissions or a chat that is briefly unreachable) must
-  // never prevent local session, workspace, binding, and runtime-state cleanup;
-  // the error is reported at the end so the orphan can be retried or reset.
-  try {
-    await deleteForumTopicWithRetry(api, binding.chatId, binding.threadId);
-    topicTelemetry("telegram_topic_deleted", context);
-  } catch (error) {
-    cleanupErrors.push(asError(error));
-    logger.warn(`[TelegramTopics] Telegram Topic delete failed; continuing with local cleanup: chat=${binding.chatId}, thread=${binding.threadId}`, error);
-    topicTelemetry("telegram_topic_delete_failed_cleanup_continues", context);
-  }
-
   try {
     const { data, error } = await opencodeClient.session.delete({ sessionID: binding.sessionId, directory: binding.directory });
     if (error) {
-      cleanupErrors.push(asError(error));
-      logger.warn(`[TelegramTopics] Session cleanup returned an error; continuing with idempotent Topic cleanup: session=${binding.sessionId}`, error);
-      topicTelemetry("session_delete_failed_but_cleanup_continues", context);
+      if (isOpencodeSessionNotFoundError(error)) {
+        logger.info(`[TelegramTopics] OpenCode session already absent: session=${binding.sessionId}`);
+        topicTelemetry("session_already_deleted", context);
+      } else {
+        throw asError(error);
+      }
     } else if (data !== true) {
-      const error = new Error(`OpenCode did not confirm deletion of session ${binding.sessionId}`);
-      cleanupErrors.push(error);
-      logger.warn(`[TelegramTopics] OpenCode did not confirm session deletion: session=${binding.sessionId}`);
-      topicTelemetry("session_delete_failed_but_cleanup_continues", context);
+      throw new Error(`OpenCode did not confirm deletion of session ${binding.sessionId}`);
     } else {
       topicTelemetry("session_deleted", context);
     }
   } catch (error) {
-    cleanupErrors.push(asError(error));
-    logger.warn(`[TelegramTopics] Session cleanup threw; continuing with idempotent Topic cleanup: session=${binding.sessionId}`, error);
-    topicTelemetry("session_delete_failed_but_cleanup_continues", context);
+    if (isOpencodeSessionNotFoundError(error)) {
+      logger.info(`[TelegramTopics] OpenCode session already absent: session=${binding.sessionId}`);
+      topicTelemetry("session_already_deleted", context);
+    } else {
+      const normalized = asError(error);
+      cleanupErrors.push(normalized);
+      logger.warn(`[TelegramTopics] Session cleanup failed; retaining Topic binding for retry: session=${binding.sessionId}`, error);
+      topicTelemetry("session_delete_failed_binding_retained", context);
+      throw new AggregateError(
+        cleanupErrors,
+        `Telegram Topic ${binding.threadId} cleanup stopped because OpenCode session deletion was not confirmed; binding retained for retry.`,
+      );
+    }
   }
 
   stopTopicEventSubscription(binding.directory, binding.sessionId);
   getTelegramTopicRuntimeDependencies()?.retireSessionRuntime(binding.sessionId, "topic_deleted");
   topicTelemetry("event_subscription_removed", context);
+
+  if (getCurrentSession()?.id === binding.sessionId) {
+    clearSession();
+    detachAttachedSession("telegram_topic_deleted");
+  }
 
   if (managedWorkspace) {
     try {
@@ -121,9 +165,26 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
       topicTelemetry("workspace_deleted", context);
     } catch (error) {
       cleanupErrors.push(asError(error));
-      logger.error(`[TelegramTopics] Failed to delete managed Topic workspace: directory=${binding.directory}`, error);
-      topicTelemetry("workspace_delete_failed", context);
+      logger.error(`[TelegramTopics] Failed to delete managed Topic workspace; retaining Topic binding for retry: directory=${binding.directory}`, error);
+      topicTelemetry("workspace_delete_failed_binding_retained", context);
+      throw new AggregateError(
+        cleanupErrors,
+        `Telegram Topic ${binding.threadId} cleanup stopped because workspace deletion failed; binding retained for retry.`,
+      );
     }
+  }
+
+  try {
+    await deleteForumTopicWithRetry(api, binding.chatId, binding.threadId);
+    topicTelemetry("telegram_topic_deleted", context);
+  } catch (error) {
+    cleanupErrors.push(asError(error));
+    logger.warn(`[TelegramTopics] Telegram Topic delete failed; retaining binding for retry: chat=${binding.chatId}, thread=${binding.threadId}`, error);
+    topicTelemetry("telegram_topic_delete_failed_binding_retained", context);
+    throw new AggregateError(
+      cleanupErrors,
+      `Telegram Topic ${binding.threadId} cleanup stopped because Telegram deletion failed; binding retained for retry.`,
+    );
   }
 
   promptQueue.clearSession(binding.sessionId, "telegram_topic_deleted");
@@ -144,7 +205,11 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
     topicTelemetry("runtime_state_removed", context);
   } catch (error) {
     cleanupErrors.push(asError(error));
-    logger.error(`[TelegramTopics] Failed to remove Topic runtime state: chat=${binding.chatId}, thread=${binding.threadId}`, error);
+    logger.error(`[TelegramTopics] Failed to remove Topic runtime state; retaining binding for retry: chat=${binding.chatId}, thread=${binding.threadId}`, error);
+    throw new AggregateError(
+      cleanupErrors,
+      `Telegram Topic ${binding.threadId} cleanup stopped because runtime-state removal failed; binding retained for retry.`,
+    );
   }
 
   try {
@@ -154,8 +219,6 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
     cleanupErrors.push(asError(error));
     logger.error(`[TelegramTopics] Failed to remove Topic binding: chat=${binding.chatId}, session=${binding.sessionId}`, error);
   }
-
-  if (getCurrentSession()?.id === binding.sessionId) clearSession();
 
   const remainingBindings = (await listTelegramTopicBindings()).filter((b) => b.chatId === binding.chatId);
   if (remainingBindings.length === 0) {

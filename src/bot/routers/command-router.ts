@@ -17,7 +17,7 @@ import { taskListCommand } from "../commands/tasklist-command.js";
 import { renameCommand } from "../commands/rename-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
-import { mcpsCommand } from "../commands/mcp-catalog-command.js";
+import { mcpsCommand } from "../commands/mcp-server-command.js";
 import { startCommand } from "../commands/start-command.js";
 import { helpCommand } from "../commands/help-command.js";
 import { statusCommand } from "../commands/status-command.js";

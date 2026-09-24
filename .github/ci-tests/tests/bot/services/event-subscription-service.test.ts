@@ -419,8 +419,9 @@ describe("bot/services/event-subscription-service", () => {
 
     await vi.waitFor(() => {
       expect(api.sendDocument).toHaveBeenCalledTimes(1);
+      expect(api.sendMessage).toHaveBeenCalledTimes(1);
     });
-    expect(api.sendMessage).not.toHaveBeenCalled();
+    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("Write File");
   });
 
   it("streams write tool call text without document attachment when diff files are disabled", async () => {
@@ -436,6 +437,20 @@ describe("bot/services/event-subscription-service", () => {
     );
     expect(defined(api.sendMessage.mock.calls[0]?.[1])).toContain("Write File");
     expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
+  it("does not emit footer or keyboard-update messages when idle is caused by Pause", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    const { setPausedSession, clearPausedSession } = await import("../../../src/app/managers/paused-session-manager.js");
+
+    setPausedSession({ id: "session-1", title: "Test session", directory: "D:/repo" });
+    api.sendMessage.mockClear();
+
+    emitSessionIdle(summaryAggregator);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    clearPausedSession("session-1");
   });
 
   it("routes session output for an AI Topic session to its thread even after General clobbered the context", async () => {
@@ -495,7 +510,7 @@ describe("bot/services/event-subscription-service", () => {
       expect(lastText).not.toContain("⏳");
     });
 
-    it("leaves fast tool calls exactly as before", async () => {
+    it("announces fast tool calls immediately and still finalizes them cleanly", async () => {
       const { api, summaryAggregator } = await setupService(false);
 
       useTrackerFakeTimers();
@@ -506,8 +521,9 @@ describe("bot/services/event-subscription-service", () => {
 
       const texts = collectSentTexts(api);
       expect(texts.some((text) => text.includes("npm test"))).toBe(true);
-      expect(texts.some((text) => text.includes("⏳"))).toBe(false);
+      expect(texts.some((text) => text.includes("⏳") && text.includes("Run Command"))).toBe(true);
       expect(texts.some((text) => text.includes("🕒"))).toBe(false);
+      expect(texts.at(-1)).not.toContain("⏳");
     });
 
     it("does not send compact progress after the session goes idle", async () => {
@@ -569,6 +585,7 @@ describe("bot/services/event-subscription-service", () => {
       expect(lastText).toContain("npm test");
       // The final line carries the exact duration, not the display bucket.
       expect(lastText).toContain("· 🕒 29s");
+      expect(lastText).toContain("❌");
       expect(lastText).not.toContain("⏳");
     });
 

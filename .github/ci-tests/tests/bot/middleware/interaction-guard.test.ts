@@ -8,6 +8,8 @@ import { t } from "../../../src/i18n/index.js";
 const mocked = vi.hoisted(() => ({
   reconcileForegroundBusyStateMock: vi.fn(),
   questionManagerActiveForChatMock: vi.fn().mockReturnValue(true),
+  mcpTextWizardActiveMock: vi.fn().mockReturnValue(false),
+  handleMcpsMessageMock: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock("../../../src/app/services/run-control-service.js", () => ({
@@ -19,6 +21,11 @@ vi.mock("../../../src/app/managers/question-manager.js", () => ({
     isActiveForChat: mocked.questionManagerActiveForChatMock,
     clear: vi.fn(),
   },
+}));
+
+vi.mock("../../../src/bot/commands/mcp-server-command.js", () => ({
+  isMcpTextWizardActive: mocked.mcpTextWizardActiveMock,
+  handleMcpsMessage: mocked.handleMcpsMessageMock,
 }));
 
 function createTextContext(text: string): Context {
@@ -55,6 +62,32 @@ describe("interactionGuardMiddleware", () => {
     mocked.reconcileForegroundBusyStateMock.mockResolvedValue(undefined);
     mocked.questionManagerActiveForChatMock.mockReset();
     mocked.questionManagerActiveForChatMock.mockReturnValue(true);
+    mocked.mcpTextWizardActiveMock.mockReset().mockReturnValue(false);
+    mocked.handleMcpsMessageMock.mockReset().mockResolvedValue(false);
+  });
+
+  it("consumes MCP wizard text before it can reach the prompt pipeline", async () => {
+    mocked.mcpTextWizardActiveMock.mockReturnValue(true);
+    mocked.handleMcpsMessageMock.mockResolvedValue(true);
+    const ctx = createTextContext("github");
+    const next: NextFunction = vi.fn().mockResolvedValue(undefined);
+
+    await interactionGuardMiddleware(ctx, next);
+
+    expect(mocked.handleMcpsMessageMock).toHaveBeenCalledWith(ctx);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when MCP wizard state exists but its text handler cannot consume input", async () => {
+    mocked.mcpTextWizardActiveMock.mockReturnValue(true);
+    mocked.handleMcpsMessageMock.mockResolvedValue(false);
+    const ctx = createTextContext("github");
+    const next: NextFunction = vi.fn().mockResolvedValue(undefined);
+
+    await interactionGuardMiddleware(ctx, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(t("interaction.blocked.expected_text"));
   });
 
   it("passes through when there is no active interaction", async () => {

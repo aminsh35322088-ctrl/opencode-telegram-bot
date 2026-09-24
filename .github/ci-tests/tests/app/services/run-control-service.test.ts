@@ -3,10 +3,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   reconcileBusyStateNowMock: vi.fn(),
   loggerWarnMock: vi.fn(),
+  sessionStatusMock: vi.fn(),
+  listTopicRuntimeStatesMock: vi.fn(),
+  getCurrentSessionMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/busy-reconciliation-service.js", () => ({
   reconcileBusyStateNow: mocked.reconcileBusyStateNowMock,
+}));
+vi.mock("../../../src/opencode/client.js", () => ({
+  opencodeClient: { session: { status: mocked.sessionStatusMock } },
+}));
+vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
+  listTopicRuntimeStates: mocked.listTopicRuntimeStatesMock,
+}));
+vi.mock("../../../src/app/services/session-service.js", () => ({
+  getCurrentSession: mocked.getCurrentSessionMock,
 }));
 
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -20,7 +32,10 @@ vi.mock("../../../src/utils/logger.js", () => ({
 
 import { attachManager } from "../../../src/app/managers/attach-manager.js";
 import { foregroundSessionState } from "../../../src/app/managers/foreground-session-state-manager.js";
-import { reconcileForegroundBusyState } from "../../../src/app/services/run-control-service.js";
+import {
+  getOpenCodeActivityState,
+  reconcileForegroundBusyState,
+} from "../../../src/app/services/run-control-service.js";
 
 describe("app/services/run-control-service", () => {
   beforeEach(() => {
@@ -29,6 +44,9 @@ describe("app/services/run-control-service", () => {
     mocked.reconcileBusyStateNowMock.mockReset();
     mocked.reconcileBusyStateNowMock.mockResolvedValue(undefined);
     mocked.loggerWarnMock.mockReset();
+    mocked.sessionStatusMock.mockReset().mockResolvedValue({ data: {}, error: null });
+    mocked.listTopicRuntimeStatesMock.mockReset().mockResolvedValue([]);
+    mocked.getCurrentSessionMock.mockReset().mockReturnValue(null);
   });
 
   it("uses non-throttled reconciliation for foreground busy directories", async () => {
@@ -54,5 +72,31 @@ describe("app/services/run-control-service", () => {
       "[BusyGuard] Failed to reconcile foreground busy state",
       error,
     );
+  });
+
+  it("detects a busy background OpenCode session in a Topic directory", async () => {
+    mocked.listTopicRuntimeStatesMock.mockResolvedValue([
+      {
+        chatId: 1,
+        threadId: 2,
+        settings: { workspaceDirectory: "D:/topic", runState: "idle" },
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+    mocked.sessionStatusMock.mockResolvedValue({
+      data: {
+        "background-child": { type: "busy" },
+      },
+      error: null,
+    });
+
+    await expect(getOpenCodeActivityState()).resolves.toBe("busy");
+    expect(mocked.sessionStatusMock).toHaveBeenCalledWith({ directory: "D:/topic" });
+  });
+
+  it("fails closed when OpenCode activity cannot be verified", async () => {
+    mocked.sessionStatusMock.mockResolvedValue({ data: undefined, error: new Error("offline") });
+
+    await expect(getOpenCodeActivityState()).resolves.toBe("unavailable");
   });
 });

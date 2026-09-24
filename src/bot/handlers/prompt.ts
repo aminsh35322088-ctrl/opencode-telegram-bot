@@ -179,7 +179,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     });
 
     void Promise.resolve()
-      .then(() => keyboardManager.sendKeyboardUpdate(ctx.chat!.id, false, currentSession!.id))
+      .then(() => keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession!.id))
       .catch((error) => {
         logger.warn(`[Bot] Busy keyboard update failed without blocking prompt dispatch: session=${currentSession!.id}`, error);
       });

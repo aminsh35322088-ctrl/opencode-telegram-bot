@@ -14,6 +14,10 @@ vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("../../../src/app/stores/settings-store.js", () => ({
+  getMainNavigationMessageId: () => 4242,
+}));
+
 const serviceMock = vi.hoisted(() => ({
   resolveSkillSource: vi.fn(),
   fetchSkillFromGitHub: vi.fn(),
@@ -36,6 +40,7 @@ import { handleSkillWizardMessage, startSkillWizard, clearSkillWizard } from "..
 import { t } from "../../../src/i18n/index.js";
 
 interface PanelEdit {
+  messageId?: number;
   text: string;
   options?: { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
 }
@@ -48,9 +53,10 @@ interface Ctx {
 function makeCtx(messageId = 700): Ctx {
   const edits: PanelEdit[] = [];
   const recordEdit = vi.fn(async (...args: unknown[]) => {
+    const messageId = typeof args[0] === "number" ? Number(args[1]) : undefined;
     const text = typeof args[0] === "number" ? String(args[2] ?? "") : String(args[0] ?? "");
     const options = (typeof args[0] === "number" ? args[3] : args[1]) as PanelEdit["options"];
-    edits.push({ text, options });
+    edits.push({ messageId, text, options });
     return true;
   });
   const context = {
@@ -137,6 +143,7 @@ describe("bot/commands/skills-import-flow", () => {
 
     expect(isSkillImportActive()).toBe(true);
     expect(ctx.context.reply).not.toHaveBeenCalled();
+    expect(ctx.edits[0]?.messageId).toBe(4242);
     expect(ctx.edits[0]?.text).toBe(t("skills.import.ask_url"));
     expect(ctx.lastKeyboard().flat().map((b) => b.callback_data)).toEqual(
       expect.arrayContaining(["skills:imp_cancel", "main:home"]),

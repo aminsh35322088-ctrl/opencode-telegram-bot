@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import * as ts from "typescript";
 
 import {
   AGENT_ACTIONS,
@@ -36,6 +37,16 @@ describe("agent action registry", () => {
     }
   });
 
+  it("parses every repository custom tool without TypeScript syntax errors", async () => {
+    const toolsDir = path.join(process.cwd(), ".opencode", "tools");
+    const files = (await fs.readdir(toolsDir)).filter((name) => name.endsWith(".ts")).sort();
+    for (const file of files) {
+      const source = await fs.readFile(path.join(toolsDir, file), "utf8");
+      const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+      expect(parsed.parseDiagnostics, file).toEqual([]);
+    }
+  });
+
   it("returns canonical invocation metadata", () => {
     expect(getAgentAction("bash.exec")?.invocation).toEqual({ kind: "native-tool", tool: "bash" });
     expect(getAgentAction("bot.tasks.create")?.invocation).toEqual({
@@ -50,7 +61,10 @@ describe("agent action registry", () => {
     expect(getAgentAction("bot.tasks.delete")?.risk).toBe("destructive");
     expect(getAgentAction("bot.settings.set")?.risk).toBe("mutating");
     expect(getAgentAction("media.image.generate")?.risk).toBe("external");
-    expect(getAgentAction("rustdesk.system.restart")?.risk).toBe("destructive");
+    expect(getAgentAction("file.delete")?.risk).toBe("destructive");
+    expect(getAgentAction("git.reset")?.risk).toBe("destructive");
+    expect(getAgentAction("notify.send")?.risk).toBe("external");
+    expect(getAgentAction("session-extended.export")?.risk).toBe("write");
   });
 
   it("supports discovery filters and summary counts", () => {
@@ -59,5 +73,49 @@ describe("agent action registry", () => {
     const summary = summarizeAgentActions() as { total: number };
     expect(summary.total).toBe(AGENT_ACTIONS.length);
     expect(summary.total).toBeGreaterThan(100);
+  });
+
+  it("passes the session title as a top-level create parameter, not a nested body", async () => {
+    const source = await fs.readFile(path.join(process.cwd(), ".opencode", "tools", "session-extended.ts"), "utf8");
+    const parsed = ts.createSourceFile("session-extended.ts", source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+
+    const createCalls: ts.CallExpression[] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node)
+        && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === "create"
+        && node.expression.expression.getText(parsed).endsWith("session")
+      ) {
+        createCalls.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
+
+    expect(createCalls.length).toBeGreaterThan(0);
+    const firstArgument = createCalls[0]!.arguments[0];
+    expect(firstArgument && ts.isObjectLiteralExpression(firstArgument)).toBe(true);
+
+    const propertyNames: string[] = [];
+    const collectPropertyNames = (node: ts.Node): void => {
+      if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+        propertyNames.push(node.name.getText(parsed));
+      }
+      ts.forEachChild(node, collectPropertyNames);
+    };
+    collectPropertyNames(firstArgument);
+
+    expect(propertyNames).toContain("title");
+    expect(propertyNames).not.toContain("body");
+  });
+
+  it("wires the hardened tool helpers into the custom tools", async () => {
+    const toolsDir = path.join(process.cwd(), ".opencode", "tools");
+    const read = (file: string): Promise<string> => fs.readFile(path.join(toolsDir, file), "utf8");
+
+    expect(await read("git.ts"), "git.push must reject force pushes").toContain("containsForcePushFlag");
+    expect(await read("file.ts"), "file.read must guard sensitive paths").toContain("isSensitivePath");
+    expect(await read("test.ts"), "test args must use the shared parser").toContain("parseShellLikeArgs");
   });
 });

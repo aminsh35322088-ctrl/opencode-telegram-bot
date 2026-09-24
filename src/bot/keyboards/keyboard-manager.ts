@@ -444,12 +444,6 @@ class KeyboardManager {
     const resolved = this.resolveSessionId(sessionId);
     const state = this.state(resolved);
     if (state) {
-      // While the Topic session is actively running, outbound messages carry no
-      // reply markup so the keyboard stays collapsed until the user summons it
-      // via Telegram's own show/hide control.
-      if (state.sessionId && state.threadId !== undefined && assistantRunState.hasActiveRun(state.sessionId)) {
-        return undefined;
-      }
       return this.buildKeyboard(resolved);
     }
     if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });

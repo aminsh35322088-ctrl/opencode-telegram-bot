@@ -33,8 +33,10 @@ describe("minimal experimental price UI", () => {
     state.topic = { model: { providerID: "p", modelID: "m" } };
     expect(buildSettingsMenuView().keyboard.inline_keyboard.flat().some((b: any) => b.callback_data === SETTINGS_EXPERIMENTAL_CALLBACK)).toBe(false);
   });
-  it("leaves disabled lists unchanged without price work", async () => {
+  it("keeps the provider page simple and hides internal verification states", async () => {
     const view = await buildModelCenterProvider(provider, 0);
+    expect(view.text).toContain("10 live models");
+    expect(view.text).not.toMatch(/ready|unchecked/i);
     expect(view.keyboard.inline_keyboard[0][0].text).toBe("🧠 Model 0");
     expect(view.keyboard.inline_keyboard.flat().some((b) => b.text === "ⓘ Colors")).toBe(false);
     expect(getProviderModelPrices).not.toHaveBeenCalled();

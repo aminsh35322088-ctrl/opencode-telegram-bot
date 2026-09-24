@@ -136,24 +136,28 @@ async function handlePermissionReply(
   let firstError: unknown = null;
 
   for (const requestID of requestIDs) {
-    const response = await opencodeClient.permission.reply({
-      requestID,
-      directory,
-      reply,
-    });
+    try {
+      const response = await opencodeClient.permission.reply({
+        requestID,
+        directory,
+        reply,
+      });
 
-    if (!response.error) {
-      continue;
+      if (!response.error) {
+        continue;
+      }
+
+      if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
+        logger.debug(
+          `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
+        );
+        continue;
+      }
+
+      firstError ??= response.error;
+    } catch (error) {
+      firstError ??= error;
     }
-
-    if (requestIDs.length > 1 && isPermissionRequestNotFound(response.error)) {
-      logger.debug(
-        `[PermissionHandler] Ignoring duplicate permission reply miss: requestID=${requestID}`,
-      );
-      continue;
-    }
-
-    firstError ??= response.error;
   }
 
   if (firstError) {
@@ -162,9 +166,7 @@ async function handlePermissionReply(
       lastReplyError: true,
       requestIDs,
     });
-    await ctx.api
-      .sendMessage(chatId, t("permission.send_reply_error"))
-      .catch(() => {});
+    await ctx.api.sendMessage(chatId, t("permission.send_reply_error")).catch(() => {});
     return;
   }
 

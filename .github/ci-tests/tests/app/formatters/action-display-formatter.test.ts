@@ -11,7 +11,27 @@ describe("friendly action display", () => {
       expect(display.label, action.id).toBeTruthy();
       expect(display.label, action.id).not.toContain(".");
       expect(display.label, action.id).not.toContain("_");
+      expect(display.icon, action.id).not.toBe("🛠️");
     }
+  });
+
+  it("uses purpose-specific labels for representative nested actions", () => {
+    expect(getFriendlyActionDisplay("bot", { action: "mcp.add-local" })).toEqual({
+      icon: "➕",
+      label: "Add Local MCP Server",
+    });
+    expect(getFriendlyActionDisplay("browser", { action: "tab-select" })).toEqual({
+      icon: "🗂️",
+      label: "Switch Browser Tab",
+    });
+    expect(getFriendlyActionDisplay("railway", { action: "logs" })).toEqual({
+      icon: "📜",
+      label: "Read Railway Logs",
+    });
+    expect(getFriendlyActionDisplay("git", { action: "status" })).toEqual({
+      icon: "🌿",
+      label: "Check Git Status",
+    });
   });
 
   it("renders Image AI actions with purpose-specific names instead of raw action IDs", () => {

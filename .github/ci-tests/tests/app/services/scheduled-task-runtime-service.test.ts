@@ -385,6 +385,67 @@ describe("app/services/scheduled-task-runtime-service", () => {
     vi.useRealTimers();
   });
 
+  it("clears idle timers for factory reset and remains initialized for new tasks", async () => {
+    ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
+      await import("../../../src/app/services/scheduled-task-runtime-service.js"));
+    ({ foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js"));
+    foregroundSessionState.__resetForTests();
+
+    const runtime = new ScheduledTaskRuntimeClass();
+    mocked.tasks = [
+      createTask({
+        id: "task-old",
+        nextRunAt: "2026-03-16T10:10:00.000Z",
+        runAt: "2026-03-16T10:10:00.000Z",
+      }),
+    ];
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-16T10:00:00.000Z"));
+
+    await runtime.initialize({ api: {} } as Bot<Context>, await createDeliverySender());
+
+    expect(runtime.hasRunningTasks()).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(runtime.clearAll("factory_reset")).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const nextTask = createTask({
+      id: "task-new",
+      nextRunAt: "2026-03-16T10:20:00.000Z",
+      runAt: "2026-03-16T10:20:00.000Z",
+    });
+    mocked.tasks = [nextTask];
+    runtime.registerTask(nextTask);
+
+    expect(vi.getTimerCount()).toBe(1);
+
+    runtime.__resetForTests();
+    vi.useRealTimers();
+  });
+
+  it("refuses to clear runtime state while a scheduled task is executing", async () => {
+    ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
+      await import("../../../src/app/services/scheduled-task-runtime-service.js"));
+
+    const runtime = new ScheduledTaskRuntimeClass();
+    mocked.tasks = [createTask({ nextRunAt: "2026-03-16T10:00:00.000Z" })];
+    mocked.executeScheduledTaskMock.mockReturnValue(new Promise(() => undefined));
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-16T10:00:00.000Z"));
+
+    await runtime.initialize({ api: {} } as Bot<Context>, await createDeliverySender());
+    await Promise.resolve();
+
+    expect(runtime.hasRunningTasks()).toBe(true);
+    expect(runtime.clearAll("factory_reset")).toBe(false);
+    expect(runtime.hasRunningTasks()).toBe(true);
+
+    runtime.__resetForTests();
+    vi.useRealTimers();
+  });
+
   it("does not start the same scheduled task twice while it is already running", async () => {
     ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
       await import("../../../src/app/services/scheduled-task-runtime-service.js"));

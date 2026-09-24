@@ -1,4 +1,5 @@
 import { reconcileStoredModelSelection } from "../app/services/model-selection-service.js";
+import { restoreMcpRuntime } from "../app/services/mcp-server-service.js";
 import { warmupSessionDirectoryCache } from "../app/services/session-cache-service.js";
 import { logger } from "../utils/logger.js";
 import { opencodeClient } from "./client.js";
@@ -16,6 +17,15 @@ export async function isOpencodeServerHealthy(): Promise<boolean> {
 }
 
 export async function refreshSessionCacheAfterOpencodeReady(reason: string): Promise<void> {
+  try {
+    const restored = await restoreMcpRuntime();
+    logger.debug(
+      `[OpenCodeReady] MCP runtime restored: reason=${reason}, managed=${restored.managed.restored}/${restored.managed.failed}, secure=${restored.secure.restored}/${restored.secure.failed}`,
+    );
+  } catch (error) {
+    logger.warn(`[OpenCodeReady] Failed to restore MCP runtime: reason=${reason}`, error);
+  }
+
   try {
     await warmupSessionDirectoryCache();
     logger.debug(`[OpenCodeReady] Session cache refreshed: reason=${reason}`);
@@ -42,6 +52,30 @@ export async function refreshSessionCacheIfOpencodeReady(reason: string): Promis
 
   await refreshSessionCacheAfterOpencodeReady(reason);
   return true;
+}
+
+export async function waitForOpencodeReadyAndRefresh(
+  reason: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (await isOpencodeServerHealthy()) {
+      await refreshSessionCacheAfterOpencodeReady(reason);
+      return true;
+    }
+
+    if (Date.now() - startedAt >= timeoutMs) break;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  logger.warn(
+    `[OpenCodeReady] Timed out waiting for OpenCode after restart: reason=${reason}, timeoutMs=${timeoutMs}`,
+  );
+  return false;
 }
 
 export function registerOpenCodeReadyRefreshHandler(): void {

@@ -16,7 +16,7 @@ export interface ImageModelCatalogEntry {
 export async function listImageModelCatalog(): Promise<ImageModelCatalogEntry[]> {
   return (await listUnifiedModelCatalog())
     .filter((entry) => entry.capabilities.operations.imageGenerate === true || entry.capabilities.operations.imageEdit === true)
-    .map((entry) => {
+    .map<ImageModelCatalogEntry>((entry) => {
       const editable = entry.capabilities.operations.imageEdit === true;
       return {
         providerID: entry.providerID,
@@ -27,7 +27,8 @@ export async function listImageModelCatalog(): Promise<ImageModelCatalogEntry[]>
         capabilities: editable ? ["generate", "edit"] : ["generate"],
         source: "unified-model-catalog" as const,
       };
-    });
+    })
+    .sort((a, b) => a.providerID.localeCompare(b.providerID) || a.modelID.localeCompare(b.modelID));
 }
 
 export function imageCatalogSelection(entry: ImageModelCatalogEntry): ImageModelSelection {

@@ -404,6 +404,30 @@ describe("interaction guard", () => {
     expect(blockedCommand.reason).toBe("command_not_allowed");
   });
 
+  it("blocks custom interaction text while busy", () => {
+    foregroundSessionState.markBusy("session-1", "D:\Projects\Repo");
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "text",
+      metadata: {
+        flow: "generic-custom-flow",
+        sessionId: "session-1",
+      },
+    });
+
+    const textDecision = resolveInteractionGuardDecision(createContext({ text: "fixture-value" }));
+    const commandDecision = resolveInteractionGuardDecision(createContext({ text: "/status" }));
+    const callbackDecision = resolveInteractionGuardDecision(
+      createContext({ callbackData: "settings:advanced" }),
+    );
+
+    expect(textDecision.allow).toBe(false);
+    expect(textDecision.busy).toBe(true);
+    expect(commandDecision.allow).toBe(true);
+    expect(callbackDecision.allow).toBe(true);
+    expect(callbackDecision.busy).toBe(true);
+  });
+
   it("allows valid permission callback while busy and blocks other inputs", () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
     interactionManager.start({

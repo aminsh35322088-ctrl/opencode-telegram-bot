@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   healthMock: vi.fn(),
   warmupSessionDirectoryCacheMock: vi.fn(),
   reconcileStoredModelSelectionMock: vi.fn(),
+  restoreMcpRuntimeMock: vi.fn(),
   loggerDebugMock: vi.fn(),
   loggerWarnMock: vi.fn(),
 }));
@@ -25,6 +26,10 @@ vi.mock("../../src/app/services/model-selection-service.js", () => ({
   reconcileStoredModelSelection: mocked.reconcileStoredModelSelectionMock,
 }));
 
+vi.mock("../../src/app/services/mcp-server-service.js", () => ({
+  restoreMcpRuntime: mocked.restoreMcpRuntimeMock,
+}));
+
 vi.mock("../../src/utils/logger.js", () => ({
   logger: {
     debug: mocked.loggerDebugMock,
@@ -37,6 +42,7 @@ vi.mock("../../src/utils/logger.js", () => ({
 import {
   refreshSessionCacheAfterOpencodeReady,
   refreshSessionCacheIfOpencodeReady,
+  waitForOpencodeReadyAndRefresh,
 } from "../../src/opencode/ready-refresh.js";
 
 describe("opencode/ready-refresh", () => {
@@ -44,11 +50,13 @@ describe("opencode/ready-refresh", () => {
     mocked.healthMock.mockReset();
     mocked.warmupSessionDirectoryCacheMock.mockReset();
     mocked.reconcileStoredModelSelectionMock.mockReset();
+    mocked.restoreMcpRuntimeMock.mockReset();
     mocked.loggerDebugMock.mockReset();
     mocked.loggerWarnMock.mockReset();
 
     mocked.warmupSessionDirectoryCacheMock.mockResolvedValue(undefined);
     mocked.reconcileStoredModelSelectionMock.mockResolvedValue(undefined);
+    mocked.restoreMcpRuntimeMock.mockResolvedValue({ managed: { restored: 0, failed: 0 }, secure: { restored: 0, failed: 0 } });
   });
 
   it("skips refresh with a short warning when OpenCode server is unavailable", async () => {
@@ -59,6 +67,7 @@ describe("opencode/ready-refresh", () => {
     expect(refreshed).toBe(false);
     expect(mocked.warmupSessionDirectoryCacheMock).not.toHaveBeenCalled();
     expect(mocked.reconcileStoredModelSelectionMock).not.toHaveBeenCalled();
+    expect(mocked.restoreMcpRuntimeMock).not.toHaveBeenCalled();
     expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
       "[OpenCodeReady] OpenCode server is not running; skipping session cache refresh: reason=startup",
     );
@@ -74,6 +83,7 @@ describe("opencode/ready-refresh", () => {
     expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
+    expect(mocked.restoreMcpRuntimeMock).toHaveBeenCalledTimes(1);
   });
 
   it("logs refresh failures without throwing", async () => {
@@ -104,4 +114,62 @@ describe("opencode/ready-refresh", () => {
       expect.any(Error),
     );
   });
+  it("restores managed and secure MCP definitions whenever OpenCode becomes ready", async () => {
+    mocked.restoreMcpRuntimeMock.mockResolvedValueOnce({ managed: { restored: 1, failed: 0 }, secure: { restored: 2, failed: 0 } });
+
+    await refreshSessionCacheAfterOpencodeReady("auto_restart_startup");
+
+    expect(mocked.restoreMcpRuntimeMock).toHaveBeenCalledTimes(1);
+    expect(mocked.loggerDebugMock).toHaveBeenCalledWith(
+      "[OpenCodeReady] MCP runtime restored: reason=auto_restart_startup, managed=1/0, secure=2/0",
+    );
+  });
+
+  it("does not fail ready handling when MCP runtime restoration fails", async () => {
+    mocked.restoreMcpRuntimeMock.mockRejectedValueOnce(new Error("credential restore failed"));
+
+    await expect(
+      refreshSessionCacheAfterOpencodeReady("auto_restart_interval"),
+    ).resolves.toBeUndefined();
+
+    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
+      "[OpenCodeReady] Failed to restore MCP runtime: reason=auto_restart_interval",
+      expect.any(Error),
+    );
+    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+      forceCatalogRefresh: true,
+    });
+  });
+
+
+  it("waits for a restarted OpenCode server and then restores MCP runtime state", async () => {
+    mocked.healthMock
+      .mockResolvedValueOnce({ data: { healthy: false }, error: null })
+      .mockResolvedValueOnce({ data: { healthy: true }, error: null });
+
+    const refreshed = await waitForOpencodeReadyAndRefresh("provider_change", {
+      timeoutMs: 50,
+      pollIntervalMs: 1,
+    });
+
+    expect(refreshed).toBe(true);
+    expect(mocked.healthMock).toHaveBeenCalledTimes(2);
+    expect(mocked.restoreMcpRuntimeMock).toHaveBeenCalledTimes(1);
+    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+      forceCatalogRefresh: true,
+    });
+  });
+
+  it("returns false without restoring runtime state when a restarted server never becomes healthy", async () => {
+    mocked.healthMock.mockResolvedValue({ data: { healthy: false }, error: null });
+
+    const refreshed = await waitForOpencodeReadyAndRefresh("provider_change", {
+      timeoutMs: 3,
+      pollIntervalMs: 1,
+    });
+
+    expect(refreshed).toBe(false);
+    expect(mocked.restoreMcpRuntimeMock).not.toHaveBeenCalled();
+  });
+
 });

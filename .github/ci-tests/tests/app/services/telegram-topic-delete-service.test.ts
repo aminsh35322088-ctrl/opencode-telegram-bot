@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   clearInteractionMock: vi.fn(),
   getCurrentSessionMock: vi.fn(() => undefined),
   clearSessionServiceMock: vi.fn(),
+  detachAttachedSessionMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -26,6 +27,9 @@ vi.mock("../../../src/opencode/client.js", () => ({
 vi.mock("../../../src/app/services/session-service.js", () => ({
   getCurrentSession: mocks.getCurrentSessionMock,
   clearSession: mocks.clearSessionServiceMock,
+}));
+vi.mock("../../../src/app/services/attach-service.js", () => ({
+  detachAttachedSession: mocks.detachAttachedSessionMock,
 }));
 vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
   removeTelegramTopicBinding: mocks.removeTelegramTopicBindingMock,
@@ -88,13 +92,18 @@ describe("telegram-topic-delete-service", () => {
     vi.clearAllMocks();
     mocks.isTelegramTopicWorkspaceMock.mockReturnValue(true);
     mocks.sessionDeleteMock.mockResolvedValue({ data: true, error: null });
+    mocks.deleteTelegramTopicWorkspaceMock.mockResolvedValue(undefined);
+    mocks.removeTopicRuntimeStateMock.mockResolvedValue(undefined);
+    mocks.removeTelegramTopicBindingMock.mockResolvedValue(undefined);
+    mocks.listTelegramTopicBindingsMock.mockResolvedValue([]);
+    mocks.getCurrentSessionMock.mockReturnValue(undefined);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("completes local cleanup even when the Telegram topic deletion keeps failing", async () => {
+  it("retains the binding when Telegram deletion fails so cleanup can be retried", async () => {
     const api = {
       deleteForumTopic: vi.fn().mockRejectedValue(new Error("Bad Request: chat not found")),
     } as unknown as Api;
@@ -102,11 +111,89 @@ describe("telegram-topic-delete-service", () => {
 
     await expect(deleteTelegramTopicSession(api, binding)).rejects.toThrow();
 
-    // Destructive-but-safe local steps must have run despite the Telegram error.
     expect(mocks.deleteTelegramTopicWorkspaceMock).toHaveBeenCalledWith(binding.directory);
+    expect(mocks.removeTelegramTopicBindingMock).not.toHaveBeenCalled();
+    expect(mocks.removeTopicRuntimeStateMock).not.toHaveBeenCalled();
+    expect(mocks.stopTopicEventSubscriptionMock).toHaveBeenCalledWith(binding.directory, "ses_test");
+  });
+
+  it("keeps the Topic intact when OpenCode session deletion fails", async () => {
+    mocks.sessionDeleteMock.mockResolvedValue({
+      data: undefined,
+      error: { name: "ServerError", data: { message: "session service unavailable" } },
+    });
+    const api = { deleteForumTopic: vi.fn().mockResolvedValue(true) } as unknown as Api;
+    const binding = createBinding("/ws/5/ses_test");
+
+    await expect(deleteTelegramTopicSession(api, binding)).rejects.toThrow();
+
+    expect(api.deleteForumTopic).not.toHaveBeenCalled();
+    expect(mocks.deleteTelegramTopicWorkspaceMock).not.toHaveBeenCalled();
+    expect(mocks.removeTopicRuntimeStateMock).not.toHaveBeenCalled();
+    expect(mocks.removeTelegramTopicBindingMock).not.toHaveBeenCalled();
+    expect(mocks.retireSessionRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it("treats an already-missing OpenCode session as an idempotent delete", async () => {
+    mocks.sessionDeleteMock.mockResolvedValue({
+      data: undefined,
+      error: { name: "NotFoundError", data: { message: "Session not found: ses_test" } },
+    });
+    const api = { deleteForumTopic: vi.fn().mockResolvedValue(true) } as unknown as Api;
+    const binding = createBinding("/ws/5/ses_test");
+
+    await expect(deleteTelegramTopicSession(api, binding)).resolves.toBeUndefined();
+
+    expect(mocks.deleteTelegramTopicWorkspaceMock).toHaveBeenCalledWith(binding.directory);
+    expect(mocks.removeTelegramTopicBindingMock).toHaveBeenCalledWith(5, "ses_test");
+  });
+
+  it("detaches a current session once OpenCode deletion succeeds even if a later cleanup step fails", async () => {
+    mocks.getCurrentSessionMock.mockReturnValue({ id: "ses_test", directory: "/ws/5/ses_test" });
+    const api = {
+      deleteForumTopic: vi.fn().mockRejectedValue(new Error("Bad Request: chat not found")),
+    } as unknown as Api;
+    const binding = createBinding("/ws/5/ses_test");
+
+    await expect(deleteTelegramTopicSession(api, binding)).rejects.toThrow();
+
+    expect(mocks.clearSessionServiceMock).toHaveBeenCalled();
+    expect(mocks.detachAttachedSessionMock).toHaveBeenCalledWith("telegram_topic_deleted");
+  });
+
+  it("retains the binding when workspace deletion fails", async () => {
+    mocks.deleteTelegramTopicWorkspaceMock.mockRejectedValue(new Error("filesystem busy"));
+    const api = { deleteForumTopic: vi.fn().mockResolvedValue(true) } as unknown as Api;
+    const binding = createBinding("/ws/5/ses_test");
+
+    await expect(deleteTelegramTopicSession(api, binding)).rejects.toThrow(/binding retained/i);
+
+    expect(api.deleteForumTopic).not.toHaveBeenCalled();
+    expect(mocks.removeTopicRuntimeStateMock).not.toHaveBeenCalled();
+    expect(mocks.removeTelegramTopicBindingMock).not.toHaveBeenCalled();
+  });
+
+  it("retains the binding when runtime-state removal fails", async () => {
+    mocks.removeTopicRuntimeStateMock.mockRejectedValue(new Error("state store unavailable"));
+    const api = { deleteForumTopic: vi.fn().mockResolvedValue(true) } as unknown as Api;
+    const binding = createBinding("/ws/5/ses_test");
+
+    await expect(deleteTelegramTopicSession(api, binding)).rejects.toThrow(/binding retained/i);
+
+    expect(api.deleteForumTopic).toHaveBeenCalledWith(5, 7);
+    expect(mocks.removeTelegramTopicBindingMock).not.toHaveBeenCalled();
+  });
+
+  it("treats an already-missing Telegram Topic as idempotent cleanup", async () => {
+    const api = {
+      deleteForumTopic: vi.fn().mockRejectedValue(new Error("Bad Request: TOPIC_NOT_FOUND")),
+    } as unknown as Api;
+    const binding = createBinding("/ws/5/ses_test");
+
+    await expect(deleteTelegramTopicSession(api, binding)).resolves.toBeUndefined();
+
     expect(mocks.removeTopicRuntimeStateMock).toHaveBeenCalledWith(5, 7);
     expect(mocks.removeTelegramTopicBindingMock).toHaveBeenCalledWith(5, "ses_test");
-    expect(mocks.stopTopicEventSubscriptionMock).toHaveBeenCalledWith(binding.directory, "ses_test");
   });
 
   it("removes binding and runtime state even when the directory is unmanaged", async () => {

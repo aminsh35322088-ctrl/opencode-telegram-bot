@@ -5,12 +5,33 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 
 import {
+  buildAgentEnvironment,
   createOpencodeServeSpawnCommand,
   findUnixListeningPidInSs,
   findWindowsListeningPidInNetstat,
 } from "../../src/opencode/process.js";
 
 describe("opencode/process", () => {
+  it("strips Telegram credentials from the OpenCode child environment", () => {
+    const originalTelegram = process.env.TELEGRAM_BOT_TOKEN;
+    const originalAllowedUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+
+    try {
+      process.env.TELEGRAM_BOT_TOKEN = "telegram-fixture";
+      process.env.TELEGRAM_ALLOWED_USER_ID = "123456";
+
+      const environment = buildAgentEnvironment();
+
+      expect(environment.TELEGRAM_BOT_TOKEN).toBeUndefined();
+      expect(environment.TELEGRAM_ALLOWED_USER_ID).toBeUndefined();
+    } finally {
+      if (originalTelegram === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = originalTelegram;
+      if (originalAllowedUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
+      else process.env.TELEGRAM_ALLOWED_USER_ID = originalAllowedUser;
+    }
+  });
+
   it("matches the exact local port on Windows netstat output", async () => {
     const stdout = [
       "  TCP    127.0.0.1:40960      0.0.0.0:0      LISTENING       1111",

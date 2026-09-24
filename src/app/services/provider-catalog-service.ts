@@ -5,6 +5,8 @@ export interface ProviderCatalog { records: CatalogRecord[]; fetchedAt: number; 
 export interface ProviderCatalogFetchOptions { force?: boolean; }
 
 const TTL_MS = 5 * 60_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_ATTEMPTS = 2;
 const MAX_CATALOGS = 32;
 const catalogs = new Map<string, ProviderCatalog>();
 const pending = new Map<string, Promise<ProviderCatalog>>();
@@ -16,6 +18,65 @@ function catalogKey(baseURL: string, apiKey: string): string {
 
 export function peekProviderCatalog(baseURL: string, apiKey: string): ProviderCatalog | undefined {
   return catalogs.get(catalogKey(baseURL, apiKey));
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+}
+
+async function fetchCatalogResponse(baseURL: string, apiKey: string): Promise<Response> {
+  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetch(baseURL.replace(/\/$/, "") + "/models", {
+        headers: { Authorization: "Bearer " + apiKey.trim() },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (!isTimeoutError(error)) throw error;
+      if (attempt === REQUEST_ATTEMPTS) {
+        throw new Error(
+          `Model discovery timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds (${REQUEST_ATTEMPTS} attempts)`,
+        );
+      }
+    }
+  }
+
+  throw new Error("Model discovery failed before receiving a response");
+}
+
+function redactCredential(value: string, apiKey: string): string {
+  const secret = apiKey.trim();
+  return secret ? value.split(secret).join("[REDACTED]") : value;
+}
+
+function providerErrorDetail(response: Response, raw: string, apiKey: string): string {
+  let message = "";
+  let code = "";
+  try {
+    const payload = raw ? JSON.parse(raw) as unknown : null;
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const error = (payload as { error?: unknown }).error;
+      if (error && typeof error === "object" && !Array.isArray(error)) {
+        const record = error as { message?: unknown; code?: unknown };
+        if (typeof record.message === "string") message = record.message.trim();
+        if (typeof record.code === "string") code = record.code.trim();
+      } else if (typeof error === "string") {
+        message = error.trim();
+      }
+    }
+  } catch {
+    message = raw.trim().replace(/\s+/g, " ").slice(0, 180);
+  }
+
+  const requestId =
+    response.headers.get("x-request-id") ??
+    response.headers.get("request-id");
+  const parts = [
+    code ? "code=" + redactCredential(code, apiKey) : "",
+    message ? redactCredential(message, apiKey).slice(0, 180) : "",
+    requestId ? "request=" + redactCredential(requestId, apiKey) : "",
+  ].filter(Boolean);
+  return parts.length ? " — " + parts.join(" · ") : "";
 }
 
 /** Shared discovery/refresh cache. No timer, credential persistence or inference. */
@@ -41,11 +102,11 @@ export async function fetchProviderCatalog(
   }
 
   const request = (async () => {
-    const response = await fetch(baseURL.replace(/\/$/, "") + "/models", {
-      headers: { Authorization: "Bearer " + apiKey.trim() },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error("Model discovery failed: HTTP " + response.status);
+    const response = await fetchCatalogResponse(baseURL, apiKey);
+    if (!response.ok) {
+      const raw = await response.text().catch(() => "");
+      throw new Error("Model discovery failed: HTTP " + response.status + providerErrorDetail(response, raw, apiKey));
+    }
 
     const payload: unknown = await response.json();
     const data = payload && typeof payload === "object" && "data" in payload ? payload.data : undefined;

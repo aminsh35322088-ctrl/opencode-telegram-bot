@@ -14,6 +14,10 @@ vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("../../../src/app/stores/settings-store.js", () => ({
+  getMainNavigationMessageId: () => 4242,
+}));
+
 import {
   clearSkillWizard,
   handleSkillWizardMessage,
@@ -76,7 +80,7 @@ describe("bot/commands/skills-wizard", () => {
     expect(start.reply).not.toHaveBeenCalled();
     expect(start.api.editMessageText).toHaveBeenCalledWith(
       777,
-      700,
+      4242,
       expect.any(String),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
@@ -86,7 +90,7 @@ describe("bot/commands/skills-wizard", () => {
     expect(badName.api.deleteMessage).toHaveBeenCalledWith(777, 800);
     expect(badName.api.editMessageText).toHaveBeenCalledWith(
       777,
-      700,
+      4242,
       expect.any(String),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
@@ -117,7 +121,7 @@ describe("bot/commands/skills-wizard", () => {
     expect(start.reply).not.toHaveBeenCalled();
     expect(start.api.editMessageText).toHaveBeenCalledWith(
       777,
-      701,
+      4242,
       expect.any(String),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
@@ -144,7 +148,7 @@ describe("bot/commands/skills-wizard", () => {
     expect(isSkillWizardActive()).toBe(true);
     expect(body.api.editMessageText).toHaveBeenCalledWith(
       777,
-      702,
+      4242,
       expect.any(String),
       expect.objectContaining({ reply_markup: expect.anything() }),
     );

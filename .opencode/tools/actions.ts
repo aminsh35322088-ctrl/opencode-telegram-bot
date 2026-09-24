@@ -50,7 +50,7 @@ export default tool({
     "Discover the unified model-facing action catalog. Use action=list to find capabilities, describe/resolve for an exact canonical action ID, sources to understand native/custom/plugin/MCP action sources, and summary for counts. The catalog does not execute other tools; resolve returns the exact tool/action invocation the model should call next.",
   args: {
     action: tool.schema.enum(["list", "describe", "resolve", "sources", "summary"]).describe("Action-registry operation."),
-    id: tool.schema.string().optional().describe("Canonical action ID such as browser.goto, railway.logs, rustdesk.terminal.exec, or bash.exec."),
+    id: tool.schema.string().optional().describe("Canonical action ID such as browser.goto, railway.logs, github-ci.status, or bash.exec."),
     tool_name: tool.schema.string().optional().describe("For list: exact tool-name filter."),
     category: tool.schema.string().optional().describe("For list: exact category filter."),
     source: tool.schema.enum(["opencode-core", "custom-tool", "plugin", "dynamic-mcp"]).optional().describe("For list: action source filter."),

@@ -112,7 +112,7 @@ export function createOpencodeServeSpawnCommand(
   };
 }
 
-function buildAgentEnvironment(): NodeJS.ProcessEnv {
+export function buildAgentEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
 
   // The OpenCode agent must never receive the Telegram bot credential or

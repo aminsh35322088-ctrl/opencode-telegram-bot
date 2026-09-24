@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const fixture = vi.hoisted(() => ({ config: undefined as any, native: undefined as any }));
+const fixture = vi.hoisted(() => ({ config: undefined as any, native: undefined as any, modelsDev: undefined as any, schedule: vi.fn() }));
 vi.mock("../../../src/app/services/custom-provider-service.js", async (original) => ({
   ...await original<typeof import("../../../src/app/services/custom-provider-service.js")>(),
   getCustomProviderConfig: async () => fixture.config,
 }));
-vi.mock("../../../src/app/services/model-selection-service.js", async (original) => ({
-  ...await original<typeof import("../../../src/app/services/model-selection-service.js")>(),
-  getCachedProviderPriceMetadata: () => fixture.native,
+vi.mock("../../../src/app/services/unified-model-catalog-service.js", async (original) => ({
+  ...await original<typeof import("../../../src/app/services/unified-model-catalog-service.js")>(),
+  getUnifiedRuntimePriceMetadata: () => fixture.native,
+  getUnifiedProviderRevisionData: async () => [],
+}));
+vi.mock("../../../src/app/services/models-dev-price-service.js", () => ({
+  peekModelsDevProviderPrices: () => fixture.modelsDev,
+  scheduleModelsDevPriceRefresh: fixture.schedule,
 }));
 import { fetchProviderCatalog, __resetProviderCatalogForTests } from "../../../src/app/services/provider-catalog-service.js";
 import { getProviderModelPrices } from "../../../src/app/services/model-price-service.js";
-beforeEach(() => { fixture.config = undefined; fixture.native = undefined; __resetProviderCatalogForTests(); });
+beforeEach(() => { fixture.config = undefined; fixture.native = undefined; fixture.modelsDev = undefined; fixture.schedule.mockClear(); __resetProviderCatalogForTests(); });
 describe("price evidence source", () => {
   it("uses shared provider records without further network calls; detects duplicate conflicts", async () => {
     fixture.config = { apiUrl: "https://openrouter.ai/api/v1", apiKey: "key" };
@@ -34,13 +39,24 @@ describe("price evidence source", () => {
     vi.useFakeTimers(); vi.advanceTimersByTime(900_001);
     expect((await getProviderModelPrices("p")).size).toBe(0);
   });
-  it("never interprets OpenCode default zero costs as verified free", async () => {
+  it("never interprets OpenCode default zero costs as verified free without secondary evidence", async () => {
     fixture.native = { fetchedAt: Date.now(), models: [["zero", { cost: { input: 0, output: 0 } }], ["paid", { cost: { input: 1, output: 2 } }]] };
-    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
     const prices = await getProviderModelPrices("native");
     expect(prices.get("zero")?.group).toBe("unknown");
     expect(prices.get("paid")?.group).toBe("paid");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fixture.schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("promotes generic runtime zero estimates only when exact Models.dev evidence confirms free pricing", async () => {
+    fixture.native = { fetchedAt: Date.now(), models: [["zero", { cost: { input: 0, output: 0 } }], ["paid", { cost: { input: 1, output: 2 } }]] };
+    fixture.modelsDev = new Map([
+      ["zero", { group: "free", reason: "Models.dev exact zero price" }],
+      ["paid", { group: "paid", reason: "Models.dev paid price" }],
+    ]);
+    const prices = await getProviderModelPrices("native");
+    expect(prices.get("zero")?.group).toBe("free");
+    expect(prices.get("paid")?.group).toBe("paid");
+    expect(fixture.schedule).not.toHaveBeenCalled();
   });
 });
 

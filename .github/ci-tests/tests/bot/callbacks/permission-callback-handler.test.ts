@@ -27,7 +27,9 @@ vi.mock("../../../src/opencode/client.js", () => ({
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
+  getCurrentSession: vi.fn(() => undefined),
   isPermissionAlwaysAllowed: vi.fn().mockReturnValue(false),
+  rememberAlwaysAllowedPermission: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../src/app/services/session-service.js", () => ({

@@ -83,6 +83,7 @@ export default tool({
   },
   async execute(args, context) {
     const action = args.action as MediaAction;
+    const base = context.directory || context.worktree || process.cwd();
 
     if (action === "stt.status") {
       const service = await load<SttModule>("app/services/stt-service.js");
@@ -91,7 +92,7 @@ export default tool({
 
     if (action === "stt.transcribe") {
       const rawPath = required(args.path, "path", action);
-      const filePath = resolveWorktreePath(context.worktree, rawPath);
+      const filePath = resolveWorktreePath(base, rawPath);
       const stat = await fs.stat(filePath);
       if (!stat.isFile()) throw new Error("Audio path is not a regular file.");
       if (stat.size > MAX_AUDIO_BYTES) {
@@ -107,7 +108,7 @@ export default tool({
 
     if (action === "video.prepare") {
       const rawPath = required(args.path, "path", action);
-      const filePath = resolveWorktreePath(context.worktree, rawPath);
+      const filePath = resolveWorktreePath(base, rawPath);
       const stat = await fs.stat(filePath);
       if (!stat.isFile()) throw new Error("Video path is not a regular file.");
       if (stat.size > 20 * 1024 * 1024) throw new Error("Video exceeds the 20 MB preparation limit.");
@@ -116,7 +117,7 @@ export default tool({
       const frames = await service.extractVideoFrames(source, path.basename(filePath));
       const audio = await service.extractVideoAudio(source, path.basename(filePath));
       const requestedOutput = args.output?.trim() || `artifacts/video-${Date.now()}`;
-      const outputDir = resolveWorktreePath(context.worktree, requestedOutput);
+      const outputDir = resolveWorktreePath(base, requestedOutput);
       await fs.mkdir(outputDir, { recursive: true });
       const framePaths: string[] = [];
       for (const frame of frames) {
@@ -140,7 +141,7 @@ export default tool({
     if (action === "image.current") {
       const resolver = await load<ImageResolutionModule>("app/services/image-model-resolution-service.js");
       return JSON.stringify({
-        selection: await resolver.resolvePersistedImageModel(context.worktree) ?? null,
+        selection: await resolver.resolvePersistedImageModel(base) ?? null,
       }, null, 2);
     }
 
@@ -153,7 +154,7 @@ export default tool({
       let result: { buffer: Buffer; mimeType: string };
       if (action === "image.edit") {
         const rawPath = required(args.path, "path", action);
-        const filePath = resolveWorktreePath(context.worktree, rawPath);
+        const filePath = resolveWorktreePath(base, rawPath);
         const buffer = await fs.readFile(filePath);
         const aiHttp = await load<AiHttpModule>("app/services/ai-http-service.js");
         const mimeType = aiHttp.detectImageMimeType(buffer);
@@ -162,19 +163,19 @@ export default tool({
           prompt,
           { buffer, mimeType },
           controller.signal,
-          context.worktree,
+          base,
         );
       } else {
         result = await imageService.generateConfiguredImage(
           prompt,
           controller.signal,
-          context.worktree,
+          base,
         );
       }
 
       const requestedOutput = args.output?.trim() || `artifacts/image-${Date.now()}`;
       const outputPath = resolveWorktreePath(
-        context.worktree,
+        base,
         path.extname(requestedOutput)
           ? requestedOutput
           : requestedOutput + extensionForMime(result.mimeType),
@@ -187,7 +188,7 @@ export default tool({
         ok: true,
         path: outputPath,
         mimeType: result.mimeType,
-        selection: await resolver.resolvePersistedImageModel(context.worktree) ?? null,
+        selection: await resolver.resolvePersistedImageModel(base) ?? null,
       }, null, 2);
     } finally {
       clearTimeout(timer);

@@ -18,6 +18,35 @@ describe("shared provider catalog", () => {
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty("method", "POST");
   });
 
+
+  it("retries a timed-out model discovery request once", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "model-after-retry" }] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const catalog = await fetchProviderCatalog(url, "key");
+
+    expect(catalog.records.map((record) => record.id)).toEqual(["model-after-retry"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows provider model discovery up to 30 seconds per attempt", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "slow-model" }] }))));
+
+    await fetchProviderCatalog(url, "key");
+
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+  });
+
+  it("reports a clear error after both discovery attempts time out", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchProviderCatalog(url, "key")).rejects.toThrow("Model discovery timed out after 30 seconds (2 attempts)");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("force refresh bypasses a fresh cached catalog", async () => {
     const first = { data: [{ id: "old-model" }] };
     const second = { data: [{ id: "old-model" }, { id: "new-model" }] };
@@ -61,5 +90,44 @@ describe("shared provider catalog", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
     await expect(fetchProviderCatalog(url, "key")).rejects.toThrow();
     expect(peekProviderCatalog(url, "key")).toBeUndefined();
+  });
+
+  it("redacts the configured API key from provider discovery errors", async () => {
+    const secret = "sk-super-secret";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { message: "Rejected key " + secret, code: "invalid_" + secret } }),
+        { status: 401, headers: { "x-request-id": "req-" + secret } },
+      ),
+    ));
+
+    await expect(fetchProviderCatalog("https://gateway.example/v1", secret)).rejects.toThrow(
+      /\[REDACTED\]/,
+    );
+    await expect(fetchProviderCatalog("https://gateway.example/v1", secret)).rejects.not.toThrow(
+      new RegExp(secret),
+    );
+  });
+
+  it("surfaces provider error code, message and request id for failed discovery", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "No API key provided.",
+            type: "authentication_error",
+            code: "missing_api_key",
+          },
+        }),
+        {
+          status: 401,
+          headers: { "x-request-id": "req_test_123" },
+        },
+      ),
+    ));
+
+    await expect(fetchProviderCatalog("https://gateway.example/v1", "bad-key")).rejects.toThrow(
+      /HTTP 401.*missing_api_key.*No API key provided.*req_test_123/,
+    );
   });
 });

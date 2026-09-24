@@ -42,7 +42,7 @@ async function gh(args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhRes
     const { stdout, stderr } = await execFileAsync(GH_BIN, args, {
       timeout: timeoutMs,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GH_PAGER: "cat", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+      env: { ...process.env, GH_PAGER: "cat", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1", GH_PROMPT_DISABLED: "1" },
     });
     return { ok: true, stdout, stderr, timedOut: false };
   } catch (error) {
@@ -59,6 +59,30 @@ async function gh(args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhRes
       : (e.stderr || e.message || String(error)).trim();
     return { ok: false, stdout: e.stdout ?? "", stderr, timedOut };
   }
+}
+
+function baseRepoFromEnvOrGit(base: string): string {
+  const fromEnv = (process.env.GITHUB_REPOSITORY || "").trim();
+  if (/^[^/]+\/[^/]+$/.test(fromEnv)) return fromEnv;
+  const remotes = process.env.GH_REPO || process.env.GITHUB_REPO || "";
+  if (/^[^/]+\/[^/]+$/.test(remotes.trim())) return remotes.trim();
+  return "";
+}
+
+async function resolveBaseRepo(base: string): Promise<string> {
+  const direct = baseRepoFromEnvOrGit(base);
+  if (direct) return direct;
+  try {
+    const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], {
+      cwd: base,
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const remote = stdout.trim().replace(/\.git$/u, "");
+    const match = /(?:^|[:/])([^/]+\/[^/]+)$/u.exec(remote);
+    if (match) return match[1]!;
+  } catch { /* fall through */ }
+  return "";
 }
 
 function clip(text: string): string {
@@ -157,17 +181,18 @@ export default tool({
         `For watch/verify: total wait budget in ms, default ${DEFAULT_WATCH_BUDGET_MS}, capped at ${MAX_WATCH_BUDGET_MS}.`,
       ),
   },
-  async execute(args) {
+  async execute(args, context) {
     const action = String(args.action ?? "").trim().toLowerCase();
     const validActions = ["status", "jobs", "dispatch", "watch", "logs", "verify", "rerun-failed", "cancel"];
     if (!validActions.includes(action)) {
       return result({ ok: false, error: `action must be one of: ${validActions.join(" | ")}` });
     }
 
+    const base = context.directory || context.worktree || process.cwd();
     const workflowName = (args.workflow ?? "CI").trim() || "CI";
     const branch = args.branch?.trim() || "";
     const commit = args.commit?.trim() || "";
-    const repo = args.repo?.trim() || "";
+    const repo = args.repo?.trim() || await resolveBaseRepo(base);
     const repoArgs = repo ? ["--repo", repo] : [];
     let runId = String(args.runId ?? "").trim();
     let run: RunSummary | null = null;
@@ -197,10 +222,13 @@ export default tool({
 
       const list = await gh(listArgs);
       if (!list.ok) {
+        const repoHint = repo
+          ? "Check gh authentication, the workflow name, and the requested branch/commit filters."
+          : "No git remote or GITHUB_REPOSITORY is available to infer the repository. Pass repo=\"OWNER/REPO\" explicitly.";
         return result({
           ok: false,
           error: `Could not list workflow runs: ${clip(list.stderr || list.stdout)}`,
-          hint: "Check gh authentication, the workflow name, and the requested branch/commit filters.",
+          hint: repoHint,
         });
       }
 

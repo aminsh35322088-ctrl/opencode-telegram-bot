@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
-import { mcpsCommand } from "../../../src/bot/commands/mcp-catalog-command.js";
-import { handleMcpsCallback } from "../../../src/bot/callbacks/mcp-catalog-callback-handler.js";
+import { mcpsCommand } from "../../../src/bot/commands/mcp-server-command.js";
+import { handleMcpsCallback } from "../../../src/bot/callbacks/mcp-server-callback-handler.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
@@ -18,6 +18,7 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
   getCurrentSession: mocked.getCurrentSessionMock,
   setCurrentSession: vi.fn(),
   clearSession: vi.fn(),
+  getMainNavigationMessageId: vi.fn(() => undefined),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -60,6 +61,7 @@ function createCallbackContext(data: string, messageId: number): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 902 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -181,11 +183,10 @@ describe("bot/commands/mcps", () => {
     expect(state?.metadata.serverName).toBe("github");
   });
 
-  it("disables a connected server", async () => {
-    mocked.mcpDisconnectMock.mockResolvedValue({ error: null });
+  it("never disables a connected server from the legacy toggle callback", async () => {
     mocked.mcpStatusMock.mockResolvedValue({
       data: {
-        filesystem: { status: "disabled" },
+        filesystem: { status: "connected" },
       },
       error: null,
     });
@@ -199,7 +200,7 @@ describe("bot/commands/mcps", () => {
         messageId: 300,
         projectDirectory: "D:\\Projects\\Repo",
         serverName: "filesystem",
-        servers: [{ name: "filesystem", status: { status: "connected" } }],
+        servers: [{ name: "filesystem", status: { status: "connected" }, type: "remote" }],
       },
     });
 
@@ -207,10 +208,8 @@ describe("bot/commands/mcps", () => {
     const handled = await handleMcpsCallback(ctx);
 
     expect(handled).toBe(true);
-    expect(mocked.mcpDisconnectMock).toHaveBeenCalledWith({
-      name: "filesystem",
-      directory: "D:/Projects/Repo",
-    });
+    expect(mocked.mcpDisconnectMock).not.toHaveBeenCalled();
+    expect((ctx.api as { editMessageText: ReturnType<typeof vi.fn> }).editMessageText).toHaveBeenCalled();
 
     const state = interactionManager.getSnapshot();
     expect(state?.metadata.stage).toBe("detail");
@@ -331,7 +330,7 @@ describe("bot/commands/mcps", () => {
     expect(interactionManager.getSnapshot()).toBeNull();
   });
 
-  it("does not show enable button for needs_auth status", async () => {
+  it("shows Sign In instead of enable for needs_auth status", async () => {
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
@@ -349,7 +348,7 @@ describe("bot/commands/mcps", () => {
 
     expect(handled).toBe(true);
     expect(ctx.editMessageText).toHaveBeenCalledWith(
-      expect.stringContaining(t("mcps.auth_required")),
+      expect.stringContaining(t("mcps.detail.needs_auth_hint")),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
 
@@ -362,6 +361,10 @@ describe("bot/commands/mcps", () => {
       row.some((btn) => btn.callback_data === "mcps:toggle"),
     );
     expect(hasToggleButton).toBe(false);
+    const hasSignInButton = options.reply_markup.inline_keyboard.some((row) =>
+      row.some((btn) => btn.callback_data === "mcps:auth:start"),
+    );
+    expect(hasSignInButton).toBe(true);
     expect(options.reply_markup.inline_keyboard.every((row) => row.length > 0)).toBe(true);
   });
 

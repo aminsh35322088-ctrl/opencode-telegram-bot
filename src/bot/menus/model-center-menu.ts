@@ -187,7 +187,9 @@ export async function buildModelCenterList(kind: "favorites" | "recent", current
 export async function buildModelCenterProviders(): Promise<{ text: string; keyboard: InlineKeyboard }> {
   const providers = await getProviders();
   const keyboard = new InlineKeyboard();
-  providers.forEach((provider) => keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row());
+  providers.forEach((provider) => {
+    keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
+  });
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   return {
     text: providers.length

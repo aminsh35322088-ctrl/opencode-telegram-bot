@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InlineKeyboard } from "grammy";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
-import { appendInlineMenuCancelButton, ensureActiveInlineMenu, replyWithInlineMenu } from "../../../src/bot/menus/inline-menu.js";
+import { appendInlineMenuCancelButton, clearActiveInlineMenu, ensureActiveInlineMenu, replyWithInlineMenu } from "../../../src/bot/menus/inline-menu.js";
 
 function getCallbackData(button: unknown): string | undefined {
   if (!button || typeof button !== "object" || !("callback_data" in button)) return undefined;
@@ -20,7 +20,7 @@ function allButtons(keyboard: InlineKeyboard): unknown[] {
 }
 
 describe("inline-menu", () => {
-  beforeEach(() => interactionManager.clear("test_setup"));
+  beforeEach(() => { interactionManager.clear("test_setup"); clearActiveInlineMenu("test_setup"); });
 
   it("adds a Home button without creating empty rows in non-topic chats", () => {
     const keyboard = new InlineKeyboard().text("Session A", "session:1").row();
@@ -77,6 +77,63 @@ describe("inline-menu", () => {
     await replyWithInlineMenu(ctx, { menuKind: "session", text: "Select session", keyboard: new InlineKeyboard().text("A", "session:a") });
     expect(interactionManager.getSnapshot()?.kind).toBe("inline");
     expect(interactionManager.getSnapshot()?.metadata.menuKind).toBe("session");
+  });
+
+  it("reuses the canonical Topic panel instead of replying with duplicate menus", async () => {
+    const reply = vi.fn().mockResolvedValue({ message_id: 42 });
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = {
+      chat: { id: 100 },
+      message: { message_id: 10, message_thread_id: 735542 },
+      reply,
+      api: { editMessageText },
+    } as never;
+
+    await replyWithInlineMenu(ctx, {
+      menuKind: "settings",
+      text: "Topic Settings",
+      keyboard: new InlineKeyboard().text("Option", "settings:appearance"),
+    });
+    await replyWithInlineMenu(ctx, {
+      menuKind: "model",
+      text: "Model Center",
+      keyboard: new InlineKeyboard().text("Provider", "mc:providers"),
+    });
+
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledWith(
+      100,
+      42,
+      "Model Center",
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
+    expect(interactionManager.getSnapshot()?.metadata.messageId).toBe(42);
+    expect(interactionManager.getSnapshot()?.metadata.menuKind).toBe("model");
+  });
+
+  it("does not create a duplicate when Telegram reports message is not modified", async () => {
+    const reply = vi.fn().mockResolvedValue({ message_id: 77 });
+    const editMessageText = vi.fn().mockRejectedValue(new Error("Bad Request: message is not modified"));
+    const ctx = {
+      chat: { id: 100 },
+      message: { message_id: 11, message_thread_id: 735543 },
+      reply,
+      api: { editMessageText },
+    } as never;
+
+    await replyWithInlineMenu(ctx, {
+      menuKind: "settings",
+      text: "Topic Settings",
+      keyboard: new InlineKeyboard().text("Option", "settings:appearance"),
+    });
+    await replyWithInlineMenu(ctx, {
+      menuKind: "settings",
+      text: "Topic Settings",
+      keyboard: new InlineKeyboard().text("Option", "settings:appearance"),
+    });
+
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(interactionManager.getSnapshot()?.metadata.messageId).toBe(77);
   });
 
   it("accepts the active matching menu", async () => {

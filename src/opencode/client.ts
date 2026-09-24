@@ -11,8 +11,20 @@ const getAuth = () => {
 };
 
 const CONTROL_REQUEST_TIMEOUT_MS = 10_000;
+// A synchronous session prompt (POST /session/{id}/message) blocks until the
+// full model completion finishes. The short control-plane cap routinely aborted
+// slow completions (e.g. the schedule parser) with "The operation timed out",
+// so synchronous prompts get a dedicated generous bound instead.
+const SYNC_PROMPT_TIMEOUT_MS = 180_000;
 
 type FetchInput = string | URL | Request;
+
+function isSyncSessionPrompt(input: FetchInput, init?: RequestInit): boolean {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (!/\/session\/[^/]+\/message(?:\?|$)/u.test(url)) return false;
+  const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  return method === "POST";
+}
 
 function isLongLivedRequest(input: FetchInput, init?: RequestInit): boolean {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -23,11 +35,12 @@ function isLongLivedRequest(input: FetchInput, init?: RequestInit): boolean {
 
 const boundedControlFetch: typeof fetch = (input, init) => {
   if (isLongLivedRequest(input as FetchInput, init)) return fetch(input, init);
+  const timeoutMs = isSyncSessionPrompt(input as FetchInput, init) ? SYNC_PROMPT_TIMEOUT_MS : CONTROL_REQUEST_TIMEOUT_MS;
   return fetch(input, {
     ...init,
     signal: AbortSignal.any([
       init?.signal ?? new AbortController().signal,
-      AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+      AbortSignal.timeout(timeoutMs),
     ]),
   });
 };
@@ -64,6 +77,7 @@ type PromptOptions = {
   model?: { providerID: string; modelID: string };
   agent?: string;
   variant?: string;
+  system?: string;
 };
 type SessionApi = typeof baseClient.session;
 type SessionCreateOptions = Parameters<SessionApi["create"]>[0];
@@ -73,6 +87,24 @@ const MEMORY_LOOKUP_BUDGET_MS = 75;
 function extractPromptText(parts: PromptPart[]): string {
   return parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text ?? "").join("\n").trim();
 }
+
+const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. Use them instead of raw bash/read/write when a purpose-built action exists.
+
+• bot — session/task/memory/model management. Call with action= (e.g. action="session.current", action="tasks.parse", action="tasks.create", action="memory.search", action="settings.get").
+• railway — deployment operations. action="deploy-latest" (latest commit), action="status", action="logs", action="variables".
+• github-ci — CI/CD. action="status", action="logs", action="dispatch", action="verify".
+• session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
+• session — OpenCode session control. action="current", action="messages", action="abort", action="fork".
+• telegram — Telegram context. action="context.current", action="media.fetch".
+• media — image/audio. action="image.generate", action="stt.transcribe".
+• browser — web browsing. action="goto", action="snapshot", action="click", action="screenshot".
+• actions — discover all available actions. action="list", action="describe", action="summary".
+• full-diagnostics / system-diagnostics / logs-observability — health and logs.
+• network-diagnostics / storage-health — network and storage checks.
+
+Tool invocation pattern: each tool has an "action" parameter. Check the tool's action enum to see all available actions before deciding.
+
+Only use native bash/read/write/edit/grep/glob when no purpose-built action covers the task.`;
 
 function countPromptChars(parts: PromptPart[]): number {
   return parts.reduce((total, part) => total + (typeof part.text === "string" ? part.text.length : 0), 0);
@@ -118,7 +150,7 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
       logger.warn("[Memory] Memory retrieval failed; continuing without memory:", error);
     }
   }
-  const promptOptions = { ...options, parts } as Parameters<SessionApi["promptAsync"]>[0];
+  const promptOptions = { ...options, parts, system: TOOL_GUIDANCE_PROMPT } as Parameters<SessionApi["promptAsync"]>[0];
   if (promptOptions.variant === "default") {
     let effectiveProviderID = promptOptions.model?.providerID;
     if (!effectiveProviderID) {

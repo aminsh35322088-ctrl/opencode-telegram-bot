@@ -44,7 +44,7 @@ export const CUSTOM_TOOL_ACTIONS = {
     "agents.list", "agents.current", "agents.select",
     "variants.list", "variants.current", "variants.select",
     "skills.list", "skills.create", "skills.update", "skills.delete", "skills.import", "commands.list",
-    "mcp.list", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable",
+    "mcp.list", "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "mcp.delete",
     "session.current", "session.messages", "session.latest-assistant", "run.status",
     "tasks.list", "tasks.get", "tasks.parse", "tasks.create", "tasks.delete",
     "settings.get", "settings.set",
@@ -54,6 +54,13 @@ export const CUSTOM_TOOL_ACTIONS = {
     "integrations.railway.list", "integrations.railway.active", "integrations.railway.select", "integrations.railway.remove",
     "version.info",
   ],
+  file: ["read", "write", "search", "grep", "info", "delete", "copy", "move"],
+  git: ["status", "diff", "log", "commit", "push", "pull", "branch", "checkout", "stash", "merge", "rebase", "blame", "tags", "remote", "fetch", "reset"],
+  monitoring: ["tail", "grep", "health", "metrics", "alerts"],
+  notify: ["send", "alert", "schedule", "list", "cancel"],
+  security: ["secrets", "audit", "permissions", "deps"],
+  "session-extended": ["create", "delete", "export", "list-all", "archive"],
+  test: ["test", "lint", "typecheck", "build", "test-file", "lint-fix"],
   browser: [
     "open", "goto", "back", "forward", "reload", "snapshot", "screenshot", "click", "fill", "type", "press",
     "hover", "check", "uncheck", "select", "close", "tab-list", "tab-new", "tab-select", "tab-close", "requests", "console", "pdf",
@@ -67,13 +74,6 @@ export const CUSTOM_TOOL_ACTIONS = {
   telegram: ["context.current", "reply.resolve", "forward.inspect", "media.fetch"],
   "network-diagnostics": ["dns", "http", "tcp"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
-  rustdesk: [
-    "bridge.health", "devices.list", "device.info", "device.connect", "device.disconnect",
-    "terminal.exec", "terminal.open", "terminal.write", "terminal.read", "terminal.close", "screen.capture",
-    "mouse.move", "mouse.click", "mouse.doubleClick", "mouse.drag", "mouse.scroll", "keyboard.type", "keyboard.press",
-    "touch.tap", "touch.longPress", "touch.swipe", "clipboard.read", "clipboard.write", "files.list", "files.read",
-    "files.upload", "files.download", "system.info", "system.restart",
-  ],
   "safe-download": ["download"],
   "send-file": ["send"],
   session: ["current", "messages", "latest-assistant", "fork", "revert", "unrevert", "summarize", "abort", "diff", "todo", "children"],
@@ -92,9 +92,10 @@ const CORE_CATEGORIES: Record<CoreToolName, string> = {
 };
 
 const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
-  actions: "discovery", bot: "bot-control", browser: "browser", "database-query": "database",
+  actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
+  notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
   "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
-  media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment", rustdesk: "remote-control",
+  media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment",
   "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
   "system-diagnostics": "diagnostics",
 };
@@ -114,6 +115,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.variants.select": "Select a validated variant for the current model.",
   "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
   "bot.settings.set": "Update a constrained safe bot setting.",
+  "bot.mcp.debug": "Inspect and optionally repair MCP runtime synchronization without exposing credentials.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
   "media.video.prepare": "Extract bounded video keyframes and audio into the current worktree for model analysis.",
   "media.image.generate": "Generate an image with the effective Main/Topic Image Model and save it to the worktree.",
@@ -126,10 +128,13 @@ const DESCRIPTIONS: Record<string, string> = {
   "telegram.reply.resolve": "Read the replied Telegram message snapshot for the current AI Topic.",
   "telegram.forward.inspect": "Inspect safe forwarding metadata for the current Telegram message.",
   "telegram.media.fetch": "Fetch media belonging to the current/replied Telegram message into the current worktree.",
-  "rustdesk.devices.list": "List authorized RustDesk devices with OS and capability metadata.",
-  "rustdesk.terminal.exec": "Execute a command in an authorized remote device terminal.",
-  "rustdesk.screen.capture": "Capture the current screen of an authorized remote device.",
-  "rustdesk.system.restart": "Restart an authorized remote device.",
+  "file.delete": "Delete a file or directory inside the current worktree.",
+  "git.reset": "Reset git state in the current worktree.",
+  "notify.send": "Send a Telegram notification to the current Topic.",
+  "notify.schedule": "Schedule a persisted Telegram notification for the current Topic.",
+  "session-extended.create": "Create an OpenCode session without rebinding the current Telegram Topic.",
+  "session-extended.delete": "Delete a non-current OpenCode session.",
+  "test.test": "Run the project's configured tests or local test runner without downloading tools.",
 };
 
 const BOT_READ = new Set([
@@ -141,10 +146,10 @@ const BOT_READ = new Set([
 ]);
 const BOT_MUTATING = new Set([
   "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update", "skills.import",
-  "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable", "tasks.create", "settings.set", "memory.add", "memory.remove",
+  "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "tasks.create", "settings.set", "memory.add", "memory.remove",
   "integrations.github.select", "integrations.railway.select",
 ]);
-const BOT_DESTRUCTIVE = new Set(["skills.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove"]);
+const BOT_DESTRUCTIVE = new Set(["skills.delete", "mcp.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove"]);
 
 function customRisk(tool: string, action: string): AgentActionRisk {
   if (tool === "bot") {
@@ -152,12 +157,32 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     if (BOT_MUTATING.has(action)) return "mutating";
     if (BOT_READ.has(action)) return "read";
   }
+  if (tool === "file") {
+    if (action === "delete") return "destructive";
+    if (["write", "copy", "move"].includes(action)) return "write";
+    return "read";
+  }
+  if (tool === "git") {
+    if (action === "reset") return "destructive";
+    if (["push", "pull", "fetch"].includes(action)) return "external";
+    if (["commit", "branch", "checkout", "stash", "merge", "rebase"].includes(action)) return "mutating";
+    return "read";
+  }
+  if (tool === "monitoring" || tool === "security") return "read";
+  if (tool === "notify") {
+    if (action === "list") return "read";
+    if (action === "cancel") return "mutating";
+    return "external";
+  }
+  if (tool === "session-extended") {
+    if (action === "delete") return "destructive";
+    if (action === "create") return "mutating";
+    if (["export", "archive"].includes(action)) return "write";
+    return "read";
+  }
+  if (tool === "test") return ["build", "lint-fix"].includes(action) ? "write" : "read";
   if (tool === "media") return ["stt.status", "image.providers", "image.models", "image.current"].includes(action) ? "read" : "external";
   if (tool === "telegram") return action === "media.fetch" ? "write" : "read";
-  if (tool === "rustdesk") {
-    if (action === "system.restart") return "destructive";
-    return /^(device\.(connect|disconnect)|terminal\.(exec|open|write|close)|mouse\.|keyboard\.|touch\.|clipboard\.write|files\.upload)/.test(action) ? "mutating" : "read";
-  }
   if (tool === "browser") {
     if (["click", "fill", "type", "press", "hover", "check", "uncheck", "select", "tab-new", "tab-select", "tab-close", "close"].includes(action)) return "mutating";
     return action === "pdf" ? "write" : "external";

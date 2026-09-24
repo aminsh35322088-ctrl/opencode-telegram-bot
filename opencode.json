@@ -11,7 +11,6 @@
     "telegram": "allow",
     "github-ci": "allow",
     "session": "allow",
-    "rustdesk": "allow",
     "webfetch": "allow",
     "websearch": "allow",
     "lsp": "allow",
@@ -100,7 +99,6 @@
     },
     "external_directory": {
       "/data/logs/**": "allow"
-    },
-    "media": "allow"
+    }
   }
 }

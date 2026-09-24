@@ -24,6 +24,10 @@ export interface CustomProviderModel {
   name: string;
   attachment?: boolean;
   modalities?: CustomProviderModelModalities;
+  /** Provider/model claims tool calling is supported. */
+  toolCall?: boolean;
+  /** True only after the bot completed an actual OpenAI-compatible tool-call round trip. */
+  toolCallVerified?: boolean;
 }
 
 export interface CustomProvider {
@@ -34,6 +38,15 @@ export interface CustomProvider {
   capability: AiCapability;
   createdAt: string;
   updatedAt: string;
+}
+
+function isVerifiedCustomAgentModel(model: CustomProviderModel | undefined): boolean {
+  return Boolean(
+    model &&
+    model.toolCall === true &&
+    model.toolCallVerified === true &&
+    isChatModelMetadata(model)
+  );
 }
 
 interface StoredProvider extends CustomProvider {
@@ -56,6 +69,9 @@ const LEGACY_GEMINI_IMAGE_ID = "gemini-image";
 const PROVIDER_ENV_PREFIX = "OPENCODE_TELEGRAM_PROVIDER_";
 const DEFAULT_CUSTOM_MODEL_INPUT_MODALITIES = ["text", "image"] as const;
 const DEFAULT_CUSTOM_MODEL_OUTPUT_MODALITIES = ["text"] as const;
+const TOOL_CALL_PROBE_NAME = "opencode_action_probe";
+const TOOL_CALL_PROBE_TIMEOUT_MS = 12_000;
+const toolCapabilityVerificationFlights = new Map<string, Promise<boolean>>();
 
 const SUPPORTED_MODALITIES = new Set(["text", "audio", "image", "video", "pdf"]);
 
@@ -112,6 +128,29 @@ function readAttachmentFlag(raw: DiscoveredModelRecord, modalities?: CustomProvi
   return undefined;
 }
 
+function readToolCallFlag(raw: DiscoveredModelRecord): boolean | undefined {
+  const capabilities =
+    raw.capabilities && typeof raw.capabilities === "object" && !Array.isArray(raw.capabilities)
+      ? raw.capabilities as Record<string, unknown>
+      : undefined;
+
+  for (const value of [
+    raw.tool_call,
+    raw.toolcall,
+    raw.toolCall,
+    raw.supports_tools,
+    raw.supportsTools,
+    capabilities?.tools,
+    capabilities?.tool_call,
+    capabilities?.toolcall,
+    capabilities?.toolCall,
+  ]) {
+    if (typeof value === "boolean") return value;
+  }
+
+  return undefined;
+}
+
 /**
  * Normalize an arbitrary OpenAI-compatible /models entry.
  *
@@ -127,12 +166,14 @@ export function normalizeDiscoveredModel(raw: DiscoveredModelRecord): CustomProv
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
   const modalities = readModalities(raw);
   const attachment = readAttachmentFlag(raw, modalities);
+  const toolCall = readToolCallFlag(raw);
 
   return {
     id,
     name,
     ...(attachment !== undefined ? { attachment } : {}),
     ...(modalities ? { modalities } : {}),
+    ...(toolCall !== undefined ? { toolCall } : {}),
   };
 }
 
@@ -156,6 +197,9 @@ export function getOpenCodeCustomModelConfig(model: CustomProviderModel): Record
   return {
     name: model.name,
     attachment,
+    // Fail closed: OpenCode must only expose agent tools through a custom
+    // provider after a real tool-call probe succeeded for this exact model.
+    tool_call: model.toolCall === true && model.toolCallVerified === true,
     modalities: {
       input,
       output,
@@ -180,6 +224,8 @@ function normalizeStore(value: unknown): ProviderStoreFile {
                   name: typeof model.name === "string" && model.name.trim() ? model.name : model.id,
                   ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
                   ...(model.modalities ? { modalities: model.modalities } : {}),
+                  ...(typeof model.toolCall === "boolean" ? { toolCall: model.toolCall } : {}),
+                  ...(typeof model.toolCallVerified === "boolean" ? { toolCallVerified: model.toolCallVerified } : {}),
                 }))
             : [],
         }))
@@ -195,8 +241,14 @@ async function readStore(): Promise<ProviderStoreFile> {
   return normalizeStore(state.customProviders);
 }
 
+async function invalidateUnifiedCatalog(): Promise<void> {
+  const { invalidateUnifiedModelCatalog } = await import("./unified-model-catalog-service.js");
+  invalidateUnifiedModelCatalog();
+}
+
 async function writeStore(store: ProviderStoreFile, beforeSave: () => void = () => {}): Promise<void> {
   await updateAppState(() => { beforeSave(); return { customProviders: normalizeStore(store) }; });
+  await invalidateUnifiedCatalog();
 }
 
 function normalizeId(value: string): string {
@@ -248,7 +300,7 @@ export async function listCustomProvidersByCapability(capability: AiCapability):
     return general.filter((provider) => provider.models.some(isImageModelMetadata));
   }
   if (capability === "coding") {
-    return general.filter((provider) => provider.models.some(isChatModelMetadata));
+    return general.filter((provider) => provider.models.some(isVerifiedCustomAgentModel));
   }
   return general;
 }
@@ -281,6 +333,130 @@ export async function discoverModels(baseURL: string, apiKey: string): Promise<C
 
   if (!models.length) throw new Error("Provider returned no models from /models");
   return models;
+}
+
+function hasProbeToolCall(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices)) return false;
+
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object" || Array.isArray(choice)) continue;
+    const message = (choice as { message?: unknown }).message;
+    if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+    const record = message as Record<string, unknown>;
+
+    if (Array.isArray(record.tool_calls)) {
+      const matched = record.tool_calls.some((call) => {
+        if (!call || typeof call !== "object" || Array.isArray(call)) return false;
+        const fn = (call as { function?: unknown }).function;
+        return Boolean(
+          fn &&
+          typeof fn === "object" &&
+          !Array.isArray(fn) &&
+          (fn as { name?: unknown }).name === TOOL_CALL_PROBE_NAME,
+        );
+      });
+      if (matched) return true;
+    }
+
+    const legacy = record.function_call;
+    if (
+      legacy &&
+      typeof legacy === "object" &&
+      !Array.isArray(legacy) &&
+      (legacy as { name?: unknown }).name === TOOL_CALL_PROBE_NAME
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Verify the exact model can complete the OpenAI-compatible function-calling
+ * contract used by OpenCode. null means the provider could not be verified
+ * (for example a temporary transport error); false means it answered normally
+ * but did not produce the required tool call.
+ */
+export async function probeToolCallSupport(
+  baseURL: string,
+  apiKey: string,
+  modelID: string,
+): Promise<boolean | null> {
+  const normalizedURL = normalizeBaseURL(baseURL);
+  const key = apiKey.trim();
+  const model = modelID.trim();
+  if (!key || !model) return null;
+
+  const tool = {
+    type: "function",
+    function: {
+      name: TOOL_CALL_PROBE_NAME,
+      description: "Compatibility probe. Call this function exactly once.",
+      parameters: {
+        type: "object",
+        properties: { ping: { type: "string" } },
+        required: ["ping"],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  const toolChoices: unknown[] = [
+    { type: "function", function: { name: TOOL_CALL_PROBE_NAME } },
+    "required",
+    "auto",
+  ];
+  let receivedCompatibleResponse = false;
+
+  for (const toolChoice of toolChoices) {
+    try {
+      const response = await fetch(`${normalizedURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: `Call ${TOOL_CALL_PROBE_NAME} exactly once with ping set to ok. Do not answer with normal text.`,
+            },
+          ],
+          tools: [tool],
+          tool_choice: toolChoice,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(TOOL_CALL_PROBE_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      receivedCompatibleResponse = true;
+      const payload = await response.json().catch(() => null);
+      if (hasProbeToolCall(payload)) {
+        logger.info(`[CustomProvider] Verified tool calling: model=${model}`);
+        return true;
+      }
+    } catch (error) {
+      logger.debug(`[CustomProvider] Tool-call probe transport failure: model=${model}`, error);
+      return null;
+    }
+  }
+
+  if (receivedCompatibleResponse) {
+    logger.warn(`[CustomProvider] Model did not complete required tool-call probe: model=${model}`);
+    return false;
+  }
+
+  logger.warn(`[CustomProvider] Could not verify tool calling against provider endpoint: model=${model}`);
+  return null;
 }
 
 export async function configureGroqStt(apiKey: string, beforeSave: () => void = () => {}): Promise<void> {
@@ -347,26 +523,39 @@ export async function saveCustomProvider(input: {
           name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : model.id.trim(),
           ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
           ...(model.modalities ? { modalities: model.modalities } : {}),
+          ...(typeof model.toolCall === "boolean" ? { toolCall: model.toolCall } : {}),
+          ...(typeof model.toolCallVerified === "boolean" ? { toolCallVerified: model.toolCallVerified } : {}),
         }))
     : [];
   if (!requestedModels.length) throw new Error("At least one provider model is required");
 
   const discovered = await discoverModels(baseURL, key);
   const discoveredById = new Map(discovered.map((model) => [model.id, model]));
-  const verifiedModels = requestedModels
+  const catalogModels = requestedModels
     .map((model) => discoveredById.get(model.id))
     .filter((model): model is CustomProviderModel => Boolean(model));
-  if (!verifiedModels.length) throw new Error("None of the configured models were returned by the provider");
+  if (!catalogModels.length) throw new Error("None of the configured models were returned by the provider");
 
   const now = new Date().toISOString();
   const store = await readStore();
   const existing = store.providers.find((provider) => provider.id === id);
   if (existing && !input.id) throw new Error("A provider with this name already exists. Choose a different name.");
+
+  const preserveVerification = Boolean(existing && existing.baseURL === baseURL && existing.apiKey === key);
+  const previousModels = preserveVerification
+    ? new Map(existing!.models.map((model) => [model.id, model]))
+    : new Map<string, CustomProviderModel>();
+  const modelsWithPreservedVerification = catalogModels.map((model) => {
+    const previous = previousModels.get(model.id);
+    if (previous?.toolCallVerified !== true) return model;
+    return { ...model, toolCall: previous.toolCall === true, toolCallVerified: true };
+  });
+
   const provider: StoredProvider = {
     id,
     name,
     baseURL,
-    models: verifiedModels,
+    models: modelsWithPreservedVerification,
     capability,
     apiKey: key,
     createdAt: existing?.createdAt ?? now,
@@ -375,7 +564,7 @@ export async function saveCustomProvider(input: {
   const next = { ...store, providers: [...store.providers.filter((item) => item.id !== id), provider] };
   await writeStore(next, input.beforeSave);
   applyProviderEnvironment(next);
-  logger.info(`[CustomProvider] Saved verified provider ${id} capability=${capability} models=${provider.models.length}`);
+  logger.info(`[CustomProvider] Saved provider ${id} capability=${capability} models=${provider.models.length}`);
   return toPublicProvider(provider);
 }
 
@@ -389,6 +578,132 @@ export async function deleteCustomProvider(id: string): Promise<boolean> {
   return true;
 }
 
+export interface ToolCapabilityTarget {
+  providerID: string;
+  modelID: string;
+}
+
+interface ToolCapabilityUpdate {
+  providerId: string;
+  providerUpdatedAt: string;
+  providerBaseURL: string;
+  providerApiKey: string;
+  modelId: string;
+  toolCall: boolean;
+  previousToolCall?: boolean;
+}
+
+async function collectToolCapabilityUpdates(
+  snapshot: ProviderStoreFile,
+  targets: readonly ToolCapabilityTarget[],
+): Promise<ToolCapabilityUpdate[]> {
+  if (!targets.length) return [];
+
+  const unique = new Map(targets.map((target) => [`${target.providerID}/${target.modelID}`, target]));
+  const updates: ToolCapabilityUpdate[] = [];
+
+  for (const target of unique.values()) {
+    const provider = snapshot.providers.find((item) => item.id === target.providerID);
+    if (
+      !provider ||
+      provider.id === LEGACY_GEMINI_IMAGE_ID ||
+      provider.capability === "stt" ||
+      !provider.apiKey.trim()
+    ) {
+      continue;
+    }
+
+    const model = provider.models.find((item) => item.id === target.modelID);
+    if (!model || model.toolCallVerified === true || !isChatModelMetadata(model)) continue;
+
+    const toolCall = await probeToolCallSupport(provider.baseURL, provider.apiKey, model.id);
+    if (toolCall === null) continue;
+    updates.push({
+      providerId: provider.id,
+      providerUpdatedAt: provider.updatedAt,
+      providerBaseURL: provider.baseURL,
+      providerApiKey: provider.apiKey,
+      modelId: model.id,
+      toolCall,
+      ...(typeof model.toolCall === "boolean" ? { previousToolCall: model.toolCall } : {}),
+    });
+  }
+
+  return updates;
+}
+
+async function persistToolCapabilityUpdates(updates: readonly ToolCapabilityUpdate[]): Promise<boolean> {
+  if (!updates.length) return false;
+
+  let changed = false;
+  await updateAppState((state) => {
+    const current = normalizeStore(state.customProviders);
+    const providers = current.providers.map((provider) => {
+      const matching = updates.filter((update) =>
+        update.providerId === provider.id &&
+        update.providerUpdatedAt === provider.updatedAt &&
+        update.providerBaseURL === provider.baseURL &&
+        update.providerApiKey === provider.apiKey
+      );
+      if (!matching.length) return provider;
+
+      let providerChanged = false;
+      const models = provider.models.map((model) => {
+        const update = matching.find((candidate) => candidate.modelId === model.id);
+        if (!update || model.toolCallVerified === true) return model;
+        providerChanged = true;
+        changed = true;
+        return { ...model, toolCall: update.toolCall, toolCallVerified: true };
+      });
+      return providerChanged ? { ...provider, models } : provider;
+    });
+    return changed ? { customProviders: normalizeStore({ ...current, providers }) } : {};
+  });
+
+  if (changed) {
+    await invalidateUnifiedCatalog();
+    logger.info("[CustomProvider] Persisted verified tool-call capabilities");
+  }
+  return changed;
+}
+
+async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpdate[]): Promise<void> {
+  if (!updates.length) return;
+
+  let changed = false;
+  await updateAppState((state) => {
+    const current = normalizeStore(state.customProviders);
+    const providers = current.providers.map((provider) => {
+      const matching = updates.filter((update) =>
+        update.providerId === provider.id &&
+        update.providerUpdatedAt === provider.updatedAt &&
+        update.providerBaseURL === provider.baseURL &&
+        update.providerApiKey === provider.apiKey
+      );
+      if (!matching.length) return provider;
+
+      let providerChanged = false;
+      const models = provider.models.map((model) => {
+        const update = matching.find((candidate) => candidate.modelId === model.id);
+        if (!update || model.toolCallVerified !== true || model.toolCall !== update.toolCall) return model;
+
+        providerChanged = true;
+        changed = true;
+        const restored: CustomProviderModel = { ...model };
+        delete restored.toolCallVerified;
+        if (typeof update.previousToolCall === "boolean") restored.toolCall = update.previousToolCall;
+        else delete restored.toolCall;
+        return restored;
+      });
+      return providerChanged ? { ...provider, models } : provider;
+    });
+    return changed ? { customProviders: normalizeStore({ ...current, providers }) } : {};
+  });
+  if (changed) await invalidateUnifiedCatalog();
+}
+
+// Explicit targets are mandatory: catalog discovery/refresh paths must never
+// fan out inference probes across every model exposed by a provider.
 export async function buildOpenCodeCustomConfig(): Promise<string> {
   const store = await readStore();
   applyProviderEnvironment(store);
@@ -414,10 +729,114 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
   return JSON.stringify({ $schema: "https://opencode.ai/config.json", provider: providers }, null, 2);
 }
 
+async function writeOpenCodeCustomConfigFile(configPath?: string): Promise<string> {
+  const target = configPath ?? path.join(getRuntimePaths().appHome, ".config", "opencode-telegram", "custom-providers.json");
+  await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await fs.writeFile(target, await buildOpenCodeCustomConfig(), { mode: 0o600 });
+  return target;
+}
+
 export async function syncOpenCodeCustomConfig(): Promise<string> {
-  const configDir = path.join(getRuntimePaths().appHome, ".config", "opencode-telegram");
-  const configPath = path.join(configDir, "custom-providers.json");
-  await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(configPath, await buildOpenCodeCustomConfig(), { mode: 0o600 });
-  return configPath;
+  // Config sync is intentionally network-free. Unverified custom models remain
+  // fail-closed until an active/selected model is verified explicitly.
+  return writeOpenCodeCustomConfigFile();
+}
+
+async function isToolCapabilityRuntimeIdle(): Promise<boolean> {
+  try {
+    const {
+      getOpenCodeActivityState,
+      isAnyForegroundBusy,
+      reconcileAllForegroundBusyState,
+    } = await import("./run-control-service.js");
+    const { scheduledTaskRuntime } = await import("./scheduled-task-runtime-service.js");
+    await reconcileAllForegroundBusyState();
+    if (isAnyForegroundBusy() || scheduledTaskRuntime.hasRunningTasks()) return false;
+    return await getOpenCodeActivityState() === "idle";
+  } catch (error) {
+    logger.debug("[CustomProvider] Could not verify idle OpenCode state for tool capability update", error);
+    return false;
+  }
+}
+
+export async function refreshAndApplyCustomProviderToolCapabilities(
+  configPath: string | undefined,
+  targets: readonly ToolCapabilityTarget[],
+): Promise<boolean> {
+  // Never mutate capability state while another Topic/session/task may be
+  // executing against the current OpenCode instance configuration.
+  if (!(await isToolCapabilityRuntimeIdle())) return false;
+
+  const snapshot = await readStore();
+  const updates = await collectToolCapabilityUpdates(snapshot, targets);
+  if (!updates.length) return false;
+
+  // Probes can take seconds. Re-check after the network round-trip so a run
+  // that started meanwhile cannot be interrupted by the instance reload.
+  if (!(await isToolCapabilityRuntimeIdle())) return false;
+
+  const changed = await persistToolCapabilityUpdates(updates);
+  if (!changed) return false;
+
+  const positiveUpdates = updates.filter((update) => update.toolCall);
+  if (!positiveUpdates.length) {
+    // Negative verification remains fail-closed and does not require a runtime
+    // reload because the existing OpenCode config already exposes tool_call=false.
+    return true;
+  }
+
+  try {
+    await writeOpenCodeCustomConfigFile(configPath);
+    const { opencodeClient } = await import("../../opencode/client.js");
+    const { error } = await opencodeClient.global.dispose();
+    if (error) throw error;
+    logger.info("[CustomProvider] Reloaded idle OpenCode instances with verified tool-call capabilities");
+    return true;
+  } catch (error) {
+    // Never leave a positive capability persisted when the live instance could
+    // not reload the matching config. Roll it back so selection stays fail-closed.
+    await rollbackToolCapabilityUpdates(positiveUpdates);
+    await writeOpenCodeCustomConfigFile(configPath).catch(() => {});
+    logger.warn("[CustomProvider] Rolled back verified capability after OpenCode reload failure", error);
+    return false;
+  }
+}
+
+async function ensureCustomProviderModelToolCapabilityInternal(
+  providerID: string,
+  modelID: string,
+): Promise<boolean> {
+  const snapshot = await readStore();
+  const provider = snapshot.providers.find((item) => item.id === providerID && item.capability !== "stt");
+  const model = provider?.models.find((item) => item.id === modelID);
+  if (!provider || !model || !isChatModelMetadata(model)) return false;
+  if (model.toolCallVerified === true) return model.toolCall === true;
+
+  const applied = await refreshAndApplyCustomProviderToolCapabilities(undefined, [{ providerID, modelID }]);
+  if (!applied) return false;
+
+  const refreshed = await readStore();
+  const verified = refreshed.providers
+    .find((item) => item.id === providerID)
+    ?.models.find((item) => item.id === modelID);
+  return verified?.toolCallVerified === true && verified.toolCall === true;
+}
+
+export async function ensureCustomProviderModelToolCapability(
+  providerID: string,
+  modelID: string,
+): Promise<boolean> {
+  const key = JSON.stringify([providerID.trim(), modelID.trim()]);
+  const existing = toolCapabilityVerificationFlights.get(key);
+  if (existing) return existing;
+
+  const flight = ensureCustomProviderModelToolCapabilityInternal(providerID, modelID);
+  toolCapabilityVerificationFlights.set(key, flight);
+  try {
+    return await flight;
+  } finally {
+    if (toolCapabilityVerificationFlights.get(key) === flight) {
+      toolCapabilityVerificationFlights.delete(key);
+    }
+  }
 }

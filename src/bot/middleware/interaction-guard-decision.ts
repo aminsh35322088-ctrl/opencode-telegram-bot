@@ -1,13 +1,13 @@
 import type { Context } from "grammy";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { questionManager } from "../../app/managers/question-manager.js";
-import type { BlockReason, ExpectedInput, GuardDecision, IncomingInputType, InteractionState, InteractionKind } from "../../app/types/interaction.js";
+import type { BlockReason, ExpectedInput, GuardDecision, IncomingInputType, InteractionState } from "../../app/types/interaction.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN, isReplyKeyboardButtonText } from "../message-patterns.js";
 import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
-import { isMcpAddWizardActive } from "../commands/mcp-catalog-command.js";
+import { isMcpTextWizardActive } from "../commands/mcp-server-command.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -37,7 +37,7 @@ const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
 ]);
 function isBusyAllowedCommand(command?: string): boolean { return Boolean(command && ALWAYS_REACHABLE_CONTROL_COMMANDS.has(command)); }
 const ROOT_NAVIGATION_TEXTS = new Set(["💬 New Chat", "📁 Projects", "⚙️ Settings"]);
-function allowsBusyInteraction(kind: InteractionKind | undefined): boolean { return kind === "question" || kind === "permission"; }
+function allowsBusyInteraction(state: InteractionState | null): boolean { return Boolean(state && (state.kind === "question" || state.kind === "permission")); }
 function isQueuedPromptButtonPress(ctx: Context): boolean { const text = ctx.message?.text; return typeof text === "string" && QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text); }
 function resolveCurrentSessionBusy(): boolean {
   const topic = getTopicRuntimeContext();
@@ -53,7 +53,7 @@ function isReplyKeyboardPress(ctx: Context): boolean {
   if (model.providerID && model.modelID) knownButtonTexts.add(formatModelForButton(model.providerID, model.modelID, model.name));
   return isReplyKeyboardButtonText(text, knownButtonTexts);
 }
-function isSetupWizardText(ctx: Context): boolean { return Boolean(ctx.message?.text && (isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive())); }
+function isSetupWizardText(ctx: Context): boolean { return Boolean(ctx.message?.text && (isProviderWizardActive() || isIntegrationWizardActive() || isMcpTextWizardActive())); }
 function isRootNavigationText(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && ROOT_NAVIGATION_TEXTS.has(text); }
 function normalizeIncomingCommand(text: string): string | null { const trimmed = text.trim(); if (!trimmed.startsWith("/")) return null; const token = trimmed.split(/\s+/)[0]; if (!token) return null; const withoutMention = token.split("@")[0]?.toLowerCase(); return !withoutMention || withoutMention.length <= 1 ? null : withoutMention; }
 function classifyIncomingInput(ctx: Context): { inputType: IncomingInputType; command?: string } {
@@ -91,7 +91,7 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
   }
   if (isBusy) {
     if (inputType === "command") { if (isBusyAllowedCommand(command)) return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "command_not_allowed", command); }
-    if (scopedState && allowsBusyInteraction(scopedState.kind)) {
+    if (scopedState && allowsBusyInteraction(scopedState)) {
       if (scopedState.expectedInput === "mixed") { if (inputType === "callback" || inputType === "text") return createAllowDecision(inputType, scopedState, command, true); return createBusyBlockDecision(inputType, scopedState, "expected_text", command); }
       if (scopedState.expectedInput === inputType) return createAllowDecision(inputType, scopedState, command, true);
       return createBusyBlockDecision(inputType, scopedState, getExpectedInputBlockReason(scopedState.expectedInput), command);

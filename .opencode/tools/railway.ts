@@ -282,7 +282,24 @@ export default tool({
         if (args.build) command.push("--build");
         command.push("--lines", String(Math.max(1, Math.min(Math.trunc(args.lines ?? 100), 200))), "--json");
         break;
-      case "variables": command.push("variable", "list", "--json"); addScope(command, project, environment, args.service); break;
+      case "variables": {
+        // `railway variable list` requires a linked service even when the
+        // project and environment are explicit. When the caller omits the
+        // service and the project exposes exactly one, resolve it via the API
+        // so the action works without extra round trips.
+        let variablesService = args.service?.trim();
+        if (!variablesService && project) {
+          try {
+            const scope = await resolveDeployScope(token, tokenType, project, environment, undefined);
+            variablesService = scope.serviceId;
+          } catch {
+            // Fall through: the CLI reports its own actionable error.
+          }
+        }
+        command.push("variable", "list", "--json");
+        addScope(command, project, environment, variablesService);
+        break;
+      }
       case "deploy": command.push("up", "--detach", "--yes"); addScope(command, project, environment, args.service); break;
     }
 
@@ -297,7 +314,7 @@ export default tool({
 
     try {
       const { stdout, stderr } = await execFileAsync(RAILWAY_BIN, command, {
-        cwd: context.worktree,
+        cwd: context.directory || context.worktree || process.cwd(),
         timeout: clampTimeout(args.timeoutMs),
         maxBuffer: 2 * 1024 * 1024,
         env: railwayEnv,
