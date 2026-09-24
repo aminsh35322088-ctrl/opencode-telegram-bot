@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { assistantRunState } from "../app/managers/assistant-run-state-manager.js";
 import { config } from "../config.js";
 import { isContainerRuntime } from "../runtime/container.js";
 import { logger } from "../utils/logger.js";
@@ -18,6 +20,47 @@ const HEALTH_CHECK_TIMEOUT_MS = 5000;
 // OpenCode process is dead. The SSE subscriber has its own reconnect logic.
 const HEALTH_FAILURES_BEFORE_RESTART = 3;
 const HEALTH_CHECK_TIMED_OUT = Symbol("health-check-timed-out");
+const DEFAULT_RAILWAY_MEMORY_RESTART_RATIO = 0.82;
+
+type CgroupMemoryPressure = {
+  usedBytes: number;
+  limitBytes: number;
+  ratio: number;
+};
+
+function memoryRestartRatio(): number | null {
+  const configured = process.env.OPENCODE_MEMORY_RESTART_RATIO?.trim();
+  if (!configured && !process.env.RAILWAY_PROJECT_ID) return null;
+  const value = configured ? Number(configured) : DEFAULT_RAILWAY_MEMORY_RESTART_RATIO;
+  return Number.isFinite(value) && value >= 0.6 && value < 0.98 ? value : null;
+}
+
+async function readNumberFile(filePath: string): Promise<number | null> {
+  try {
+    const raw = (await readFile(filePath, "utf8")).trim();
+    if (!raw || raw === "max") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readCgroupMemoryPressure(): Promise<CgroupMemoryPressure | null> {
+  const candidates = [
+    ["/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"],
+    ["/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes"],
+  ] as const;
+  for (const [usagePath, limitPath] of candidates) {
+    const [usedBytes, limitBytes] = await Promise.all([
+      readNumberFile(usagePath),
+      readNumberFile(limitPath),
+    ]);
+    if (!usedBytes || !limitBytes || limitBytes <= 0) continue;
+    return { usedBytes, limitBytes, ratio: usedBytes / limitBytes };
+  }
+  return null;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,7 +133,7 @@ export class OpencodeAutoRestartService {
     this.started = true;
     this.localTarget = localTarget;
     this.consecutiveHealthFailures = 0;
-    logger.info(`[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}, healthTimeoutMs=${HEALTH_CHECK_TIMEOUT_MS}, failuresBeforeRestart=${HEALTH_FAILURES_BEFORE_RESTART}`);
+    logger.info(`[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}, healthTimeoutMs=${HEALTH_CHECK_TIMEOUT_MS}, failuresBeforeRestart=${HEALTH_FAILURES_BEFORE_RESTART}, memoryRestartRatio=${memoryRestartRatio() ?? "off"}`);
     await this.checkAndRestart("startup");
     this.timer = setInterval(() => void this.checkAndRestart("interval"), config.opencode.monitorIntervalSec * 1000);
     this.timer.unref?.();
@@ -118,6 +161,28 @@ export class OpencodeAutoRestartService {
         if (!this.serverWasHealthy) {
           this.serverWasHealthy = true;
           await opencodeReadyLifecycle.notifyReady(`auto_restart_${reason}`);
+        }
+
+        if (reason === "interval") {
+          const threshold = memoryRestartRatio();
+          const pressure = threshold === null ? null : await readCgroupMemoryPressure();
+          if (pressure && threshold !== null && pressure.ratio >= threshold) {
+            const usedMb = Math.round(pressure.usedBytes / (1024 * 1024));
+            const limitMb = Math.round(pressure.limitBytes / (1024 * 1024));
+            if (assistantRunState.hasActiveRuns()) {
+              logger.warn(
+                `[OpenCodeAutoRestart] Memory pressure detected but restart deferred for active AI run(s): used=${usedMb}MB, limit=${limitMb}MB, ratio=${pressure.ratio.toFixed(3)}, threshold=${threshold}`,
+              );
+              return;
+            }
+
+            logger.warn(
+              `[OpenCodeAutoRestart] Recycling idle OpenCode before OOM pressure: used=${usedMb}MB, limit=${limitMb}MB, ratio=${pressure.ratio.toFixed(3)}, threshold=${threshold}`,
+            );
+            this.serverWasHealthy = false;
+            opencodeReadyLifecycle.notifyUnavailable("memory_pressure");
+            await this.startServer("memory_pressure");
+          }
         }
         return;
       }
@@ -175,13 +240,18 @@ export class OpencodeAutoRestartService {
     logger.info(`[OpenCodeAutoRestart] Existing OpenCode listener stop result: pid=${existingPid}, stopped=${stopped}`);
   }
 
-  private async startServer(reason: "startup" | "interval"): Promise<void> {
+  private async startServer(reason: "startup" | "interval" | "memory_pressure"): Promise<void> {
     if (!this.localTarget) return;
     if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
       logger.warn(`[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`);
       return;
     }
-    const prefix = reason === "startup" ? "Startup" : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
+    const prefix =
+      reason === "startup"
+        ? "Startup"
+        : reason === "memory_pressure"
+          ? "Idle memory-pressure recycle"
+          : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
     logger.info(`[OpenCodeAutoRestart] ${prefix}: preparing local OpenCode server on port=${this.localTarget.port}`);
     await this.stopExistingServerIfNeeded();
     logger.info(`[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`);

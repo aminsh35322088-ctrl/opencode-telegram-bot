@@ -44,7 +44,7 @@ export const CUSTOM_TOOL_ACTIONS = {
     "agents.list", "agents.current", "agents.select",
     "variants.list", "variants.current", "variants.select",
     "skills.list", "skills.create", "skills.update", "skills.delete", "skills.import", "commands.list",
-    "mcp.list", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "mcp.delete",
+    "mcp.list", "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "mcp.delete",
     "session.current", "session.messages", "session.latest-assistant", "run.status",
     "tasks.list", "tasks.get", "tasks.parse", "tasks.create", "tasks.delete",
     "settings.get", "settings.set",
@@ -115,6 +115,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.variants.select": "Select a validated variant for the current model.",
   "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
   "bot.settings.set": "Update a constrained safe bot setting.",
+  "bot.mcp.debug": "Inspect and optionally repair MCP runtime synchronization without exposing credentials.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
   "media.video.prepare": "Extract bounded video keyframes and audio into the current worktree for model analysis.",
   "media.image.generate": "Generate an image with the effective Main/Topic Image Model and save it to the worktree.",
@@ -145,7 +146,7 @@ const BOT_READ = new Set([
 ]);
 const BOT_MUTATING = new Set([
   "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update", "skills.import",
-  "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "tasks.create", "settings.set", "memory.add", "memory.remove",
+  "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "tasks.create", "settings.set", "memory.add", "memory.remove",
   "integrations.github.select", "integrations.railway.select",
 ]);
 const BOT_DESTRUCTIVE = new Set(["skills.delete", "mcp.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove"]);

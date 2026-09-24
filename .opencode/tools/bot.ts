@@ -27,6 +27,7 @@ const BOT_ACTIONS = [
   "skills.import",
   "commands.list",
   "mcp.list",
+  "mcp.debug",
   "mcp.add-local",
   "mcp.add-remote",
   "mcp.enable",
@@ -145,6 +146,7 @@ interface SkillImportModule {
 interface CommandCatalogModule { loadCommandCatalog(projectDirectory: string): Promise<unknown[]>; }
 interface McpModule {
   loadMcpServers(projectDirectory: string): Promise<unknown[]>;
+  debugMcpServer(projectDirectory: string, serverName?: string, options?: { repair?: boolean }): Promise<unknown>;
   createMcpServerFromInput(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<void>;
   setMcpServerEnabled(projectDirectory: string, serverName: string, enable: boolean): Promise<void>;
   renameMcpServer(projectDirectory: string, serverName: string, newName: string): Promise<unknown>;
@@ -336,6 +338,7 @@ export default tool({
     prompt: tool.schema.string().optional().describe("Scheduled-task prompt for tasks.create."),
     setting: tool.schema.enum(SETTINGS).optional().describe("Safe bot setting for settings.get/settings.set."),
     enabled: tool.schema.boolean().optional().describe("Boolean value for boolean settings."),
+    repair: tool.schema.boolean().optional().describe("For mcp.debug, force-resync managed MCP definitions into the current Topic runtime before returning diagnostics."),
   },
   async execute(args, context) {
     const action = args.action as BotAction;
@@ -447,6 +450,9 @@ export default tool({
     if (action.startsWith("mcp.")) {
       const service = await load<McpModule>("app/services/mcp-server-service.js");
       if (action === "mcp.list") return json(await service.loadMcpServers(base));
+      if (action === "mcp.debug") {
+        return json(await service.debugMcpServer(base, args.name, { repair: args.repair === true }));
+      }
       const name = required(args.name, "name", action);
       if (action === "mcp.enable") {
         await service.setMcpServerEnabled(base, name, true);

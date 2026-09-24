@@ -75,10 +75,10 @@ describe("artifact destination isolation", () => {
     expect(send).toHaveBeenCalledTimes(3);
   });
 
-  it("captures the main-chat destination before later focus changes", async () => {
+  it("refuses to deliver generated artifacts into All/root without a validated Topic", async () => {
     delivery.setChatId(100); delivery.processEvent(artifact); delivery.setChatId(200);
     await vi.advanceTimersByTimeAsync(1500);
-    expect(send.mock.calls[0][0]).toBe(100);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("warns for an unroutable artifact but not for heartbeat traffic", async () => {
@@ -87,7 +87,7 @@ describe("artifact destination isolation", () => {
     delivery.processEvent({ type: "server.heartbeat", properties: {} } as unknown as Event);
     expect(warn).not.toHaveBeenCalled();
     delivery.processEvent(artifact);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("No Telegram destination"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Missing validated Topic destination"));
   });
 
   it("does not assign an initially unroutable artifact to a later chat", async () => {

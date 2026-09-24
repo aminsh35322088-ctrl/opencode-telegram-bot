@@ -12,6 +12,9 @@ const ABORT_CONFIRMATION_TIMEOUT_MS = 8000;
 const MESSAGE_LIMIT = 6;
 
 type SessionStatus = { type?: string };
+type SessionStatusProbe =
+  | { kind: "status"; status: SessionStatus }
+  | { kind: "absent" };
 
 const activeWatchdogs = new Map<string, AbortController>();
 const sleep = (ms: number) =>
@@ -101,11 +104,15 @@ async function getMessages(sessionId: string, directory: string, signal: AbortSi
   }
 }
 
-async function getStatus(sessionId: string, directory: string, signal: AbortSignal): Promise<SessionStatus | null> {
+async function getStatus(sessionId: string, directory: string, signal: AbortSignal): Promise<SessionStatusProbe | null> {
   try {
     const { data, error } = await probe((probeSignal) => opencodeClient.session.status({ directory }, { signal: probeSignal }), signal);
     if (error || !data) return null;
-    return ((data as Record<string, SessionStatus>)[sessionId] ?? null) as SessionStatus | null;
+    const status = (data as Record<string, SessionStatus>)[sessionId];
+    // OpenCode's SessionStatus list is an in-memory active-run map: idle
+    // sessions are removed. A successful response with no entry is therefore
+    // meaningful and must not be treated like a failed probe.
+    return status ? { kind: "status", status } : { kind: "absent" };
   } catch (error) {
     logger.debug(`[StallWatchdog] Status probe failed: session=${sessionId}`, error);
     return null;
@@ -131,7 +138,9 @@ async function waitForIdle(sessionId: string, directory: string, signal: AbortSi
   const deadline = Date.now() + ABORT_CONFIRMATION_TIMEOUT_MS;
   let lastStatus: SessionStatus | null = null;
   while (!signal.aborted && Date.now() < deadline) {
-    const status = await getStatus(sessionId, directory, signal);
+    const probeResult = await getStatus(sessionId, directory, signal);
+    if (probeResult?.kind === "absent") return true;
+    const status = probeResult?.kind === "status" ? probeResult.status : null;
     if (status) lastStatus = status;
     if (status?.type === "idle" || status?.type === "error") return true;
     await sleep(POLL_INTERVAL_MS);
@@ -176,15 +185,35 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
   void (async () => {
     let lastFingerprint = "";
     let lastMeaningfulProgressAt = Date.now();
+    let consecutiveAbsentStatuses = 0;
     logger.debug(`[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, attempt=${attempt}, stallAfterMs=${STALL_AFTER_MS}`);
     try {
       while (!controller.signal.aborted) {
         await sleep(POLL_INTERVAL_MS);
         if (controller.signal.aborted) return;
-        const status = await getStatus(options.sessionId, options.directory, controller.signal);
+        const statusProbe = await getStatus(options.sessionId, options.directory, controller.signal);
         if (controller.signal.aborted) return;
-        if (!status) continue;
-        if (status.type === "idle" || status.type === "error") return;
+        if (!statusProbe) continue;
+        if (statusProbe.kind === "absent") {
+          consecutiveAbsentStatuses += 1;
+          // Missing from a successful SessionStatus response means OpenCode no
+          // longer considers this session active. Require three consecutive
+          // probes to bridge short startup/reconnect windows, then release any
+          // stale local Busy state left behind by a lost session.idle event or
+          // an OpenCode process restart.
+          if (consecutiveAbsentStatuses >= 3) {
+            await clearLocalRunState(options.sessionId, "stall_watchdog_status_absent");
+            logger.warn(`[StallWatchdog] Cleared stale local run after OpenCode reported no active status: session=${options.sessionId}`);
+            return;
+          }
+          continue;
+        }
+        consecutiveAbsentStatuses = 0;
+        const status = statusProbe.status;
+        if (status.type === "idle" || status.type === "error") {
+          await clearLocalRunState(options.sessionId, `stall_watchdog_status_${status.type}`);
+          return;
+        }
         if (status.type !== "busy" && status.type !== "retry") continue;
 
         // OpenCode owns provider retryability, Retry-After handling and bounded

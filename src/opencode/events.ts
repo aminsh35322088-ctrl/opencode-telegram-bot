@@ -6,7 +6,7 @@ import {
   setTopicEventBusIdleTimeoutForTests,
 } from "./topic-event-bus.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
-import { findTelegramTopicBindingByDirectory } from "../app/services/telegram-topic-store.js";
+import { findTelegramTopicBindingsByDirectory } from "../app/services/telegram-topic-store.js";
 
 type EventCallback = (event: Event) => void;
 const subscriptions = new Map<string, { directory: string; sessionId?: string; callback: EventCallback; stop: () => void }>();
@@ -20,7 +20,11 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
   // workspaces are persisted with a unique session binding, so recover that
   // scope instead of silently installing an unscoped subscriber.
   const runtimeSessionId = getTopicRuntimeContext()?.sessionId;
-  const resolvedSessionId = sessionId ?? runtimeSessionId ?? (await findTelegramTopicBindingByDirectory(directory))?.sessionId;
+  let resolvedSessionId = sessionId ?? runtimeSessionId;
+  if (!resolvedSessionId) {
+    const directoryBindings = await findTelegramTopicBindingsByDirectory(directory);
+    if (directoryBindings.length === 1) resolvedSessionId = directoryBindings[0]?.sessionId;
+  }
   const key = `${normalizeDirectory(directory)}:${resolvedSessionId ?? "*"}:${String(callback)}`;
   subscriptions.get(key)?.stop();
   const stop = subscribeToTopicEvents(directory, callback, resolvedSessionId);

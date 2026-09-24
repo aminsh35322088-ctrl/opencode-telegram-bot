@@ -7,7 +7,7 @@ const REQUIRED = [
   "telegram.context.current", "telegram.reply.resolve", "telegram.forward.inspect", "telegram.media.fetch",
   "media.video.prepare", "media.stt.status", "media.stt.transcribe",
   "media.image.models", "media.image.current", "media.image.generate", "media.image.edit",
-  "bot.mcp.list", "bot.mcp.add-local", "bot.mcp.add-remote", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
+  "bot.mcp.list", "bot.mcp.debug", "bot.mcp.add-local", "bot.mcp.add-remote", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
   "bot.skills.list", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "bot.skills.import", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
@@ -25,6 +25,7 @@ describe("expanded model-facing action surface", () => {
     expect(getAgentAction("telegram.media.fetch")?.risk).toBe("write");
     expect(getAgentAction("session.revert")?.risk).toBe("destructive");
     expect(getAgentAction("session.diff")?.risk).toBe("read");
+    expect(getAgentAction("bot.mcp.debug")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.rename")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.delete")?.risk).toBe("destructive");
   });
@@ -41,6 +42,7 @@ describe("expanded model-facing action surface", () => {
     for (const action of ["context.current", "reply.resolve", "forward.inspect", "media.fetch"]) expect(telegram).toContain(`"${action}"`);
     expect(media).toContain('"video.prepare"');
     for (const action of ["session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort", "session.diff", "session.todo", "session.children"]) expect(session).toContain(`"${action.replace("session.", "")}"`);
+    expect(bot).toContain('"mcp.debug"');
     expect(bot).toContain('"mcp.rename"');
     expect(bot).toContain('"mcp.delete"');
     expect(bot).not.toContain('"mcp.disable"');

@@ -36,6 +36,30 @@ export interface McpLoginIdentity {
   displayName?: string;
   providerHost?: string;
 }
+
+export interface McpDebugServer {
+  name: string;
+  type: McpServerType;
+  runtimePresent: boolean;
+  status: string;
+  error?: string;
+  managed: boolean;
+  managedSourceDirectory?: string;
+  authMode?: McpCredentialRecord["mode"] | "native-oauth";
+  providerHost?: string;
+  account?: McpLoginIdentity;
+}
+
+export interface McpDebugReport {
+  directory: string;
+  serverName?: string;
+  repairRequested: boolean;
+  repair?: { restored: number; failed: number };
+  runtimeStatusAvailable: boolean;
+  runtimeError?: string;
+  servers: McpDebugServer[];
+  suggestions: string[];
+}
 const deletedMcpServerNames = new Set<string>();
 
 async function refreshDeletedMcpServerNames(): Promise<void> {
@@ -149,6 +173,145 @@ export async function loadMcpServers(projectDirectory: string): Promise<McpServe
       ...server,
       type: typeIndex.get(server.name) ?? server.type,
     }));
+}
+
+function redactMcpDiagnosticText(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return value
+    .replace(/Bearer\s+[^\s,;]+/giu, "Bearer [REDACTED]")
+    .replace(/([?&](?:code|access_token|refresh_token|api_?key|key|token|secret)=)[^&\s]+/giu, "$1[REDACTED]")
+    .replace(/("(?:apiKey|api_key|access_token|refresh_token|token|secret|authorization)"\s*:\s*")[^"]+/giu, "$1[REDACTED]")
+    .replace(/((?:api[-_ ]?key|token|secret|authorization)\s*[:=]\s*)[^\s,;]+/giu, "$1[REDACTED]")
+    .slice(0, 1000);
+}
+
+export async function debugMcpServer(
+  projectDirectory: string,
+  serverName?: string,
+  options: { repair?: boolean } = {},
+): Promise<McpDebugReport> {
+  const directory = normalizeDirectoryForMcpApi(projectDirectory);
+  const requestedName = serverName?.trim() || undefined;
+  await refreshDeletedMcpServerNames();
+
+  const repair = options.repair
+    ? await ensureMcpRuntimeForDirectory(projectDirectory, { force: true })
+    : undefined;
+
+  let runtimeServers: McpServerItem[] = [];
+  let runtimeStatusAvailable = false;
+  let runtimeError: string | undefined;
+  try {
+    const { data, error } = await opencodeClient.mcp.status({ directory });
+    if (error || !data) {
+      const errorValue: unknown = error;
+      runtimeError = redactMcpDiagnosticText(
+        errorValue instanceof Error
+          ? errorValue.message
+          : errorValue
+            ? "OpenCode MCP status request returned an error."
+            : "No MCP status data received",
+      );
+    } else {
+      const parsed = parseMcpServerItems(data);
+      if (!parsed) {
+        runtimeError = "OpenCode returned an invalid MCP status payload.";
+      } else {
+        runtimeServers = parsed.filter((server) => !deletedMcpServerNames.has(server.name));
+        runtimeStatusAvailable = true;
+      }
+    }
+  } catch (error) {
+    runtimeError = redactMcpDiagnosticText(error instanceof Error ? error.message : String(error));
+  }
+
+  const managedRecords = chooseCanonicalManagedServers(await listManagedMcpServers(), projectDirectory);
+  const managedByName = new Map(managedRecords.map((record) => [record.name, record]));
+  const credentials = await credentialIndexByServerName();
+  const typeIndex = await loadConfiguredTypeIndex(projectDirectory);
+  const runtimeByName = new Map(runtimeServers.map((server) => [server.name, server]));
+  const names = new Set<string>([
+    ...managedByName.keys(),
+    ...runtimeByName.keys(),
+    ...credentials.keys(),
+    ...(requestedName ? [requestedName] : []),
+  ]);
+
+  const debugServers: McpDebugServer[] = [];
+  for (const name of [...names].sort()) {
+    if (requestedName && name !== requestedName) continue;
+    const runtime = runtimeByName.get(name);
+    const managed = managedByName.get(name);
+    const credential = credentials.get(name);
+    const type = typeIndex.get(name) ?? runtime?.type ?? managed?.config.type ?? (credential ? "remote" : "unknown");
+    let identity: McpLoginIdentity | null = null;
+    let providerHost: string | undefined;
+    if (type === "remote") {
+      try {
+        const remoteUrl = await resolveMcpRemoteUrl(projectDirectory, name);
+        providerHost = new URL(remoteUrl).host || undefined;
+      } catch {
+        // The missing URL itself is represented by runtime/managed metadata.
+      }
+      try {
+        identity = await getMcpLoginIdentity(projectDirectory, name);
+      } catch {
+        // Identity is best-effort and never blocks diagnostics.
+      }
+    }
+    const runtimeErrorText =
+      runtime && "error" in runtime.status ? redactMcpDiagnosticText(runtime.status.error) : undefined;
+    debugServers.push({
+      name,
+      type,
+      runtimePresent: Boolean(runtime),
+      status: runtime?.status.status ?? "missing",
+      ...(runtimeErrorText ? { error: runtimeErrorText } : {}),
+      managed: Boolean(managed),
+      ...(managed ? { managedSourceDirectory: managed.projectDirectory } : {}),
+      ...(credential
+        ? { authMode: credential.mode }
+        : type === "remote" && runtime?.status.status === "connected"
+          ? { authMode: "native-oauth" as const }
+          : {}),
+      ...(providerHost ? { providerHost } : {}),
+      ...(identity ? { account: identity } : {}),
+    });
+  }
+
+  const suggestions: string[] = [];
+  const target = requestedName ? debugServers[0] : undefined;
+  if (!runtimeStatusAvailable) {
+    suggestions.push("OpenCode MCP status is unavailable; verify the local OpenCode runtime before provider-specific debugging.");
+  }
+  if (requestedName && !target?.managed && !target?.runtimePresent) {
+    suggestions.push(`MCP server "${requestedName}" is not present in managed state or the current runtime.`);
+  } else if (target && !target.runtimePresent && target.managed) {
+    suggestions.push(`MCP server "${target.name}" is managed but missing from this Topic runtime; run mcp.debug with repair=true.`);
+  }
+  if (target?.status === "needs_auth") {
+    suggestions.push(`MCP server "${target.name}" requires authentication; complete Sign in from the Telegram MCP Server UI.`);
+  }
+  if (target?.status === "failed") {
+    suggestions.push(`MCP server "${target.name}" failed at the OpenCode MCP layer; inspect the redacted runtime error and provider availability.`);
+  }
+  if (target?.status === "connected") {
+    suggestions.push("Transport/runtime status is connected. If provider tools still fail, diagnose the provider/index/account layer rather than re-adding credentials.");
+  }
+  if (options.repair && repair && repair.failed > 0) {
+    suggestions.push(`Runtime repair completed with ${repair.failed} failed synchronization target(s).`);
+  }
+
+  return {
+    directory,
+    ...(requestedName ? { serverName: requestedName } : {}),
+    repairRequested: options.repair === true,
+    ...(repair ? { repair } : {}),
+    runtimeStatusAvailable,
+    ...(runtimeError ? { runtimeError } : {}),
+    servers: debugServers,
+    suggestions,
+  };
 }
 
 export type McpAuthSummary = {

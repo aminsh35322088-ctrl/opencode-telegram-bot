@@ -5,6 +5,7 @@ import { promptQueue } from "../../../src/app/managers/prompt-queue-manager.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
+import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 
 const mergerMock = vi.hoisted(() => ({ queuePromptForMerging: vi.fn() }));
 vi.mock("../../../src/bot/handlers/message-merger.js", async (importOriginal) => {
@@ -108,6 +109,19 @@ describe("bot/routers/message-router", () => {
 
       expect(ctx.reply).not.toHaveBeenCalledWith(t("general.topic_only_prompt"));
       expect(mergerMock.queuePromptForMerging).toHaveBeenCalled();
+    });
+
+    it("blocks an unbound Topic instead of falling back to another session", async () => {
+      const handler = registerAndGetTextHandler();
+      const ctx = makeTextContext({
+        chat: { id: 42, type: "supergroup", is_forum: true },
+        message: { text: "must not leak", message_thread_id: 77 },
+      });
+
+      await runInTopicRuntimeContext({ chatId: 42, threadId: 77 }, () => handler(ctx, vi.fn()));
+
+      expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"));
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
     });
 
     it("keeps AI Topics and private chats unaffected", async () => {
