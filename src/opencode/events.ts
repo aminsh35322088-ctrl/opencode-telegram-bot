@@ -45,11 +45,13 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
   );
   subscriptions.set(key, { directory, sessionId: resolvedSessionId, callback, stop });
   try {
-    await withTimeout(
+    const ready = withTimeout(
       stop.ready,
       INITIAL_SUBSCRIPTION_READY_TIMEOUT_MS,
       `event subscription for ${directory}`,
     );
+    void ready.catch(() => undefined);
+    await ready;
   } catch (error) {
     stop();
     if (subscriptions.get(key)?.stop === stop) subscriptions.delete(key);

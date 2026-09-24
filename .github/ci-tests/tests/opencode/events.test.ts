@@ -242,23 +242,22 @@ describe("opencode/events", () => {
     stopEventListening();
     resolveEvent(event);
     await flushImmediate();
-    await subscription;
+    await expect(subscription).rejects.toThrow("Event subscription stopped before becoming ready");
 
     expect(callback).not.toHaveBeenCalled();
   });
 
   it("stopTopicEventSubscription removes only the matching session subscription", async () => {
     subscribeMock.mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-      stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+      stream: createStream([{ type: "server.heartbeat", properties: {} }], params?.signal ?? new AbortController().signal),
     }));
 
     const callbackA = vi.fn();
     const callbackB = vi.fn();
-    await subscribeToEvents("D:/repo", callbackA, "session-a");
-    await subscribeToEvents("D:/repo", callbackB, "session-b");
-    await vi.waitFor(() => {
-      expect(subscribeMock).toHaveBeenCalledTimes(1);
-    });
+    const firstSubscription = subscribeToEvents("D:/repo", callbackA, "session-a");
+    const secondSubscription = subscribeToEvents("D:/repo", callbackB, "session-b");
+    await Promise.all([firstSubscription, secondSubscription]);
+    expect(subscribeMock).toHaveBeenCalledTimes(1);
 
     stopTopicEventSubscription("D:/repo", "session-a");
 
@@ -271,11 +270,10 @@ describe("opencode/events", () => {
     subscribeMock
       .mockImplementationOnce(async () => ({
         stream: (async function* () {
-          // ends immediately
         })(),
       }))
       .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-        stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+        stream: createStream([{ type: "server.heartbeat", properties: {} }], params?.signal ?? new AbortController().signal),
       }));
 
     const subscription = subscribeToEvents("D:/repo", vi.fn());
@@ -316,7 +314,7 @@ describe("opencode/events", () => {
     subscribeMock
       .mockImplementationOnce(async () => ({ stream: createNeverResolvingStream() }))
       .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-        stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+        stream: createStream([{ type: "server.heartbeat", properties: {} }], params?.signal ?? new AbortController().signal),
       }));
 
     const subscription = subscribeToEvents("D:/repo", vi.fn());

@@ -57,6 +57,7 @@ describe("OpenCode SSE cancellation", () => {
       })
       .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
         stream: (async function* () {
+          yield { type: "server.heartbeat", properties: {} } as Event;
           while (!params.signal?.aborted) {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
