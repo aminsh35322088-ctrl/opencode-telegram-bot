@@ -20,6 +20,7 @@ const RECONNECT_MAX_DELAY_MS = 15000;
 const INITIAL_STREAM_CONNECT_TIMEOUT_MS = 10000;
 const DEFAULT_SSE_IDLE_TIMEOUT_MS = 45000;
 const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
+const STREAM_CLOSED_BEFORE_FIRST_EVENT = "SSE stream closed before the first event";
 const SSE_IDLE_TIMEOUT_ERROR = "SSE stream idle timeout";
 const subscribers = new Map<string, Subscriber>();
 const directoryListeners = new Map<string, DirectoryListener>();
@@ -259,7 +260,7 @@ async function startDirectoryListener(directory: string, localController: AbortC
           if (!response.stream) throw new Error(FATAL_NO_STREAM_ERROR);
           const iterator = response.stream[Symbol.asyncIterator]();
           const firstResult = await readNextWithIdleTimeout(iterator, streamController.signal);
-          if (firstResult.done) throw new Error(FATAL_NO_STREAM_ERROR);
+          if (firstResult.done) throw new Error(STREAM_CLOSED_BEFORE_FIRST_EVENT);
           return { stream: response.stream, iterator, firstResult };
         },
         streamController,
@@ -285,9 +286,12 @@ async function startDirectoryListener(directory: string, localController: AbortC
       }, result.firstResult, result.iterator);
     } catch (error) {
       if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break;
+      const retryableBeforeFirstEvent =
+        error instanceof Error &&
+        (error.message === SSE_IDLE_TIMEOUT_ERROR || error.message === STREAM_CLOSED_BEFORE_FIRST_EVENT);
       if (error instanceof Error && error.message === SSE_IDLE_TIMEOUT_ERROR) {
         logger.warn(`[TopicEventBus] Directory event stream idle timeout; reconnecting: directory=${directory}, timeoutMs=${sseIdleTimeoutMs}`);
-      } else {
+      } else if (!retryableBeforeFirstEvent) {
         if (!(error instanceof Error && error.message === "SSE aborted") && !isExpectedOpencodeUnavailableError(error)) {
           logger.warn(`[TopicEventBus] Directory event stream failed; retrying: directory=${directory}`, error);
         }
@@ -385,11 +389,7 @@ export function subscribeToTopicEvents(directory: string, callback: TopicEventCa
       stopDirectoryListenerIfUnused(directory);
     }
   }) as TopicEventSubscription;
-  Object.defineProperty(stop, "ready", {
-    configurable: true,
-    enumerable: true,
-    get: () => listener.ready,
-  });
+  stop.ready = listener.ready;
   return stop;
 }
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); if (subscriber.sessionId) retireSession(subscriber.sessionId); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
