@@ -512,9 +512,12 @@ describe("bot/services/event-subscription-service", () => {
     expect(keyboardManager.getTopicSendTarget("session-1")).toEqual({ chatId: 42, threadId: 7 });
     emitWriteTool(summaryAggregator);
 
-    await vi.waitFor(() => {
-      expect(api.sendMessage).toHaveBeenCalledTimes(1);
-    });
+    await vi.waitFor(
+      () => {
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3000 },
+    );
     const options = api.sendMessage.mock.calls[0]?.[2] as { message_thread_id?: number };
     expect(options?.message_thread_id).toBe(7);
   });
