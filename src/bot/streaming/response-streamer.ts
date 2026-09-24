@@ -23,6 +23,7 @@ export interface StreamingMessagePayload {
 export interface StreamCompleteResult {
   streamed: boolean;
   telegramMessageIds: number[];
+  cancelled?: boolean;
 }
 
 interface ResponseStreamerCompleteOptions {
@@ -245,7 +246,7 @@ export class ResponseStreamer {
 
     if (state.cancelled) {
       this.states.delete(state.key);
-      return notStreamed;
+      return { ...notStreamed, cancelled: true };
     }
 
     if (state.isBroken) {
@@ -287,8 +288,20 @@ export class ResponseStreamer {
             ? enableNotificationForOptions(completionPayload.sendOptions)
             : completionPayload.sendOptions;
           notifyNextCompletePart = false;
-          const result = await this.completePart(part, completeOptions);
-          realMessageIds.push(result.messageId);
+           const result = await this.completePart(part, completeOptions);
+           if (state.cancelled) {
+             if (result.rollback) {
+               await result.rollback().catch((error) => {
+                 logger.warn(
+                   `[ResponseStreamer] Failed to roll back cancelled final message: session=${sessionId}, message=${messageId}, telegramMessageId=${result.messageId}`,
+                   error,
+                 );
+               });
+             }
+             return { ...notStreamed, cancelled: true };
+           }
+           realMessageIds.push(result.messageId);
+
           if (result.rollback) {
             completionRollbacks.push(result.rollback);
           }
@@ -632,7 +645,15 @@ export class ResponseStreamer {
       }
 
       const result = await this.sendPart(part, payload.sendOptions);
-      if (state.cancelled) return;
+      if (state.cancelled) {
+        await this.deleteText(result.messageId).catch((error) => {
+          logger.warn(
+            `[ResponseStreamer] Failed to delete late cancelled message: session=${state.sessionId}, message=${state.messageId}, telegramMessageId=${result.messageId}`,
+            error,
+          );
+        });
+        return;
+      }
       state.telegramMessageIds[index] = result.messageId;
       state.lastSentSignatures[index] = result.deliveredSignature;
       if (result.degradedToPlain) {

@@ -13,7 +13,7 @@ import { markAbortExpected } from "../app/managers/abort-suppression-manager.js"
 export type TopicEventCallback = (event: Event) => void | Promise<void>;
 type EventLike = { type: string; properties: Record<string, unknown> };
 export interface TelegramTopicRoute { chatId: number; threadId: number; }
-interface Subscriber { directory: string; sessionId?: string; callback: TopicEventCallback; route?: TelegramTopicRoute; }
+interface Subscriber { directory: string; sessionId?: string; callback: TopicEventCallback; route?: TelegramTopicRoute; failClosed?: boolean; }
 interface DirectoryListener { directory: string; controller: AbortController; promise: Promise<void>; ready: Promise<void>; resolveReady: () => void; rejectReady: (error: unknown) => void; readySettled: boolean; }
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
@@ -28,7 +28,7 @@ const abortedRetrySessions = new Set<string>();
 // Only retired root sessions are rejected; unknown child sessions still need
 // the unique-directory route for subagent progress. Reattachment reactivates a root.
 const retiredSessions = new Set<string>();
-const childSessions = new Set<string>();
+const childSessions = new Map<string, string>();
 const sessionGenerations = new Map<string, object>();
 let busGeneration = {};
 let sseIdleTimeoutMs = DEFAULT_SSE_IDLE_TIMEOUT_MS;
@@ -42,9 +42,9 @@ function rememberChildSession(event: EventLike): void {
   const id = typeof info?.["id"] === "string" ? info["id"] : typeof event.properties["sessionID"] === "string" ? event.properties["sessionID"] : null;
   const parentID = typeof info?.["parentID"] === "string" ? info["parentID"] : typeof event.properties["parentID"] === "string" ? event.properties["parentID"] : typeof event.properties["parentSessionID"] === "string" ? event.properties["parentSessionID"] : null;
   if (!id || !parentID) return;
-  childSessions.add(id);
+  childSessions.set(id, parentID);
   while (childSessions.size > 1000) {
-    const oldest = childSessions.values().next().value;
+    const oldest = childSessions.keys().next().value;
     if (oldest === undefined) break;
     childSessions.delete(oldest);
   }
@@ -70,7 +70,29 @@ async function readNextWithIdleTimeout<T>(iterator: AsyncIterator<T>, signal: Ab
     signal.removeEventListener("abort", onAbort);
   }
 }
-async function consumeEventStream(stream: AsyncGenerator<unknown, unknown, unknown>, controller: AbortController, onEvent: (event: EventLike) => void): Promise<void> { const iterator = stream[Symbol.asyncIterator](); try { while (!controller.signal.aborted) { const result = await readNextWithIdleTimeout(iterator, controller.signal); if (result.done) return; if (isEventLike(result.value)) onEvent(result.value); } } finally { controller.abort(); void iterator.return?.(undefined as never)?.catch(() => undefined); } }
+async function consumeEventStream(
+  stream: AsyncGenerator<unknown, unknown, unknown>,
+  controller: AbortController,
+  onEvent: (event: EventLike) => void,
+  initialResult?: IteratorResult<unknown>,
+  iteratorOverride?: AsyncIterator<unknown>,
+): Promise<void> {
+  const iterator = iteratorOverride ?? stream[Symbol.asyncIterator]();
+  try {
+    let result = initialResult;
+    while (!controller.signal.aborted) {
+      if (!result) {
+        result = await readNextWithIdleTimeout(iterator, controller.signal);
+      }
+      if (result.done) return;
+      if (isEventLike(result.value)) onEvent(result.value);
+      result = undefined;
+    }
+  } finally {
+    controller.abort();
+    void iterator.return?.(undefined as never)?.catch(() => undefined);
+  }
+}
 function createStreamController(parentSignal: AbortSignal): { controller: AbortController; cleanup: () => void } { const controller = new AbortController(); const onAbort = () => controller.abort(parentSignal.reason); if (parentSignal.aborted) controller.abort(parentSignal.reason); else parentSignal.addEventListener("abort", onAbort, { once: true }); return { controller, cleanup: () => parentSignal.removeEventListener("abort", onAbort) }; }
 async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: string | undefined, candidates: Subscriber[], isCurrent: () => boolean): Promise<void> {
   if (!isCurrent()) return;
@@ -90,7 +112,7 @@ async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: str
       directoryBindingCount = directoryBindings.length;
       if (directoryBindings.length === 1) {
         const onlyBinding = directoryBindings[0] ?? null;
-        if (!sessionId || onlyBinding?.sessionId === sessionId || (sessionId && childSessions.has(sessionId))) {
+        if (!sessionId || onlyBinding?.sessionId === sessionId || (sessionId && childSessions.get(sessionId) === onlyBinding?.sessionId)) {
           binding = onlyBinding;
         }
       } else if (directoryBindings.length > 1 && sessionId) {
@@ -109,6 +131,7 @@ async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: str
   const targets = candidates.filter((subscriber) => {
     if (!isCurrent() || ![...subscribers.values()].includes(subscriber)) return false;
     if (effectiveDirectory && normalizeDirectory(subscriber.directory) !== effectiveDirectory) return false;
+    if (subscriber.failClosed && !binding) return false;
     if (subscriber.sessionId !== undefined) {
       if (sessionId && subscriber.sessionId !== sessionId && subscriber.sessionId !== binding?.sessionId) return false;
       if (subscriber.route && (!binding || subscriber.route.chatId !== binding.chatId || subscriber.route.threadId !== binding.threadId)) return false;
@@ -211,6 +234,7 @@ async function connectWithTimeout<T>(request: () => Promise<T>, controller: Abor
 
 async function startDirectoryListener(directory: string, localController: AbortController): Promise<void> {
   let reconnectAttempt = 0;
+  let hasConnected = false;
   const normalized = normalizeDirectory(directory);
   const listener = directoryListeners.get(normalized);
   while (
@@ -230,14 +254,21 @@ async function startDirectoryListener(directory: string, localController: AbortC
       }
       logger.info(`[SessionTrace] phase=topic_directory_stream_connecting directory=${directory}`);
       const result = await connectWithTimeout(
-        () => eventApi.subscribe({ directory }, { signal: streamController.signal }),
+        async () => {
+          const response = await eventApi.subscribe({ directory }, { signal: streamController.signal });
+          if (!response.stream) throw new Error(FATAL_NO_STREAM_ERROR);
+          const iterator = response.stream[Symbol.asyncIterator]();
+          const firstResult = await readNextWithIdleTimeout(iterator, streamController.signal);
+          if (firstResult.done) throw new Error(FATAL_NO_STREAM_ERROR);
+          return { stream: response.stream, iterator, firstResult };
+        },
         streamController,
         reconnectAttempt === 0
           ? Math.min(sseIdleTimeoutMs, INITIAL_STREAM_CONNECT_TIMEOUT_MS)
           : sseIdleTimeoutMs,
       );
-      if (!result.stream) throw new Error(FATAL_NO_STREAM_ERROR);
       reconnectAttempt = 0;
+      hasConnected = true;
       listener?.resolveReady();
       logger.info(`[SessionTrace] phase=topic_directory_stream_active directory=${directory}`);
       topicTelemetry("directory_stream_active", { directory }, { subscriberCount: subscribersForDirectory(normalized).length });
@@ -251,7 +282,7 @@ async function startDirectoryListener(directory: string, localController: AbortC
         }
         if (rawEvent.type === "session.status" && typeof retrySessionId === "string" && retryStatus && retryStatus["type"] !== "retry") abortedRetrySessions.delete(retrySessionId);
         dispatchToSubscribers(rawEvent, directory);
-      });
+      }, result.firstResult, result.iterator);
     } catch (error) {
       if (localController.signal.aborted || directoryListeners.get(normalized)?.controller !== localController) break;
       if (error instanceof Error && error.message === SSE_IDLE_TIMEOUT_ERROR) {
@@ -267,8 +298,31 @@ async function startDirectoryListener(directory: string, localController: AbortC
     } finally {
       streamController.abort();
       streamContext.cleanup();
+      if (hasConnected && listener) resetReadiness(listener);
     }
   }
+}
+function resetReadiness(listener: DirectoryListener): void {
+  if (!listener.readySettled) return;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: unknown) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  listener.ready = ready;
+  listener.readySettled = false;
+  listener.resolveReady = () => {
+    if (listener.readySettled) return;
+    listener.readySettled = true;
+    resolveReady();
+  };
+  listener.rejectReady = (error: unknown) => {
+    if (listener.readySettled) return;
+    listener.readySettled = true;
+    rejectReady(error);
+  };
+  ready.catch(() => undefined);
 }
 function subscribersForDirectory(normalizedDirectory: string): Subscriber[] { return [...subscribers.values()].filter((subscriber) => normalizeDirectory(subscriber.directory) === normalizedDirectory); }
 function ensureDirectoryListener(directory: string): DirectoryListener {
@@ -318,10 +372,10 @@ function stopDirectoryListenerIfUnused(directory: string): void {
   directoryListeners.delete(normalized);
 }
 export type TopicEventSubscription = (() => void) & { ready: Promise<void> };
-export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string, route?: TelegramTopicRoute): TopicEventSubscription {
+export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string, route?: TelegramTopicRoute, failClosed = false): TopicEventSubscription {
   if (sessionId) retiredSessions.delete(sessionId);
   const key = subscriberKey(directory, callback, sessionId);
-  subscribers.set(key, { directory, sessionId, callback, route });
+  subscribers.set(key, { directory, sessionId, callback, route, failClosed });
   topicTelemetry("subscription_added", { sessionId, directory }, { subscriberCount: subscribers.size, scoped: sessionId !== undefined });
   const listener = ensureDirectoryListener(directory);
   const stop = (() => {
@@ -331,7 +385,11 @@ export function subscribeToTopicEvents(directory: string, callback: TopicEventCa
       stopDirectoryListenerIfUnused(directory);
     }
   }) as TopicEventSubscription;
-  stop.ready = listener.ready;
+  Object.defineProperty(stop, "ready", {
+    configurable: true,
+    enumerable: true,
+    get: () => listener.ready,
+  });
   return stop;
 }
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); if (subscriber.sessionId) retireSession(subscriber.sessionId); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }

@@ -118,6 +118,36 @@ describe("opencode/events", () => {
     expect(defined(callback.mock.calls[1]?.[0])).toEqual(eventB);
   });
 
+  it("does not resolve before the first SSE read succeeds", async () => {
+    vi.useFakeTimers();
+    __setSseIdleTimeoutForTests(1000);
+    let releaseFirstRead!: () => void;
+    const firstReadGate = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let firstReadStarted = false;
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
+      stream: (async function* () {
+        firstReadStarted = true;
+        await firstReadGate;
+        yield { type: "server.heartbeat", properties: {} } as Event;
+        while (!params.signal?.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
+      })(),
+    }));
+
+    let settled = false;
+    const subscription = subscribeToEvents("D:/repo", vi.fn()).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(firstReadStarted).toBe(true);
+    expect(settled).toBe(false);
+    releaseFirstRead();
+    await subscription;
+    stopEventListening();
+  });
+
   it("logs callback errors without failing event delivery", async () => {
     const eventA = { type: "session.status", properties: { sessionID: "s1" } } as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "s1" } } as Event;

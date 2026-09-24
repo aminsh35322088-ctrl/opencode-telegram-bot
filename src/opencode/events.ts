@@ -19,7 +19,9 @@ function normalizeDirectory(directory: string): string {
 }
 
 export async function subscribeToEvents(directory: string, callback: EventCallback, sessionId?: string): Promise<void> {
-  const runtimeSessionId = getTopicRuntimeContext()?.sessionId;
+  const runtimeContext = getTopicRuntimeContext();
+  const topicScoped = (runtimeContext?.threadId ?? 0) > 1;
+  const runtimeSessionId = runtimeContext?.sessionId;
   let resolvedSessionId = sessionId ?? runtimeSessionId;
   let resolvedBinding = resolvedSessionId
     ? await findTelegramTopicBindingBySessionId(resolvedSessionId)
@@ -39,6 +41,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
     callback,
     resolvedSessionId,
     resolvedBinding ? { chatId: resolvedBinding.chatId, threadId: resolvedBinding.threadId } : undefined,
+    topicScoped && !resolvedBinding,
   );
   subscriptions.set(key, { directory, sessionId: resolvedSessionId, callback, stop });
   try {

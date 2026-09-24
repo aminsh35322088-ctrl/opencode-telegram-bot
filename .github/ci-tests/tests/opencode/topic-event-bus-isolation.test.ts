@@ -106,7 +106,7 @@ describe("topic-event-bus session isolation", () => {
     }));
 
     const callback = vi.fn();
-    subscribeToTopicEvents("/workspace", callback, "session-a", { chatId: 100, threadId: 101 });
+    subscribeToTopicEvents("/workspace", callback, "session-a", undefined, true);
 
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(callback).not.toHaveBeenCalled();
@@ -191,6 +191,31 @@ it("preserves unique-directory routing for an unbound child session", async () =
   subscribeToTopicEvents("/workspace", callback, "parent");
   try { await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(event)); }
   finally { stopTopicEventBus(); }
+});
+
+it("does not route a child event to a replacement parent", async () => {
+  const created = {
+    type: "session.created",
+    properties: { info: { id: "child", parentID: "parent-a", directory: "/workspace" } },
+  } as unknown as Event;
+  const message = {
+    type: "message.updated",
+    properties: { sessionID: "child", directory: "/workspace" },
+  } as unknown as Event;
+  bindings.bySession.mockResolvedValue(null);
+  bindings.byDirectory
+    .mockResolvedValueOnce([{ chatId: 100, threadId: 11, sessionId: "parent-a", directory: "/workspace" }])
+    .mockResolvedValue([{ chatId: 100, threadId: 22, sessionId: "parent-b", directory: "/workspace" }]);
+  subscribeMock.mockImplementationOnce(async (_parameters: unknown, options: { signal: AbortSignal }) => ({
+    stream: createStream([created, message], options.signal),
+  }));
+
+  const callback = vi.fn();
+  subscribeToTopicEvents("/workspace", callback, "parent-a", { chatId: 100, threadId: 11 });
+
+  await vi.waitFor(() => expect(callback).toHaveBeenCalledTimes(1));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(callback).toHaveBeenCalledTimes(1);
 });
 
 describe("subscription retirement lifecycle", () => {

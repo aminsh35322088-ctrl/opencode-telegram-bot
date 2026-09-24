@@ -32,7 +32,7 @@ import { getCurrentSession } from "../../app/services/session-service.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { logger } from "../../utils/logger.js";
 import { withTimeout } from "../../utils/async-timeout.js";
-import { stopSessionStallWatchdog, setStallNoticeSender } from "../../app/services/session-stall-watchdog.js";
+import { stopSessionStallWatchdog, setStallNoticeSender, setStallRecoveryHandler } from "../../app/services/session-stall-watchdog.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -153,7 +153,9 @@ export interface BotEventSubscriptionService {
 }
 
 export function createEventSubscriptionService(): BotEventSubscriptionService {
-  return new EventSubscriptionService();
+  const service = new EventSubscriptionService();
+  setStallRecoveryHandler((sessionId, reason) => service.recoverTerminalState(sessionId, reason));
+  return service;
 }
 
 class EventSubscriptionService implements BotEventSubscriptionService {
@@ -414,10 +416,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   }
 
   private getCurrentTopicTarget(): { chatId: number; threadId: number } | undefined {
-    const context = getTopicRuntimeContext();
-    if (context && context.threadId > 1) {
-      return { chatId: context.chatId, threadId: context.threadId };
-    }
+    const runtimeSessionId = getTopicRuntimeContext()?.sessionId;
+    if (runtimeSessionId) return this.getTopicTargetForSession(runtimeSessionId);
     const currentSession = getCurrentSession();
     return currentSession ? this.getTopicTargetForSession(currentSession.id) : undefined;
   }
@@ -425,6 +425,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private getChatIdForSession(sessionId: string): number | null {
     const target = this.getTopicTargetForSession(sessionId) ?? this.getCurrentTopicTarget();
     if (target) return target.chatId;
+    const runtimeContext = getTopicRuntimeContext();
+    if (runtimeContext && runtimeContext.threadId > 1) return null;
     return this.sessionChatIds.get(sessionId) ?? this.chatIdInstance;
   }
 
@@ -437,6 +439,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     const botApi = this.botInstance?.api;
     if (!botApi) throw new Error("Bot context missing for session-scoped send");
     const target = this.getTopicTargetForSession(sessionId) ?? this.getCurrentTopicTarget();
+    const runtimeContext = getTopicRuntimeContext();
+    if (!target && (this.sessionTopicTargets.has(sessionId) || (runtimeContext && runtimeContext.threadId > 1))) {
+      throw new Error(`Missing Telegram Topic delivery target for session ${sessionId}`);
+    }
     const raw = getUnscopedTelegramApi(botApi);
     return target ? createTopicAwareApi(raw, target) : raw;
   }
@@ -444,6 +450,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private getCurrentTopicTransport(): { api: Api; chatId: number } | null {
     if (!this.botInstance) return null;
     const target = this.getCurrentTopicTarget();
+    const runtimeContext = getTopicRuntimeContext();
+    if (!target && runtimeContext && runtimeContext.threadId > 1) return null;
     const chatId = target?.chatId ?? this.chatIdInstance;
     if (!chatId) return null;
     const raw = getUnscopedTelegramApi(this.botInstance.api);
@@ -743,6 +751,24 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     assistantRunState.clearAll(reason);
   };
 
+  async recoverTerminalState(sessionId: string, reason: string): Promise<void> {
+    this.clearAssistantResponseSession(sessionId, reason);
+    this.thinkingResponseStreamer.clearSession(sessionId, reason);
+    this.toolCallStreamer.clearSession(sessionId, reason);
+    this.toolMessageBatcher.clearSession(sessionId, reason);
+    this.compactProgressStreamer.clearSession(sessionId, reason);
+    this.clearToolElapsedState(sessionId, reason);
+    for (const key of Array.from(this.thinkingSections.keys())) {
+      if (key.startsWith(`${sessionId}:`)) this.thinkingSections.delete(key);
+    }
+    this.compactProgressFinalizationTasks.delete(sessionId);
+    this.sessionCompletionTasks.delete(sessionId);
+    this.completionGenerations.delete(sessionId);
+    clearPromptResponseMode(sessionId);
+    await scheduledTaskRuntime.flushDeferredDeliveries();
+    void dispatchNextQueuedPrompt();
+  }
+
   retireSessionRuntime = (sessionId: string, reason: string): void => {
     if (!sessionId) return;
     stopSessionStallWatchdog(sessionId);
@@ -771,6 +797,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     stopEventListening();
     summaryAggregator.clear();
     this.clearRuntimeState(reason);
+    setStallRecoveryHandler(null);
     this.setTelegramContext(null, null);
   }
 
@@ -1396,6 +1423,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionIdle(async (sessionId) => {
+      stopSessionStallWatchdog(sessionId);
       interactionEventGate.clearSession(sessionId);
       resetStreamThrottle(sessionId);
       await markAttachedSessionIdle(sessionId);

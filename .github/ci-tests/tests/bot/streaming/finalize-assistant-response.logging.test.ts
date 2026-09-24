@@ -49,4 +49,42 @@ describe("bot/streaming/finalize-assistant-response logging", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("does not resend a response after stream cancellation", async () => {
+    vi.resetModules();
+    vi.doMock("../../../src/utils/logger.js", () => ({
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+    }));
+
+    const { finalizeAssistantResponse } =
+      await import("../../../src/bot/streaming/finalize-assistant-response.js");
+    const sendRenderedPart = vi.fn().mockResolvedValue(undefined);
+
+    await finalizeAssistantResponse({
+      sessionId: "s1",
+      messageId: "m1",
+      messageText: "raw model output",
+      responseStreamer: {
+        complete: vi.fn().mockResolvedValue({ streamed: false, telegramMessageIds: [], cancelled: true }),
+      },
+      flushPendingServiceMessages: vi.fn().mockResolvedValue(undefined),
+      prepareStreamingPayload: vi.fn(() => null),
+      renderFinalParts: vi.fn(() => [
+        {
+          blocks: [],
+          fallbackText: "raw model output",
+          source: "plain" as const,
+        },
+      ]),
+      getReplyKeyboard: vi.fn(() => undefined),
+      sendRenderedPart,
+    });
+
+    expect(sendRenderedPart).not.toHaveBeenCalled();
+  });
 });

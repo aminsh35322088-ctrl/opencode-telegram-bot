@@ -35,6 +35,23 @@ describe("watchdog liveness and isolation", () => {
     expect(mocks.status).toHaveBeenCalledTimes(count);
   });
 
+  it("does not let an old terminal probe clear a replacement run", async () => {
+    let releaseFirstStatus!: (result: unknown) => void;
+    mocks.status
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirstStatus = resolve; }))
+      .mockResolvedValueOnce({ data: { a: { type: "busy" } } });
+    const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
+
+    start(options("a"));
+    await vi.advanceTimersByTimeAsync(5000);
+    assistantRunState.startRun("a", { startedAt: Date.now() });
+    start(options("a"));
+    releaseFirstStatus({ data: { a: { type: "idle" } } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(assistantRunState.getRun("a")).not.toBeNull();
+  });
+
   it("does not continue a stopped probe into messages or recovery", async () => {
     let release!: (result: unknown) => void;
     mocks.status.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
@@ -72,19 +89,27 @@ describe("watchdog liveness and isolation", () => {
   });
 
   it("clears local run state when a terminal status arrives without an idle event", async () => {
-    const [{ assistantRunState }, { foregroundSessionState }] = await Promise.all([
+    const [{ assistantRunState }, { foregroundSessionState }, { setStallRecoveryHandler }] = await Promise.all([
       import("../../../src/app/managers/assistant-run-state-manager.js"),
       import("../../../src/app/managers/foreground-session-state-manager.js"),
+      import("../../../src/app/services/session-stall-watchdog.js"),
     ]);
+    const recovery = vi.fn().mockResolvedValue(undefined);
+    setStallRecoveryHandler(recovery);
     assistantRunState.startRun("a", { startedAt: Date.now() });
     foregroundSessionState.markBusy("a", "/workspace/a");
     mocks.status.mockResolvedValue({ data: { a: { type: "idle" } } });
-    start(options("a"));
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    try {
+      start(options("a"));
+      await vi.advanceTimersByTimeAsync(5_000);
 
-    expect(assistantRunState.getRun("a")).toBeNull();
-    expect(foregroundSessionState.isSessionBusy("a")).toBe(false);
+      expect(assistantRunState.getRun("a")).toBeNull();
+      expect(foregroundSessionState.isSessionBusy("a")).toBe(false);
+      expect(recovery).toHaveBeenCalledWith("a", "terminal_status_recovered");
+    } finally {
+      setStallRecoveryHandler(null);
+    }
   });
 
   it("does not abort a session while a tool call is active past the stall threshold", async () => {

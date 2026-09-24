@@ -15,7 +15,8 @@ const MESSAGE_LIMIT = 6;
 
 type SessionStatus = { type?: string };
 
-const activeWatchdogs = new Map<string, AbortController>();
+interface ActiveWatchdog { controller: AbortController; generation: object; }
+const activeWatchdogs = new Map<string, ActiveWatchdog>();
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -168,11 +169,27 @@ export interface StallNoticeInfo {
 }
 
 type StallNoticeSender = (info: StallNoticeInfo) => Promise<void> | void;
+type StallRecoveryHandler = (sessionId: string, reason: string) => Promise<void> | void;
 
 let stallNoticeSender: StallNoticeSender | null = null;
+let stallRecoveryHandler: StallRecoveryHandler | null = null;
 
 export function setStallNoticeSender(sender: StallNoticeSender | null): void {
   stallNoticeSender = sender;
+}
+
+export function setStallRecoveryHandler(handler: StallRecoveryHandler | null): void {
+  stallRecoveryHandler = handler;
+}
+
+async function recoverLocalRunState(sessionId: string, reason: string): Promise<void> {
+  await clearLocalRunState(sessionId, reason);
+  if (!stallRecoveryHandler) return;
+  try {
+    await stallRecoveryHandler(sessionId, reason);
+  } catch (error) {
+    logger.warn(`[StallWatchdog] Terminal recovery cleanup failed: session=${sessionId}`, error);
+  }
 }
 
 async function notifyStall(info: StallNoticeInfo): Promise<void> {
@@ -197,10 +214,17 @@ export interface StartSessionStallWatchdogOptions {
 }
 
 export function startSessionStallWatchdog(options: StartSessionStallWatchdogOptions): void {
-  if (activeWatchdogs.has(options.sessionId)) return;
+  const previous = activeWatchdogs.get(options.sessionId);
+  previous?.controller.abort();
   const attempt = options.attempt ?? 1;
   const controller = new AbortController();
-  activeWatchdogs.set(options.sessionId, controller);
+  const generation = {};
+  const activeWatchdog: ActiveWatchdog = { controller, generation };
+  activeWatchdogs.set(options.sessionId, activeWatchdog);
+  const isCurrent = () => {
+    const current = activeWatchdogs.get(options.sessionId);
+    return current?.controller === controller && current.generation === generation;
+  };
 
   void (async () => {
     let lastFingerprint = "";
@@ -209,17 +233,17 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
     let runningToolStartedAt: number | undefined;
     logger.debug(`[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, attempt=${attempt}, stallAfterMs=${STALL_AFTER_MS}`);
     try {
-      while (!controller.signal.aborted) {
+      while (isCurrent() && !controller.signal.aborted) {
         await sleep(POLL_INTERVAL_MS);
-        if (controller.signal.aborted) return;
+        if (!isCurrent() || controller.signal.aborted) return;
         const status = await getStatus(options.sessionId, options.directory, controller.signal);
-        if (controller.signal.aborted) return;
+        if (!isCurrent() || controller.signal.aborted) return;
         if (!status) continue;
         if (status.type === "idle" || status.type === "error") {
           const run = assistantRunState.getRun(options.sessionId);
           const hasLocalRun = run !== null || foregroundSessionState.isSessionBusy(options.sessionId);
           if (hasLocalRun) {
-            await clearLocalRunState(options.sessionId, "terminal_status_recovered");
+            await recoverLocalRunState(options.sessionId, "terminal_status_recovered");
             if (!run?.hasCompletedResponse) {
               await notifyStall({
                 sessionId: options.sessionId,
@@ -261,7 +285,7 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         let messages: unknown[] | null = null;
         if (!livenessExpired) {
           messages = await getMessages(options.sessionId, options.directory, controller.signal);
-          if (controller.signal.aborted) return;
+          if (!isCurrent() || controller.signal.aborted) return;
           if (!messages) continue;
           if (hasRunningToolPart(messages)) {
             runningToolStartedAt ??= Date.now();
@@ -289,21 +313,21 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         if (stalledForMs < STALL_AFTER_MS) continue;
         logger.warn(`[StallWatchdog] Busy session made no progress: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}. Requesting safety abort without re-prompting.`);
         const aborted = await requestAbort(options.sessionId, options.directory, controller.signal);
-        if (controller.signal.aborted) return;
+        if (!isCurrent() || controller.signal.aborted) return;
         if (!aborted) {
           logger.error(`[StallWatchdog] Could not confirm abort request: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
         const idle = await waitForIdle(options.sessionId, options.directory, controller.signal);
-        if (controller.signal.aborted) return;
+        if (!isCurrent() || controller.signal.aborted) return;
         if (!idle) {
           logger.error(`[StallWatchdog] Abort acknowledged but session did not become idle: session=${options.sessionId}; preserving local busy state.`);
           lastMeaningfulProgressAt = Date.now();
           continue;
         }
-        await clearLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
-        if (controller.signal.aborted) return;
+        await recoverLocalRunState(options.sessionId, "stall_watchdog_abort_confirmed");
+        if (!isCurrent() || controller.signal.aborted) return;
         logger.warn(`[StallWatchdog] Stopped genuinely stalled busy session: session=${options.sessionId}, model=${options.model}, attempt=${attempt}. No synthetic retry was dispatched.`);
         await notifyStall({
           sessionId: options.sessionId,
@@ -311,25 +335,25 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
           model: options.model,
           stalledForMs,
         });
-        if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
+        if (isCurrent()) activeWatchdogs.delete(options.sessionId);
         return;
       }
     } catch (error) {
       logger.error(`[StallWatchdog] Unexpected watchdog failure: session=${options.sessionId}`, error);
     } finally {
-      if (activeWatchdogs.get(options.sessionId) === controller) activeWatchdogs.delete(options.sessionId);
+      if (isCurrent()) activeWatchdogs.delete(options.sessionId);
     }
   })();
 }
 
 export function stopSessionStallWatchdog(sessionId: string): void {
-  const controller = activeWatchdogs.get(sessionId);
-  if (!controller) return;
-  controller.abort();
+  const activeWatchdog = activeWatchdogs.get(sessionId);
+  if (!activeWatchdog) return;
+  activeWatchdog.controller.abort();
   activeWatchdogs.delete(sessionId);
 }
 
 export function __resetSessionStallWatchdogsForTests(): void {
-  for (const controller of activeWatchdogs.values()) controller.abort();
+  for (const activeWatchdog of activeWatchdogs.values()) activeWatchdog.controller.abort();
   activeWatchdogs.clear();
 }

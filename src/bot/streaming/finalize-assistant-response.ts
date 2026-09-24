@@ -64,6 +64,13 @@ export async function finalizeAssistantResponse({
 
   await flushPendingServiceMessages();
 
+  if (result.cancelled) {
+    logger.debug(
+      `[FinalizeResponse] Stream was cancelled before finalization: session=${sessionId}, message=${messageId}`,
+    );
+    return false;
+  }
+
   if (result.streamed) {
     logger.debug(
       `[FinalizeResponse] Finalized streamed assistant message in place: session=${sessionId}, message=${messageId}, telegramMessages=${result.telegramMessageIds.length}`,

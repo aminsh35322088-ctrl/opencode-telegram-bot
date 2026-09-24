@@ -348,7 +348,7 @@ describe("bot/streaming/response-streamer", () => {
     const completion = streamer.complete("s1", "m1", { parts: [plainPart("final")] });
     streamer.clearSession("s1", "session_error");
 
-    await expect(completion).resolves.toEqual({ streamed: false, telegramMessageIds: [] });
+    await expect(completion).resolves.toEqual({ streamed: false, telegramMessageIds: [], cancelled: true });
     resolveSend(1);
   });
 
