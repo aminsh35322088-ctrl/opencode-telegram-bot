@@ -25,7 +25,8 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
     ? await findTelegramTopicBindingBySessionId(resolvedSessionId)
     : null;
   if (!resolvedSessionId) {
-    const directoryBindings = await findTelegramTopicBindingsByDirectory(directory);
+    const directoryBindingsResult = await findTelegramTopicBindingsByDirectory(directory);
+    const directoryBindings = Array.isArray(directoryBindingsResult) ? directoryBindingsResult : [];
     if (directoryBindings.length === 1) {
       resolvedBinding = directoryBindings[0] ?? null;
       resolvedSessionId = resolvedBinding?.sessionId;

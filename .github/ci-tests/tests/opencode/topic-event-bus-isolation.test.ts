@@ -185,7 +185,7 @@ describe("overlapping Topic execution", () => {
 it("preserves unique-directory routing for an unbound child session", async () => {
   bindings.bySession.mockResolvedValue(null);
   bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "parent", directory: "/workspace" }]);
-  const event = { type: "message.updated", properties: { sessionID: "child" } } as unknown as Event;
+  const event = { type: "message.updated", properties: { sessionID: "child", parentID: "parent" } } as unknown as Event;
   subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
   const callback = vi.fn();
   subscribeToTopicEvents("/workspace", callback, "parent");

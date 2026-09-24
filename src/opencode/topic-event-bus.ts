@@ -28,6 +28,7 @@ const abortedRetrySessions = new Set<string>();
 // Only retired root sessions are rejected; unknown child sessions still need
 // the unique-directory route for subagent progress. Reattachment reactivates a root.
 const retiredSessions = new Set<string>();
+const childSessions = new Set<string>();
 const sessionGenerations = new Map<string, object>();
 let busGeneration = {};
 let sseIdleTimeoutMs = DEFAULT_SSE_IDLE_TIMEOUT_MS;
@@ -36,6 +37,18 @@ function subscriberKey(directory: string, callback: TopicEventCallback, sessionI
 function isEventLike(value: unknown): value is EventLike { return isRecord(value) && typeof value.type === "string" && isRecord(value.properties); }
 function getSessionId(event: EventLike): string | null { const p = event.properties; const candidates: unknown[] = [p["sessionID"], p["sessionId"], p["id"]]; if (isRecord(p["info"])) { if (event.type.startsWith("session.")) candidates.push(p["info"]["id"]); candidates.push(p["info"]["sessionID"], p["info"]["sessionId"]); } if (isRecord(p["part"])) candidates.push(p["part"]["sessionID"], p["part"]["sessionId"]); if (isRecord(p["message"])) candidates.push(p["message"]["sessionID"], p["message"]["sessionId"]); return candidates.find((value): value is string => typeof value === "string" && value.length > 0) ?? null; }
 function getEventDirectory(event: EventLike): string | null { const candidates: unknown[] = [event.properties["directory"], event.properties["worktree"]]; if (isRecord(event.properties["info"])) candidates.push(event.properties["info"]["directory"], event.properties["info"]["worktree"]); if (isRecord(event.properties["part"])) candidates.push(event.properties["part"]["directory"], event.properties["part"]["worktree"]); return candidates.find((value): value is string => typeof value === "string" && value.length > 0) ?? null; }
+function rememberChildSession(event: EventLike): void {
+  const info = isRecord(event.properties["info"]) ? event.properties["info"] : null;
+  const id = typeof info?.["id"] === "string" ? info["id"] : typeof event.properties["sessionID"] === "string" ? event.properties["sessionID"] : null;
+  const parentID = typeof info?.["parentID"] === "string" ? info["parentID"] : typeof event.properties["parentID"] === "string" ? event.properties["parentID"] : typeof event.properties["parentSessionID"] === "string" ? event.properties["parentSessionID"] : null;
+  if (!id || !parentID) return;
+  childSessions.add(id);
+  while (childSessions.size > 1000) {
+    const oldest = childSessions.values().next().value;
+    if (oldest === undefined) break;
+    childSessions.delete(oldest);
+  }
+}
 function getReconnectDelayMs(attempt: number): number { return Math.min(RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1), RECONNECT_MAX_DELAY_MS); }
 function wait(ms: number, signal: AbortSignal): Promise<boolean> { return new Promise((resolve) => { if (signal.aborted) return resolve(false); const onAbort = () => { clearTimeout(timer); signal.removeEventListener("abort", onAbort); resolve(false); }; const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(true); }, ms); signal.addEventListener("abort", onAbort, { once: true }); }); }
 function abortDeterministicRetrySession(sessionId: string, message: string, directory: string, attempt?: number): void { if (abortedRetrySessions.has(sessionId)) return; abortedRetrySessions.add(sessionId); markAbortExpected(sessionId); logger.warn(`[ProviderPolicy] Aborting non-retryable provider error: session=${sessionId} attempt=${attempt ?? "n/a"} message=${message}`); if (!directory) return; void opencodeClient.session.abort({ sessionID: sessionId, directory }).catch((error) => logger.warn(`[ProviderPolicy] Exception aborting deterministic retry session=${sessionId}`, error)); }
@@ -62,6 +75,7 @@ function createStreamController(parentSignal: AbortSignal): { controller: AbortC
 async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: string | undefined, candidates: Subscriber[], isCurrent: () => boolean): Promise<void> {
   if (!isCurrent()) return;
   const sessionId = getSessionId(event);
+  rememberChildSession(event);
   if (sessionId && retiredSessions.has(sessionId)) {
     topicTelemetry("stale_session_route_blocked", { sessionId, directory: scopedDirectory }, { type: event.type });
     return;
@@ -75,7 +89,10 @@ async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: str
       const directoryBindings = await findTelegramTopicBindingsByDirectory(directoryForLookup);
       directoryBindingCount = directoryBindings.length;
       if (directoryBindings.length === 1) {
-        binding = directoryBindings[0] ?? null;
+        const onlyBinding = directoryBindings[0] ?? null;
+        if (!sessionId || onlyBinding?.sessionId === sessionId || (sessionId && childSessions.has(sessionId))) {
+          binding = onlyBinding;
+        }
       } else if (directoryBindings.length > 1 && sessionId) {
         binding = directoryBindings.find((candidate) => candidate.sessionId === sessionId) ?? null;
       } else if (directoryBindings.length > 1) {
@@ -318,5 +335,5 @@ export function subscribeToTopicEvents(directory: string, callback: TopicEventCa
   return stop;
 }
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); if (subscriber.sessionId) retireSession(subscriber.sessionId); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
-export function stopTopicEventBus(): void { const previousSubscriberCount = subscribers.size; busGeneration = {}; sessionGenerations.clear(); for (const listener of directoryListeners.values()) { listener.rejectReady(new Error("Event bus stopped before becoming ready")); listener.controller.abort(); } directoryListeners.clear(); subscribers.clear(); dispatchChains.clear(); abortedRetrySessions.clear(); retiredSessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
+export function stopTopicEventBus(): void { const previousSubscriberCount = subscribers.size; busGeneration = {}; sessionGenerations.clear(); for (const listener of directoryListeners.values()) { listener.rejectReady(new Error("Event bus stopped before becoming ready")); listener.controller.abort(); } directoryListeners.clear(); subscribers.clear(); dispatchChains.clear(); abortedRetrySessions.clear(); retiredSessions.clear(); childSessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
 export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { sseIdleTimeoutMs = Math.max(1, timeoutMs); }
