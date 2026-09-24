@@ -7,7 +7,7 @@ const REQUIRED = [
   "telegram.context.current", "telegram.reply.resolve", "telegram.forward.inspect", "telegram.media.fetch",
   "media.video.prepare", "media.stt.status", "media.stt.transcribe",
   "media.image.models", "media.image.current", "media.image.generate", "media.image.edit",
-  "bot.mcp.list", "bot.mcp.add-local", "bot.mcp.add-remote", "bot.mcp.enable", "bot.mcp.disable",
+  "bot.mcp.list", "bot.mcp.add-local", "bot.mcp.add-remote", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
   "bot.skills.list", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "bot.skills.import", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
@@ -25,18 +25,24 @@ describe("expanded model-facing action surface", () => {
     expect(getAgentAction("telegram.media.fetch")?.risk).toBe("write");
     expect(getAgentAction("session.revert")?.risk).toBe("destructive");
     expect(getAgentAction("session.diff")?.risk).toBe("read");
+    expect(getAgentAction("bot.mcp.rename")?.risk).toBe("mutating");
+    expect(getAgentAction("bot.mcp.delete")?.risk).toBe("destructive");
   });
 
   it("backs the registered IDs with concrete OpenCode tool implementations", async () => {
-    const [github, telegram, media, session] = await Promise.all([
+    const [github, telegram, media, session, bot] = await Promise.all([
       fs.readFile(".opencode/tools/github-ci.ts", "utf8"),
       fs.readFile(".opencode/tools/telegram.ts", "utf8"),
       fs.readFile(".opencode/tools/media.ts", "utf8"),
       fs.readFile(".opencode/tools/session.ts", "utf8"),
+      fs.readFile(".opencode/tools/bot.ts", "utf8"),
     ]);
     for (const action of ["dispatch", "jobs", "rerun-failed", "cancel"]) expect(github).toContain(`"${action}"`);
     for (const action of ["context.current", "reply.resolve", "forward.inspect", "media.fetch"]) expect(telegram).toContain(`"${action}"`);
     expect(media).toContain('"video.prepare"');
     for (const action of ["session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort", "session.diff", "session.todo", "session.children"]) expect(session).toContain(`"${action.replace("session.", "")}"`);
+    expect(bot).toContain('"mcp.rename"');
+    expect(bot).toContain('"mcp.delete"');
+    expect(bot).not.toContain('"mcp.disable"');
   });
 });

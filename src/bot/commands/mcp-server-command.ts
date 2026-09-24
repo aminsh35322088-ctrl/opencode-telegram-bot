@@ -6,7 +6,9 @@ import {
   completeMcpOAuth,
   configureSecureMcpAuth,
   getMcpAuthSummary,
+  getMcpLoginIdentity,
   loadMcpServers,
+  renameMcpServer,
   resetMcpAuthToAuto,
   resolveMcpRemoteUrl,
   startMcpOAuth,
@@ -19,6 +21,7 @@ import {
   buildMcpAuthOptionsKeyboard,
   buildMcpCredentialInputKeyboard,
   buildMcpOAuthKeyboard,
+  buildMcpRenameKeyboard,
   buildMcpsAddTypeKeyboard,
   buildMcpsAddValueKeyboard,
   buildMcpsDetailKeyboard,
@@ -46,6 +49,12 @@ interface PendingMcpAuth {
   projectDirectory: string;
 }
 
+interface PendingMcpRename {
+  serverName: string;
+  messageId: number;
+  projectDirectory: string;
+}
+
 export type McpCredentialMode = "bearer" | "api-key" | "custom-header" | "oauth-client";
 type McpCredentialStep = "menu" | "header-name" | "secret" | "client-id" | "client-secret" | "scope";
 
@@ -64,6 +73,7 @@ interface PendingMcpCredential {
 const mcpAddWizard = new TopicScopedValue<PendingMcpAdd>();
 const mcpAuthWizard = new TopicScopedValue<PendingMcpAuth>();
 const mcpCredentialWizard = new TopicScopedValue<PendingMcpCredential>();
+const mcpRenameWizard = new TopicScopedValue<PendingMcpRename>();
 
 function callbackMessageId(ctx: Context): number | null {
   const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
@@ -107,6 +117,11 @@ function isMcpCredentialInteractionActive(): boolean {
   return state?.kind === "custom" && state.metadata.flow === "mcps" && state.metadata.stage === "auth_setup";
 }
 
+function isMcpRenameInteractionActive(): boolean {
+  const state = interactionManager.getSnapshot();
+  return state?.kind === "custom" && state.metadata.flow === "mcps" && state.metadata.stage === "rename";
+}
+
 async function renderMcpList(
   ctx: Context,
   messageId: number,
@@ -146,20 +161,42 @@ export async function renderMcpDetailView(
     return;
   }
 
-  let authLine = "";
+  const authLines: string[] = [];
+  let summary: Awaited<ReturnType<typeof getMcpAuthSummary>> = null;
   try {
-    const summary = await getMcpAuthSummary(projectDirectory, serverName);
+    summary = await getMcpAuthSummary(projectDirectory, serverName);
     if (summary) {
       const modeLabel = credentialModeLabel(summary.mode);
       const label =
         summary.mode === "api-key" || summary.mode === "custom-header"
           ? `${modeLabel} · ${summary.headerName ?? "X-API-Key"}`
           : modeLabel;
-      authLine = `\n\n${t("mcps.auth.summary", { mode: label })}`;
+      authLines.push(t("mcps.auth.summary", { mode: label }));
     }
   } catch {
-    authLine = `\n\n${t("mcps.auth.reconfigure")}`;
+    authLines.push(t("mcps.auth.reconfigure"));
   }
+
+  const shouldResolveAccount =
+    server.type !== "local" &&
+    server.status.status === "connected" &&
+    (!summary || summary.mode === "oauth-client");
+  if (shouldResolveAccount) {
+    try {
+      const identity = await getMcpLoginIdentity(projectDirectory, serverName);
+      const accountLabel = identity?.email ?? identity?.username ?? identity?.displayName;
+      const provider = identity?.providerHost ? ` · ${identity.providerHost}` : "";
+      authLines.push(
+        accountLabel
+          ? t("mcps.auth.account", { identity: accountLabel, provider })
+          : t("mcps.auth.account_unknown", { provider }),
+      );
+    } catch {
+      authLines.push(t("mcps.auth.account_unknown", { provider: "" }));
+    }
+  }
+
+  const authLine = authLines.length > 0 ? `\n\n${authLines.join("\n")}` : "";
 
   await ctx.api.editMessageText(
     ctx.chat.id,
@@ -185,17 +222,52 @@ export async function renderMcpDetailView(
 }
 
 function transitionMcpWizard(pending: PendingMcpAdd, expectedInput: "mixed" | "callback" = "mixed"): void {
-  interactionManager.transition({
-    expectedInput,
-    metadata: {
-      flow: "mcps",
-      stage: "add",
-      messageId: pending.messageId,
-      projectDirectory: pending.projectDirectory,
-      name: pending.name,
-      type: pending.type,
-    },
-  });
+  const metadata = {
+    flow: "mcps",
+    stage: "add",
+    messageId: pending.messageId,
+    projectDirectory: pending.projectDirectory,
+    name: pending.name,
+    type: pending.type,
+  };
+  const state = interactionManager.getSnapshot();
+  if (state?.kind === "custom" && state.metadata.flow === "mcps") {
+    interactionManager.transition({ expectedInput, metadata });
+  } else {
+    interactionManager.start({ kind: "custom", expectedInput, metadata });
+  }
+}
+
+function transitionMcpAuthWizard(pending: PendingMcpAuth): void {
+  const metadata = {
+    flow: "mcps",
+    stage: "auth",
+    messageId: pending.messageId,
+    projectDirectory: pending.projectDirectory,
+    serverName: pending.serverName,
+  };
+  const state = interactionManager.getSnapshot();
+  if (state?.kind === "custom" && state.metadata.flow === "mcps") {
+    interactionManager.transition({ expectedInput: "mixed", metadata });
+  } else {
+    interactionManager.start({ kind: "custom", expectedInput: "mixed", metadata });
+  }
+}
+
+function transitionMcpRenameWizard(pending: PendingMcpRename): void {
+  const metadata = {
+    flow: "mcps",
+    stage: "rename",
+    messageId: pending.messageId,
+    projectDirectory: pending.projectDirectory,
+    serverName: pending.serverName,
+  };
+  const state = interactionManager.getSnapshot();
+  if (state?.kind === "custom" && state.metadata.flow === "mcps") {
+    interactionManager.transition({ expectedInput: "mixed", metadata });
+  } else {
+    interactionManager.start({ kind: "custom", expectedInput: "mixed", metadata });
+  }
 }
 
 export function isMcpAddWizardActive(): boolean {
@@ -210,6 +282,19 @@ export function isMcpCredentialWizardActive(): boolean {
   return mcpCredentialWizard.isActive();
 }
 
+export function isMcpRenameWizardActive(): boolean {
+  return mcpRenameWizard.isActive();
+}
+
+export function isMcpTextWizardActive(): boolean {
+  return (
+    mcpAddWizard.isActive() ||
+    mcpAuthWizard.isActive() ||
+    mcpCredentialWizard.isActive() ||
+    mcpRenameWizard.isActive()
+  );
+}
+
 export function clearMcpAddWizard(): void {
   mcpAddWizard.clear();
 }
@@ -220,6 +305,10 @@ export function clearMcpAuthWizard(): void {
 
 export function clearMcpCredentialWizard(): void {
   mcpCredentialWizard.clear();
+}
+
+export function clearMcpRenameWizard(): void {
+  mcpRenameWizard.clear();
 }
 
 export async function dismissMcpAddWizard(ctx: Context, restoreList = false): Promise<boolean> {
@@ -252,6 +341,29 @@ export async function dismissMcpAuthWizard(ctx: Context, restoreDetail = false):
       );
     } catch (error) {
       logger.warn("[Mcps] Failed to restore MCP detail after dismissing OAuth:", error);
+    }
+  }
+  return true;
+}
+
+export async function dismissMcpRenameWizard(
+  ctx: Context,
+  restoreDetail = false,
+): Promise<boolean> {
+  const pending = mcpRenameWizard.get();
+  if (!pending) return false;
+  mcpRenameWizard.clear();
+  if (isMcpRenameInteractionActive()) interactionManager.clear("mcp_rename_dismissed");
+  if (restoreDetail) {
+    try {
+      await renderMcpDetailView(
+        ctx,
+        pending.messageId,
+        pending.projectDirectory,
+        pending.serverName,
+      );
+    } catch (error) {
+      logger.warn("[Mcps] Failed to restore MCP detail after dismissing rename:", error);
     }
   }
   return true;
@@ -299,25 +411,7 @@ export async function startMcpAuthWizard(ctx: Context, options: {
     projectDirectory: options.projectDirectory,
   };
   mcpAuthWizard.set(pending);
-  const authMetadata = {
-    flow: "mcps",
-    stage: "auth",
-    messageId: options.messageId,
-    projectDirectory: options.projectDirectory,
-    serverName: options.serverName,
-  };
-  if (interactionManager.getSnapshot()) {
-    interactionManager.transition({
-      expectedInput: "mixed",
-      metadata: authMetadata,
-    });
-  } else {
-    interactionManager.start({
-      kind: "custom",
-      expectedInput: "mixed",
-      metadata: authMetadata,
-    });
-  }
+  transitionMcpAuthWizard(pending);
 
   await renderWizard(
     ctx,
@@ -633,6 +727,26 @@ export async function resetMcpCredentialAuthToAuto(ctx: Context): Promise<boolea
   }
 }
 
+export async function startMcpRenameWizard(ctx: Context, options: {
+  serverName: string;
+  projectDirectory: string;
+  messageId: number;
+}): Promise<void> {
+  const pending: PendingMcpRename = {
+    serverName: options.serverName,
+    projectDirectory: options.projectDirectory,
+    messageId: options.messageId,
+  };
+  mcpRenameWizard.set(pending);
+  transitionMcpRenameWizard(pending);
+  await renderWizard(
+    ctx,
+    options.messageId,
+    t("mcps.rename.prompt", { name: options.serverName }),
+    buildMcpRenameKeyboard(),
+  );
+}
+
 export async function startMcpAddWizard(ctx: Context): Promise<void> {
   const projectDirectory = getCurrentSessionDirectory();
   const messageId = callbackMessageId(ctx);
@@ -707,7 +821,13 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   if (!text || !ctx.chat?.id) return false;
 
   const pendingCredential = mcpCredentialWizard.get();
-  if (pendingCredential && isMcpCredentialInteractionActive()) {
+  if (pendingCredential) {
+    if (!isMcpCredentialInteractionActive()) {
+      transitionMcpCredentialWizard(
+        pendingCredential,
+        pendingCredential.step === "menu" ? "callback" : "mixed",
+      );
+    }
     await deleteInput(ctx);
 
     if (pendingCredential.step === "header-name" && pendingCredential.mode === "custom-header") {
@@ -767,7 +887,8 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   }
 
   const pendingAuth = mcpAuthWizard.get();
-  if (pendingAuth && isMcpAuthInteractionActive()) {
+  if (pendingAuth) {
+    if (!isMcpAuthInteractionActive()) transitionMcpAuthWizard(pendingAuth);
     await deleteInput(ctx);
 
     let callbackUrl: URL;
@@ -844,8 +965,50 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
     return true;
   }
 
+  const pendingRename = mcpRenameWizard.get();
+  if (pendingRename) {
+    if (!isMcpRenameInteractionActive()) transitionMcpRenameWizard(pendingRename);
+    await deleteInput(ctx);
+    if (text.length > 128) {
+      await renderWizard(
+        ctx,
+        pendingRename.messageId,
+        t("mcps.rename.retry", { error: t("mcps.rename.name_too_long") }),
+        buildMcpRenameKeyboard(),
+      );
+      return true;
+    }
+    try {
+      const renamed = await renameMcpServer(
+        pendingRename.projectDirectory,
+        pendingRename.serverName,
+        text,
+      );
+      mcpRenameWizard.clear();
+      interactionManager.clear("mcp_rename_completed");
+      await renderMcpDetailView(
+        ctx,
+        pendingRename.messageId,
+        pendingRename.projectDirectory,
+        renamed.name,
+      );
+    } catch (error) {
+      await renderWizard(
+        ctx,
+        pendingRename.messageId,
+        t("mcps.rename.retry", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+        buildMcpRenameKeyboard(),
+      );
+      transitionMcpRenameWizard(pendingRename);
+    }
+    return true;
+  }
+
   const pending = mcpAddWizard.get();
-  if (!pending || !isMcpAddInteractionActive()) return false;
+  if (!pending) return false;
+  if (!isMcpAddInteractionActive()) transitionMcpWizard(pending);
 
   await deleteInput(ctx);
 
@@ -867,7 +1030,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
       t("mcps.add.type_prompt"),
       buildMcpsAddTypeKeyboard(),
     );
-    transitionMcpWizard(pending);
+    transitionMcpWizard(pending, "callback");
     return true;
   }
 

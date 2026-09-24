@@ -537,6 +537,16 @@ export const it: I18nDictionary = {
   "mcps.auth.mode.oauth_client": "Client OAuth",
   "mcps.auth.step_title": "🔐 {mode} · {name}",
   "mcps.auth.step_title_client": "🪪 Client OAuth · {name}",
+  "mcps.button.rename": "✏️ Rinomina",
+  "mcps.button.delete": "🗑 Elimina",
+  "mcps.button.confirm_delete": "🗑 Sì, elimina",
+  "mcps.rename.prompt": "✏️ Rinomina server MCP\n\nNome attuale: {name}\n\nInvia il nuovo nome.",
+  "mcps.rename.retry": "✏️ Rinomina server MCP\n\n❌ {error}\n\nInvia un altro nome.",
+  "mcps.rename.name_too_long": "Il nome deve contenere al massimo 128 caratteri.",
+  "mcps.delete.confirm": "🗑 Elimina server MCP\n\nEliminare {name}?\n\nLa definizione e l’autenticazione salvata verranno rimosse e i runtime attivi disconnessi.",
+  "mcps.deleted": "Server MCP {name} eliminato.",
+  "mcps.auth.account": "👤 Account: {identity}{provider}",
+  "mcps.auth.account_unknown": "👤 Account: Accesso effettuato{provider} · il provider non espone email/username",
   "model.fallback.notice": "⚠️ Il modello selezionato {previous} non è disponibile o non è adatto a un agente. Passato a {next}.",
 
 

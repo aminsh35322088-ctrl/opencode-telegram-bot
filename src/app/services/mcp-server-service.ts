@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { McpLocalConfig, McpRemoteConfig, McpStatus } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
@@ -10,16 +13,37 @@ import {
   type McpCredentialRecord,
 } from "./mcp-credential-store.js";
 import {
+  clearMcpServerDeleted,
+  listDeletedMcpServerNames,
   listManagedMcpServers,
   loadManagedMcpServer,
+  markMcpServerDeleted,
+  removeManagedMcpServersByName,
+  renameManagedMcpServer,
   saveManagedMcpServer,
   type ManagedMcpConfig,
   type ManagedMcpServer,
 } from "./mcp-server-store.js";
+import { listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
 
 export type McpServerType = "local" | "remote" | "unknown";
 export interface McpServerItem { name: string; status: McpStatus; type: McpServerType; }
 export interface McpOAuthStartResult { authorizationUrl: string; oauthState: string; }
+export interface McpLoginIdentity {
+  label: string;
+  email?: string;
+  username?: string;
+  displayName?: string;
+  providerHost?: string;
+}
+const deletedMcpServerNames = new Set<string>();
+
+async function refreshDeletedMcpServerNames(): Promise<void> {
+  const names = await listDeletedMcpServerNames();
+  deletedMcpServerNames.clear();
+  for (const name of names) deletedMcpServerNames.add(name);
+}
+
 function normalizeDirectoryForMcpApi(directory: string): string { return directory.replace(/\\/g, "/"); }
 const MCP_STATUS_NAMES = ["connected", "disabled", "failed", "needs_auth", "needs_client_registration"] as const;
 function isMcpStatusName(value: unknown): value is (typeof MCP_STATUS_NAMES)[number] { return typeof value === "string" && MCP_STATUS_NAMES.some((name) => name === value); }
@@ -111,6 +135,7 @@ async function loadConfiguredTypeIndex(projectDirectory: string): Promise<Map<st
 }
 
 export async function loadMcpServers(projectDirectory: string): Promise<McpServerItem[]> {
+  await ensureMcpRuntimeForDirectory(projectDirectory);
   const { data, error } = await opencodeClient.mcp.status({
     directory: normalizeDirectoryForMcpApi(projectDirectory),
   });
@@ -118,10 +143,12 @@ export async function loadMcpServers(projectDirectory: string): Promise<McpServe
   const servers = parseMcpServerItems(data);
   if (!servers) throw new Error("Invalid MCP status data format");
   const typeIndex = await loadConfiguredTypeIndex(projectDirectory);
-  return servers.map((server) => ({
-    ...server,
-    type: typeIndex.get(server.name) ?? server.type,
-  }));
+  return servers
+    .filter((server) => !deletedMcpServerNames.has(server.name))
+    .map((server) => ({
+      ...server,
+      type: typeIndex.get(server.name) ?? server.type,
+    }));
 }
 
 export type McpAuthSummary = {
@@ -200,6 +227,127 @@ function buildSecureMcpConfig(record: McpCredentialRecord): McpRemoteConfig {
   };
 }
 
+function normalizedDirectoryKey(directory: string): string {
+  return normalizeDirectoryForMcpApi(directory).replace(/\/+$/u, "");
+}
+
+function chooseCanonicalManagedServers(
+  records: readonly ManagedMcpServer[],
+  projectDirectory: string,
+): ManagedMcpServer[] {
+  const target = normalizedDirectoryKey(projectDirectory);
+  const result = new Map<string, ManagedMcpServer>();
+  for (const record of records) {
+    if (normalizedDirectoryKey(record.projectDirectory) === target) {
+      result.set(record.name, record);
+    }
+  }
+  for (const record of records) {
+    if (!result.has(record.name)) result.set(record.name, record);
+  }
+  return [...result.values()].filter((record) => !deletedMcpServerNames.has(record.name));
+}
+
+async function credentialIndexByServerName(): Promise<Map<string, McpCredentialRecord>> {
+  const index = new Map<string, McpCredentialRecord>();
+  try {
+    for (const record of await listMcpCredentials()) {
+      if (!index.has(record.serverName)) index.set(record.serverName, record);
+    }
+  } catch (error) {
+    logger.warn("[McpServer] Secure credentials unavailable while synchronizing MCP runtime:", error);
+  }
+  return index;
+}
+
+export async function ensureMcpRuntimeForDirectory(
+  projectDirectory: string,
+  options: { force?: boolean } = {},
+): Promise<{ restored: number; failed: number }> {
+  await refreshDeletedMcpServerNames();
+  const directory = normalizeDirectoryForMcpApi(projectDirectory);
+  for (const name of deletedMcpServerNames) {
+    await opencodeClient.mcp.disconnect({ name, directory }).catch(() => {});
+  }
+  const records = chooseCanonicalManagedServers(await listManagedMcpServers(), projectDirectory);
+  const credentials = await credentialIndexByServerName();
+  const existingNames = new Set<string>();
+  if (!options.force) {
+    try {
+      const { data, error } = await opencodeClient.mcp.status({ directory });
+      if (!error && data) {
+        for (const server of parseMcpServerItems(data) ?? []) existingNames.add(server.name);
+      }
+    } catch {
+      // Missing status is handled by the add pass below.
+    }
+  }
+  let restored = 0;
+  let failed = 0;
+
+  for (const record of records) {
+    if (existingNames.has(record.name)) continue;
+    try {
+      const credential = credentials.get(record.name);
+      const config = credential
+        ? buildSecureMcpConfig({ ...credential, projectDirectory } as McpCredentialRecord)
+        : normalizeManagedConfig(record.config);
+      const { data, error } = await opencodeClient.mcp.add({
+        directory,
+        name: record.name,
+        config,
+      });
+      if (error || !data) throw error || new Error("No MCP status returned");
+      restored += 1;
+    } catch (error) {
+      failed += 1;
+      logger.warn(
+        `[McpServer] Failed to synchronize MCP "${record.name}" into directory=${directory}:`,
+        error,
+      );
+    }
+  }
+  return { restored, failed };
+}
+
+async function knownMcpDirectories(extraDirectories: readonly string[] = []): Promise<string[]> {
+  const directories = new Map<string, string>();
+  const add = (value: string | undefined) => {
+    if (!value?.trim()) return;
+    const normalized = normalizedDirectoryKey(value);
+    if (normalized) directories.set(normalized, value);
+  };
+
+  extraDirectories.forEach(add);
+  for (const record of await listManagedMcpServers()) add(record.projectDirectory);
+  try {
+    for (const state of await listTopicRuntimeStates()) {
+      add(state.settings.workspaceDirectory ?? state.settings.session?.directory);
+    }
+  } catch (error) {
+    logger.debug("[McpServer] Topic runtime directories unavailable during MCP synchronization", error);
+  }
+  return [...directories.values()];
+}
+
+export async function synchronizeMcpRuntimeToKnownDirectories(
+  extraDirectories: readonly string[] = [],
+  skipDirectories: readonly string[] = [],
+): Promise<{ restored: number; failed: number; directories: number }> {
+  const skipped = new Set(skipDirectories.map(normalizedDirectoryKey));
+  let restored = 0;
+  let failed = 0;
+  let directories = 0;
+  for (const directory of await knownMcpDirectories(extraDirectories)) {
+    if (skipped.has(normalizedDirectoryKey(directory))) continue;
+    directories += 1;
+    const result = await ensureMcpRuntimeForDirectory(directory, { force: true });
+    restored += result.restored;
+    failed += result.failed;
+  }
+  return { restored, failed, directories };
+}
+
 async function addSecureMcpDefinition(
   record: McpCredentialRecord,
   config: McpRemoteConfig = buildSecureMcpConfig(record),
@@ -267,6 +415,17 @@ export async function configureSecureMcpAuth(
       config: { type: "remote", url: record.remoteUrl },
     });
     await saveMcpCredential(record);
+    deletedMcpServerNames.delete(record.serverName.trim());
+    await clearMcpServerDeleted(record.serverName);
+    const synchronized = await synchronizeMcpRuntimeToKnownDirectories(
+      [record.projectDirectory],
+      [record.projectDirectory],
+    );
+    if (synchronized.failed > 0) {
+      logger.warn(
+        `[McpServer] Secure MCP "${record.serverName}" connected locally but failed to synchronize to ${synchronized.failed} runtime target(s)`,
+      );
+    }
     return server;
   } catch (error) {
     await scrubSecureMcpDefinition(record);
@@ -312,7 +471,10 @@ export async function getMcpAuthSummary(
   projectDirectory: string,
   serverName: string,
 ): Promise<McpAuthSummary | null> {
-  const record = await loadMcpCredential(projectDirectory, serverName);
+  const record =
+    await loadMcpCredential(projectDirectory, serverName) ??
+    (await listMcpCredentials()).find((candidate) => candidate.serverName === serverName) ??
+    null;
   if (!record) return null;
   if (record.mode === "api-key" || record.mode === "custom-header") {
     return { configured: true, mode: record.mode, headerName: record.headerName };
@@ -320,12 +482,79 @@ export async function getMcpAuthSummary(
   return { configured: true, mode: record.mode };
 }
 
+function oauthAuthFileCandidates(): string[] {
+  const candidates = new Set<string>();
+  const xdgDataHome = process.env.XDG_DATA_HOME?.trim();
+  const home = process.env.HOME?.trim() || os.homedir();
+  if (xdgDataHome) candidates.add(path.join(xdgDataHome, "opencode", "mcp-auth.json"));
+  if (home) candidates.add(path.join(home, ".local", "share", "opencode", "mcp-auth.json"));
+  return [...candidates];
+}
+
+function decodeJwtIdentity(accessToken: string): Omit<McpLoginIdentity, "providerHost"> | null {
+  const parts = accessToken.split(".");
+  if (parts.length < 2 || !parts[1]) return null;
+  try {
+    const payload: unknown = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (!isRecord(payload)) return null;
+    const stringClaim = (name: string): string | undefined => {
+      const value = payload[name];
+      return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    };
+    const email = stringClaim("email");
+    const username =
+      stringClaim("preferred_username") ??
+      stringClaim("username") ??
+      stringClaim("login");
+    const displayName = stringClaim("name");
+    const subject = stringClaim("sub");
+    const label = email ?? username ?? displayName ?? subject;
+    return label ? { label, email, username, displayName } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getMcpLoginIdentity(
+  projectDirectory: string,
+  serverName: string,
+): Promise<McpLoginIdentity | null> {
+  let providerHost: string | undefined;
+  try {
+    providerHost = new URL(await resolveMcpRemoteUrl(projectDirectory, serverName)).host || undefined;
+  } catch {
+    // Identity lookup is best-effort and must not break the MCP detail view.
+  }
+
+  for (const candidate of oauthAuthFileCandidates()) {
+    try {
+      const parsed: unknown = JSON.parse(await fs.readFile(candidate, "utf8"));
+      if (!isRecord(parsed)) continue;
+      const entry = parsed[serverName];
+      if (!isRecord(entry) || !isRecord(entry.tokens)) continue;
+      const accessToken = entry.tokens.accessToken;
+      if (typeof accessToken !== "string" || !accessToken) continue;
+      const identity = decodeJwtIdentity(accessToken);
+      if (identity) return { ...identity, ...(providerHost ? { providerHost } : {}) };
+      return providerHost ? { label: providerHost, providerHost } : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.debug("[McpServer] Native OAuth identity lookup failed", error);
+      }
+    }
+  }
+  return null;
+}
+
 export async function resolveMcpRemoteUrl(
   projectDirectory: string,
   serverName: string,
 ): Promise<string> {
   try {
-    const stored = await loadMcpCredential(projectDirectory, serverName);
+    const stored =
+      await loadMcpCredential(projectDirectory, serverName) ??
+      (await listMcpCredentials()).find((candidate) => candidate.serverName === serverName) ??
+      null;
     if (stored) return assertSecureRemoteUrl(stored.remoteUrl);
   } catch (error) {
     const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -335,7 +564,10 @@ export async function resolveMcpRemoteUrl(
   }
 
   try {
-    const managed = await loadManagedMcpServer(projectDirectory, serverName);
+    const managed =
+      await loadManagedMcpServer(projectDirectory, serverName) ??
+      (await listManagedMcpServers()).find((candidate) => candidate.name === serverName) ??
+      null;
     if (managed?.config.type === "remote") return assertSecureRemoteUrl(managed.config.url);
   } catch (error) {
     logger.debug(
@@ -396,7 +628,23 @@ export async function resetMcpAuthToAuto(options: {
     name,
     config: { type: "remote", url: options.remoteUrl },
   });
+  const credentials = await listMcpCredentials();
   await removeMcpCredential(options.projectDirectory, name);
+  const currentDirectory = normalizedDirectoryKey(options.projectDirectory);
+  for (const credential of credentials) {
+    if (
+      credential.serverName === name &&
+      normalizedDirectoryKey(credential.projectDirectory) !== currentDirectory
+    ) {
+      await removeMcpCredential(credential.projectDirectory, name);
+    }
+  }
+  deletedMcpServerNames.delete(name);
+  await clearMcpServerDeleted(name);
+  await synchronizeMcpRuntimeToKnownDirectories(
+    [options.projectDirectory],
+    [options.projectDirectory],
+  );
   return { ...server, type: "remote" };
 }
 
@@ -440,6 +688,9 @@ export async function completeMcpOAuth(
   const parsed = parseMcpServerItems({ [name]: data });
   const server = parsed?.[0];
   if (!server) throw new Error("OpenCode returned an invalid MCP OAuth completion status.");
+  deletedMcpServerNames.delete(name);
+  await clearMcpServerDeleted(name);
+  await synchronizeMcpRuntimeToKnownDirectories([projectDirectory], [projectDirectory]);
   return { ...server, type: "remote" };
 }
 
@@ -561,6 +812,12 @@ async function createMcpServer(options: {
     name,
     config: options.config,
   });
+  deletedMcpServerNames.delete(name);
+  await clearMcpServerDeleted(name);
+  await synchronizeMcpRuntimeToKnownDirectories(
+    [options.projectDirectory],
+    [options.projectDirectory],
+  );
   return { ...server, type: config.type };
 }
 
@@ -627,8 +884,16 @@ export async function restoreMcpRuntime(): Promise<{
   managed: { restored: number; failed: number };
   secure: { restored: number; failed: number };
 }> {
+  await refreshDeletedMcpServerNames();
   const managed = await restoreManagedMcpServers();
   const secure = await restoreSecureMcpConnections();
+  const managedSources = (await listManagedMcpServers()).map((record) => record.projectDirectory);
+  const synchronized = await synchronizeMcpRuntimeToKnownDirectories([], managedSources);
+  if (synchronized.failed > 0) {
+    logger.warn(
+      `[McpServer] MCP startup synchronization failed for ${synchronized.failed} runtime target(s)`,
+    );
+  }
   return { managed, secure };
 }
 
@@ -673,4 +938,117 @@ export async function setMcpServerEnabled(
   }
   const { error } = await opencodeClient.mcp.disconnect(params);
   if (error) throw error;
+}
+
+async function removeMcpCredentialsByName(serverName: string): Promise<number> {
+  let removed = 0;
+  for (const record of await listMcpCredentials()) {
+    if (record.serverName !== serverName) continue;
+    if (await removeMcpCredential(record.projectDirectory, serverName)) removed += 1;
+  }
+  return removed;
+}
+
+async function detachMcpRuntimeName(serverName: string, directories: readonly string[]): Promise<void> {
+  for (const projectDirectory of directories) {
+    const params = {
+      name: serverName,
+      directory: normalizeDirectoryForMcpApi(projectDirectory),
+    };
+    await opencodeClient.mcp.disconnect(params).catch(() => {});
+    await opencodeClient.mcp.auth.remove(params).catch(() => {});
+  }
+}
+
+export async function deleteMcpServer(
+  projectDirectory: string,
+  serverName: string,
+): Promise<{ deleted: boolean; name: string }> {
+  const name = serverName.trim();
+  if (!name) throw new Error("MCP server name is required.");
+  const directories = await knownMcpDirectories([projectDirectory]);
+  const managed = (await listManagedMcpServers()).some((record) => record.name === name);
+  const credentials = (await listMcpCredentials()).some((record) => record.serverName === name);
+
+  await detachMcpRuntimeName(name, directories);
+  const removedManaged = await removeManagedMcpServersByName(name);
+  const removedCredentials = await removeMcpCredentialsByName(name);
+  deletedMcpServerNames.add(name);
+  await markMcpServerDeleted(name);
+
+  return {
+    deleted: managed || credentials || removedManaged > 0 || removedCredentials > 0,
+    name,
+  };
+}
+
+export async function renameMcpServer(
+  projectDirectory: string,
+  serverName: string,
+  newName: string,
+): Promise<McpServerItem> {
+  const sourceName = serverName.trim();
+  const targetName = newName.trim();
+  if (!sourceName || !targetName) throw new Error("MCP server name is required.");
+  if (targetName.length > 128) throw new Error("MCP server name must be 128 characters or fewer.");
+  if (sourceName === targetName) {
+    const current = (await loadMcpServers(projectDirectory)).find((server) => server.name === sourceName);
+    if (!current) throw new Error(`MCP server "${sourceName}" was not found.`);
+    return current;
+  }
+
+  const managedRecords = await listManagedMcpServers();
+  if (managedRecords.some((record) => record.name === targetName)) {
+    throw new Error(`An MCP server named "${targetName}" already exists.`);
+  }
+  const source =
+    managedRecords.find(
+      (record) =>
+        record.name === sourceName &&
+        normalizedDirectoryKey(record.projectDirectory) === normalizedDirectoryKey(projectDirectory),
+    ) ??
+    managedRecords.find((record) => record.name === sourceName);
+  if (!source) {
+    throw new Error(`MCP server "${sourceName}" is not managed by the bot and cannot be renamed safely.`);
+  }
+
+  const credentials = await listMcpCredentials();
+  const credential = credentials.find((record) => record.serverName === sourceName);
+  const targetConfig = credential
+    ? buildSecureMcpConfig({ ...credential, projectDirectory } as McpCredentialRecord)
+    : normalizeManagedConfig(source.config);
+  const { data, error } = await opencodeClient.mcp.add({
+    directory: normalizeDirectoryForMcpApi(projectDirectory),
+    name: targetName,
+    config: targetConfig,
+  });
+  if (error || !data) throw error || new Error(`OpenCode could not create renamed MCP server "${targetName}".`);
+
+  const renamed = await renameManagedMcpServer(sourceName, targetName);
+  if (!renamed) throw new Error(`MCP server "${sourceName}" was not found in managed state.`);
+
+  for (const record of credentials) {
+    if (record.serverName !== sourceName) continue;
+    await saveMcpCredential({ ...record, serverName: targetName } as McpCredentialRecord);
+    await removeMcpCredential(record.projectDirectory, sourceName);
+  }
+
+  deletedMcpServerNames.add(sourceName);
+  deletedMcpServerNames.delete(targetName);
+  await markMcpServerDeleted(sourceName);
+  await clearMcpServerDeleted(targetName);
+  const directories = await knownMcpDirectories([projectDirectory, source.projectDirectory]);
+  await detachMcpRuntimeName(sourceName, directories);
+  const synchronized = await synchronizeMcpRuntimeToKnownDirectories(
+    [projectDirectory, source.projectDirectory],
+  );
+  if (synchronized.failed > 0) {
+    logger.warn(
+      `[McpServer] Renamed MCP "${sourceName}" to "${targetName}" but ${synchronized.failed} runtime target(s) failed to synchronize`,
+    );
+  }
+
+  const current = (await loadMcpServers(projectDirectory)).find((server) => server.name === targetName);
+  if (!current) throw new Error(`Renamed MCP server "${targetName}" is not visible in the current runtime.`);
+  return current;
 }

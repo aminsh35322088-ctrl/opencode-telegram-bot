@@ -531,6 +531,16 @@ export const ru: I18nDictionary = {
   "mcps.auth.mode.oauth_client": "OAuth-клиент",
   "mcps.auth.step_title": "🔐 {mode} · {name}",
   "mcps.auth.step_title_client": "🪪 OAuth-клиент · {name}",
+  "mcps.button.rename": "✏️ Переименовать",
+  "mcps.button.delete": "🗑 Удалить",
+  "mcps.button.confirm_delete": "🗑 Да, удалить",
+  "mcps.rename.prompt": "✏️ Переименовать MCP-сервер\n\nТекущее имя: {name}\n\nОтправьте новое имя.",
+  "mcps.rename.retry": "✏️ Переименовать MCP-сервер\n\n❌ {error}\n\nОтправьте другое имя.",
+  "mcps.rename.name_too_long": "Имя должно содержать не более 128 символов.",
+  "mcps.delete.confirm": "🗑 Удалить MCP-сервер\n\nУдалить {name}?\n\nОпределение и сохранённая авторизация будут удалены, активные runtime отключены.",
+  "mcps.deleted": "MCP-сервер {name} удалён.",
+  "mcps.auth.account": "👤 Аккаунт: {identity}{provider}",
+  "mcps.auth.account_unknown": "👤 Аккаунт: вход выполнен{provider} · провайдер не предоставил email/имя пользователя",
   "model.fallback.notice": "⚠️ Выбранная модель {previous} недоступна или не подходит для агента. Переключение на {next}.",
 
 

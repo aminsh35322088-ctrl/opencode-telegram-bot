@@ -30,7 +30,8 @@ const BOT_ACTIONS = [
   "mcp.add-local",
   "mcp.add-remote",
   "mcp.enable",
-  "mcp.disable",
+  "mcp.rename",
+  "mcp.delete",
   "session.current",
   "session.messages",
   "session.latest-assistant",
@@ -146,6 +147,8 @@ interface McpModule {
   loadMcpServers(projectDirectory: string): Promise<unknown[]>;
   createMcpServerFromInput(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<void>;
   setMcpServerEnabled(projectDirectory: string, serverName: string, enable: boolean): Promise<void>;
+  renameMcpServer(projectDirectory: string, serverName: string, newName: string): Promise<unknown>;
+  deleteMcpServer(projectDirectory: string, serverName: string): Promise<{ deleted: boolean; name: string }>;
 }
 interface SessionModule {
   getEffectiveCurrentSession(): Promise<{ id: string; title: string; directory: string } | null>;
@@ -323,7 +326,7 @@ export default tool({
     name: tool.schema.string().optional().describe("Skill or MCP server name."),
     description: tool.schema.string().optional().describe("Skill description for create/update."),
     body: tool.schema.string().optional().describe("Skill body for create/update."),
-    value: tool.schema.string().optional().describe("MCP URL/command or settings value."),
+    value: tool.schema.string().optional().describe("MCP URL/command, MCP rename target, or settings value."),
     scope: tool.schema.enum(["user", "project"]).optional().describe("Memory scope; defaults to user."),
     content: tool.schema.string().optional().describe("Memory content for memory.add."),
     id: tool.schema.string().optional().describe("Memory, task, or integration account ID."),
@@ -445,9 +448,16 @@ export default tool({
       const service = await load<McpModule>("app/services/mcp-server-service.js");
       if (action === "mcp.list") return json(await service.loadMcpServers(base));
       const name = required(args.name, "name", action);
-      if (action === "mcp.enable" || action === "mcp.disable") {
-        await service.setMcpServerEnabled(base, name, action === "mcp.enable");
-        return json({ ok: true, name, enabled: action === "mcp.enable" });
+      if (action === "mcp.enable") {
+        await service.setMcpServerEnabled(base, name, true);
+        return json({ ok: true, name, enabled: true });
+      }
+      if (action === "mcp.delete") {
+        return json(await service.deleteMcpServer(base, name));
+      }
+      if (action === "mcp.rename") {
+        const newName = required(args.value, "value", action);
+        return json({ ok: true, server: await service.renameMcpServer(base, name, newName) });
       }
       const value = required(args.value, "value", action);
       const type = action === "mcp.add-remote" ? "remote" : "local";

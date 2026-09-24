@@ -17,6 +17,7 @@ const mocked = vi.hoisted(() => ({
   ingestSessionInfoForCacheMock: vi.fn(),
   createTopicKeyboardMock: vi.fn(),
   buildModelRoutingSummaryMock: vi.fn(),
+  ensureMcpRuntimeForDirectoryMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -87,6 +88,10 @@ vi.mock("../../../src/app/services/agent-selection-service.js", () => ({
 
 vi.mock("../../../src/app/services/model-routing-summary-service.js", () => ({
   buildModelRoutingSummary: mocked.buildModelRoutingSummaryMock,
+}));
+
+vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
+  ensureMcpRuntimeForDirectory: mocked.ensureMcpRuntimeForDirectoryMock,
 }));
 
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({
@@ -167,6 +172,7 @@ describe("bot/commands/new", () => {
     mocked.getCurrentProjectMock.mockReset();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
     mocked.attachToSessionMock.mockReset();
+    mocked.ensureMcpRuntimeForDirectoryMock.mockReset().mockResolvedValue({ restored: 1, failed: 0 });
     mocked.attachToSessionMock.mockResolvedValue({
       busy: false,
       alreadyAttached: false,
@@ -258,6 +264,7 @@ describe("bot/commands/new", () => {
       expect.objectContaining({ providerID: "openai", modelID: "gpt-5" }),
       "/repo",
     );
+    expect(mocked.ensureMcpRuntimeForDirectoryMock).toHaveBeenCalledWith("/repo");
     expect((deps.sendMessageMock.mock.invocationCallOrder[0] ?? Infinity)).toBeLessThan(
       mocked.attachToSessionMock.mock.invocationCallOrder[0] ?? Infinity,
     );

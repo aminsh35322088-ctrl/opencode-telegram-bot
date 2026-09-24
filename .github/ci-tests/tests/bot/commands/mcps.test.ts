@@ -61,6 +61,7 @@ function createCallbackContext(data: string, messageId: number): Context {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 902 }),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Context;
 }
@@ -182,11 +183,10 @@ describe("bot/commands/mcps", () => {
     expect(state?.metadata.serverName).toBe("github");
   });
 
-  it("disables a connected server", async () => {
-    mocked.mcpDisconnectMock.mockResolvedValue({ error: null });
+  it("never disables a connected server from the legacy toggle callback", async () => {
     mocked.mcpStatusMock.mockResolvedValue({
       data: {
-        filesystem: { status: "disabled" },
+        filesystem: { status: "connected" },
       },
       error: null,
     });
@@ -200,7 +200,7 @@ describe("bot/commands/mcps", () => {
         messageId: 300,
         projectDirectory: "D:\\Projects\\Repo",
         serverName: "filesystem",
-        servers: [{ name: "filesystem", status: { status: "connected" } }],
+        servers: [{ name: "filesystem", status: { status: "connected" }, type: "remote" }],
       },
     });
 
@@ -208,10 +208,8 @@ describe("bot/commands/mcps", () => {
     const handled = await handleMcpsCallback(ctx);
 
     expect(handled).toBe(true);
-    expect(mocked.mcpDisconnectMock).toHaveBeenCalledWith({
-      name: "filesystem",
-      directory: "D:/Projects/Repo",
-    });
+    expect(mocked.mcpDisconnectMock).not.toHaveBeenCalled();
+    expect((ctx.api as { editMessageText: ReturnType<typeof vi.fn> }).editMessageText).toHaveBeenCalled();
 
     const state = interactionManager.getSnapshot();
     expect(state?.metadata.stage).toBe("detail");

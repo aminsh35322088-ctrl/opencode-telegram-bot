@@ -20,6 +20,8 @@ const mockedMcp = vi.hoisted(() => ({
   configureSecureMcpAuth: vi.fn(),
   getMcpAuthSummary: vi.fn(),
   resetMcpAuthToAuto: vi.fn(),
+  getMcpLoginIdentity: vi.fn(),
+  renameMcpServer: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
@@ -31,6 +33,8 @@ vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
   configureSecureMcpAuth: mockedMcp.configureSecureMcpAuth,
   getMcpAuthSummary: mockedMcp.getMcpAuthSummary,
   resetMcpAuthToAuto: mockedMcp.resetMcpAuthToAuto,
+  getMcpLoginIdentity: mockedMcp.getMcpLoginIdentity,
+  renameMcpServer: mockedMcp.renameMcpServer,
 }));
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
@@ -43,6 +47,7 @@ import {
   clearMcpAddWizard,
   clearMcpAuthWizard,
   clearMcpCredentialWizard,
+  clearMcpRenameWizard,
   dismissMcpAddWizard,
   handleMcpsMessage,
   selectMcpCredentialMode,
@@ -51,6 +56,7 @@ import {
   startMcpAddWizard,
   startMcpAuthWizard,
   startMcpCredentialWizard,
+  startMcpRenameWizard,
 } from "../../../src/bot/commands/mcp-server-command.js";
 import { interactionManager } from "../../../src/app/managers/interaction-manager.js";
 import { t } from "../../../src/i18n/index.js";
@@ -104,12 +110,19 @@ describe("MCP add wizard UX", () => {
       name: "secure",
       status: { status: "needs_auth" },
     });
+    mockedMcp.getMcpLoginIdentity.mockReset().mockResolvedValue(null);
+    mockedMcp.renameMcpServer.mockReset().mockResolvedValue({
+      name: "renamed",
+      status: { status: "connected" },
+      type: "remote",
+    });
   });
 
   afterEach(() => {
     clearMcpAddWizard();
     clearMcpAuthWizard();
     clearMcpCredentialWizard();
+    clearMcpRenameWizard();
     mockedMcp.createMcpServerFromInput.mockClear();
     mockedMcp.loadMcpServers.mockClear();
     mockedMcp.startMcpOAuth.mockClear();
@@ -118,6 +131,8 @@ describe("MCP add wizard UX", () => {
     mockedMcp.configureSecureMcpAuth.mockClear();
     mockedMcp.getMcpAuthSummary.mockClear();
     mockedMcp.resetMcpAuthToAuto.mockClear();
+    mockedMcp.getMcpLoginIdentity.mockClear();
+    mockedMcp.renameMcpServer.mockClear();
     interactionManager.clear("test_cleanup");
   });
 
@@ -141,6 +156,23 @@ describe("MCP add wizard UX", () => {
     expect(state?.metadata.parentMessageId).toBeUndefined();
   });
 
+
+  it("recovers MCP add state after interaction state loss instead of leaking text to the model", async () => {
+    const startCtx = createContext();
+    await startMcpAddWizard(startCtx);
+    interactionManager.clear("simulate_stale_interaction");
+
+    const nameCtx = createTextContext("github");
+    await expect(handleMcpsMessage(nameCtx)).resolves.toBe(true);
+
+    expect(nameCtx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
+    expect(mockedMcp.createMcpServerFromInput).not.toHaveBeenCalled();
+    expect(interactionManager.getSnapshot()).toMatchObject({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: { flow: "mcps", stage: "add", name: "github" },
+    });
+  });
 
   it("navigates backward through add-MCP steps on the same General panel", async () => {
     const startCtx = createContext();
@@ -179,6 +211,30 @@ describe("MCP add wizard UX", () => {
       expect.objectContaining({ reply_markup: expect.anything() }),
     );
     expect(startCtx.reply).not.toHaveBeenCalled();
+  });
+
+  it("renames an MCP server on the same General panel and restores detail view", async () => {
+    const startCtx = createContext();
+    await startMcpRenameWizard(startCtx, {
+      serverName: "github",
+      projectDirectory: "/work/repo",
+      messageId: 4242,
+    });
+    interactionManager.clear("simulate_stale_rename_interaction");
+    mockedMcp.loadMcpServers.mockResolvedValue([
+      { name: "renamed", status: { status: "connected" }, type: "remote" },
+    ]);
+
+    const renameCtx = createTextContext("renamed");
+    await expect(handleMcpsMessage(renameCtx)).resolves.toBe(true);
+
+    expect(mockedMcp.renameMcpServer).toHaveBeenCalledWith("/work/repo", "github", "renamed");
+    expect(renameCtx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
+    expect(interactionManager.getSnapshot()?.metadata).toMatchObject({
+      flow: "mcps",
+      stage: "detail",
+      serverName: "renamed",
+    });
   });
 
   it("dismisses without deleting the General panel", async () => {
@@ -237,8 +293,13 @@ describe("MCP add wizard UX", () => {
     });
 
     mockedMcp.loadMcpServers.mockResolvedValue([
-      { name: "sentry", status: { status: "connected" } },
+      { name: "sentry", status: { status: "connected" }, type: "remote" },
     ]);
+    mockedMcp.getMcpLoginIdentity.mockResolvedValue({
+      label: "amin@example.com",
+      email: "amin@example.com",
+      providerHost: "mcp.example.com",
+    });
 
     const ctx = createTextContext("http://127.0.0.1/callback?code=secret-code&state=oauth-state");
     expect(await handleMcpsMessage(ctx)).toBe(true);
@@ -246,6 +307,12 @@ describe("MCP add wizard UX", () => {
     expect(ctx.api.deleteMessage).toHaveBeenCalledWith(777, 600);
     expect(interactionManager.getSnapshot()?.metadata.stage).toBe("detail");
     expect(interactionManager.getSnapshot()?.metadata.serverName).toBe("sentry");
+    expect(ctx.api.editMessageText).toHaveBeenLastCalledWith(
+      777,
+      4242,
+      expect.stringContaining("amin@example.com"),
+      expect.objectContaining({ reply_markup: expect.anything() }),
+    );
   });
   it("opens credential auth choices by editing only the canonical General panel", async () => {
     const ctx = createContext();

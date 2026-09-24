@@ -3,8 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  clearMcpServerDeleted,
+  listDeletedMcpServerNames,
   listManagedMcpServers,
   loadManagedMcpServer,
+  markMcpServerDeleted,
+  removeManagedMcpServersByName,
+  renameManagedMcpServer,
   saveManagedMcpServer,
 } from "../../../src/app/services/mcp-server-store.js";
 
@@ -70,7 +75,7 @@ describe("mcp server store", () => {
     });
   });
 
-  it("isolates definitions by project and supports filtered listing", async () => {
+  it("keeps one canonical definition per server name across Topic directories", async () => {
     await saveManagedMcpServer({
       projectDirectory: "/work/a",
       name: "same",
@@ -82,10 +87,40 @@ describe("mcp server store", () => {
       config: { type: "remote", url: "https://b.example/mcp" },
     });
 
-    await expect(listManagedMcpServers("/work/a")).resolves.toEqual([
-      expect.objectContaining({ projectDirectory: "/work/a", name: "same" }),
+    await expect(listManagedMcpServers("/work/a")).resolves.toEqual([]);
+    await expect(listManagedMcpServers("/work/b")).resolves.toEqual([
+      expect.objectContaining({ projectDirectory: "/work/b", name: "same" }),
     ]);
-    await expect(listManagedMcpServers()).resolves.toHaveLength(2);
+    await expect(listManagedMcpServers()).resolves.toHaveLength(1);
+  });
+
+  it("persists delete tombstones across store reads and clears them when a server is recreated", async () => {
+    await markMcpServerDeleted("legacy-server");
+    await expect(listDeletedMcpServerNames()).resolves.toEqual(["legacy-server"]);
+
+    const stateText = await fs.readFile(path.join(home, "app-state.json"), "utf8");
+    expect(stateText).toContain("mcpServerTombstones");
+    expect(stateText).toContain("legacy-server");
+
+    await clearMcpServerDeleted("legacy-server");
+    await expect(listDeletedMcpServerNames()).resolves.toEqual([]);
+  });
+
+  it("renames and deletes canonical definitions without leaving stale records", async () => {
+    await saveManagedMcpServer({
+      projectDirectory: "/work/root",
+      name: "old-name",
+      config: { type: "remote", url: "https://mcp.example/mcp" },
+    });
+
+    await expect(renameManagedMcpServer("old-name", "new-name")).resolves.toEqual(
+      expect.objectContaining({ name: "new-name", projectDirectory: "/work/root" }),
+    );
+    await expect(listManagedMcpServers()).resolves.toEqual([
+      expect.objectContaining({ name: "new-name" }),
+    ]);
+    await expect(removeManagedMcpServersByName("new-name")).resolves.toBe(1);
+    await expect(listManagedMcpServers()).resolves.toEqual([]);
   });
 
 

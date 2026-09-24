@@ -11,6 +11,9 @@ const mocked = vi.hoisted(() => ({
   getMcpAuthSummary: vi.fn(),
   configureSecureMcpAuth: vi.fn(),
   resetMcpAuthToAuto: vi.fn(),
+  getMcpLoginIdentity: vi.fn(),
+  renameMcpServer: vi.fn(),
+  deleteMcpServer: vi.fn(),
   currentSessionDirectory: "/work/repo" as string | null,
 }));
 
@@ -24,6 +27,9 @@ vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
   getMcpAuthSummary: mocked.getMcpAuthSummary,
   configureSecureMcpAuth: mocked.configureSecureMcpAuth,
   resetMcpAuthToAuto: mocked.resetMcpAuthToAuto,
+  getMcpLoginIdentity: mocked.getMcpLoginIdentity,
+  renameMcpServer: mocked.renameMcpServer,
+  deleteMcpServer: mocked.deleteMcpServer,
 }));
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
@@ -152,8 +158,10 @@ describe("mcp catalog callback recovery", () => {
   it("starts OAuth client setup directly for needs_client_registration", async () => {
     const servers = [{
       name: "enterprise",
+      type: "remote",
       status: { status: "needs_client_registration", error: "Client registration required" },
     }];
+    mocked.loadMcpServers.mockResolvedValue(servers);
     interactionManager.start({
       kind: "custom",
       expectedInput: "callback",
@@ -179,6 +187,34 @@ describe("mcp catalog callback recovery", () => {
     expect(interactionManager.getSnapshot()?.metadata.stage).toBe("auth_setup");
     expect(interactionManager.getSnapshot()?.metadata.mode).toBe("oauth-client");
     expect(interactionManager.getSnapshot()?.expectedInput).toBe("mixed");
+  });
+
+  it("does not reopen authentication from stale callbacks after the server is connected", async () => {
+    const servers = [{
+      name: "secure",
+      type: "remote",
+      status: { status: "connected" as const },
+    }];
+    mocked.loadMcpServers.mockResolvedValue(servers);
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "callback",
+      metadata: {
+        flow: "mcps",
+        stage: "detail",
+        messageId: 777,
+        projectDirectory: "/work/repo",
+        serverName: "secure",
+        servers,
+      },
+    });
+
+    for (const callback of ["mcps:auth:options", "mcps:auth:client", "mcps:auth:start"]) {
+      const ctx = createCallbackContext(callback, 777);
+      expect(await handleMcpsCallback(ctx)).toBe(true);
+      expect(interactionManager.getSnapshot()?.metadata.stage).toBe("detail");
+      expect(answerTexts(ctx).some((text) => text.includes("inactive") || text.includes("not waiting"))).toBe(true);
+    }
   });
 
   it("cancels credential setup back to the same server detail instead of creating a message", async () => {

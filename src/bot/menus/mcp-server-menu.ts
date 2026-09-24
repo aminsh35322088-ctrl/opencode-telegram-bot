@@ -6,6 +6,11 @@ import { t } from "../../i18n/index.js";
 export const MCPS_CALLBACK_PREFIX = "mcps:";
 export const MCPS_CALLBACK_SELECT_PREFIX = `${MCPS_CALLBACK_PREFIX}select:`;
 export const MCPS_CALLBACK_TOGGLE = `${MCPS_CALLBACK_PREFIX}toggle`;
+export const MCPS_CALLBACK_RENAME = `${MCPS_CALLBACK_PREFIX}rename`;
+export const MCPS_CALLBACK_RENAME_CANCEL = `${MCPS_CALLBACK_PREFIX}rename:cancel`;
+export const MCPS_CALLBACK_DELETE = `${MCPS_CALLBACK_PREFIX}delete`;
+export const MCPS_CALLBACK_DELETE_CONFIRM = `${MCPS_CALLBACK_PREFIX}delete:confirm`;
+export const MCPS_CALLBACK_DELETE_CANCEL = `${MCPS_CALLBACK_PREFIX}delete:cancel`;
 export const MCPS_CALLBACK_BACK = `${MCPS_CALLBACK_PREFIX}back`;
 export const MCPS_CALLBACK_PARENT_BACK = `${MCPS_CALLBACK_PREFIX}parent_back`;
 export const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
@@ -135,22 +140,33 @@ export function buildMcpsAddValueKeyboard(): InlineKeyboard {
     .text(t("mcps.button.cancel"), MCPS_CALLBACK_CANCEL).row()
     .text(t("mcps.button.home"), "main:home");
 }
+
+export function buildMcpRenameKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(t("mcps.button.cancel"), MCPS_CALLBACK_RENAME_CANCEL)
+    .text(t("mcps.button.home"), "main:home");
+}
+
+export function buildMcpDeleteConfirmKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(t("mcps.button.confirm_delete"), MCPS_CALLBACK_DELETE_CONFIRM).row()
+    .text(t("mcps.button.back"), MCPS_CALLBACK_DELETE_CANCEL)
+    .text(t("mcps.button.home"), "main:home");
+}
+
 export function buildMcpsDetailKeyboard(server: McpServerItem): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   const supportsRemoteAuth = server.type !== "local";
   let hasActionRow = false;
 
   if (server.status.status === "connected") {
-    keyboard.text(t("mcps.button.disable"), MCPS_CALLBACK_TOGGLE);
-    if (supportsRemoteAuth) {
-      keyboard.text(t("mcps.button.auth"), MCPS_CALLBACK_AUTH_OPTIONS);
-    }
-    hasActionRow = true;
-  } else if (server.status.status === "needs_auth") {
+    // Authentication controls intentionally disappear once the server is connected.
+    // The detail view shows non-secret account identity instead.
+  } else if (server.status.status === "needs_auth" && supportsRemoteAuth) {
     keyboard.text(t("mcps.button.sign_in"), MCPS_CALLBACK_AUTH_START);
     keyboard.text(t("mcps.button.other_auth"), MCPS_CALLBACK_AUTH_OPTIONS);
     hasActionRow = true;
-  } else if (server.status.status === "needs_client_registration") {
+  } else if (server.status.status === "needs_client_registration" && supportsRemoteAuth) {
     keyboard.text(`🪪 ${t("mcps.auth.mode.oauth_client")}`, MCPS_CALLBACK_AUTH_CLIENT);
     hasActionRow = true;
   } else if (server.status.status === "disabled" || server.status.status === "failed") {
@@ -162,6 +178,9 @@ export function buildMcpsDetailKeyboard(server: McpServerItem): InlineKeyboard {
   }
 
   if (hasActionRow) keyboard.row();
+  keyboard
+    .text(t("mcps.button.rename"), MCPS_CALLBACK_RENAME)
+    .text(t("mcps.button.delete"), MCPS_CALLBACK_DELETE).row();
   keyboard
     .text(t("mcps.button.back"), MCPS_CALLBACK_BACK)
     .text(t("mcps.button.home"), "main:home");

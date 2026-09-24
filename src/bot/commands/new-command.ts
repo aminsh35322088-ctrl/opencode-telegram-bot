@@ -19,6 +19,7 @@ import { createTopicAwareBot } from "../services/telegram-topic-runtime.js";
 import { initializeTopicRuntimeState, ensureTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
+import { ensureMcpRuntimeForDirectory } from "../../app/services/mcp-server-service.js";
 import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
 
 export interface NewCommandDeps {
@@ -64,6 +65,13 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       model: initialModel,
       compactOutputMode: initialCompact,
     });
+
+    const mcpSync = await ensureMcpRuntimeForDirectory(directory);
+    if (mcpSync.failed > 0) {
+      logger.warn(
+        `[TelegramTopics] MCP runtime sync incomplete for new Topic: directory=${directory}, failed=${mcpSync.failed}`,
+      );
+    }
 
     // Android's ChatMessageCell adds Continue last thread only when the last
     // message in All belongs to a Topic. Publish root navigation first.

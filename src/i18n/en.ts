@@ -567,6 +567,16 @@ export const en = {
   "mcps.auth.mode.oauth_client": "OAuth Client",
   "mcps.auth.step_title": "🔐 {mode} · {name}",
   "mcps.auth.step_title_client": "🪪 OAuth Client · {name}",
+  "mcps.button.rename": "✏️ Rename",
+  "mcps.button.delete": "🗑 Delete",
+  "mcps.button.confirm_delete": "🗑 Yes, delete",
+  "mcps.rename.prompt": "✏️ Rename MCP Server\n\nCurrent name: {name}\n\nSend the new server name.",
+  "mcps.rename.retry": "✏️ Rename MCP Server\n\n❌ {error}\n\nSend another name to retry.",
+  "mcps.rename.name_too_long": "Name must be 128 characters or fewer.",
+  "mcps.delete.confirm": "🗑 Delete MCP Server\n\nDelete {name}?\n\nThis removes the bot-managed definition and stored authentication, disconnects it from active runtimes, and stops restoring it after restart.",
+  "mcps.deleted": "Deleted MCP server {name}.",
+  "mcps.auth.account": "👤 Account: {identity}{provider}",
+  "mcps.auth.account_unknown": "👤 Account: Signed in{provider} · provider did not expose an email/username",
   "model.fallback.notice":
     "⚠️ Selected model {previous} is unavailable or not agent-capable. Switched to {next}.",
 
