@@ -78,6 +78,8 @@ import { deleteTelegramTopicSession } from "../../../src/app/services/telegram-t
 
 function createBinding(directory: string) {
   return {
+    bindingId: "5:7",
+    bindingGeneration: 1,
     chatId: 5,
     threadId: 7,
     sessionId: "ses_test",

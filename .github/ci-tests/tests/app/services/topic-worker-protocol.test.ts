@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createRunId,
   LIFECYCLE_OPERATIONS,
+  LIFECYCLE_OUTBOUND_KINDS,
   normalizeTopicDirectory,
   type OutboundEnvelope,
   type TopicEnvelope,
@@ -72,6 +73,23 @@ describe("topic worker protocol", () => {
     });
   });
 
+  it("allows a null runId only for lifecycle outbound kinds", () => {
+    expect(validateOutboundEnvelope(
+      makeOutbound({ kind: "session.heartbeat", runId: null }),
+      { bindingGeneration: 1, runId: "run-1" },
+    )).toEqual({ accepted: true, reason: null });
+  });
+
+  it.each(["assistant.message", "tool.result", "model.output"] as const)(
+    "rejects a null runId for model-derived outbound kind %s",
+    (kind) => {
+      expect(validateOutboundEnvelope(
+        makeOutbound({ kind, runId: null }),
+        { bindingGeneration: 1, runId: "run-1" },
+      )).toEqual({ accepted: false, reason: "invalid_run_id" });
+    },
+  );
+
   it.each([
     [{ bindingId: "" }, "missing_binding"],
     [{ threadId: 0 }, "invalid_route"],
@@ -109,8 +127,34 @@ describe("topic worker protocol", () => {
     });
   });
 
-  it("exposes the explicit lifecycle operation set", () => {
+  it("rejects an inbound envelope missing its payload property", () => {
+    const envelope = makeEnvelope();
+    Reflect.deleteProperty(envelope, "payload");
+
+    expect(validateTopicEnvelope(envelope, { bindingGeneration: 1, runId: "run-1" })).toEqual({
+      accepted: false,
+      reason: "invalid_route",
+    });
+  });
+
+  it("rejects an outbound envelope missing its payload property", () => {
+    const envelope = makeOutbound();
+    Reflect.deleteProperty(envelope, "payload");
+
+    expect(validateOutboundEnvelope(envelope, { bindingGeneration: 1, runId: "run-1" })).toEqual({
+      accepted: false,
+      reason: "invalid_route",
+    });
+  });
+
+  it("exposes the explicit lifecycle operation and outbound-kind sets", () => {
     expect([...LIFECYCLE_OPERATIONS]).toEqual([
+      "session.heartbeat",
+      "session.status",
+      "session.idle",
+      "session.error",
+    ]);
+    expect([...LIFECYCLE_OUTBOUND_KINDS]).toEqual([
       "session.heartbeat",
       "session.status",
       "session.idle",

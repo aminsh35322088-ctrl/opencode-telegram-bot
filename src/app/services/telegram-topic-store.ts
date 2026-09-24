@@ -44,50 +44,44 @@ function routeKey(chatId: number, threadId: number): string {
   return `${chatId}:${threadId}`;
 }
 
-function parseBinding(value: unknown): TelegramTopicBinding | null {
-  if (!isRecord(value)) return null;
+function malformedBinding(index: number, field: string): never {
+  throw new Error(`Malformed Telegram Topic binding at index ${index}: ${field}.`);
+}
+
+function parseBinding(value: unknown, index: number): TelegramTopicBinding {
+  if (!isRecord(value)) return malformedBinding(index, "record");
   const chatId = value.chatId;
   const threadId = value.threadId;
   const sessionId = value.sessionId;
   const directory = value.directory;
   const createdAt = value.createdAt;
   const updatedAt = value.updatedAt;
-  if (
-    typeof chatId !== "number" ||
-    !Number.isFinite(chatId) ||
-    !Number.isInteger(chatId) ||
-    chatId === 0 ||
-    typeof threadId !== "number" ||
-    !Number.isFinite(threadId) ||
-    !Number.isInteger(threadId) ||
-    threadId <= 0 ||
-    !isNonEmptyString(sessionId) ||
-    !isNonEmptyString(directory) ||
-    !isNonEmptyString(createdAt) ||
-    (updatedAt !== undefined && !isNonEmptyString(updatedAt))
-  ) {
-    return null;
+  if (typeof chatId !== "number" || !Number.isFinite(chatId) || !Number.isInteger(chatId) || chatId === 0) {
+    return malformedBinding(index, "chatId");
   }
+  if (typeof threadId !== "number" || !Number.isFinite(threadId) || !Number.isInteger(threadId) || threadId <= 0) {
+    return malformedBinding(index, "threadId");
+  }
+  if (!isNonEmptyString(sessionId)) return malformedBinding(index, "sessionId");
+  if (!isNonEmptyString(directory)) return malformedBinding(index, "directory");
+  if (!isNonEmptyString(createdAt)) return malformedBinding(index, "createdAt");
+  const effectiveUpdatedAt = updatedAt === undefined ? createdAt : updatedAt;
+  if (!isNonEmptyString(effectiveUpdatedAt)) return malformedBinding(index, "updatedAt");
 
-  const bindingId = value.bindingId === undefined || value.bindingId === null
-    ? legacyBindingId(chatId, threadId)
-    : value.bindingId;
-  const bindingGeneration = value.bindingGeneration === undefined || value.bindingGeneration === null
-    ? DEFAULT_BINDING_GENERATION
-    : value.bindingGeneration;
-  const effectiveUpdatedAt = updatedAt ?? createdAt;
-  if (!isNonEmptyString(bindingId) || !isNonEmptyString(effectiveUpdatedAt)) return null;
+  const bindingId = value.bindingId === undefined ? legacyBindingId(chatId, threadId) : value.bindingId;
+  if (!isNonEmptyString(bindingId)) return malformedBinding(index, "bindingId");
+  const bindingGeneration = value.bindingGeneration === undefined ? DEFAULT_BINDING_GENERATION : value.bindingGeneration;
   if (
     typeof bindingGeneration !== "number" ||
     !Number.isFinite(bindingGeneration) ||
     !Number.isInteger(bindingGeneration) ||
     bindingGeneration <= 0
   ) {
-    return null;
+    return malformedBinding(index, "bindingGeneration");
   }
 
   const normalizedDirectory = normalizeTopicDirectory(directory);
-  if (!normalizedDirectory) return null;
+  if (!normalizedDirectory) return malformedBinding(index, "directory");
   const binding: TelegramTopicBinding = {
     bindingId,
     chatId,
@@ -99,11 +93,13 @@ function parseBinding(value: unknown): TelegramTopicBinding | null {
     updatedAt: effectiveUpdatedAt,
   };
   if (value.title !== undefined) {
-    if (typeof value.title !== "string") return null;
+    if (typeof value.title !== "string") return malformedBinding(index, "title");
     binding.title = value.title;
   }
   if (value.navigationMessageId !== undefined) {
-    if (typeof value.navigationMessageId !== "number" || !Number.isFinite(value.navigationMessageId)) return null;
+    if (typeof value.navigationMessageId !== "number" || !Number.isFinite(value.navigationMessageId)) {
+      return malformedBinding(index, "navigationMessageId");
+    }
     binding.navigationMessageId = value.navigationMessageId;
   }
   return binding;
@@ -130,7 +126,7 @@ async function readBindings(): Promise<TelegramTopicBinding[]> {
     const raw = await fs.readFile(getStorePath(), "utf8");
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error("Telegram topic binding store must contain an array");
-    const bindings = parsed.map(parseBinding).filter((binding): binding is TelegramTopicBinding => binding !== null);
+    const bindings = parsed.map((item, index) => parseBinding(item, index));
     assertUniqueBindings(bindings);
     return bindings;
   } catch (error) {
@@ -239,6 +235,13 @@ function mergeBinding(existing: TelegramTopicBinding, candidate: TelegramTopicBi
   };
 }
 
+function nextBindingGeneration(binding: TelegramTopicBinding): number {
+  if (binding.bindingGeneration >= Number.MAX_SAFE_INTEGER) {
+    throw new Error(`Telegram Topic binding ${binding.bindingId} exhausted its generation sequence.`);
+  }
+  return binding.bindingGeneration + 1;
+}
+
 function findUnique<T>(values: T[], description: string): T | null {
   if (values.length > 1) throw new Error(`Ambiguous Telegram Topic binding lookup: ${description}.`);
   return values[0] ?? null;
@@ -342,7 +345,8 @@ export async function updateTelegramTopicBinding(
     const index = bindings.findIndex((binding) => binding.chatId === chatId && binding.threadId === threadId);
     const existing = bindings[index];
     if (!existing) throw new Error(`Telegram Topic binding ${routeKey(chatId, threadId)} was not found.`);
-    if (patch.sessionId !== undefined && patch.sessionId !== existing.sessionId) {
+    const sessionChanged = patch.sessionId !== undefined && patch.sessionId !== existing.sessionId;
+    if (sessionChanged) {
       const duplicate = bindings.some(
         (binding, bindingIndex) => bindingIndex !== index && binding.sessionId === patch.sessionId,
       );
@@ -350,8 +354,11 @@ export async function updateTelegramTopicBinding(
     }
     const updated: TelegramTopicBinding = {
       ...existing,
-      ...patch,
-      directory: patch.directory === undefined ? existing.directory : normalizeTopicDirectory(patch.directory),
+      ...(patch.title === undefined ? {} : { title: patch.title }),
+      ...(patch.directory === undefined ? {} : { directory: normalizeTopicDirectory(patch.directory) }),
+      ...(patch.sessionId === undefined ? {} : { sessionId: patch.sessionId }),
+      ...(patch.navigationMessageId === undefined ? {} : { navigationMessageId: patch.navigationMessageId }),
+      bindingGeneration: sessionChanged ? nextBindingGeneration(existing) : existing.bindingGeneration,
       updatedAt: new Date().toISOString(),
     };
     const next = [...bindings];

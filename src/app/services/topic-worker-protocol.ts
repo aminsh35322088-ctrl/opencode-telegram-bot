@@ -39,6 +39,13 @@ export const LIFECYCLE_OPERATIONS = new Set([
   "session.error",
 ]);
 
+export const LIFECYCLE_OUTBOUND_KINDS = new Set([
+  "session.heartbeat",
+  "session.status",
+  "session.idle",
+  "session.error",
+]);
+
 type CurrentBinding = Pick<TopicBindingRef, "bindingGeneration"> & { runId: string | null };
 type ValidationResult = { accepted: true; reason: null } | { accepted: false; reason: EnvelopeRejectionReason };
 
@@ -52,6 +59,10 @@ function rejected(reason: EnvelopeRejectionReason): ValidationResult {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasRequiredPayload(value: unknown): boolean {
+  return typeof value === "object" && value !== null && Object.prototype.hasOwnProperty.call(value, "payload");
 }
 
 function validateBindingRef(binding: TopicBindingRef): EnvelopeRejectionReason | null {
@@ -87,13 +98,15 @@ function validateEnvelope(
 }
 
 export function validateTopicEnvelope(envelope: TopicEnvelope, current: CurrentBinding): ValidationResult {
+  if (!hasRequiredPayload(envelope)) return rejected("invalid_route");
   if (!isNonEmptyString(envelope.operation) || !isNonEmptyString(envelope.operationId)) return rejected("invalid_route");
   return validateEnvelope(envelope, current, LIFECYCLE_OPERATIONS.has(envelope.operation));
 }
 
 export function validateOutboundEnvelope(envelope: OutboundEnvelope, current: CurrentBinding): ValidationResult {
+  if (!hasRequiredPayload(envelope)) return rejected("invalid_route");
   if (!isNonEmptyString(envelope.kind) || !isNonEmptyString(envelope.operationId)) return rejected("invalid_route");
-  return validateEnvelope(envelope, current, true);
+  return validateEnvelope(envelope, current, LIFECYCLE_OUTBOUND_KINDS.has(envelope.kind));
 }
 
 export function createRunId(): string {

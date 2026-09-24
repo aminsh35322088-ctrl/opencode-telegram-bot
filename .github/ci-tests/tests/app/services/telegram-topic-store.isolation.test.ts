@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   findTelegramTopicBindingByDirectory,
+  findTelegramTopicBindingByThread,
   findTelegramTopicBindingsByDirectory,
   listTelegramTopicBindings,
   saveTelegramTopicBinding,
@@ -79,6 +80,24 @@ describe("telegram topic binding identity", () => {
     expect(second).toEqual(first);
   });
 
+  it("fails closed when a persisted bindingId is explicitly null", async () => {
+    await writeStore([{ ...makeBinding(), bindingId: null }]);
+
+    await expect(listTelegramTopicBindings()).rejects.toThrow(/malformed.*bindingId|bindingId.*invalid/i);
+  });
+
+  it("fails closed when a persisted bindingGeneration is explicitly null", async () => {
+    await writeStore([{ ...makeBinding(), bindingGeneration: null }]);
+
+    await expect(listTelegramTopicBindings()).rejects.toThrow(/malformed.*bindingGeneration|bindingGeneration.*invalid/i);
+  });
+
+  it("fails closed on other malformed persisted records instead of filtering them", async () => {
+    await writeStore([null]);
+
+    await expect(listTelegramTopicBindings()).rejects.toThrow(/malformed.*binding/i);
+  });
+
   it("accepts legacy-shaped writes and persists canonical identity", async () => {
     await saveTelegramTopicBinding({
       chatId: 100,
@@ -124,6 +143,25 @@ describe("telegram topic binding identity", () => {
     await saveTelegramTopicBinding({ ...(updated as TelegramTopicBinding), title: "Updated again" });
     const persisted = await readStore();
     expect(persisted[0]).toMatchObject({ bindingId: "binding-a", bindingGeneration: 7, directory: "c:/other/path" });
+  });
+
+  it("increments generation for session rebinds but not metadata updates", async () => {
+    await saveTelegramTopicBinding(makeBinding({ bindingId: "binding-a", bindingGeneration: 3 }));
+
+    await updateTelegramTopicBinding(100, 11, { title: "Metadata only", directory: "/metadata/" });
+    let current = await findTelegramTopicBindingByThread(100, 11);
+    expect(current?.bindingGeneration).toBe(3);
+    expect(current?.directory).toBe("/metadata");
+
+    await updateTelegramTopicBinding(100, 11, { sessionId: "session-b" });
+    current = await findTelegramTopicBindingByThread(100, 11);
+    expect(current?.bindingId).toBe("binding-a");
+    expect(current?.sessionId).toBe("session-b");
+    expect(current?.bindingGeneration).toBe(4);
+
+    await updateTelegramTopicBinding(100, 11, { sessionId: "session-b", title: "Still same session" });
+    current = await findTelegramTopicBindingByThread(100, 11);
+    expect(current?.bindingGeneration).toBe(4);
   });
 
   it("rejects a duplicate session ID across bindings", async () => {
