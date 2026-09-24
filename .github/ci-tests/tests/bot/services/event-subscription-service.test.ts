@@ -507,6 +507,9 @@ describe("bot/services/event-subscription-service", () => {
     ]);
 
     const { api, summaryAggregator } = await setupService(false);
+    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
+    expect(mocked.topicBindingsByDirectory).toHaveBeenCalledWith("D:/repo");
+    expect(keyboardManager.getTopicSendTarget("session-1")).toEqual({ chatId: 42, threadId: 7 });
     emitWriteTool(summaryAggregator);
 
     await vi.waitFor(() => {

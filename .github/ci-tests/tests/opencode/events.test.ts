@@ -270,13 +270,14 @@ describe("opencode/events", () => {
         stream: createStream([{ type: "server.heartbeat", properties: {} }], params.signal!),
       }));
     const a = vi.fn(); const b = vi.fn();
-    await subscribeToEvents("/a", a, "a");
-    await subscribeToEvents("/b", b);
+    const firstSubscription = subscribeToEvents("/a", a, "a");
+    const secondSubscription = subscribeToEvents("/b", b);
     await vi.advanceTimersByTimeAsync(2200);
     expect(subscribeMock.mock.calls.filter(call => call[0].directory === "/a")).toHaveLength(2);
     expect(b).toHaveBeenCalled();
     expect(subscribeMock.mock.calls[0][1].signal.aborted).toBe(true);
     stopEventListening();
+    await Promise.all([firstSubscription, secondSubscription]);
   });
 
   it("reconnects when the SSE stream becomes idle", async () => {
