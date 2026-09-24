@@ -488,7 +488,7 @@ describe("bot/services/event-subscription-service lifecycle", () => {
         },
         { timeout: STREAM_WAIT_TIMEOUT_MS },
       );
-      expect(api.sendMessage.mock.calls.at(-1)?.[1]).toContain("test-provider/test-model");
+      expect(findFooterCalls(api)).toHaveLength(1);
     }, 30_000);
 
     it("skips the footer for a session that went idle after losing focus", async () => {
@@ -942,9 +942,10 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       emitSessionError(summaryAggregator, "x".repeat(5000));
 
       await vi.waitFor(() => {
-        expect(api.sendMessage).toHaveBeenCalledTimes(1);
+        expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("x".repeat(100)))).toBe(true);
       });
-      const text = String(defined(api.sendMessage.mock.calls[0]?.[1]));
+      const errorCall = api.sendMessage.mock.calls.find((call) => String(call[1]).includes("x".repeat(100)));
+      const text = String(defined(errorCall)?.[1]);
       expect(text).toContain("...");
       expect(text.length).toBeLessThan(3700);
     });

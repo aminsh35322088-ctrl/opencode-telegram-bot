@@ -173,6 +173,13 @@ describe("opencode/events", () => {
 
   it("resolves the topic session from the directory binding when no sessionId is given", async () => {
     bindings.byDirectoryList.mockResolvedValue([{ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" }]);
+    bindings.bySession.mockImplementation((sessionId: string) =>
+      Promise.resolve(
+        sessionId === "session-b"
+          ? { chatId: 1, threadId: 3, sessionId: "session-b", directory: "D:/repo" }
+          : null,
+      ),
+    );
     const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "session-b", directory: "D:/repo" } } as unknown as Event;
     subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({

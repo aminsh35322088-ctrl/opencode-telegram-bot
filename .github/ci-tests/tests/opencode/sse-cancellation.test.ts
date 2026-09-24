@@ -64,6 +64,8 @@ describe("OpenCode SSE cancellation", () => {
       }));
 
     const subscription = subscribeToEvents("D:/repo", vi.fn());
+    await Promise.resolve();
+    await Promise.resolve();
 
     await vi.advanceTimersByTimeAsync(2000);
 
