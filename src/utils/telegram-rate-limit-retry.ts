@@ -126,15 +126,13 @@ function getServerErrorBackoffMs(attempt: number, baseDelayMs: number): number {
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    let timer: ReturnType<typeof setTimeout>;
-    let onAbort!: () => void;
-    const finish = () => {
+    const onAbort = () => finish();
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       resolve();
-    };
-    onAbort = () => finish();
-    timer = setTimeout(finish, ms);
+    }
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
