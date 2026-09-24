@@ -52,7 +52,7 @@ describe("topic worker protocol", () => {
   });
 
   it("rejects a stale runId", () => {
-    const envelope = makeEnvelope({ runId: "run-old" });
+    const envelope = makeEnvelope({ bindingGeneration: 3, runId: "run-old" });
     expect(validateTopicEnvelope(envelope, { bindingGeneration: 3, runId: "run-current" })).toEqual({
       accepted: false,
       reason: "stale_run",
@@ -61,7 +61,7 @@ describe("topic worker protocol", () => {
 
   it("allows a null runId only for a lifecycle operation", () => {
     expect(validateTopicEnvelope(
-      makeEnvelope({ operation: "session.heartbeat", runId: null }),
+      makeEnvelope({ bindingGeneration: 3, operation: "session.heartbeat", runId: null }),
       { bindingGeneration: 3, runId: "run-current" },
     )).toEqual({ accepted: true, reason: null });
   });
