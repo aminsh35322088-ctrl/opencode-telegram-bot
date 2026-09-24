@@ -405,8 +405,6 @@ describe("bot/services/event-subscription-service", () => {
       configuredModelID: "test-model",
     });
     service.setTelegramContext(bot, 42);
-    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
-    keyboardManager.bindTopic(api as never, 42, 7, "session-1");
     await service.ensureEventSubscription("D:/repo");
     summaryAggregator.setSession("session-1");
     emitAssistantMessage(summaryAggregator);
@@ -709,11 +707,11 @@ describe("bot/services/event-subscription-service", () => {
 
     await vi.waitFor(
       () => {
-        expect(api.sendMessage.mock.calls.some((call) => call[1] === "Final answer")).toBe(true);
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
       },
       { timeout: 3000 },
     );
-    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("test-provider/test-model"))).toBe(false);
+    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toBe("Final answer");
   });
 
   it("notifies the final draft response when assistant run footer is disabled", async () => {
@@ -729,13 +727,12 @@ describe("bot/services/event-subscription-service", () => {
 
     await vi.waitFor(
       () => {
-        expect(api.sendMessage.mock.calls.some((call) => call[1] === "Final answer")).toBe(true);
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
       },
       { timeout: 3000 },
     );
-    const finalCall = api.sendMessage.mock.calls.find((call) => call[1] === "Final answer");
-    expect(defined(finalCall)[2]?.disable_notification).toBeUndefined();
-    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("test-provider/test-model"))).toBe(false);
+    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toBe("Final answer");
+    expect(defined(api.sendMessage.mock.calls[0])[2]?.disable_notification).toBeUndefined();
     expect(api.sendMessageDraft).not.toHaveBeenCalled();
   });
 
@@ -752,13 +749,13 @@ describe("bot/services/event-subscription-service", () => {
 
     await vi.waitFor(
       () => {
-        expect(api.sendMessage.mock.calls.some((call) => call[1] === "Final answer")).toBe(true);
-        expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("test-provider/test-model"))).toBe(true);
+        expect(api.sendMessage).toHaveBeenCalledTimes(2);
       },
       { timeout: 3000 },
     );
-    const finalCall = api.sendMessage.mock.calls.find((call) => call[1] === "Final answer");
-    expect(defined(finalCall)[2]).toMatchObject({ disable_notification: true, message_thread_id: 7 });
+    expect(defined(api.sendMessage.mock.calls[0]?.[1])).toBe("Final answer");
+    expect(defined(api.sendMessage.mock.calls[0])[2]).toEqual({ disable_notification: true });
+    expect(defined(api.sendMessage.mock.calls[1]?.[1])).toContain("test-provider/test-model");
     expect(api.sendMessageDraft).not.toHaveBeenCalled();
   });
 

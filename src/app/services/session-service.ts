@@ -21,19 +21,12 @@ export function setCurrentSession(sessionInfo: SessionInfo): void {
 
 export function getCurrentSession(): SessionInfo | null {
   const topic = getTopicRuntimeContext();
-  if (topic) {
-    if (topic.sessionId && topic.directory) {
-      return {
-        id: topic.sessionId,
-        title: "Telegram Topic",
-        directory: topic.directory,
-      };
-    }
-
-    // A real Telegram Topic without a validated binding must never inherit the
-    // global foreground session. Failing closed here prevents stale/unbound
-    // Topics from dispatching prompts into another Topic's OpenCode session.
-    return null;
+  if (topic?.sessionId && topic.directory) {
+    return {
+      id: topic.sessionId,
+      title: "Telegram Topic",
+      directory: topic.directory,
+    };
   }
 
   return getSettingsSession() ?? null;
