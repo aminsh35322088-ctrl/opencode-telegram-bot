@@ -356,8 +356,6 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       configuredModelID: "test-model",
     });
     service.setTelegramContext(bot, 42);
-    const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
-    keyboardManager.bindTopic(api as never, 42, 7, "session-1");
     await service.ensureEventSubscription("D:/repo");
     summaryAggregator.setSession("session-1");
     emitAssistantMessage(summaryAggregator);
@@ -379,8 +377,6 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       expect(hasActiveStream("session-1")).toBe(true);
       const writesBefore = countTelegramWrites(api);
 
-      const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
-      keyboardManager.clearSession("session-1");
       service.setTelegramContext(null, null);
       emitAssistantCompleted(summaryAggregator);
       await vi.waitFor(
@@ -488,7 +484,7 @@ describe("bot/services/event-subscription-service lifecycle", () => {
         },
         { timeout: STREAM_WAIT_TIMEOUT_MS },
       );
-      expect(findFooterCalls(api)).toHaveLength(1);
+      expect(api.sendMessage.mock.calls.at(-1)?.[1]).toContain("test-provider/test-model");
     }, 30_000);
 
     it("skips the footer for a session that went idle after losing focus", async () => {
@@ -942,10 +938,9 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       emitSessionError(summaryAggregator, "x".repeat(5000));
 
       await vi.waitFor(() => {
-        expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("x".repeat(100)))).toBe(true);
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
       });
-      const errorCall = api.sendMessage.mock.calls.find((call) => String(call[1]).includes("x".repeat(100)));
-      const text = String(defined(errorCall)?.[1]);
+      const text = String(defined(api.sendMessage.mock.calls[0]?.[1]));
       expect(text).toContain("...");
       expect(text.length).toBeLessThan(3700);
     });

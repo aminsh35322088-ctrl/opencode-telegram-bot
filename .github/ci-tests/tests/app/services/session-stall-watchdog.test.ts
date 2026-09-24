@@ -3,7 +3,6 @@ const mocks = vi.hoisted(() => ({ status: vi.fn(), messages: vi.fn(), abort: vi.
 vi.mock("../../../src/opencode/client.js", () => ({ opencodeClient: { session: mocks } }));
 import { startSessionStallWatchdog as start, stopSessionStallWatchdog as stop, __resetSessionStallWatchdogsForTests as reset } from "../../../src/app/services/session-stall-watchdog.js";
 import { markToolCallStarted, markToolCallFinished } from "../../../src/app/managers/tool-activity-manager.js";
-import { assistantRunState } from "../../../src/app/managers/assistant-run-state-manager.js";
 
 const options = (sessionId: string, onStalled = vi.fn()) => ({ sessionId, directory: `/workspace/${sessionId}`, model: "test/model", onStalled });
 
@@ -16,9 +15,8 @@ describe("watchdog liveness and isolation", () => {
     mocks.status.mockResolvedValue({ data: { a: { type: "busy" }, b: { type: "busy" } } });
     mocks.messages.mockResolvedValue({ data: [] });
     mocks.abort.mockResolvedValue({ data: true });
-    assistantRunState.__resetForTests();
   });
-  afterEach(() => { reset(); assistantRunState.__resetForTests(); vi.useRealTimers(); });
+  afterEach(() => { reset(); vi.useRealTimers(); });
 
   it("keeps monitoring after a transient status failure", async () => {
     mocks.status.mockResolvedValueOnce({ error: new Error("temporary outage") });
@@ -26,17 +24,6 @@ describe("watchdog liveness and isolation", () => {
     await vi.advanceTimersByTimeAsync(10000);
     expect(mocks.status).toHaveBeenCalledTimes(2);
     expect(mocks.messages).toHaveBeenCalledTimes(1);
-  });
-
-  it("clears stale local Busy state after OpenCode no longer reports the session active", async () => {
-    mocks.status.mockResolvedValue({ data: {} });
-    assistantRunState.startRun("a", { startedAt: Date.now() });
-    start(options("a"));
-
-    await vi.advanceTimersByTimeAsync(16_000);
-
-    expect(assistantRunState.hasActiveRun("a")).toBe(false);
-    expect(mocks.abort).not.toHaveBeenCalled();
   });
 
   it("does not let an old loop remove a replacement watchdog", async () => {

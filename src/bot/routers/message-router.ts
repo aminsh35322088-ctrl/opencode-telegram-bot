@@ -181,22 +181,16 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
  * a wizard/question/etc.; actual AI prompts belong in conversation Topics.
  */
 function isMainNavigationTopic(ctx: Context): boolean {
-  const chat = ctx.chat as { id?: number; type?: string; is_forum?: boolean } | undefined;
+  const chat = ctx.chat as { type?: string; is_forum?: boolean } | undefined;
   if (!chat) return false;
-
-  const threadId = (ctx.message as { message_thread_id?: number } | undefined)?.message_thread_id;
-  const isRoot = typeof threadId !== "number" || threadId <= 1;
-  if (!isRoot) return false;
-
-  // Once Topic Mode has been established for a chat, treat an unthreaded/root
-  // update as All/General even if Telegram omitted forum capability metadata on
-  // this particular update.
-  if (typeof chat.id === "number" && keyboardManager.isTopicMode(chat.id)) return true;
 
   const botInfo = ctx.me as { has_topics_enabled?: boolean } | undefined;
   const isSupergroupForum = chat.type !== "private" && chat.is_forum === true;
   const isPrivateBotForum = chat.type === "private" && botInfo?.has_topics_enabled === true;
-  return isSupergroupForum || isPrivateBotForum;
+  if (!isSupergroupForum && !isPrivateBotForum) return false;
+
+  const threadId = (ctx.message as { message_thread_id?: number } | undefined)?.message_thread_id;
+  return typeof threadId !== "number" || threadId <= 1;
 }
 
 function isBotAwaitingTextInput(): boolean {
@@ -212,11 +206,6 @@ function isBotAwaitingTextInput(): boolean {
 }
 
 function isGeneralTopicPromptBlocked(ctx: Context): boolean {
-  const topic = getTopicRuntimeContext();
-  // A Topic thread with no validated session binding is not an AI surface.
-  // Blocking it here prevents the prompt pipeline from creating/falling back
-  // to a shared session while a binding is missing or stale.
-  if (topic && topic.threadId > 1 && !topic.sessionId) return true;
   return isMainNavigationTopic(ctx) && !isBotAwaitingTextInput();
 }
 

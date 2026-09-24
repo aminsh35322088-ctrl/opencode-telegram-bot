@@ -112,6 +112,7 @@ class AgentArtifactDeliveryService {
   private botInstance: Bot | null = null;
   private readonly pending = new Map<string, { timer: ReturnType<typeof setTimeout>; scope: DeliveryScope }>();
   private readonly lastDelivered = new Map<string, { signature: string; at: number; sessionId?: string }>();
+  private chatId: number | null = null;
   private generation = {};
   private readonly sessionGenerations = new Map<string, object>();
 
@@ -122,10 +123,8 @@ class AgentArtifactDeliveryService {
     return this.botInstance;
   }
 
-  setChatId(_chatId: number | null): void {
-    // Kept as a compatibility hook for callers that still publish foreground
-    // chat context. Artifact delivery intentionally ignores it: generated files
-    // require a validated AI Topic scope and may never fall back to All/root.
+  setChatId(chatId: number | null): void {
+    this.chatId = chatId;
   }
 
   processEvent(event: Event): void {
@@ -141,18 +140,11 @@ class AgentArtifactDeliveryService {
     // Capture identity before asynchronous inspection or delayed delivery.
     // Never resolve the destination from a later foreground chat selection.
     const runtime = getTopicRuntimeContext();
-    const scope: DeliveryScope | null =
-      runtime?.sessionId && runtime.threadId > 1
-        ? {
-            chatId: runtime.chatId,
-            threadId: runtime.threadId,
-            sessionId: runtime.sessionId,
-            generation: this.generation,
-            sessionGeneration: this.sessionGenerations.get(runtime.sessionId),
-          }
-        : null;
+    const scope: DeliveryScope | null = runtime
+      ? { chatId: runtime.chatId, threadId: runtime.threadId, sessionId: runtime.sessionId, generation: this.generation, sessionGeneration: runtime.sessionId ? this.sessionGenerations.get(runtime.sessionId) : undefined }
+      : this.chatId === null ? null : { chatId: this.chatId, threadId: 0, generation: this.generation };
     if (!scope) {
-      logger.warn(`[Artifact] Missing validated Topic destination at event time; refusing unscoped delivery for generated file`);
+      logger.warn(`[Artifact] No Telegram destination at event time; refusing delivery for generated file`);
       return;
     }
 
@@ -191,6 +183,7 @@ class AgentArtifactDeliveryService {
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
     this.lastDelivered.clear();
+    this.chatId = null;
   }
 
   private async scheduleAutoDetection(filePath: string, scope: DeliveryScope): Promise<void> {
