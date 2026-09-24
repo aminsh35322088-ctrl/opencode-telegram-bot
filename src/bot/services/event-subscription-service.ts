@@ -1444,6 +1444,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
+      const chatId = this.getChatIdForSession(sessionId);
+      if (!chatId) {
+        foregroundSessionState.markIdle(sessionId);
+        return;
+      }
+
       try {
         await Promise.all([
           this.toolMessageBatcher.flushSession(sessionId, "session_idle"),
@@ -1458,7 +1464,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           if (agent && providerID && modelID) {
             const keyboard = this.getCurrentReplyKeyboard(sessionId);
             await this.sessionScopedApi(sessionId).sendMessage(
-              this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
+              chatId,
               formatAssistantRunFooter({
                 agent,
                 providerID,
@@ -1476,7 +1482,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       } finally {
         foregroundSessionState.markIdle(sessionId);
         try {
-          await keyboardManager.sendKeyboardUpdate(this.getChatIdForSession(sessionId) ?? this.chatIdInstance, true, sessionId);
+          await keyboardManager.sendKeyboardUpdate(chatId, true, sessionId);
         } catch (error) {
           logger.warn(`[Bot] Failed to restore keyboard after session idle: session=${sessionId}`, error);
         }
@@ -1517,7 +1523,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       clearPausedSession(sessionId);
-      if (!this.botInstance || !this.getChatIdForSession(sessionId)) {
+      const chatId = this.getChatIdForSession(sessionId);
+      if (!this.botInstance || !chatId) {
         clearPromptResponseMode(sessionId);
         this.clearAssistantResponseSession(sessionId, "session_error_no_bot_context");
         this.toolCallStreamer.clearSession(sessionId, "session_error_no_bot_context");
@@ -1555,7 +1562,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         : normalizedMessage;
 
       await this.sessionScopedApi(sessionId)
-        .sendMessage(this.getChatIdForSession(sessionId) ?? this.chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
+        .sendMessage(chatId, t("bot.session_error", { message: truncatedMessage }))
         .catch((err) => logger.error("[Bot] Failed to send session.error message:", err));
 
       foregroundSessionState.markIdle(sessionId);
@@ -1570,7 +1577,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "idle" });
       }
       try {
-        await keyboardManager.sendKeyboardUpdate(this.getChatIdForSession(sessionId) ?? this.chatIdInstance, true, sessionId);
+        await keyboardManager.sendKeyboardUpdate(chatId, true, sessionId);
       } catch (error) {
         logger.warn(`[Bot] Failed to restore keyboard after session error: session=${sessionId}`, error);
       }

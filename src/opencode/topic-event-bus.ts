@@ -85,7 +85,7 @@ async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: str
     }
   }
   if (!binding && sessionId && directoryBindingCount > 1) {
-    topicTelemetry("ambiguous_session_route_blocked", { sessionId, directory: scopedDirectory ?? eventDirectory }, { type: event.type, bindingCount: directoryBindingCount });
+    topicTelemetry("ambiguous_session_route_blocked", { sessionId, directory: scopedDirectory ?? eventDirectory ?? undefined }, { type: event.type, bindingCount: directoryBindingCount });
     return;
   }
   const effectiveDirectory = normalizeDirectory(scopedDirectory ?? eventDirectory ?? binding?.directory ?? "");
