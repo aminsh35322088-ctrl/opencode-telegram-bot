@@ -172,7 +172,7 @@ describe("opencode/events", () => {
   });
 
   it("resolves the topic session from the directory binding when no sessionId is given", async () => {
-    bindings.byDirectory.mockResolvedValue({ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" });
+    bindings.byDirectoryList.mockResolvedValue([{ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" }]);
     const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "session-b", directory: "D:/repo" } } as unknown as Event;
     subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
@@ -183,7 +183,7 @@ describe("opencode/events", () => {
     const subscription = subscribeToEvents("D:/repo", callback);
 
     await vi.waitFor(() => {
-      expect(bindings.byDirectory).toHaveBeenCalledWith("D:/repo");
+      expect(bindings.byDirectoryList).toHaveBeenCalledWith("D:/repo");
       expect(callback).toHaveBeenCalledWith(eventA);
     });
     await flushImmediate();
@@ -298,15 +298,19 @@ describe("opencode/events", () => {
     await subscription;
   });
 
-  it("does not throw when subscribe result has no stream", async () => {
+  it("rejects when the initial event stream cannot connect", async () => {
+    subscribeMock.mockRejectedValueOnce(new Error("SSE unavailable"));
+
+    await expect(subscribeToEvents("D:/repo", vi.fn())).rejects.toThrow("SSE unavailable");
+    stopEventListening();
+  });
+
+  it("rejects when the initial subscribe result has no stream", async () => {
     subscribeMock.mockResolvedValue({ stream: null });
     const loggerWarnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
 
-    const subscription = await subscribeToEvents("D:/repo", vi.fn());
-
-    expect(subscription).toBeUndefined();
+    await expect(subscribeToEvents("D:/repo", vi.fn())).rejects.toThrow("No stream returned");
     stopEventListening();
-    await subscription;
     loggerWarnSpy.mockRestore();
   });
 });

@@ -81,7 +81,7 @@ async function handlePromptStartFailure(input: {
 
 async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string }) {
   const first = await opencodeClient.session.promptAsync(promptOptions);
-  if (!first.error || !promptOptions.model) return first;
+  if (first == null || !first.error || !promptOptions.model) return first;
   const detail = String((first.error as { name?: string; message?: string })?.message ?? first.error);
   const type = String((first.error as { name?: string })?.name ?? "");
   if (!/model\s+not\s+found|ProviderModelNotFoundError/i.test(`${type} ${detail}`)) return first;

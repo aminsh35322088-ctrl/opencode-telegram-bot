@@ -97,6 +97,21 @@ describe("topic-event-bus session isolation", () => {
     expect(callbackA).not.toHaveBeenCalled();
   });
 
+  it("does not invoke a scoped subscriber when its Topic route cannot be resolved", async () => {
+    const event = { type: "message.updated", properties: { sessionID: "session-a" } } as unknown as Event;
+    bindings.bySession.mockResolvedValue(null);
+    bindings.byDirectory.mockResolvedValue([]);
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, options: { signal: AbortSignal }) => ({
+      stream: createStream([event], options.signal),
+    }));
+
+    const callback = vi.fn();
+    subscribeToTopicEvents("/workspace", callback, "session-a", { chatId: 100, threadId: 101 });
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(callback).not.toHaveBeenCalled();
+  });
+
   it("does not guess a Topic when multiple bindings share a directory and the event has no session id", async () => {
     const event = { type: "workspace.updated", properties: { directory: "/workspace" } } as unknown as Event;
     bindings.byDirectory.mockResolvedValue([

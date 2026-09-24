@@ -7,6 +7,8 @@ import { hasActiveToolCall } from "../managers/tool-activity-manager.js";
 
 const POLL_INTERVAL_MS = 5000;
 const STALL_AFTER_MS = 4 * 60 * 1000;
+const MAX_RETRY_LIVENESS_MS = 30 * 60 * 1000;
+const MAX_RUNNING_TOOL_LIVENESS_MS = 30 * 60 * 1000;
 const ABORT_REQUEST_TIMEOUT_MS = 5000;
 const ABORT_CONFIRMATION_TIMEOUT_MS = 8000;
 const MESSAGE_LIMIT = 6;
@@ -112,18 +114,21 @@ async function getStatus(sessionId: string, directory: string, signal: AbortSign
   }
 }
 
-async function requestAbort(sessionId: string, directory: string): Promise<boolean> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), ABORT_REQUEST_TIMEOUT_MS);
+async function requestAbort(
+  sessionId: string,
+  directory: string,
+  parentSignal: AbortSignal,
+): Promise<boolean> {
   try {
-    const { data, error } = await opencodeClient.session.abort({ sessionID: sessionId, directory }, { signal: controller.signal });
+    const { data, error } = await probe(
+      (signal) => opencodeClient.session.abort({ sessionID: sessionId, directory }, { signal }),
+      parentSignal,
+    );
     logger.warn(`[StallWatchdog] Abort result: session=${sessionId}, result=${String(data)}, error=${error ? "yes" : "no"}`);
     return !error && data === true;
   } catch (error) {
     logger.warn(`[StallWatchdog] Abort request failed: session=${sessionId}`, error);
     return false;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -200,6 +205,8 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
   void (async () => {
     let lastFingerprint = "";
     let lastMeaningfulProgressAt = Date.now();
+    let retryStartedAt: number | undefined;
+    let runningToolStartedAt: number | undefined;
     logger.debug(`[StallWatchdog] Started: session=${options.sessionId}, model=${options.model}, attempt=${attempt}, stallAfterMs=${STALL_AFTER_MS}`);
     try {
       while (!controller.signal.aborted) {
@@ -208,41 +215,80 @@ export function startSessionStallWatchdog(options: StartSessionStallWatchdogOpti
         const status = await getStatus(options.sessionId, options.directory, controller.signal);
         if (controller.signal.aborted) return;
         if (!status) continue;
-        if (status.type === "idle" || status.type === "error") return;
-        if (status.type !== "busy" && status.type !== "retry") continue;
-
-        // OpenCode owns provider retryability, Retry-After handling and bounded
-        // backoff. A retry can legitimately be quiet while waiting for the next
-        // upstream attempt, so the Telegram watchdog must never abort it.
-        if (status.type === "retry") {
-          lastMeaningfulProgressAt = Date.now();
+        if (status.type === "idle" || status.type === "error") {
+          const run = assistantRunState.getRun(options.sessionId);
+          const hasLocalRun = run !== null || foregroundSessionState.isSessionBusy(options.sessionId);
+          if (hasLocalRun) {
+            await clearLocalRunState(options.sessionId, "terminal_status_recovered");
+            if (!run?.hasCompletedResponse) {
+              await notifyStall({
+                sessionId: options.sessionId,
+                directory: options.directory,
+                model: options.model,
+                stalledForMs: 0,
+              });
+            }
+          }
+          return;
+        }
+        if (status.type !== "busy" && status.type !== "retry") {
+          retryStartedAt = undefined;
+          runningToolStartedAt = undefined;
           continue;
+        }
+
+        let livenessExpired = false;
+        if (status.type === "retry") {
+          retryStartedAt ??= Date.now();
+          if (Date.now() - retryStartedAt < MAX_RETRY_LIVENESS_MS) {
+            lastMeaningfulProgressAt = Date.now();
+            continue;
+          }
+          livenessExpired = true;
+        } else {
+          retryStartedAt = undefined;
         }
 
         if (hasActiveToolCall(options.sessionId)) {
-          // A tool is executing right now. OpenCode only emits tool events on
-          // output changes, so a silent blocking tool (test runner, CI wait)
-          // never refreshes the REST fingerprint and must never look stalled.
-          lastMeaningfulProgressAt = Date.now();
-          continue;
+          runningToolStartedAt ??= Date.now();
+          if (Date.now() - runningToolStartedAt < MAX_RUNNING_TOOL_LIVENESS_MS) {
+            lastMeaningfulProgressAt = Date.now();
+            continue;
+          }
+          livenessExpired = true;
         }
-        const messages = await getMessages(options.sessionId, options.directory, controller.signal);
-        if (controller.signal.aborted) return;
-        if (!messages) continue;
-        if (hasRunningToolPart(messages)) {
-          lastMeaningfulProgressAt = Date.now();
-          continue;
+
+        let messages: unknown[] | null = null;
+        if (!livenessExpired) {
+          messages = await getMessages(options.sessionId, options.directory, controller.signal);
+          if (controller.signal.aborted) return;
+          if (!messages) continue;
+          if (hasRunningToolPart(messages)) {
+            runningToolStartedAt ??= Date.now();
+            if (Date.now() - runningToolStartedAt < MAX_RUNNING_TOOL_LIVENESS_MS) {
+              lastMeaningfulProgressAt = Date.now();
+              continue;
+            }
+            livenessExpired = true;
+          }
         }
-        const fingerprint = buildMeaningfulFingerprint(messages);
-        if (fingerprint !== lastFingerprint) {
-          lastFingerprint = fingerprint;
-          lastMeaningfulProgressAt = Date.now();
-          continue;
+
+        if (!livenessExpired) {
+          const fingerprint = buildMeaningfulFingerprint(messages as unknown[]);
+          if (fingerprint !== lastFingerprint) {
+            lastFingerprint = fingerprint;
+            lastMeaningfulProgressAt = Date.now();
+            runningToolStartedAt = undefined;
+            continue;
+          }
         }
-        const stalledForMs = Date.now() - lastMeaningfulProgressAt;
+
+        const stalledForMs = livenessExpired
+          ? Date.now() - (retryStartedAt ?? runningToolStartedAt ?? lastMeaningfulProgressAt)
+          : Date.now() - lastMeaningfulProgressAt;
         if (stalledForMs < STALL_AFTER_MS) continue;
         logger.warn(`[StallWatchdog] Busy session made no progress: session=${options.sessionId}, model=${options.model}, stalledForMs=${stalledForMs}. Requesting safety abort without re-prompting.`);
-        const aborted = await requestAbort(options.sessionId, options.directory);
+        const aborted = await requestAbort(options.sessionId, options.directory, controller.signal);
         if (controller.signal.aborted) return;
         if (!aborted) {
           logger.error(`[StallWatchdog] Could not confirm abort request: session=${options.sessionId}; preserving local busy state.`);

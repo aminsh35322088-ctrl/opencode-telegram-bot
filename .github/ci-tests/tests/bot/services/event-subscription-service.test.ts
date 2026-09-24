@@ -11,6 +11,15 @@ import { defined } from "../../helpers/defined.js";
 const mocked = vi.hoisted(() => ({
   subscribeToEvents: vi.fn(),
   stopEventListening: vi.fn(),
+  topicBindingsByDirectory: vi.fn().mockResolvedValue([]),
+  topicBindingBySessionId: vi.fn().mockResolvedValue(null),
+  topicBindings: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
+  findTelegramTopicBindingsByDirectory: mocked.topicBindingsByDirectory,
+  findTelegramTopicBindingBySessionId: mocked.topicBindingBySessionId,
+  listTelegramTopicBindings: mocked.topicBindings,
 }));
 
 vi.mock("../../../src/opencode/events.js", () => ({
@@ -331,6 +340,9 @@ describe("bot/services/event-subscription-service", () => {
 
     mocked.subscribeToEvents.mockReset();
     mocked.stopEventListening.mockReset();
+    mocked.topicBindingsByDirectory.mockReset().mockResolvedValue([]);
+    mocked.topicBindingBySessionId.mockReset().mockResolvedValue(null);
+    mocked.topicBindings.mockReset().mockResolvedValue([]);
     mocked.subscribeToEvents.mockResolvedValue(undefined);
 
     const settingsStore = await import("../../../src/app/stores/settings-store.js");
@@ -480,6 +492,28 @@ describe("bot/services/event-subscription-service", () => {
     expect(options!.reply_markup).toBeUndefined();
 
     keyboardManager.clearSession("session-1");
+  });
+
+  it("hydrates a persisted Topic route before asynchronous output", async () => {
+    mocked.topicBindingsByDirectory.mockResolvedValue([
+      {
+        chatId: 42,
+        threadId: 7,
+        sessionId: "session-1",
+        directory: "D:/repo",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const { api, summaryAggregator } = await setupService(false);
+    emitWriteTool(summaryAggregator);
+
+    await vi.waitFor(() => {
+      expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    });
+    const options = api.sendMessage.mock.calls[0]?.[2] as { message_thread_id?: number };
+    expect(options?.message_thread_id).toBe(7);
   });
 
   describe("elapsed time for long tool calls", () => {

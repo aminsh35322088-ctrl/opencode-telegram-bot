@@ -181,6 +181,33 @@ describe("bot/streaming/response-streamer", () => {
     });
   });
 
+  it("caps a Telegram rate-limit delay so one retry cannot freeze the stream", async () => {
+    vi.useFakeTimers();
+
+    const sendPart = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("429: retry after 99999"))
+      .mockImplementationOnce(async (part) => ({
+        messageId: 1,
+        deliveredSignature: signature(part),
+      }));
+    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ResponseStreamer({
+      throttleMs: 0,
+      sendPart,
+      editPart,
+      deleteText,
+    });
+
+    streamer.enqueue("s1", "m1", { parts: [plainPart("hello")] });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await vi.waitFor(() => {
+      expect(sendPart).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("marks a stream as broken after fatal edit error and cleans up partial messages on complete", async () => {
     vi.useFakeTimers();
 
@@ -295,6 +322,34 @@ describe("bot/streaming/response-streamer", () => {
     expect(sendPart).toHaveBeenCalledTimes(1);
     expect(editPart).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
+  });
+
+  it("does not wait for an in-flight send after the session is cleared", async () => {
+    let resolveSend!: (messageId: number) => void;
+    const sendPart = vi.fn(
+      () =>
+        new Promise<{ messageId: number; deliveredSignature: string }>((resolve) => {
+          resolveSend = (messageId) =>
+            resolve({ messageId, deliveredSignature: signature(plainPart("partial")) });
+        }),
+    );
+    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ResponseStreamer({
+      throttleMs: 0,
+      sendPart,
+      editPart,
+      deleteText,
+    });
+
+    streamer.enqueue("s1", "m1", { parts: [plainPart("partial")] });
+    await vi.waitFor(() => expect(sendPart).toHaveBeenCalledTimes(1));
+
+    const completion = streamer.complete("s1", "m1", { parts: [plainPart("final")] });
+    streamer.clearSession("s1", "session_error");
+
+    await expect(completion).resolves.toEqual({ streamed: false, telegramMessageIds: [] });
+    resolveSend(1);
   });
 
   it("keeps visible partial messages when clearing a session and stops tracking the old stream", async () => {

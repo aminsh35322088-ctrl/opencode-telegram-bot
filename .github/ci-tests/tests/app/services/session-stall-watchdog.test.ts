@@ -59,6 +59,34 @@ describe("watchdog liveness and isolation", () => {
     expect(onStalled).not.toHaveBeenCalled();
   });
 
+  it("aborts a session that remains in provider retry beyond the absolute ceiling", async () => {
+    mocks.status.mockResolvedValue({ data: { a: { type: "retry" } } });
+    start(options("a"));
+
+    await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+
+    expect(mocks.abort).toHaveBeenCalledWith(
+      { sessionID: "a", directory: "/workspace/a" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("clears local run state when a terminal status arrives without an idle event", async () => {
+    const [{ assistantRunState }, { foregroundSessionState }] = await Promise.all([
+      import("../../../src/app/managers/assistant-run-state-manager.js"),
+      import("../../../src/app/managers/foreground-session-state-manager.js"),
+    ]);
+    assistantRunState.startRun("a", { startedAt: Date.now() });
+    foregroundSessionState.markBusy("a", "/workspace/a");
+    mocks.status.mockResolvedValue({ data: { a: { type: "idle" } } });
+    start(options("a"));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(assistantRunState.getRun("a")).toBeNull();
+    expect(foregroundSessionState.isSessionBusy("a")).toBe(false);
+  });
+
   it("does not abort a session while a tool call is active past the stall threshold", async () => {
     markToolCallStarted("a", "call-1");
     start(options("a"));

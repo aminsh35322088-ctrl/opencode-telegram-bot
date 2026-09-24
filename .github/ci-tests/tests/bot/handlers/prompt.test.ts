@@ -480,4 +480,15 @@ describe("bot/handlers/prompt", () => {
       expect(mocked.interactionClearMock).not.toHaveBeenCalledWith("attachment_consumed");
     });
   });
+
+  it("does not abort a prompt when the server confirms it accepted the request without a response body", async () => {
+    mocked.sessionPromptAsyncMock.mockResolvedValueOnce(undefined);
+
+    const handled = await processUserPrompt(createContext(), "Review README", createDeps());
+    expect(handled).toBe(true);
+
+    const backgroundTask = getScheduledBackgroundTask();
+    await expect(backgroundTask.task()).resolves.toBeUndefined();
+    expect(mocked.recoverSessionAfterErrorMock).not.toHaveBeenCalled();
+  });
 });
