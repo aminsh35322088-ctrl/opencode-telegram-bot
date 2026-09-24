@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 
-const { subscribeMock, telemetry } = vi.hoisted(() => ({ subscribeMock: vi.fn(), telemetry: vi.fn() }));
+const { subscribeMock } = vi.hoisted(() => ({ subscribeMock: vi.fn() }));
 
 vi.mock("../../src/opencode/client.js", () => ({
   opencodeClient: { event: { subscribe: subscribeMock }, session: { abort: vi.fn() } },
@@ -25,10 +25,6 @@ vi.mock("../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../../src/utils/topic-observability.js", () => ({
-  topicTelemetry: telemetry,
-}));
-
 vi.mock("../../src/opencode/provider-error-policy.js", () => ({
   isDeterministicProviderRetryError: vi.fn().mockReturnValue(false),
 }));
@@ -50,7 +46,8 @@ async function settleSubscription(subscription: ReturnType<typeof subscribeToTop
 
 async function waitForTelemetry(eventName: string): Promise<void> {
   await vi.waitFor(() => {
-    expect(telemetry.mock.calls.some(([event]) => event === eventName)).toBe(true);
+    const calls = [...logger.info.mock.calls, ...logger.debug.mock.calls];
+    expect(calls.some(([line]) => String(line).includes(`event=${eventName}`))).toBe(true);
   });
 }
 
