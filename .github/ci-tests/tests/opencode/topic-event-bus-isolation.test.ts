@@ -141,7 +141,7 @@ describe("topic-event-bus session isolation", () => {
     const subscription = subscribeToTopicEvents("/workspace", callback, "session-a");
 
     await settleSubscription(subscription);
-    await waitForTelemetry("ambiguous_directory_route_blocked");
+    await waitForTelemetry("ambiguous_session_route_blocked");
     expect(callback).not.toHaveBeenCalled();
   });
 

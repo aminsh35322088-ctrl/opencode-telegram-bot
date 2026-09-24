@@ -416,7 +416,10 @@ describe("bot/services/event-subscription-service lifecycle", () => {
         await flushEventDispatch();
         expect(countTelegramWrites(api)).toBe(writesBefore);
       } finally {
+        const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
         assistantRunState.clearRun("session-1", "test_cleanup");
+        foregroundSessionState.__resetForTests();
+        service.clearRuntimeState("test_cleanup");
       }
     });
 
