@@ -44,7 +44,7 @@ export const CUSTOM_TOOL_ACTIONS = {
     "agents.list", "agents.current", "agents.select",
     "variants.list", "variants.current", "variants.select",
     "skills.list", "skills.create", "skills.update", "skills.delete", "skills.import", "commands.list",
-    "mcp.list", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable",
+    "mcp.list", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "mcp.delete",
     "session.current", "session.messages", "session.latest-assistant", "run.status",
     "tasks.list", "tasks.get", "tasks.parse", "tasks.create", "tasks.delete",
     "settings.get", "settings.set",
@@ -145,10 +145,10 @@ const BOT_READ = new Set([
 ]);
 const BOT_MUTATING = new Set([
   "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update", "skills.import",
-  "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.disable", "tasks.create", "settings.set", "memory.add", "memory.remove",
+  "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "tasks.create", "settings.set", "memory.add", "memory.remove",
   "integrations.github.select", "integrations.railway.select",
 ]);
-const BOT_DESTRUCTIVE = new Set(["skills.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove"]);
+const BOT_DESTRUCTIVE = new Set(["skills.delete", "mcp.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove"]);
 
 function customRisk(tool: string, action: string): AgentActionRisk {
   if (tool === "bot") {

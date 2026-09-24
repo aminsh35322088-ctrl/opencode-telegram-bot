@@ -519,6 +519,16 @@ export const ar: I18nDictionary = {
   "mcps.auth.mode.oauth_client": "عميل OAuth",
   "mcps.auth.step_title": "🔐 {mode} · {name}",
   "mcps.auth.step_title_client": "🪪 عميل OAuth · {name}",
+  "mcps.button.rename": "✏️ إعادة تسمية",
+  "mcps.button.delete": "🗑 حذف",
+  "mcps.button.confirm_delete": "🗑 نعم، احذف",
+  "mcps.rename.prompt": "✏️ إعادة تسمية خادم MCP\n\nالاسم الحالي: {name}\n\nأرسل الاسم الجديد.",
+  "mcps.rename.retry": "✏️ إعادة تسمية خادم MCP\n\n❌ {error}\n\nأرسل اسمًا آخر.",
+  "mcps.rename.name_too_long": "يجب ألا يتجاوز الاسم 128 حرفًا.",
+  "mcps.delete.confirm": "🗑 حذف خادم MCP\n\nحذف {name}؟\n\nسيتم حذف التعريف والمصادقة المحفوظة وفصل التشغيلات النشطة.",
+  "mcps.deleted": "تم حذف خادم MCP ‏{name}.",
+  "mcps.auth.account": "👤 الحساب: {identity}{provider}",
+  "mcps.auth.account_unknown": "👤 الحساب: تم تسجيل الدخول{provider} · لم يوفّر المزوّد بريدًا أو اسم مستخدم",
   "model.fallback.notice":
     "⚠️ النموذج المحدد {previous} غير متاح أو غير مؤهل كوكيل. تم التبديل إلى {next}.",
 

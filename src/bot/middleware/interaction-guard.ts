@@ -6,7 +6,7 @@ import { shouldSuggestPromptQueue, tryEnqueuePrompt } from "../handlers/prompt-q
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { isReplyKeyboardControl } from "../interaction-classifier.js";
-import { handleMcpsMessage, isMcpAddWizardActive } from "../commands/mcp-server-command.js";
+import { handleMcpsMessage, isMcpTextWizardActive } from "../commands/mcp-server-command.js";
 
 function getInteractionBlockedMessage(reason: BlockReason | undefined, interactionKind: InteractionKind | undefined): string {
   if (interactionKind === "permission") {
@@ -65,8 +65,11 @@ function getInteractionBlockedMessage(reason: BlockReason | undefined, interacti
 }
 
 export async function interactionGuardMiddleware(ctx: Context, next: NextFunction): Promise<void> {
-  if (ctx.message?.text && isMcpAddWizardActive()) {
+  if (ctx.message?.text && isMcpTextWizardActive()) {
     if (await handleMcpsMessage(ctx)) return;
+    logger.warn("[InteractionGuard] MCP text wizard was active but did not consume text; blocking prompt leakage.");
+    await ctx.reply(t("interaction.blocked.expected_text")).catch(() => {});
+    return;
   }
 
   // Reply Keyboard controls are UI interactions, never user prompts. Classify

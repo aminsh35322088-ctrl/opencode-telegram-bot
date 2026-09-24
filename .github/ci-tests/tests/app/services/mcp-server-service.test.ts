@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   authStart: vi.fn(),
@@ -48,19 +49,39 @@ const mockedManaged = vi.hoisted(() => ({
   save: vi.fn(),
   load: vi.fn(),
   list: vi.fn(),
+  removeByName: vi.fn(),
+  rename: vi.fn(),
+  listDeleted: vi.fn(),
+  markDeleted: vi.fn(),
+  clearDeleted: vi.fn(),
+}));
+
+const mockedTopics = vi.hoisted(() => ({
+  list: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/mcp-server-store.js", () => ({
   saveManagedMcpServer: mockedManaged.save,
   loadManagedMcpServer: mockedManaged.load,
   listManagedMcpServers: mockedManaged.list,
+  removeManagedMcpServersByName: mockedManaged.removeByName,
+  renameManagedMcpServer: mockedManaged.rename,
+  listDeletedMcpServerNames: mockedManaged.listDeleted,
+  markMcpServerDeleted: mockedManaged.markDeleted,
+  clearMcpServerDeleted: mockedManaged.clearDeleted,
+}));
+
+vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
+  listTopicRuntimeStates: mockedTopics.list,
 }));
 
 import {
   completeMcpOAuth,
   configureSecureMcpAuth,
   createMcpServerFromInput,
+  deleteMcpServer,
   getMcpAuthSummary,
+  getMcpLoginIdentity,
   loadMcpServers,
   parseMcpCommandLine,
   parseMcpServerItems,
@@ -73,7 +94,7 @@ import {
 import { logger } from "../../../src/utils/logger.js";
 
 describe("app/services/mcp-server-service", () => {
-  afterEach(() => {
+  beforeEach(() => {
     vi.restoreAllMocks();
     mocked.authStart.mockReset();
     mocked.authCallback.mockReset();
@@ -85,11 +106,17 @@ describe("app/services/mcp-server-service", () => {
     mocked.configGet.mockReset();
     mockedCredentials.save.mockReset();
     mockedCredentials.load.mockReset();
-    mockedCredentials.list.mockReset();
+    mockedCredentials.list.mockReset().mockResolvedValue([]);
     mockedCredentials.remove.mockReset();
     mockedManaged.save.mockReset();
     mockedManaged.load.mockReset().mockResolvedValue(null);
     mockedManaged.list.mockReset().mockResolvedValue([]);
+    mockedManaged.removeByName.mockReset().mockResolvedValue(0);
+    mockedManaged.rename.mockReset().mockResolvedValue(null);
+    mockedManaged.listDeleted.mockReset().mockResolvedValue([]);
+    mockedManaged.markDeleted.mockReset().mockResolvedValue(undefined);
+    mockedManaged.clearDeleted.mockReset().mockResolvedValue(undefined);
+    mockedTopics.list.mockReset().mockResolvedValue([]);
   });
 
   it("parses a dictionary-form catalog", () => {
@@ -705,6 +732,157 @@ describe("app/services/mcp-server-service", () => {
     await expect(loadMcpServers("/repo")).resolves.toEqual([
       { name: "local", status: { status: "connected" }, type: "local" },
     ]);
+  });
+
+  it("synchronizes a globally managed MCP into a Topic directory before mcp.list reads status", async () => {
+    mockedManaged.list.mockResolvedValue([
+      {
+        projectDirectory: "/root/workspace",
+        name: "github",
+        config: { type: "remote", url: "https://mcp.example.com/mcp" },
+      },
+    ]);
+    mockedCredentials.list.mockResolvedValue([]);
+    mocked.status
+      .mockResolvedValueOnce({ data: {}, error: undefined })
+      .mockResolvedValueOnce({ data: { github: { status: "connected" } }, error: undefined });
+    mocked.add.mockResolvedValue({
+      data: { github: { status: "connected" } },
+      error: undefined,
+    });
+    mocked.configGet.mockResolvedValue({ data: {}, error: undefined });
+
+    await expect(loadMcpServers("/topics/chat-42")).resolves.toEqual([
+      { name: "github", status: { status: "connected" }, type: "remote" },
+    ]);
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/topics/chat-42",
+      name: "github",
+      config: { type: "remote", url: "https://mcp.example.com/mcp" },
+    });
+  });
+
+  it("synchronizes a Local MCP into a Topic runtime with its structured command intact", async () => {
+    mockedManaged.list.mockResolvedValue([
+      {
+        projectDirectory: "/root/workspace",
+        name: "local-tools",
+        config: {
+          type: "local",
+          command: ["node", "./tools/mcp server.js", "--flag", "hello world"],
+        },
+      },
+    ]);
+    mockedCredentials.list.mockResolvedValue([]);
+    mocked.status
+      .mockResolvedValueOnce({ data: {}, error: undefined })
+      .mockResolvedValueOnce({ data: { "local-tools": { status: "connected" } }, error: undefined });
+    mocked.add.mockResolvedValue({
+      data: { "local-tools": { status: "connected" } },
+      error: undefined,
+    });
+    mocked.configGet.mockResolvedValue({ data: {}, error: undefined });
+
+    await expect(loadMcpServers("/topics/chat-local")).resolves.toEqual([
+      { name: "local-tools", status: { status: "connected" }, type: "local" },
+    ]);
+    expect(mocked.add).toHaveBeenCalledWith({
+      directory: "/topics/chat-local",
+      name: "local-tools",
+      config: {
+        type: "local",
+        command: ["node", "./tools/mcp server.js", "--flag", "hello world"],
+      },
+    });
+  });
+
+  it("deletes a managed MCP from persistent state, credentials, and every known runtime", async () => {
+    mockedManaged.list.mockResolvedValue([
+      {
+        projectDirectory: "/root/workspace",
+        name: "delete-me",
+        config: { type: "remote", url: "https://mcp.example.com/mcp" },
+      },
+    ]);
+    mockedTopics.list.mockResolvedValue([
+      { settings: { session: { directory: "/topics/chat-a" } } },
+      { settings: { workspaceDirectory: "/topics/chat-b" } },
+    ]);
+    mockedCredentials.list.mockResolvedValue([
+      {
+        projectDirectory: "/root/workspace",
+        serverName: "delete-me",
+        remoteUrl: "https://mcp.example.com/mcp",
+        mode: "bearer",
+        secret: "never-log-this",
+      },
+    ]);
+    mockedManaged.removeByName.mockResolvedValue(1);
+    mockedCredentials.remove.mockResolvedValue(true);
+    mocked.disconnect.mockResolvedValue({ data: true, error: undefined });
+    mocked.authRemove.mockResolvedValue({ data: true, error: undefined });
+
+    await expect(deleteMcpServer("/root/workspace", "delete-me")).resolves.toEqual({
+      deleted: true,
+      name: "delete-me",
+    });
+
+    for (const directory of ["/root/workspace", "/topics/chat-a", "/topics/chat-b"]) {
+      expect(mocked.disconnect).toHaveBeenCalledWith({ name: "delete-me", directory });
+      expect(mocked.authRemove).toHaveBeenCalledWith({ name: "delete-me", directory });
+    }
+    expect(mockedManaged.removeByName).toHaveBeenCalledWith("delete-me");
+    expect(mockedManaged.markDeleted).toHaveBeenCalledWith("delete-me");
+    expect(mockedCredentials.remove).toHaveBeenCalledWith("/root/workspace", "delete-me");
+  });
+
+  it("shows safe OAuth account identity from JWT claims without returning the access token", async () => {
+    const previousXdg = process.env.XDG_DATA_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-oauth-identity-"));
+    try {
+      process.env.XDG_DATA_HOME = home;
+      const authDir = path.join(home, "opencode");
+      fs.mkdirSync(authDir, { recursive: true });
+      const payload = Buffer.from(JSON.stringify({
+        email: "amin@example.com",
+        preferred_username: "amin",
+        name: "Amin",
+      })).toString("base64url");
+      const token = `header.${payload}.signature`;
+      fs.writeFileSync(
+        path.join(authDir, "mcp-auth.json"),
+        JSON.stringify({
+          identity: {
+            serverUrl: "https://mcp.example.com/mcp",
+            tokens: { accessToken: token, scope: "openid profile email" },
+          },
+        }),
+      );
+      mockedCredentials.load.mockResolvedValue(null);
+      mockedCredentials.list.mockResolvedValue([]);
+      mockedManaged.load.mockResolvedValue(null);
+      mockedManaged.list.mockResolvedValue([
+        {
+          projectDirectory: "/root/workspace",
+          name: "identity",
+          config: { type: "remote", url: "https://mcp.example.com/mcp" },
+        },
+      ]);
+
+      const identity = await getMcpLoginIdentity("/topics/chat", "identity");
+      expect(identity).toEqual({
+        label: "amin@example.com",
+        email: "amin@example.com",
+        username: "amin",
+        displayName: "Amin",
+        providerHost: "mcp.example.com",
+      });
+      expect(JSON.stringify(identity)).not.toContain(token);
+    } finally {
+      if (previousXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = previousXdg;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("contains no legacy OpenCode CLI subprocess path", () => {

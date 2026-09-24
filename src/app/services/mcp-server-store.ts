@@ -19,6 +19,12 @@ interface McpServerState {
 }
 
 const STORE_KEY = "mcpServers";
+const TOMBSTONE_STORE_KEY = "mcpServerTombstones";
+
+interface McpServerTombstoneState {
+  version: 1;
+  names: string[];
+}
 
 function normalizeDirectory(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/\/+$/u, "");
@@ -115,6 +121,19 @@ function isManagedConfig(value: unknown): value is ManagedMcpConfig {
   return true;
 }
 
+function parseTombstoneState(value: unknown): McpServerTombstoneState {
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.names)) {
+    return { version: 1, names: [] };
+  }
+  const names = [...new Set(
+    value.names
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )];
+  return { version: 1, names };
+}
+
 function parseState(value: unknown): McpServerState {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.records)) {
     return { version: 1, records: {} };
@@ -148,10 +167,13 @@ export async function saveManagedMcpServer(server: ManagedMcpServer): Promise<vo
   const id = serverId(normalized.projectDirectory, normalized.name);
   await updateAppState((state) => {
     const current = parseState(state[STORE_KEY]);
+    const records = Object.fromEntries(
+      Object.entries(current.records).filter(([, candidate]) => candidate.name !== normalized.name),
+    );
     return {
       [STORE_KEY]: {
         version: 1,
-        records: { ...current.records, [id]: normalized },
+        records: { ...records, [id]: normalized },
       },
     };
   });
@@ -173,4 +195,85 @@ export async function listManagedMcpServers(projectDirectory?: string): Promise<
   return Object.values(current.records).filter(
     (server) => normalizedDirectory === null || server.projectDirectory === normalizedDirectory,
   );
+}
+
+export async function removeManagedMcpServersByName(name: string): Promise<number> {
+  const normalizedName = name.trim();
+  if (!normalizedName) return 0;
+  let removed = 0;
+  await updateAppState((state) => {
+    const current = parseState(state[STORE_KEY]);
+    const records = Object.fromEntries(
+      Object.entries(current.records).filter(([, candidate]) => {
+        if (candidate.name !== normalizedName) return true;
+        removed += 1;
+        return false;
+      }),
+    );
+    return { [STORE_KEY]: { version: 1, records } };
+  });
+  return removed;
+}
+
+export async function listDeletedMcpServerNames(): Promise<string[]> {
+  const state = await readAppState();
+  return parseTombstoneState(state[TOMBSTONE_STORE_KEY]).names;
+}
+
+export async function markMcpServerDeleted(name: string): Promise<void> {
+  const normalizedName = name.trim();
+  if (!normalizedName) return;
+  await updateAppState((state) => {
+    const current = parseTombstoneState(state[TOMBSTONE_STORE_KEY]);
+    return {
+      [TOMBSTONE_STORE_KEY]: {
+        version: 1,
+        names: [...new Set([...current.names, normalizedName])],
+      },
+    };
+  });
+}
+
+export async function clearMcpServerDeleted(name: string): Promise<void> {
+  const normalizedName = name.trim();
+  if (!normalizedName) return;
+  await updateAppState((state) => {
+    const current = parseTombstoneState(state[TOMBSTONE_STORE_KEY]);
+    return {
+      [TOMBSTONE_STORE_KEY]: {
+        version: 1,
+        names: current.names.filter((candidate) => candidate !== normalizedName),
+      },
+    };
+  });
+}
+
+export async function renameManagedMcpServer(
+  oldName: string,
+  newName: string,
+): Promise<ManagedMcpServer | null> {
+  const sourceName = oldName.trim();
+  const targetName = newName.trim();
+  if (!sourceName || !targetName) throw new Error("MCP server name is required.");
+  if (sourceName === targetName) {
+    return (await listManagedMcpServers()).find((item) => item.name === sourceName) ?? null;
+  }
+
+  let renamed: ManagedMcpServer | null = null;
+  await updateAppState((state) => {
+    const current = parseState(state[STORE_KEY]);
+    if (Object.values(current.records).some((candidate) => candidate.name === targetName)) {
+      throw new Error("An MCP server named \"" + targetName + "\" already exists.");
+    }
+    const source = Object.values(current.records).find((candidate) => candidate.name === sourceName);
+    if (!source) return { [STORE_KEY]: current };
+
+    renamed = normalizeServer({ ...source, name: targetName });
+    const records = Object.fromEntries(
+      Object.entries(current.records).filter(([, candidate]) => candidate.name !== sourceName),
+    );
+    records[serverId(renamed.projectDirectory, renamed.name)] = renamed;
+    return { [STORE_KEY]: { version: 1, records } };
+  });
+  return renamed;
 }

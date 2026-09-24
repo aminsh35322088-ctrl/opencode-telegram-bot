@@ -7,7 +7,7 @@ import { attachManager } from "../../app/managers/attach-manager.js";
 import { QUEUED_PROMPT_BUTTON_TEXT_PATTERN, isReplyKeyboardButtonText } from "../message-patterns.js";
 import { isProviderWizardActive } from "../commands/providers-command.js";
 import { isIntegrationWizardActive } from "../commands/integrations-command.js";
-import { isMcpAddWizardActive } from "../commands/mcp-server-command.js";
+import { isMcpTextWizardActive } from "../commands/mcp-server-command.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -53,7 +53,7 @@ function isReplyKeyboardPress(ctx: Context): boolean {
   if (model.providerID && model.modelID) knownButtonTexts.add(formatModelForButton(model.providerID, model.modelID, model.name));
   return isReplyKeyboardButtonText(text, knownButtonTexts);
 }
-function isSetupWizardText(ctx: Context): boolean { return Boolean(ctx.message?.text && (isProviderWizardActive() || isIntegrationWizardActive() || isMcpAddWizardActive())); }
+function isSetupWizardText(ctx: Context): boolean { return Boolean(ctx.message?.text && (isProviderWizardActive() || isIntegrationWizardActive() || isMcpTextWizardActive())); }
 function isRootNavigationText(ctx: Context): boolean { const text = ctx.message?.text?.trim(); return typeof text === "string" && ROOT_NAVIGATION_TEXTS.has(text); }
 function normalizeIncomingCommand(text: string): string | null { const trimmed = text.trim(); if (!trimmed.startsWith("/")) return null; const token = trimmed.split(/\s+/)[0]; if (!token) return null; const withoutMention = token.split("@")[0]?.toLowerCase(); return !withoutMention || withoutMention.length <= 1 ? null : withoutMention; }
 function classifyIncomingInput(ctx: Context): { inputType: IncomingInputType; command?: string } {

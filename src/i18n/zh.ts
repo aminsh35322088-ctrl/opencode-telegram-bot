@@ -485,6 +485,16 @@ export const zh: I18nDictionary = {
   "mcps.auth.mode.oauth_client": "OAuth 客户端",
   "mcps.auth.step_title": "🔐 {mode} · {name}",
   "mcps.auth.step_title_client": "🪪 OAuth 客户端 · {name}",
+  "mcps.button.rename": "✏️ 重命名",
+  "mcps.button.delete": "🗑 删除",
+  "mcps.button.confirm_delete": "🗑 确认删除",
+  "mcps.rename.prompt": "✏️ 重命名 MCP 服务器\n\n当前名称：{name}\n\n请发送新名称。",
+  "mcps.rename.retry": "✏️ 重命名 MCP 服务器\n\n❌ {error}\n\n请发送其他名称。",
+  "mcps.rename.name_too_long": "名称不能超过 128 个字符。",
+  "mcps.delete.confirm": "🗑 删除 MCP 服务器\n\n删除 {name}？\n\n将移除机器人管理的配置和已保存认证，并断开活动运行时连接。",
+  "mcps.deleted": "已删除 MCP 服务器 {name}。",
+  "mcps.auth.account": "👤 账户：{identity}{provider}",
+  "mcps.auth.account_unknown": "👤 账户：已登录{provider} · 提供方未公开邮箱/用户名",
   "model.fallback.notice": "⚠️ 所选模型 {previous} 不可用或不适合智能体，已切换到 {next}。",
 
 

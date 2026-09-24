@@ -12,7 +12,7 @@ import { pt } from "../../src/i18n/pt.js";
 import { ru } from "../../src/i18n/ru.js";
 import { zh } from "../../src/i18n/zh.js";
 import { t, setRuntimeLocale, resetRuntimeLocale } from "../../src/i18n/index.js";
-import { buildMcpsDetailText } from "../../src/bot/menus/mcp-server-menu.js";
+import { buildMcpsDetailKeyboard, buildMcpsDetailText } from "../../src/bot/menus/mcp-server-menu.js";
 
 const REQUIRED_KEYS = [
   "mcps.detail.needs_auth_hint",
@@ -36,6 +36,16 @@ const REQUIRED_KEYS = [
   "mcps.auth.client_id_prompt",
   "mcps.auth.client_secret_prompt",
   "mcps.auth.scope_prompt",
+  "mcps.auth.account",
+  "mcps.auth.account_unknown",
+  "mcps.button.rename",
+  "mcps.button.delete",
+  "mcps.button.confirm_delete",
+  "mcps.rename.prompt",
+  "mcps.rename.retry",
+  "mcps.rename.name_too_long",
+  "mcps.delete.confirm",
+  "mcps.deleted",
   "model.fallback.notice",
 ] as const satisfies readonly I18nKey[];
 
@@ -80,6 +90,45 @@ describe("MCP auth and model fallback i18n keys", () => {
       expect(buildMcpsDetailText(server as never)).not.toContain(en["mcps.detail.needs_auth_hint"]);
     } finally {
       resetRuntimeLocale();
+    }
+  });
+
+  it("shows Rename and Delete instead of Disable for connected MCP servers", () => {
+    resetRuntimeLocale();
+    const keyboard = buildMcpsDetailKeyboard({
+      name: "github",
+      type: "remote",
+      status: { status: "connected" },
+    });
+    const callbacks = keyboard.inline_keyboard.flat().map((button) => button.callback_data).filter(Boolean);
+    expect(callbacks).toContain("mcps:rename");
+    expect(callbacks).toContain("mcps:delete");
+    expect(callbacks).not.toContain("mcps:toggle");
+    expect(callbacks).not.toContain("mcps:auth:options");
+    expect(callbacks).not.toContain("mcps:auth:start");
+    expect(callbacks).not.toContain("mcps:auth:client");
+  });
+
+  it("never exposes authentication controls for Local MCP servers", () => {
+    resetRuntimeLocale();
+    for (const status of [
+      { status: "connected" as const },
+      { status: "needs_auth" as const },
+      { status: "needs_client_registration" as const, error: "unexpected local auth state" },
+      { status: "failed" as const, error: "local command failed" },
+    ]) {
+      const keyboard = buildMcpsDetailKeyboard({
+        name: "local-tools",
+        type: "local",
+        status,
+      });
+      const callbacks = keyboard.inline_keyboard.flat().map((button) => button.callback_data).filter(Boolean);
+      expect(callbacks).not.toContain("mcps:auth:options");
+      expect(callbacks).not.toContain("mcps:auth:start");
+      expect(callbacks).not.toContain("mcps:auth:client");
+      expect(callbacks).not.toContain("mcps:auth:bearer");
+      expect(callbacks).not.toContain("mcps:auth:api-key");
+      expect(callbacks).not.toContain("mcps:auth:custom-header");
     }
   });
 

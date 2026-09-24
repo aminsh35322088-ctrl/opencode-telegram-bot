@@ -534,6 +534,16 @@ export const ko: I18nDictionary = {
   "mcps.auth.mode.oauth_client": "OAuth 클라이언트",
   "mcps.auth.step_title": "🔐 {mode} · {name}",
   "mcps.auth.step_title_client": "🪪 OAuth 클라이언트 · {name}",
+  "mcps.button.rename": "✏️ 이름 변경",
+  "mcps.button.delete": "🗑 삭제",
+  "mcps.button.confirm_delete": "🗑 예, 삭제",
+  "mcps.rename.prompt": "✏️ MCP 서버 이름 변경\n\n현재 이름: {name}\n\n새 이름을 보내세요.",
+  "mcps.rename.retry": "✏️ MCP 서버 이름 변경\n\n❌ {error}\n\n다른 이름을 보내세요.",
+  "mcps.rename.name_too_long": "이름은 128자 이하여야 합니다.",
+  "mcps.delete.confirm": "🗑 MCP 서버 삭제\n\n{name}을(를) 삭제할까요?\n\n봇 관리 정의와 저장된 인증을 제거하고 활성 런타임 연결을 해제합니다.",
+  "mcps.deleted": "MCP 서버 {name}을(를) 삭제했습니다.",
+  "mcps.auth.account": "👤 계정: {identity}{provider}",
+  "mcps.auth.account_unknown": "👤 계정: 로그인됨{provider} · 공급자가 이메일/사용자 이름을 제공하지 않음",
   "model.fallback.notice": "⚠️ 선택된 모델 {previous}을(를) 사용할 수 없거나 에이전트에 적합하지 않습니다. {next}(으)로 전환했습니다.",
 
 

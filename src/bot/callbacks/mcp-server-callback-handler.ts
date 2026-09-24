@@ -1,14 +1,21 @@
 import type { Context } from "grammy";
 import type { McpServerItem } from "../../app/services/mcp-server-service.js";
-import { loadMcpServers, parseMcpServerItems, setMcpServerEnabled } from "../../app/services/mcp-server-service.js";
+import {
+  deleteMcpServer,
+  loadMcpServers,
+  parseMcpServerItems,
+  setMcpServerEnabled,
+} from "../../app/services/mcp-server-service.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { cancelMenu } from "./feedback.js";
 import {
+  buildMcpDeleteConfirmKeyboard,
   buildMcpsDetailKeyboard,
   buildMcpsDetailText,
+  buildMcpsEmptyKeyboard,
   buildMcpsListKeyboard,
   MCPS_CALLBACK_ADD,
   MCPS_CALLBACK_ADD_BACK,
@@ -27,8 +34,13 @@ import {
   MCPS_CALLBACK_AUTH_START,
   MCPS_CALLBACK_BACK,
   MCPS_CALLBACK_CANCEL,
+  MCPS_CALLBACK_DELETE,
+  MCPS_CALLBACK_DELETE_CANCEL,
+  MCPS_CALLBACK_DELETE_CONFIRM,
   MCPS_CALLBACK_PARENT_BACK,
   MCPS_CALLBACK_PREFIX,
+  MCPS_CALLBACK_RENAME,
+  MCPS_CALLBACK_RENAME_CANCEL,
   MCPS_CALLBACK_SELECT_PREFIX,
   MCPS_CALLBACK_TOGGLE,
   parseMcpSelectCallback,
@@ -45,11 +57,15 @@ import {
   clearMcpAddWizard,
   clearMcpAuthWizard,
   clearMcpCredentialWizard,
+  clearMcpRenameWizard,
   dismissMcpAddWizard,
   dismissMcpAuthWizard,
   dismissMcpCredentialWizard,
+  dismissMcpRenameWizard,
+  renderMcpDetailView,
   resetMcpCredentialAuthToAuto,
   skipMcpCredentialOptionalStep,
+  startMcpRenameWizard,
 } from "../commands/mcp-server-command.js";
 import { replyWithInlineMenu } from "../menus/inline-menu.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
@@ -120,6 +136,16 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
 
   if (data === MCPS_CALLBACK_ADD_BACK) {
     if (await backMcpAddWizard(ctx)) return true;
+    await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
+    return true;
+  }
+
+  if (data === MCPS_CALLBACK_RENAME_CANCEL) {
+    if (await dismissMcpRenameWizard(ctx, true)) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      return true;
+    }
+    clearMcpRenameWizard();
     await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
     return true;
   }
@@ -247,9 +273,89 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
       return true;
     }
 
+    if (data === MCPS_CALLBACK_RENAME) {
+      if (metadata.stage !== "detail") {
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      await ctx.answerCallbackQuery().catch(() => {});
+      await startMcpRenameWizard(ctx, {
+        serverName: metadata.serverName,
+        projectDirectory: metadata.projectDirectory,
+        messageId: metadata.messageId,
+      });
+      return true;
+    }
+
+    if (data === MCPS_CALLBACK_DELETE) {
+      if (metadata.stage !== "detail") {
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      await ctx.answerCallbackQuery().catch(() => {});
+      await ctx.editMessageText(
+        t("mcps.delete.confirm", { name: metadata.serverName }),
+        { reply_markup: buildMcpDeleteConfirmKeyboard() },
+      );
+      return true;
+    }
+
+    if (data === MCPS_CALLBACK_DELETE_CANCEL) {
+      if (metadata.stage !== "detail") {
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      await ctx.answerCallbackQuery().catch(() => {});
+      await renderMcpDetailView(
+        ctx,
+        metadata.messageId,
+        metadata.projectDirectory,
+        metadata.serverName,
+      );
+      return true;
+    }
+
+    if (data === MCPS_CALLBACK_DELETE_CONFIRM) {
+      if (metadata.stage !== "detail") {
+        await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      await deleteMcpServer(metadata.projectDirectory, metadata.serverName);
+      const servers = await loadMcpServers(metadata.projectDirectory);
+      const text = servers.length > 0 ? t("mcps.select") : t("mcps.empty");
+      const keyboard = servers.length > 0 ? buildMcpsListKeyboard(servers) : buildMcpsEmptyKeyboard();
+      await ctx.answerCallbackQuery({ text: t("mcps.deleted", { name: metadata.serverName }) }).catch(() => {});
+      await ctx.editMessageText(text, { reply_markup: keyboard });
+      interactionManager.transition({
+        expectedInput: "callback",
+        metadata: {
+          flow: "mcps",
+          stage: "list",
+          messageId: metadata.messageId,
+          projectDirectory: metadata.projectDirectory,
+          servers,
+        },
+      });
+      return true;
+    }
+
     if (data === MCPS_CALLBACK_AUTH_OPTIONS) {
       if (metadata.stage !== "detail") {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      const server = (await loadMcpServers(metadata.projectDirectory))
+        .find((item) => item.name === metadata.serverName);
+      if (!server || server.type === "local" || server.status.status === "connected") {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback") }).catch(() => {});
+        if (server) {
+          await renderMcpDetailView(
+            ctx,
+            metadata.messageId,
+            metadata.projectDirectory,
+            metadata.serverName,
+          );
+        }
         return true;
       }
       await ctx.answerCallbackQuery().catch(() => {});
@@ -264,6 +370,24 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     if (data === MCPS_CALLBACK_AUTH_CLIENT) {
       if (metadata.stage !== "detail") {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+        return true;
+      }
+      const server = (await loadMcpServers(metadata.projectDirectory))
+        .find((item) => item.name === metadata.serverName);
+      if (
+        !server ||
+        server.type === "local" ||
+        server.status.status !== "needs_client_registration"
+      ) {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback") }).catch(() => {});
+        if (server) {
+          await renderMcpDetailView(
+            ctx,
+            metadata.messageId,
+            metadata.projectDirectory,
+            metadata.serverName,
+          );
+        }
         return true;
       }
       await ctx.answerCallbackQuery().catch(() => {});
@@ -281,9 +405,22 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
         return true;
       }
-      const server = metadata.servers.find((item) => item.name === metadata.serverName);
-      if (!server || server.status.status !== "needs_auth") {
+      const server = (await loadMcpServers(metadata.projectDirectory))
+        .find((item) => item.name === metadata.serverName);
+      if (
+        !server ||
+        server.type === "local" ||
+        server.status.status !== "needs_auth"
+      ) {
         await ctx.answerCallbackQuery({ text: t("mcps.auth.not_waiting_oauth"), show_alert: true });
+        if (server) {
+          await renderMcpDetailView(
+            ctx,
+            metadata.messageId,
+            metadata.projectDirectory,
+            metadata.serverName,
+          );
+        }
         return true;
       }
       await ctx.answerCallbackQuery({ text: t("mcps.auth.opening_login") }).catch(() => {});
@@ -305,8 +442,18 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true });
         return true;
       }
-      const enable = server.status.status !== "connected";
-      await ctx.answerCallbackQuery({ text: enable ? t("mcps.enabling") : t("mcps.disabling") });
+      if (server.status.status === "connected") {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback") }).catch(() => {});
+        await renderMcpDetailView(
+          ctx,
+          metadata.messageId,
+          metadata.projectDirectory,
+          metadata.serverName,
+        );
+        return true;
+      }
+      const enable = true;
+      await ctx.answerCallbackQuery({ text: t("mcps.enabling") });
       await setMcpServerEnabled(metadata.projectDirectory, metadata.serverName, enable);
       const updatedServers = await loadMcpServers(metadata.projectDirectory);
       const updatedServer = updatedServers.find((item) => item.name === metadata.serverName);
@@ -345,6 +492,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
     clearMcpAddWizard();
     clearMcpAuthWizard();
     clearMcpCredentialWizard();
+    clearMcpRenameWizard();
     await ctx.answerCallbackQuery({ text: t("mcps.toggle_error") }).catch(() => {});
     return true;
   }
