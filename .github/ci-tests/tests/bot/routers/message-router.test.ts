@@ -7,10 +7,29 @@ import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
 const mergerMock = vi.hoisted(() => ({ queuePromptForMerging: vi.fn() }));
+const mediaMocks = vi.hoisted(() => ({
+  handleVoiceMessage: vi.fn(),
+  handlePhotoMessage: vi.fn(),
+  handleVideoMessage: vi.fn(),
+  handleDocumentMessage: vi.fn(),
+}));
+
 vi.mock("../../../src/bot/handlers/message-merger.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../src/bot/handlers/message-merger.js")>();
   return { ...actual, queuePromptForMerging: mergerMock.queuePromptForMerging };
 });
+vi.mock("../../../src/bot/handlers/voice-handler.js", () => ({
+  handleVoiceMessage: mediaMocks.handleVoiceMessage,
+}));
+vi.mock("../../../src/bot/handlers/photo-handler.js", () => ({
+  handlePhotoMessage: mediaMocks.handlePhotoMessage,
+}));
+vi.mock("../../../src/bot/handlers/video-handler.js", () => ({
+  handleVideoMessage: mediaMocks.handleVideoMessage,
+}));
+vi.mock("../../../src/bot/handlers/document-handler.js", () => ({
+  handleDocumentMessage: mediaMocks.handleDocumentMessage,
+}));
 
 function getMessageHandler(eventName: string): (ctx: unknown, next: () => Promise<void>) => Promise<void> {
   const bot = { on: vi.fn(), hears: vi.fn() };
@@ -22,10 +41,24 @@ function getMessageHandler(eventName: string): (ctx: unknown, next: () => Promis
   return defined(call?.[1]) as (ctx: unknown, next: () => Promise<void>) => Promise<void>;
 }
 
-function makeMediaContext({ chatId, threadId }: { chatId: number; threadId: number }) {
+function makeMediaContext({
+  chatId,
+  threadId,
+  media,
+}: {
+  chatId: number;
+  threadId: number;
+  media: Record<string, unknown>;
+}) {
   return {
+    api: {},
     chat: { id: chatId, type: "supergroup", is_forum: true },
-    message: { message_thread_id: threadId },
+    message: {
+      message_id: 100,
+      date: Math.floor(Date.now() / 1000),
+      message_thread_id: threadId,
+      ...media,
+    },
     reply: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -85,18 +118,108 @@ describe("bot/routers/message-router", () => {
 
     beforeEach(() => {
       mergerMock.queuePromptForMerging.mockReset();
+      mediaMocks.handleVoiceMessage.mockReset();
+      mediaMocks.handlePhotoMessage.mockReset();
+      mediaMocks.handleVideoMessage.mockReset();
+      mediaMocks.handleDocumentMessage.mockReset();
       interactionManager.clear("general_gate_test_reset");
     });
 
-    it.each(["message:voice", "message:audio", "message:photo", "message:video", "message:video_note", "message:document"])(
-      "does not dispatch %s to the model in General",
-      async (eventName) => {
-        const handler = getMessageHandler(eventName);
-        const ctx = makeMediaContext({ chatId: 42, threadId: 1 });
-        await handler(ctx, vi.fn());
-        expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+    it.each([
+      {
+        eventName: "message:voice",
+        handler: mediaMocks.handleVoiceMessage,
+        media: {
+          voice: {
+            file_id: "voice-file",
+            file_unique_id: "voice-unique",
+            duration: 2,
+            mime_type: "audio/ogg",
+            file_size: 128,
+          },
+        },
       },
-    );
+      {
+        eventName: "message:audio",
+        handler: mediaMocks.handleVoiceMessage,
+        media: {
+          audio: {
+            file_id: "audio-file",
+            file_unique_id: "audio-unique",
+            duration: 12,
+            mime_type: "audio/mpeg",
+            file_size: 256,
+          },
+        },
+      },
+      {
+        eventName: "message:photo",
+        handler: mediaMocks.handlePhotoMessage,
+        media: {
+          caption: "photo prompt",
+          photo: [
+            { file_id: "photo-small", file_unique_id: "photo-small", width: 90, height: 90, file_size: 1000 },
+            { file_id: "photo-large", file_unique_id: "photo-large", width: 1280, height: 960, file_size: 5000 },
+          ],
+        },
+      },
+      {
+        eventName: "message:video",
+        handler: mediaMocks.handleVideoMessage,
+        media: {
+          caption: "video prompt",
+          video: {
+            file_id: "video-file",
+            file_unique_id: "video-unique",
+            file_name: "clip.mp4",
+            mime_type: "video/mp4",
+            file_size: 2048,
+            width: 1280,
+            height: 720,
+            duration: 12,
+          },
+        },
+      },
+      {
+        eventName: "message:video_note",
+        handler: mediaMocks.handleVideoMessage,
+        media: {
+          caption: "video note prompt",
+          video_note: {
+            file_id: "video-note-file",
+            file_unique_id: "video-note-unique",
+            file_size: 1024,
+            length: 10,
+            duration: 10,
+          },
+        },
+      },
+      {
+        eventName: "message:document",
+        handler: mediaMocks.handleDocumentMessage,
+        media: {
+          caption: "document prompt",
+          document: {
+            file_id: "document-file",
+            file_unique_id: "document-unique",
+            file_name: "notes.txt",
+            mime_type: "text/plain",
+            file_size: 512,
+          },
+        },
+      },
+    ])("does not dispatch $eventName to the model in General", async ({ eventName, handler, media }) => {
+      const route = getMessageHandler(eventName);
+      const ctx = makeMediaContext({ chatId: 42, threadId: 1, media });
+      const next = vi.fn().mockResolvedValue(undefined);
+
+      await route(ctx, next);
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(mergerMock.queuePromptForMerging).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"));
+    });
 
     it("blocks free-text AI prompts in the forum General topic", async () => {
       const handler = registerAndGetTextHandler();

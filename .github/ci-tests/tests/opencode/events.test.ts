@@ -77,12 +77,23 @@ function flushImmediate(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+async function waitForTopicTelemetry(eventName: string): Promise<void> {
+  await vi.waitFor(() => {
+    const calls = [...logger.info.mock.calls, ...logger.debug.mock.calls];
+    expect(calls.some(([line]) => String(line).includes(`event=${eventName}`))).toBe(true);
+  });
+}
+
 describe("opencode/events", () => {
   beforeEach(() => {
     subscribeMock.mockReset();
     bindings.byDirectory.mockReset().mockResolvedValue(null);
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectoryList.mockReset().mockResolvedValue([]);
+    logger.info.mockClear();
+    logger.debug.mockClear();
+    logger.warn.mockClear();
+    logger.error.mockClear();
     __setSseIdleTimeoutForTests(30_000);
   });
   afterEach(() => {
@@ -106,9 +117,9 @@ describe("opencode/events", () => {
 
     const callback = vi.fn();
     const subscription = subscribeToEvents("/workspace", callback);
-    void subscription.catch(() => undefined);
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await subscription;
+    await waitForTopicTelemetry("event_seen");
 
     expect(callback).not.toHaveBeenCalled();
     stopEventListening();

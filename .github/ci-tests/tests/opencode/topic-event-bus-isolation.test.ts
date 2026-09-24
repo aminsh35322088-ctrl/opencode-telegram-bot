@@ -30,6 +30,7 @@ vi.mock("../../src/opencode/provider-error-policy.js", () => ({
 }));
 
 import { stopTopicEventBus, stopTopicEventSubscription, subscribeToTopicEvents } from "../../src/opencode/topic-event-bus.js";
+import { logger } from "../../src/utils/logger.js";
 
 function createStream<T>(events: T[], signal: AbortSignal): AsyncGenerator<T, void, unknown> {
   return (async function* () {
@@ -38,11 +39,27 @@ function createStream<T>(events: T[], signal: AbortSignal): AsyncGenerator<T, vo
   })();
 }
 
+async function settleSubscription(subscription: ReturnType<typeof subscribeToTopicEvents>): Promise<void> {
+  await subscription.ready;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+async function waitForTelemetry(eventName: string): Promise<void> {
+  await vi.waitFor(() => {
+    const calls = [...logger.info.mock.calls, ...logger.debug.mock.calls];
+    expect(calls.some(([line]) => String(line).includes(`event=${eventName}`))).toBe(true);
+  });
+}
+
 describe("topic-event-bus session isolation", () => {
   beforeEach(() => {
     subscribeMock.mockReset();
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectory.mockReset().mockResolvedValue([]);
+    logger.info.mockClear();
+    logger.debug.mockClear();
+    logger.warn.mockClear();
+    logger.error.mockClear();
   });
 
   afterEach(() => stopTopicEventBus());
@@ -106,9 +123,10 @@ describe("topic-event-bus session isolation", () => {
     }));
 
     const callback = vi.fn();
-    subscribeToTopicEvents("/workspace", callback, "session-a", undefined, true);
+    const subscription = subscribeToTopicEvents("/workspace", callback, "session-a", undefined, true);
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await settleSubscription(subscription);
+    await waitForTelemetry("event_seen");
     expect(callback).not.toHaveBeenCalled();
   });
 
@@ -124,8 +142,9 @@ describe("topic-event-bus session isolation", () => {
     }));
     const callback = vi.fn();
     const subscription = subscribeToTopicEvents("/workspace", callback, "session-a");
-    void subscription.ready.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    await settleSubscription(subscription);
+    await waitForTelemetry("ambiguous_directory_route_blocked");
     expect(callback).not.toHaveBeenCalled();
   });
 
@@ -139,8 +158,9 @@ describe("topic-event-bus session isolation", () => {
     }));
     const callback = vi.fn();
     const subscription = subscribeToTopicEvents("/workspace", callback, "session-a");
-    void subscription.ready.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    await settleSubscription(subscription);
+    await waitForTelemetry("event_seen");
     expect(callback).not.toHaveBeenCalled();
   });
 
@@ -154,10 +174,12 @@ describe("topic-event-bus session isolation", () => {
 
     const callbackA = vi.fn();
     const callbackB = vi.fn();
-    subscribeToTopicEvents("/workspace", callbackA, "session-a");
-    subscribeToTopicEvents("/workspace", callbackB, "session-b");
+    const subscriptionA = subscribeToTopicEvents("/workspace", callbackA, "session-a");
+    const subscriptionB = subscribeToTopicEvents("/workspace", callbackB, "session-b");
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await settleSubscription(subscriptionA);
+    await settleSubscription(subscriptionB);
+    await waitForTelemetry("ambiguous_directory_route_blocked");
     expect(callbackA).not.toHaveBeenCalled();
     expect(callbackB).not.toHaveBeenCalled();
     expect(bindings.byDirectory).toHaveBeenCalledWith("/workspace");
@@ -243,10 +265,10 @@ it("does not route a child event to a replacement parent", async () => {
   }));
 
   const callback = vi.fn();
-  subscribeToTopicEvents("/workspace", callback, "parent-a", { chatId: 100, threadId: 11 });
+  const subscription = subscribeToTopicEvents("/workspace", callback, "parent-a", { chatId: 100, threadId: 11 });
 
   await vi.waitFor(() => expect(callback).toHaveBeenCalledTimes(1));
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await settleSubscription(subscription);
   expect(callback).toHaveBeenCalledTimes(1);
 });
 
@@ -278,14 +300,14 @@ describe("subscription retirement lifecycle", () => {
     subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
     const oldCallback = vi.fn();
     const replacement = vi.fn();
-    subscribeToTopicEvents("/workspace", oldCallback, "a");
+    const subscription = subscribeToTopicEvents("/workspace", oldCallback, "a");
     subscribeToTopicEvents("/workspace", vi.fn(), "b");
     try {
       await vi.waitFor(() => expect(release).toBeTypeOf("function"));
       stopTopicEventSubscription("/workspace", "a");
       subscribeToTopicEvents("/workspace", replacement, "a");
       release({ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" });
-      await new Promise(resolve => setTimeout(resolve, 30));
+      await settleSubscription(subscription);
       expect(oldCallback).not.toHaveBeenCalled();
       expect(replacement).not.toHaveBeenCalled();
     } finally { stopTopicEventBus(); }
@@ -297,11 +319,11 @@ describe("subscription retirement lifecycle", () => {
     const event = { type: "session.deleted", properties: { info: { id: "a", directory: "/workspace" } } } as unknown as Event;
     subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
     const callback = vi.fn();
-    subscribeToTopicEvents("/workspace", callback, "b");
+    const subscription = subscribeToTopicEvents("/workspace", callback, "b");
     const stopA = subscribeToTopicEvents("/workspace", vi.fn(), "a");
     stopA();
     try {
-      await new Promise(resolve => setTimeout(resolve, 30));
+      await settleSubscription(subscription);
       expect(callback).not.toHaveBeenCalled();
     } finally { stopTopicEventBus(); }
   });
@@ -316,6 +338,8 @@ describe("subscription retirement lifecycle", () => {
     const event3 = { type: "message.updated", properties: { sessionID: "a", n: 3 } } as unknown as Event;
     let releaseEvent2!: () => void;
     const event2Gate = new Promise<void>((resolve) => { releaseEvent2 = resolve; });
+    let event2Consumed!: () => void;
+    const event2ConsumedPromise = new Promise<void>((resolve) => { event2Consumed = resolve; });
     let releaseEvent3!: () => void;
     const event3Gate = new Promise<void>((resolve) => { releaseEvent3 = resolve; });
     subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({
@@ -323,6 +347,7 @@ describe("subscription retirement lifecycle", () => {
         yield event1;
         await event2Gate;
         yield event2;
+        event2Consumed();
         await event3Gate;
         yield event3;
         while (!options.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -338,7 +363,8 @@ describe("subscription retirement lifecycle", () => {
 
     stopTopicEventSubscription("/workspace", "a");
     releaseEvent2();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await event2ConsumedPromise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     // While retired, even the unscoped wildcard listener must not receive the
     // session's events through the unique-directory fallback route.

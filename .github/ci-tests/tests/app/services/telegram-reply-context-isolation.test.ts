@@ -50,13 +50,18 @@ import { enrichTelegramReplyContext } from "../../../src/app/services/telegram-r
 function contextWithCrossTopicReply(replyContent: Record<string, unknown>): Context {
   return {
     api: {},
-    chat: { id: 100, type: "private" },
+    chat: { id: 100, type: "private", is_forum: true },
     message: {
+      message_id: 11,
       message_thread_id: 101,
+      is_topic_message: true,
+      chat: { id: 100, type: "private", is_forum: true },
       text: "continue this",
       reply_to_message: {
         message_id: 10,
         message_thread_id: 202,
+        is_topic_message: true,
+        chat: { id: 100, type: "private", is_forum: true },
         from: { first_name: "Other Topic" },
         ...replyContent,
       },

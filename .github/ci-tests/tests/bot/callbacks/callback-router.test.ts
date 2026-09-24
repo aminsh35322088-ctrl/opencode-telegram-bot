@@ -155,7 +155,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("dispatches a callback only to the handler matching its prefix", async () => {
     mocked.handleAgentSelect.mockResolvedValue(true);
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext("agent:subagent");
 
     await callback(ctx);
@@ -171,7 +171,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("does not call other handlers when the callback is handled", async () => {
     mocked.handleSettingsCallback.mockResolvedValue(true);
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
 
     await callback(createCallbackContext("settings:prompt_queue"));
 
@@ -181,7 +181,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("dispatches Model Center callbacks to the Model Center handler", async () => {
     mocked.handleModelCenterCallback.mockResolvedValue(true);
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
 
     await callback(createCallbackContext("mc:tab:providers"));
 
@@ -196,7 +196,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("does not call table handlers when the background session pre-hook handles the callback", async () => {
     mocked.handleBackgroundSessionOpen.mockResolvedValue(true);
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
 
     await callback(createCallbackContext("background-session:session-1"));
 
@@ -207,7 +207,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("clears path indexes when the inline cancel pre-hook handles the callback", async () => {
     mocked.handleInlineMenuCancel.mockResolvedValue(true);
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
 
     await callback(createCallbackContext("inline:cancel:model"));
 
@@ -219,7 +219,7 @@ describe("bot/callbacks/callback-router", () => {
   });
 
   it("answers unknown callbacks", async () => {
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext();
 
     await callback(ctx);
@@ -228,7 +228,7 @@ describe("bot/callbacks/callback-router", () => {
   });
 
   it("answers callbacks with an unknown prefix", async () => {
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext("nonexistent:action");
 
     await callback(ctx);
@@ -244,18 +244,20 @@ describe("bot/callbacks/callback-router", () => {
     ["skills:list", mocked.handleSkillsCallback],
     ["messages:list", mocked.handleMessagesCallback],
   ] as const)("rejects unbound Topic callback %s before model-backed dispatch", async (data, handler) => {
-    const callback = registerAndGetCallback();
+    const setTelegramContext = vi.fn();
+    const { callback } = registerAndGetCallback(setTelegramContext);
     const ctx = createUnboundTopicCallbackContext(data);
 
     await callback(ctx);
 
     expect(mocked.topicBindingByThread).toHaveBeenCalledWith(2, 99);
+    expect(setTelegramContext).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: "general.topic_only_prompt" });
   });
 
   it("answers callbacks without a colon as unknown", async () => {
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext("noseparator");
 
     await callback(ctx);
@@ -265,7 +267,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("clears the interaction scope when a callback handler throws", async () => {
     mocked.handleAgentSelect.mockRejectedValueOnce(new Error("boom"));
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext("agent:subagent");
 
     await callback(ctx);
@@ -279,7 +281,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("clears the permission scope when the permission handler throws", async () => {
     mocked.handlePermissionCallback.mockRejectedValueOnce(new Error("boom"));
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext("permission:req-1:allow");
 
     await callback(ctx);
@@ -292,7 +294,7 @@ describe("bot/callbacks/callback-router", () => {
 
   it("does not clear state when a pre-hook throws before dispatch", async () => {
     mocked.handleBackgroundSessionOpen.mockRejectedValueOnce(new Error("boom"));
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
     const ctx = createCallbackContext("background-session:session-1");
 
     await callback(ctx);
@@ -303,7 +305,7 @@ describe("bot/callbacks/callback-router", () => {
     );
   });
   it("clears every MCP wizard state when Home is pressed", async () => {
-    const callback = registerAndGetCallback();
+    const { callback } = registerAndGetCallback();
 
     await callback(createCallbackContext("main:home"));
 
@@ -314,13 +316,16 @@ describe("bot/callbacks/callback-router", () => {
 
 });
 
-function registerAndGetCallback() {
+function registerAndGetCallback(setTelegramContext = vi.fn()) {
   const bot = { on: vi.fn(), hears: vi.fn(), callbackQuery: vi.fn() };
   registerCallbackRouter(bot as never, {
     ensureEventSubscription: vi.fn(),
-    setTelegramContext: vi.fn(),
+    setTelegramContext,
   });
-  return defined(bot.on.mock.calls[0]?.[1]) as (ctx: Context) => Promise<void>;
+  return {
+    callback: defined(bot.on.mock.calls[0]?.[1]) as (ctx: Context) => Promise<void>,
+    setTelegramContext,
+  };
 }
 
 function createCallbackContext(data = "unknown"): Context {

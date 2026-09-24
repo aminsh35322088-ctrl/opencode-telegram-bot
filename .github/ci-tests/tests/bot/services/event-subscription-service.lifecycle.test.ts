@@ -46,6 +46,8 @@ type FakeBotApi = {
   sendMessage: ReturnType<typeof vi.fn>;
   sendRichMessage: ReturnType<typeof vi.fn>;
   sendMessageDraft: ReturnType<typeof vi.fn>;
+  sendRichMessageDraft: ReturnType<typeof vi.fn>;
+  sendChatAction: ReturnType<typeof vi.fn>;
   editMessageText: ReturnType<typeof vi.fn>;
   deleteMessage: ReturnType<typeof vi.fn>;
   sendDocument: ReturnType<typeof vi.fn>;
@@ -60,6 +62,8 @@ function createFakeBot(): { bot: Bot<Context>; api: FakeBotApi } {
       .fn()
       .mockRejectedValue(Object.assign(new Error("Bad Request: rich message unavailable"), { error_code: 400 })),
     sendMessageDraft: vi.fn().mockResolvedValue(undefined),
+    sendRichMessageDraft: vi.fn().mockResolvedValue(undefined),
+    sendChatAction: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     sendDocument: vi.fn().mockResolvedValue({ message_id: 101 }),
@@ -161,8 +165,13 @@ function emitBashTool(aggregator: Aggregator, status: "running" | "completed"): 
 function countTelegramWrites(api: FakeBotApi): number {
   return (
     api.sendMessage.mock.calls.length +
+    api.sendRichMessage.mock.calls.length +
     api.sendMessageDraft.mock.calls.length +
-    api.editMessageText.mock.calls.length
+    api.sendRichMessageDraft.mock.calls.length +
+    api.sendChatAction.mock.calls.length +
+    api.editMessageText.mock.calls.length +
+    api.deleteMessage.mock.calls.length +
+    api.sendDocument.mock.calls.length
   );
 }
 
@@ -177,6 +186,12 @@ function findFooterCalls(api: FakeBotApi): unknown[][] {
   return api.sendMessage.mock.calls.filter((call) =>
     String(call[1]).includes("test-provider/test-model"),
   );
+}
+
+async function flushEventDispatch(iterations = 4): Promise<void> {
+  for (let attempt = 0; attempt < iterations; attempt++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 /**
@@ -396,7 +411,7 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       service.setTelegramContext(null, null);
       const writesBefore = countTelegramWrites(api);
       emitAssistantTextPart(summaryAggregator, "late");
-      await settle();
+      await flushEventDispatch();
       expect(countTelegramWrites(api)).toBe(writesBefore);
     });
 
