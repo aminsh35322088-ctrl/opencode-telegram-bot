@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 
-const { subscribeMock, bindings } = vi.hoisted(() => ({
+const { subscribeMock, bindings, telemetry } = vi.hoisted(() => ({
   subscribeMock: vi.fn(),
+  telemetry: vi.fn(),
   bindings: {
     byDirectory: vi.fn().mockResolvedValue(null),
     bySession: vi.fn().mockResolvedValue(null),
@@ -29,6 +30,10 @@ vi.mock("../../src/bot/services/agent-artifact-delivery-service.js", () => ({
 
 vi.mock("../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("../../src/utils/topic-observability.js", () => ({
+  topicTelemetry: telemetry,
 }));
 
 import {
@@ -79,8 +84,7 @@ function flushImmediate(): Promise<void> {
 
 async function waitForTopicTelemetry(eventName: string): Promise<void> {
   await vi.waitFor(() => {
-    const calls = [...logger.info.mock.calls, ...logger.debug.mock.calls];
-    expect(calls.some(([line]) => String(line).includes(`event=${eventName}`))).toBe(true);
+    expect(telemetry.mock.calls.some(([event]) => event === eventName)).toBe(true);
   });
 }
 
