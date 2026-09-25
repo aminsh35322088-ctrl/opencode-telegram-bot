@@ -63,11 +63,12 @@ describe("friendly action display", () => {
   });
 
   it("uses purpose-specific SSH action labels", () => {
+    expect(getFriendlyActionDisplay("tailscale", { action: "status" })).toEqual({ icon: "🌐", label: "Check Tailnet Status" });
+    expect(getFriendlyActionDisplay("tailscale", { action: "devices" })).toEqual({ icon: "🖥️", label: "List SSH Devices" });
+    expect(getFriendlyActionDisplay("tailscale", { action: "ping" })).toEqual({ icon: "📡", label: "Ping Tailnet Device" });
     expect(getFriendlyActionDisplay("ssh", { action: "check" })).toEqual({ icon: "🔐", label: "Check SSH Access" });
     expect(getFriendlyActionDisplay("ssh", { action: "debug" })).toEqual({ icon: "🩺", label: "Debug SSH Connection" });
     expect(getFriendlyActionDisplay("ssh", { action: "exec" })).toEqual({ icon: "🖥️", label: "Run SSH Command" });
-    expect(getFriendlyActionDisplay("ssh", { action: "tailnet.status" })).toEqual({ icon: "🌐", label: "Check Tailnet Status" });
-    expect(getFriendlyActionDisplay("ssh", { action: "profiles.create" })).toEqual({ icon: "➕", label: "Create SSH Profile" });
     expect(getFriendlyActionDisplay("ssh", { action: "upload" })).toEqual({ icon: "📤", label: "Upload over SSH" });
   });
 
