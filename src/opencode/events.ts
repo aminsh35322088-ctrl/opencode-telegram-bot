@@ -6,7 +6,10 @@ import {
   setTopicEventBusIdleTimeoutForTests,
 } from "./topic-event-bus.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
-import { findTelegramTopicBindingByDirectory } from "../app/services/telegram-topic-store.js";
+import { findTelegramTopicBindingBySessionId, findTelegramTopicBindingsByDirectory } from "../app/services/telegram-topic-store.js";
+import { withTimeout } from "../utils/async-timeout.js";
+
+const INITIAL_SUBSCRIPTION_READY_TIMEOUT_MS = 30_000;
 
 type EventCallback = (event: Event) => void;
 const subscriptions = new Map<string, { directory: string; sessionId?: string; callback: EventCallback; stop: () => void }>();
@@ -16,15 +19,44 @@ function normalizeDirectory(directory: string): string {
 }
 
 export async function subscribeToEvents(directory: string, callback: EventCallback, sessionId?: string): Promise<void> {
-  // Attach/background paths can outlive the AsyncLocalStorage context. Topic
-  // workspaces are persisted with a unique session binding, so recover that
-  // scope instead of silently installing an unscoped subscriber.
-  const runtimeSessionId = getTopicRuntimeContext()?.sessionId;
-  const resolvedSessionId = sessionId ?? runtimeSessionId ?? (await findTelegramTopicBindingByDirectory(directory))?.sessionId;
+  const runtimeContext = getTopicRuntimeContext();
+  const topicScoped = (runtimeContext?.threadId ?? 0) > 1;
+  const runtimeSessionId = runtimeContext?.sessionId;
+  let resolvedSessionId = sessionId ?? runtimeSessionId;
+  let resolvedBinding = resolvedSessionId
+    ? await findTelegramTopicBindingBySessionId(resolvedSessionId)
+    : null;
+  if (!resolvedSessionId) {
+    const directoryBindingsResult = await findTelegramTopicBindingsByDirectory(directory);
+    const directoryBindings = Array.isArray(directoryBindingsResult) ? directoryBindingsResult : [];
+    if (directoryBindings.length === 1) {
+      resolvedBinding = directoryBindings[0] ?? null;
+      resolvedSessionId = resolvedBinding?.sessionId;
+    }
+  }
   const key = `${normalizeDirectory(directory)}:${resolvedSessionId ?? "*"}:${String(callback)}`;
   subscriptions.get(key)?.stop();
-  const stop = subscribeToTopicEvents(directory, callback, resolvedSessionId);
+  const stop = subscribeToTopicEvents(
+    directory,
+    callback,
+    resolvedSessionId,
+    resolvedBinding ? { chatId: resolvedBinding.chatId, threadId: resolvedBinding.threadId } : undefined,
+    topicScoped && !resolvedBinding,
+  );
   subscriptions.set(key, { directory, sessionId: resolvedSessionId, callback, stop });
+  try {
+    const ready = withTimeout(
+      stop.ready,
+      INITIAL_SUBSCRIPTION_READY_TIMEOUT_MS,
+      `event subscription for ${directory}`,
+    );
+    void ready.catch(() => undefined);
+    await ready;
+  } catch (error) {
+    stop();
+    if (subscriptions.get(key)?.stop === stop) subscriptions.delete(key);
+    throw error;
+  }
 }
 
 export function stopTopicEventSubscription(directory: string, sessionId?: string): void {

@@ -1254,7 +1254,10 @@ class SummaryAggregator {
           this.onCostCallback(assistantInfo.cost);
         }
 
-        if (this.onCompleteCallback && finalText.length > 0) {
+        if (this.onCompleteCallback) {
+          // A completed assistant message with no text (tool-only turn,
+          // filtered output) must still complete: skipping the callback here
+          // leaves the run finalized by nobody and the turn silent.
           this.onCompleteCallback(info.sessionID, messageID, finalText, {
             agent: info.agent,
             providerID: info.providerID,

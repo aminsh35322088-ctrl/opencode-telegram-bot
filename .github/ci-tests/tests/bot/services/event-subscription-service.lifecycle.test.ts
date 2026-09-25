@@ -161,8 +161,11 @@ function emitBashTool(aggregator: Aggregator, status: "running" | "completed"): 
 function countTelegramWrites(api: FakeBotApi): number {
   return (
     api.sendMessage.mock.calls.length +
+    api.sendRichMessage.mock.calls.length +
     api.sendMessageDraft.mock.calls.length +
-    api.editMessageText.mock.calls.length
+    api.editMessageText.mock.calls.length +
+    api.deleteMessage.mock.calls.length +
+    api.sendDocument.mock.calls.length
   );
 }
 
@@ -177,6 +180,12 @@ function findFooterCalls(api: FakeBotApi): unknown[][] {
   return api.sendMessage.mock.calls.filter((call) =>
     String(call[1]).includes("test-provider/test-model"),
   );
+}
+
+async function flushEventDispatch(iterations = 8): Promise<void> {
+  for (let attempt = 0; attempt < iterations; attempt++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 /**
@@ -645,6 +654,30 @@ describe("bot/services/event-subscription-service lifecycle", () => {
     });
   });
 
+  describe("completion queue deadline", () => {
+    it("releases the session queue when a completion task never settles", async () => {
+      const { service } = await setupService({ startAssistantRun: false });
+      const queue = service as unknown as {
+        enqueueSessionCompletionTask: (id: string, task: () => Promise<void>) => Promise<void>;
+      };
+      const { setSessionCompletionTaskTimeoutForTests } = await import(
+        "../../../src/bot/services/event-subscription-service.js"
+      );
+      setSessionCompletionTaskTimeoutForTests(50);
+      try {
+        const stuck = queue.enqueueSessionCompletionTask("a", () => new Promise<void>(() => {}));
+        const delivered: string[] = [];
+        await queue.enqueueSessionCompletionTask("a", async () => {
+          delivered.push("second");
+        });
+        expect(delivered).toEqual(["second"]);
+        await expect(stuck).resolves.toBeUndefined();
+      } finally {
+        setSessionCompletionTaskTimeoutForTests(0);
+      }
+    });
+  });
+
   describe("session retirement cleanup", () => {
     it("retireSessionRuntime drops active assistant streams and run state for the retired session only", async () => {
       const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
@@ -1043,6 +1076,23 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       await settle();
 
       expect(api.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not send a late event after the session target is removed", async () => {
+      const { api, summaryAggregator, service } = await setupService({ startAssistantRun: true });
+      const { assistantRunState } = await import("../../../src/app/managers/assistant-run-state-manager.js");
+      const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
+      service.setTelegramContext(null, null);
+      const writesBefore = countTelegramWrites(api);
+      try {
+        emitAssistantTextPart(summaryAggregator, "late");
+        await flushEventDispatch();
+        expect(countTelegramWrites(api)).toBe(writesBefore);
+      } finally {
+        assistantRunState.clearRun("session-1", "test_cleanup");
+        foregroundSessionState.__resetForTests();
+        service.clearRuntimeState("test_cleanup");
+      }
     });
   });
 });

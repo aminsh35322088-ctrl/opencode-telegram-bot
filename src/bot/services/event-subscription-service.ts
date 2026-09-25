@@ -31,7 +31,8 @@ import {
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { logger } from "../../utils/logger.js";
-import { stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
+import { withTimeout } from "../../utils/async-timeout.js";
+import { stopSessionStallWatchdog, setStallNoticeSender, setStallRecoveryHandler } from "../../app/services/session-stall-watchdog.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -107,6 +108,8 @@ import {
 } from "../../app/managers/interaction-manager.js";
 import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { findTelegramTopicBindingsByDirectory } from "../../app/services/telegram-topic-store.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const SESSION_RETRY_PREFIX = "🔁";
@@ -114,6 +117,14 @@ const SUBAGENT_STREAM_PREFIX = "🧩";
 const TOOL_ELAPSED_TICK_INTERVAL_MS = 5000;
 const TOOL_ELAPSED_MAX_TRACKING_HOURS = 24;
 const TOOL_ELAPSED_MAX_TRACKING_MS = TOOL_ELAPSED_MAX_TRACKING_HOURS * 60 * 60 * 1000;
+// A single wedged completion (stalled transport, missing event) must never
+// hold the session queue hostage: everything behind it would stay silent.
+const DEFAULT_SESSION_COMPLETION_TASK_TIMEOUT_MS = 180_000;
+let sessionCompletionTaskTimeoutMs = DEFAULT_SESSION_COMPLETION_TASK_TIMEOUT_MS;
+
+export function setSessionCompletionTaskTimeoutForTests(timeoutMs: number): void {
+  sessionCompletionTaskTimeoutMs = timeoutMs > 0 ? timeoutMs : DEFAULT_SESSION_COMPLETION_TASK_TIMEOUT_MS;
+}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.join(__dirname, "..", "..", ".tmp");
@@ -129,7 +140,7 @@ type EventStreamItem = {
 
 export interface BotEventSubscriptionService {
   ensureEventSubscription(directory: string): Promise<void>;
-  setTelegramContext(bot: Bot<Context> | null, chatId: number | null): void;
+  setTelegramContext(bot: Bot<Context> | null, chatId: number | null, sessionId?: string): void;
   clearRuntimeState(reason: string): void;
   /**
    * Purges every per-session runtime buffer owned by the service after a
@@ -142,13 +153,16 @@ export interface BotEventSubscriptionService {
 }
 
 export function createEventSubscriptionService(): BotEventSubscriptionService {
-  return new EventSubscriptionService();
+  const service = new EventSubscriptionService();
+  setStallRecoveryHandler((sessionId, reason) => service.recoverTerminalState(sessionId, reason));
+  return service;
 }
 
 class EventSubscriptionService implements BotEventSubscriptionService {
   private botInstance: Bot<Context> | null = null;
   private chatIdInstance: number | null = null;
   private readonly sessionChatIds = new Map<string, number>();
+  private readonly sessionTopicTargets = new Map<string, { chatId: number; threadId: number }>();
   private nextDraftId = 1;
   private readonly thinkingSections = new Map<string, ThinkingSection[]>();
   private readonly completionGenerations = new Map<string, object>();
@@ -283,7 +297,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         if (!chatId) throw new Error("No chat ID for session");
 
         try {
-          await this.botInstance.api.editMessageText(chatId, messageId, text);
+          await this.sessionScopedApi(sessionId).editMessageText(chatId, messageId, text);
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -329,7 +343,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         if (!chatId) throw new Error("No chat ID for session");
 
         try {
-          await this.botInstance.api.editMessageText(chatId, messageId, text);
+          await this.sessionScopedApi(sessionId).editMessageText(chatId, messageId, text);
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -352,7 +366,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        await this.botInstance.api.deleteMessage(chatId, messageId).catch((error) => {
+        await this.sessionScopedApi(sessionId).deleteMessage(chatId, messageId).catch((error) => {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
           if (
@@ -372,9 +386,47 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.botInstance = bot;
     this.chatIdInstance = chatId;
     if (sessionId && chatId) this.sessionChatIds.set(sessionId, chatId);
+    setStallNoticeSender(async (info) => {
+      try {
+        const chatId = this.getChatIdForSession(info.sessionId) ?? this.chatIdInstance;
+        if (!this.botInstance || !chatId) return;
+        await this.sessionScopedApi(info.sessionId).sendMessage(chatId, t("bot.session_stalled"));
+      } catch (error) {
+        logger.warn(`[Bot] Failed to send stall notice: session=${info.sessionId}`, error);
+      }
+    });
+  }
+
+  private async hydrateTopicRoutes(directory: string): Promise<void> {
+    if (!this.botInstance) return;
+    const bindings = await findTelegramTopicBindingsByDirectory(directory);
+    const raw = getUnscopedTelegramApi(this.botInstance.api);
+    for (const binding of bindings) {
+      this.sessionTopicTargets.set(binding.sessionId, {
+        chatId: binding.chatId,
+        threadId: binding.threadId,
+      });
+      this.sessionChatIds.set(binding.sessionId, binding.chatId);
+      keyboardManager.bindTopic(raw, binding.chatId, binding.threadId, binding.sessionId);
+    }
+  }
+
+  private getTopicTargetForSession(sessionId: string): { chatId: number; threadId: number } | undefined {
+    return this.sessionTopicTargets.get(sessionId) ?? keyboardManager.getTopicSendTarget(sessionId);
+  }
+
+  private getCurrentTopicTarget(): { chatId: number; threadId: number } | undefined {
+    const runtimeSessionId = getTopicRuntimeContext()?.sessionId;
+    if (runtimeSessionId) return this.getTopicTargetForSession(runtimeSessionId);
+    const currentSession = getCurrentSession();
+    return currentSession ? this.getTopicTargetForSession(currentSession.id) : undefined;
   }
 
   private getChatIdForSession(sessionId: string): number | null {
+    const target = this.getTopicTargetForSession(sessionId) ?? this.getCurrentTopicTarget();
+    if (target) return target.chatId;
+    const runtimeContext = getTopicRuntimeContext();
+    if (runtimeContext && runtimeContext.threadId > 1) return null;
     return this.sessionChatIds.get(sessionId) ?? this.chatIdInstance;
   }
 
@@ -383,18 +435,30 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     return keyboardManager.getKeyboard(sessionId);
   }
 
-  /**
-   * Async session output must land in the session's own AI Topic thread. The
-   * chat-global bot context can be clobbered by General/All inbound traffic
-   * (no session id and an unbound api), so derive the authoritative Topic
-   * delivery target from the keyboard manager instead of the last inbound frame.
-   */
   private sessionScopedApi(sessionId: string): Api {
     const botApi = this.botInstance?.api;
     if (!botApi) throw new Error("Bot context missing for session-scoped send");
-    const target = keyboardManager.getTopicSendTarget(sessionId);
+    const target = this.getTopicTargetForSession(sessionId) ?? this.getCurrentTopicTarget();
+    const runtimeContext = getTopicRuntimeContext();
+    if (!target && (this.sessionTopicTargets.has(sessionId) || (runtimeContext && runtimeContext.threadId > 1))) {
+      throw new Error(`Missing Telegram Topic delivery target for session ${sessionId}`);
+    }
     const raw = getUnscopedTelegramApi(botApi);
     return target ? createTopicAwareApi(raw, target) : raw;
+  }
+
+  private getCurrentTopicTransport(): { api: Api; chatId: number } | null {
+    if (!this.botInstance) return null;
+    const target = this.getCurrentTopicTarget();
+    const runtimeContext = getTopicRuntimeContext();
+    if (!target && runtimeContext && runtimeContext.threadId > 1) return null;
+    const chatId = target?.chatId ?? this.chatIdInstance;
+    if (!chatId) return null;
+    const raw = getUnscopedTelegramApi(this.botInstance.api);
+    return {
+      api: target ? createTopicAwareApi(raw, target) : this.botInstance.api,
+      chatId,
+    };
   }
 
   private getLiveToolPrefix(callId: string): string {
@@ -532,7 +596,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
   private async presentQuestionFlow(questions: Question[], requestID: string, sessionId: string): Promise<void> {
 
-      if (!this.botInstance || !this.chatIdInstance) {
+      const chatId = this.getChatIdForSession(sessionId);
+      if (!this.botInstance || !chatId) {
         logger.error("Bot or chat ID not available for showing questions");
         return;
       }
@@ -558,7 +623,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           `[Bot] Replacing active poll with a new one: previousRequestID=${previousRequestID ?? "none"}, newRequestID=${requestID}`,
         );
         for (const messageId of previousMessageIds) {
-          await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch(() => {});
+          await this.sessionScopedApi(sessionId).deleteMessage(chatId, messageId).catch(() => {});
         }
         const directoryForReject = currentSession.directory;
         if (previousRequestID && directoryForReject) {
@@ -590,7 +655,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
       questionManager.startQuestions(questions, requestID);
-      await showCurrentQuestion(this.botInstance.api, this.chatIdInstance);
+      await showCurrentQuestion(this.sessionScopedApi(sessionId), chatId);
   }
 
   private async presentPermissionFlow(request: PermissionRequest): Promise<void> {
@@ -598,7 +663,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       interactionEventGate.mark("permission", request.sessionID, request.id);
       const generation = permissionManager.getGeneration();
 
-      if (!this.botInstance || !this.chatIdInstance) {
+      const chatId = this.getChatIdForSession(request.sessionID);
+      if (!this.botInstance || !chatId) {
         logger.error("Bot or chat ID not available for showing permission request");
         return;
       }
@@ -622,7 +688,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       logger.info(
         `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}, subagent=${isSubagent}`,
       );
-      await showPermissionRequest(this.botInstance.api, this.chatIdInstance, request, generation);
+      await showPermissionRequest(this.sessionScopedApi(request.sessionID), chatId, request, generation);
   }
 
   private clearToolElapsedState(sessionId: string | null, reason: string): void {
@@ -680,9 +746,28 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.sessionCompletionTasks.clear();
     this.completionGenerations.clear();
     this.sessionChatIds.clear();
+    this.sessionTopicTargets.clear();
     this.clearToolElapsedState(null, reason);
     assistantRunState.clearAll(reason);
   };
+
+  async recoverTerminalState(sessionId: string, reason: string): Promise<void> {
+    this.clearAssistantResponseSession(sessionId, reason);
+    this.thinkingResponseStreamer.clearSession(sessionId, reason);
+    this.toolCallStreamer.clearSession(sessionId, reason);
+    this.toolMessageBatcher.clearSession(sessionId, reason);
+    this.compactProgressStreamer.clearSession(sessionId, reason);
+    this.clearToolElapsedState(sessionId, reason);
+    for (const key of Array.from(this.thinkingSections.keys())) {
+      if (key.startsWith(`${sessionId}:`)) this.thinkingSections.delete(key);
+    }
+    this.compactProgressFinalizationTasks.delete(sessionId);
+    this.sessionCompletionTasks.delete(sessionId);
+    this.completionGenerations.delete(sessionId);
+    clearPromptResponseMode(sessionId);
+    await scheduledTaskRuntime.flushDeferredDeliveries();
+    void dispatchNextQueuedPrompt();
+  }
 
   retireSessionRuntime = (sessionId: string, reason: string): void => {
     if (!sessionId) return;
@@ -704,6 +789,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     interactionEventGate.clearSession(sessionId);
     assistantRunState.clearRun(sessionId, reason);
     this.sessionChatIds.delete(sessionId);
+    this.sessionTopicTargets.delete(sessionId);
     logger.info(`[Bot] Retired session runtime state: session=${sessionId}, reason=${reason}`);
   };
 
@@ -711,6 +797,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     stopEventListening();
     summaryAggregator.clear();
     this.clearRuntimeState(reason);
+    setStallRecoveryHandler(null);
     this.setTelegramContext(null, null);
   }
 
@@ -720,6 +807,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       return;
     }
 
+    await this.hydrateTopicRoutes(directory);
     summaryAggregator.setTypingIndicatorEnabled(true);
     backgroundSessionTracker.setDirectory(directory);
     backgroundSessionTracker.setOnNotification(this.deliverBackgroundSessionNotification);
@@ -868,6 +956,17 @@ class EventSubscriptionService implements BotEventSubscriptionService {
               });
             },
           });
+
+          if (!messageText.trim()) {
+            try {
+              await botApi.sendMessage(chatId, t("bot.empty_response"));
+            } catch (noticeError) {
+              logger.warn(
+                `[Bot] Failed to send empty-response notice: session=${sessionId}`,
+                noticeError,
+              );
+            }
+          }
         } catch (err) {
           clearPromptResponseMode(sessionId);
           this.clearThinkingStream(sessionId, messageId, "assistant_finalize_failed");
@@ -885,14 +984,15 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnExternalUserInput(async (sessionId, _messageId, messageText) => {
       void this.enqueueSessionCompletionTask(sessionId, async () => {
-        if (!this.botInstance || !this.chatIdInstance) {
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!this.botInstance || !chatId) {
           return;
         }
 
         try {
           await deliverExternalUserInputNotification({
             api: this.sessionScopedApi(sessionId),
-            chatId: this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
+            chatId,
             currentSessionId: getCurrentSession()?.id ?? null,
             sessionId,
             text: messageText,
@@ -1016,7 +1116,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      if (!this.botInstance || !this.chatIdInstance) {
+      if (!this.botInstance || !this.getChatIdForSession(toolInfo.sessionId)) {
         logger.error("Bot or chat ID not available for sending tool notification");
         return;
       }
@@ -1045,7 +1145,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSubagent(async (sessionId, subagents) => {
-      if (!this.botInstance || !this.chatIdInstance) {
+      if (!this.botInstance || !this.getChatIdForSession(sessionId)) {
         return;
       }
 
@@ -1084,8 +1184,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      if (!this.botInstance || !this.chatIdInstance) {
-        logger.error("Bot or chat ID not available for sending file");
+      if (!this.botInstance || !this.getChatIdForSession(fileInfo.sessionId)) {
+        logger.error("Bot or chat ID not available for sending tool file");
         return;
       }
 
@@ -1126,12 +1226,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       logger.info("[Bot] Question tool failed, clearing active poll and deleting messages");
 
       const messageIds = questionManager.getMessageIds();
-      for (const messageId of messageIds) {
-        if (this.chatIdInstance) {
-          await this.botInstance?.api.deleteMessage(this.chatIdInstance, messageId).catch((err) => {
+      const transport = this.getCurrentTopicTransport();
+      if (transport) {
+        await Promise.all(messageIds.map((messageId) =>
+          transport.api.deleteMessage(transport.chatId, messageId).catch((err) => {
             logger.error(`[Bot] Failed to delete question message ${messageId}:`, err);
-          });
-        }
+          }),
+        ));
       }
 
       clearAllInteractionState("question_error");
@@ -1139,21 +1240,21 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnPermission((request) => this.presentPermissionFlow(request));
 
-    summaryAggregator.setOnPermissionReplied(async (_sessionId, requestID) => {
+    summaryAggregator.setOnPermissionReplied(async (sessionId, requestID) => {
       const messageIds = permissionManager.resolveRequest(requestID);
-      interactionEventGate.release("permission", _sessionId, requestID);
+      interactionEventGate.release("permission", sessionId, requestID);
       const interaction = interactionManager.getSnapshot();
       if (!permissionManager.isActive() || !interaction || interaction.kind === "permission") {
         syncPermissionInteractionState({ resolvedRequestID: requestID });
       }
 
-      if (this.botInstance && this.chatIdInstance) {
-        const api = this.botInstance.api;
-        const chatId = this.chatIdInstance;
+      const chatId = this.getChatIdForSession(sessionId);
+      if (this.botInstance && chatId) {
+        const api = this.sessionScopedApi(sessionId);
         await Promise.all(
           messageIds.map((messageId) =>
             api.deleteMessage(chatId, messageId).catch((err) => {
-              logger.warn(`[Bot] Failed to delete resolved permission message ${messageId}:`, err);
+              logger.warn(`[Bot] Failed to delete resolved permission message: ${messageId}`, err);
             }),
           ),
         );
@@ -1172,7 +1273,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      if (!this.botInstance || !this.chatIdInstance) {
+      const chatId = this.getChatIdForSession(update.sessionId);
+      if (!this.botInstance || !chatId) {
         return;
       }
 
@@ -1237,7 +1339,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnThinkingFinished((sessionId, messageId) => {
-      if (!this.botInstance || !this.chatIdInstance) {
+      if (!this.botInstance || !this.getChatIdForSession(sessionId)) {
         return;
       }
 
@@ -1321,6 +1423,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionIdle(async (sessionId) => {
+      stopSessionStallWatchdog(sessionId);
       interactionEventGate.clearSession(sessionId);
       resetStreamThrottle(sessionId);
       await markAttachedSessionIdle(sessionId);
@@ -1329,7 +1432,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       // or fire a compact-progress timer armed before the run stopped.
       this.clearToolElapsedState(sessionId, "session_idle");
       this.compactProgressStreamer.clearSession(sessionId, "session_idle");
-      await this.sessionCompletionTasks.get(sessionId)?.catch(() => undefined);
+      try {
+        await withTimeout(
+          this.sessionCompletionTasks.get(sessionId)?.catch(() => undefined) ?? Promise.resolve(),
+          sessionCompletionTaskTimeoutMs,
+          `drain session completion tasks for ${sessionId}`,
+        );
+      } catch (error) {
+        logger.error(
+          `[Bot] Timed out waiting for session completion tasks on idle: session=${sessionId}`,
+          error,
+        );
+      }
 
       const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
       clearPromptResponseMode(sessionId);
@@ -1346,7 +1460,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      if (!this.botInstance || !this.chatIdInstance) {
+      if (!this.botInstance || !this.getChatIdForSession(sessionId)) {
         foregroundSessionState.markIdle(sessionId);
         return;
       }
@@ -1355,6 +1469,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       if (!currentSession || currentSession.id !== sessionId) {
         foregroundSessionState.markIdle(sessionId);
         await scheduledTaskRuntime.flushDeferredDeliveries();
+        return;
+      }
+
+      const chatId = this.getChatIdForSession(sessionId);
+      if (!chatId) {
+        foregroundSessionState.markIdle(sessionId);
         return;
       }
 
@@ -1372,7 +1492,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           if (agent && providerID && modelID) {
             const keyboard = this.getCurrentReplyKeyboard(sessionId);
             await this.sessionScopedApi(sessionId).sendMessage(
-              this.getChatIdForSession(sessionId) ?? this.chatIdInstance,
+              chatId,
               formatAssistantRunFooter({
                 agent,
                 providerID,
@@ -1390,7 +1510,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       } finally {
         foregroundSessionState.markIdle(sessionId);
         try {
-          await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
+          await keyboardManager.sendKeyboardUpdate(chatId, true, sessionId);
         } catch (error) {
           logger.warn(`[Bot] Failed to restore keyboard after session idle: session=${sessionId}`, error);
         }
@@ -1431,7 +1551,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       clearPausedSession(sessionId);
-      if (!this.botInstance || !this.chatIdInstance) {
+      const chatId = this.getChatIdForSession(sessionId);
+      if (!this.botInstance || !chatId) {
         clearPromptResponseMode(sessionId);
         this.clearAssistantResponseSession(sessionId, "session_error_no_bot_context");
         this.toolCallStreamer.clearSession(sessionId, "session_error_no_bot_context");
@@ -1469,7 +1590,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         : normalizedMessage;
 
       await this.sessionScopedApi(sessionId)
-        .sendMessage(this.getChatIdForSession(sessionId) ?? this.chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
+        .sendMessage(chatId, t("bot.session_error", { message: truncatedMessage }))
         .catch((err) => logger.error("[Bot] Failed to send session.error message:", err));
 
       foregroundSessionState.markIdle(sessionId);
@@ -1484,7 +1605,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "idle" });
       }
       try {
-        await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
+        await keyboardManager.sendKeyboardUpdate(chatId, true, sessionId);
       } catch (error) {
         logger.warn(`[Bot] Failed to restore keyboard after session error: session=${sessionId}`, error);
       }
@@ -1494,7 +1615,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionRetry(async ({ sessionId, message }) => {
-      if (!this.botInstance || !this.chatIdInstance) {
+      if (!this.botInstance || !this.getChatIdForSession(sessionId)) {
         return;
       }
 
@@ -1561,42 +1682,55 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     void this.restorePendingInteractionsOnce();
     logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
-    subscribeToEvents(directory, (event) => {
-      if ((event as EventStreamItem).type === "server.heartbeat") {
-        void reconcileBusyState(directory);
-      }
-
-      const attached = attachManager.getSnapshot();
-      const eventSessionId = this.getEventSessionId(event as EventStreamItem);
-      if (
-        attached &&
-        eventSessionId === attached.sessionId &&
-        this.shouldMarkAttachedBusyFromEvent(event as EventStreamItem)
-      ) {
-        void markAttachedSessionBusy(attached.sessionId);
-      }
-
-      if (event.type === "session.created" || event.type === "session.updated") {
-        const info = (
-          event.properties as { info?: { directory?: string; time?: { updated?: number } } }
-        ).info;
-
-        if (info?.directory) {
-          safeBackgroundTask({
-            taskName: `session.cache.${event.type}`,
-            task: () => ingestSessionInfoForCache(info),
-          });
+    try {
+      await subscribeToEvents(directory, (event) => {
+        if ((event as EventStreamItem).type === "server.heartbeat") {
+          void reconcileBusyState(directory);
         }
-      }
 
-      if (config.bot.trackBackgroundSessions) {
-        backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
-      }
+        const attached = attachManager.getSnapshot();
+        const eventSessionId = this.getEventSessionId(event as EventStreamItem);
+        if (
+          attached &&
+          eventSessionId === attached.sessionId &&
+          this.shouldMarkAttachedBusyFromEvent(event as EventStreamItem)
+        ) {
+          void markAttachedSessionBusy(attached.sessionId);
+        }
 
-      summaryAggregator.processEvent(event);
-    }).catch((err) => {
-      logger.error("Failed to subscribe to events:", err);
-    });
+        if (event.type === "session.created" || event.type === "session.updated") {
+          const info = (
+            event.properties as { info?: { directory?: string; time?: { updated?: number } } }
+          ).info;
+
+          if (info?.directory) {
+            safeBackgroundTask({
+              taskName: `session.cache.${event.type}`,
+              task: () => ingestSessionInfoForCache(info),
+            });
+          }
+        }
+
+        if (config.bot.trackBackgroundSessions) {
+          backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
+        }
+
+        summaryAggregator.processEvent(event);
+      });
+    } catch (error) {
+      logger.error("Failed to subscribe to events:", error);
+      const context = getTopicRuntimeContext();
+      const chatId = context?.chatId ?? this.chatIdInstance;
+      if (this.botInstance && chatId) {
+        const api = context && context.threadId > 1
+          ? createTopicAwareApi(getUnscopedTelegramApi(this.botInstance.api), context)
+          : this.botInstance.api;
+        await api.sendMessage(chatId, t("bot.prompt_send_error")).catch((noticeError) => {
+          logger.warn("[Bot] Failed to send event-subscription failure notice", noticeError);
+        });
+      }
+      throw error;
+    }
   };
 
   private getAssistantResponseStreamKey(sessionId: string, messageId: string): string {
@@ -1683,40 +1817,43 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       return new ResponseStreamer({
         throttleMs: getSessionStreamThrottleMs,
         sendPart: async (part) => {
-          if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+          const transport = this.getCurrentTopicTransport();
+          if (!transport || transport.chatId <= 0) {
             throw new Error("Bot context missing for draft send");
           }
 
           const draftId = this.getNextDraftId();
           const result = await sendDraftBotPart({
-            api: this.botInstance.api,
-            chatId: this.chatIdInstance,
+            api: transport.api,
+            chatId: transport.chatId,
             draftId,
             part,
           });
           return { messageId: draftId, deliveredSignature: result.deliveredSignature };
         },
         editPart: async (messageId, part) => {
-          if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+          const transport = this.getCurrentTopicTransport();
+          if (!transport || transport.chatId <= 0) {
             throw new Error("Bot context missing for draft edit");
           }
 
           return sendDraftBotPart({
-            api: this.botInstance.api,
-            chatId: this.chatIdInstance,
+            api: transport.api,
+            chatId: transport.chatId,
             draftId: messageId,
             part,
           });
         },
         deleteText: async () => {},
         completePart: async (part, options) => {
-          if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+          const transport = this.getCurrentTopicTransport();
+          if (!transport || transport.chatId <= 0) {
             throw new Error("Bot context missing for draft complete");
           }
 
           return completeDraftPart({
-            api: this.botInstance.api,
-            chatId: this.chatIdInstance,
+            api: transport.api,
+            chatId: transport.chatId,
             part,
             options,
           });
@@ -1727,27 +1864,29 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     return new ResponseStreamer({
       throttleMs: getSessionStreamThrottleMs,
       sendPart: async (part, options) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        const transport = this.getCurrentTopicTransport();
+        if (!transport || transport.chatId <= 0) {
           throw new Error("Bot context missing for streamed send");
         }
 
         return sendRenderedBotPart({
-          api: this.botInstance.api,
-          chatId: this.chatIdInstance,
+          api: transport.api,
+          chatId: transport.chatId,
           part,
           options,
           allowPlainFallback: false,
         });
       },
       editPart: async (messageId, part, options) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        const transport = this.getCurrentTopicTransport();
+        if (!transport || transport.chatId <= 0) {
           throw new Error("Bot context missing for streamed edit");
         }
 
         try {
           return await editRenderedBotPart({
-            api: this.botInstance.api,
-            chatId: this.chatIdInstance,
+            api: transport.api,
+            chatId: transport.chatId,
             messageId,
             part,
             options,
@@ -1766,11 +1905,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         }
       },
       deleteText: async (messageId) => {
-        if (!this.botInstance || !this.chatIdInstance || this.chatIdInstance <= 0) {
+        const transport = this.getCurrentTopicTransport();
+        if (!transport || transport.chatId <= 0) {
           throw new Error("Bot context missing for streamed delete");
         }
 
-        await this.botInstance.api.deleteMessage(this.chatIdInstance, messageId).catch((error) => {
+        await transport.api.deleteMessage(transport.chatId, messageId).catch((error) => {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
           if (
@@ -1849,14 +1989,15 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       return;
     }
 
-    if (!this.botInstance || !this.chatIdInstance) {
+    const transport = this.getCurrentTopicTransport();
+    if (!transport) {
       return;
     }
 
     for (const part of finalPayload.parts) {
       await sendRenderedBotPart({
-        api: this.botInstance.api,
-        chatId: this.chatIdInstance,
+        api: transport.api,
+        chatId: transport.chatId,
         part,
         options: finalPayload.sendOptions as Parameters<typeof sendBotText>[0]["options"],
       });
@@ -1870,7 +2011,19 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     const nextTask = previousTask
       .catch(() => undefined)
       .then(() => {
-        if (this.completionGenerations.get(sessionId) === generation) return task();
+        if (this.completionGenerations.get(sessionId) === generation) {
+          return withTimeout(
+            task(),
+            sessionCompletionTaskTimeoutMs,
+            `session completion task for ${sessionId}`,
+          ).catch((error) => {
+            logger.error(
+              `[Bot] Session completion task timed out and was skipped so the queue can continue: session=${sessionId}`,
+              error,
+            );
+          });
+        }
+        return undefined;
       })
       .finally(() => {
         if (this.sessionCompletionTasks.get(sessionId) === nextTask) {
@@ -1952,12 +2105,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private deliverBackgroundSessionNotification = async (
     notification: BackgroundSessionNotification,
   ): Promise<void> => {
-    if (!this.botInstance || !this.chatIdInstance) {
+    const chatId = this.getChatIdForSession(notification.sessionId);
+    if (!this.botInstance || !chatId) {
       return;
     }
 
-    await this.botInstance.api.sendMessage(
-      this.chatIdInstance,
+    await this.sessionScopedApi(notification.sessionId).sendMessage(
+      chatId,
       this.formatBackgroundSessionNotification(notification),
       {
         reply_markup: buildBackgroundSessionOpenKeyboard(notification.sessionId, notification.kind),

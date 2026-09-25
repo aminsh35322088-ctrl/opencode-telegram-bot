@@ -71,6 +71,10 @@ export const ko: I18nDictionary = {
     "⚠️ 활성 세션이 선택한 프로젝트와 일치하지 않아 초기화되었습니다. /sessions에서 세션을 선택하거나 /new로 새 세션을 만들어 주세요.",
   "bot.prompt_send_error": "OpenCode에 요청을 보내지 못했습니다.",
   "bot.empty_prompt": "⚠️ 보낼 내용이 없습니다: 첨부는 처리된 뒤 메시지가 비어 있습니다.",
+  "bot.empty_response":
+    "⚠️ 모델이 텍스트 없이 종료되었습니다. 요청을 바꿔 말씀하시거나 /abort 후 다시 시도하세요.",
+  "bot.session_stalled":
+    "⏸️ 모델이 더 이상 진행되지 않아 실행이 중단되었습니다. 응답이 생성되지 않았습니다. 다시 시도해 주세요.",
   "bot.session_error": "🔴 OpenCode 오류가 발생했습니다: {message}",
   "bot.session_retry":
     "🔁 {message}\n\n재시도할 때마다 동일한 오류가 반복됩니다. /abort로 중단하세요.",

@@ -23,6 +23,7 @@ export interface StreamingMessagePayload {
 export interface StreamCompleteResult {
   streamed: boolean;
   telegramMessageIds: number[];
+  cancelled?: boolean;
 }
 
 interface ResponseStreamerCompleteOptions {
@@ -66,6 +67,8 @@ interface StreamState {
   plainOnly: boolean;
   fatalErrorMessage: string | null;
   fatalErrorLogged: boolean;
+  cancellation: Promise<void>;
+  resolveCancellation: () => void;
 }
 
 function buildStateKey(sessionId: string, messageId: string): string {
@@ -154,6 +157,7 @@ function getRetryAfterMs(error: unknown): number | null {
 }
 
 const MAX_STREAM_SYNC_RATE_LIMIT_RETRIES = 3;
+const MAX_STREAM_SYNC_RATE_LIMIT_DELAY_MS = 30_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -238,7 +242,12 @@ export class ResponseStreamer {
 
     this.clearTimer(state);
 
-    await state.task.catch(() => false);
+    await Promise.race([state.task.catch(() => false), state.cancellation]);
+
+    if (state.cancelled) {
+      this.states.delete(state.key);
+      return { ...notStreamed, cancelled: true };
+    }
 
     if (state.isBroken) {
       await this.cleanupBrokenStream(state, "complete_broken_stream");
@@ -279,8 +288,20 @@ export class ResponseStreamer {
             ? enableNotificationForOptions(completionPayload.sendOptions)
             : completionPayload.sendOptions;
           notifyNextCompletePart = false;
-          const result = await this.completePart(part, completeOptions);
-          realMessageIds.push(result.messageId);
+           const result = await this.completePart(part, completeOptions);
+           if (state.cancelled) {
+             if (result.rollback) {
+               await result.rollback().catch((error) => {
+                 logger.warn(
+                   `[ResponseStreamer] Failed to roll back cancelled final message: session=${sessionId}, message=${messageId}, telegramMessageId=${result.messageId}`,
+                   error,
+                 );
+               });
+             }
+             return { ...notStreamed, cancelled: true };
+           }
+           realMessageIds.push(result.messageId);
+
           if (result.rollback) {
             completionRollbacks.push(result.rollback);
           }
@@ -383,6 +404,10 @@ export class ResponseStreamer {
       return existing;
     }
 
+    let resolveCancellation!: () => void;
+    const cancellation = new Promise<void>((resolve) => {
+      resolveCancellation = resolve;
+    });
     const state: StreamState = {
       key,
       sessionId,
@@ -397,6 +422,8 @@ export class ResponseStreamer {
       plainOnly: false,
       fatalErrorMessage: null,
       fatalErrorLogged: false,
+      cancellation,
+      resolveCancellation,
     };
 
     this.states.set(key, state);
@@ -442,7 +469,9 @@ export class ResponseStreamer {
   }
 
   private cancelState(state: StreamState): void {
+    if (state.cancelled) return;
     state.cancelled = true;
+    state.resolveCancellation();
     this.clearTimer(state);
   }
 
@@ -504,7 +533,10 @@ export class ResponseStreamer {
             return false;
           }
 
-          const delayMs = Math.max(this.resolveThrottleMs(state.sessionId), retryAfterMs);
+          const delayMs = Math.max(
+            this.resolveThrottleMs(state.sessionId),
+            Math.min(retryAfterMs, MAX_STREAM_SYNC_RATE_LIMIT_DELAY_MS),
+          );
           logger.warn(
             `[ResponseStreamer] Stream sync rate-limited, retrying in ${delayMs}ms: session=${state.sessionId}, message=${state.messageId}, reason=${reason}`,
             error,
@@ -590,6 +622,7 @@ export class ResponseStreamer {
     targetSignatures: string[],
   ): Promise<void> {
     for (let index = 0; index < payload.parts.length; index++) {
+      if (state.cancelled) return;
       const part = payload.parts[index];
       if (!part) {
         continue;
@@ -603,6 +636,7 @@ export class ResponseStreamer {
         }
 
         const result = await this.editPart(currentMessageId, part, payload.editOptions);
+        if (state.cancelled) return;
         state.lastSentSignatures[index] = result.deliveredSignature;
         if (result.degradedToPlain) {
           this.markStreamPlainOnly(state, null, "transport_degraded_to_plain");
@@ -611,6 +645,15 @@ export class ResponseStreamer {
       }
 
       const result = await this.sendPart(part, payload.sendOptions);
+      if (state.cancelled) {
+        await this.deleteText(result.messageId).catch((error) => {
+          logger.warn(
+            `[ResponseStreamer] Failed to delete late cancelled message: session=${state.sessionId}, message=${state.messageId}, telegramMessageId=${result.messageId}`,
+            error,
+          );
+        });
+        return;
+      }
       state.telegramMessageIds[index] = result.messageId;
       state.lastSentSignatures[index] = result.deliveredSignature;
       if (result.degradedToPlain) {
@@ -619,9 +662,11 @@ export class ResponseStreamer {
     }
 
     for (let index = state.telegramMessageIds.length - 1; index >= payload.parts.length; index--) {
+      if (state.cancelled) return;
       const messageId = state.telegramMessageIds[index];
       if (messageId) {
         await this.deleteText(messageId);
+        if (state.cancelled) return;
       }
       state.telegramMessageIds.pop();
       state.lastSentSignatures.pop();

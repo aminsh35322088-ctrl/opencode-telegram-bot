@@ -37,6 +37,22 @@ describe("utils/telegram-rate-limit-retry", () => {
     expect(operation).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds a Telegram retry loop by an elapsed deadline", async () => {
+    vi.useFakeTimers();
+    const operation = vi.fn().mockRejectedValue(new Error("429: retry after 99999"));
+
+    const promise = withTelegramRateLimitRetry(operation, {
+      maxRetries: 5,
+      maxRetryAfterMs: 30_000,
+      maxElapsedMs: 30_000,
+    }).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(promise).resolves.toMatchObject({ message: expect.stringContaining("429") });
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry non-retryable errors", async () => {
     const operation = vi.fn().mockRejectedValueOnce(new Error("400: Bad Request"));
 

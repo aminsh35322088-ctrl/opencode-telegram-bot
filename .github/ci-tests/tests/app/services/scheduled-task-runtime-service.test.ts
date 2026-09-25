@@ -181,6 +181,37 @@ describe("app/services/scheduled-task-runtime-service", () => {
     mocked.cleanupIgnoresMock.mockResolvedValue(0);
   });
 
+  it("does not execute or deliver a task without a bound Topic", async () => {
+    ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
+      await import("../../../src/app/services/scheduled-task-runtime-service.js"));
+    const runtime = new ScheduledTaskRuntimeClass();
+    const deliverySender = await createDeliverySender();
+    const deliverySendSpy = vi.spyOn(deliverySender, "send");
+    mocked.tasks = [createTask({
+      id: "task-without-binding",
+      runAt: "2099-03-16T10:00:00.000Z",
+      nextRunAt: "2099-03-16T10:00:00.000Z",
+    })];
+    mocked.executeScheduledTaskMock.mockResolvedValue({
+      taskId: "task-without-binding",
+      status: "success",
+      startedAt: "2099-03-16T10:00:00.000Z",
+      finishedAt: "2099-03-16T10:01:00.000Z",
+      resultText: "unexpected result",
+      errorMessage: null,
+    });
+
+    try {
+      await runtime.initialize({ api: {} } as Bot<Context>, deliverySender);
+      await (runtime as unknown as { executeTask(taskId: string): Promise<void> }).executeTask("task-without-binding");
+
+      expect(mocked.executeScheduledTaskMock).not.toHaveBeenCalled();
+      expect(deliverySendSpy).not.toHaveBeenCalled();
+    } finally {
+      runtime.__resetForTests();
+    }
+  });
+
   it("queues scheduled task result while foreground session is busy and flushes later", async () => {
     ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
       await import("../../../src/app/services/scheduled-task-runtime-service.js"));

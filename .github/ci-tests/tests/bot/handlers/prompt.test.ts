@@ -21,6 +21,7 @@ const mocked = vi.hoisted(() => ({
   safeBackgroundTaskMock: vi.fn(),
   setSessionSummaryMock: vi.fn(),
   setBotAndChatIdMock: vi.fn(),
+  resolveCatalogModelMock: vi.fn(),
   attachToSessionMock: vi.fn(),
   recoverSessionAfterErrorMock: vi.fn(),
 }));
@@ -61,6 +62,7 @@ vi.mock("../../../src/app/services/model-selection-service.js", () => ({
     modelID: "gpt-5",
     variant: "default",
   })),
+  resolveCatalogModel: mocked.resolveCatalogModelMock,
 }));
 
 vi.mock("../../../src/bot/pinned/pinned-message-manager.js", () => ({
@@ -202,6 +204,7 @@ describe("bot/handlers/prompt", () => {
     mocked.safeBackgroundTaskMock.mockReset();
     mocked.setSessionSummaryMock.mockReset();
     mocked.setBotAndChatIdMock.mockReset();
+    mocked.resolveCatalogModelMock.mockReset();
     mocked.attachToSessionMock.mockReset();
     mocked.recoverSessionAfterErrorMock.mockReset();
     mocked.recoverSessionAfterErrorMock.mockResolvedValue({ abortAttempted: true, abortAccepted: true, removedMessageIds: [], contaminationRemaining: false });
@@ -479,5 +482,30 @@ describe("bot/handlers/prompt", () => {
       expect(mocked.resolvePendingAttachmentMock).toHaveBeenCalled();
       expect(mocked.interactionClearMock).not.toHaveBeenCalledWith("attachment_consumed");
     });
+  });
+
+  it("accepts a model-refresh retry that returns no response body", async () => {
+    mocked.resolveCatalogModelMock.mockResolvedValue({ providerID: "openai", modelID: "gpt-5" });
+    mocked.sessionPromptAsyncMock
+      .mockResolvedValueOnce({ error: { name: "ProviderModelNotFoundError", message: "model not found" } })
+      .mockResolvedValueOnce(undefined);
+
+    const handled = await processUserPrompt(createContext(), "Review README", createDeps());
+    expect(handled).toBe(true);
+
+    await expect(getScheduledBackgroundTask().task()).resolves.toBeUndefined();
+    expect(mocked.recoverSessionAfterErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("does not abort a prompt when the server confirms it accepted the request without a response body", async () => {
+    mocked.sessionPromptAsyncMock.mockResolvedValueOnce(undefined);
+
+    const handled = await processUserPrompt(createContext(), "Review README", createDeps());
+    expect(handled).toBe(true);
+
+    const backgroundTask = getScheduledBackgroundTask();
+    await expect(backgroundTask.task()).resolves.toBeUndefined();
+    await backgroundTask.onSuccess?.(undefined as never);
+    expect(mocked.recoverSessionAfterErrorMock).not.toHaveBeenCalled();
   });
 });

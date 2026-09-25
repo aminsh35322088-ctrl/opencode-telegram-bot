@@ -4,6 +4,8 @@ import type { TelegramTopicBinding } from "../../../src/app/services/telegram-to
 
 function binding(chatId: number, title: string, threadId: number): TelegramTopicBinding {
   return {
+    bindingId: `${chatId}:${threadId}`,
+    bindingGeneration: 1,
     chatId,
     threadId,
     sessionId: `session-${chatId}-${threadId}`,

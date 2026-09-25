@@ -77,12 +77,20 @@ function flushImmediate(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+async function waitForTopicTelemetry(eventName: string): Promise<void> {
+  await vi.waitFor(() => {
+    const calls = [...logger.info.mock.calls, ...logger.debug.mock.calls];
+    expect(calls.some(([line]) => String(line).includes(`event=${eventName}`))).toBe(true);
+  });
+}
+
 describe("opencode/events", () => {
   beforeEach(() => {
     subscribeMock.mockReset();
     bindings.byDirectory.mockReset().mockResolvedValue(null);
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectoryList.mockReset().mockResolvedValue([]);
+    vi.clearAllMocks();
     __setSseIdleTimeoutForTests(30_000);
   });
   afterEach(() => {
@@ -91,31 +99,57 @@ describe("opencode/events", () => {
     vi.useRealTimers();
   });
 
-  it("subscribes to the directory stream and forwards events to callback", async () => {
-    const eventA = { type: "session.status", properties: { sessionID: "s1" } } as Event;
-    const eventB = { type: "session.idle", properties: { sessionID: "s1" } } as Event;
-    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-      stream: createStream([eventA, eventB], params?.signal ?? new AbortController().signal),
+  it("does not deliver model events to a General wildcard subscriber", async () => {
+    const event = {
+      type: "message.updated",
+      properties: { sessionID: "session-a", directory: "/workspace" },
+    } as unknown as Event;
+    subscribeMock.mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
+      stream: createStream([event], params?.signal ?? new AbortController().signal),
     }));
+    bindings.bySession.mockResolvedValue(null);
+    bindings.byDirectoryList.mockResolvedValue([
+      { chatId: 100, threadId: 11, sessionId: "session-a", directory: "/workspace" },
+    ]);
 
     const callback = vi.fn();
-    const subscription = subscribeToEvents("D:/repo", callback);
+    const subscription = subscribeToEvents("/workspace", callback);
 
-    await vi.waitFor(() => {
-      expect(callback).toHaveBeenCalledTimes(2);
-    });
-    await flushImmediate();
-
-    stopEventListening();
     await subscription;
+    await waitForTopicTelemetry("event_seen");
 
-    expect(subscribeMock).toHaveBeenCalledWith(
-      { directory: "D:/repo" },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(callback).toHaveBeenCalledTimes(2);
-    expect(defined(callback.mock.calls[0]?.[0])).toEqual(eventA);
-    expect(defined(callback.mock.calls[1]?.[0])).toEqual(eventB);
+    expect(callback).not.toHaveBeenCalled();
+    stopEventListening();
+  });
+
+  it("does not resolve before the first SSE read succeeds", async () => {
+    vi.useFakeTimers();
+    __setSseIdleTimeoutForTests(1000);
+    let releaseFirstRead!: () => void;
+    const firstReadGate = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let firstReadStarted = false;
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
+      stream: (async function* () {
+        firstReadStarted = true;
+        await firstReadGate;
+        yield { type: "server.heartbeat", properties: {} } as Event;
+        while (!params.signal?.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
+      })(),
+    }));
+
+    let settled = false;
+    const subscription = subscribeToEvents("D:/repo", vi.fn()).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(firstReadStarted).toBe(true);
+    expect(settled).toBe(false);
+    releaseFirstRead();
+    await subscription;
+    stopEventListening();
   });
 
   it("logs callback errors without failing event delivery", async () => {
@@ -172,7 +206,7 @@ describe("opencode/events", () => {
   });
 
   it("resolves the topic session from the directory binding when no sessionId is given", async () => {
-    bindings.byDirectory.mockResolvedValue({ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" });
+    bindings.byDirectoryList.mockResolvedValue([{ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" }]);
     const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "session-b", directory: "D:/repo" } } as unknown as Event;
     subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
@@ -183,7 +217,7 @@ describe("opencode/events", () => {
     const subscription = subscribeToEvents("D:/repo", callback);
 
     await vi.waitFor(() => {
-      expect(bindings.byDirectory).toHaveBeenCalledWith("D:/repo");
+      expect(bindings.byDirectoryList).toHaveBeenCalledWith("D:/repo");
       expect(callback).toHaveBeenCalledWith(eventA);
     });
     await flushImmediate();
@@ -204,6 +238,7 @@ describe("opencode/events", () => {
 
     const callback = vi.fn();
     const subscription = subscribeToEvents("D:/repo", callback);
+    void subscription.catch(() => undefined);
 
     await vi.waitFor(() => {
       expect(subscribeMock).toHaveBeenCalledTimes(1);
@@ -212,23 +247,22 @@ describe("opencode/events", () => {
     stopEventListening();
     resolveEvent(event);
     await flushImmediate();
-    await subscription;
+    await expect(subscription).rejects.toThrow("Event subscription stopped before becoming ready");
 
     expect(callback).not.toHaveBeenCalled();
   });
 
   it("stopTopicEventSubscription removes only the matching session subscription", async () => {
     subscribeMock.mockImplementation(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-      stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+      stream: createStream([{ type: "server.heartbeat", properties: { sessionID: "other" } }], params?.signal ?? new AbortController().signal),
     }));
 
     const callbackA = vi.fn();
     const callbackB = vi.fn();
-    await subscribeToEvents("D:/repo", callbackA, "session-a");
-    await subscribeToEvents("D:/repo", callbackB, "session-b");
-    await vi.waitFor(() => {
-      expect(subscribeMock).toHaveBeenCalledTimes(1);
-    });
+    const firstSubscription = subscribeToEvents("D:/repo", callbackA, "session-a");
+    const secondSubscription = subscribeToEvents("D:/repo", callbackB, "session-b");
+    await Promise.all([firstSubscription, secondSubscription]);
+    expect(subscribeMock).toHaveBeenCalledTimes(1);
 
     stopTopicEventSubscription("D:/repo", "session-a");
 
@@ -241,11 +275,10 @@ describe("opencode/events", () => {
     subscribeMock
       .mockImplementationOnce(async () => ({
         stream: (async function* () {
-          // ends immediately
         })(),
       }))
       .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-        stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+        stream: createStream([{ type: "server.heartbeat", properties: {} }], params?.signal ?? new AbortController().signal),
       }));
 
     const subscription = subscribeToEvents("D:/repo", vi.fn());
@@ -270,13 +303,14 @@ describe("opencode/events", () => {
         stream: createStream([{ type: "server.heartbeat", properties: {} }], params.signal!),
       }));
     const a = vi.fn(); const b = vi.fn();
-    await subscribeToEvents("/a", a, "a");
-    await subscribeToEvents("/b", b);
+    const firstSubscription = subscribeToEvents("/a", a, "a");
+    const secondSubscription = subscribeToEvents("/b", b);
     await vi.advanceTimersByTimeAsync(2200);
     expect(subscribeMock.mock.calls.filter(call => call[0].directory === "/a")).toHaveLength(2);
     expect(b).toHaveBeenCalled();
     expect(subscribeMock.mock.calls[0][1].signal.aborted).toBe(true);
     stopEventListening();
+    await Promise.all([firstSubscription, secondSubscription]);
   });
 
   it("reconnects when the SSE stream becomes idle", async () => {
@@ -285,7 +319,7 @@ describe("opencode/events", () => {
     subscribeMock
       .mockImplementationOnce(async () => ({ stream: createNeverResolvingStream() }))
       .mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({
-        stream: createAbortableStream(params?.signal ?? new AbortController().signal),
+        stream: createStream([{ type: "server.heartbeat", properties: {} }], params?.signal ?? new AbortController().signal),
       }));
 
     const subscription = subscribeToEvents("D:/repo", vi.fn());
@@ -298,15 +332,19 @@ describe("opencode/events", () => {
     await subscription;
   });
 
-  it("does not throw when subscribe result has no stream", async () => {
+  it("rejects when the initial event stream cannot connect", async () => {
+    subscribeMock.mockRejectedValueOnce(new Error("SSE unavailable"));
+
+    await expect(subscribeToEvents("D:/repo", vi.fn())).rejects.toThrow("SSE unavailable");
+    stopEventListening();
+  });
+
+  it("rejects when the initial subscribe result has no stream", async () => {
     subscribeMock.mockResolvedValue({ stream: null });
     const loggerWarnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
 
-    const subscription = await subscribeToEvents("D:/repo", vi.fn());
-
-    expect(subscription).toBeUndefined();
+    await expect(subscribeToEvents("D:/repo", vi.fn())).rejects.toThrow("No stream returned");
     stopEventListening();
-    await subscription;
     loggerWarnSpy.mockRestore();
   });
 });
