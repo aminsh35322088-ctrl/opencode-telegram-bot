@@ -233,7 +233,7 @@ else
   if [ "$TAILSCALE_SOCKET_READY" = "true" ]; then
     if /usr/local/bin/tailscale --socket="$TAILSCALE_SOCKET" up \
       --auth-key="$TS_AUTHKEY" \
-      --hostname="opencode-telegram-bot-railway" \
+      --hostname="opencode-bot" \
       --accept-dns=false >/dev/null 2>&1; then
       printf '%s\n' "[railway] Tailscale ready: use 'tailscale status' and 'tailscale ssh user@host' from the Railway console"
     else
