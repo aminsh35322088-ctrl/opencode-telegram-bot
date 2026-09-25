@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	targetHost = "GitHub-Exit"
+	targetHost = "100.81.141.68"
 	targetPort = "22"
 	localAddr  = "127.0.0.1:2222"
-	stateDir   = "/tmp/opencode-tsnet"
+	stateDir   = "/data/tsnet"
 	hostname   = "opencode-telegram-bot-railway"
 )
 
@@ -66,14 +66,14 @@ func main() {
 		Dir:       stateDir,
 		Hostname:  hostname,
 		AuthKey:   authKey,
-		Ephemeral: true,
+		Ephemeral: false,
 	}
 	if err := srv.Start(); err != nil {
 		log.Fatalf("[tsnet] start failed: %v", err)
 	}
 	defer srv.Close()
 
-	log.Printf("[tsnet] node started hostname=%s ephemeral=true", hostname)
+	log.Printf("[tsnet] node started hostname=%s ephemeral=false", hostname)
 
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	probeConn, err := srv.Dial(probeCtx, "tcp", targetAddr)
