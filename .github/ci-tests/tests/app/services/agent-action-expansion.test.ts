@@ -11,7 +11,7 @@ const REQUIRED = [
   "bot.skills.list", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "bot.skills.import", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
-  "ssh.tailnet.status", "ssh.tailnet.ping", "ssh.profiles.list", "ssh.profiles.get", "ssh.profiles.create", "ssh.profiles.update", "ssh.profiles.delete", "ssh.credentials.status", "ssh.check", "ssh.debug", "ssh.exec", "ssh.upload", "ssh.download",
+  "tailscale.status", "tailscale.devices", "tailscale.ping", "ssh.check", "ssh.debug", "ssh.exec", "ssh.upload", "ssh.download",
 ] as const;
 
 describe("expanded model-facing action surface", () => {
@@ -34,7 +34,8 @@ describe("expanded model-facing action surface", () => {
     expect(getAgentAction("ssh.exec")?.risk).toBe("mutating");
     expect(getAgentAction("ssh.upload")?.risk).toBe("mutating");
     expect(getAgentAction("ssh.download")?.risk).toBe("write");
-    expect(getAgentAction("ssh.profiles.delete")?.risk).toBe("destructive");
+    expect(getAgentAction("tailscale.status")?.risk).toBe("read");
+    expect(getAgentAction("tailscale.ping")?.risk).toBe("external");
   });
 
   it("backs the registered IDs with concrete OpenCode tool implementations", async () => {
@@ -53,20 +54,27 @@ describe("expanded model-facing action surface", () => {
     expect(bot).toContain('"mcp.rename"');
     expect(bot).toContain('"mcp.delete"');
     expect(bot).not.toContain('"mcp.disable"');
-    const ssh = await fs.readFile(".opencode/tools/ssh.ts", "utf8");
-    for (const action of ["tailnet.status", "tailnet.ping", "profiles.list", "profiles.get", "profiles.create", "profiles.update", "profiles.delete", "credentials.status", "check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);
+    const [ssh, tailscale] = await Promise.all([fs.readFile(".opencode/tools/ssh.ts", "utf8"), fs.readFile(".opencode/tools/tailscale.ts", "utf8")]);
+    for (const action of ["check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);
+    for (const action of ["status", "devices", "ping"]) expect(tailscale).toContain(`"${action}"`);
   });
 
-  it("keeps SSH execution profile-scoped and permission-gated", async () => {
-    const [sshTool, opencodeConfigText] = await Promise.all([
+  it("keeps SSH Tailnet-only and permission-gated", async () => {
+    const [sshTool, tailscaleTool, opencodeConfigText] = await Promise.all([
       fs.readFile(".opencode/tools/ssh.ts", "utf8"),
+      fs.readFile(".opencode/tools/tailscale.ts", "utf8"),
       fs.readFile("opencode.json", "utf8"),
     ]);
     const opencodeConfig = JSON.parse(opencodeConfigText) as { permission?: Record<string, unknown> };
     expect(opencodeConfig.permission?.ssh).toBe("ask");
-    expect(sshTool).toContain("Model-facing SSH execution is restricted to saved allowlisted profiles");
+    expect(opencodeConfig.permission?.tailscale).toBe("allow");
+    expect(sshTool).toContain("SSH only to Tailnet peers");
+    expect(sshTool).not.toContain("transport:");
+    expect(sshTool).not.toContain("credential_id");
+    expect(sshTool).not.toContain("profile_id");
     expect(sshTool).not.toContain("password: tool.schema");
     expect(sshTool).not.toContain("private_key: tool.schema");
+    expect(tailscaleTool).toContain("tag:ssh");
   });
 
 });
