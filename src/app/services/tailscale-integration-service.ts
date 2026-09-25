@@ -1,6 +1,6 @@
 import { spawn, execFile } from "node:child_process";
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
-import { createWriteStream, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { ChildProcess } from "node:child_process";
@@ -163,17 +163,20 @@ export async function ensureTailscaleDaemon(): Promise<void> {
   await fs.mkdir(p.socketDir, { recursive: true, mode: 0o700 });
   await fs.mkdir(path.dirname(p.log), { recursive: true });
   await fs.rm(p.socket, { force: true }).catch(() => {});
-  const log = createWriteStream(p.log, { flags: "a", mode: 0o600 });
-  daemon = spawn(TAILSALED_BIN, [
-    "--tun=userspace-networking",
-    `--state=${p.state}`,
-    `--statedir=${p.stateDir}`,
-    `--socket=${p.socket}`,
-  ], { stdio: ["ignore", log, log], env: process.env });
+  const logHandle = await fs.open(p.log, "a", 0o600);
+  try {
+    daemon = spawn(TAILSALED_BIN, [
+      "--tun=userspace-networking",
+      `--state=${p.state}`,
+      `--statedir=${p.stateDir}`,
+      `--socket=${p.socket}`,
+    ], { stdio: ["ignore", logHandle.fd, logHandle.fd], env: process.env });
+  } finally {
+    await logHandle.close().catch(() => {});
+  }
   daemon.once("exit", (code, signal) => {
     logger.warn(`[Tailscale] tailscaled exited: code=${code ?? "null"} signal=${signal ?? "null"}`);
     daemon = null;
-    log.end();
   });
   if (!await waitForSocket()) {
     try { daemon.kill("SIGTERM"); } catch {}
