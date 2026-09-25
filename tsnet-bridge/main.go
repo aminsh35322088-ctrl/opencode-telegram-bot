@@ -14,7 +14,7 @@ import (
 
 const (
 	targetHost = "poco-f4-gt.tail57d500.ts.net"
-	targetPort = "22"
+	targetPort = "8022"
 	localAddr  = "127.0.0.1:2222"
 	stateDir   = "/tmp/opencode-tsnet"
 	hostname   = "opencode-telegram-bot-railway"
