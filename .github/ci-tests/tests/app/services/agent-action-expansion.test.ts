@@ -56,4 +56,17 @@ describe("expanded model-facing action surface", () => {
     const ssh = await fs.readFile(".opencode/tools/ssh.ts", "utf8");
     for (const action of ["tailnet.status", "tailnet.ping", "profiles.list", "profiles.get", "profiles.create", "profiles.update", "profiles.delete", "credentials.status", "check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);
   });
+
+  it("keeps SSH execution profile-scoped and permission-gated", async () => {
+    const [sshTool, opencodeConfigText] = await Promise.all([
+      fs.readFile(".opencode/tools/ssh.ts", "utf8"),
+      fs.readFile("opencode.json", "utf8"),
+    ]);
+    const opencodeConfig = JSON.parse(opencodeConfigText) as { permission?: Record<string, unknown> };
+    expect(opencodeConfig.permission?.ssh).toBe("ask");
+    expect(sshTool).toContain("Model-facing SSH execution is restricted to saved allowlisted profiles");
+    expect(sshTool).not.toContain("password: tool.schema");
+    expect(sshTool).not.toContain("private_key: tool.schema");
+  });
+
 });
