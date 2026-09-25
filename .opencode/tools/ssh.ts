@@ -33,28 +33,6 @@ function clean(value?: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function commonTarget(args: {
-  profile_id?: string;
-  host?: string;
-  user?: string;
-  port?: number;
-  transport?: "auto" | "tailscale" | "direct";
-  compatibility?: "auto" | "default" | "ecdh-nistp256";
-  credential_id?: string;
-  timeoutMs?: number;
-}): Record<string, unknown> {
-  return {
-    profileId: clean(args.profile_id),
-    host: clean(args.host),
-    user: clean(args.user),
-    port: args.port,
-    transport: args.transport,
-    compatibility: args.compatibility,
-    credentialId: clean(args.credential_id),
-    timeoutMs: args.timeoutMs,
-  };
-}
-
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
