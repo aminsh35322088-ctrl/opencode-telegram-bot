@@ -11,20 +11,20 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/app/services/github-integration-service.js", () => ({
-  addGithubAccount: vi.fn(),
-  getActiveGithubAccount: vi.fn().mockResolvedValue(null),
-  listGithubAccounts: vi.fn().mockResolvedValue([]),
-  removeGithubAccount: vi.fn(),
-  setActiveGithubAccount: vi.fn(),
+  addGithubAccount: async () => ({ id: "github", name: "GitHub" }),
+  getActiveGithubAccount: async () => null,
+  listGithubAccounts: async () => [],
+  removeGithubAccount: async () => false,
+  setActiveGithubAccount: async () => ({ id: "github", name: "GitHub" }),
 }));
 
 vi.mock("../../../src/app/services/railway-integration-service.js", () => ({
-  addRailwayAccount: vi.fn(),
-  getActiveRailwayAccount: vi.fn().mockResolvedValue(null),
-  listRailwayAccounts: vi.fn().mockResolvedValue([]),
-  removeRailwayAccount: vi.fn(),
-  setActiveRailwayAccount: vi.fn(),
-  validateRailwayToken: vi.fn(),
+  addRailwayAccount: async () => ({ id: "railway", name: "Railway" }),
+  getActiveRailwayAccount: async () => null,
+  listRailwayAccounts: async () => [],
+  removeRailwayAccount: async () => false,
+  setActiveRailwayAccount: async () => ({ id: "railway", name: "Railway" }),
+  validateRailwayToken: async () => ({ valid: false, reason: "invalid" }),
 }));
 
 vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
