@@ -120,7 +120,11 @@ function summary(record: SshCredential): SshCredentialSummary {
   return { id: record.id, label: record.label, mode: record.mode, createdAt: record.createdAt, updatedAt: record.updatedAt };
 }
 
-async function save(record: Omit<SshCredential, "createdAt" | "updatedAt">): Promise<SshCredentialSummary> {
+type NewSshCredential =
+  | { id: string; label: string; mode: "password"; password: string }
+  | { id: string; label: string; mode: "private-key"; privateKey: string };
+
+async function save(record: NewSshCredential): Promise<SshCredentialSummary> {
   const id = normalizeId(record.id);
   let saved!: SshCredential;
   await updateAppState((state) => {
