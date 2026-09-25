@@ -1,9 +1,4 @@
-FROM golang:1.26.6-bookworm AS tsnet-builder
-WORKDIR /src
-COPY tsnet-bridge/go.mod tsnet-bridge/go.sum ./
-RUN go mod download
-COPY tsnet-bridge/main.go ./main.go
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tsnet-bridge .
+FROM tailscale/tailscale:v1.102.4 AS tailscale
 
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder
 WORKDIR /app
@@ -26,7 +21,8 @@ RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache 
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
-COPY --from=tsnet-builder --chown=root:root /out/tsnet-bridge /usr/local/bin/tsnet-bridge
+COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 COPY --chown=node:node AGENTS.md ./AGENTS.md
 COPY --chown=node:node docs/release-notes ./docs/release-notes
 COPY --chown=node:node opencode.json ./opencode.json
