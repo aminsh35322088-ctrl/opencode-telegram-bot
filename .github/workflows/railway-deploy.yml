@@ -50,6 +50,13 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare Railway source upload
+        shell: bash
+        run: |
+          # The repository intentionally tracks this container-only absolute symlink.
+          # Railway CLI's local source indexer cannot archive it reliably.
+          rm -f node_modules
+
       - name: Deploy source to Railway
         shell: bash
         env:
