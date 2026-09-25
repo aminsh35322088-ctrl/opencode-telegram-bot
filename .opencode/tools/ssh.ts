@@ -196,7 +196,9 @@ export default tool({
       return output(await ssh.sshProfilesDelete(id));
     }
 
-    const target = commonTarget(args);
+    const profileId = clean(args.profile_id);
+    if (!profileId) throw new Error(`${action} requires profile_id. Model-facing SSH execution is restricted to saved allowlisted profiles.`);
+    const target = { profileId, timeoutMs: args.timeoutMs };
 
     if (action === "check") return output(await ssh.sshCheck(target));
     if (action === "debug") return output(await ssh.sshDebug({ ...target, depth: args.depth }));
