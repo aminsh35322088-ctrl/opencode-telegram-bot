@@ -199,5 +199,8 @@ printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamic
 chown -R node:node /data/.cache /data/.local 2>/dev/null || true
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
+
+
+printf '%s\n' "[railway] Tailscale binaries are available; Tailnet connection is managed by the bot Integrations UI"
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
 exec su -s /bin/sh node -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'

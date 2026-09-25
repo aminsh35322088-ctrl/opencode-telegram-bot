@@ -1,3 +1,5 @@
+FROM tailscale/tailscale:v1.102.4 AS tailscale
+
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
@@ -19,6 +21,8 @@ RUN mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache 
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 COPY --chown=node:node AGENTS.md ./AGENTS.md
 COPY --chown=node:node docs/release-notes ./docs/release-notes
 COPY --chown=node:node opencode.json ./opencode.json
