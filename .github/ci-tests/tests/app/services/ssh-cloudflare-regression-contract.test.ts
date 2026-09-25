@@ -5,9 +5,9 @@ import { getAgentAction } from "../../../src/app/services/agent-action-registry.
 
 /**
  * PR #121's Cloudflare Access/direct-identity implementation remains removed.
- * SSH has since returned as a new profile-scoped Tailscale/direct subsystem,
- * so this regression contract protects the old removals without forbidding
- * the new SSH surface.
+ * SSH has since returned as a Tailscale-only subsystem. This regression
+ * contract protects the old Cloudflare/direct-identity removal while requiring
+ * the new Tailnet-only action surface.
  */
 
 const LEGACY_FORBIDDEN_PATHS = [
@@ -34,15 +34,10 @@ const LEGACY_FORBIDDEN_ACTIONS = [
   "ssh.write",
 ] as const;
 
-const REQUIRED_SSH_ACTIONS = [
-  "ssh.tailnet.status",
-  "ssh.tailnet.ping",
-  "ssh.profiles.list",
-  "ssh.profiles.get",
-  "ssh.profiles.create",
-  "ssh.profiles.update",
-  "ssh.profiles.delete",
-  "ssh.credentials.status",
+const REQUIRED_REMOTE_ACTIONS = [
+  "tailscale.status",
+  "tailscale.devices",
+  "tailscale.ping",
   "ssh.check",
   "ssh.debug",
   "ssh.exec",
@@ -89,9 +84,12 @@ describe("SSH/Cloudflare regression contract", () => {
     for (const id of LEGACY_FORBIDDEN_ACTIONS) expect(getAgentAction(id), id).toBeNull();
   });
 
-  it("requires the new profile-scoped SSH action surface", () => {
-    for (const id of REQUIRED_SSH_ACTIONS) expect(getAgentAction(id), id).not.toBeNull();
+  it("requires the new Tailnet-only remote action surface", () => {
+    for (const id of REQUIRED_REMOTE_ACTIONS) expect(getAgentAction(id), id).not.toBeNull();
     expect(existsSync(repoPath(".opencode/tools/ssh.ts"))).toBe(true);
+    expect(existsSync(repoPath(".opencode/tools/tailscale.ts"))).toBe(true);
+    expect(existsSync(repoPath("src/app/services/ssh-profile-store.ts"))).toBe(false);
+    expect(existsSync(repoPath("src/app/services/ssh-credential-store.ts"))).toBe(false);
   });
 
   it("keeps the SSH tool permission-gated", () => {
@@ -99,5 +97,6 @@ describe("SSH/Cloudflare regression contract", () => {
       permission?: Record<string, unknown>;
     };
     expect(config.permission?.ssh).toBe("ask");
+    expect(config.permission?.tailscale).toBe("allow");
   });
 });
