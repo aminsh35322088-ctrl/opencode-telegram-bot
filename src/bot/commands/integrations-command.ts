@@ -104,7 +104,7 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
     keyboard.text("🔑 Connect Tailnet", "integration:tailscale:connect").row();
   } else {
     keyboard.text("🔄 Reconnect", "integration:tailscale:reconnect").text("⏸ Disconnect", "integration:tailscale:disconnect").row();
-    keyboard.text("🖥 SSH Devices", "integration:tailscale:devices").text("🔑 Change Auth Key", "integration:tailscale:connect").row();
+    keyboard.text("🖥 Tailnet Devices", "integration:tailscale:devices").text("🔑 Change Auth Key", "integration:tailscale:connect").row();
     keyboard.text("🗑 Forget Tailnet", "integration:tailscale:remove").row();
   }
   keyboard.text("← Integrations", "integration:menu").text("🏠 Home", "main:home");
@@ -136,7 +136,7 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
 async function showTailscaleDevices(ctx: Context): Promise<void> {
   const devices = await listTailscaleDevices();
   const text = [
-    "🖥 SSH Devices",
+    "🖥 Tailnet Devices",
     "",
     devices.length ? devices.map((device) => {
       const eligibility = device.sshEligible
