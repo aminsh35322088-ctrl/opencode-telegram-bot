@@ -230,7 +230,7 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "ssh.debug": { icon: "🩺", label: "Debug SSH Connection" },
   "ssh.exec": { icon: "🖥️", label: "Run SSH Command" },
   "tailscale.status": { icon: "🌐", label: "Check Tailnet Status" },
-  "tailscale.devices": { icon: "🖥️", label: "List SSH Devices" },
+  "tailscale.devices": { icon: "🖥️", label: "List Tailnet Devices" },
   "tailscale.ping": { icon: "📡", label: "Ping Tailnet Device" },
   "ssh.upload": { icon: "📤", label: "Upload over SSH" },
   "ssh.download": { icon: "📥", label: "Download over SSH" },
