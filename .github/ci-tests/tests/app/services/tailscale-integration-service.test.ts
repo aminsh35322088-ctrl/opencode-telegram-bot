@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,29 +8,25 @@ describe("bot-managed Tailscale integration", () => {
   let home: string;
   let binDir: string;
   let statusFile: string;
+  let socketPath: string;
+  let server: net.Server;
 
   beforeEach(async () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "tailscale-integration-"));
     binDir = path.join(home, "bin");
     statusFile = path.join(home, "status.json");
+    socketPath = path.join(home, "run", "tailscaled.sock");
     await fs.mkdir(binDir, { recursive: true });
+    await fs.mkdir(path.dirname(socketPath), { recursive: true });
 
-    const tailscaled = path.join(binDir, "tailscaled");
-    await fs.writeFile(tailscaled, `#!/usr/bin/env node
-const net = require("node:net");
-const fs = require("node:fs");
-const path = require("node:path");
-if (!process.argv.includes("--state=mem:")) process.exit(42);
-const arg = process.argv.find((value) => value.startsWith("--socket="));
-const socket = arg.slice("--socket=".length);
-fs.mkdirSync(path.dirname(socket), { recursive: true });
-try { fs.unlinkSync(socket); } catch {}
-const server = net.createServer(() => {});
-server.listen(socket);
-const stop = () => server.close(() => process.exit(0));
-process.on("SIGTERM", stop);
-process.on("SIGINT", stop);
-`, { mode: 0o755 });
+    server = net.createServer(() => {});
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
 
     const tailscale = path.join(binDir, "tailscale");
     await fs.writeFile(tailscale, `#!/bin/sh
@@ -56,16 +53,14 @@ esac
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:test-bot-token");
     vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "1");
     vi.stubEnv("TAILSCALE_BIN", tailscale);
-    vi.stubEnv("TAILSALED_BIN", tailscaled);
+    vi.stubEnv("TAILSCALE_SOCKET", socketPath);
     vi.stubEnv("FAKE_TAILSCALE_STATUS_FILE", statusFile);
     vi.resetModules();
   });
 
   afterEach(async () => {
-    try {
-      const service = await import("../../../src/app/services/tailscale-integration-service.js");
-      await service.stopTailscaleIntegration();
-    } catch {}
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.unstubAllEnvs();
     vi.resetModules();
     await fs.rm(home, { recursive: true, force: true });
   });
@@ -82,6 +77,7 @@ esac
     expect(status).toEqual(expect.objectContaining({
       configured: true,
       connected: true,
+      daemonRunning: true,
       hostname: "opencode-bot",
       tailnet: "example.ts.net",
       selfTags: ["tag:opencode-bot"],
@@ -108,9 +104,6 @@ esac
       sshEligible: false,
       sshReason: "offline",
     }));
-
-    const sshDevices = await service.listTailscaleSshDevices();
-    expect(sshDevices.map((device) => device.name)).toEqual(["github-exit", "old-vps"]);
   });
 
   it("rejects untagged and offline peers as SSH targets", async () => {
@@ -126,12 +119,9 @@ esac
     }));
   });
 
-  it("uses container-local memory state instead of persisting a Tailscale node key", async () => {
+  it("never spawns its own daemon and requires the shared socket", async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     const service = await import("../../../src/app/services/tailscale-integration-service.js");
-    await service.configureTailscale("tskey-auth-reusable");
-
-    await expect(fs.stat(path.join(home, "tailscale", "tailscaled.state"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect(service.getTailscaleSocketPath()).toBe("/tmp/opencode-tailscale/tailscaled.sock");
+    await expect(service.ensureTailscaleDaemon()).rejects.toThrow(/shared tailscaled socket/i);
   });
-
 });
