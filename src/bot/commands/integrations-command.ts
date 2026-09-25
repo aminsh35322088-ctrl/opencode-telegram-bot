@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
-import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, listTailscaleSshDevices, reconnectTailscale, removeTailscaleIntegration } from "../../app/services/tailscale-integration-service.js";
+import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, listTailscaleDevices, reconnectTailscale, removeTailscaleIntegration } from "../../app/services/tailscale-integration-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -97,7 +97,8 @@ export async function integrationsCommand(ctx: CommandContext<Context>): Promise
 
 async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
   const status = await getTailscaleRuntimeStatus();
-  const devices = status.configured ? await listTailscaleSshDevices().catch(() => []) : [];
+  const devices = status.configured ? await listTailscaleDevices().catch(() => []) : [];
+  const eligibleDevices = devices.filter((device) => device.sshEligible);
   const keyboard = new InlineKeyboard();
   if (!status.configured) {
     keyboard.text("🔑 Connect Tailnet", "integration:tailscale:connect").row();
@@ -116,7 +117,9 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
     ...(status.tailnet ? [`Tailnet: ${status.tailnet}`] : []),
     ...(status.ips.length ? [`IP: ${status.ips.join(", ")}`] : []),
     `Mode: Userspace`,
-    `SSH devices: ${devices.length}`,
+    `Visible peers: ${status.visiblePeers}`,
+    `SSH eligible: ${eligibleDevices.length}`,
+    ...(status.selfTags.length ? [`Bot tags: ${status.selfTags.join(" · ")}`] : ["Bot tags: none"]),
     "",
     "SSH is Tailnet-only. A remote machine must join this Tailnet and carry tag:ssh before the model can access it.",
   ].join("\n");
@@ -131,15 +134,22 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
 }
 
 async function showTailscaleDevices(ctx: Context): Promise<void> {
-  const devices = await listTailscaleSshDevices();
+  const devices = await listTailscaleDevices();
   const text = [
     "🖥 SSH Devices",
     "",
-    devices.length ? devices.map((device) =>
-      `${device.online ? "🟢" : "⚪"} ${device.name}\n   ${device.ips.join(", ") || "No IP"}\n   ${device.tags.join(" · ")}`
-    ).join("\n\n") : "No tag:ssh devices are visible.",
+    devices.length ? devices.map((device) => {
+      const eligibility = device.sshEligible
+        ? "✅ SSH eligible"
+        : device.sshReason === "offline"
+          ? "⚪ SSH blocked: device offline"
+          : "❌ SSH blocked: missing tag:ssh";
+      return `${device.online ? "🟢" : "⚪"} ${device.name}\n   ${device.ips.join(", ") || "No IP"}\n   ${device.tags.length ? device.tags.join(" · ") : "No tags"}\n   ${eligibility}`;
+    }).join("\n\n") : "No peers are visible in the bot's Tailscale netmap.",
     "",
-    "This list is discovered automatically from your Tailnet. There is no separate SSH server list in the bot.",
+    devices.length
+      ? "SSH remains restricted to online devices carrying tag:ssh."
+      : "If other devices exist in the tailnet, check the access policy: Tailscale netmap trimming only exposes peers this bot is allowed to communicate with.",
   ].join("\n");
   const keyboard = new InlineKeyboard().text("🔄 Refresh", "integration:tailscale:devices").row().text("← Tailscale", "integration:tailscale").text("🏠 Home", "main:home");
   const messageId = callbackMessageId(ctx);
