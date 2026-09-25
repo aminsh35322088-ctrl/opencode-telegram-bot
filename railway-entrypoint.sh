@@ -219,18 +219,18 @@ else
     --socket="$TAILSCALE_SOCKET" \
     >> /data/logs/tailscaled.log 2>&1 &
 
-  TAILSCALE_READY=false
+  TAILSCALE_SOCKET_READY=false
   i=0
-  while [ "$i" -lt 20 ]; do
-    if /usr/local/bin/tailscale --socket="$TAILSCALE_SOCKET" status >/dev/null 2>&1; then
-      TAILSCALE_READY=true
+  while [ "$i" -lt 40 ]; do
+    if [ -S "$TAILSCALE_SOCKET" ]; then
+      TAILSCALE_SOCKET_READY=true
       break
     fi
     i=$((i + 1))
-    sleep 0.5
+    sleep 0.25
   done
 
-  if [ "$TAILSCALE_READY" = "true" ]; then
+  if [ "$TAILSCALE_SOCKET_READY" = "true" ]; then
     if /usr/local/bin/tailscale --socket="$TAILSCALE_SOCKET" up \
       --auth-key="$TS_AUTHKEY" \
       --hostname="opencode-telegram-bot-railway" \
@@ -240,7 +240,7 @@ else
       printf '%s\n' "[railway] WARNING: tailscale up failed; inspect /data/logs/tailscaled.log" >&2
     fi
   else
-    printf '%s\n' "[railway] WARNING: tailscaled did not become ready; inspect /data/logs/tailscaled.log" >&2
+    printf '%s\n' "[railway] WARNING: tailscaled socket did not become ready; inspect /data/logs/tailscaled.log" >&2
   fi
 fi
 
