@@ -61,4 +61,11 @@ describe("friendly action display", () => {
       label: "Custom MCP Search Tool",
     });
   });
+
+  it("uses purpose-specific SSH action labels", () => {
+    expect(getFriendlyActionDisplay("ssh", { action: "check" })).toEqual({ icon: "🔐", label: "Check SSH Access" });
+    expect(getFriendlyActionDisplay("ssh", { action: "debug" })).toEqual({ icon: "🩺", label: "Debug SSH Connection" });
+    expect(getFriendlyActionDisplay("ssh", { action: "exec" })).toEqual({ icon: "🖥️", label: "Run SSH Command" });
+  });
+
 });
