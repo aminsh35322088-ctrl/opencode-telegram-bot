@@ -226,6 +226,9 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "network-diagnostics.dns": { icon: "🌐", label: "Check DNS" },
   "network-diagnostics.http": { icon: "🌐", label: "Check HTTP" },
   "network-diagnostics.tcp": { icon: "🔌", label: "Check TCP" },
+  "ssh.check": { icon: "🔐", label: "Check SSH Access" },
+  "ssh.debug": { icon: "🩺", label: "Debug SSH Connection" },
+  "ssh.exec": { icon: "🖥️", label: "Run SSH Command" },
 };
 
 const TOOL_META: Record<string, FriendlyActionDisplay> = {
@@ -247,6 +250,7 @@ const TOOL_META: Record<string, FriendlyActionDisplay> = {
   media: { icon: "🎬", label: "Media" },
   telegram: { icon: "💬", label: "Telegram" },
   "network-diagnostics": { icon: "🌐", label: "Network" },
+  ssh: { icon: "🔐", label: "SSH" },
   railway: { icon: "🚆", label: "Railway" },
   "safe-download": { icon: "📥", label: "Download" },
   "send-file": { icon: "📤", label: "File" },
