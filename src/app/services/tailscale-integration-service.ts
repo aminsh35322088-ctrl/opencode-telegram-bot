@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import { promisify } from "node:util";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
