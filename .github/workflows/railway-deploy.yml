@@ -60,31 +60,11 @@ jobs:
       - name: Deploy source to Railway
         shell: bash
         env:
-          RAILWAY_CI_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          set -uo pipefail
-          args=(
-            up
-            --project cc68b602-f68f-42f4-b8c4-da1b2fd79141
-            --environment d0c30324-2558-44cb-84b7-c2635b5666f0
-            --service 64a7b986-c2e0-4b52-9583-eee9557577f1
-            --ci
+          npx -y @railway/cli@latest up \
+            --project cc68b602-f68f-42f4-b8c4-da1b2fd79141 \
+            --environment d0c30324-2558-44cb-84b7-c2635b5666f0 \
+            --service 64a7b986-c2e0-4b52-9583-eee9557577f1 \
+            --ci \
             --message "GitHub ${{ steps.revision.outputs.sha }}"
-          )
-
-          log="$(mktemp)"
-          set +e
-          RAILWAY_TOKEN="$RAILWAY_CI_TOKEN" npx -y @railway/cli@latest "${args[@]}" 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-
-          if [ "$status" -eq 0 ]; then
-            exit 0
-          fi
-
-          if ! grep -qi "Unauthorized" "$log"; then
-            exit "$status"
-          fi
-
-          echo "Project-token authentication rejected; retrying as an account API token."
-          RAILWAY_API_TOKEN="$RAILWAY_CI_TOKEN" npx -y @railway/cli@latest "${args[@]}"
