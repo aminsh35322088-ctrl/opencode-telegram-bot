@@ -127,7 +127,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "github-ci.dispatch": "Dispatch an existing GitHub Actions workflow on an explicit branch/tag/SHA.",
   "github-ci.jobs": "Inspect jobs and steps for a GitHub Actions run before falling back to raw logs.",
   "tailscale.status": "Inspect the bot's current Tailnet connection.",
-  "tailscale.devices": "List visible online/offline Tailnet peers carrying tag:ssh.",
+  "tailscale.devices": "List all Tailnet peers visible to the bot with SSH eligibility diagnostics.",
   "tailscale.ping": "Ping a visible tag:ssh Tailnet peer.",
   "ssh.check": "Check Tailscale SSH access to a visible tag:ssh peer.",
   "ssh.debug": "Diagnose Tailscale SSH negotiation and report sanitized compatibility findings.",
