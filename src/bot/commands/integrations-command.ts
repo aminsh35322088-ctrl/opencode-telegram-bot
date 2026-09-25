@@ -121,7 +121,7 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
     `SSH eligible: ${eligibleDevices.length}`,
     ...(status.selfTags.length ? [`Bot tags: ${status.selfTags.join(" · ")}`] : ["Bot tags: none"]),
     "",
-    "Railway uses one shared tailscaled daemon and a persistent node identity, so the machine stays opencode-bot across restarts."
+    "Railway uses one shared tailscaled daemon and a persistent node identity, so the machine stays opencode-bot across restarts.",
     "SSH is Tailnet-only. A remote machine must join this Tailnet and carry tag:ssh before the model can access it.",
   ].join("\n");
   const text = notice ? `${notice}\n\n${body}` : body;
