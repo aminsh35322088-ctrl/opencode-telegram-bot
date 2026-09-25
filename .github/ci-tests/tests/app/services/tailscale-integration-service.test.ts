@@ -19,6 +19,7 @@ describe("bot-managed Tailscale integration", () => {
 const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
+if (!process.argv.includes("--state=mem:")) process.exit(42);
 const arg = process.argv.find((value) => value.startsWith("--socket="));
 const socket = arg.slice("--socket=".length);
 fs.mkdirSync(path.dirname(socket), { recursive: true });
@@ -124,4 +125,13 @@ esac
       tags: expect.arrayContaining(["tag:ssh"]),
     }));
   });
+
+  it("uses container-local memory state instead of persisting a Tailscale node key", async () => {
+    const service = await import("../../../src/app/services/tailscale-integration-service.js");
+    await service.configureTailscale("tskey-auth-reusable");
+
+    await expect(fs.stat(path.join(home, "tailscale", "tailscaled.state"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(service.getTailscaleSocketPath()).toBe("/tmp/opencode-tailscale/tailscaled.sock");
+  });
+
 });
