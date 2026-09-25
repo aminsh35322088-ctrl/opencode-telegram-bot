@@ -200,13 +200,48 @@ chown -R node:node /data/.cache /data/.local 2>/dev/null || true
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
 
+TAILSCALE_STATE_DIR="/data/tailscale"
+TAILSCALE_SOCKET="/var/run/tailscale/tailscaled.sock"
+
 if [ -z "${TS_AUTHKEY:-}" ]; then
-  printf '%s\n' "[railway] tsnet bridge disabled: TS_AUTHKEY is missing" >&2
-elif [ ! -x /usr/local/bin/tsnet-bridge ]; then
-  printf '%s\n' "[railway] WARNING: tsnet bridge binary is missing; bridge not started" >&2
+  printf '%s\n' "[railway] Tailscale userspace daemon disabled: TS_AUTHKEY is missing" >&2
+elif [ ! -x /usr/local/bin/tailscale ] || [ ! -x /usr/local/bin/tailscaled ]; then
+  printf '%s\n' "[railway] WARNING: Tailscale binaries are missing; daemon not started" >&2
 else
-  printf '%s\n' "[railway] tsnet bridge enabled: local=127.0.0.1:2222 target=100.81.141.68:22"
-  su -s /bin/sh node -c 'exec /usr/local/bin/tsnet-bridge' &
+  mkdir -p "$TAILSCALE_STATE_DIR" /var/run/tailscale
+  chmod 700 "$TAILSCALE_STATE_DIR"
+
+  printf '%s\n' "[railway] Starting Tailscale userspace daemon"
+  /usr/local/bin/tailscaled \
+    --tun=userspace-networking \
+    --state="$TAILSCALE_STATE_DIR/tailscaled.state" \
+    --statedir="$TAILSCALE_STATE_DIR" \
+    --socket="$TAILSCALE_SOCKET" \
+    >> /data/logs/tailscaled.log 2>&1 &
+
+  TAILSCALE_READY=false
+  i=0
+  while [ "$i" -lt 20 ]; do
+    if /usr/local/bin/tailscale --socket="$TAILSCALE_SOCKET" status >/dev/null 2>&1; then
+      TAILSCALE_READY=true
+      break
+    fi
+    i=$((i + 1))
+    sleep 0.5
+  done
+
+  if [ "$TAILSCALE_READY" = "true" ]; then
+    if /usr/local/bin/tailscale --socket="$TAILSCALE_SOCKET" up \
+      --auth-key="$TS_AUTHKEY" \
+      --hostname="opencode-telegram-bot-railway" \
+      --accept-dns=false >/dev/null 2>&1; then
+      printf '%s\n' "[railway] Tailscale ready: use 'tailscale status' and 'tailscale ssh user@host' from the Railway console"
+    else
+      printf '%s\n' "[railway] WARNING: tailscale up failed; inspect /data/logs/tailscaled.log" >&2
+    fi
+  else
+    printf '%s\n' "[railway] WARNING: tailscaled did not become ready; inspect /data/logs/tailscaled.log" >&2
+  fi
 fi
 
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
