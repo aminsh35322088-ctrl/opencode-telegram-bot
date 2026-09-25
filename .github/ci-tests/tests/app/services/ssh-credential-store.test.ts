@@ -9,6 +9,14 @@ vi.mock("../../../src/config.js", () => ({
     get telegram() {
       return { token: mockedConfig.token, allowedUserId: 1, proxyUrl: "", apiRoot: "", proxySecret: "", forceIpv4: false };
     },
+    opencode: {
+      apiUrl: "http://127.0.0.1:4096",
+      username: "opencode",
+      password: "",
+      autoRestartEnabled: true,
+      monitorIntervalSec: 20,
+      model: { provider: "opencode", modelId: "big-pickle" },
+    },
   },
 }));
 
