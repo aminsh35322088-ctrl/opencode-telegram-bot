@@ -30,6 +30,7 @@ COPY --chown=node:node .opencode/tools ./.opencode/tools
 COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 COPY --chown=root:root railway-volume-maintenance.sh ./railway-volume-maintenance.sh
 COPY --chown=root:root scripts/opencode-db-maintenance.mjs ./scripts/opencode-db-maintenance.mjs
-RUN chmod +x ./railway-entrypoint.sh ./railway-volume-maintenance.sh
+COPY --chown=root:root scripts/ssh-credential-admin.mjs ./scripts/ssh-credential-admin.mjs
+RUN chmod +x ./railway-entrypoint.sh ./railway-volume-maintenance.sh ./scripts/ssh-credential-admin.mjs && ln -s /app/scripts/ssh-credential-admin.mjs /usr/local/bin/opencode-ssh-credential
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["./railway-volume-maintenance.sh"]
