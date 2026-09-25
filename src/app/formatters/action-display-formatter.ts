@@ -229,6 +229,16 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "ssh.check": { icon: "🔐", label: "Check SSH Access" },
   "ssh.debug": { icon: "🩺", label: "Debug SSH Connection" },
   "ssh.exec": { icon: "🖥️", label: "Run SSH Command" },
+  "ssh.tailnet.status": { icon: "🌐", label: "Check Tailnet Status" },
+  "ssh.tailnet.ping": { icon: "📡", label: "Ping Tailnet Device" },
+  "ssh.profiles.list": { icon: "🗂️", label: "List SSH Profiles" },
+  "ssh.profiles.get": { icon: "🔎", label: "Inspect SSH Profile" },
+  "ssh.profiles.create": { icon: "➕", label: "Create SSH Profile" },
+  "ssh.profiles.update": { icon: "✏️", label: "Update SSH Profile" },
+  "ssh.profiles.delete": { icon: "🗑️", label: "Delete SSH Profile" },
+  "ssh.credentials.status": { icon: "🔐", label: "Check SSH Credentials" },
+  "ssh.upload": { icon: "📤", label: "Upload over SSH" },
+  "ssh.download": { icon: "📥", label: "Download over SSH" },
 };
 
 const TOOL_META: Record<string, FriendlyActionDisplay> = {
