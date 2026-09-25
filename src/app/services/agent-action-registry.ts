@@ -73,7 +73,7 @@ export const CUSTOM_TOOL_ACTIONS = {
   media: ["stt.status", "stt.transcribe", "video.prepare", "image.providers", "image.models", "image.current", "image.generate", "image.edit"],
   telegram: ["context.current", "reply.resolve", "forward.inspect", "media.fetch"],
   "network-diagnostics": ["dns", "http", "tcp"],
-  ssh: ["check", "debug", "exec"],
+  ssh: ["tailnet.status", "tailnet.ping", "profiles.list", "profiles.get", "profiles.create", "profiles.update", "profiles.delete", "credentials.status", "check", "debug", "exec", "upload", "download"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   "safe-download": ["download"],
   "send-file": ["send"],
@@ -128,6 +128,16 @@ const DESCRIPTIONS: Record<string, string> = {
   "ssh.check": "Check SSH reachability without executing a remote workload.",
   "ssh.debug": "Diagnose direct or Tailscale SSH negotiation and report sanitized compatibility findings.",
   "ssh.exec": "Run a bounded remote SSH command using direct or Tailscale transport.",
+  "ssh.tailnet.status": "List the visible Tailnet peers and safe metadata from the local Tailscale client.",
+  "ssh.tailnet.ping": "Probe Tailnet reachability to a hostname or IP.",
+  "ssh.profiles.list": "List saved non-secret SSH server profiles.",
+  "ssh.profiles.get": "Inspect one saved SSH profile and credential metadata.",
+  "ssh.profiles.create": "Create a non-secret SSH server profile.",
+  "ssh.profiles.update": "Update a saved SSH server profile.",
+  "ssh.profiles.delete": "Delete a saved SSH server profile.",
+  "ssh.credentials.status": "List safe metadata for encrypted SSH credentials without returning secret values.",
+  "ssh.upload": "Upload a worktree file over direct or Tailscale SSH.",
+  "ssh.download": "Download a remote file into the current worktree.",
   "telegram.context.current": "Read the latest persisted Telegram message context for the current AI Topic/worktree.",
   "telegram.reply.resolve": "Read the replied Telegram message snapshot for the current AI Topic.",
   "telegram.forward.inspect": "Inspect safe forwarding metadata for the current Telegram message.",
@@ -202,7 +212,13 @@ function customRisk(tool: string, action: string): AgentActionRisk {
   if (tool === "safe-download" || tool === "send-file") return "write";
   if (tool === "github-ci") return ["dispatch", "rerun-failed", "cancel"].includes(action) ? "mutating" : "external";
   if (tool === "network-diagnostics") return "external";
-  if (tool === "ssh") return action === "exec" ? "mutating" : "read";
+  if (tool === "ssh") {
+    if (action === "profiles.delete") return "destructive";
+    if (["profiles.create", "profiles.update", "exec", "upload"].includes(action)) return "mutating";
+    if (action === "download") return "write";
+    if (action === "tailnet.ping") return "external";
+    return "read";
+  }
   return "read";
 }
 
