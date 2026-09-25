@@ -73,6 +73,8 @@ export const CUSTOM_TOOL_ACTIONS = {
   media: ["stt.status", "stt.transcribe", "video.prepare", "image.providers", "image.models", "image.current", "image.generate", "image.edit"],
   telegram: ["context.current", "reply.resolve", "forward.inspect", "media.fetch"],
   "network-diagnostics": ["dns", "http", "tcp"],
+  tailscale: ["status", "devices", "ping"],
+  ssh: ["check", "debug", "exec", "upload", "download"],
   railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   "safe-download": ["download"],
   "send-file": ["send"],
@@ -95,7 +97,7 @@ const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
   actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
   notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
   "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
-  media: "media", telegram: "telegram-context", "network-diagnostics": "network", railway: "deployment",
+  media: "media", telegram: "telegram-context", "network-diagnostics": "network", tailscale: "remote-access", ssh: "remote-access", railway: "deployment",
   "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
   "system-diagnostics": "diagnostics",
 };
@@ -124,6 +126,14 @@ const DESCRIPTIONS: Record<string, string> = {
   "media.image.current": "Show the effective Image Model for the current worktree/Topic.",
   "github-ci.dispatch": "Dispatch an existing GitHub Actions workflow on an explicit branch/tag/SHA.",
   "github-ci.jobs": "Inspect jobs and steps for a GitHub Actions run before falling back to raw logs.",
+  "tailscale.status": "Inspect the bot's current Tailnet connection.",
+  "tailscale.devices": "List visible online/offline Tailnet peers carrying tag:ssh.",
+  "tailscale.ping": "Ping a visible tag:ssh Tailnet peer.",
+  "ssh.check": "Check Tailscale SSH access to a visible tag:ssh peer.",
+  "ssh.debug": "Diagnose Tailscale SSH negotiation and report sanitized compatibility findings.",
+  "ssh.exec": "Run a bounded command over Tailscale SSH to a visible tag:ssh peer.",
+  "ssh.upload": "Upload a worktree file over Tailscale SSH.",
+  "ssh.download": "Download a remote file over Tailscale SSH into the worktree.",
   "telegram.context.current": "Read the latest persisted Telegram message context for the current AI Topic/worktree.",
   "telegram.reply.resolve": "Read the replied Telegram message snapshot for the current AI Topic.",
   "telegram.forward.inspect": "Inspect safe forwarding metadata for the current Telegram message.",
@@ -198,6 +208,12 @@ function customRisk(tool: string, action: string): AgentActionRisk {
   if (tool === "safe-download" || tool === "send-file") return "write";
   if (tool === "github-ci") return ["dispatch", "rerun-failed", "cancel"].includes(action) ? "mutating" : "external";
   if (tool === "network-diagnostics") return "external";
+  if (tool === "tailscale") return action === "ping" ? "external" : "read";
+  if (tool === "ssh") {
+    if (["exec", "upload"].includes(action)) return "mutating";
+    if (action === "download") return "write";
+    return "read";
+  }
   return "read";
 }
 

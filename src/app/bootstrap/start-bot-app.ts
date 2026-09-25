@@ -11,6 +11,7 @@ import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeGithubIntegration } from "../services/github-integration-service.js";
 import { initializeRailwayIntegration } from "../services/railway-integration-service.js";
+import { initializeTailscaleIntegration, stopTailscaleIntegration } from "../services/tailscale-integration-service.js";
 import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -140,6 +141,11 @@ export async function startBotApp(): Promise<void> {
     return false;
   });
   logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
+  const tailscaleConnected = await initializeTailscaleIntegration().catch((error) => {
+    logger.warn("[Tailscale] Could not initialize stored Tailnet integration; continuing without Tailnet access", error);
+    return false;
+  });
+  logger.info(`[Tailscale] ${tailscaleConnected ? "connected" : "not connected"}`);
   try {
     process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig();
   } catch (error) {
@@ -212,6 +218,7 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
+    void stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     shutdownTimeout = setTimeout(() => {
       logger.warn(`[App] Shutdown did not finish in ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`);
       void flushSettingsWithTimeout()
@@ -263,6 +270,7 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime("app_shutdown_complete");
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
+    await stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     await clearManagedServiceState().catch((error) =>
       logger.warn("[App] Failed to clear managed service state", error),
     );

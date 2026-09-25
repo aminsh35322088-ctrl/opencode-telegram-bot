@@ -2,6 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
+import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, listTailscaleSshDevices, reconnectTailscale, removeTailscaleIntegration } from "../../app/services/tailscale-integration-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -10,7 +11,8 @@ import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingRailway { step: "name" | "token"; name?: string; messageId: number; }
-interface PendingState { github?: PendingGithub; railway?: PendingRailway; }
+interface PendingTailscale { step: "auth-key"; messageId: number; }
+interface PendingState { github?: PendingGithub; railway?: PendingRailway; tailscale?: PendingTailscale; }
 
 const integrationWizard = new TopicScopedValue<PendingState>();
 function callbackMessageId(ctx: Context): number | null {
@@ -30,7 +32,7 @@ function wizardKeyboard(): InlineKeyboard {
 }
 export function isIntegrationWizardActive(): boolean {
   const pending = integrationWizard.get();
-  return Boolean(pending?.github || pending?.railway);
+  return Boolean(pending?.github || pending?.railway || pending?.tailscale);
 }
 export function clearIntegrationWizard(): void {
   integrationWizard.clear();
@@ -65,6 +67,7 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   const githubActive = await getActiveGithubAccount();
   const railwayAccounts = await listRailwayAccounts();
   const railwayActive = await getActiveRailwayAccount();
+  const tailscale = await getTailscaleRuntimeStatus();
   const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add").text("➕ Add Railway account", "integration:railway:add");
   for (const account of githubAccounts) {
     const label = account.id === githubActive?.id ? `✅ ${account.name}` : account.name;
@@ -74,8 +77,9 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
     const label = account.id === railwayActive?.id ? `✅ ${account.name}` : account.name;
     keyboard.row().text(label, `integration:railway:select:${account.id}`).text("🗑️", `integration:railway:remove:${account.id}`);
   }
+  keyboard.row().text(`🌐 Tailscale · ${tailscale.connected ? "Connected" : tailscale.configured ? "Disconnected" : "Not set"}`, "integration:tailscale");
   keyboard.row().text("← Advanced", "integration:advanced").text("🏠 Home", "main:home");
-  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}`;
+  const body = `🔌 Integrations\n\nGitHub accounts: ${githubAccounts.length}\nActive: ${githubActive?.name ?? "None"}\n\nRailway accounts: ${railwayAccounts.length}\nActive: ${railwayActive?.name ?? "None"}\n\nTailscale: ${tailscale.connected ? "🟢 Connected" : tailscale.configured ? "⚪ Disconnected" : "⚪ Not configured"}`;
   const text = notice ? `${notice}\n\n${body}` : body;
   const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
   if (targetMessageId !== null && ctx.chat?.id) {
@@ -90,6 +94,61 @@ export async function showIntegrationsMenu(ctx: Context, messageId?: number, not
   await ctx.reply(text, { reply_markup: keyboard });
 }
 export async function integrationsCommand(ctx: CommandContext<Context>): Promise<void> { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx as Context); }
+
+async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
+  const status = await getTailscaleRuntimeStatus();
+  const devices = status.configured ? await listTailscaleSshDevices().catch(() => []) : [];
+  const keyboard = new InlineKeyboard();
+  if (!status.configured) {
+    keyboard.text("🔑 Connect Tailnet", "integration:tailscale:connect").row();
+  } else {
+    keyboard.text("🔄 Reconnect", "integration:tailscale:reconnect").text("⏸ Disconnect", "integration:tailscale:disconnect").row();
+    keyboard.text("🖥 SSH Devices", "integration:tailscale:devices").text("🔑 Change Auth Key", "integration:tailscale:connect").row();
+    keyboard.text("🗑 Forget Tailnet", "integration:tailscale:remove").row();
+  }
+  keyboard.text("← Integrations", "integration:menu").text("🏠 Home", "main:home");
+
+  const body = [
+    "🌐 Tailscale",
+    "",
+    `Status: ${status.connected ? "🟢 Connected" : status.configured ? "⚪ Disconnected" : "⚪ Not configured"}`,
+    `Device: ${status.hostname}`,
+    ...(status.tailnet ? [`Tailnet: ${status.tailnet}`] : []),
+    ...(status.ips.length ? [`IP: ${status.ips.join(", ")}`] : []),
+    `Mode: Userspace`,
+    `SSH devices: ${devices.length}`,
+    "",
+    "SSH is Tailnet-only. A remote machine must join this Tailnet and carry tag:ssh before the model can access it.",
+  ].join("\n");
+  const text = notice ? `${notice}\n\n${body}` : body;
+  const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
+  if (targetMessageId !== null && ctx.chat?.id) {
+    try { await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard }); }
+    catch (error) { if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error; }
+    return;
+  }
+  await ctx.reply(text, { reply_markup: keyboard });
+}
+
+async function showTailscaleDevices(ctx: Context): Promise<void> {
+  const devices = await listTailscaleSshDevices();
+  const text = [
+    "🖥 SSH Devices",
+    "",
+    devices.length ? devices.map((device) =>
+      `${device.online ? "🟢" : "⚪"} ${device.name}\n   ${device.ips.join(", ") || "No IP"}\n   ${device.tags.join(" · ")}`
+    ).join("\n\n") : "No tag:ssh devices are visible.",
+    "",
+    "This list is discovered automatically from your Tailnet. There is no separate SSH server list in the bot.",
+  ].join("\n");
+  const keyboard = new InlineKeyboard().text("🔄 Refresh", "integration:tailscale:devices").row().text("← Tailscale", "integration:tailscale").text("🏠 Home", "main:home");
+  const messageId = callbackMessageId(ctx);
+  if (messageId !== null && ctx.chat?.id) {
+    await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
+      if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
+    });
+  }
+}
 export async function handleIntegrationsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data ?? "";
   if (!data.startsWith("integration:")) return false;
@@ -98,8 +157,15 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:close") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
   if (data === "integration:advanced") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
-  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx, state?.github?.messageId ?? state?.railway?.messageId, "❌ Setup cancelled."); return true; }
+  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); const id = state?.github?.messageId ?? state?.railway?.messageId ?? state?.tailscale?.messageId; if (state?.tailscale) await showTailscaleMenu(ctx, id, "❌ Setup cancelled."); else await showIntegrationsMenu(ctx, id, "❌ Setup cancelled."); return true; }
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
+  if (data === "integration:tailscale") { clearIntegrationWizard(); clearProviderWizard(); await showTailscaleMenu(ctx); return true; }
+  if (data === "integration:tailscale:devices") { clearIntegrationWizard(); await showTailscaleDevices(ctx); return true; }
+  if (data === "integration:tailscale:connect") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearProviderWizard(); integrationWizard.set({ tailscale: { step: "auth-key", messageId } }); await editWizard(ctx, messageId, "🌐 Connect Tailscale\n\nSend a Tailscale auth key.\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model."); return true; }
+  if (data === "integration:tailscale:reconnect") { await reconnectTailscale(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale reconnected."); return true; }
+  if (data === "integration:tailscale:disconnect") { await disconnectTailscale(); await showTailscaleMenu(ctx, undefined, "⏸ Tailscale disconnected. The Tailnet identity is preserved."); return true; }
+  if (data === "integration:tailscale:remove") { const id = callbackMessageId(ctx); if (id !== null && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, "🗑 Forget Tailscale?\n\nThis logs the bot out of the Tailnet and removes the encrypted auth key from bot state.", { reply_markup: new InlineKeyboard().text("🗑 Forget", "integration:tailscale:remove:confirm").text("Cancel", "integration:tailscale") }); return true; }
+  if (data === "integration:tailscale:remove:confirm") { await removeTailscaleIntegration(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale configuration removed."); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
   if (data === "integration:railway:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ railway: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add Railway Account\n\n1/2 · Account name\n\nExample: Personal Railway"); return true; }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
@@ -114,10 +180,19 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   if (!ctx.chat?.id || !text || !state) return false;
   const github = state.github;
   const railway = state.railway;
+  const tailscale = state.tailscale;
   try {
     if (github) {
       if (github.step === "name") { github.name = text; github.step = "token"; await deleteInput(ctx); await editWizard(ctx, github.messageId, "➕ Add GitHub Account\n\n2/2 · Personal Access Token\n\nSend the token as a message. Telegram will delete it when possible."); return true; }
       await deleteInput(ctx); const account = await addGithubAccount(github.name!, text); await finishWizard(ctx, github.messageId, `✅ GitHub account “${account.name}” added and selected.`); return true;
+    }
+    if (tailscale) {
+      await deleteInput(ctx);
+      await editWizard(ctx, tailscale.messageId, "🌐 Connecting Tailscale…\n\nStarting userspace networking and verifying Tailnet authentication.");
+      await configureTailscale(text);
+      clearIntegrationWizard();
+      await showTailscaleMenu(ctx, tailscale.messageId, "✅ Tailscale connected.");
+      return true;
     }
     if (railway) {
       if (railway.step === "name") { railway.name = text; railway.step = "token"; await deleteInput(ctx); await editWizard(ctx, railway.messageId, "➕ Add Railway Account\n\n2/2 · API Token\n\nSend the token as a message. It will be verified with Railway before it is saved."); return true; }
@@ -128,8 +203,8 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
     return false;
   } catch (error) {
     logger.error("[Integrations] wizard failed:", error);
-    const messageId = github?.messageId ?? railway?.messageId; const kind = github ? "GitHub" : "Railway";
-    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
+    const messageId = github?.messageId ?? railway?.messageId ?? tailscale?.messageId; const kind = github ? "GitHub" : railway ? "Railway" : "Tailscale";
+    if (messageId !== undefined && integrationWizard.get()) await editWizard(ctx, messageId, kind === "Tailscale" ? `🌐 Connect Tailscale\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nThe key was not saved. Send a valid auth key to retry, or press Cancel.` : `➕ Add ${kind} Account\n\n2/2 · Token\n\n❌ ${error instanceof Error ? error.message : "Unknown error"}\n\nSend the token again to retry, or press Cancel.`).catch(() => {});
     return true;
   }
 }

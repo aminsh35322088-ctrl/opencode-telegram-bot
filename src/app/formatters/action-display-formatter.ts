@@ -226,6 +226,14 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "network-diagnostics.dns": { icon: "🌐", label: "Check DNS" },
   "network-diagnostics.http": { icon: "🌐", label: "Check HTTP" },
   "network-diagnostics.tcp": { icon: "🔌", label: "Check TCP" },
+  "ssh.check": { icon: "🔐", label: "Check SSH Access" },
+  "ssh.debug": { icon: "🩺", label: "Debug SSH Connection" },
+  "ssh.exec": { icon: "🖥️", label: "Run SSH Command" },
+  "tailscale.status": { icon: "🌐", label: "Check Tailnet Status" },
+  "tailscale.devices": { icon: "🖥️", label: "List SSH Devices" },
+  "tailscale.ping": { icon: "📡", label: "Ping Tailnet Device" },
+  "ssh.upload": { icon: "📤", label: "Upload over SSH" },
+  "ssh.download": { icon: "📥", label: "Download over SSH" },
 };
 
 const TOOL_META: Record<string, FriendlyActionDisplay> = {
@@ -247,6 +255,8 @@ const TOOL_META: Record<string, FriendlyActionDisplay> = {
   media: { icon: "🎬", label: "Media" },
   telegram: { icon: "💬", label: "Telegram" },
   "network-diagnostics": { icon: "🌐", label: "Network" },
+  tailscale: { icon: "🌐", label: "Tailscale" },
+  ssh: { icon: "🔐", label: "SSH" },
   railway: { icon: "🚆", label: "Railway" },
   "safe-download": { icon: "📥", label: "Download" },
   "send-file": { icon: "📤", label: "File" },
