@@ -2,51 +2,23 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"tailscale.com/tsnet"
 )
 
-func envOr(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envBool(key string, fallback bool) bool {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	value, err := strconv.ParseBool(raw)
-	if err != nil {
-		log.Fatalf("[tsnet] invalid %s=%q: %v", key, raw, err)
-	}
-	return value
-}
-
-func validateLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("invalid listen address %q: %w", addr, err)
-	}
-	if strings.EqualFold(host, "localhost") {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("refusing non-loopback listen address %q; set TSNET_ALLOW_NON_LOOPBACK=true only if intentional", addr)
-	}
-	return nil
-}
+const (
+	targetHost = "poco-f4-gt.tail57d500.ts.net"
+	targetPort = "22"
+	localAddr  = "127.0.0.1:2222"
+	stateDir   = "/tmp/opencode-tsnet"
+	hostname   = "opencode-telegram-bot-railway"
+)
 
 func proxyConnection(srv *tsnet.Server, local net.Conn, target string) {
 	defer local.Close()
@@ -84,38 +56,24 @@ func main() {
 		log.Fatal("[tsnet] TS_AUTHKEY is required")
 	}
 
-	targetHost := strings.TrimSpace(os.Getenv("TSNET_TARGET"))
-	if targetHost == "" {
-		log.Fatal("[tsnet] TSNET_TARGET is required")
-	}
-
-	targetPort := envOr("TSNET_TARGET_PORT", "22")
 	targetAddr := net.JoinHostPort(targetHost, targetPort)
-	localAddr := envOr("TSNET_LOCAL_ADDR", "127.0.0.1:2222")
 
-	if !envBool("TSNET_ALLOW_NON_LOOPBACK", false) {
-		if err := validateLoopback(localAddr); err != nil {
-			log.Fatal("[tsnet] ", err)
-		}
-	}
-
-	stateDir := envOr("TSNET_STATE_DIR", "/tmp/opencode-tsnet")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		log.Fatalf("[tsnet] create state dir: %v", err)
 	}
 
 	srv := &tsnet.Server{
 		Dir:       stateDir,
-		Hostname:  envOr("TSNET_HOSTNAME", "opencode-telegram-bot-railway"),
+		Hostname:  hostname,
 		AuthKey:   authKey,
-		Ephemeral: envBool("TSNET_EPHEMERAL", true),
+		Ephemeral: true,
 	}
 	if err := srv.Start(); err != nil {
 		log.Fatalf("[tsnet] start failed: %v", err)
 	}
 	defer srv.Close()
 
-	log.Printf("[tsnet] node started hostname=%s ephemeral=%t", srv.Hostname, srv.Ephemeral)
+	log.Printf("[tsnet] node started hostname=%s ephemeral=true", hostname)
 
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	probeConn, err := srv.Dial(probeCtx, "tcp", targetAddr)
