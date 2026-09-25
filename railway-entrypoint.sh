@@ -201,6 +201,38 @@ chown -R node:node /data/.cache /data/.local 2>/dev/null || true
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
 
 
-printf '%s\n' "[railway] Tailscale binaries are available; Tailnet connection is managed by the bot Integrations UI"
+TAILSCALE_STATE_DIR="/data/tailscale"
+TAILSCALE_SOCKET_DIR="/data/run/tailscale"
+TAILSCALE_SOCKET="$TAILSCALE_SOCKET_DIR/tailscaled.sock"
+TAILSCALE_STATE="$TAILSCALE_STATE_DIR/tailscaled.state"
+TAILSCALE_LOG="/data/logs/tailscaled.log"
+
+mkdir -p "$TAILSCALE_STATE_DIR" "$TAILSCALE_SOCKET_DIR"
+chown -R node:node "$TAILSCALE_STATE_DIR" "$TAILSCALE_SOCKET_DIR"
+rm -f "$TAILSCALE_SOCKET"
+
+printf '%s\n' "[railway] Starting the single shared Tailscale userspace daemon"
+su -s /bin/sh node -c "exec /usr/local/bin/tailscaled --tun=userspace-networking --state='$TAILSCALE_STATE' --socket='$TAILSCALE_SOCKET' >>'$TAILSCALE_LOG' 2>&1" &
+TAILSCALED_PID="$!"
+
+i=0
+while [ ! -S "$TAILSCALE_SOCKET" ]; do
+  if ! kill -0 "$TAILSCALED_PID" 2>/dev/null; then
+    printf '%s\n' "[railway] FATAL: tailscaled exited before creating its socket" >&2
+    tail -n 80 "$TAILSCALE_LOG" >&2 2>/dev/null || true
+    exit 1
+  fi
+  i=$((i + 1))
+  if [ "$i" -ge 100 ]; then
+    printf '%s\n' "[railway] FATAL: tailscaled socket did not become ready" >&2
+    tail -n 80 "$TAILSCALE_LOG" >&2 2>/dev/null || true
+    exit 1
+  fi
+  sleep 0.1
+done
+
+printf '%s\n' "[railway] Tailscale daemon ready: socket=$TAILSCALE_SOCKET state=$TAILSCALE_STATE"
+printf '%s\n' "[railway] Tailnet login is managed by the bot Integrations UI; all bot/tools share this daemon"
+
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
 exec su -s /bin/sh node -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
