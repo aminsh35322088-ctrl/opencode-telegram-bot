@@ -64,7 +64,7 @@ jobs:
         run: |
           set -uo pipefail
           args=(
-            up .
+            up
             --project cc68b602-f68f-42f4-b8c4-da1b2fd79141
             --environment d0c30324-2558-44cb-84b7-c2635b5666f0
             --service 64a7b986-c2e0-4b52-9583-eee9557577f1
