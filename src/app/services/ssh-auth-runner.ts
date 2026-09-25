@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { accessSync, constants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -39,8 +39,8 @@ function findExecutable(bin: string, env: NodeJS.ProcessEnv): string {
   for (const directory of String(env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
     const candidate = path.join(directory, name);
     try {
-      const stat = requireStat(candidate);
-      if (stat) return candidate;
+      accessSync(candidate, constants.X_OK);
+      return candidate;
     } catch {
       // Continue.
     }
@@ -48,17 +48,6 @@ function findExecutable(bin: string, env: NodeJS.ProcessEnv): string {
   return bin;
 }
 
-function requireStat(candidate: string): boolean {
-  try {
-    // accessSync avoids making command-runner interception async before temp setup.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fsSync = require("node:fs") as typeof import("node:fs");
-    fsSync.accessSync(candidate, fsSync.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
