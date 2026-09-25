@@ -1,17 +1,14 @@
-import { spawn, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ChildProcess } from "node:child_process";
 import { config } from "../../config.js";
-import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
 const execFileAsync = promisify(execFile);
 const TAILSCALE_BIN = process.env.TAILSCALE_BIN?.trim() || "/usr/local/bin/tailscale";
-const TAILSALED_BIN = process.env.TAILSALED_BIN?.trim() || "/usr/local/bin/tailscaled";
 const HOSTNAME = "opencode-bot";
 const KEY_SALT = Buffer.from("opencode-telegram-bot:tailscale:v1", "utf8");
 const KEY_INFO = Buffer.from("tailscale-auth-key", "utf8");
@@ -64,16 +61,10 @@ export interface TailscaleRuntimeStatus {
   sshDevices: number;
 }
 
-let daemon: ChildProcess | null = null;
+const TAILSCALE_SOCKET = process.env.TAILSCALE_SOCKET?.trim() || "/data/run/tailscale/tailscaled.sock";
 
 function paths() {
-  const appHome = getRuntimePaths().appHome;
-  const runtimeDir = path.join("/tmp", "opencode-tailscale");
-  return {
-    runtimeDir,
-    socket: path.join(runtimeDir, "tailscaled.sock"),
-    log: path.join(appHome, "logs", "tailscaled.log"),
-  };
+  return { socket: TAILSCALE_SOCKET };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -149,41 +140,23 @@ async function cli(args: string[], timeout = 12_000): Promise<{ ok: boolean; std
   }
 }
 
+async function socketReady(): Promise<boolean> {
+  return fs.stat(paths().socket).then((stat) => stat.isSocket()).catch(() => false);
+}
+
 async function waitForSocket(timeoutMs = 10_000): Promise<boolean> {
-  const { socket } = paths();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const exists = await fs.stat(socket).then((stat) => stat.isSocket()).catch(() => false);
-    if (exists) return true;
+    if (await socketReady()) return true;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   return false;
 }
 
 export async function ensureTailscaleDaemon(): Promise<void> {
-  if (daemon && daemon.exitCode === null && !daemon.killed) return;
-  const p = paths();
-  await fs.mkdir(p.runtimeDir, { recursive: true, mode: 0o700 });
-  await fs.mkdir(path.dirname(p.log), { recursive: true });
-  await fs.rm(p.socket, { force: true }).catch(() => {});
-  const logHandle = await fs.open(p.log, "a", 0o600);
-  try {
-    daemon = spawn(TAILSALED_BIN, [
-      "--tun=userspace-networking",
-      "--state=mem:",
-      `--socket=${p.socket}`,
-    ], { stdio: ["ignore", logHandle.fd, logHandle.fd], env: process.env });
-  } finally {
-    await logHandle.close().catch(() => {});
-  }
-  daemon.once("exit", (code, signal) => {
-    logger.warn(`[Tailscale] tailscaled exited: code=${code ?? "null"} signal=${signal ?? "null"}`);
-    daemon = null;
-  });
+  if (await socketReady()) return;
   if (!await waitForSocket()) {
-    try { daemon.kill("SIGTERM"); } catch {}
-    daemon = null;
-    throw new Error("tailscaled did not become ready.");
+    throw new Error("The shared tailscaled socket is unavailable. Railway entrypoint must own the single daemon.");
   }
 }
 
@@ -205,7 +178,13 @@ async function up(authKey?: string): Promise<void> {
 export async function configureTailscale(authKeyValue: string): Promise<void> {
   const authKey = normalizeAuthKey(authKeyValue);
   await up(authKey);
+  await enforceStableHostname();
   await writeStored({ version: 1, hostname: HOSTNAME, authKey: encryptAuthKey(authKey), configuredAt: new Date().toISOString() });
+}
+
+async function enforceStableHostname(): Promise<void> {
+  const result = await cli(["set", `--hostname=${HOSTNAME}`], 8_000);
+  if (!result.ok) throw new Error(result.stderr.trim() || "tailscale set --hostname failed.");
 }
 
 export async function initializeTailscaleIntegration(): Promise<boolean> {
@@ -213,10 +192,14 @@ export async function initializeTailscaleIntegration(): Promise<boolean> {
   if (!stored) return false;
   try {
     await ensureTailscaleDaemon();
-    await up(decryptAuthKey(stored.authKey));
+    const status = await statusJson();
+    if (status?.BackendState !== "Running") {
+      await up(decryptAuthKey(stored.authKey));
+    }
+    await enforceStableHostname();
     return true;
   } catch (error) {
-    logger.warn("[Tailscale] Stored integration could not connect; bot will continue without Tailnet access. The saved auth key must be reusable.", error);
+    logger.warn("[Tailscale] Stored integration could not connect; bot will continue without Tailnet access.", error);
     return false;
   }
 }
@@ -226,30 +209,21 @@ export async function reconnectTailscale(): Promise<void> {
   if (!stored) throw new Error("Tailscale is not configured.");
   await ensureTailscaleDaemon();
   await up(decryptAuthKey(stored.authKey));
+  await enforceStableHostname();
 }
 
 export async function disconnectTailscale(): Promise<void> {
-  if (!daemon) return;
+  await ensureTailscaleDaemon();
   await cli(["down"], 8_000);
 }
 
 export async function removeTailscaleIntegration(): Promise<void> {
-  if (daemon) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
-  await stopTailscaleIntegration();
-  const p = paths();
-  await fs.rm(p.runtimeDir, { recursive: true, force: true }).catch(() => {});
+  if (await socketReady()) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
   await writeStored(null);
 }
 
 export async function stopTailscaleIntegration(): Promise<void> {
-  const child = daemon;
-  daemon = null;
-  if (!child || child.exitCode !== null || child.killed) return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} resolve(); }, 2_000);
-    child.once("exit", () => { clearTimeout(timer); resolve(); });
-    try { child.kill("SIGTERM"); } catch { clearTimeout(timer); resolve(); }
-  });
+  // The daemon is owned by railway-entrypoint.sh and intentionally outlives the bot process.
 }
 
 function normalizeTarget(value: string): string {
@@ -318,7 +292,7 @@ export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatu
     return {
       configured: true,
       connected: status?.BackendState === "Running",
-      daemonRunning: Boolean(daemon && daemon.exitCode === null && !daemon.killed),
+      daemonRunning: await socketReady(),
       backendState: status?.BackendState,
       hostname: status?.Self?.HostName || HOSTNAME,
       tailnet: status?.CurrentTailnet?.Name,
