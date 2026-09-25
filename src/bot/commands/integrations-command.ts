@@ -116,11 +116,12 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
     `Device: ${status.hostname}`,
     ...(status.tailnet ? [`Tailnet: ${status.tailnet}`] : []),
     ...(status.ips.length ? [`IP: ${status.ips.join(", ")}`] : []),
-    `Mode: Userspace`,
+    `Mode: Userspace · ephemeral identity`,
     `Visible peers: ${status.visiblePeers}`,
     `SSH eligible: ${eligibleDevices.length}`,
     ...(status.selfTags.length ? [`Bot tags: ${status.selfTags.join(" · ")}`] : ["Bot tags: none"]),
     "",
+    "Railway uses a fresh ephemeral Tailscale node identity on each container start to avoid duplicate node keys during rolling deploys.",
     "SSH is Tailnet-only. A remote machine must join this Tailnet and carry tag:ssh before the model can access it.",
   ].join("\n");
   const text = notice ? `${notice}\n\n${body}` : body;
@@ -171,7 +172,7 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
   if (data === "integration:tailscale") { clearIntegrationWizard(); clearProviderWizard(); await showTailscaleMenu(ctx); return true; }
   if (data === "integration:tailscale:devices") { clearIntegrationWizard(); await showTailscaleDevices(ctx); return true; }
-  if (data === "integration:tailscale:connect") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearProviderWizard(); integrationWizard.set({ tailscale: { step: "auth-key", messageId } }); await editWizard(ctx, messageId, "🌐 Connect Tailscale\n\nSend a Tailscale auth key.\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model."); return true; }
+  if (data === "integration:tailscale:connect") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearProviderWizard(); integrationWizard.set({ tailscale: { step: "auth-key", messageId } }); await editWizard(ctx, messageId, "🌐 Connect Tailscale\n\nSend a Tailscale auth key.\n\nRequired key settings:\n• Reusable: ON\n• Tag: tag:opencode-bot\n• Ephemeral: ON is recommended for Railway\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model."); return true; }
   if (data === "integration:tailscale:reconnect") { await reconnectTailscale(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale reconnected."); return true; }
   if (data === "integration:tailscale:disconnect") { await disconnectTailscale(); await showTailscaleMenu(ctx, undefined, "⏸ Tailscale disconnected. The Tailnet identity is preserved."); return true; }
   if (data === "integration:tailscale:remove") { const id = callbackMessageId(ctx); if (id !== null && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, "🗑 Forget Tailscale?\n\nThis logs the bot out of the Tailnet and removes the encrypted auth key from bot state.", { reply_markup: new InlineKeyboard().text("🗑 Forget", "integration:tailscale:remove:confirm").text("Cancel", "integration:tailscale") }); return true; }

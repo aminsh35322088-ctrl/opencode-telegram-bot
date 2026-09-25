@@ -68,12 +68,11 @@ let daemon: ChildProcess | null = null;
 
 function paths() {
   const appHome = getRuntimePaths().appHome;
+  const runtimeDir = path.join("/tmp", "opencode-tailscale");
   return {
-    stateDir: path.join(appHome, "tailscale"),
-    socketDir: path.join(appHome, "run", "tailscale"),
-    socket: path.join(appHome, "run", "tailscale", "tailscaled.sock"),
+    runtimeDir,
+    socket: path.join(runtimeDir, "tailscaled.sock"),
     log: path.join(appHome, "logs", "tailscaled.log"),
-    state: path.join(appHome, "tailscale", "tailscaled.state"),
   };
 }
 
@@ -164,16 +163,14 @@ async function waitForSocket(timeoutMs = 10_000): Promise<boolean> {
 export async function ensureTailscaleDaemon(): Promise<void> {
   if (daemon && daemon.exitCode === null && !daemon.killed) return;
   const p = paths();
-  await fs.mkdir(p.stateDir, { recursive: true, mode: 0o700 });
-  await fs.mkdir(p.socketDir, { recursive: true, mode: 0o700 });
+  await fs.mkdir(p.runtimeDir, { recursive: true, mode: 0o700 });
   await fs.mkdir(path.dirname(p.log), { recursive: true });
   await fs.rm(p.socket, { force: true }).catch(() => {});
   const logHandle = await fs.open(p.log, "a", 0o600);
   try {
     daemon = spawn(TAILSALED_BIN, [
       "--tun=userspace-networking",
-      `--state=${p.state}`,
-      `--statedir=${p.stateDir}`,
+      "--state=mem:",
       `--socket=${p.socket}`,
     ], { stdio: ["ignore", logHandle.fd, logHandle.fd], env: process.env });
   } finally {
@@ -216,14 +213,10 @@ export async function initializeTailscaleIntegration(): Promise<boolean> {
   if (!stored) return false;
   try {
     await ensureTailscaleDaemon();
-    const status = await statusJson();
-    if (status?.BackendState === "Running") return true;
-    const withoutKey = await cli(["up", `--hostname=${HOSTNAME}`, "--accept-dns=false"], 15_000);
-    if (withoutKey.ok) return true;
     await up(decryptAuthKey(stored.authKey));
     return true;
   } catch (error) {
-    logger.warn("[Tailscale] Stored integration could not connect; bot will continue without Tailnet access", error);
+    logger.warn("[Tailscale] Stored integration could not connect; bot will continue without Tailnet access. The saved auth key must be reusable.", error);
     return false;
   }
 }
@@ -232,8 +225,7 @@ export async function reconnectTailscale(): Promise<void> {
   const stored = await readStored();
   if (!stored) throw new Error("Tailscale is not configured.");
   await ensureTailscaleDaemon();
-  const first = await cli(["up", `--hostname=${HOSTNAME}`, "--accept-dns=false"], 15_000);
-  if (!first.ok) await up(decryptAuthKey(stored.authKey));
+  await up(decryptAuthKey(stored.authKey));
 }
 
 export async function disconnectTailscale(): Promise<void> {
@@ -245,8 +237,7 @@ export async function removeTailscaleIntegration(): Promise<void> {
   if (daemon) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
   await stopTailscaleIntegration();
   const p = paths();
-  await fs.rm(p.stateDir, { recursive: true, force: true }).catch(() => {});
-  await fs.rm(p.socketDir, { recursive: true, force: true }).catch(() => {});
+  await fs.rm(p.runtimeDir, { recursive: true, force: true }).catch(() => {});
   await writeStored(null);
 }
 
