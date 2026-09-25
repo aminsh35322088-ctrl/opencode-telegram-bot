@@ -11,6 +11,7 @@ const REQUIRED = [
   "bot.skills.list", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "bot.skills.import", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
+  "ssh.check", "ssh.debug", "ssh.exec",
 ] as const;
 
 describe("expanded model-facing action surface", () => {
@@ -28,6 +29,9 @@ describe("expanded model-facing action surface", () => {
     expect(getAgentAction("bot.mcp.debug")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.rename")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.delete")?.risk).toBe("destructive");
+    expect(getAgentAction("ssh.check")?.risk).toBe("read");
+    expect(getAgentAction("ssh.debug")?.risk).toBe("read");
+    expect(getAgentAction("ssh.exec")?.risk).toBe("mutating");
   });
 
   it("backs the registered IDs with concrete OpenCode tool implementations", async () => {
@@ -46,5 +50,7 @@ describe("expanded model-facing action surface", () => {
     expect(bot).toContain('"mcp.rename"');
     expect(bot).toContain('"mcp.delete"');
     expect(bot).not.toContain('"mcp.disable"');
+    const ssh = await fs.readFile(".opencode/tools/ssh.ts", "utf8");
+    for (const action of ["check", "debug", "exec"]) expect(ssh).toContain(`"${action}"`);
   });
 });
