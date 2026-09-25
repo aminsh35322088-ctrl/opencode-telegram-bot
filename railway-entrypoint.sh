@@ -205,7 +205,7 @@ if [ -z "${TS_AUTHKEY:-}" ]; then
 elif [ ! -x /usr/local/bin/tsnet-bridge ]; then
   printf '%s\n' "[railway] WARNING: tsnet bridge binary is missing; bridge not started" >&2
 else
-  printf '%s\n' "[railway] tsnet bridge enabled: local=127.0.0.1:2222 target=GitHub-Exit:22"
+  printf '%s\n' "[railway] tsnet bridge enabled: local=127.0.0.1:2222 target=100.81.141.68:22"
   su -s /bin/sh node -c 'exec /usr/local/bin/tsnet-bridge' &
 fi
 
