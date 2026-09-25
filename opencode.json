@@ -25,6 +25,7 @@
     "safe-download": "allow",
     "send-file": "allow",
     "railway": "allow",
+    "ssh": "ask",
     "bash": {
       "*": "allow",
       "*tsc *": "allow",
