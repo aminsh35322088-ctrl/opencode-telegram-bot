@@ -83,17 +83,33 @@ esac
       connected: true,
       hostname: "opencode-bot",
       tailnet: "example.ts.net",
+      selfTags: ["tag:opencode-bot"],
+      visiblePeers: 3,
       sshDevices: 2,
     }));
   });
 
-  it("discovers only tag:ssh peers and never creates a separate server list", async () => {
+  it("reports every visible peer and explains SSH eligibility", async () => {
     const service = await import("../../../src/app/services/tailscale-integration-service.js");
     await service.configureTailscale("tskey-auth-test");
 
-    const devices = await service.listTailscaleSshDevices();
-    expect(devices.map((device) => device.name)).toEqual(["github-exit", "old-vps"]);
-    expect(devices.some((device) => device.name === "phone")).toBe(false);
+    const devices = await service.listTailscaleDevices();
+    expect(devices.map((device) => device.name)).toEqual(["github-exit", "old-vps", "phone"]);
+    expect(devices.find((device) => device.name === "github-exit")).toEqual(expect.objectContaining({
+      sshEligible: true,
+      sshReason: "eligible",
+    }));
+    expect(devices.find((device) => device.name === "phone")).toEqual(expect.objectContaining({
+      sshEligible: false,
+      sshReason: "missing-tag:ssh",
+    }));
+    expect(devices.find((device) => device.name === "old-vps")).toEqual(expect.objectContaining({
+      sshEligible: false,
+      sshReason: "offline",
+    }));
+
+    const sshDevices = await service.listTailscaleSshDevices();
+    expect(sshDevices.map((device) => device.name)).toEqual(["github-exit", "old-vps"]);
   });
 
   it("rejects untagged and offline peers as SSH targets", async () => {

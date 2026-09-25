@@ -33,7 +33,7 @@ vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
   disconnectTailscale: mocks.disconnect,
   removeTailscaleIntegration: mocks.remove,
   getTailscaleRuntimeStatus: mocks.status,
-  listTailscaleSshDevices: mocks.devices,
+  listTailscaleDevices: mocks.devices,
 }));
 
 vi.mock("../../../src/bot/commands/providers-command.js", () => ({
@@ -99,6 +99,8 @@ describe("Tailscale Integrations UI", () => {
       daemonRunning: false,
       hostname: "opencode-bot",
       ips: [],
+      selfTags: [],
+      visiblePeers: 0,
       sshDevices: 0,
     });
     mocks.devices.mockReset().mockResolvedValue([]);
@@ -131,9 +133,11 @@ describe("Tailscale Integrations UI", () => {
       hostname: "opencode-bot",
       tailnet: "example.ts.net",
       ips: ["100.64.0.2"],
+      selfTags: ["tag:opencode-bot"],
+      visiblePeers: 1,
       sshDevices: 1,
     });
-    mocks.devices.mockResolvedValue([{ name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:ssh"] }]);
+    mocks.devices.mockResolvedValue([{ name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:ssh"], sshEligible: true, sshReason: "eligible" }]);
 
     const input = textContext("tskey-auth-secret-value");
     expect(await handleIntegrationMessage(input)).toBe(true);
@@ -152,10 +156,13 @@ describe("Tailscale Integrations UI", () => {
       daemonRunning: true,
       hostname: "opencode-bot",
       ips: ["100.64.0.2"],
+      selfTags: ["tag:opencode-bot"],
+      visiblePeers: 2,
       sshDevices: 1,
     });
     mocks.devices.mockResolvedValue([
-      { name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:exit", "tag:ssh"] },
+      { name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:exit", "tag:ssh"], sshEligible: true, sshReason: "eligible" },
+      { name: "phone", ips: ["100.64.0.11"], online: true, tags: [], sshEligible: false, sshReason: "missing-tag:ssh" },
     ]);
 
     const ctx = callbackContext("integration:tailscale:devices");
@@ -164,6 +171,8 @@ describe("Tailscale Integrations UI", () => {
     const call = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls.at(-1);
     expect(call?.[2]).toContain("github-exit");
     expect(call?.[2]).toContain("tag:ssh");
-    expect(call?.[2]).toContain("discovered automatically");
+    expect(call?.[2]).toContain("phone");
+    expect(call?.[2]).toContain("missing tag:ssh");
+    expect(call?.[2]).toContain("SSH remains restricted");
   });
 });

@@ -41,13 +41,16 @@ interface TailscaleStatusJson {
   Peer?: Record<string, TailscalePeer>;
   CurrentTailnet?: { Name?: string; MagicDNSSuffix?: string };
 }
-export interface TailscaleSshDevice {
+export interface TailscaleDevice {
   name: string;
   dnsName?: string;
   ips: string[];
   online: boolean;
   tags: string[];
+  sshEligible: boolean;
+  sshReason: "eligible" | "missing-tag:ssh" | "offline";
 }
+export type TailscaleSshDevice = TailscaleDevice;
 export interface TailscaleRuntimeStatus {
   configured: boolean;
   connected: boolean;
@@ -56,6 +59,8 @@ export interface TailscaleRuntimeStatus {
   hostname: string;
   tailnet?: string;
   ips: string[];
+  selfTags: string[];
+  visiblePeers: number;
   sshDevices: number;
 }
 
@@ -265,32 +270,42 @@ function allPeers(status: TailscaleStatusJson | null): TailscalePeer[] {
 function isSshPeer(peer: TailscalePeer): boolean {
   return (peer.Tags ?? []).includes("tag:ssh");
 }
-function toDevice(peer: TailscalePeer): TailscaleSshDevice {
+function toDevice(peer: TailscalePeer): TailscaleDevice {
+  const tags = peer.Tags ?? [];
+  const online = peer.Online === true;
+  const taggedForSsh = tags.includes("tag:ssh");
   return {
     name: peer.HostName?.trim() || peer.DNSName?.split(".")[0] || peer.TailscaleIPs?.[0] || "unknown",
     ...(peer.DNSName ? { dnsName: peer.DNSName.replace(/\.$/u, "") } : {}),
     ips: peer.TailscaleIPs ?? [],
-    online: peer.Online === true,
-    tags: peer.Tags ?? [],
+    online,
+    tags,
+    sshEligible: taggedForSsh && online,
+    sshReason: !taggedForSsh ? "missing-tag:ssh" : online ? "eligible" : "offline",
   };
 }
 
-export async function listTailscaleSshDevices(): Promise<TailscaleSshDevice[]> {
+export async function listTailscaleDevices(): Promise<TailscaleDevice[]> {
   if (!await readStored()) return [];
   await ensureTailscaleDaemon();
   const status = await statusJson();
-  return allPeers(status).filter(isSshPeer).map(toDevice).sort((a, b) => a.name.localeCompare(b.name));
+  return allPeers(status).map(toDevice).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function listTailscaleSshDevices(): Promise<TailscaleSshDevice[]> {
+  return (await listTailscaleDevices()).filter((device) => device.tags.includes("tag:ssh"));
 }
 
 export async function resolveTailscaleSshDevice(targetValue: string): Promise<TailscaleSshDevice> {
   const target = normalizeTarget(targetValue);
   if (!target) throw new Error("SSH target is required.");
-  const devices = await listTailscaleSshDevices();
+  const devices = await listTailscaleDevices();
   const device = devices.find((candidate) => {
     const names = [candidate.name, candidate.dnsName, ...candidate.ips].filter((value): value is string => Boolean(value)).map(normalizeTarget);
     return names.includes(target) || names.some((name) => name.split(".")[0] === target);
   });
-  if (!device) throw new Error("Target is not an allowed Tailnet SSH device. It must be visible and carry tag:ssh.");
+  if (!device) throw new Error("Target is not visible in the bot's Tailnet netmap.");
+  if (!device.tags.includes("tag:ssh")) throw new Error(`Tailnet device "${device.name}" is visible but missing tag:ssh.`);
   if (!device.online) throw new Error(`Tailnet SSH device "${device.name}" is offline.`);
   return device;
 }
@@ -303,11 +318,12 @@ export async function pingTailscaleSshDevice(target: string): Promise<{ ok: bool
 
 export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatus> {
   const stored = await readStored();
-  if (!stored) return { configured: false, connected: false, daemonRunning: false, hostname: HOSTNAME, ips: [], sshDevices: 0 };
+  if (!stored) return { configured: false, connected: false, daemonRunning: false, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
   try {
     await ensureTailscaleDaemon();
     const status = await statusJson();
-    const devices = allPeers(status).filter(isSshPeer);
+    const peers = allPeers(status);
+    const sshDevices = peers.filter(isSshPeer);
     return {
       configured: true,
       connected: status?.BackendState === "Running",
@@ -316,10 +332,12 @@ export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatu
       hostname: status?.Self?.HostName || HOSTNAME,
       tailnet: status?.CurrentTailnet?.Name,
       ips: status?.Self?.TailscaleIPs ?? [],
-      sshDevices: devices.length,
+      selfTags: status?.Self?.Tags ?? [],
+      visiblePeers: peers.length,
+      sshDevices: sshDevices.length,
     };
   } catch {
-    return { configured: true, connected: false, daemonRunning: false, hostname: HOSTNAME, ips: [], sshDevices: 0 };
+    return { configured: true, connected: false, daemonRunning: false, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
   }
 }
 
