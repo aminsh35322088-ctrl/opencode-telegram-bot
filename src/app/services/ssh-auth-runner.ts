@@ -79,7 +79,7 @@ async function materializeAuth(
       env.SSH_ASKPASS = askpass;
       env.SSH_ASKPASS_REQUIRE = "force";
       env.DISPLAY = env.DISPLAY || "opencode-ssh:0";
-      authOptions.push("-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no");
+      authOptions.push("-o", "BatchMode=no", "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no");
     }
 
     if (request.bin === SSH_BIN || request.bin === SCP_BIN) {
