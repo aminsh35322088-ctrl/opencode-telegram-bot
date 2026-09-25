@@ -12,6 +12,8 @@ export interface AppState {
   integrations?: Record<string, unknown>;
   mcpCredentials?: Record<string, unknown>;
   mcpServers?: Record<string, unknown>;
+  sshProfiles?: Record<string, unknown>;
+  sshCredentials?: Record<string, unknown>;
   aiRoles?: Record<string, unknown>;
   [key: string]: unknown;
 }
