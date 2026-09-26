@@ -266,7 +266,12 @@ function hostKeyAlgorithms(device: TailscaleSshDevice): string {
   const values = [...new Set(
     device.sshHostKeys
       .map((key) => key.trim().split(/\s+/u)[0])
-      .filter((value): value is string => Boolean(value) && /^[A-Za-z0-9@._+-]+$/u.test(value)),
+      .filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.length > 0 &&
+          /^[A-Za-z0-9@._+-]+$/u.test(value),
+      ),
   )];
   if (values.length === 0) throw new Error("Native Tailscale SSH peer did not advertise SSH host keys.");
   if (values.includes("ssh-ed25519")) {
