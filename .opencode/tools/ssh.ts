@@ -23,6 +23,8 @@ interface SshModule {
   resolveTailnetSshScope(sessionId: string): Promise<string>;
   describeTailnetSshTarget(input: Record<string, unknown>): Promise<SshTargetDescription>;
   hasActiveTailnetSshConnection(input: Record<string, unknown>): Promise<boolean>;
+  hasTailnetSshAuthorization(input: Record<string, unknown>): Promise<boolean>;
+  grantTailnetSshAuthorization(input: Record<string, unknown>): Promise<void>;
   checkTailnetSsh(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   debugTailnetSsh(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   execTailnetSsh(input: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -107,7 +109,7 @@ function permissionAction(action: string): string {
 
 export default tool({
   description:
-    "Passwordless SSH to online Tailnet peers tagged tag:ssh. The first approved use opens one multiplexed SSH master scoped to the current Telegram Topic, server identity, username, and port. Each such scope also receives a separate server-side workspace; exec starts there and upload/download paths are relative to it, so multiple Topics can work on the same server concurrently without sharing a working directory. Subsequent operations reuse the same connection without new SSH handshakes or permission prompts. If the server restarts, the master closes, the Tailnet identity changes, the username/port changes, or another Topic is used, permission is required again. Direct public-internet SSH and password authentication are intentionally unsupported.",
+    "Passwordless SSH to online Tailnet peers tagged tag:ssh. The first approved use grants a Topic-scoped authorization lease for the current server identity, username, and port, then opens a multiplexed SSH master. Each such scope also receives a separate server-side workspace; exec starts there and upload/download paths are relative to it, so multiple Topics can work on the same server concurrently without sharing a working directory. A dead or stuck master is transport state only: it is automatically recreated under the existing authorization lease without asking again. Permission is required again when the Tailnet identity, username/port, or Topic changes. Direct public-internet SSH and password authentication are intentionally unsupported.",
   args: {
     action: tool.schema.enum(["check", "debug", "exec", "upload", "download"]).describe("SSH operation."),
     target: tool.schema.string().describe("Tailnet hostname, MagicDNS name, or Tailscale IP of a visible tag:ssh peer."),
@@ -158,16 +160,23 @@ export default tool({
         : await downloadDestination(worktree, local, args.overwrite === true);
     }
 
-    const alreadyAuthorized = await ssh.hasActiveTailnetSshConnection(common);
-    let allowConnectionStart = false;
+    const permissionPattern =
+      `server:${scope}:${description.identity}:${user}:${description.port}`;
+    const activeConnection = await ssh.hasActiveTailnetSshConnection(common);
+    let authorizationLease = await ssh.hasTailnetSshAuthorization(common);
 
-    if (!alreadyAuthorized) {
+    // A live master can only exist for this exact scoped connection key, so it
+    // is safe to restore the in-process lease after a tool/module reload.
+    if (activeConnection && !authorizationLease) {
+      await ssh.grantTailnetSshAuthorization(common);
+      authorizationLease = true;
+    }
+
+    if (!authorizationLease) {
       const topicScoped = scope.startsWith("topic:");
       await context.ask({
         permission: "ssh-remote",
-        patterns: [
-          `server:${scope}:${description.identity}:${user}:${description.port}`,
-        ],
+        patterns: [permissionPattern],
         always: [],
         metadata: {
           input: {
@@ -183,8 +192,8 @@ export default tool({
             password: "Not required",
             serverIdentity: description.identity.slice(0, 16),
             grantScope: topicScoped ? "This Telegram Topic" : "This OpenCode session",
-            grantUntil: "The SSH master disconnects, the server restarts, or the Tailnet identity changes",
-            connectionMode: "One multiplexed SSH connection; later operations reuse it",
+            grantUntil: "This bot/OpenCode runtime, unless the Topic, server identity, username, or port changes",
+            connectionMode: "Multiplexed SSH with automatic master recovery under the existing authorization lease",
             remoteWorkspace: description.remoteWorkspace ?? "Topic-scoped remote workspace",
             requestedAction: args.action,
             command: command ?? null,
@@ -193,14 +202,14 @@ export default tool({
           },
         },
       });
-      allowConnectionStart = true;
+      await ssh.grantTailnetSshAuthorization(common);
+      authorizationLease = true;
     }
 
     const authorized = {
       ...common,
-      allowConnectionStart,
+      allowConnectionStart: authorizationLease,
     };
-
     if (args.action === "check") {
       return output(await ssh.checkTailnetSsh(authorized));
     }
