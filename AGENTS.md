@@ -61,7 +61,7 @@ Do not create a second application dependency tree on the Railway volume. Do not
 
 ### Where to work
 
-The persistent repository checkout lives at `/data/opencode/opencode-telegram-bot` and tracks `main`.
+The persistent repository checkout lives at `/data/opencode/opencode-telegram-bot`. Railway startup creates or refreshes it from the deployment's GitHub repository and commit, so this path must exist before agents begin repository work. Treat it as the clean source checkout; do actual changes in per-session worktrees.
 
 When a task needs a working copy on a branch, create a git worktree **inside the agent's own session workspace** and work there:
 
@@ -101,8 +101,8 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 - SSH is Tailnet-only and targets must be visible online peers carrying `tag:ssh`; never introduce a direct public-Internet SSH path.
 - Never ask the user for an SSH password or place SSH passwords/private keys in prompts, commands, logs, or model-facing metadata.
 - The first approved SSH use opens one multiplexed master connection scoped to the Telegram Topic + server identity + username + port. Reuse that connection for later SSH operations instead of reconnecting per command.
-- Treat a closed master connection, server restart/disconnect, changed Tailnet/SSH identity, changed username/port, or another Topic as a new authorization boundary and request permission again.
-- A reused channel must fail closed if its master connection disappeared; it must never silently open a replacement connection.
+- SSH authorization is independent from the ControlMaster transport. After the user approves a Topic + stable server identity + username + port, a dead, stuck, timed-out, or remotely restarted master must be recreated automatically under that existing authorization lease without asking again.
+- Request permission again only when the authorization boundary changes: another Topic/session scope, a changed stable Tailnet/SSH identity, or a changed username/port. Never reuse a lease across those boundaries.
 - SSH action state is Topic-owned. Every `ssh.check`, `ssh.debug`, `ssh.exec`, `ssh.upload`, and `ssh.download` invocation must resolve the current Topic/session scope before touching connection, authorization, transfer, or debug state. Never reuse another Topic's SSH master, permission lease, command queue, transfer state, or diagnostics.
 - Multiple Topics may use the same Tailnet server concurrently, but they must not share a remote working directory. The SSH service assigns a deterministic server-side workspace scoped to `Topic + server identity + username + port`; `ssh.exec` starts in that workspace and file-transfer `remote_path` values are workspace-relative.
 - Treat the Topic SSH workspace as the default boundary for project files. Do not use shared paths such as `/tmp`, another Topic's workspace, or an absolute remote project path unless the user explicitly asks for a machine-global/system operation. Workspace isolation is a filesystem/cwd boundary, not an OS sandbox: commands that deliberately modify absolute/system paths can still affect the whole server.
