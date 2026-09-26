@@ -221,7 +221,7 @@ export function sanitizeSshLog(value: string): string {
 
 function classify(result: CommandResult, authMode: SshAuthMode): string {
   const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  if (output.includes("authorization expired") || output.includes("active ssh master")) {
+  if (output.includes("authorization expired") || output.includes("authorization is required") || output.includes("active ssh master")) {
     return "authorization-expired";
   }
   if (result.timedOut || output.includes("port 65535 timed out")) return "transport-timeout";
