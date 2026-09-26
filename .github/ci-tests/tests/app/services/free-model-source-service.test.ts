@@ -1,11 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildFreeSourceProviderConfigs,
   buildOmniEnvironment,
+  cancelFreebuffAutoConnect,
+  checkFreebuffAutoConnect,
+  getPendingFreebuffAutoConnect,
+  startFreebuffAutoConnect,
   type FreeModelSourceID,
 } from "../../../src/app/services/free-model-source-service.js";
 
 describe("experimental free model source config", () => {
+  afterEach(() => {
+    cancelFreebuffAutoConnect();
+    vi.unstubAllGlobals();
+  });
+
   it("builds five isolated OpenAI-compatible providers over one local runtime", () => {
     const configured = new Set<FreeModelSourceID>(["ds", "freebuff"]);
     const sources = buildFreeSourceProviderConfigs({
@@ -76,6 +85,37 @@ describe("experimental free model source config", () => {
       delete process.env.GITHUB_TOKEN;
       delete process.env.SSL_CERT_FILE;
     }
+  });
+
+  it("starts the official Freebuff browser login and treats 401 status as pending", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        loginUrl: "https://freebuff.com/login?code=abc",
+        fingerprintHash: "hash-1",
+        expiresAt: 123456,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "pending" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const started = await startFreebuffAutoConnect();
+    expect(started.loginUrl).toBe("https://freebuff.com/login?code=abc");
+    expect(getPendingFreebuffAutoConnect()?.loginUrl).toBe(started.loginUrl);
+
+    const result = await checkFreebuffAutoConnect();
+    expect(result).toMatchObject({ status: "pending", loginUrl: started.loginUrl });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/auth/cli/status?");
+  });
+
+  it("rejects an unexpected Freebuff login origin", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      loginUrl: "https://evil.example/login",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(startFreebuffAutoConnect()).rejects.toThrow("unexpected login origin");
+    expect(getPendingFreebuffAutoConnect()).toBeNull();
   });
 
   it("uses source-specific conservative catalogs when discovery is empty", () => {
