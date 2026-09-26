@@ -92,6 +92,13 @@ describe("SSH/Cloudflare regression contract", () => {
     expect(existsSync(repoPath("src/app/services/ssh-credential-store.ts"))).toBe(false);
   });
 
+  it("keeps SSH authorization independent from ControlMaster liveness", () => {
+    const source = readFileSync(repoPath(".opencode/tools/ssh.ts"), "utf8");
+    expect(source).toContain("hasTailnetSshAuthorization");
+    expect(source).toContain("grantTailnetSshAuthorization");
+    expect(source).toContain("allowConnectionStart: authorizationLease");
+    expect(source).toContain("automatic master recovery");
+  });
   it("keeps the SSH tool permission-gated", () => {
     const config = JSON.parse(readFileSync(repoPath("opencode.json"), "utf8")) as {
       permission?: Record<string, unknown>;
