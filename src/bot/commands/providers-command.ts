@@ -15,10 +15,14 @@ import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 import { getFreeModelSourcesEnabled, getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 import {
+  cancelFreebuffAutoConnect,
+  checkFreebuffAutoConnect,
   clearFreeModelSourceCredential,
+  getPendingFreebuffAutoConnect,
   listFreeModelSourceConnections,
   restartFreeModelSources,
   setFreeModelSourceCredential,
+  startFreebuffAutoConnect,
   type FreeModelSourceID,
 } from "../../app/services/free-model-source-service.js";
 
@@ -93,7 +97,45 @@ function freeSourcePrompt(sourceID: FreeModelSourceID): string {
     case "ds":
       return "🐋 DeepSeek Web\n\nSend one DeepSeek userToken value from your own logged-in chat.deepseek.com session.\n\nDeepSeek Web has no guest mode.\n🔒 Your message will be deleted immediately.";
     case "freebuff":
-      return "🆓 Freebuff\n\nSend one Freebuff auth token from your own Freebuff/Codebuff account.\n\nThe integration uses one account/seat and respects upstream limits.\n🔒 Your message will be deleted immediately.";
+      return "🆓 Freebuff · Manual fallback\n\nNormally use the automatic browser login. If that flow is unavailable, send one Freebuff auth token from your own account here.\n\nThe integration uses one account/seat and respects upstream limits.\n🔒 Your message will be deleted immediately.";
+  }
+}
+
+
+async function renderFreebuffAutoConnect(ctx: Context, id?: number, notice = ""): Promise<void> {
+  const pending = getPendingFreebuffAutoConnect();
+  if (!pending) {
+    await renderFreeModelSources(ctx, id, notice || "⌛ Freebuff login session expired. Start the connection again.\n\n");
+    return;
+  }
+  const keyboard = new InlineKeyboard()
+    .url("🌐 Open Freebuff Login", pending.loginUrl).row()
+    .text("✅ I approved · Check connection", "provider:freebuff-check").row()
+    .text("✍️ Paste token manually", "provider:freebuff-manual").row()
+    .text("✖ Cancel login", "provider:freebuff-cancel").row()
+    .text("← Free Model Sources", "provider:free-sources");
+
+  await render(ctx, [
+    notice,
+    "🆓 Freebuff · Automatic connection",
+    "",
+    "1. Open the official Freebuff login link below.",
+    "2. Sign in / approve the CLI connection on freebuff.com.",
+    "3. Return here and tap “I approved · Check connection”.",
+    "",
+    "The bot then retrieves the account token from Freebuff's official login status endpoint, verifies it against Codebuff, saves it privately, and reloads OmniRouter/OpenCode.",
+    "",
+    "No token copy/paste is required.",
+  ].filter(Boolean).join("\n"), keyboard, id);
+}
+
+async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void> {
+  try {
+    await startFreebuffAutoConnect();
+    await renderFreebuffAutoConnect(ctx, id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Freebuff login could not start";
+    await renderFreeModelSources(ctx, id, `❌ Automatic Freebuff login could not start.\n${message}\n\nManual token setup is still available by opening Freebuff again.\n\n`);
   }
 }
 
@@ -103,14 +145,26 @@ async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): P
   const keyboard = new InlineKeyboard();
 
   for (const source of sources) {
-    const state = source.configured ? "Connected" : source.guestCapable ? "Guest" : "Needs connection";
+    const state = source.configured
+      ? "Connected"
+      : source.id === "freebuff"
+        ? "Auto login"
+        : source.guestCapable
+          ? "Guest"
+          : "Needs connection";
     keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${state}`), `provider:free-source:${source.id}`).row();
     if (source.configured) keyboard.text(`🗑 Remove ${source.label} credential`, `provider:free-source-remove:${source.id}`).row();
   }
   keyboard.text("← API Connections", "provider:menu");
 
   const lines = sources.map((source) => {
-    const state = source.configured ? "✅ Connected" : source.guestCapable ? "👻 Guest available" : "🔐 Connection required";
+    const state = source.configured
+      ? "✅ Connected"
+      : source.id === "freebuff"
+        ? "🌐 Automatic browser login"
+        : source.guestCapable
+          ? "👻 Guest available"
+          : "🔐 Connection required";
     return `${source.label} · ${state}`;
   });
 
@@ -240,6 +294,35 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     return true;
   }
   if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
+  if (data === "provider:freebuff-check") {
+    const result = await checkFreebuffAutoConnect();
+    if (result.status === "connected") {
+      const notice = await applyFreeSourceCredentialChange();
+      await renderFreeModelSources(ctx, id, `✅ Freebuff connected automatically${result.account ? " · " + result.account : ""}.${notice}\n\n`);
+      return true;
+    }
+    if (result.status === "pending") {
+      await renderFreebuffAutoConnect(ctx, id, "⏳ Freebuff is still waiting for approval. Finish login in the browser, then check again.\n\n");
+      return true;
+    }
+    if (result.status === "expired") {
+      await renderFreeModelSources(ctx, id, "⌛ Freebuff login session expired. Tap Freebuff to start a fresh login.\n\n");
+      return true;
+    }
+    await renderFreebuffAutoConnect(ctx, id, `❌ Freebuff connection check failed.\n${result.message}\n\n`);
+    return true;
+  }
+  if (data === "provider:freebuff-manual") {
+    await start(ctx, "free-source-secret", freeSourcePrompt("freebuff"));
+    const wizard = providerWizard.get();
+    if (wizard) wizard.freeSourceID = "freebuff";
+    return true;
+  }
+  if (data === "provider:freebuff-cancel") {
+    cancelFreebuffAutoConnect();
+    await renderFreeModelSources(ctx, id, "Freebuff automatic login cancelled.\n\n");
+    return true;
+  }
   if (data.startsWith("provider:free-source-remove:")) {
     const sourceID = data.slice("provider:free-source-remove:".length) as FreeModelSourceID;
     const removed = await clearFreeModelSourceCredential(sourceID);
@@ -251,6 +334,10 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     const sourceID = data.slice("provider:free-source:".length) as FreeModelSourceID;
     const source = (await listFreeModelSourceConnections()).find((item) => item.id === sourceID);
     if (!source) { await renderFreeModelSources(ctx, id, "❌ Unknown free model source.\n\n"); return true; }
+    if (sourceID === "freebuff" && !source.configured) {
+      await beginFreebuffAutoConnect(ctx, id);
+      return true;
+    }
     await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
     const wizard = providerWizard.get();
     if (wizard) wizard.freeSourceID = sourceID;
