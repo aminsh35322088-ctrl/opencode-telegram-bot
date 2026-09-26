@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,275 +14,731 @@ import {
   getManagedSshKnownHostsPath,
   getManagedSshPrivateKeyPath,
 } from "./ssh-key-service.js";
+import { findTelegramTopicBindingBySessionId } from "./telegram-topic-store.js";
 
 const execFileAsync = promisify(execFile);
 const SSH_BIN = process.env.SSH_REAL_BIN?.trim() || "/usr/bin/ssh";
 const SCP_BIN = process.env.SCP_REAL_BIN?.trim() || "/usr/bin/scp";
 const TAILSCALE_BIN = process.env.TAILSCALE_BIN?.trim() || "/usr/local/bin/tailscale";
-const FALLBACK_KEX = "ecdh-sha2-nistp256";
 const MAX_OUTPUT = 16_000;
 const DEFAULT_PORT = 22;
+const CONTROL_DIR = process.env.SSH_CONTROL_DIR?.trim() || path.join(os.tmpdir(), "opencode-ssh-control");
+const HOSTKEY_DIR = process.env.SSH_HOSTKEY_DIR?.trim() || path.join(os.tmpdir(), "opencode-ssh-hostkeys");
+const NATIVE_KEX_ORDER = "ecdh-sha2-nistp256,curve25519-sha256";
+const masterLocks = new Map<string, Promise<CommandResult>>();
 
 export type SshAuthMode = "tailscale-ssh" | "managed-key";
-export interface CommandRequest { bin: string; args: string[]; timeoutMs: number; env?: NodeJS.ProcessEnv; }
-export interface CommandResult { ok: boolean; stdout: string; stderr: string; timedOut: boolean; exitCode: number | null; signal: string | null; }
+
+export interface CommandRequest {
+  bin: string;
+  args: string[];
+  timeoutMs: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface CommandResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  exitCode: number | null;
+  signal: string | null;
+}
+
 export type CommandRunner = (request: CommandRequest) => Promise<CommandResult>;
-export interface TailnetSshTarget { target: string; user: string; port?: number; timeoutMs?: number; }
-export interface TailnetSshExecInput extends TailnetSshTarget { command: string; }
-export interface TailnetSshTransferInput extends TailnetSshTarget { localPath: string; remotePath: string; direction: "upload" | "download"; }
+
+export interface TailnetSshTarget {
+  target: string;
+  user: string;
+  port?: number;
+  timeoutMs?: number;
+  scope?: string;
+  allowConnectionStart?: boolean;
+}
+
+export interface TailnetSshExecInput extends TailnetSshTarget {
+  command: string;
+}
+
+export interface TailnetSshTransferInput extends TailnetSshTarget {
+  localPath: string;
+  remotePath: string;
+  direction: "upload" | "download";
+}
+
 export interface TailnetSshTargetDescription {
-  hostname: string; dnsName?: string; ips: string[]; os?: string; username: string; port: number;
-  network: "Tailscale"; authMode: SshAuthMode; authentication: string; passwordRequired: false; nativeTailscaleSsh: boolean;
+  hostname: string;
+  dnsName?: string;
+  ips: string[];
+  os?: string;
+  identity: string;
+  username: string;
+  port: number;
+  scope: string;
+  network: "Tailscale";
+  authMode: SshAuthMode;
+  authentication: string;
+  passwordRequired: false;
+  nativeTailscaleSsh: boolean;
+}
+
+interface PreparedConnection {
+  device: TailscaleSshDevice;
+  user: string;
+  port: number;
+  timeout: number;
+  scope: string;
+  authMode: SshAuthMode;
+  host: string;
+  controlPath: string;
+}
+
+interface MasterResult {
+  ok: boolean;
+  created: boolean;
+  reused: boolean;
+  result: CommandResult;
+  prepared: PreparedConnection;
 }
 
 export async function runCommand(request: CommandRequest): Promise<CommandResult> {
   try {
     const { stdout, stderr } = await execFileAsync(request.bin, request.args, {
-      timeout: request.timeoutMs, maxBuffer: 8 * 1024 * 1024,
-      env: request.env ?? process.env, encoding: "utf8",
+      timeout: request.timeoutMs,
+      maxBuffer: 8 * 1024 * 1024,
+      env: request.env ?? process.env,
+      encoding: "utf8",
     });
     return { ok: true, stdout, stderr, timedOut: false, exitCode: 0, signal: null };
   } catch (error) {
-    const e = error as { stdout?: string; stderr?: string; killed?: boolean; signal?: string; code?: string | number; message?: string };
+    const e = error as {
+      stdout?: string;
+      stderr?: string;
+      killed?: boolean;
+      signal?: string;
+      code?: string | number;
+      message?: string;
+    };
     return {
-      ok: false, stdout: e.stdout ?? "", stderr: e.stderr ?? e.message ?? String(error),
+      ok: false,
+      stdout: e.stdout ?? "",
+      stderr: e.stderr ?? e.message ?? String(error),
       timedOut: Boolean(e.killed) || e.signal === "SIGTERM" || e.code === "ETIMEDOUT",
-      exitCode: typeof e.code === "number" ? e.code : null, signal: e.signal ?? null,
+      exitCode: typeof e.code === "number" ? e.code : null,
+      signal: e.signal ?? null,
     };
   }
 }
+
+function failure(stderr: string, exitCode: number | null = null): CommandResult {
+  return {
+    ok: false,
+    stdout: "",
+    stderr,
+    timedOut: false,
+    exitCode,
+    signal: null,
+  };
+}
+
 function boundedTimeout(value?: number): number {
   if (!Number.isFinite(value)) return 15_000;
   return Math.max(3_000, Math.min(Math.trunc(value ?? 15_000), 60_000));
 }
+
 function validatePort(value?: number): number {
   if (value === undefined) return DEFAULT_PORT;
   const port = Math.trunc(value);
-  if (!Number.isFinite(port) || port < 1 || port > 65535) throw new Error("SSH port must be between 1 and 65535.");
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    throw new Error("SSH port must be between 1 and 65535.");
+  }
   return port;
 }
+
 function validateUser(value: string): string {
   const user = value.trim();
-  if (!user || !/^[A-Za-z0-9._-]+$/u.test(user)) throw new Error("SSH user is required and must contain only safe username characters.");
+  if (!user || !/^[A-Za-z0-9._-]+$/u.test(user)) {
+    throw new Error("SSH user is required and must contain only safe username characters.");
+  }
   return user;
 }
+
+function normalizeScope(value?: string): string {
+  const scope = value?.trim();
+  if (!scope || scope.length > 256 || !/^[A-Za-z0-9:._-]+$/u.test(scope)) {
+    return "session:unknown";
+  }
+  return scope;
+}
+
 function validateRemotePath(value: string): string {
   const remote = value.trim();
-  if (!remote || remote.length > 4096 || remote.startsWith("-") || !/^[A-Za-z0-9_./~:@%+=,\\-]+$/u.test(remote)) {
-    throw new Error("remote_path is empty or unsafe.");
+  if (
+    !remote ||
+    remote.length > 4096 ||
+    remote.startsWith("-") ||
+    !/^[A-Za-z0-9_./~:@%+=,\\-]+$/u.test(remote)
+  ) {
+    throw new Error("remote_path contains unsupported or unsafe characters.");
   }
   return remote;
 }
-function clip(value: string): string { return value.length <= MAX_OUTPUT ? value : `…(truncated, ${value.length} chars total)\n${value.slice(-MAX_OUTPUT)}`; }
+
+function clip(value: string): string {
+  return value.length <= MAX_OUTPUT
+    ? value
+    : `…(truncated, ${value.length} chars total)\n${value.slice(-MAX_OUTPUT)}`;
+}
+
 export function sanitizeSshLog(value: string): string {
   return clip(value)
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/giu, "[REDACTED PRIVATE KEY]")
+    .replace(
+      /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/giu,
+      "[REDACTED PRIVATE KEY]",
+    )
     .replace(/\b(password|passwd|token|secret|auth[-_]?key)\s*[=:]\s*\S+/giu, "$1=[REDACTED]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]");
 }
+
 function classify(result: CommandResult, authMode: SshAuthMode): string {
   const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  if (output.includes("authorization expired") || output.includes("active ssh master")) {
+    return "authorization-expired";
+  }
   if (result.timedOut || output.includes("port 65535 timed out")) return "transport-timeout";
   if (output.includes("no matching key exchange method")) return "kex-mismatch";
   if (output.includes("kex_exchange_identification")) return "kex-handshake-failed";
-  if (output.includes("host key verification failed")) return "host-key-verification-failed";
-  if (output.includes("connection refused")) return "connection-refused";
-  if (output.includes("no route to host") || output.includes("network is unreachable")) return "network-unreachable";
-  if (output.includes("permission denied") || output.includes("access denied") || output.includes("unable to authenticate")) {
-    return authMode === "managed-key" ? "managed-key-not-authorized" : "tailscale-ssh-policy-denied";
+  if (output.includes("host key verification failed") || output.includes("remote host identification has changed")) {
+    return "host-identity-changed";
   }
-  if (output.includes("could not resolve hostname") || output.includes("name or service not known")) return "hostname-resolution-failed";
+  if (output.includes("connection refused")) return "connection-refused";
+  if (output.includes("no route to host") || output.includes("network is unreachable")) {
+    return "network-unreachable";
+  }
+  if (
+    output.includes("permission denied") ||
+    output.includes("access denied") ||
+    output.includes("unable to authenticate")
+  ) {
+    return authMode === "managed-key"
+      ? "managed-key-not-authorized"
+      : "tailscale-ssh-policy-denied";
+  }
+  if (output.includes("could not resolve hostname") || output.includes("name or service not known")) {
+    return "hostname-resolution-failed";
+  }
   return "ssh-failed";
 }
-function shouldNativeKexFallback(result: CommandResult): boolean {
-  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  return result.timedOut || output.includes("port 65535 timed out") || output.includes("no matching key exchange method") || output.includes("kex_exchange_identification");
+
+function proxyCommand(): string {
+  return `${TAILSCALE_BIN} --socket=${getTailscaleSocketPath()} nc %h %p`;
 }
-function proxyCommand(): string { return `${TAILSCALE_BIN} --socket=${getTailscaleSocketPath()} nc %h %p`; }
-function preferredHost(device: TailscaleSshDevice): string {
-  return device.ips.find((ip) => /^\d+\.\d+\.\d+\.\d+$/u.test(ip)) ?? device.ips[0] ?? device.dnsName ?? device.name;
+
+function preferredHost(device: TailscaleSshDevice, authMode: SshAuthMode): string {
+  if (authMode === "tailscale-ssh") return device.name;
+  return device.ips.find((ip) => /^\d+\.\d+\.\d+\.\d+$/u.test(ip))
+    ?? device.ips[0]
+    ?? device.dnsName
+    ?? device.name;
 }
+
 function authModeFor(device: TailscaleSshDevice, port: number): SshAuthMode {
-  return port === DEFAULT_PORT && device.nativeTailscaleSsh ? "tailscale-ssh" : "managed-key";
+  return port === DEFAULT_PORT && device.nativeTailscaleSsh
+    ? "tailscale-ssh"
+    : "managed-key";
 }
+
 function authLabel(authMode: SshAuthMode): string {
-  return authMode === "tailscale-ssh" ? "Tailscale SSH (Tailnet identity)" : "Managed Ed25519 SSH key over Tailscale";
+  return authMode === "tailscale-ssh"
+    ? "Tailscale SSH (Tailnet identity)"
+    : "Managed Ed25519 SSH key over Tailscale";
 }
 
-export async function describeTailnetSshTarget(input: TailnetSshTarget): Promise<TailnetSshTargetDescription> {
-  const user = validateUser(input.user);
-  const port = validatePort(input.port);
-  const device = await resolveTailscaleSshDevice(input.target);
-  const authMode = authModeFor(device, port);
-  return {
-    hostname: device.name, ...(device.dnsName ? { dnsName: device.dnsName } : {}),
-    ips: device.ips, ...(device.os ? { os: device.os } : {}),
-    username: user, port, network: "Tailscale", authMode,
-    authentication: authLabel(authMode), passwordRequired: false,
-    nativeTailscaleSsh: authMode === "tailscale-ssh",
-  };
+function controlPathFor(scope: string, device: TailscaleSshDevice, user: string, port: number): string {
+  const digest = createHash("sha256")
+    .update([scope, device.identity, user, String(port)].join("\0"), "utf8")
+    .digest("hex")
+    .slice(0, 32);
+  return path.join(CONTROL_DIR, `${digest}.sock`);
 }
 
-async function withKexShim<T>(fn: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-ts-ssh-"));
-  const shim = path.join(directory, "ssh");
-  try {
-    await fs.writeFile(shim, `#!/bin/sh\nexec "${SSH_BIN.replaceAll('"', '\\"')}" -o KexAlgorithms=${FALLBACK_KEX} "$@"\n`, { mode: 0o700 });
-    return await fn({ ...process.env, PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}` });
-  } finally {
-    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+function hostKeyAlgorithms(device: TailscaleSshDevice): string {
+  const values = [...new Set(
+    device.sshHostKeys
+      .map((key) => key.trim().split(/\s+/u)[0])
+      .filter((value): value is string => Boolean(value) && /^[A-Za-z0-9@._+-]+$/u.test(value)),
+  )];
+  if (values.length === 0) throw new Error("Native Tailscale SSH peer did not advertise SSH host keys.");
+  if (values.includes("ssh-ed25519")) {
+    return ["ssh-ed25519", ...values.filter((value) => value !== "ssh-ed25519")].join(",");
   }
+  return values.join(",");
 }
-async function nativeAttempt(
-  device: TailscaleSshDevice, user: string, command: string, timeout: number,
-  runner: CommandRunner, fallback: boolean, verbose: boolean,
-): Promise<CommandResult> {
-  const args = [`--socket=${getTailscaleSocketPath()}`, "ssh", `${user}@${device.name}`, command];
-  const debugEnv = verbose ? { TS_DEBUG_SSH_EXEC: "1" } : {};
-  if (!fallback) return runner({ bin: TAILSCALE_BIN, args, timeoutMs: timeout, env: { ...process.env, ...debugEnv } });
-  return withKexShim((shimEnv) => runner({ bin: TAILSCALE_BIN, args, timeoutMs: timeout, env: { ...shimEnv, ...debugEnv } }));
+
+async function nativeKnownHosts(device: TailscaleSshDevice): Promise<string> {
+  if (device.sshHostKeys.length === 0) {
+    throw new Error("Native Tailscale SSH peer did not advertise SSH host keys.");
+  }
+  await fs.mkdir(HOSTKEY_DIR, { recursive: true, mode: 0o700 });
+  const file = path.join(HOSTKEY_DIR, `${device.identity}.known_hosts`);
+  const aliases = [...new Set([
+    device.name,
+    ...(device.dnsName ? [device.dnsName] : []),
+    ...device.ips,
+  ].filter(Boolean))];
+  const lines = aliases.flatMap((alias) =>
+    device.sshHostKeys.map((key) => `${alias} ${key.trim()}`),
+  );
+  await fs.writeFile(file, `${lines.join("\n")}\n`, { mode: 0o600 });
+  await fs.chmod(file, 0o600).catch(() => {});
+  return file;
 }
-async function adaptiveNativeSsh(
-  device: TailscaleSshDevice, user: string, command: string, timeout: number,
-  runner: CommandRunner, verbose = false,
-): Promise<{ result: CommandResult; fallback: boolean; first?: CommandResult }> {
-  const first = await nativeAttempt(device, user, command, timeout, runner, false, verbose);
-  if (first.ok || !shouldNativeKexFallback(first)) return { result: first, fallback: false };
-  const second = await nativeAttempt(device, user, command, timeout, runner, true, verbose);
-  return { result: second, fallback: true, first };
-}
-async function managedKeySsh(
-  device: TailscaleSshDevice, user: string, port: number, command: string,
-  timeout: number, runner: CommandRunner, verbose = false,
-): Promise<CommandResult> {
-  const privateKey = await getManagedSshPrivateKeyPath();
-  const knownHosts = await getManagedSshKnownHostsPath();
+
+async function connectionOptions(prepared: PreparedConnection, verbose = false): Promise<string[]> {
   const args = [
     ...(verbose ? ["-vvv"] : []),
     "-o", `ProxyCommand=${proxyCommand()}`,
-    "-o", "BatchMode=yes", "-o", "PasswordAuthentication=no",
-    "-o", "KbdInteractiveAuthentication=no", "-o", "PreferredAuthentications=publickey",
-    "-o", "IdentitiesOnly=yes", "-o", `UserKnownHostsFile=${knownHosts}`,
-    "-o", "StrictHostKeyChecking=accept-new",
-    "-o", `ConnectTimeout=${Math.max(3, Math.ceil(timeout / 1000))}`,
-    "-i", privateKey, "-p", String(port), `${user}@${preferredHost(device)}`, command,
+    "-o", "BatchMode=yes",
+    "-o", "PasswordAuthentication=no",
+    "-o", "KbdInteractiveAuthentication=no",
+    "-o", `ConnectTimeout=${Math.max(3, Math.ceil(prepared.timeout / 1000))}`,
   ];
-  return runner({ bin: SSH_BIN, args, timeoutMs: timeout });
-}
-async function runSsh(
-  device: TailscaleSshDevice, user: string, port: number, command: string,
-  timeout: number, runner: CommandRunner, verbose = false,
-): Promise<{ result: CommandResult; authMode: SshAuthMode; fallback: boolean; first?: CommandResult }> {
-  const authMode = authModeFor(device, port);
-  if (authMode === "tailscale-ssh") {
-    const attempt = await adaptiveNativeSsh(device, user, command, timeout, runner, verbose);
-    return { ...attempt, authMode };
-  }
-  return { result: await managedKeySsh(device, user, port, command, timeout, runner, verbose), authMode, fallback: false };
-}
 
-export async function checkTailnetSsh(input: TailnetSshTarget, runner: CommandRunner = runCommand): Promise<Record<string, unknown>> {
-  const user = validateUser(input.user), port = validatePort(input.port), timeout = boundedTimeout(input.timeoutMs);
-  const device = await resolveTailscaleSshDevice(input.target);
-  const ping = await pingTailscaleSshDevice(device.name);
-  if (!ping.ok) return { ok: false, device, user, port, tailnetReachable: false, diagnosis: "tailnet-unreachable", ping: ping.output };
-  const attempt = await runSsh(device, user, port, "exit 0", timeout, runner);
-  return {
-    ok: attempt.result.ok, device, user, port, tailnetReachable: true,
-    authMode: attempt.authMode, authentication: authLabel(attempt.authMode), passwordRequired: false,
-    diagnosis: attempt.result.ok ? (attempt.fallback ? "connected-with-kex-fallback" : "connected") : classify(attempt.result, attempt.authMode),
-    compatibility: attempt.fallback ? "ecdh-nistp256" : "default",
-    workingOverrides: attempt.result.ok && attempt.fallback ? [`KexAlgorithms=${FALLBACK_KEX}`] : [],
-  };
-}
-export async function debugTailnetSsh(input: TailnetSshTarget, runner: CommandRunner = runCommand): Promise<Record<string, unknown>> {
-  const user = validateUser(input.user), port = validatePort(input.port), timeout = boundedTimeout(input.timeoutMs);
-  const device = await resolveTailscaleSshDevice(input.target);
-  const ping = await pingTailscaleSshDevice(device.name);
-  if (!ping.ok) return { ok: false, device, user, port, tailnetReachable: false, diagnosis: "tailnet-unreachable", ping: ping.output };
-  const attempt = await runSsh(device, user, port, "exit 0", timeout, runner, true);
-  return {
-    ok: attempt.result.ok, device, user, port, tailnetReachable: true,
-    authMode: attempt.authMode, authentication: authLabel(attempt.authMode), passwordRequired: false,
-    diagnosis: attempt.result.ok ? (attempt.fallback ? "kex-compatibility-required" : "connected") : classify(attempt.result, attempt.authMode),
-    compatibility: attempt.fallback ? "ecdh-nistp256" : "default",
-    workingOverrides: attempt.result.ok && attempt.fallback ? [`KexAlgorithms=${FALLBACK_KEX}`] : [],
-    defaultAttempt: attempt.first ? { ok: attempt.first.ok, diagnosis: classify(attempt.first, attempt.authMode), timedOut: attempt.first.timedOut } : undefined,
-    log: sanitizeSshLog([attempt.result.stdout, attempt.result.stderr].filter(Boolean).join("\n")),
-  };
-}
-export async function execTailnetSsh(input: TailnetSshExecInput, runner: CommandRunner = runCommand): Promise<Record<string, unknown>> {
-  const user = validateUser(input.user), port = validatePort(input.port);
-  const command = input.command.trim();
-  if (!command || command.length > 8_000 || command.includes("\0")) throw new Error("SSH command is empty or invalid.");
-  const timeout = boundedTimeout(input.timeoutMs);
-  const device = await resolveTailscaleSshDevice(input.target);
-  const attempt = await runSsh(device, user, port, command, timeout, runner);
-  return {
-    ok: attempt.result.ok, device, user, port,
-    authMode: attempt.authMode, authentication: authLabel(attempt.authMode), passwordRequired: false,
-    diagnosis: attempt.result.ok ? (attempt.fallback ? "completed-with-kex-fallback" : "completed") : classify(attempt.result, attempt.authMode),
-    compatibility: attempt.fallback ? "ecdh-nistp256" : "default",
-    workingOverrides: attempt.result.ok && attempt.fallback ? [`KexAlgorithms=${FALLBACK_KEX}`] : [],
-    stdout: sanitizeSshLog(attempt.result.stdout), stderr: sanitizeSshLog(attempt.result.stderr), exitCode: attempt.result.exitCode,
-  };
-}
-
-function tailscaleKnownHostsPath(): string {
-  const configRoot = process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), ".config");
-  return path.join(configRoot, "tailscale", "ssh_known_hosts");
-}
-async function scpArgs(
-  device: TailscaleSshDevice, user: string, port: number, localPath: string, remotePath: string,
-  direction: "upload" | "download", timeout: number, authMode: SshAuthMode, fallback: boolean,
-): Promise<string[]> {
-  const args = ["-o", `ProxyCommand=${proxyCommand()}`, "-o", `ConnectTimeout=${Math.max(3, Math.ceil(timeout / 1000))}`];
-  if (authMode === "tailscale-ssh") {
-    args.push("-o", `UserKnownHostsFile=${tailscaleKnownHostsPath()}`, "-o", "UpdateHostKeys=no",
-      "-o", "StrictHostKeyChecking=yes", "-o", "CanonicalizeHostname=no");
-    if (fallback) args.push("-o", `KexAlgorithms=${FALLBACK_KEX}`);
+  if (prepared.authMode === "tailscale-ssh") {
+    const knownHosts = await nativeKnownHosts(prepared.device);
+    args.push(
+      "-o", `KexAlgorithms=${NATIVE_KEX_ORDER}`,
+      "-o", `HostKeyAlgorithms=${hostKeyAlgorithms(prepared.device)}`,
+      "-o", `UserKnownHostsFile=${knownHosts}`,
+      "-o", "StrictHostKeyChecking=yes",
+      "-o", "UpdateHostKeys=no",
+      "-o", "CanonicalizeHostname=no",
+    );
   } else {
-    const privateKey = await getManagedSshPrivateKeyPath(), knownHosts = await getManagedSshKnownHostsPath();
-    args.push("-o", "BatchMode=yes", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
-      "-o", "PreferredAuthentications=publickey", "-o", "IdentitiesOnly=yes",
-      "-o", `UserKnownHostsFile=${knownHosts}`, "-o", "StrictHostKeyChecking=accept-new", "-i", privateKey);
+    const privateKey = await getManagedSshPrivateKeyPath();
+    const knownHosts = await getManagedSshKnownHostsPath();
+    args.push(
+      "-o", "PreferredAuthentications=publickey",
+      "-o", "IdentitiesOnly=yes",
+      "-o", `UserKnownHostsFile=${knownHosts}`,
+      "-o", "StrictHostKeyChecking=accept-new",
+      "-i", privateKey,
+    );
   }
-  args.push("-P", String(port));
-  const remote = `${user}@${preferredHost(device)}:${remotePath}`;
-  args.push(direction === "upload" ? localPath : remote, direction === "upload" ? remote : localPath);
   return args;
 }
-export async function transferTailnetSshFile(input: TailnetSshTransferInput, runner: CommandRunner = runCommand): Promise<Record<string, unknown>> {
-  const user = validateUser(input.user), port = validatePort(input.port), timeout = boundedTimeout(input.timeoutMs);
+
+async function prepare(input: TailnetSshTarget): Promise<PreparedConnection> {
+  const user = validateUser(input.user);
+  const port = validatePort(input.port);
+  const timeout = boundedTimeout(input.timeoutMs);
+  const scope = normalizeScope(input.scope);
   const device = await resolveTailscaleSshDevice(input.target);
-  const remotePath = validateRemotePath(input.remotePath), localPath = path.resolve(input.localPath);
+  const authMode = authModeFor(device, port);
+  const host = preferredHost(device, authMode);
+  return {
+    device,
+    user,
+    port,
+    timeout,
+    scope,
+    authMode,
+    host,
+    controlPath: controlPathFor(scope, device, user, port),
+  };
+}
+
+async function masterCheck(
+  prepared: PreparedConnection,
+  runner: CommandRunner,
+): Promise<CommandResult> {
+  return runner({
+    bin: SSH_BIN,
+    args: [
+      "-S", prepared.controlPath,
+      "-O", "check",
+      "-p", String(prepared.port),
+      `${prepared.user}@${prepared.host}`,
+    ],
+    timeoutMs: Math.min(prepared.timeout, 5_000),
+  });
+}
+
+async function startMaster(
+  prepared: PreparedConnection,
+  runner: CommandRunner,
+  verbose = false,
+): Promise<CommandResult> {
+  await fs.mkdir(CONTROL_DIR, { recursive: true, mode: 0o700 });
+  await fs.rm(prepared.controlPath, { force: true }).catch(() => {});
+  const options = await connectionOptions(prepared, verbose);
+  return runner({
+    bin: SSH_BIN,
+    args: [
+      ...options,
+      "-M",
+      "-S", prepared.controlPath,
+      "-o", "ControlMaster=yes",
+      "-o", "ControlPersist=yes",
+      "-N",
+      "-f",
+      "-p", String(prepared.port),
+      `${prepared.user}@${prepared.host}`,
+    ],
+    timeoutMs: prepared.timeout,
+  });
+}
+
+async function ensureMaster(
+  prepared: PreparedConnection,
+  allowStart: boolean,
+  runner: CommandRunner,
+  verbose = false,
+): Promise<MasterResult> {
+  const current = await masterCheck(prepared, runner);
+  if (current.ok) {
+    return { ok: true, created: false, reused: true, result: current, prepared };
+  }
+  if (!allowStart) {
+    return {
+      ok: false,
+      created: false,
+      reused: false,
+      result: failure(
+        "SSH authorization expired: there is no active SSH master for this Topic/server identity. Ask permission again before reconnecting.",
+      ),
+      prepared,
+    };
+  }
+
+  const existingLock = masterLocks.get(prepared.controlPath);
+  if (existingLock) {
+    const lockedResult = await existingLock;
+    return {
+      ok: lockedResult.ok,
+      created: lockedResult.ok,
+      reused: false,
+      result: lockedResult,
+      prepared,
+    };
+  }
+
+  const operation = startMaster(prepared, runner, verbose)
+    .finally(() => masterLocks.delete(prepared.controlPath));
+  masterLocks.set(prepared.controlPath, operation);
+  const result = await operation;
+  return { ok: result.ok, created: result.ok, reused: false, result, prepared };
+}
+
+async function runOverMaster(
+  prepared: PreparedConnection,
+  command: string,
+  runner: CommandRunner,
+  verbose = false,
+): Promise<CommandResult> {
+  return runner({
+    bin: SSH_BIN,
+    args: [
+      ...(verbose ? ["-vvv"] : []),
+      "-S", prepared.controlPath,
+      "-o", "ControlMaster=no",
+      "-o", "ProxyCommand=/bin/false",
+      "-p", String(prepared.port),
+      `${prepared.user}@${prepared.host}`,
+      command,
+    ],
+    timeoutMs: prepared.timeout,
+  });
+}
+
+export async function resolveTailnetSshScope(sessionId: string): Promise<string> {
+  const session = sessionId.trim();
+  if (!session) return "session:unknown";
+  const binding = await findTelegramTopicBindingBySessionId(session).catch(() => null);
+  return binding
+    ? `topic:${binding.chatId}:${binding.threadId}`
+    : `session:${session}`;
+}
+
+export async function describeTailnetSshTarget(
+  input: TailnetSshTarget,
+): Promise<TailnetSshTargetDescription> {
+  const prepared = await prepare(input);
+  return {
+    hostname: prepared.device.name,
+    ...(prepared.device.dnsName ? { dnsName: prepared.device.dnsName } : {}),
+    ips: prepared.device.ips,
+    ...(prepared.device.os ? { os: prepared.device.os } : {}),
+    identity: prepared.device.identity,
+    username: prepared.user,
+    port: prepared.port,
+    scope: prepared.scope,
+    network: "Tailscale",
+    authMode: prepared.authMode,
+    authentication: authLabel(prepared.authMode),
+    passwordRequired: false,
+    nativeTailscaleSsh: prepared.authMode === "tailscale-ssh",
+  };
+}
+
+export async function hasActiveTailnetSshConnection(
+  input: TailnetSshTarget,
+  runner: CommandRunner = runCommand,
+): Promise<boolean> {
+  const prepared = await prepare(input);
+  return (await masterCheck(prepared, runner)).ok;
+}
+
+function masterMetadata(master: MasterResult): Record<string, unknown> {
+  return {
+    persistentConnection: true,
+    connectionCreated: master.created,
+    connectionReused: master.reused,
+    authorizationScope: master.prepared.scope,
+    serverIdentity: master.prepared.device.identity,
+    reconnectRequiresPermission: true,
+  };
+}
+
+export async function checkTailnetSsh(
+  input: TailnetSshTarget,
+  runner: CommandRunner = runCommand,
+): Promise<Record<string, unknown>> {
+  const prepared = await prepare(input);
+  const ping = await pingTailscaleSshDevice(prepared.device.name);
+  if (!ping.ok) {
+    return {
+      ok: false,
+      device: prepared.device,
+      user: prepared.user,
+      port: prepared.port,
+      tailnetReachable: false,
+      diagnosis: "tailnet-unreachable",
+      ping: ping.output,
+    };
+  }
+
+  const master = await ensureMaster(
+    prepared,
+    input.allowConnectionStart === true,
+    runner,
+  );
+  return {
+    ok: master.ok,
+    device: prepared.device,
+    user: prepared.user,
+    port: prepared.port,
+    tailnetReachable: true,
+    authMode: prepared.authMode,
+    authentication: authLabel(prepared.authMode),
+    passwordRequired: false,
+    diagnosis: master.ok
+      ? master.created ? "connected-master-created" : "connected-master-reused"
+      : classify(master.result, prepared.authMode),
+    compatibility: prepared.authMode === "tailscale-ssh"
+      ? "ecdh-nistp256-first"
+      : "default",
+    workingOverrides: prepared.authMode === "tailscale-ssh"
+      ? [
+          `ProxyCommand=${proxyCommand()}`,
+          `KexAlgorithms=${NATIVE_KEX_ORDER}`,
+          `HostKeyAlgorithms=${hostKeyAlgorithms(prepared.device)}`,
+        ]
+      : [],
+    ...masterMetadata(master),
+  };
+}
+
+export async function debugTailnetSsh(
+  input: TailnetSshTarget,
+  runner: CommandRunner = runCommand,
+): Promise<Record<string, unknown>> {
+  const prepared = await prepare(input);
+  const ping = await pingTailscaleSshDevice(prepared.device.name);
+  if (!ping.ok) {
+    return {
+      ok: false,
+      device: prepared.device,
+      user: prepared.user,
+      port: prepared.port,
+      tailnetReachable: false,
+      diagnosis: "tailnet-unreachable",
+      ping: ping.output,
+    };
+  }
+
+  const master = await ensureMaster(
+    prepared,
+    input.allowConnectionStart === true,
+    runner,
+    true,
+  );
+  return {
+    ok: master.ok,
+    device: prepared.device,
+    user: prepared.user,
+    port: prepared.port,
+    tailnetReachable: true,
+    authMode: prepared.authMode,
+    authentication: authLabel(prepared.authMode),
+    passwordRequired: false,
+    diagnosis: master.ok
+      ? master.created ? "connected-master-created" : "connected-master-reused"
+      : classify(master.result, prepared.authMode),
+    compatibility: prepared.authMode === "tailscale-ssh"
+      ? "ecdh-nistp256-first"
+      : "default",
+    workingOverrides: prepared.authMode === "tailscale-ssh"
+      ? [
+          `ProxyCommand=${proxyCommand()}`,
+          `KexAlgorithms=${NATIVE_KEX_ORDER}`,
+          `HostKeyAlgorithms=${hostKeyAlgorithms(prepared.device)}`,
+        ]
+      : [],
+    log: sanitizeSshLog(
+      [master.result.stdout, master.result.stderr].filter(Boolean).join("\n"),
+    ),
+    ...masterMetadata(master),
+  };
+}
+
+export async function execTailnetSsh(
+  input: TailnetSshExecInput,
+  runner: CommandRunner = runCommand,
+): Promise<Record<string, unknown>> {
+  const command = input.command.trim();
+  if (!command || command.length > 8_000 || command.includes("\0")) {
+    throw new Error("SSH command is empty or invalid.");
+  }
+
+  const prepared = await prepare(input);
+  const master = await ensureMaster(
+    prepared,
+    input.allowConnectionStart === true,
+    runner,
+  );
+  if (!master.ok) {
+    return {
+      ok: false,
+      device: prepared.device,
+      user: prepared.user,
+      port: prepared.port,
+      authMode: prepared.authMode,
+      authentication: authLabel(prepared.authMode),
+      passwordRequired: false,
+      diagnosis: classify(master.result, prepared.authMode),
+      stdout: "",
+      stderr: sanitizeSshLog(master.result.stderr),
+      exitCode: master.result.exitCode,
+      ...masterMetadata(master),
+    };
+  }
+
+  const result = await runOverMaster(prepared, command, runner);
+  return {
+    ok: result.ok,
+    device: prepared.device,
+    user: prepared.user,
+    port: prepared.port,
+    authMode: prepared.authMode,
+    authentication: authLabel(prepared.authMode),
+    passwordRequired: false,
+    diagnosis: result.ok ? "completed-over-master" : classify(result, prepared.authMode),
+    compatibility: prepared.authMode === "tailscale-ssh"
+      ? "ecdh-nistp256-first"
+      : "default",
+    stdout: sanitizeSshLog(result.stdout),
+    stderr: sanitizeSshLog(result.stderr),
+    exitCode: result.exitCode,
+    ...masterMetadata(master),
+  };
+}
+
+async function scpOverMaster(
+  prepared: PreparedConnection,
+  localPath: string,
+  remotePath: string,
+  direction: "upload" | "download",
+  runner: CommandRunner,
+): Promise<CommandResult> {
+  const remote = `${prepared.user}@${prepared.host}:${remotePath}`;
+  return runner({
+    bin: SCP_BIN,
+    args: [
+      "-o", `ControlPath=${prepared.controlPath}`,
+      "-o", "ControlMaster=no",
+      "-o", "ProxyCommand=/bin/false",
+      "-P", String(prepared.port),
+      direction === "upload" ? localPath : remote,
+      direction === "upload" ? remote : localPath,
+    ],
+    timeoutMs: prepared.timeout,
+  });
+}
+
+export async function transferTailnetSshFile(
+  input: TailnetSshTransferInput,
+  runner: CommandRunner = runCommand,
+): Promise<Record<string, unknown>> {
+  const prepared = await prepare(input);
+  const remotePath = validateRemotePath(input.remotePath);
+  const localPath = path.resolve(input.localPath);
+
   if (input.direction === "upload") {
     const stat = await fs.stat(localPath).catch(() => null);
-    if (!stat?.isFile()) throw new Error("Upload source must be an existing regular file.");
-  } else await fs.mkdir(path.dirname(localPath), { recursive: true });
-  const authMode = authModeFor(device, port);
-  let fallback = false;
-  if (authMode === "tailscale-ssh") {
-    const preflight = await adaptiveNativeSsh(device, user, "exit 0", timeout, runner);
-    if (!preflight.result.ok) return {
-      ok: false, device, user, port, direction: input.direction, authMode,
-      authentication: authLabel(authMode), passwordRequired: false,
-      diagnosis: classify(preflight.result, authMode), stderr: sanitizeSshLog(preflight.result.stderr),
-    };
-    fallback = preflight.fallback;
+    if (!stat?.isFile()) {
+      throw new Error("Upload source must be an existing regular file.");
+    }
+  } else {
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
   }
-  const result = await runner({
-    bin: SCP_BIN,
-    args: await scpArgs(device, user, port, localPath, remotePath, input.direction, timeout, authMode, fallback),
-    timeoutMs: timeout,
-  });
-  const bytes = result.ok ? (await fs.stat(localPath).catch(() => null))?.size ?? null : null;
+
+  const master = await ensureMaster(
+    prepared,
+    input.allowConnectionStart === true,
+    runner,
+  );
+  if (!master.ok) {
+    return {
+      ok: false,
+      device: prepared.device,
+      user: prepared.user,
+      port: prepared.port,
+      direction: input.direction,
+      authMode: prepared.authMode,
+      authentication: authLabel(prepared.authMode),
+      passwordRequired: false,
+      diagnosis: classify(master.result, prepared.authMode),
+      stderr: sanitizeSshLog(master.result.stderr),
+      ...masterMetadata(master),
+    };
+  }
+
+  const result = await scpOverMaster(
+    prepared,
+    localPath,
+    remotePath,
+    input.direction,
+    runner,
+  );
+  const bytes = result.ok
+    ? (await fs.stat(localPath).catch(() => null))?.size ?? null
+    : null;
+
   return {
-    ok: result.ok, device, user, port, direction: input.direction, authMode,
-    authentication: authLabel(authMode), passwordRequired: false,
-    diagnosis: result.ok ? (fallback ? "completed-with-kex-fallback" : "completed") : classify(result, authMode),
-    compatibility: fallback ? "ecdh-nistp256" : "default",
-    workingOverrides: result.ok && fallback ? [`KexAlgorithms=${FALLBACK_KEX}`] : [],
-    bytes, localPath, remotePath, stderr: result.ok ? "" : sanitizeSshLog(result.stderr),
+    ok: result.ok,
+    device: prepared.device,
+    user: prepared.user,
+    port: prepared.port,
+    direction: input.direction,
+    authMode: prepared.authMode,
+    authentication: authLabel(prepared.authMode),
+    passwordRequired: false,
+    diagnosis: result.ok ? "completed-over-master" : classify(result, prepared.authMode),
+    bytes,
+    localPath,
+    remotePath,
+    stderr: result.ok ? "" : sanitizeSshLog(result.stderr),
+    ...masterMetadata(master),
   };
 }
