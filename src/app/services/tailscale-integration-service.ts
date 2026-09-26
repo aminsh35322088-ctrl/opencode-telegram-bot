@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { promisify } from "node:util";
 import { config } from "../../config.js";
@@ -31,6 +31,8 @@ interface TailscalePeer {
   Online?: boolean;
   Tags?: string[];
   OS?: string;
+  ID?: string;
+  PublicKey?: string;
   sshHostKeys?: string[];
 }
 interface TailscaleStatusJson {
@@ -46,6 +48,7 @@ export interface TailscaleDevice {
   online: boolean;
   tags: string[];
   os?: string;
+  identity: string;
   sshHostKeys: string[];
   nativeTailscaleSsh: boolean;
   sshEligible: boolean;
@@ -244,6 +247,16 @@ function toDevice(peer: TailscalePeer): TailscaleDevice {
   const online = peer.Online === true;
   const taggedForSsh = tags.includes("tag:ssh");
   const sshHostKeys = peer.sshHostKeys ?? [];
+  const identitySource =
+    peer.ID?.trim() ||
+    peer.PublicKey?.trim() ||
+    (sshHostKeys.length > 0 ? sshHostKeys.slice().sort().join("\n") : "") ||
+    [
+      peer.HostName?.trim() ?? "",
+      peer.DNSName?.trim() ?? "",
+      ...(peer.TailscaleIPs ?? []),
+    ].join("|");
+  const identity = createHash("sha256").update(identitySource, "utf8").digest("hex").slice(0, 32);
   return {
     name: peer.HostName?.trim() || peer.DNSName?.split(".")[0] || peer.TailscaleIPs?.[0] || "unknown",
     ...(peer.DNSName ? { dnsName: peer.DNSName.replace(/\.$/u, "") } : {}),
@@ -251,6 +264,7 @@ function toDevice(peer: TailscalePeer): TailscaleDevice {
     online,
     tags,
     ...(peer.OS ? { os: peer.OS } : {}),
+    identity,
     sshHostKeys,
     nativeTailscaleSsh: sshHostKeys.length > 0,
     sshEligible: taggedForSsh && online,
