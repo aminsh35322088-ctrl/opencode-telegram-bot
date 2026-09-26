@@ -178,6 +178,26 @@ chown -R node:node /data
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
+PERSISTENT_REPO_DIR="/data/opencode/opencode-telegram-bot"
+if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; then
+  REPO_URL="https://github.com/${RAILWAY_GIT_REPO_OWNER}/${RAILWAY_GIT_REPO_NAME}.git"
+  REPO_BRANCH="${RAILWAY_GIT_BRANCH:-main}"
+  mkdir -p "$(dirname "$PERSISTENT_REPO_DIR")"
+  if [ ! -d "$PERSISTENT_REPO_DIR/.git" ]; then
+    rm -rf "$PERSISTENT_REPO_DIR"
+    printf '%s\n' "[railway] Creating persistent repository checkout: ${REPO_URL}"
+    su -s /bin/sh node -c "git clone --filter=blob:none --no-tags '$REPO_URL' '$PERSISTENT_REPO_DIR'"
+  else
+    su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' remote set-url origin '$REPO_URL'"
+  fi
+  su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
+  REPO_REVISION="${RAILWAY_GIT_COMMIT_SHA:-origin/$REPO_BRANCH}"
+  su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
+  REPO_HEAD="$(su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
+  printf '%s\n' "[railway] Persistent repository checkout ready: ${PERSISTENT_REPO_DIR} (${REPO_BRANCH}@${REPO_HEAD})"
+else
+  printf '%s\n' "[railway] WARNING: Railway Git metadata is unavailable; persistent repository checkout was not refreshed" >&2
+fi
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
 printf '%s\n' "[railway] OpenCode CLI: $(su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"
