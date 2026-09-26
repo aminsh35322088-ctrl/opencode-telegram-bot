@@ -225,11 +225,18 @@ function formatSshPermissionText(request: PermissionRequest, groupedCount: numbe
     `Authentication: ${displayValue(input.authentication)}`,
     `Password: ${displayValue(input.password, "Not required")}`,
   ];
-  if (input.command) lines.push(`Command: ${displayValue(input.command)}`);
+  if (input.serverIdentity) lines.push(`Server identity: ${displayValue(input.serverIdentity)}`);
+  if (input.connectionMode) lines.push(`Connection: ${displayValue(input.connectionMode)}`);
+  if (input.grantScope) lines.push(`Grant scope: ${displayValue(input.grantScope)}`);
+  if (input.grantUntil) lines.push(`Grant expires when: ${displayValue(input.grantUntil)}`);
+  if (input.command) lines.push(`Initial command: ${displayValue(input.command)}`);
   if (input.localPath) lines.push(`Local file: ${displayValue(input.localPath)}`);
   if (input.remotePath) lines.push(`Remote file: ${displayValue(input.remotePath)}`);
   if (groupedCount > 1) lines.push("", `Grouped requests: ${groupedCount}`);
-  lines.push("", "Approve this SSH operation?");
+  lines.push(
+    "",
+    "Approving opens SSH access for this server/user/port in this Topic. Later SSH operations reuse the same live connection without prompting again.",
+  );
   return lines.join("\n");
 }
 
@@ -256,8 +263,10 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
 
 function buildPermissionKeyboard(request: PermissionRequest): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  keyboard.text(t("permission.button.allow"), "permission:once").row();
-  if (request.permission !== SSH_REMOTE_PERMISSION) {
+  if (request.permission === SSH_REMOTE_PERMISSION) {
+    keyboard.text("✅ Allow for this Topic", "permission:once").row();
+  } else {
+    keyboard.text(t("permission.button.allow"), "permission:once").row();
     keyboard.text(t("permission.button.always"), "permission:always").row();
   }
   keyboard.text(t("permission.button.reject"), "permission:reject");
