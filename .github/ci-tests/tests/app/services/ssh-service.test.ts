@@ -7,6 +7,10 @@ const tailscale = vi.hoisted(() => ({
   resolve: vi.fn(),
   ping: vi.fn(),
 }));
+const sshKeys = vi.hoisted(() => ({
+  privateKey: vi.fn(),
+  knownHosts: vi.fn(),
+}));
 
 vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
   getTailscaleSocketPath: () => "/data/run/tailscale/tailscaled.sock",
@@ -15,8 +19,8 @@ vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
 }));
 
 vi.mock("../../../src/app/services/ssh-key-service.js", () => ({
-  getManagedSshPrivateKeyPath: vi.fn().mockResolvedValue("/data/ssh/id_ed25519"),
-  getManagedSshKnownHostsPath: vi.fn().mockResolvedValue("/data/ssh/known_hosts"),
+  getManagedSshPrivateKeyPath: sshKeys.privateKey,
+  getManagedSshKnownHostsPath: sshKeys.knownHosts,
 }));
 
 import {
@@ -77,8 +81,10 @@ describe("cross-platform Tailnet SSH service", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    tailscale.resolve.mockResolvedValue(nativeDevice());
-    tailscale.ping.mockImplementation(async (target: string) => ({
+    sshKeys.privateKey.mockReset().mockResolvedValue("/data/ssh/id_ed25519");
+    sshKeys.knownHosts.mockReset().mockResolvedValue("/data/ssh/known_hosts");
+    tailscale.resolve.mockReset().mockImplementation(async (target: string) => nativeDevice(target));
+    tailscale.ping.mockReset().mockImplementation(async (target: string) => ({
       ok: true,
       device: nativeDevice(target),
       output: "pong",
