@@ -8,7 +8,8 @@ describe("Railway Tailscale single-daemon contract", () => {
     expect(launches).toHaveLength(1);
     expect(entrypoint).toContain("--tun=userspace-networking");
     expect(entrypoint).toContain("--state='$TAILSCALE_STATE'");
-    expect(entrypoint).toContain('TAILSCALE_STATE="/data/tailscale/tailscaled.state"');
+    expect(entrypoint).toContain('TAILSCALE_STATE_DIR="/data/tailscale"');
+    expect(entrypoint).toContain('TAILSCALE_STATE="$TAILSCALE_STATE_DIR/tailscaled.state"');
     expect(entrypoint).toContain('TAILSCALE_SOCKET="/data/run/tailscale/tailscaled.sock"');
     expect(entrypoint).not.toContain("--state=mem:");
   });
