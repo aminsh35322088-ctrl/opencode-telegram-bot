@@ -38,7 +38,7 @@ function permissionAction(action:string):string{
 export default tool({
   description:"Passwordless SSH to online Tailnet peers tagged tag:ssh. Uses native Tailscale SSH when available; otherwise uses the bot managed Ed25519 key over Tailscale. Direct public-internet SSH and password authentication are unsupported.",
   args:{
-    action:tool.schema.enum(["check","debug","exec","upload","download"]).describe("SSH operation."),
+    action: tool.schema.enum(["check","debug","exec","upload","download"]).describe("SSH operation."),
     target:tool.schema.string().describe("Tailnet hostname, MagicDNS name, or Tailscale IP of a visible tag:ssh peer."),
     user:tool.schema.string().describe("Remote OS username."),
     port:tool.schema.number().optional().describe("SSH port, default 22. Non-22 ports use managed-key SSH over Tailscale."),
