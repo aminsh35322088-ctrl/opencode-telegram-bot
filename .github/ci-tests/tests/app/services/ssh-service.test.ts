@@ -34,7 +34,9 @@ import {
   checkTailnetSsh,
   describeTailnetSshTarget,
   execTailnetSsh,
+  grantTailnetSshAuthorization,
   hasActiveTailnetSshConnection,
+  hasTailnetSshAuthorization,
   resolveTailnetSshScope,
   sanitizeSshLog,
   transferTailnetSshFile,
@@ -246,6 +248,37 @@ describe("pooled cross-platform Tailnet SSH service", () => {
     expect(calls.filter((call) => call.args.includes("ControlMaster=yes"))).toHaveLength(1);
   });
 
+  it("recreates a dead master without another prompt when the authorization lease still matches", async () => {
+    const calls: CommandRequest[] = [];
+    const { runner, active } = createMultiplexRunner(calls);
+    const common = {
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:lease-recovery",
+    };
+
+    await grantTailnetSshAuthorization(common);
+    expect(await hasTailnetSshAuthorization(common)).toBe(true);
+
+    const first = await execTailnetSsh({
+      ...common,
+      command: "true",
+    }, runner);
+    expect(first.ok).toBe(true);
+    expect(first.connectionCreated).toBe(true);
+
+    active.clear();
+    const recovered = await execTailnetSsh({
+      ...common,
+      command: "whoami",
+      allowConnectionStart: false,
+    }, runner);
+
+    expect(recovered.ok).toBe(true);
+    expect(recovered.connectionCreated).toBe(true);
+    expect(recovered.masterLossRequiresPermission).toBe(false);
+    expect(calls.filter((call) => call.args.includes("ControlMaster=yes"))).toHaveLength(2);
+  });
   it("requires a new grant when the Tailnet server identity changes", async () => {
     const calls: CommandRequest[] = [];
     const { runner } = createMultiplexRunner(calls);
