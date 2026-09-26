@@ -80,7 +80,25 @@ per topic scope, resolved from the ALS context at each get/set.
 `summaryAggregator` class so each topic gets its own aggregation instance while callbacks
 registered on the base instance are shared.
 
-### 4. Concurrency & liveness
+### 4. Remote SSH isolation
+
+SSH follows the same ownership rule as the rest of the Topic runtime, at two separate layers:
+
+- **Connection/permission scope:** the OpenSSH ControlMaster socket is keyed by
+  `Telegram Topic + Tailnet device identity + username + port`. A Topic cannot inherit another
+  Topic's live master or permission boundary, even when both target the same server.
+- **Remote workspace scope:** the same tuple deterministically selects a private working
+  directory below the remote SSH user's home directory. `ssh.exec` starts commands from that
+  directory, and `ssh.upload`/`ssh.download` accept only workspace-relative remote paths.
+  Two Topics can therefore work against the same host concurrently without sharing cwd or
+  project-transfer paths.
+- A Tailnet identity change produces a different connection socket and a different remote
+  workspace. An IP-only change does not, because the stable device identity is part of the key.
+- The workspace is not an operating-system sandbox. A command that intentionally writes an
+  absolute/system path can still change machine-global state, so such operations remain
+  explicit rather than being silently redirected.
+
+### 5. Concurrency & liveness
 
 - **Answer finalization is per-session serialized**: `event-subscription-service` keeps a
   completion task queue per sessionId; assistant text, thinking streams, and tool streams are

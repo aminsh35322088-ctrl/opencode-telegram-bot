@@ -25,6 +25,7 @@ const DEFAULT_PORT = 22;
 const CONTROL_DIR = process.env.SSH_CONTROL_DIR?.trim() || path.join(os.tmpdir(), "opencode-ssh-control");
 const HOSTKEY_DIR = process.env.SSH_HOSTKEY_DIR?.trim() || path.join(os.tmpdir(), "opencode-ssh-hostkeys");
 const NATIVE_KEX_ORDER = "ecdh-sha2-nistp256,curve25519-sha256";
+const REMOTE_WORKSPACE_ROOT = ".opencode-telegram/ssh-workspaces";
 const masterLocks = new Map<string, Promise<CommandResult>>();
 
 export type SshAuthMode = "tailscale-ssh" | "managed-key";
@@ -91,6 +92,8 @@ interface PreparedConnection {
   authMode: SshAuthMode;
   host: string;
   controlPath: string;
+  workspaceId: string;
+  remoteWorkspace: string;
 }
 
 interface MasterResult {
@@ -172,16 +175,30 @@ function normalizeScope(value?: string): string {
 }
 
 function validateRemotePath(value: string): string {
-  const remote = value.trim();
+  const remote = value.trim().replace(/\\\\/gu, "/");
   if (
     !remote ||
     remote.length > 4096 ||
-    remote.startsWith("-") ||
-    !/^[A-Za-z0-9_./~:@%+=,\\-]+$/u.test(remote)
+    remote.startsWith("/") ||
+    remote.startsWith("~") ||
+    /^[A-Za-z]:/u.test(remote)
   ) {
-    throw new Error("remote_path contains unsupported or unsafe characters.");
+    throw new Error("remote_path must be relative to this Topic's isolated SSH workspace.");
   }
-  return remote;
+  const segments = remote.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        segment.startsWith("-") ||
+        !/^[A-Za-z0-9_@%+=,.-]+$/u.test(segment),
+    )
+  ) {
+    throw new Error("remote_path contains unsupported or unsafe workspace path segments.");
+  }
+  return segments.join("/");
 }
 
 function clip(value: string): string {
@@ -254,12 +271,98 @@ function authLabel(authMode: SshAuthMode): string {
     : "Managed Ed25519 SSH key over Tailscale";
 }
 
-function controlPathFor(scope: string, device: TailscaleSshDevice, user: string, port: number): string {
-  const digest = createHash("sha256")
+function connectionDigest(
+  scope: string,
+  device: TailscaleSshDevice,
+  user: string,
+  port: number,
+): string {
+  return createHash("sha256")
     .update([scope, device.identity, user, String(port)].join("\0"), "utf8")
-    .digest("hex")
-    .slice(0, 32);
-  return path.join(CONTROL_DIR, `${digest}.sock`);
+    .digest("hex");
+}
+
+function controlPathFor(scope: string, device: TailscaleSshDevice, user: string, port: number): string {
+  return path.join(CONTROL_DIR, `${connectionDigest(scope, device, user, port).slice(0, 32)}.sock`);
+}
+
+function remoteWorkspaceIdFor(
+  scope: string,
+  device: TailscaleSshDevice,
+  user: string,
+  port: number,
+): string {
+  return connectionDigest(scope, device, user, port).slice(0, 24);
+}
+
+function isWindowsDevice(device: TailscaleSshDevice): boolean {
+  return device.os?.trim().toLowerCase() === "windows";
+}
+
+function remoteWorkspaceFor(device: TailscaleSshDevice, workspaceId: string): string {
+  return isWindowsDevice(device)
+    ? `%USERPROFILE%\\.opencode-telegram\\ssh-workspaces\\${workspaceId}`
+    : `~/${REMOTE_WORKSPACE_ROOT}/${workspaceId}`;
+}
+
+function quotePosixShell(value: string): string {
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function windowsWorkspaceCommand(
+  prepared: PreparedConnection,
+  command?: string,
+  relativeDirectory?: string,
+): string {
+  const workspaceRelative = `${REMOTE_WORKSPACE_ROOT.replace(/\//gu, "\\\\")}\\${prepared.workspaceId}`;
+  const lines = [
+    "$ErrorActionPreference = 'Stop'",
+    `$workspace = Join-Path $env:USERPROFILE '${workspaceRelative}'`,
+    "New-Item -ItemType Directory -Force -Path $workspace | Out-Null",
+  ];
+  if (relativeDirectory) {
+    const directory = relativeDirectory.replace(/\//gu, "\\\\");
+    lines.push(
+      `$targetDirectory = Join-Path $workspace '${directory}'`,
+      "New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null",
+    );
+  }
+  lines.push("Set-Location -LiteralPath $workspace");
+  if (command !== undefined) {
+    const encodedCommand = Buffer.from(command, "utf8").toString("base64");
+    lines.push(
+      `$command = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedCommand}'))`,
+      "& $env:ComSpec /d /s /c $command",
+      "exit $LASTEXITCODE",
+    );
+  } else {
+    lines.push("exit 0");
+  }
+  const encodedScript = Buffer.from(lines.join("; "), "utf16le").toString("base64");
+  return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`;
+}
+
+function workspaceBootstrapCommand(
+  prepared: PreparedConnection,
+  relativeDirectory?: string,
+): string {
+  if (isWindowsDevice(prepared.device)) {
+    return windowsWorkspaceCommand(prepared, undefined, relativeDirectory);
+  }
+  const suffix = relativeDirectory ? `/${relativeDirectory}` : "";
+  return `umask 077; mkdir -p -- "$HOME/${REMOTE_WORKSPACE_ROOT}/${prepared.workspaceId}${suffix}"`;
+}
+
+function workspaceWrappedCommand(prepared: PreparedConnection, command: string): string {
+  if (isWindowsDevice(prepared.device)) {
+    return windowsWorkspaceCommand(prepared, command);
+  }
+  const workspace = `$HOME/${REMOTE_WORKSPACE_ROOT}/${prepared.workspaceId}`;
+  return `umask 077; workspace="${workspace}"; mkdir -p -- "$workspace" && cd -- "$workspace" && eval ${quotePosixShell(command)}`;
+}
+
+function remoteTransferPath(prepared: PreparedConnection, remotePath: string): string {
+  return `${REMOTE_WORKSPACE_ROOT}/${prepared.workspaceId}/${remotePath}`;
 }
 
 function hostKeyAlgorithms(device: TailscaleSshDevice): string {
@@ -341,6 +444,7 @@ async function prepare(input: TailnetSshTarget): Promise<PreparedConnection> {
   const device = await resolveTailscaleSshDevice(input.target);
   const authMode = authModeFor(device, port);
   const host = preferredHost(device, authMode);
+  const workspaceId = remoteWorkspaceIdFor(scope, device, user, port);
   return {
     device,
     user,
@@ -350,6 +454,8 @@ async function prepare(input: TailnetSshTarget): Promise<PreparedConnection> {
     authMode,
     host,
     controlPath: controlPathFor(scope, device, user, port),
+    workspaceId,
+    remoteWorkspace: remoteWorkspaceFor(device, workspaceId),
   };
 }
 
@@ -502,6 +608,8 @@ function masterMetadata(master: MasterResult): Record<string, unknown> {
     authorizationScope: master.prepared.scope,
     serverIdentity: master.prepared.device.identity,
     reconnectRequiresPermission: true,
+    remoteWorkspace: master.prepared.remoteWorkspace,
+    remoteWorkspaceScope: "topic+server-identity+username+port",
   };
 }
 
@@ -639,7 +747,11 @@ export async function execTailnetSsh(
     };
   }
 
-  const result = await runOverMaster(prepared, command, runner);
+  const result = await runOverMaster(
+    prepared,
+    workspaceWrappedCommand(prepared, command),
+    runner,
+  );
   return {
     ok: result.ok,
     device: prepared.device,
@@ -666,7 +778,7 @@ async function scpOverMaster(
   direction: "upload" | "download",
   runner: CommandRunner,
 ): Promise<CommandResult> {
-  const remote = `${prepared.user}@${prepared.host}:${remotePath}`;
+  const remote = `${prepared.user}@${prepared.host}:${remoteTransferPath(prepared, remotePath)}`;
   return runner({
     bin: SCP_BIN,
     args: [
@@ -715,6 +827,33 @@ export async function transferTailnetSshFile(
       passwordRequired: false,
       diagnosis: classify(master.result, prepared.authMode),
       stderr: sanitizeSshLog(master.result.stderr),
+      ...masterMetadata(master),
+    };
+  }
+
+  const parentDirectory = input.direction === "upload"
+    ? path.posix.dirname(remotePath)
+    : undefined;
+  const workspaceReady = await runOverMaster(
+    prepared,
+    workspaceBootstrapCommand(
+      prepared,
+      parentDirectory && parentDirectory !== "." ? parentDirectory : undefined,
+    ),
+    runner,
+  );
+  if (!workspaceReady.ok) {
+    return {
+      ok: false,
+      device: prepared.device,
+      user: prepared.user,
+      port: prepared.port,
+      direction: input.direction,
+      authMode: prepared.authMode,
+      authentication: authLabel(prepared.authMode),
+      passwordRequired: false,
+      diagnosis: classify(workspaceReady, prepared.authMode),
+      stderr: sanitizeSshLog(workspaceReady.stderr),
       ...masterMetadata(master),
     };
   }

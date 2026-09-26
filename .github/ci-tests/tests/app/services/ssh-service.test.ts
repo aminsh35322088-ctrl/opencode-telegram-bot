@@ -301,6 +301,52 @@ describe("pooled cross-platform Tailnet SSH service", () => {
     }, runner)).toBe(false);
   });
 
+  it("keeps a stable remote workspace per Topic and separates Topics on the same server", async () => {
+    const calls: CommandRequest[] = [];
+    const { runner } = createMultiplexRunner(calls);
+
+    const first = await execTailnetSsh({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
+      command: "pwd",
+      allowConnectionStart: true,
+    }, runner);
+    const second = await execTailnetSsh({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
+      command: "pwd",
+      allowConnectionStart: false,
+    }, runner);
+    const otherTopic = await execTailnetSsh({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:43",
+      command: "pwd",
+      allowConnectionStart: true,
+    }, runner);
+
+    expect(first.remoteWorkspace).toBe(second.remoteWorkspace);
+    expect(first.remoteWorkspace).not.toBe(otherTopic.remoteWorkspace);
+
+    const commands = calls
+      .filter(
+        (call) =>
+          call.args.includes("ProxyCommand=/bin/false") &&
+          call.args.at(-1)?.includes("ssh-workspaces"),
+      )
+      .map((call) => call.args.at(-1) ?? "");
+    expect(commands).toHaveLength(3);
+
+    const workspaceIds = commands.map((command) =>
+      command.match(/ssh-workspaces\/([a-f0-9]{24})/u)?.[1],
+    );
+    expect(workspaceIds[0]).toBe(workspaceIds[1]);
+    expect(workspaceIds[0]).not.toBe(workspaceIds[2]);
+    expect(commands.every((command) => command.includes("cd --"))).toBe(true);
+  });
+
   it("uses a managed Ed25519 key over Tailscale for non-native SSH servers", async () => {
     tailscale.resolve.mockImplementation(async () => standardDevice());
     const calls: CommandRequest[] = [];
@@ -379,15 +425,25 @@ describe("pooled cross-platform Tailnet SSH service", () => {
       user: "runner",
       scope: "topic:777:42",
       localPath: source,
-      remotePath: "/tmp/upload.txt",
+      remotePath: "artifacts/upload.txt",
       direction: "upload",
       allowConnectionStart: true,
     }, runner);
 
     expect(output.ok).toBe(true);
     const scp = calls.find((call) => call.bin === "/usr/bin/scp");
-    expect(scp?.args.join(" ")).toContain("ControlPath=");
-    expect(scp?.args.join(" ")).toContain("ProxyCommand=/bin/false");
+    const scpArgs = scp?.args.join(" ") ?? "";
+    expect(scpArgs).toContain("ControlPath=");
+    expect(scpArgs).toContain("ProxyCommand=/bin/false");
+    expect(scpArgs).toMatch(/\.opencode-telegram\/ssh-workspaces\/[a-f0-9]{24}\/artifacts\/upload\.txt/u);
+    expect(scpArgs).not.toContain("/tmp/upload.txt");
+    const workspaceBootstrap = calls.find(
+      (call) =>
+        call.args.includes("ProxyCommand=/bin/false") &&
+        call.args.at(-1)?.includes("mkdir -p") &&
+        call.args.at(-1)?.includes("/artifacts"),
+    );
+    expect(workspaceBootstrap).toBeDefined();
     expect(calls.filter((call) => call.args.includes("ControlMaster=yes"))).toHaveLength(1);
   });
 
@@ -424,11 +480,35 @@ describe("pooled cross-platform Tailnet SSH service", () => {
         user: "root",
         scope: "topic:777:42",
         localPath: source,
-        remotePath: "/tmp/a;id",
+        remotePath: "/tmp/upload.txt",
         direction: "upload",
         allowConnectionStart: true,
       }, runner),
-    ).rejects.toThrow(/remote_path/i);
+    ).rejects.toThrow(/relative/i);
+
+    await expect(
+      transferTailnetSshFile({
+        target: "server",
+        user: "root",
+        scope: "topic:777:42",
+        localPath: source,
+        remotePath: "../other-topic/file.txt",
+        direction: "upload",
+        allowConnectionStart: true,
+      }, runner),
+    ).rejects.toThrow(/workspace path/i);
+
+    await expect(
+      transferTailnetSshFile({
+        target: "server",
+        user: "root",
+        scope: "topic:777:42",
+        localPath: source,
+        remotePath: "safe/a;id",
+        direction: "upload",
+        allowConnectionStart: true,
+      }, runner),
+    ).rejects.toThrow(/workspace path/i);
   });
 
   it("redacts credential-like material from debug logs", () => {

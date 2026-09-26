@@ -103,6 +103,9 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 - The first approved SSH use opens one multiplexed master connection scoped to the Telegram Topic + server identity + username + port. Reuse that connection for later SSH operations instead of reconnecting per command.
 - Treat a closed master connection, server restart/disconnect, changed Tailnet/SSH identity, changed username/port, or another Topic as a new authorization boundary and request permission again.
 - A reused channel must fail closed if its master connection disappeared; it must never silently open a replacement connection.
+- SSH action state is Topic-owned. Every `ssh.check`, `ssh.debug`, `ssh.exec`, `ssh.upload`, and `ssh.download` invocation must resolve the current Topic/session scope before touching connection, authorization, transfer, or debug state. Never reuse another Topic's SSH master, permission lease, command queue, transfer state, or diagnostics.
+- Multiple Topics may use the same Tailnet server concurrently, but they must not share a remote working directory. The SSH service assigns a deterministic server-side workspace scoped to `Topic + server identity + username + port`; `ssh.exec` starts in that workspace and file-transfer `remote_path` values are workspace-relative.
+- Treat the Topic SSH workspace as the default boundary for project files. Do not use shared paths such as `/tmp`, another Topic's workspace, or an absolute remote project path unless the user explicitly asks for a machine-global/system operation. Workspace isolation is a filesystem/cwd boundary, not an OS sandbox: commands that deliberately modify absolute/system paths can still affect the whole server.
 
 ### MCP credentials and OAuth
 

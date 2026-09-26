@@ -16,6 +16,7 @@ interface SshTargetDescription {
   scope: string;
   authentication: string;
   passwordRequired: false;
+  remoteWorkspace?: string;
 }
 
 interface SshModule {
@@ -106,7 +107,7 @@ function permissionAction(action: string): string {
 
 export default tool({
   description:
-    "Passwordless SSH to online Tailnet peers tagged tag:ssh. The first approved use opens one multiplexed SSH master scoped to the current Telegram Topic, server identity, username, and port. Subsequent exec/check/debug/upload/download operations reuse that same connection without new SSH handshakes or permission prompts. If the server restarts, the master closes, the Tailnet identity changes, the username/port changes, or another Topic is used, permission is required again. Direct public-internet SSH and password authentication are intentionally unsupported.",
+    "Passwordless SSH to online Tailnet peers tagged tag:ssh. The first approved use opens one multiplexed SSH master scoped to the current Telegram Topic, server identity, username, and port. Each such scope also receives a separate server-side workspace; exec starts there and upload/download paths are relative to it, so multiple Topics can work on the same server concurrently without sharing a working directory. Subsequent operations reuse the same connection without new SSH handshakes or permission prompts. If the server restarts, the master closes, the Tailnet identity changes, the username/port changes, or another Topic is used, permission is required again. Direct public-internet SSH and password authentication are intentionally unsupported.",
   args: {
     action: tool.schema.enum(["check", "debug", "exec", "upload", "download"]).describe("SSH operation."),
     target: tool.schema.string().describe("Tailnet hostname, MagicDNS name, or Tailscale IP of a visible tag:ssh peer."),
@@ -115,7 +116,7 @@ export default tool({
     timeoutMs: tool.schema.number().optional().describe("Per-attempt timeout in ms, bounded to 3000-60000."),
     command: tool.schema.string().optional().describe("Remote command for exec. Never include credentials."),
     local_path: tool.schema.string().optional().describe("Worktree-relative local path for upload/download."),
-    remote_path: tool.schema.string().optional().describe("Remote file path for upload/download."),
+    remote_path: tool.schema.string().optional().describe("Path relative to this Topic's isolated server-side SSH workspace. Absolute paths and traversal are rejected."),
     overwrite: tool.schema.boolean().optional().describe("Allow download to replace an existing worktree file."),
   },
 
@@ -184,6 +185,7 @@ export default tool({
             grantScope: topicScoped ? "This Telegram Topic" : "This OpenCode session",
             grantUntil: "The SSH master disconnects, the server restarts, or the Tailnet identity changes",
             connectionMode: "One multiplexed SSH connection; later operations reuse it",
+            remoteWorkspace: description.remoteWorkspace ?? "Topic-scoped remote workspace",
             requestedAction: args.action,
             command: command ?? null,
             localPath: localPath ?? null,
