@@ -90,7 +90,7 @@ export async function handlePermissionCallback(ctx: Context): Promise<boolean> {
 
   if (action === "always" && permissionManager.getPermissionType(callbackMessageId) === "ssh-remote") {
     await ctx.answerCallbackQuery({
-      text: "SSH access must be approved for every operation.",
+      text: "SSH access uses the Topic-scoped Allow flow; Always Allow is not supported.",
       show_alert: true,
     });
     return true;
