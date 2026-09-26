@@ -24,6 +24,10 @@ import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-s
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
 import { initializeFreeModelSources, stopFreeModelSources } from "../services/free-model-source-service.js";
+import {
+  startFreeSourceLoginPairingServer,
+  stopFreeSourceLoginPairingServer,
+} from "../services/free-source-login-pairing-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -130,6 +134,11 @@ export async function startBotApp(): Promise<void> {
     return false;
   });
   logger.info(`[FreeModelSources] ${freeModelSourcesReady ? "ready" : "disabled/unavailable"}`);
+  const freeSourceLoginServerReady = await startFreeSourceLoginPairingServer().catch((error) => {
+    logger.warn("[FreeSourceLogin] Pairing server could not start; manual credential setup remains available", error);
+    return false;
+  });
+  logger.info(`[FreeSourceLogin] ${freeSourceLoginServerReady ? "ready" : "disabled"}`);
   await reconcileOrphanedTopicState();
   const githubConfigured = await initializeGithubIntegration().catch((error) => {
     logger.warn(
@@ -224,6 +233,7 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
+    void stopFreeSourceLoginPairingServer().catch((error) => logger.warn("[FreeSourceLogin] Failed to stop pairing server cleanly", error));
     void stopFreeModelSources().catch((error) => logger.warn("[FreeModelSources] Failed to stop OmniRouter cleanly", error));
     void stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     shutdownTimeout = setTimeout(() => {
@@ -277,6 +287,7 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime("app_shutdown_complete");
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
+    await stopFreeSourceLoginPairingServer().catch((error) => logger.warn("[FreeSourceLogin] Failed to stop pairing server cleanly", error));
     await stopFreeModelSources().catch((error) => logger.warn("[FreeModelSources] Failed to stop OmniRouter cleanly", error));
     await stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     await clearManagedServiceState().catch((error) =>
