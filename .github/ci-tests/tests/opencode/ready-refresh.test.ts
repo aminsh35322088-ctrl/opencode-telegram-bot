@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   healthMock: vi.fn(),
   warmupSessionDirectoryCacheMock: vi.fn(),
-  reconcileStoredModelSelectionMock: vi.fn(),
+  reconcileAllStoredModelSelectionsMock: vi.fn(),
   restoreMcpRuntimeMock: vi.fn(),
   loggerDebugMock: vi.fn(),
   loggerWarnMock: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock("../../src/app/services/session-cache-service.js", () => ({
 }));
 
 vi.mock("../../src/app/services/model-selection-service.js", () => ({
-  reconcileStoredModelSelection: mocked.reconcileStoredModelSelectionMock,
+  reconcileAllStoredModelSelections: mocked.reconcileAllStoredModelSelectionsMock,
 }));
 
 vi.mock("../../src/app/services/mcp-server-service.js", () => ({
@@ -49,13 +49,13 @@ describe("opencode/ready-refresh", () => {
   beforeEach(() => {
     mocked.healthMock.mockReset();
     mocked.warmupSessionDirectoryCacheMock.mockReset();
-    mocked.reconcileStoredModelSelectionMock.mockReset();
+    mocked.reconcileAllStoredModelSelectionsMock.mockReset();
     mocked.restoreMcpRuntimeMock.mockReset();
     mocked.loggerDebugMock.mockReset();
     mocked.loggerWarnMock.mockReset();
 
     mocked.warmupSessionDirectoryCacheMock.mockResolvedValue(undefined);
-    mocked.reconcileStoredModelSelectionMock.mockResolvedValue(undefined);
+    mocked.reconcileAllStoredModelSelectionsMock.mockResolvedValue(undefined);
     mocked.restoreMcpRuntimeMock.mockResolvedValue({ managed: { restored: 0, failed: 0 }, secure: { restored: 0, failed: 0 } });
   });
 
@@ -66,7 +66,7 @@ describe("opencode/ready-refresh", () => {
 
     expect(refreshed).toBe(false);
     expect(mocked.warmupSessionDirectoryCacheMock).not.toHaveBeenCalled();
-    expect(mocked.reconcileStoredModelSelectionMock).not.toHaveBeenCalled();
+    expect(mocked.reconcileAllStoredModelSelectionsMock).not.toHaveBeenCalled();
     expect(mocked.restoreMcpRuntimeMock).not.toHaveBeenCalled();
     expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
       "[OpenCodeReady] OpenCode server is not running; skipping session cache refresh: reason=startup",
@@ -80,7 +80,7 @@ describe("opencode/ready-refresh", () => {
 
     expect(refreshed).toBe(true);
     expect(mocked.warmupSessionDirectoryCacheMock).toHaveBeenCalledTimes(1);
-    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+    expect(mocked.reconcileAllStoredModelSelectionsMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
     expect(mocked.restoreMcpRuntimeMock).toHaveBeenCalledTimes(1);
@@ -97,13 +97,13 @@ describe("opencode/ready-refresh", () => {
       "[OpenCodeReady] Failed to refresh session cache: reason=opencode_start_success",
       expect.any(Error),
     );
-    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+    expect(mocked.reconcileAllStoredModelSelectionsMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
   });
 
   it("logs model refresh failures without throwing", async () => {
-    mocked.reconcileStoredModelSelectionMock.mockRejectedValueOnce(new Error("model failed"));
+    mocked.reconcileAllStoredModelSelectionsMock.mockRejectedValueOnce(new Error("model failed"));
 
     await expect(
       refreshSessionCacheAfterOpencodeReady("opencode_start_success"),
@@ -136,7 +136,7 @@ describe("opencode/ready-refresh", () => {
       "[OpenCodeReady] Failed to restore MCP runtime: reason=auto_restart_interval",
       expect.any(Error),
     );
-    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+    expect(mocked.reconcileAllStoredModelSelectionsMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
   });
@@ -155,7 +155,7 @@ describe("opencode/ready-refresh", () => {
     expect(refreshed).toBe(true);
     expect(mocked.healthMock).toHaveBeenCalledTimes(2);
     expect(mocked.restoreMcpRuntimeMock).toHaveBeenCalledTimes(1);
-    expect(mocked.reconcileStoredModelSelectionMock).toHaveBeenCalledWith({
+    expect(mocked.reconcileAllStoredModelSelectionsMock).toHaveBeenCalledWith({
       forceCatalogRefresh: true,
     });
   });

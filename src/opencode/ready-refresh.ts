@@ -1,4 +1,4 @@
-import { reconcileStoredModelSelection } from "../app/services/model-selection-service.js";
+import { reconcileAllStoredModelSelections } from "../app/services/model-selection-service.js";
 import { restoreMcpRuntime } from "../app/services/mcp-server-service.js";
 import { warmupSessionDirectoryCache } from "../app/services/session-cache-service.js";
 import { logger } from "../utils/logger.js";
@@ -34,7 +34,7 @@ export async function refreshSessionCacheAfterOpencodeReady(reason: string): Pro
   }
 
   try {
-    await reconcileStoredModelSelection({ forceCatalogRefresh: true });
+    await reconcileAllStoredModelSelections({ forceCatalogRefresh: true });
     logger.debug(`[OpenCodeReady] Model catalog refreshed: reason=${reason}`);
   } catch (error) {
     logger.warn(`[OpenCodeReady] Failed to refresh model catalog: reason=${reason}`, error);

@@ -1,6 +1,8 @@
 import { getCurrentModel, setCurrentModel } from "../stores/settings-store.js";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import { runInTopicRuntimeContext } from "./topic-runtime-context.js";
+import { listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
 import type {
   FavoriteModel,
   ModelInfo,
@@ -291,6 +293,37 @@ export async function reconcileStoredModelSelection(options?: {
     logger.warn(
       "[ModelManager] Model fallback listener failed:",
       error,
+    );
+  }
+}
+
+export async function reconcileAllStoredModelSelections(options?: {
+  forceCatalogRefresh?: boolean;
+}): Promise<void> {
+  if (options?.forceCatalogRefresh) {
+    await refreshUnifiedModelCatalog();
+  }
+
+  // Reconcile the global/main selection first.
+  await reconcileStoredModelSelection();
+
+  // Topic model selections are persisted independently from the global model.
+  // A provider can disappear after a runtime availability check (for example,
+  // Qwen guest being rejected on Railway) while a Topic still points at it.
+  // Reconcile every stored Topic against the same fresh runtime catalog so a
+  // stale provider/model cannot survive and fail later during prompt dispatch.
+  const states = await listTopicRuntimeStates();
+  for (const state of states) {
+    const model = state.settings.model;
+    if (!model?.providerID || !model.modelID) continue;
+    await runInTopicRuntimeContext(
+      {
+        chatId: state.chatId,
+        threadId: state.threadId,
+        sessionId: state.settings.session?.id,
+        directory: state.settings.workspaceDirectory,
+      },
+      () => reconcileStoredModelSelection(),
     );
   }
 }
