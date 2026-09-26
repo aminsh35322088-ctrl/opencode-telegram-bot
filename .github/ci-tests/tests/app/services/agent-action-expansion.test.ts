@@ -70,8 +70,11 @@ describe("expanded model-facing action surface", () => {
     expect(opencodeConfig.permission?.["ssh-remote"]).toBe("ask");
     expect(opencodeConfig.permission?.tailscale).toBe("allow");
     expect(sshTool).toContain("Passwordless SSH to online Tailnet peers");
-    expect(sshTool).toContain('permission:"ssh-remote"');
+    expect(sshTool).toContain('permission: "ssh-remote"');
     expect(sshTool).toContain("context.ask");
+    expect(sshTool).toContain("hasActiveTailnetSshConnection");
+    expect(sshTool).toContain("resolveTailnetSshScope");
+    expect(sshTool).toContain("allowConnectionStart");
     expect(sshTool).not.toContain("transport:");
     expect(sshTool).not.toContain("credential_id");
     expect(sshTool).not.toContain("profile_id");
