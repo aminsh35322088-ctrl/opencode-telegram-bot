@@ -419,7 +419,7 @@ export function buildExperimentalSettingsView(): { text: string; keyboard: Inlin
     text: [
       "🧪 <b>Experimental</b>",
       "",
-      "🆓 <b>Free Model Sources</b> adds Gemini Web, Qwen Web, GLM Web, DeepSeek Web and Freebuff through one loopback-only compatibility runtime. Gemini/Qwen support guest mode; credential-required sources can be connected under API Connections. OpenCode Zen stays on OpenCode's native provider path.",
+      "🆓 <b>Free Model Sources</b> adds Gemini Web, Qwen Web, GLM Web, DeepSeek Web and Freebuff through one loopback-only compatibility runtime. Guest sources are live-tested from this host before they enter Model Center; Freebuff supports official browser auto-login. Credential-required sources stay out of Model Center until connected. OpenCode Zen stays on OpenCode's native provider path.",
       "",
       "🎨 <b>Free Model Detection</b> only adds experimental pricing hints to model lists. It never filters, selects, or reroutes a model.",
       "",
