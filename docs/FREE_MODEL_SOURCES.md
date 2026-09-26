@@ -7,15 +7,15 @@ This subsystem adds optional free model sources without changing the bot's stabl
 | Source | Login requirement | Transport/capability notes |
 | --- | --- | --- |
 | Gemini Web | Guest works; account cookies optional | text + real image transport + emulated tool calling |
-| Qwen Web | Guest works on some networks; token optional | text + emulated tool calling; image transport is deliberately **not** advertised |
-| GLM Web (Z.AI) | account/device token required for reliable chat | text + real image transport + emulated tool calling |
-| DeepSeek Web | account token required; no guest mode | text + emulated tool calling |
+| Qwen Web | Guest is network-dependent; datacenter/Railway hosts may require an account token | text + emulated tool calling; image transport is deliberately **not** advertised |
+| GLM Web (Z.AI) | account/device authorization required for reliable chat | text + real image transport + emulated tool calling |
+| DeepSeek Web | human account login/session required; no guest mode | text + emulated tool calling |
 | Freebuff | official browser login (automatic capture) or one normal account token | curated free catalog; text/tool integration, upstream seat/quota/geography controls remain authoritative |
 | OpenCode Zen | already native in OpenCode | not duplicated by this subsystem |
 
 The feature is **OFF by default** under **Settings → Experimental → Free Model Sources**.
 
-Credentials are managed under **Settings → API Connections → Free Model Sources**. Freebuff uses its official CLI-style browser login: the bot requests a login URL from Freebuff, the user approves it in the browser, then the bot reads the approved token from Freebuff's official status endpoint, verifies it against Codebuff, stores it privately, and reloads the runtime. Manual token paste remains available as a fallback. The bot accepts at most one credential per source and does not expose multi-account pooling or token rotation.
+Connections are managed under **Settings → API Connections → Free Model Sources**. Gemini guest mode is zero-input. Freebuff uses its official CLI-style browser login: the bot requests a login URL from Freebuff, the user approves it in the browser, then the bot reads the approved token from Freebuff's official status endpoint, verifies it against Codebuff, stores it privately, and reloads the runtime. Qwen, GLM and DeepSeek still require upstream account/human authorization when their guest path is unavailable; the UI does not label those states as fully automatic. Manual token paste remains available where needed. The bot accepts at most one credential per source and does not expose multi-account pooling or token rotation.
 
 ## Runtime architecture
 
