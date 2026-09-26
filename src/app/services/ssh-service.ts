@@ -424,6 +424,8 @@ async function connectionOptions(prepared: PreparedConnection, verbose = false):
     "-o", "BatchMode=yes",
     "-o", "PasswordAuthentication=no",
     "-o", "KbdInteractiveAuthentication=no",
+    "-o", "ServerAliveInterval=15",
+    "-o", "ServerAliveCountMax=3",
     "-o", `ConnectTimeout=${Math.max(3, Math.ceil(prepared.timeout / 1000))}`,
   ];
 
