@@ -5,6 +5,7 @@ import {
   cancelFreebuffAutoConnect,
   checkFreebuffAutoConnect,
   getPendingFreebuffAutoConnect,
+  getUsableFreeSourceProviderIDs,
   startFreebuffAutoConnect,
   type FreeModelSourceID,
 } from "../../../src/app/services/free-model-source-service.js";
@@ -116,6 +117,23 @@ describe("experimental free model source config", () => {
 
     await expect(startFreebuffAutoConnect()).rejects.toThrow("unexpected login origin");
     expect(getPendingFreebuffAutoConnect()).toBeNull();
+  });
+
+  it("only exposes credentialed or live-verified guest sources to OpenCode", () => {
+    const configured = new Set<FreeModelSourceID>(["ds", "freebuff"]);
+    expect(getUsableFreeSourceProviderIDs(configured, {
+      gemini: "ready",
+      qwen: "blocked",
+    })).toEqual([
+      "experimental-gemini-web",
+      "experimental-deepseek-web",
+      "experimental-freebuff",
+    ]);
+
+    expect(getUsableFreeSourceProviderIDs(new Set(), {
+      gemini: "blocked",
+      qwen: "blocked",
+    })).toEqual([]);
   });
 
   it("uses source-specific conservative catalogs when discovery is empty", () => {
