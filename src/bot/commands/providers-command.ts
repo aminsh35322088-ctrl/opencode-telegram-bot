@@ -140,14 +140,23 @@ async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void
 }
 
 function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceConnections>>[number]): { button: string; line: string } {
-  if (source.configured) return { button: "Connected", line: "✅ Connected" };
+  if (source.runtimeUsable && source.runtimeMode === "account") return { button: "Connected", line: "✅ Connected · live runtime check passed" };
+  if (source.runtimeUsable && source.runtimeMode === "guest") return { button: "Automatic guest", line: "⚡ Guest access verified on this host" };
+
+  if (source.configured && source.runtimeUsable === false) {
+    return { button: "Reconnect", line: "❌ Credential/runtime check failed · reconnect required" };
+  }
+
   switch (source.id) {
     case "gemini":
       return { button: "Automatic guest", line: "⚡ Automatic guest · no input required" };
     case "freebuff":
       return { button: "Auto login", line: "🌐 Official browser login · token captured automatically" };
     case "qwen":
-      return { button: "Account recommended", line: "⚠️ Guest is network-dependent · account token recommended on Railway" };
+      if (source.runtimeUsable === false) {
+        return { button: "Account required", line: "🔐 Guest rejected on this host · Qwen account token required" };
+      }
+      return { button: "Auto-check guest", line: "🔎 Guest access is checked automatically when the runtime starts" };
     case "glm":
       return { button: "Account required", line: "🔐 Account/device authorization required" };
     case "ds":
@@ -175,7 +184,8 @@ async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): P
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
     "Gemini needs no input. Freebuff uses an official one-click browser login.",
-    "Qwen, GLM and DeepSeek still depend on upstream account/human authorization when guest access is unavailable.",
+    "Qwen guest access is live-tested on this Railway host before its models are exposed.",
+    "If Qwen guest is rejected, its models are hidden until you connect an account token. GLM and DeepSeek still require upstream account/human authorization.",
     "",
     ...lines,
     "",
@@ -337,6 +347,14 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     if (!source) { await renderFreeModelSources(ctx, id, "❌ Unknown free model source.\n\n"); return true; }
     if (sourceID === "freebuff" && !source.configured) {
       await beginFreebuffAutoConnect(ctx, id);
+      return true;
+    }
+    if (sourceID === "gemini" && !source.configured && source.runtimeUsable !== false) {
+      await renderFreeModelSources(ctx, id, "✅ Gemini guest mode needs no credential. It is already available automatically.\n\n");
+      return true;
+    }
+    if (sourceID === "qwen" && !source.configured && source.runtimeUsable === true) {
+      await renderFreeModelSources(ctx, id, "✅ Qwen guest mode passed the live runtime check on this host. No token is needed right now.\n\n");
       return true;
     }
     await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
