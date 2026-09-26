@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { getDefaultCapabilityModel, getDefaultImageModel, getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicCapabilityOverride, getCurrentTopicImageModelOverride, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import { getDefaultCapabilityModel, getDefaultImageModel, getFreeModelDetectionEnabled, getFreeModelSourcesEnabled, getCompactOutputMode, getCurrentTopicCapabilityOverride, getCurrentTopicImageModelOverride, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 
@@ -15,6 +15,7 @@ export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notif
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
 export const SETTINGS_EXPERIMENTAL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}experimental`;
 export const SETTINGS_FREE_DETECTION_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}free_detection`;
+export const SETTINGS_FREE_SOURCES_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}free_sources`;
 export const SETTINGS_ADVANCED_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}advanced`;
 export const SETTINGS_TOPIC_DEFAULTS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}topic_defaults`;
 export const SETTINGS_AGENT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}agent`;
@@ -415,7 +416,18 @@ export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKe
 
 export function buildExperimentalSettingsView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🧪 <b>Experimental</b>\n\nFree Model Detection adds experimental pricing hints to model lists. Results may be incomplete or wrong and never filter, select, or reroute a model. Applies to the whole bot.",
-    keyboard: new InlineKeyboard().text("Free Model Detection: " + formatBooleanSettingValue(getFreeModelDetectionEnabled()), SETTINGS_FREE_DETECTION_CALLBACK).row().text("← Back", SETTINGS_BACK_CALLBACK),
+    text: [
+      "🧪 <b>Experimental</b>",
+      "",
+      "🆓 <b>Free Model Sources</b> adds Gemini Web, Qwen Web, GLM Web, DeepSeek Web and Freebuff through one loopback-only compatibility runtime. Gemini/Qwen support guest mode; credential-required sources can be connected under API Connections. OpenCode Zen stays on OpenCode's native provider path.",
+      "",
+      "🎨 <b>Free Model Detection</b> only adds experimental pricing hints to model lists. It never filters, selects, or reroutes a model.",
+      "",
+      "Experimental sources can change or stop working when their upstream web service changes.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("Free Model Sources: " + formatBooleanSettingValue(getFreeModelSourcesEnabled()), SETTINGS_FREE_SOURCES_CALLBACK).row()
+      .text("Free Model Detection: " + formatBooleanSettingValue(getFreeModelDetectionEnabled()), SETTINGS_FREE_DETECTION_CALLBACK).row()
+      .text("← Back", SETTINGS_BACK_CALLBACK),
   };
 }

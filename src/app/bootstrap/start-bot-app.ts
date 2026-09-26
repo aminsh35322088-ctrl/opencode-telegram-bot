@@ -23,6 +23,7 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
+import { initializeFreeModelSources, stopFreeModelSources } from "../services/free-model-source-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -124,6 +125,11 @@ export async function startBotApp(): Promise<void> {
   process.on("uncaughtException", uncaughtExceptionHandler);
 
   await loadSettings();
+  const freeModelSourcesReady = await initializeFreeModelSources().catch((error) => {
+    logger.warn("[FreeModelSources] Startup initialization failed; continuing without experimental free sources", error);
+    return false;
+  });
+  logger.info(`[FreeModelSources] ${freeModelSourcesReady ? "ready" : "disabled/unavailable"}`);
   await reconcileOrphanedTopicState();
   const githubConfigured = await initializeGithubIntegration().catch((error) => {
     logger.warn(
@@ -218,6 +224,7 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
+    void stopFreeModelSources().catch((error) => logger.warn("[FreeModelSources] Failed to stop OmniRouter cleanly", error));
     void stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     shutdownTimeout = setTimeout(() => {
       logger.warn(`[App] Shutdown did not finish in ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`);
@@ -270,6 +277,7 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime("app_shutdown_complete");
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
+    await stopFreeModelSources().catch((error) => logger.warn("[FreeModelSources] Failed to stop OmniRouter cleanly", error));
     await stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     await clearManagedServiceState().catch((error) =>
       logger.warn("[App] Failed to clear managed service state", error),

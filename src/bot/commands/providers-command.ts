@@ -13,10 +13,17 @@ import { buildSettingsMenuView } from "../menus/settings-menu.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
-import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
+import { getFreeModelSourcesEnabled, getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
+import {
+  clearFreeModelSourceCredential,
+  listFreeModelSourceConnections,
+  restartFreeModelSources,
+  setFreeModelSourceCredential,
+  type FreeModelSourceID,
+} from "../../app/services/free-model-source-service.js";
 
-type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
-interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
+type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key" | "free-source-secret";
+interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; freeSourceID?: FreeModelSourceID; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
 function messageId(ctx: Context): number | undefined { const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined; return canonical ?? ctx.callbackQuery?.message?.message_id; }
 function wizardKeyboard() { return new InlineKeyboard().text("✖ Cancel", "provider:cancel"); }
@@ -67,13 +74,67 @@ async function restartOpenCodeAfterProviderChange(): Promise<void> {
   }
   await reconcileStoredModelSelection({ forceCatalogRefresh: true });
 }
-async function applyAiChanges(): Promise<string> {
+export async function applyAiChanges(): Promise<string> {
   try { await restartOpenCodeAfterProviderChange(); return ""; }
   catch { logger.warn("[Providers] Settings saved, but OpenCode refresh failed"); return "\n⚠️ Settings are saved. OpenCode could not reload them; restart the bot to apply."; }
 }
 function compactButtonLabel(value: string, max = 42): string {
   return value.length <= max ? value : value.slice(0, Math.max(1, max - 1)) + "…";
 }
+
+function freeSourcePrompt(sourceID: FreeModelSourceID): string {
+  switch (sourceID) {
+    case "gemini":
+      return "✨ Gemini Web\n\nOptional account cookies\nSend the cookie header containing __Secure-1PSID and, when available, __Secure-1PSIDTS.\n\nGuest mode already works without this.\n🔒 Your message will be deleted immediately.";
+    case "qwen":
+      return "🦞 Qwen Web\n\nOptional account token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode remains available without it, but some datacenter networks hit Qwen risk control.\n🔒 Your message will be deleted immediately.";
+    case "glm":
+      return "🧠 GLM Web (Z.AI)\n\nSend one Z.AI account token used by the bridge (ZAI_TOKEN).\n\nThis source needs account/device authorization for chat.\n🔒 Your message will be deleted immediately.";
+    case "ds":
+      return "🐋 DeepSeek Web\n\nSend one DeepSeek userToken value from your own logged-in chat.deepseek.com session.\n\nDeepSeek Web has no guest mode.\n🔒 Your message will be deleted immediately.";
+    case "freebuff":
+      return "🆓 Freebuff\n\nSend one Freebuff auth token from your own Freebuff/Codebuff account.\n\nThe integration uses one account/seat and respects upstream limits.\n🔒 Your message will be deleted immediately.";
+  }
+}
+
+async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): Promise<void> {
+  const sources = await listFreeModelSourceConnections();
+  const enabled = getFreeModelSourcesEnabled();
+  const keyboard = new InlineKeyboard();
+
+  for (const source of sources) {
+    const state = source.configured ? "Connected" : source.guestCapable ? "Guest" : "Needs connection";
+    keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${state}`), `provider:free-source:${source.id}`).row();
+    if (source.configured) keyboard.text(`🗑 Remove ${source.label} credential`, `provider:free-source-remove:${source.id}`).row();
+  }
+  keyboard.text("← API Connections", "provider:menu");
+
+  const lines = sources.map((source) => {
+    const state = source.configured ? "✅ Connected" : source.guestCapable ? "👻 Guest available" : "🔐 Connection required";
+    return `${source.label} · ${state}`;
+  });
+
+  await render(ctx, [
+    notice,
+    "🆓 Free Model Sources",
+    "",
+    `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
+    "One local OmniRouter process exposes each source as a separate OpenCode provider.",
+    "No smart cross-provider fallback is enabled by this integration; explicit provider/model IDs are used.",
+    "",
+    ...lines,
+    "",
+    "OpenCode Zen · ✅ Native OpenCode provider (not duplicated here)",
+  ].filter(Boolean).join("\n"), keyboard, id);
+}
+
+async function applyFreeSourceCredentialChange(): Promise<string> {
+  if (!getFreeModelSourcesEnabled()) return "";
+  const restarted = await restartFreeModelSources();
+  if (!restarted) return "\n⚠️ Credential saved, but the experimental free-source runtime could not restart.";
+  return applyAiChanges();
+}
+
 async function renderImageProviders(ctx: Context, id?: number, notice = "") {
   const legacy = await listImageAiProviders();
   const cloudflare = legacy.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
@@ -143,6 +204,7 @@ async function renderProviders(ctx: Context, id?: number, notice = "") {
   }
 
   keyboard.text("➕ Add Provider", "provider:add:general").row();
+  keyboard.text("🆓 Free Model Sources", "provider:free-sources").row();
   keyboard.text("🎙 Transcription · " + (transcription ? "Configured" : "Not set"), "provider:slot:stt").row();
   keyboard.text("🎨 Image APIs · " + (imageAdapters ? imageAdapters + " connected" : "Optional"), "provider:image:engines").row();
   keyboard.text("← Settings", "provider:settings");
@@ -175,6 +237,23 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     const raw = data.slice("provider:slot:".length) as AiCapability;
     const capability: AiCapability = raw === "stt" ? "stt" : "general";
     await renderSlot(ctx, capability, id);
+    return true;
+  }
+  if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
+  if (data.startsWith("provider:free-source-remove:")) {
+    const sourceID = data.slice("provider:free-source-remove:".length) as FreeModelSourceID;
+    const removed = await clearFreeModelSourceCredential(sourceID);
+    const notice = removed ? await applyFreeSourceCredentialChange() : "";
+    await renderFreeModelSources(ctx, id, removed ? `✅ Credential removed.${notice}\n\n` : "Credential was already absent.\n\n");
+    return true;
+  }
+  if (data.startsWith("provider:free-source:")) {
+    const sourceID = data.slice("provider:free-source:".length) as FreeModelSourceID;
+    const source = (await listFreeModelSourceConnections()).find((item) => item.id === sourceID);
+    if (!source) { await renderFreeModelSources(ctx, id, "❌ Unknown free model source.\n\n"); return true; }
+    await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
+    const wizard = providerWizard.get();
+    if (wizard) wizard.freeSourceID = sourceID;
     return true;
   }
   if (data === "provider:image:engines") { await renderImageProviders(ctx, id); return true; }
@@ -249,6 +328,18 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
   let saved = false;
   const guard = () => { if (providerWizard.get() !== s || Date.now() > s.expires) throw new DOMException("Setup cancelled", "AbortError"); };
   try {
+    if (s.step === "free-source-secret") {
+      const sourceID = s.freeSourceID;
+      if (!sourceID) throw new Error("Free model source context is missing");
+      guard();
+      await setFreeModelSourceCredential(sourceID, text);
+      saved = true;
+      const notice = await applyFreeSourceCredentialChange();
+      if (providerWizard.get() !== s) return true;
+      clearProviderWizard();
+      await renderFreeModelSources(ctx, s.messageId, `✅ Free model source credential saved.${notice}\n\n`);
+      return true;
+    }
     if (s.step === "stt-select") {
       const p = (await listCustomProviders()).find(p => p.id === s.providerID && p.capability === "stt");
       if (!p?.models.some(m => m.id === text)) throw new Error("Choose a model returned by this transcription provider");

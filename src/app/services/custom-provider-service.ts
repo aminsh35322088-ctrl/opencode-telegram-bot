@@ -5,6 +5,7 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
+import { getBuiltInFreeProviderConfigs } from "./free-model-source-service.js";
 
 export type AiCapability = "general" | "coding" | "image" | "stt";
 
@@ -724,6 +725,10 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
       },
       models: Object.fromEntries(provider.models.map((model) => [model.id, getOpenCodeCustomModelConfig(model)])),
     };
+  }
+
+  for (const source of await getBuiltInFreeProviderConfigs()) {
+    providers[source.id] = source.config;
   }
 
   return JSON.stringify({ $schema: "https://opencode.ai/config.json", provider: providers }, null, 2);

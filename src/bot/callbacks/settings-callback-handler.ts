@@ -14,12 +14,15 @@ import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineM
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { handleImageModelSettingsCallback } from "../menus/image-model-menu.js";
 import { handleVoiceModelSettingsCallback } from "../menus/voice-model-menu.js";
+import { toggleFreeModelSources } from "../../app/services/free-model-source-service.js";
+import { applyAiChanges } from "../commands/providers-command.js";
 
 import {
   buildDefaultModelsSettingsView,
   buildExperimentalSettingsView,
   SETTINGS_EXPERIMENTAL_CALLBACK,
   SETTINGS_FREE_DETECTION_CALLBACK,
+  SETTINGS_FREE_SOURCES_CALLBACK,
   buildAdvancedSettingsView,
   buildAppearanceSettingsView,
   buildContextSettingsView,
@@ -138,6 +141,18 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "both"); return true;
       case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "both"); return true;
       case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
+      case SETTINGS_FREE_SOURCES_CALLBACK: {
+        const result = await toggleFreeModelSources();
+        if (!result.success) {
+          await ctx.answerCallbackQuery({ text: "Free model source runtime could not start.", show_alert: true });
+          return true;
+        }
+        const reloadNotice = await applyAiChanges();
+        if (reloadNotice) logger.warn("[FreeModelSources] OpenCode reload reported a warning");
+        await ctx.answerCallbackQuery({ text: result.enabled ? "Free Model Sources enabled" : "Free Model Sources disabled" });
+        await renderSettingsView(ctx, buildExperimentalSettingsView(), "back");
+        return true;
+      }
       case SETTINGS_FREE_DETECTION_CALLBACK: {
         await ctx.answerCallbackQuery();
         const enabled = !getFreeModelDetectionEnabled();
