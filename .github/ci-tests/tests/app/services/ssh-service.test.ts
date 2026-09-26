@@ -11,6 +11,9 @@ const sshKeys = vi.hoisted(() => ({
   privateKey: vi.fn(),
   knownHosts: vi.fn(),
 }));
+const topics = vi.hoisted(() => ({
+  findBySession: vi.fn(),
+}));
 
 vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
   getTailscaleSocketPath: () => "/data/run/tailscale/tailscaled.sock",
@@ -23,10 +26,16 @@ vi.mock("../../../src/app/services/ssh-key-service.js", () => ({
   getManagedSshKnownHostsPath: sshKeys.knownHosts,
 }));
 
+vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
+  findTelegramTopicBindingBySessionId: topics.findBySession,
+}));
+
 import {
   checkTailnetSsh,
   describeTailnetSshTarget,
   execTailnetSsh,
+  hasActiveTailnetSshConnection,
+  resolveTailnetSshScope,
   sanitizeSshLog,
   transferTailnetSshFile,
   type CommandRequest,
@@ -34,7 +43,7 @@ import {
   type CommandRunner,
 } from "../../../src/app/services/ssh-service.js";
 
-function nativeDevice(target = "github-exit") {
+function nativeDevice(target = "github-exit", identity = "node-a") {
   return {
     name: target,
     dnsName: `${target}.example.ts.net`,
@@ -42,6 +51,7 @@ function nativeDevice(target = "github-exit") {
     online: true,
     tags: ["tag:ssh"],
     os: "linux",
+    identity,
     sshHostKeys: ["ssh-ed25519 AAAATEST"],
     nativeTailscaleSsh: true,
     sshEligible: true,
@@ -49,7 +59,7 @@ function nativeDevice(target = "github-exit") {
   };
 }
 
-function standardDevice(target = "windows-host") {
+function standardDevice(target = "windows-host", identity = "node-win") {
   return {
     name: target,
     dnsName: `${target}.example.ts.net`,
@@ -57,6 +67,7 @@ function standardDevice(target = "windows-host") {
     online: true,
     tags: ["tag:ssh"],
     os: "windows",
+    identity,
     sshHostKeys: [],
     nativeTailscaleSsh: false,
     sshEligible: true,
@@ -76,7 +87,41 @@ function result(overrides: Partial<CommandResult> = {}): CommandResult {
   };
 }
 
-describe("cross-platform Tailnet SSH service", () => {
+function controlPath(args: string[]): string | undefined {
+  const index = args.indexOf("-S");
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+function createMultiplexRunner(calls: CommandRequest[]) {
+  const active = new Set<string>();
+  const runner: CommandRunner = async (request) => {
+    calls.push(request);
+    const args = request.args;
+    const socket = controlPath(args);
+
+    if (args.includes("-O") && args.includes("check")) {
+      return socket && active.has(socket)
+        ? result({ stdout: "Master running\n" })
+        : result({ ok: false, stderr: "Control socket connect failed", exitCode: 255 });
+    }
+
+    if (args.includes("ControlMaster=yes")) {
+      if (socket) active.add(socket);
+      return result();
+    }
+
+    if (args.includes("ProxyCommand=/bin/false")) {
+      return socket && active.has(socket)
+        ? result({ stdout: "channel-ok\n" })
+        : result({ ok: false, stderr: "master unavailable", exitCode: 255 });
+    }
+
+    return result();
+  };
+  return { runner, active };
+}
+
+describe("pooled cross-platform Tailnet SSH service", () => {
   let dir: string;
 
   beforeEach(async () => {
@@ -89,6 +134,14 @@ describe("cross-platform Tailnet SSH service", () => {
       device: nativeDevice(target),
       output: "pong",
     }));
+    topics.findBySession.mockReset().mockResolvedValue({
+      chatId: 777,
+      threadId: 42,
+      sessionId: "session-1",
+      directory: "/data/workspace",
+      createdAt: "2026-09-26T00:00:00.000Z",
+      updatedAt: "2026-09-26T00:00:00.000Z",
+    });
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "tailnet-ssh-"));
   });
 
@@ -96,150 +149,268 @@ describe("cross-platform Tailnet SSH service", () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it("uses the official tailscale ssh wrapper for native Tailscale SSH", async () => {
+  it("resolves a stable Telegram Topic scope across OpenCode session IDs", async () => {
+    expect(await resolveTailnetSshScope("session-1")).toBe("topic:777:42");
+    topics.findBySession.mockResolvedValueOnce(null);
+    expect(await resolveTailnetSshScope("orphan-session")).toBe("session:orphan-session");
+  });
+
+  it("opens native Tailscale SSH with the proven socket-aware direct transport", async () => {
     const calls: CommandRequest[] = [];
-    const runner: CommandRunner = async (request) => {
-      calls.push(request);
-      return result({ stdout: "ok\n" });
-    };
+    const { runner } = createMultiplexRunner(calls);
 
     const output = await execTailnetSsh({
       target: "github-exit",
       user: "runner",
       command: "uname -a",
+      scope: "topic:777:42",
+      allowConnectionStart: true,
     }, runner);
 
     expect(output.ok).toBe(true);
     expect(output.authMode).toBe("tailscale-ssh");
-    expect(output.passwordRequired).toBe(false);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.bin).toBe("/usr/local/bin/tailscale");
-    expect(calls[0]!.args).toEqual([
-      "--socket=/data/run/tailscale/tailscaled.sock",
-      "ssh",
-      "runner@github-exit",
-      "uname -a",
-    ]);
+    expect(output.connectionCreated).toBe(true);
+    expect(output.persistentConnection).toBe(true);
+
+    const master = calls.find((call) => call.args.includes("ControlMaster=yes"));
+    expect(master?.bin).toBe("/usr/bin/ssh");
+    const args = master?.args.join(" ") ?? "";
+    expect(args).toContain(
+      "ProxyCommand=/usr/local/bin/tailscale --socket=/data/run/tailscale/tailscaled.sock nc %h %p",
+    );
+    expect(args).toContain("KexAlgorithms=ecdh-sha2-nistp256,curve25519-sha256");
+    expect(args).toContain("HostKeyAlgorithms=ssh-ed25519");
+    expect(args).toContain("ControlPersist=yes");
+    expect(args).toContain("runner@github-exit");
+
+    const channel = calls.find((call) => call.args.includes("ProxyCommand=/bin/false"));
+    expect(channel?.args).toContain("uname -a");
   });
 
-  it("retries native Tailscale SSH with only the known KEX override after timeout", async () => {
+  it("reuses one master for multiple commands instead of reconnecting per command", async () => {
     const calls: CommandRequest[] = [];
-    const runner: CommandRunner = async (request) => {
-      calls.push(request);
-      return calls.length === 1
-        ? result({ ok: false, timedOut: true, exitCode: null, signal: "SIGTERM" })
-        : result({ stdout: "fallback-ok\n" });
-    };
-
-    const output = await execTailnetSsh({
+    const { runner } = createMultiplexRunner(calls);
+    const common = {
       target: "github-exit",
       user: "runner",
-      command: "exit 0",
-      timeoutMs: 3000,
+      scope: "topic:777:42",
+    };
+
+    const first = await execTailnetSsh({
+      ...common,
+      command: "uname -a",
+      allowConnectionStart: true,
+    }, runner);
+    const second = await execTailnetSsh({
+      ...common,
+      command: "uptime",
+      allowConnectionStart: false,
     }, runner);
 
-    expect(output.ok).toBe(true);
-    expect(output.compatibility).toBe("ecdh-nistp256");
-    expect(output.workingOverrides).toEqual(["KexAlgorithms=ecdh-sha2-nistp256"]);
-    expect(calls).toHaveLength(2);
-    expect(calls.every((call) => call.bin === "/usr/local/bin/tailscale")).toBe(true);
-    expect(calls[1]!.env?.PATH).toMatch(/^\/tmp\/opencode-ts-ssh-/u);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(second.connectionReused).toBe(true);
+    expect(calls.filter((call) => call.args.includes("ControlMaster=yes"))).toHaveLength(1);
+    expect(calls.filter((call) => call.args.includes("ProxyCommand=/bin/false"))).toHaveLength(2);
   });
 
-  it("uses passwordless managed-key SSH over Tailscale for non-native targets", async () => {
-    tailscale.resolve.mockResolvedValue(standardDevice());
+  it("fails closed and requires a new grant after the master connection disappears", async () => {
     const calls: CommandRequest[] = [];
-    const runner: CommandRunner = async (request) => {
-      calls.push(request);
-      return result({ stdout: "Windows\n" });
+    const { runner, active } = createMultiplexRunner(calls);
+    const common = {
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
     };
+
+    const first = await execTailnetSsh({
+      ...common,
+      command: "true",
+      allowConnectionStart: true,
+    }, runner);
+    expect(first.ok).toBe(true);
+
+    active.clear();
+    const second = await execTailnetSsh({
+      ...common,
+      command: "whoami",
+      allowConnectionStart: false,
+    }, runner);
+
+    expect(second.ok).toBe(false);
+    expect(second.diagnosis).toBe("authorization-expired");
+    expect(calls.filter((call) => call.args.includes("ControlMaster=yes"))).toHaveLength(1);
+  });
+
+  it("requires a new grant when the Tailnet server identity changes", async () => {
+    const calls: CommandRequest[] = [];
+    const { runner } = createMultiplexRunner(calls);
+
+    await execTailnetSsh({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
+      command: "true",
+      allowConnectionStart: true,
+    }, runner);
+
+    tailscale.resolve.mockImplementation(async (target: string) => nativeDevice(target, "node-b"));
+    const changed = await execTailnetSsh({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
+      command: "whoami",
+      allowConnectionStart: false,
+    }, runner);
+
+    expect(changed.ok).toBe(false);
+    expect(changed.diagnosis).toBe("authorization-expired");
+  });
+
+  it("requires a separate live master for a different Topic or username", async () => {
+    const calls: CommandRequest[] = [];
+    const { runner } = createMultiplexRunner(calls);
+
+    await execTailnetSsh({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
+      command: "true",
+      allowConnectionStart: true,
+    }, runner);
+
+    expect(await hasActiveTailnetSshConnection({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:42",
+    }, runner)).toBe(true);
+
+    expect(await hasActiveTailnetSshConnection({
+      target: "github-exit",
+      user: "runner",
+      scope: "topic:777:43",
+    }, runner)).toBe(false);
+
+    expect(await hasActiveTailnetSshConnection({
+      target: "github-exit",
+      user: "root",
+      scope: "topic:777:42",
+    }, runner)).toBe(false);
+  });
+
+  it("uses a managed Ed25519 key over Tailscale for non-native SSH servers", async () => {
+    tailscale.resolve.mockImplementation(async () => standardDevice());
+    const calls: CommandRequest[] = [];
+    const { runner } = createMultiplexRunner(calls);
 
     const description = await describeTailnetSshTarget({
       target: "windows-host",
       user: "Administrator",
+      scope: "topic:777:42",
     });
     expect(description.authMode).toBe("managed-key");
     expect(description.passwordRequired).toBe(false);
-    expect(description.os).toBe("windows");
 
     const output = await execTailnetSsh({
       target: "windows-host",
       user: "Administrator",
+      scope: "topic:777:42",
       command: "ver",
+      allowConnectionStart: true,
     }, runner);
 
     expect(output.ok).toBe(true);
-    expect(output.authMode).toBe("managed-key");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.bin).toBe("/usr/bin/ssh");
-    const args = calls[0]!.args.join(" ");
-    expect(args).toContain("ProxyCommand=/usr/local/bin/tailscale --socket=/data/run/tailscale/tailscaled.sock nc %h %p");
+    const master = calls.find((call) => call.args.includes("ControlMaster=yes"));
+    const args = master?.args.join(" ") ?? "";
     expect(args).toContain("PasswordAuthentication=no");
     expect(args).toContain("PreferredAuthentications=publickey");
     expect(args).toContain("-i /data/ssh/id_ed25519");
+    expect(args).toContain(
+      "ProxyCommand=/usr/local/bin/tailscale --socket=/data/run/tailscale/tailscaled.sock nc %h %p",
+    );
   });
 
-  it("uses managed-key mode for custom SSH ports such as Termux 8022", async () => {
+  it("uses managed-key mode for custom ports such as Termux 8022", async () => {
     const calls: CommandRequest[] = [];
-    const runner: CommandRunner = async (request) => {
-      calls.push(request);
-      return result();
-    };
+    const { runner } = createMultiplexRunner(calls);
 
     const output = await execTailnetSsh({
       target: "github-exit",
       user: "u0_a123",
       port: 8022,
+      scope: "topic:777:42",
       command: "id",
+      allowConnectionStart: true,
     }, runner);
 
     expect(output.authMode).toBe("managed-key");
-    expect(calls[0]!.bin).toBe("/usr/bin/ssh");
-    expect(calls[0]!.args.join(" ")).toContain("-p 8022");
+    const master = calls.find((call) => call.args.includes("ControlMaster=yes"));
+    expect(master?.args.join(" ")).toContain("-p 8022");
   });
 
-  it("check verifies Tailnet reachability before the SSH probe", async () => {
-    const runner: CommandRunner = async () => result();
-    const output = await checkTailnetSsh({ target: "server-a", user: "ubuntu" }, runner);
+  it("check verifies Tailnet reachability and establishes the approved master", async () => {
+    const calls: CommandRequest[] = [];
+    const { runner } = createMultiplexRunner(calls);
+
+    const output = await checkTailnetSsh({
+      target: "server-a",
+      user: "ubuntu",
+      scope: "topic:777:42",
+      allowConnectionStart: true,
+    }, runner);
+
     expect(output.ok).toBe(true);
     expect(output.tailnetReachable).toBe(true);
-    expect(output.passwordRequired).toBe(false);
+    expect(output.connectionCreated).toBe(true);
     expect(tailscale.ping).toHaveBeenCalledWith("server-a");
   });
 
-  it("preflights native Tailscale SSH before SCP transfer", async () => {
+  it("reuses the same master for SCP and fails closed instead of reconnecting", async () => {
     const source = path.join(dir, "upload.txt");
     await fs.writeFile(source, "hello");
     const calls: CommandRequest[] = [];
-    const runner: CommandRunner = async (request) => {
-      calls.push(request);
-      return result();
-    };
+    const { runner } = createMultiplexRunner(calls);
 
     const output = await transferTailnetSshFile({
       target: "github-exit",
       user: "runner",
+      scope: "topic:777:42",
       localPath: source,
       remotePath: "/tmp/upload.txt",
       direction: "upload",
+      allowConnectionStart: true,
     }, runner);
 
     expect(output.ok).toBe(true);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]!.bin).toBe("/usr/local/bin/tailscale");
-    expect(calls[1]!.bin).toBe("/usr/bin/scp");
-    expect(calls[1]!.args.join(" ")).toContain(
-      "ProxyCommand=/usr/local/bin/tailscale --socket=/data/run/tailscale/tailscaled.sock nc %h %p",
-    );
+    const scp = calls.find((call) => call.bin === "/usr/bin/scp");
+    expect(scp?.args.join(" ")).toContain("ControlPath=");
+    expect(scp?.args.join(" ")).toContain("ProxyCommand=/bin/false");
+    expect(calls.filter((call) => call.args.includes("ControlMaster=yes"))).toHaveLength(1);
   });
 
   it("rejects unsafe usernames, ports, and remote paths", async () => {
-    const runner: CommandRunner = async () => result();
+    const calls: CommandRequest[] = [];
+    const { runner } = createMultiplexRunner(calls);
+
     await expect(
-      execTailnetSsh({ target: "server", user: "root;id", command: "true" }, runner),
+      execTailnetSsh({
+        target: "server",
+        user: "root;id",
+        scope: "topic:777:42",
+        command: "true",
+        allowConnectionStart: true,
+      }, runner),
     ).rejects.toThrow(/user/i);
+
     await expect(
-      execTailnetSsh({ target: "server", user: "root", port: 70000, command: "true" }, runner),
+      execTailnetSsh({
+        target: "server",
+        user: "root",
+        port: 70000,
+        scope: "topic:777:42",
+        command: "true",
+        allowConnectionStart: true,
+      }, runner),
     ).rejects.toThrow(/port/i);
 
     const source = path.join(dir, "upload.txt");
@@ -248,9 +419,11 @@ describe("cross-platform Tailnet SSH service", () => {
       transferTailnetSshFile({
         target: "server",
         user: "root",
+        scope: "topic:777:42",
         localPath: source,
         remotePath: "/tmp/a;id",
         direction: "upload",
+        allowConnectionStart: true,
       }, runner),
     ).rejects.toThrow(/remote_path/i);
   });
