@@ -9,11 +9,15 @@ import { getFreeModelSourcesEnabled, setFreeModelSourcesEnabled } from "../store
 
 export type FreeModelSourceID = "gemini" | "qwen" | "glm" | "ds" | "freebuff";
 
+export type FreeModelSourceGuestStatus = "ready" | "blocked" | "unchecked" | "not-applicable";
+
 export interface FreeModelSourceConnection {
   id: FreeModelSourceID;
   label: string;
   configured: boolean;
   guestCapable: boolean;
+  guestStatus: FreeModelSourceGuestStatus;
+  automaticSetup: boolean;
   credentialLabel: string;
   note: string;
 }
@@ -140,6 +144,7 @@ const STARTUP_TIMEOUT_MS = 15_000;
 const HEALTH_ATTEMPT_TIMEOUT_MS = 1_000;
 const HEALTH_POLL_MS = 250;
 const MODEL_DISCOVERY_TIMEOUT_MS = 5_000;
+const GUEST_PROBE_TIMEOUT_MS = 12_000;
 const EXPECTED_OMNI_VERSION = "1.4.0";
 const PROCESS_EXIT_GRACE_MS = 2_500;
 const PROCESS_KILL_GRACE_MS = 1_500;
@@ -161,6 +166,7 @@ let omniProcess: ChildProcess | null = null;
 let omniReady = false;
 let lifecycleTail: Promise<void> = Promise.resolve();
 let discoveredModels: Partial<Record<FreeModelSourceID, string[]>> = {};
+let guestSourceStatus: Partial<Record<FreeModelSourceID, "ready" | "blocked">> = {};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -360,14 +366,24 @@ export async function clearFreeModelSourceCredential(sourceID: FreeModelSourceID
 
 export async function listFreeModelSourceConnections(): Promise<FreeModelSourceConnection[]> {
   const credentials = await readCredentials();
-  return SOURCES.map((source) => ({
-    id: source.id,
-    label: source.providerLabel,
-    configured: Boolean(credentials[source.credentialKey]),
-    guestCapable: source.guestCapable,
-    credentialLabel: source.credentialLabel,
-    note: source.note,
-  }));
+  return SOURCES.map((source) => {
+    const configured = Boolean(credentials[source.credentialKey]);
+    const guestStatus: FreeModelSourceGuestStatus = source.guestCapable
+      ? configured
+        ? "ready"
+        : guestSourceStatus[source.id] ?? "unchecked"
+      : "not-applicable";
+    return {
+      id: source.id,
+      label: source.providerLabel,
+      configured,
+      guestCapable: source.guestCapable,
+      guestStatus,
+      automaticSetup: source.id === "freebuff",
+      credentialLabel: source.credentialLabel,
+      note: source.note,
+    };
+  });
 }
 
 function parseModelIDs(value: unknown): string[] {
@@ -399,6 +415,45 @@ async function discoverModelsFor(source: SourceDefinition, internalToken: string
 async function discoverAllModels(internalToken: string): Promise<void> {
   const pairs = await Promise.all(SOURCES.map(async (source) => [source.id, await discoverModelsFor(source, internalToken)] as const));
   discoveredModels = Object.fromEntries(pairs) as Partial<Record<FreeModelSourceID, string[]>>;
+}
+
+async function probeGuestSource(source: SourceDefinition, internalToken: string): Promise<"ready" | "blocked"> {
+  const model = discoveredModels[source.id]?.[0] ?? source.fallbackModels[0];
+  if (!model) return "blocked";
+  try {
+    const response = await fetch(`${OMNI_BASE_URL}/${source.bridgePath}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${internalToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with OK." }],
+        stream: false,
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(GUEST_PROBE_TIMEOUT_MS),
+    });
+    if (response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return "ready";
+    }
+    await response.body?.cancel().catch(() => {});
+    logger.info(`[FreeModelSources] Guest probe blocked: source=${source.id} status=${response.status}`);
+    return "blocked";
+  } catch (error) {
+    logger.info(`[FreeModelSources] Guest probe failed: source=${source.id} error=${error instanceof Error ? error.message : String(error)}`);
+    return "blocked";
+  }
+}
+
+async function probeGuestSources(internalToken: string, credentials: StoredFreeModelSourceCredentials): Promise<void> {
+  const checks = await Promise.all(SOURCES.filter((source) => source.guestCapable).map(async (source) => {
+    if (credentials[source.credentialKey]) return [source.id, "ready"] as const;
+    return [source.id, await probeGuestSource(source, internalToken)] as const;
+  }));
+  for (const [sourceID, status] of checks) guestSourceStatus[sourceID] = status;
 }
 
 function modelConfig(source: SourceDefinition, upstreamModelID: string): Record<string, unknown> {
@@ -448,10 +503,36 @@ export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProvid
   if (!getFreeModelSourcesEnabled() || !omniReady) return [];
   const credentials = await readCredentials();
   const configured = new Set<FreeModelSourceID>();
+  const usableProviderIDs = new Set<string>();
   for (const source of SOURCES) {
-    if (credentials[source.credentialKey]) configured.add(source.id);
+    const hasCredential = Boolean(credentials[source.credentialKey]);
+    if (hasCredential) configured.add(source.id);
+    if (hasCredential || (source.guestCapable && guestSourceStatus[source.id] === "ready")) {
+      usableProviderIDs.add(source.providerID);
+    }
   }
-  return buildFreeSourceProviderConfigs(discoveredModels, configured);
+  return buildFreeSourceProviderConfigs(discoveredModels, configured)
+    .filter((provider) => usableProviderIDs.has(provider.id));
+}
+
+export function refreshFreeModelSourceAvailability(sourceID: FreeModelSourceID): Promise<FreeModelSourceGuestStatus> {
+  return enqueueLifecycle(async () => {
+    const source = SOURCES.find((item) => item.id === sourceID);
+    if (!source?.guestCapable) return "not-applicable";
+    if (!omniReady) {
+      guestSourceStatus[sourceID] = undefined;
+      return "unchecked";
+    }
+    const credentials = await readCredentials();
+    if (credentials[source.credentialKey]) {
+      guestSourceStatus[sourceID] = "ready";
+      return "ready";
+    }
+    const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
+    const status = await probeGuestSource(source, internalToken);
+    guestSourceStatus[sourceID] = status;
+    return status;
+  });
 }
 
 export function isFreeModelSourceRuntimeReady(): boolean {
@@ -529,6 +610,7 @@ export function buildOmniEnvironment(
 async function startFreeModelSourcesInternal(): Promise<boolean> {
   if (omniReady && omniProcess && !childHasExited(omniProcess)) return true;
 
+  guestSourceStatus = {};
   const routerKey = ensureSecret(ROUTER_KEY_ENV, "sk-otb-");
   const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
   const adminPassword = ensureSecret(ADMIN_PASSWORD_ENV);
@@ -562,6 +644,7 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
     const ready = await waitForOmni(child, () => spawnError);
     if (!ready) throw new Error("OmniRouter did not become ready");
     await discoverAllModels(internalToken);
+    await probeGuestSources(internalToken, credentials);
     if (childHasExited(child)) throw new Error("OmniRouter exited during model discovery");
     omniReady = true;
     logger.info(
@@ -584,6 +667,7 @@ async function stopFreeModelSourcesInternal(): Promise<void> {
   omniProcess = null;
   omniReady = false;
   discoveredModels = {};
+  guestSourceStatus = {};
   if (!child) return;
   await terminateChild(child);
 }
