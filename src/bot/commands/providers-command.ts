@@ -20,9 +20,11 @@ import {
   clearFreeModelSourceCredential,
   getPendingFreebuffAutoConnect,
   listFreeModelSourceConnections,
+  refreshFreeModelSourceAvailability,
   restartFreeModelSources,
   setFreeModelSourceCredential,
   startFreebuffAutoConnect,
+  type FreeModelSourceConnection,
   type FreeModelSourceID,
 } from "../../app/services/free-model-source-service.js";
 
@@ -91,7 +93,7 @@ function freeSourcePrompt(sourceID: FreeModelSourceID): string {
     case "gemini":
       return "✨ Gemini Web\n\nOptional account cookies\nSend the cookie header containing __Secure-1PSID and, when available, __Secure-1PSIDTS.\n\nGuest mode already works without this.\n🔒 Your message will be deleted immediately.";
     case "qwen":
-      return "🦞 Qwen Web\n\nOptional account token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode remains available without it, but some datacenter networks hit Qwen risk control.\n🔒 Your message will be deleted immediately.";
+      return "🦞 Qwen Web\n\nAccount token\nSend the value of the chat.qwen.ai cookie/localStorage item named token.\n\nThe bot live-tests Guest on this host. If Railway is rejected by Qwen, an account token is required before Qwen appears in Model Center.\n🔒 Your message will be deleted immediately.";
     case "glm":
       return "🧠 GLM Web (Z.AI)\n\nSend one Z.AI account token used by the bridge (ZAI_TOKEN).\n\nThis source needs account/device authorization for chat.\n🔒 Your message will be deleted immediately.";
     case "ds":
@@ -139,42 +141,49 @@ async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void
   }
 }
 
+function freeSourceShortState(source: FreeModelSourceConnection, enabled: boolean): string {
+  if (source.configured) return "Connected";
+  if (source.id === "freebuff") return "Auto login";
+  if (!source.guestCapable) return "Needs connection";
+  if (!enabled) return "Guest · enable to test";
+  if (source.guestStatus === "ready") return "Guest ready";
+  if (source.guestStatus === "blocked") return "Account required";
+  return "Guest · not tested";
+}
+
+function freeSourceLongState(source: FreeModelSourceConnection, enabled: boolean): string {
+  if (source.configured) return "✅ Connected";
+  if (source.id === "freebuff") return "🌐 Automatic browser login";
+  if (!source.guestCapable) return "🔐 Connection required";
+  if (!enabled) return "⏸ Guest will be tested when runtime is enabled";
+  if (source.guestStatus === "ready") return "✅ Guest verified on this host";
+  if (source.guestStatus === "blocked") return "🔐 Guest blocked on this host · account required";
+  return "🧪 Guest not tested yet";
+}
+
 async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): Promise<void> {
   const sources = await listFreeModelSourceConnections();
   const enabled = getFreeModelSourcesEnabled();
   const keyboard = new InlineKeyboard();
 
   for (const source of sources) {
-    const state = source.configured
-      ? "Connected"
-      : source.id === "freebuff"
-        ? "Auto login"
-        : source.guestCapable
-          ? "Guest"
-          : "Needs connection";
-    keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${state}`), `provider:free-source:${source.id}`).row();
+    keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${freeSourceShortState(source, enabled)}`), `provider:free-source:${source.id}`).row();
+    if (source.guestCapable && enabled && !source.configured && source.guestStatus === "blocked") {
+      keyboard.text(`↻ Retry ${source.label} Guest`, `provider:free-source-recheck:${source.id}`).row();
+    }
     if (source.configured) keyboard.text(`🗑 Remove ${source.label} credential`, `provider:free-source-remove:${source.id}`).row();
   }
   keyboard.text("← API Connections", "provider:menu");
 
-  const lines = sources.map((source) => {
-    const state = source.configured
-      ? "✅ Connected"
-      : source.id === "freebuff"
-        ? "🌐 Automatic browser login"
-        : source.guestCapable
-          ? "👻 Guest available"
-          : "🔐 Connection required";
-    return `${source.label} · ${state}`;
-  });
+  const lines = sources.map((source) => `${source.label} · ${freeSourceLongState(source, enabled)}`);
 
   await render(ctx, [
     notice,
     "🆓 Free Model Sources",
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
-    "One local OmniRouter process exposes each source as a separate OpenCode provider.",
-    "No smart cross-provider fallback is enabled by this integration; explicit provider/model IDs are used.",
+    "Each Guest source is live-tested from this Railway host before it is injected into Model Center.",
+    "Sources that need login stay visible here, but unusable models are kept out of Model Center until connected.",
     "",
     ...lines,
     "",
@@ -294,6 +303,18 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     return true;
   }
   if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
+  if (data.startsWith("provider:free-source-recheck:")) {
+    const sourceID = data.slice("provider:free-source-recheck:".length) as FreeModelSourceID;
+    const status = await refreshFreeModelSourceAvailability(sourceID);
+    const notice = getFreeModelSourcesEnabled() ? await applyAiChanges() : "";
+    const message = status === "ready"
+      ? `✅ ${sourceID} Guest is usable from this host now.`
+      : status === "blocked"
+        ? `🔐 ${sourceID} Guest is still blocked from this host. Connect an account credential to use it.`
+        : "Guest availability could not be tested while the runtime is disabled.";
+    await renderFreeModelSources(ctx, id, `${message}${notice}\n\n`);
+    return true;
+  }
   if (data === "provider:freebuff-check") {
     const result = await checkFreebuffAutoConnect();
     if (result.status === "connected") {
