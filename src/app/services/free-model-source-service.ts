@@ -6,6 +6,12 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { getFreeModelSourcesEnabled, setFreeModelSourcesEnabled } from "../stores/settings-store.js";
+import {
+  getQwenBxFilePath,
+  isQwenGuestPrepared,
+  prepareQwenGuestHeaders,
+  setQwenGuestVerified,
+} from "./qwen-guest-bootstrap-service.js";
 
 export type FreeModelSourceID = "gemini" | "qwen" | "glm" | "ds" | "freebuff";
 
@@ -14,6 +20,7 @@ export interface FreeModelSourceConnection {
   label: string;
   configured: boolean;
   guestCapable: boolean;
+  ready: boolean;
   credentialLabel: string;
   note: string;
 }
@@ -32,6 +39,12 @@ export type FreebuffAutoConnectResult =
   | { status: "pending"; loginUrl: string; expiresAt?: number }
   | { status: "connected"; account?: string }
   | { status: "expired" }
+  | { status: "error"; message: string };
+
+export type QwenAutoConnectResult =
+  | { status: "ready"; message: string }
+  | { status: "prepared"; message: string }
+  | { status: "manual"; message: string }
   | { status: "error"; message: string };
 
 interface StoredFreeModelSourceCredentials {
@@ -81,7 +94,7 @@ const SOURCES: readonly SourceDefinition[] = [
     guestCapable: true,
     vision: false,
     fallbackModels: ["qwen3.8-max", "qwen3.7-plus"],
-    note: "Guest works on some networks; datacenter IPs can still hit Qwen/Baxia risk control.",
+    note: "The bot can automatically prepare Qwen guest access with the bundled Railway Chromium; an account token remains the fallback.",
   },
   {
     id: "glm",
@@ -94,7 +107,7 @@ const SOURCES: readonly SourceDefinition[] = [
     guestCapable: false,
     vision: true,
     fallbackModels: ["glm-5.3", "glm-5.3-flash"],
-    note: "Chat needs a Z.AI account/device token; the source stays selectable but reports upstream auth guidance until connected.",
+    note: "Z.AI chat needs both account authorization and a populated captcha device-token store; the provider is hidden until both are ready.",
   },
   {
     id: "ds",
@@ -358,16 +371,47 @@ export async function clearFreeModelSourceCredential(sourceID: FreeModelSourceID
   return removed;
 }
 
+async function hasGlmDeviceTokens(): Promise<boolean> {
+  const dbPath = path.join(getRuntimePaths().appHome, "omnirouter", "glm-tokens.sqlite");
+  try {
+    const { default: Database } = await import("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const row = db.prepare("SELECT 1 AS ok FROM tokens LIMIT 1").get() as { ok?: number } | undefined;
+      return row?.ok === 1;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 export async function listFreeModelSourceConnections(): Promise<FreeModelSourceConnection[]> {
   const credentials = await readCredentials();
-  return SOURCES.map((source) => ({
-    id: source.id,
-    label: source.providerLabel,
-    configured: Boolean(credentials[source.credentialKey]),
-    guestCapable: source.guestCapable,
-    credentialLabel: source.credentialLabel,
-    note: source.note,
-  }));
+  const [qwenGuestReady, glmDeviceReady] = await Promise.all([
+    isQwenGuestPrepared(true),
+    hasGlmDeviceTokens(),
+  ]);
+  return SOURCES.map((source) => {
+    const configured = Boolean(credentials[source.credentialKey]);
+    const ready = source.id === "gemini"
+      ? true
+      : source.id === "qwen"
+        ? configured || qwenGuestReady
+        : source.id === "glm"
+          ? configured && glmDeviceReady
+          : configured;
+    return {
+      id: source.id,
+      label: source.providerLabel,
+      configured,
+      guestCapable: source.guestCapable,
+      ready,
+      credentialLabel: source.credentialLabel,
+      note: source.note,
+    };
+  });
 }
 
 function parseModelIDs(value: unknown): string[] {
@@ -416,8 +460,9 @@ function modelConfig(source: SourceDefinition, upstreamModelID: string): Record<
 export function buildFreeSourceProviderConfigs(
   catalogs: Partial<Record<FreeModelSourceID, readonly string[]>>,
   configured: ReadonlySet<FreeModelSourceID> = new Set(),
+  available?: ReadonlySet<FreeModelSourceID>,
 ): BuiltInFreeProviderConfig[] {
-  return SOURCES.map((source) => {
+  return SOURCES.filter((source) => !available || available.has(source.id)).map((source) => {
     const raw = catalogs[source.id] ?? source.fallbackModels;
     const models = [...new Set(raw.map((id) => id.trim()).filter(Boolean))];
     const effective = models.length ? models : [...source.fallbackModels];
@@ -451,7 +496,13 @@ export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProvid
   for (const source of SOURCES) {
     if (credentials[source.credentialKey]) configured.add(source.id);
   }
-  return buildFreeSourceProviderConfigs(discoveredModels, configured);
+
+  const available = new Set<FreeModelSourceID>(["gemini"]);
+  if (credentials.qwenToken || await isQwenGuestPrepared(true)) available.add("qwen");
+  if (credentials.deepseekToken) available.add("ds");
+  if (credentials.freebuffToken) available.add("freebuff");
+  if (credentials.glmToken && await hasGlmDeviceTokens()) available.add("glm");
+  return buildFreeSourceProviderConfigs(discoveredModels, configured, available);
 }
 
 export function isFreeModelSourceRuntimeReady(): boolean {
@@ -507,6 +558,7 @@ export function buildOmniEnvironment(
     RETRY_PER_PROVIDER: "1",
     QWEN_TOKEN: credentials.qwenToken ?? "",
     QWEN_TOKENS: "",
+    QWEN_BX_FILE: path.join(dataDir, "qwen-bx.json"),
     ZAI_TOKEN: credentials.glmToken ?? "",
     ZAI_TOKENS: "",
     DEEPSEEK_TOKENS: credentials.deepseekToken ?? "",
@@ -524,6 +576,76 @@ export function buildOmniEnvironment(
     if (value) env[key] = value;
   }
   return env;
+}
+
+async function probeQwenGuest(routerKey: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    const response = await fetch(`${OMNI_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${routerKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "qwen/qwen3.8-max",
+        stream: false,
+        max_tokens: 16,
+        messages: [{ role: "user", content: "Reply with exactly OK." }],
+      }),
+      signal: AbortSignal.timeout(35_000),
+    });
+    if (response.ok) return { ok: true, message: "Qwen guest request succeeded" };
+    const body = await response.text().catch(() => "");
+    const compact = body.replace(/\s+/g, " ").slice(0, 280);
+    return { ok: false, message: compact || `HTTP ${response.status}` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function verifyPreparedQwenGuest(routerKey: string): Promise<boolean> {
+  if (!await isQwenGuestPrepared(false)) return false;
+  const result = await probeQwenGuest(routerKey);
+  await setQwenGuestVerified(result.ok);
+  if (result.ok) logger.info("[FreeModelSources] Qwen automatic guest access verified live");
+  else logger.warn("[FreeModelSources] Qwen automatic guest access probe failed", result.message);
+  return result.ok;
+}
+
+export async function autoConnectQwenGuest(): Promise<QwenAutoConnectResult> {
+  const credentials = await readCredentials();
+  if (credentials.qwenToken) {
+    return { status: "ready", message: "Qwen account token is already connected." };
+  }
+
+  try {
+    await prepareQwenGuestHeaders();
+  } catch (error) {
+    return {
+      status: "manual",
+      message: `Automatic Qwen guest preparation failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  if (!getFreeModelSourcesEnabled() || !omniReady) {
+    await setQwenGuestVerified(false);
+    return {
+      status: "prepared",
+      message: "Qwen guest headers were captured. Enable Free Model Sources to verify them live.",
+    };
+  }
+
+  const routerKey = ensureSecret(ROUTER_KEY_ENV, "sk-otb-");
+  const probe = await probeQwenGuest(routerKey);
+  await setQwenGuestVerified(probe.ok);
+  if (probe.ok) {
+    return { status: "ready", message: "Qwen guest access was captured and verified live on this Railway host." };
+  }
+
+  return {
+    status: "manual",
+    message: `Qwen still rejected automatic guest access on this host (${probe.message}). Connect your own Qwen account token instead.`,
+  };
 }
 
 async function startFreeModelSourcesInternal(): Promise<boolean> {
@@ -564,6 +686,9 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
     await discoverAllModels(internalToken);
     if (childHasExited(child)) throw new Error("OmniRouter exited during model discovery");
     omniReady = true;
+    if (!credentials.qwenToken && await isQwenGuestPrepared(false)) {
+      await verifyPreparedQwenGuest(routerKey);
+    }
     logger.info(
       "[FreeModelSources] OmniRouter ready: " +
       SOURCES.map((source) => `${source.id}=${discoveredModels[source.id]?.length ?? 0}`).join(","),
