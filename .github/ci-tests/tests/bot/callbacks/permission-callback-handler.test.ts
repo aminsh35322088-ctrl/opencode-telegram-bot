@@ -560,6 +560,10 @@ describe("bot permission menu/callbacks", () => {
             network: "Tailscale",
             authentication: "Tailscale SSH (Tailnet identity)",
             password: "Not required",
+            serverIdentity: "abcd1234efgh5678",
+            connectionMode: "One multiplexed SSH connection; later operations reuse it",
+            grantScope: "This Telegram Topic",
+            grantUntil: "The SSH master disconnects, the server restarts, or the Tailnet identity changes",
             command: "uname -a && uptime",
           },
         },
@@ -571,9 +575,15 @@ describe("bot permission menu/callbacks", () => {
     expect(text).toContain("Username: runner");
     expect(text).toContain("Port: 22");
     expect(text).toContain("Password: Not required");
-    expect(text).toContain("Command: uname -a && uptime");
+    expect(text).toContain("Server identity: abcd1234efgh5678");
+    expect(text).toContain("Connection: One multiplexed SSH connection");
+    expect(text).toContain("Grant scope: This Telegram Topic");
+    expect(text).toContain("Grant expires when:");
+    expect(text).toContain("Initial command: uname -a && uptime");
+    expect(text).toContain("Later SSH operations reuse the same live connection");
     const keyboard = (options as { reply_markup: InlineKeyboard }).reply_markup;
     expect(keyboard.inline_keyboard).toHaveLength(2);
+    expect(keyboard.inline_keyboard[0]?.[0]?.text).toBe("✅ Allow for this Topic");
     expect(getCallbackData(keyboard.inline_keyboard[0]?.[0])).toBe("permission:once");
     expect(getCallbackData(keyboard.inline_keyboard[1]?.[0])).toBe("permission:reject");
   });
@@ -591,7 +601,7 @@ describe("bot permission menu/callbacks", () => {
     const ctx = createPermissionCallbackContext("permission:always", 901);
     expect(await handlePermissionCallback(ctx)).toBe(true);
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
-      text: "SSH access must be approved for every operation.",
+      text: "SSH access uses the Topic-scoped Allow flow; Always Allow is not supported.",
       show_alert: true,
     });
     expect(mocked.permissionReplyMock).not.toHaveBeenCalled();
