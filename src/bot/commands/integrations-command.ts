@@ -3,6 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { addRailwayAccount, getActiveRailwayAccount, listRailwayAccounts, removeRailwayAccount, setActiveRailwayAccount, validateRailwayToken, type RailwayTokenValidation } from "../../app/services/railway-integration-service.js";
 import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, listTailscaleDevices, reconnectTailscale, removeTailscaleIntegration } from "../../app/services/tailscale-integration-service.js";
+import { getManagedSshPublicKey } from "../../app/services/ssh-key-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
@@ -105,7 +106,7 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
   } else {
     keyboard.text("🔄 Reconnect", "integration:tailscale:reconnect").text("⏸ Disconnect", "integration:tailscale:disconnect").row();
     keyboard.text("🖥 Tailnet Devices", "integration:tailscale:devices").text("🔑 Change Auth Key", "integration:tailscale:connect").row();
-    keyboard.text("🗑 Forget Tailnet", "integration:tailscale:remove").row();
+    keyboard.text("🔐 SSH Public Key", "integration:tailscale:ssh-key").text("🗑 Forget Tailnet", "integration:tailscale:remove").row();
   }
   keyboard.text("← Integrations", "integration:menu").text("🏠 Home", "main:home");
 
@@ -145,7 +146,10 @@ async function showTailscaleDevices(ctx: Context): Promise<void> {
         : device.sshReason === "offline"
           ? "⚪ SSH blocked: device offline"
           : "❌ SSH blocked: missing tag:ssh";
-      return `${device.online ? "🟢" : "⚪"} ${device.name}\n   ${device.ips.join(", ") || "No IP"}\n   ${device.tags.length ? device.tags.join(" · ") : "No tags"}\n   ${eligibility}`;
+      const auth = device.nativeTailscaleSsh
+        ? "Auth: Native Tailscale SSH"
+        : "Auth: Managed SSH key over Tailscale";
+      return `${device.online ? "🟢" : "⚪"} ${device.name}\n   ${device.ips.join(", ") || "No IP"}\n   OS: ${device.os ?? "unknown"}\n   ${device.tags.length ? device.tags.join(" · ") : "No tags"}\n   ${auth}\n   ${eligibility}`;
     }).join("\n\n") : "No peers are visible in the bot's Tailscale netmap.",
     "",
     devices.length
@@ -172,6 +176,20 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
   if (data === "integration:tailscale") { clearIntegrationWizard(); clearProviderWizard(); await showTailscaleMenu(ctx); return true; }
   if (data === "integration:tailscale:devices") { clearIntegrationWizard(); await showTailscaleDevices(ctx); return true; }
+  if (data === "integration:tailscale:ssh-key") {
+    clearIntegrationWizard();
+    const key = await getManagedSshPublicKey();
+    const id = callbackMessageId(ctx);
+    if (id !== null && ctx.chat?.id) {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        id,
+        `🔐 Bot SSH Public Key\n\n${key}\n\nUse this only for devices without native Tailscale SSH. Add it to the target OS user's authorized_keys file.\n\nNever copy or expose the bot private key.`,
+        { reply_markup: new InlineKeyboard().text("← Tailscale", "integration:tailscale").text("🏠 Home", "main:home") },
+      );
+    }
+    return true;
+  }
   if (data === "integration:tailscale:connect") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearProviderWizard(); integrationWizard.set({ tailscale: { step: "auth-key", messageId } }); await editWizard(ctx, messageId, "🌐 Connect Tailscale\n\nSend a Tailscale auth key.\n\nRequired key settings:\n• Reusable: ON\n• Tag: tag:opencode-bot\n• Ephemeral: OFF\n\nThe bot keeps one persistent Tailscale identity so the machine name and Tailscale IP remain stable across Railway restarts.\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model."); return true; }
   if (data === "integration:tailscale:reconnect") { await reconnectTailscale(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale reconnected."); return true; }
   if (data === "integration:tailscale:disconnect") { await disconnectTailscale(); await showTailscaleMenu(ctx, undefined, "⏸ Tailscale disconnected. The Tailnet identity is preserved."); return true; }

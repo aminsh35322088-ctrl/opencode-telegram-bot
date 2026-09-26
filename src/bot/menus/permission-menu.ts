@@ -9,6 +9,8 @@ import type { PermissionRequest } from "../../app/types/permission.js";
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
 
+const SSH_REMOTE_PERMISSION = "ssh-remote";
+
 const PERMISSION_NAME_KEYS: Record<string, I18nKey> = {
   bash: "permission.name.bash",
   edit: "permission.name.edit",
@@ -79,6 +81,7 @@ async function autoAllowRememberedPermission(
   chatId: number,
   request: PermissionRequest,
 ): Promise<boolean> {
+  if (request.permission === SSH_REMOTE_PERMISSION) return false;
   if (!permissionManager.isAlwaysAllowed(chatId, request)) {
     return false;
   }
@@ -196,7 +199,42 @@ export async function showPermissionRequest(
   }
 }
 
+function metadataInput(request: PermissionRequest): Record<string, unknown> {
+  const input = request.metadata.input;
+  return input && typeof input === "object" && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : request.metadata;
+}
+function displayValue(value: unknown, fallback = "—", maxLength = 1200): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  const text = String(value).replace(/[\r\n]+/gu, " ").trim();
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…`;
+}
+function formatSshPermissionText(request: PermissionRequest, groupedCount: number): string {
+  const input = metadataInput(request);
+  const lines = [
+    "🔐 SSH Permission", "",
+    `Action: ${displayValue(input.action)}`,
+    `Hostname: ${displayValue(input.hostname)}`,
+    `MagicDNS: ${displayValue(input.dnsName)}`,
+    `IP: ${displayValue(input.ip)}`,
+    `OS: ${displayValue(input.os, "unknown")}`,
+    `Username: ${displayValue(input.username)}`,
+    `Port: ${displayValue(input.port, "22")}`,
+    `Network: ${displayValue(input.network, "Tailscale")}`,
+    `Authentication: ${displayValue(input.authentication)}`,
+    `Password: ${displayValue(input.password, "Not required")}`,
+  ];
+  if (input.command) lines.push(`Command: ${displayValue(input.command)}`);
+  if (input.localPath) lines.push(`Local file: ${displayValue(input.localPath)}`);
+  if (input.remotePath) lines.push(`Remote file: ${displayValue(input.remotePath)}`);
+  if (groupedCount > 1) lines.push("", `Grouped requests: ${groupedCount}`);
+  lines.push("", "Approve this SSH operation?");
+  return lines.join("\n");
+}
+
 function formatPermissionText(request: PermissionRequest, groupedCount: number = 1): string {
+  if (request.permission === SSH_REMOTE_PERMISSION) return formatSshPermissionText(request, groupedCount);
   const emoji = PERMISSION_EMOJIS[request.permission] || "🔐";
   const nameKey = PERMISSION_NAME_KEYS[request.permission];
   const name = nameKey ? t(nameKey) : request.permission;
@@ -216,12 +254,12 @@ function formatPermissionText(request: PermissionRequest, groupedCount: number =
   return text;
 }
 
-function buildPermissionKeyboard(_request: PermissionRequest): InlineKeyboard {
+function buildPermissionKeyboard(request: PermissionRequest): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-
   keyboard.text(t("permission.button.allow"), "permission:once").row();
-  keyboard.text(t("permission.button.always"), "permission:always").row();
+  if (request.permission !== SSH_REMOTE_PERMISSION) {
+    keyboard.text(t("permission.button.always"), "permission:always").row();
+  }
   keyboard.text(t("permission.button.reject"), "permission:reject");
-
   return keyboard;
 }

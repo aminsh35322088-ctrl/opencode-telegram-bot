@@ -26,7 +26,8 @@
     "send-file": "allow",
     "railway": "allow",
     "tailscale": "allow",
-    "ssh": "ask",
+    "ssh": "allow",
+    "ssh-remote": "ask",
     "bash": {
       "*": "allow",
       "*tsc *": "allow",

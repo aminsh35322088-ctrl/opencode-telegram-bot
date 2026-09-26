@@ -540,4 +540,62 @@ describe("bot permission menu/callbacks", () => {
     expect(text).toContain("• D:/data/my_project");
     expect(options).not.toHaveProperty("parse_mode");
   });
+  it("renders detailed SSH permission and never offers Always Allow", async () => {
+    const botApi = createBotApi(900);
+    await showPermissionRequest(
+      botApi,
+      777,
+      createPermissionRequest("perm-ssh", {
+        permission: "ssh-remote",
+        patterns: ['{"action":"exec"}'],
+        metadata: {
+          input: {
+            action: "Execute remote command",
+            hostname: "github-exit",
+            dnsName: "github-exit.example.ts.net",
+            ip: "100.64.0.10",
+            os: "linux",
+            username: "runner",
+            port: 22,
+            network: "Tailscale",
+            authentication: "Tailscale SSH (Tailnet identity)",
+            password: "Not required",
+            command: "uname -a && uptime",
+          },
+        },
+      }),
+    );
+    const send = botApi.sendMessage as unknown as ReturnType<typeof vi.fn>;
+    const [, text, options] = defined(send.mock.calls[0]);
+    expect(text).toContain("Hostname: github-exit");
+    expect(text).toContain("Username: runner");
+    expect(text).toContain("Port: 22");
+    expect(text).toContain("Password: Not required");
+    expect(text).toContain("Command: uname -a && uptime");
+    const keyboard = (options as { reply_markup: InlineKeyboard }).reply_markup;
+    expect(keyboard.inline_keyboard).toHaveLength(2);
+    expect(getCallbackData(keyboard.inline_keyboard[0]?.[0])).toBe("permission:once");
+    expect(getCallbackData(keyboard.inline_keyboard[1]?.[0])).toBe("permission:reject");
+  });
+
+  it("rejects forged Always Allow for SSH permissions", async () => {
+    const botApi = createBotApi(901);
+    await showPermissionRequest(
+      botApi,
+      777,
+      createPermissionRequest("perm-ssh-always", {
+        permission: "ssh-remote",
+        patterns: ["exec:github-exit:22:runner"],
+      }),
+    );
+    const ctx = createPermissionCallbackContext("permission:always", 901);
+    expect(await handlePermissionCallback(ctx)).toBe(true);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: "SSH access must be approved for every operation.",
+      show_alert: true,
+    });
+    expect(mocked.permissionReplyMock).not.toHaveBeenCalled();
+    expect(permissionManager.isActive()).toBe(true);
+  });
+
 });

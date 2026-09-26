@@ -43,7 +43,7 @@ esac
       CurrentTailnet: { Name: "example.ts.net" },
       Self: { HostName: "opencode-bot", TailscaleIPs: ["100.64.0.2"], Online: true, Tags: ["tag:opencode-bot"] },
       Peer: {
-        ssh: { HostName: "github-exit", DNSName: "github-exit.example.ts.net.", TailscaleIPs: ["100.64.0.10"], Online: true, Tags: ["tag:exit", "tag:ssh"] },
+        ssh: { HostName: "github-exit", DNSName: "github-exit.example.ts.net.", TailscaleIPs: ["100.64.0.10"], Online: true, Tags: ["tag:exit", "tag:ssh"], OS: "linux", sshHostKeys: ["ssh-ed25519 AAAATEST"] },
         normal: { HostName: "phone", TailscaleIPs: ["100.64.0.11"], Online: true, Tags: [] },
         offline: { HostName: "old-vps", TailscaleIPs: ["100.64.0.12"], Online: false, Tags: ["tag:ssh"] },
       },
@@ -95,10 +95,15 @@ esac
     expect(devices.find((device) => device.name === "github-exit")).toEqual(expect.objectContaining({
       sshEligible: true,
       sshReason: "eligible",
+      os: "linux",
+      nativeTailscaleSsh: true,
+      sshHostKeys: ["ssh-ed25519 AAAATEST"],
     }));
     expect(devices.find((device) => device.name === "phone")).toEqual(expect.objectContaining({
       sshEligible: false,
       sshReason: "missing-tag:ssh",
+      nativeTailscaleSsh: false,
+      sshHostKeys: [],
     }));
     expect(devices.find((device) => device.name === "old-vps")).toEqual(expect.objectContaining({
       sshEligible: false,

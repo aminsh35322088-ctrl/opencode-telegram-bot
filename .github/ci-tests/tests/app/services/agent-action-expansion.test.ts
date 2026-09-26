@@ -11,7 +11,7 @@ const REQUIRED = [
   "bot.skills.list", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "bot.skills.import", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
-  "tailscale.status", "tailscale.devices", "tailscale.ping", "ssh.check", "ssh.debug", "ssh.exec", "ssh.upload", "ssh.download",
+  "tailscale.status", "tailscale.devices", "tailscale.ping", "tailscale.ssh-public-key", "ssh.check", "ssh.debug", "ssh.exec", "ssh.upload", "ssh.download",
 ] as const;
 
 describe("expanded model-facing action surface", () => {
@@ -56,7 +56,7 @@ describe("expanded model-facing action surface", () => {
     expect(bot).not.toContain('"mcp.disable"');
     const [ssh, tailscale] = await Promise.all([fs.readFile(".opencode/tools/ssh.ts", "utf8"), fs.readFile(".opencode/tools/tailscale.ts", "utf8")]);
     for (const action of ["check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);
-    for (const action of ["status", "devices", "ping"]) expect(tailscale).toContain(`"${action}"`);
+    for (const action of ["status", "devices", "ping", "ssh-public-key"]) expect(tailscale).toContain(`"${action}"`);
   });
 
   it("keeps SSH Tailnet-only and permission-gated", async () => {
@@ -66,9 +66,12 @@ describe("expanded model-facing action surface", () => {
       fs.readFile("opencode.json", "utf8"),
     ]);
     const opencodeConfig = JSON.parse(opencodeConfigText) as { permission?: Record<string, unknown> };
-    expect(opencodeConfig.permission?.ssh).toBe("ask");
+    expect(opencodeConfig.permission?.ssh).toBe("allow");
+    expect(opencodeConfig.permission?.["ssh-remote"]).toBe("ask");
     expect(opencodeConfig.permission?.tailscale).toBe("allow");
-    expect(sshTool).toContain("SSH only to Tailnet peers");
+    expect(sshTool).toContain("Passwordless SSH to online Tailnet peers");
+    expect(sshTool).toContain('permission:"ssh-remote"');
+    expect(sshTool).toContain("context.ask");
     expect(sshTool).not.toContain("transport:");
     expect(sshTool).not.toContain("credential_id");
     expect(sshTool).not.toContain("profile_id");

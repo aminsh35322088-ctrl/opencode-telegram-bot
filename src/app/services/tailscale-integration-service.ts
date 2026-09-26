@@ -30,6 +30,8 @@ interface TailscalePeer {
   TailscaleIPs?: string[];
   Online?: boolean;
   Tags?: string[];
+  OS?: string;
+  sshHostKeys?: string[];
 }
 interface TailscaleStatusJson {
   BackendState?: string;
@@ -43,6 +45,9 @@ export interface TailscaleDevice {
   ips: string[];
   online: boolean;
   tags: string[];
+  os?: string;
+  sshHostKeys: string[];
+  nativeTailscaleSsh: boolean;
   sshEligible: boolean;
   sshReason: "eligible" | "missing-tag:ssh" | "offline";
 }
@@ -238,12 +243,16 @@ function toDevice(peer: TailscalePeer): TailscaleDevice {
   const tags = peer.Tags ?? [];
   const online = peer.Online === true;
   const taggedForSsh = tags.includes("tag:ssh");
+  const sshHostKeys = peer.sshHostKeys ?? [];
   return {
     name: peer.HostName?.trim() || peer.DNSName?.split(".")[0] || peer.TailscaleIPs?.[0] || "unknown",
     ...(peer.DNSName ? { dnsName: peer.DNSName.replace(/\.$/u, "") } : {}),
     ips: peer.TailscaleIPs ?? [],
     online,
     tags,
+    ...(peer.OS ? { os: peer.OS } : {}),
+    sshHostKeys,
+    nativeTailscaleSsh: sshHostKeys.length > 0,
     sshEligible: taggedForSsh && online,
     sshReason: !taggedForSsh ? "missing-tag:ssh" : online ? "eligible" : "offline",
   };

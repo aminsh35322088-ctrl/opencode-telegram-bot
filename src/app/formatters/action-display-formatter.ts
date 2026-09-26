@@ -232,6 +232,7 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "tailscale.status": { icon: "🌐", label: "Check Tailnet Status" },
   "tailscale.devices": { icon: "🖥️", label: "List Tailnet Devices" },
   "tailscale.ping": { icon: "📡", label: "Ping Tailnet Device" },
+  "tailscale.ssh-public-key": { icon: "🔑", label: "Show SSH Public Key" },
   "ssh.upload": { icon: "📤", label: "Upload over SSH" },
   "ssh.download": { icon: "📥", label: "Download over SSH" },
 };

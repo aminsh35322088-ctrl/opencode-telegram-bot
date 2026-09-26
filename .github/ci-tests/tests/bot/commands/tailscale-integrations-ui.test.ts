@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   status: vi.fn(),
   devices: vi.fn(),
+  publicKey: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/github-integration-service.js", () => ({
@@ -25,6 +26,10 @@ vi.mock("../../../src/app/services/railway-integration-service.js", () => ({
   removeRailwayAccount: async () => false,
   setActiveRailwayAccount: async () => ({ id: "railway", name: "Railway" }),
   validateRailwayToken: async () => ({ valid: false, reason: "invalid" }),
+}));
+
+vi.mock("../../../src/app/services/ssh-key-service.js", () => ({
+  getManagedSshPublicKey: mocks.publicKey,
 }));
 
 vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
@@ -104,6 +109,7 @@ describe("Tailscale Integrations UI", () => {
       sshDevices: 0,
     });
     mocks.devices.mockReset().mockResolvedValue([]);
+    mocks.publicKey.mockReset().mockResolvedValue("ssh-ed25519 AAAATEST opencode-bot@tailscale");
   });
 
   afterEach(() => {
@@ -137,7 +143,7 @@ describe("Tailscale Integrations UI", () => {
       visiblePeers: 1,
       sshDevices: 1,
     });
-    mocks.devices.mockResolvedValue([{ name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:ssh"], sshEligible: true, sshReason: "eligible" }]);
+    mocks.devices.mockResolvedValue([{ name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:ssh"], os: "linux", sshHostKeys: ["ssh-ed25519 AAAATEST"], nativeTailscaleSsh: true, sshEligible: true, sshReason: "eligible" }]);
 
     const input = textContext("tskey-auth-secret-value");
     expect(await handleIntegrationMessage(input)).toBe(true);
@@ -161,8 +167,8 @@ describe("Tailscale Integrations UI", () => {
       sshDevices: 1,
     });
     mocks.devices.mockResolvedValue([
-      { name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:exit", "tag:ssh"], sshEligible: true, sshReason: "eligible" },
-      { name: "phone", ips: ["100.64.0.11"], online: true, tags: [], sshEligible: false, sshReason: "missing-tag:ssh" },
+      { name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:exit", "tag:ssh"], os: "linux", sshHostKeys: ["ssh-ed25519 AAAATEST"], nativeTailscaleSsh: true, sshEligible: true, sshReason: "eligible" },
+      { name: "phone", ips: ["100.64.0.11"], online: true, tags: [], os: "android", sshHostKeys: [], nativeTailscaleSsh: false, sshEligible: false, sshReason: "missing-tag:ssh" },
     ]);
 
     const ctx = callbackContext("integration:tailscale:devices");
@@ -173,6 +179,15 @@ describe("Tailscale Integrations UI", () => {
     expect(call?.[2]).toContain("tag:ssh");
     expect(call?.[2]).toContain("phone");
     expect(call?.[2]).toContain("missing tag:ssh");
+    expect(call?.[2]).toContain("Auth: Native Tailscale SSH");
     expect(call?.[2]).toContain("SSH remains restricted");
+  });
+
+  it("shows the managed SSH public key from the Tailscale panel", async () => {
+    const ctx = callbackContext("integration:tailscale:ssh-key");
+    expect(await handleIntegrationsCallback(ctx)).toBe(true);
+    const call = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(call?.[2]).toContain("ssh-ed25519 AAAATEST opencode-bot@tailscale");
+    expect(call?.[2]).toContain("authorized_keys");
   });
 });

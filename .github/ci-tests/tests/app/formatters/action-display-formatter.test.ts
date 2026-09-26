@@ -66,6 +66,7 @@ describe("friendly action display", () => {
     expect(getFriendlyActionDisplay("tailscale", { action: "status" })).toEqual({ icon: "🌐", label: "Check Tailnet Status" });
     expect(getFriendlyActionDisplay("tailscale", { action: "devices" })).toEqual({ icon: "🖥️", label: "List Tailnet Devices" });
     expect(getFriendlyActionDisplay("tailscale", { action: "ping" })).toEqual({ icon: "📡", label: "Ping Tailnet Device" });
+    expect(getFriendlyActionDisplay("tailscale", { action: "ssh-public-key" })).toEqual({ icon: "🔑", label: "Show SSH Public Key" });
     expect(getFriendlyActionDisplay("ssh", { action: "check" })).toEqual({ icon: "🔐", label: "Check SSH Access" });
     expect(getFriendlyActionDisplay("ssh", { action: "debug" })).toEqual({ icon: "🩺", label: "Debug SSH Connection" });
     expect(getFriendlyActionDisplay("ssh", { action: "exec" })).toEqual({ icon: "🖥️", label: "Run SSH Command" });
