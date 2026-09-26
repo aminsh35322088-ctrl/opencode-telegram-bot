@@ -176,7 +176,7 @@ function normalizeScope(value?: string): string {
 }
 
 function validateRemotePath(value: string): string {
-  const remote = value.trim().replace(/\\\\/gu, "/");
+  const remote = value.trim().replace(/\\/gu, "/");
   if (
     !remote ||
     remote.length > 4096 ||
@@ -315,14 +315,14 @@ function windowsWorkspaceCommand(
   command?: string,
   relativeDirectory?: string,
 ): string {
-  const workspaceRelative = `${REMOTE_WORKSPACE_ROOT.replace(/\//gu, "\\\\")}\\${prepared.workspaceId}`;
+  const workspaceRelative = `${REMOTE_WORKSPACE_ROOT.replace(/\//gu, "\\")}\\${prepared.workspaceId}`;
   const lines = [
     "$ErrorActionPreference = 'Stop'",
     `$workspace = Join-Path $env:USERPROFILE '${workspaceRelative}'`,
     "New-Item -ItemType Directory -Force -Path $workspace | Out-Null",
   ];
   if (relativeDirectory) {
-    const directory = relativeDirectory.replace(/\//gu, "\\\\");
+    const directory = relativeDirectory.replace(/\//gu, "\\");
     lines.push(
       `$targetDirectory = Join-Path $workspace '${directory}'`,
       "New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null",
