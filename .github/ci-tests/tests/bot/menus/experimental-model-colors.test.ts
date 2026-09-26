@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const state = vi.hoisted(() => ({ enabled: false, revision: "a", models: [] as any[], prices: new Map(), topic: undefined as unknown }));
+const state = vi.hoisted(() => ({ enabled: false, sourcesEnabled: false, revision: "a", models: [] as any[], prices: new Map(), topic: undefined as unknown }));
 vi.mock("../../../src/app/stores/settings-store.js", async (original) => ({
   ...await original<typeof import("../../../src/app/stores/settings-store.js")>(),
   getFreeModelDetectionEnabled: () => state.enabled,
+  getFreeModelSourcesEnabled: () => state.sourcesEnabled,
   getCurrentTopicSettings: () => state.topic,
 }));
 vi.mock("../../../src/app/services/model-price-service.js", () => ({
@@ -20,7 +21,7 @@ import { clearProviderPriceViews, getProviderPriceView } from "../../../src/bot/
 import { getProviderModelPrices } from "../../../src/app/services/model-price-service.js";
 const provider = { id: "p", name: "Provider", modelCount: 10 };
 beforeEach(() => {
-  clearProviderPriceViews(); state.enabled = false; state.revision = "a"; state.topic = undefined;
+  clearProviderPriceViews(); state.enabled = false; state.sourcesEnabled = false; state.revision = "a"; state.topic = undefined;
   state.models = Array.from({ length: 10 }, (_, i) => ({ providerID: "p", modelID: "model-" + i, name: "Model " + i }));
   state.prices = new Map([["model-0", { group: "paid" }], ["model-9", { group: "free" }]]);
 });

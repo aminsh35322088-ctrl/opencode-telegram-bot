@@ -1,3 +1,14 @@
+FROM golang:1.25-bookworm AS omnirouter-builder
+ARG OMNIROUTER_REF=ce94f1166c3c5168fe0e94d6fb83c002fbaa80ef
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone https://github.com/Godde3s/omnirouter.git omnirouter \
+    && cd omnirouter \
+    && git checkout --detach "$OMNIROUTER_REF" \
+    && test "$(git rev-parse HEAD)" = "$OMNIROUTER_REF" \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/omnirouter . \
+    && cp LICENSE /out/omnirouter-LICENSE.txt
+
 FROM tailscale/tailscale:v1.102.4 AS tailscale
 
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder
@@ -12,6 +23,8 @@ RUN npm prune --omit=dev
 
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS runtime
 WORKDIR /app
+COPY --from=omnirouter-builder /out/omnirouter /usr/local/bin/omnirouter
+COPY --from=omnirouter-builder /out/omnirouter-LICENSE.txt /usr/share/licenses/omnirouter/LICENSE
 RUN apt-get update && apt-get install -y --no-install-recommends dumb-init ca-certificates curl wget git git-lfs unzip zip jq ripgrep fd-find tree file less rsync openssh-client procps strace ltrace gdb lsof iproute2 dnsutils iputils-ping tmux htop fzf python3 python3-pip python3-venv sqlite3 build-essential pkg-config ffmpeg imagemagick libx11-6 libxfixes3 libglib2.0-0 libpulse0 libxkbcommon0 libxtst6 libopus0 libxcb1 libxcb-shm0 libxcb-randr0 libvpx7 libaom3 libyuv0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libdbus-1-3 libunwind8 libx11-xcb1 libxext6 libxdo3 && git lfs install --system && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 COPY .opencode-version ./

@@ -8,7 +8,7 @@ vi.mock("../../../src/app/stores/app-state-store.js", async (original) => ({
   },
   flushAppState: async () => {},
 }));
-import { __resetSettingsForTests, getFreeModelDetectionEnabled, setFreeModelDetectionEnabled, loadSettings, flushSettings } from "../../../src/app/stores/settings-store.js";
+import { __resetSettingsForTests, getFreeModelDetectionEnabled, setFreeModelDetectionEnabled, getFreeModelSourcesEnabled, setFreeModelSourcesEnabled, loadSettings, flushSettings } from "../../../src/app/stores/settings-store.js";
 import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 beforeEach(() => { __resetSettingsForTests(); persisted.settings = {}; });
 describe("global experimental setting", () => {
@@ -22,6 +22,15 @@ describe("global experimental setting", () => {
     await setFreeModelDetectionEnabled(false);
     await flushSettings();
     __resetSettingsForTests(); await loadSettings();
+    expect(getFreeModelDetectionEnabled()).toBe(false);
+  });
+  it("persists Free Model Sources independently and defaults off", async () => {
+    await loadSettings();
+    expect(getFreeModelSourcesEnabled()).toBe(false);
+    await setFreeModelSourcesEnabled(true);
+    await flushSettings();
+    __resetSettingsForTests(); await loadSettings();
+    expect(getFreeModelSourcesEnabled()).toBe(true);
     expect(getFreeModelDetectionEnabled()).toBe(false);
   });
   it("is global even when toggled inside a Topic", async () => {

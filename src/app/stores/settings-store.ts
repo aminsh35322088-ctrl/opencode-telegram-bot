@@ -163,3 +163,11 @@ export function setFreeModelDetectionEnabled(enabled: boolean): Promise<void> {
   currentSettings.experimentalFreeModelDetection = enabled;
   return writeSettingsFile(currentSettings);
 }
+
+// Global even when called from a Topic. Free sources are opt-in because they
+// depend on unofficial web compatibility bridges rather than provider APIs.
+export function getFreeModelSourcesEnabled(): boolean { return currentSettings.experimentalFreeModelSources === true; }
+export function setFreeModelSourcesEnabled(enabled: boolean): Promise<void> {
+  currentSettings.experimentalFreeModelSources = enabled;
+  return writeSettingsFile(currentSettings);
+}

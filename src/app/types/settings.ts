@@ -26,6 +26,8 @@ export interface AlwaysAllowedPermissionInfo {
  */
 export interface GlobalSettings {
   experimentalFreeModelDetection?: boolean;
+  /** Enables zero-config experimental free model sources such as Gemini Web Guest. */
+  experimentalFreeModelSources?: boolean;
   pinnedMessageId?: number;
   mainNavigationMessageIds?: Record<string, number>;
   sessionDirectoryCache?: SessionDirectoryCacheInfo;
