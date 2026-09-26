@@ -15,6 +15,7 @@ import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 import { getFreeModelSourcesEnabled, getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 import {
+  autoConnectQwenGuest,
   cancelFreebuffAutoConnect,
   checkFreebuffAutoConnect,
   clearFreeModelSourceCredential,
@@ -102,6 +103,35 @@ function freeSourcePrompt(sourceID: FreeModelSourceID): string {
 }
 
 
+async function renderQwenFallback(ctx: Context, id: number | undefined, notice: string): Promise<void> {
+  const keyboard = new InlineKeyboard()
+    .text("🔄 Retry automatic guest setup", "provider:qwen-auto").row()
+    .text("🔐 Connect Qwen account token", "provider:qwen-manual").row()
+    .text("← Free Model Sources", "provider:free-sources");
+  await render(ctx, [
+    notice,
+    "",
+    "🦞 Qwen Web",
+    "",
+    "The bot first tries to prepare and verify guest access automatically on this Railway host.",
+    "If Qwen's risk-control still rejects the server IP, the only reliable fallback is your own Qwen account token.",
+    "",
+    "No cookie is requested unless automatic guest access fails.",
+  ].filter(Boolean).join("\n"), keyboard, id);
+}
+
+async function renderGeminiConnection(ctx: Context, id?: number): Promise<void> {
+  const keyboard = new InlineKeyboard()
+    .text("🔐 Optional · Connect Google cookies", "provider:gemini-manual").row()
+    .text("← Free Model Sources", "provider:free-sources");
+  await render(ctx, [
+    "✨ Gemini Web",
+    "",
+    "✅ Guest access is automatic — no input is required.",
+    "Account cookies are optional and only useful for broader account quota/catalog access.",
+  ].join("\n"), keyboard, id);
+}
+
 async function renderFreebuffAutoConnect(ctx: Context, id?: number, notice = ""): Promise<void> {
   const pending = getPendingFreebuffAutoConnect();
   if (!pending) {
@@ -140,18 +170,24 @@ async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void
 }
 
 function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceConnections>>[number]): { button: string; line: string } {
-  if (source.configured) return { button: "Connected", line: "✅ Connected" };
+  if (source.configured && source.ready) return { button: "Connected", line: "✅ Connected and ready" };
+  if (source.configured && source.id === "glm") {
+    return { button: "Device auth needed", line: "⚠️ Z.AI token saved · captcha device-token store still missing" };
+  }
+  if (source.configured) return { button: "Connected", line: "✅ Account credential saved" };
   switch (source.id) {
     case "gemini":
       return { button: "Automatic guest", line: "⚡ Automatic guest · no input required" };
     case "freebuff":
       return { button: "Auto login", line: "🌐 Official browser login · token captured automatically" };
     case "qwen":
-      return { button: "Account recommended", line: "⚠️ Guest is network-dependent · account token recommended on Railway" };
+      return source.ready
+        ? { button: "Auto guest ready", line: "✅ Automatic guest · verified on this host" }
+        : { button: "Auto setup", line: "🤖 Automatic guest setup available · account token only if it fails" };
     case "glm":
-      return { button: "Account required", line: "🔐 Account/device authorization required" };
+      return { button: "Manual auth", line: "🔐 Z.AI account + captcha device authorization required" };
     case "ds":
-      return { button: "Human login required", line: "🔐 Human account login/session required" };
+      return { button: "Manual auth", line: "🔐 DeepSeek requires an interactive account session" };
   }
 }
 
@@ -174,8 +210,9 @@ async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): P
     "🆓 Free Model Sources",
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
-    "Gemini needs no input. Freebuff uses an official one-click browser login.",
-    "Qwen, GLM and DeepSeek still depend on upstream account/human authorization when guest access is unavailable.",
+    "Gemini needs no input. Freebuff uses the official browser login flow.",
+    "Qwen is prepared and live-tested automatically on this Railway host before it appears in Model Center.",
+    "GLM/DeepSeek keep only the human authorization steps their upstreams do not expose as a safe device-login flow.",
     "",
     ...lines,
     "",
@@ -295,6 +332,31 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     return true;
   }
   if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
+  if (data === "provider:qwen-auto") {
+    await render(ctx, "🦞 Qwen Web\n\n🤖 Preparing guest access on this Railway host…\nCapturing browser risk-control headers and running a live Qwen 3.8 Max probe.", new InlineKeyboard().text("← Free Model Sources", "provider:free-sources"), id);
+    const result = await autoConnectQwenGuest();
+    if (result.status === "ready") {
+      const notice = await applyAiChanges();
+      await renderFreeModelSources(ctx, id, `✅ ${result.message}${notice}\n\n`);
+    } else if (result.status === "prepared") {
+      await renderFreeModelSources(ctx, id, `✅ ${result.message}\n\n`);
+    } else {
+      await renderQwenFallback(ctx, id, `⚠️ ${result.message}`);
+    }
+    return true;
+  }
+  if (data === "provider:qwen-manual") {
+    await start(ctx, "free-source-secret", freeSourcePrompt("qwen"));
+    const wizard = providerWizard.get();
+    if (wizard) wizard.freeSourceID = "qwen";
+    return true;
+  }
+  if (data === "provider:gemini-manual") {
+    await start(ctx, "free-source-secret", freeSourcePrompt("gemini"));
+    const wizard = providerWizard.get();
+    if (wizard) wizard.freeSourceID = "gemini";
+    return true;
+  }
   if (data === "provider:freebuff-check") {
     const result = await checkFreebuffAutoConnect();
     if (result.status === "connected") {
@@ -337,6 +399,23 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     if (!source) { await renderFreeModelSources(ctx, id, "❌ Unknown free model source.\n\n"); return true; }
     if (sourceID === "freebuff" && !source.configured) {
       await beginFreebuffAutoConnect(ctx, id);
+      return true;
+    }
+    if (sourceID === "qwen" && !source.configured) {
+      await render(ctx, "🦞 Qwen Web\n\n🤖 Preparing guest access on this Railway host…\nCapturing browser risk-control headers and running a live Qwen 3.8 Max probe.", new InlineKeyboard().text("← Free Model Sources", "provider:free-sources"), id);
+      const result = await autoConnectQwenGuest();
+      if (result.status === "ready") {
+        const notice = await applyAiChanges();
+        await renderFreeModelSources(ctx, id, `✅ ${result.message}${notice}\n\n`);
+      } else if (result.status === "prepared") {
+        await renderFreeModelSources(ctx, id, `✅ ${result.message}\n\n`);
+      } else {
+        await renderQwenFallback(ctx, id, `⚠️ ${result.message}`);
+      }
+      return true;
+    }
+    if (sourceID === "gemini" && !source.configured) {
+      await renderGeminiConnection(ctx, id);
       return true;
     }
     await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
