@@ -186,6 +186,8 @@ describe("pooled cross-platform Tailnet SSH service", () => {
     expect(args).toContain("KexAlgorithms=ecdh-sha2-nistp256,curve25519-sha256");
     expect(args).toContain("HostKeyAlgorithms=ssh-ed25519");
     expect(args).toContain("ControlPersist=yes");
+    expect(args).toContain("ServerAliveInterval=15");
+    expect(args).toContain("ServerAliveCountMax=3");
     expect(args).toContain("runner@github-exit");
 
     const channel = calls.find((call) => call.args.includes("ProxyCommand=/bin/false"));
