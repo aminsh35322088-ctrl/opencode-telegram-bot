@@ -89,7 +89,10 @@ function result(overrides: Partial<CommandResult> = {}): CommandResult {
 
 function controlPath(args: string[]): string | undefined {
   const index = args.indexOf("-S");
-  return index >= 0 ? args[index + 1] : undefined;
+  if (index >= 0) return args[index + 1];
+  const optionIndex = args.findIndex((value) => value.startsWith("ControlPath="));
+  if (optionIndex >= 0) return args[optionIndex]?.slice("ControlPath=".length);
+  return undefined;
 }
 
 function createMultiplexRunner(calls: CommandRequest[]) {
