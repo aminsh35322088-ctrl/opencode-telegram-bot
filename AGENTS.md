@@ -95,6 +95,15 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 - Do not expose internal stack traces to users.
 - Prefer static bot actions/menus (the `.opencode/tools` catalog and Telegram UI flows) over raw `bash` when the bot already exposes the same capability.
 
+### SSH and Tailnet access
+
+- For remote shell access, always use the dedicated `ssh` custom tool. Do not run raw `ssh`, `scp`, or `tailscale nc` through `bash` when the dedicated action can perform the operation.
+- SSH is Tailnet-only and targets must be visible online peers carrying `tag:ssh`; never introduce a direct public-Internet SSH path.
+- Never ask the user for an SSH password or place SSH passwords/private keys in prompts, commands, logs, or model-facing metadata.
+- The first approved SSH use opens one multiplexed master connection scoped to the Telegram Topic + server identity + username + port. Reuse that connection for later SSH operations instead of reconnecting per command.
+- Treat a closed master connection, server restart/disconnect, changed Tailnet/SSH identity, changed username/port, or another Topic as a new authorization boundary and request permission again.
+- A reused channel must fail closed if its master connection disappeared; it must never silently open a replacement connection.
+
 ### MCP credentials and OAuth
 
 - MCP OAuth/client secrets are derived from the bot token key material and stored encrypted by the bot. They must never appear in OpenCode config files, model prompts, logs, or user-facing error text.
