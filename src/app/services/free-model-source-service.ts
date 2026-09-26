@@ -98,7 +98,7 @@ const SOURCES: readonly SourceDefinition[] = [
     guestCapable: false,
     vision: true,
     fallbackModels: ["glm-5.3", "glm-5.3-flash"],
-    note: "Chat needs a Z.AI account/device token; the source stays selectable but reports upstream auth guidance until connected.",
+    note: "Chat needs Z.AI account/device authorization; it stays out of Model Center until a usable account credential is connected.",
   },
   {
     id: "ds",
@@ -111,7 +111,7 @@ const SOURCES: readonly SourceDefinition[] = [
     guestCapable: false,
     vision: false,
     fallbackModels: ["deepseek-chat", "deepseek-reasoner"],
-    note: "DeepSeek web has no guest mode; connect one account token before using it.",
+    note: "DeepSeek web has no guest mode; it stays out of Model Center until one account token is connected.",
   },
   {
     id: "freebuff",
@@ -129,7 +129,7 @@ const SOURCES: readonly SourceDefinition[] = [
       "mimo/mimo-v2.5",
       "upstage/solar-mini4",
     ],
-    note: "Uses one normal Freebuff account token and respects Freebuff's own seat/quota/geography controls.",
+    note: "Official browser auto-login is supported; the source appears in Model Center after the account connection succeeds.",
   },
 ] as const;
 
@@ -499,18 +499,23 @@ export function buildFreeSourceProviderConfigs(
   });
 }
 
+export function getUsableFreeSourceProviderIDs(
+  configured: ReadonlySet<FreeModelSourceID>,
+  guestStatuses: Partial<Record<FreeModelSourceID, "ready" | "blocked">>,
+): string[] {
+  return SOURCES
+    .filter((source) => configured.has(source.id) || (source.guestCapable && guestStatuses[source.id] === "ready"))
+    .map((source) => source.providerID);
+}
+
 export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProviderConfig[]> {
   if (!getFreeModelSourcesEnabled() || !omniReady) return [];
   const credentials = await readCredentials();
   const configured = new Set<FreeModelSourceID>();
-  const usableProviderIDs = new Set<string>();
   for (const source of SOURCES) {
-    const hasCredential = Boolean(credentials[source.credentialKey]);
-    if (hasCredential) configured.add(source.id);
-    if (hasCredential || (source.guestCapable && guestSourceStatus[source.id] === "ready")) {
-      usableProviderIDs.add(source.providerID);
-    }
+    if (credentials[source.credentialKey]) configured.add(source.id);
   }
+  const usableProviderIDs = new Set(getUsableFreeSourceProviderIDs(configured, guestSourceStatus));
   return buildFreeSourceProviderConfigs(discoveredModels, configured)
     .filter((provider) => usableProviderIDs.has(provider.id));
 }
