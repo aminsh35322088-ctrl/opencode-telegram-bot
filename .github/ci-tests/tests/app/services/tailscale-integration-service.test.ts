@@ -43,7 +43,7 @@ esac
       CurrentTailnet: { Name: "example.ts.net" },
       Self: { HostName: "opencode-bot", TailscaleIPs: ["100.64.0.2"], Online: true, Tags: ["tag:opencode-bot"] },
       Peer: {
-        ssh: { HostName: "github-exit", DNSName: "github-exit.example.ts.net.", TailscaleIPs: ["100.64.0.10"], Online: true, Tags: ["tag:exit", "tag:ssh"], OS: "linux", sshHostKeys: ["ssh-ed25519 AAAATEST"] },
+        ssh: { HostName: "github-exit", DNSName: "github-exit.example.ts.net.", TailscaleIPs: ["100.64.0.10"], Online: true, Tags: ["tag:exit", "tag:ssh"], OS: "linux", ID: "node-github-exit", PublicKey: "nodekey:github-exit", sshHostKeys: ["ssh-ed25519 AAAATEST"] },
         normal: { HostName: "phone", TailscaleIPs: ["100.64.0.11"], Online: true, Tags: [] },
         offline: { HostName: "old-vps", TailscaleIPs: ["100.64.0.12"], Online: false, Tags: ["tag:ssh"] },
       },
@@ -98,6 +98,7 @@ esac
       os: "linux",
       nativeTailscaleSsh: true,
       sshHostKeys: ["ssh-ed25519 AAAATEST"],
+      identity: expect.stringMatching(/^[a-f0-9]{32}$/u),
     }));
     expect(devices.find((device) => device.name === "phone")).toEqual(expect.objectContaining({
       sshEligible: false,
@@ -109,6 +110,30 @@ esac
       sshEligible: false,
       sshReason: "offline",
     }));
+  });
+
+
+  it("keeps the server identity stable across Tailscale IP changes and changes it for a new node ID", async () => {
+    const service = await import("../../../src/app/services/tailscale-integration-service.js");
+    await service.configureTailscale("tskey-auth-test");
+
+    const first = (await service.listTailscaleDevices()).find((device) => device.name === "github-exit");
+    expect(first?.identity).toMatch(/^[a-f0-9]{32}$/u);
+
+    const status = JSON.parse(await fs.readFile(statusFile, "utf8")) as {
+      Peer: Record<string, { TailscaleIPs: string[]; ID?: string }>;
+    };
+    status.Peer.ssh!.TailscaleIPs = ["100.99.88.77"];
+    await fs.writeFile(statusFile, JSON.stringify(status));
+
+    const movedIp = (await service.listTailscaleDevices()).find((device) => device.name === "github-exit");
+    expect(movedIp?.identity).toBe(first?.identity);
+
+    status.Peer.ssh!.ID = "node-github-exit-replaced";
+    await fs.writeFile(statusFile, JSON.stringify(status));
+
+    const replaced = (await service.listTailscaleDevices()).find((device) => device.name === "github-exit");
+    expect(replaced?.identity).not.toBe(first?.identity);
   });
 
   it("rejects untagged and offline peers as SSH targets", async () => {
