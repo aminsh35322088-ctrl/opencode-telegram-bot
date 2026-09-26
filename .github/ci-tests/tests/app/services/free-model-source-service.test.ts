@@ -118,6 +118,18 @@ describe("experimental free model source config", () => {
     expect(getPendingFreebuffAutoConnect()).toBeNull();
   });
 
+  it("can expose only sources that passed runtime usability checks", () => {
+    const sources = buildFreeSourceProviderConfigs({
+      gemini: ["gemini-3.6-flash"],
+      qwen: ["qwen3.8-max"],
+      glm: ["glm-5.3-flash"],
+      ds: ["deepseek-chat"],
+      freebuff: ["z-ai/glm-5.3-flash"],
+    }, new Set<FreeModelSourceID>(), new Set<FreeModelSourceID>(["gemini"]));
+
+    expect(sources.map((source) => source.id)).toEqual(["experimental-gemini-web"]);
+  });
+
   it("uses source-specific conservative catalogs when discovery is empty", () => {
     const sources = buildFreeSourceProviderConfigs({});
     const byID = new Map(sources.map((source) => [source.id, source.config.models as Record<string, unknown>]));
