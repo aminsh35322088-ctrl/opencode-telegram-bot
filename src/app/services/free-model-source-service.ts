@@ -16,6 +16,9 @@ export interface FreeModelSourceConnection {
   guestCapable: boolean;
   credentialLabel: string;
   note: string;
+  runtimeUsable?: boolean;
+  runtimeMode?: "guest" | "account" | "connect-required";
+  runtimeReason?: string;
 }
 
 export interface BuiltInFreeProviderConfig {
@@ -156,11 +159,18 @@ interface PendingFreebuffLogin {
   createdAt: number;
 }
 
+interface SourceRuntimeStatus {
+  usable: boolean;
+  mode: "guest" | "account" | "connect-required";
+  reason?: string;
+}
+
 let pendingFreebuffLogin: PendingFreebuffLogin | null = null;
 let omniProcess: ChildProcess | null = null;
 let omniReady = false;
 let lifecycleTail: Promise<void> = Promise.resolve();
 let discoveredModels: Partial<Record<FreeModelSourceID, string[]>> = {};
+let sourceRuntimeStatus: Partial<Record<FreeModelSourceID, SourceRuntimeStatus>> = {};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -360,14 +370,20 @@ export async function clearFreeModelSourceCredential(sourceID: FreeModelSourceID
 
 export async function listFreeModelSourceConnections(): Promise<FreeModelSourceConnection[]> {
   const credentials = await readCredentials();
-  return SOURCES.map((source) => ({
-    id: source.id,
-    label: source.providerLabel,
-    configured: Boolean(credentials[source.credentialKey]),
-    guestCapable: source.guestCapable,
-    credentialLabel: source.credentialLabel,
-    note: source.note,
-  }));
+  return SOURCES.map((source) => {
+    const runtime = sourceRuntimeStatus[source.id];
+    return {
+      id: source.id,
+      label: source.providerLabel,
+      configured: Boolean(credentials[source.credentialKey]),
+      guestCapable: source.guestCapable,
+      credentialLabel: source.credentialLabel,
+      note: source.note,
+      runtimeUsable: runtime?.usable,
+      runtimeMode: runtime?.mode,
+      runtimeReason: runtime?.reason,
+    };
+  });
 }
 
 function parseModelIDs(value: unknown): string[] {
@@ -401,6 +417,91 @@ async function discoverAllModels(internalToken: string): Promise<void> {
   discoveredModels = Object.fromEntries(pairs) as Partial<Record<FreeModelSourceID, string[]>>;
 }
 
+async function probeQwenUsability(internalToken: string, configured: boolean): Promise<SourceRuntimeStatus> {
+  const model = discoveredModels.qwen?.[0] ?? "qwen3.8-max";
+  try {
+    const response = await fetch(`${OMNI_BASE_URL}/qwen/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${internalToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "Reply only OK." }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (response.ok) {
+      await response.arrayBuffer().catch(() => undefined);
+      return { usable: true, mode: configured ? "account" : "guest" };
+    }
+
+    const body = await response.text().catch(() => "");
+    const normalized = body.toLowerCase();
+    const authRejected = response.status === 401 || response.status === 403
+      || normalized.includes("unauthorized")
+      || normalized.includes("rgv587")
+      || normalized.includes("risk-control")
+      || normalized.includes("captcha");
+    return {
+      usable: false,
+      mode: "connect-required",
+      reason: authRejected
+        ? "Qwen guest/account access was rejected from this host."
+        : `Qwen probe failed with HTTP ${response.status}.`,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      usable: false,
+      mode: configured ? "account" : "connect-required",
+      reason: `Qwen probe failed: ${message.slice(0, 160)}`,
+    };
+  }
+}
+
+async function refreshSourceRuntimeStatus(
+  credentials: StoredFreeModelSourceCredentials,
+  internalToken: string,
+): Promise<void> {
+  const next: Partial<Record<FreeModelSourceID, SourceRuntimeStatus>> = {};
+
+  for (const source of SOURCES) {
+    const configured = Boolean(credentials[source.credentialKey]);
+    if (source.id === "qwen") {
+      next.qwen = await probeQwenUsability(internalToken, configured);
+      continue;
+    }
+    if (configured) {
+      next[source.id] = { usable: true, mode: "account" };
+      continue;
+    }
+    if (source.id === "gemini") {
+      next.gemini = { usable: true, mode: "guest" };
+      continue;
+    }
+    next[source.id] = {
+      usable: false,
+      mode: "connect-required",
+      reason: source.id === "freebuff"
+        ? "Use the official Freebuff browser login."
+        : "Account authorization is required before this source can be used.",
+    };
+  }
+
+  sourceRuntimeStatus = next;
+  logger.info(
+    "[FreeModelSources] availability: " +
+    SOURCES.map((source) => {
+      const state = next[source.id];
+      return `${source.id}=${state?.usable ? state.mode : "connect-required"}`;
+    }).join(","),
+  );
+}
+
 function modelConfig(source: SourceDefinition, upstreamModelID: string): Record<string, unknown> {
   return {
     name: upstreamModelID,
@@ -416,8 +517,9 @@ function modelConfig(source: SourceDefinition, upstreamModelID: string): Record<
 export function buildFreeSourceProviderConfigs(
   catalogs: Partial<Record<FreeModelSourceID, readonly string[]>>,
   configured: ReadonlySet<FreeModelSourceID> = new Set(),
+  available?: ReadonlySet<FreeModelSourceID>,
 ): BuiltInFreeProviderConfig[] {
-  return SOURCES.map((source) => {
+  return SOURCES.filter((source) => !available || available.has(source.id)).map((source) => {
     const raw = catalogs[source.id] ?? source.fallbackModels;
     const models = [...new Set(raw.map((id) => id.trim()).filter(Boolean))];
     const effective = models.length ? models : [...source.fallbackModels];
@@ -448,10 +550,12 @@ export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProvid
   if (!getFreeModelSourcesEnabled() || !omniReady) return [];
   const credentials = await readCredentials();
   const configured = new Set<FreeModelSourceID>();
+  const available = new Set<FreeModelSourceID>();
   for (const source of SOURCES) {
     if (credentials[source.credentialKey]) configured.add(source.id);
+    if (sourceRuntimeStatus[source.id]?.usable) available.add(source.id);
   }
-  return buildFreeSourceProviderConfigs(discoveredModels, configured);
+  return buildFreeSourceProviderConfigs(discoveredModels, configured, available);
 }
 
 export function isFreeModelSourceRuntimeReady(): boolean {
@@ -552,6 +656,7 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
       omniProcess = null;
       omniReady = false;
       discoveredModels = {};
+      sourceRuntimeStatus = {};
     }
     if (code !== 0 && code !== null) {
       logger.warn(`[FreeModelSources] OmniRouter exited: code=${code}, signal=${signal ?? "none"}`);
@@ -563,6 +668,8 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
     if (!ready) throw new Error("OmniRouter did not become ready");
     await discoverAllModels(internalToken);
     if (childHasExited(child)) throw new Error("OmniRouter exited during model discovery");
+    await refreshSourceRuntimeStatus(credentials, internalToken);
+    if (childHasExited(child)) throw new Error("OmniRouter exited during source availability probes");
     omniReady = true;
     logger.info(
       "[FreeModelSources] OmniRouter ready: " +
@@ -572,6 +679,7 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
   } catch (error) {
     omniReady = false;
     discoveredModels = {};
+    sourceRuntimeStatus = {};
     await terminateChild(child);
     if (omniProcess === child) omniProcess = null;
     logger.warn("[FreeModelSources] OmniRouter unavailable; experimental sources stay disabled for this runtime", error);
@@ -584,6 +692,7 @@ async function stopFreeModelSourcesInternal(): Promise<void> {
   omniProcess = null;
   omniReady = false;
   discoveredModels = {};
+  sourceRuntimeStatus = {};
   if (!child) return;
   await terminateChild(child);
 }
