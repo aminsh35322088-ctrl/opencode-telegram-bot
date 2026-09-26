@@ -23,6 +23,17 @@ export interface BuiltInFreeProviderConfig {
   config: Record<string, unknown>;
 }
 
+export interface FreebuffAutoConnectSession {
+  loginUrl: string;
+  expiresAt?: number;
+}
+
+export type FreebuffAutoConnectResult =
+  | { status: "pending"; loginUrl: string; expiresAt?: number }
+  | { status: "connected"; account?: string }
+  | { status: "expired" }
+  | { status: "error"; message: string };
+
 interface StoredFreeModelSourceCredentials {
   geminiCookies?: string;
   qwenToken?: string;
@@ -132,7 +143,20 @@ const MODEL_DISCOVERY_TIMEOUT_MS = 5_000;
 const EXPECTED_OMNI_VERSION = "1.4.0";
 const PROCESS_EXIT_GRACE_MS = 2_500;
 const PROCESS_KILL_GRACE_MS = 1_500;
+const FREEBUFF_LOGIN_BASE = "https://freebuff.com";
+const FREEBUFF_API_BASE = "https://codebuff.com";
+const FREEBUFF_REQUEST_TIMEOUT_MS = 12_000;
+const FREEBUFF_LOGIN_TTL_MS = 60 * 60_000;
 
+interface PendingFreebuffLogin {
+  loginUrl: string;
+  fingerprintId: string;
+  fingerprintHash?: string;
+  expiresAt?: number;
+  createdAt: number;
+}
+
+let pendingFreebuffLogin: PendingFreebuffLogin | null = null;
 let omniProcess: ChildProcess | null = null;
 let omniReady = false;
 let lifecycleTail: Promise<void> = Promise.resolve();
@@ -207,6 +231,107 @@ async function readCredentials(): Promise<StoredFreeModelSourceCredentials> {
   return normalizeCredentials(state.freeModelSources);
 }
 
+function validateFreebuffLoginUrl(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) throw new Error("Freebuff login did not return a login URL");
+  const url = new URL(raw);
+  if (url.protocol !== "https:" || (url.hostname !== "freebuff.com" && !url.hostname.endsWith(".freebuff.com"))) {
+    throw new Error("Freebuff returned an unexpected login origin");
+  }
+  return url.toString();
+}
+
+async function readJsonSafely(response: Response): Promise<Record<string, unknown> | null> {
+  const value = await response.json().catch(() => null);
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+export function getPendingFreebuffAutoConnect(): FreebuffAutoConnectSession | null {
+  const pending = pendingFreebuffLogin;
+  if (!pending) return null;
+  if (Date.now() - pending.createdAt > FREEBUFF_LOGIN_TTL_MS) {
+    pendingFreebuffLogin = null;
+    return null;
+  }
+  return { loginUrl: pending.loginUrl, expiresAt: pending.expiresAt };
+}
+
+export function cancelFreebuffAutoConnect(): void {
+  pendingFreebuffLogin = null;
+}
+
+export async function startFreebuffAutoConnect(): Promise<FreebuffAutoConnectSession> {
+  const fingerprintId = "otb-" + randomBytes(16).toString("hex");
+  const response = await fetch(FREEBUFF_LOGIN_BASE + "/api/auth/cli/code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "User-Agent": "opencode-telegram-bot/freebuff-connect" },
+    body: JSON.stringify({ fingerprintId }),
+    signal: AbortSignal.timeout(FREEBUFF_REQUEST_TIMEOUT_MS),
+  });
+  const body = await readJsonSafely(response);
+  if (!response.ok) {
+    const message = typeof body?.message === "string" ? body.message : typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    throw new Error("Freebuff login start failed: " + message);
+  }
+  const loginUrl = validateFreebuffLoginUrl(body?.loginUrl);
+  const fingerprintHash = typeof body?.fingerprintHash === "string" ? body.fingerprintHash : undefined;
+  const expiresAt = typeof body?.expiresAt === "number" ? body.expiresAt : undefined;
+  pendingFreebuffLogin = { loginUrl, fingerprintId, fingerprintHash, expiresAt, createdAt: Date.now() };
+  return { loginUrl, expiresAt };
+}
+
+async function verifyFreebuffToken(token: string): Promise<string | undefined> {
+  const response = await fetch(FREEBUFF_API_BASE + "/api/v1/me?fields=id,email", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "opencode-telegram-bot/freebuff-connect",
+    },
+    signal: AbortSignal.timeout(FREEBUFF_REQUEST_TIMEOUT_MS),
+  });
+  const body = await readJsonSafely(response);
+  if (!response.ok) throw new Error("Freebuff returned an invalid login token");
+  return typeof body?.email === "string" ? body.email : typeof body?.id === "string" ? body.id : undefined;
+}
+
+export async function checkFreebuffAutoConnect(): Promise<FreebuffAutoConnectResult> {
+  const pending = pendingFreebuffLogin;
+  if (!pending || Date.now() - pending.createdAt > FREEBUFF_LOGIN_TTL_MS) {
+    pendingFreebuffLogin = null;
+    return { status: "expired" };
+  }
+  const query = new URLSearchParams({ fingerprintId: pending.fingerprintId });
+  if (pending.fingerprintHash) query.set("fingerprintHash", pending.fingerprintHash);
+  if (pending.expiresAt !== undefined) query.set("expiresAt", String(pending.expiresAt));
+
+  try {
+    const response = await fetch(FREEBUFF_LOGIN_BASE + "/api/auth/cli/status?" + query.toString(), {
+      headers: { "User-Agent": "opencode-telegram-bot/freebuff-connect" },
+      signal: AbortSignal.timeout(FREEBUFF_REQUEST_TIMEOUT_MS),
+    });
+    if (response.status === 401) {
+      return { status: "pending", loginUrl: pending.loginUrl, expiresAt: pending.expiresAt };
+    }
+    const body = await readJsonSafely(response);
+    if (!response.ok) {
+      const message = typeof body?.message === "string" ? body.message : typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+      return { status: "error", message };
+    }
+    const user = body?.user && typeof body.user === "object" && !Array.isArray(body.user)
+      ? body.user as Record<string, unknown>
+      : null;
+    const token = typeof user?.authToken === "string" ? user.authToken.trim() : "";
+    if (!token) {
+      return { status: "pending", loginUrl: pending.loginUrl, expiresAt: pending.expiresAt };
+    }
+    const account = await verifyFreebuffToken(token);
+    await setFreeModelSourceCredential("freebuff", token);
+    pendingFreebuffLogin = null;
+    return { status: "connected", account };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "error", message };
+  }
+}
+
 export async function setFreeModelSourceCredential(sourceID: FreeModelSourceID, value: string): Promise<void> {
   const source = SOURCES.find((item) => item.id === sourceID);
   if (!source) throw new Error("Unknown free model source");
@@ -219,6 +344,7 @@ export async function setFreeModelSourceCredential(sourceID: FreeModelSourceID, 
 }
 
 export async function clearFreeModelSourceCredential(sourceID: FreeModelSourceID): Promise<boolean> {
+  if (sourceID === "freebuff") pendingFreebuffLogin = null;
   const source = SOURCES.find((item) => item.id === sourceID);
   if (!source) return false;
   let removed = false;
