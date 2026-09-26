@@ -187,7 +187,8 @@ describe("pooled cross-platform Tailnet SSH service", () => {
     expect(args).toContain("runner@github-exit");
 
     const channel = calls.find((call) => call.args.includes("ProxyCommand=/bin/false"));
-    expect(channel?.args).toContain("uname -a");
+    expect(channel?.args.at(-1)).toContain("uname -a");
+    expect(channel?.args.at(-1)).toContain(".opencode-telegram/ssh-workspaces/");
   });
 
   it("reuses one master for multiple commands instead of reconnecting per command", async () => {
@@ -377,6 +378,14 @@ describe("pooled cross-platform Tailnet SSH service", () => {
     expect(args).toContain(
       "ProxyCommand=/usr/local/bin/tailscale --socket=/data/run/tailscale/tailscaled.sock nc %h %p",
     );
+
+    const channel = calls.find((call) => call.args.includes("ProxyCommand=/bin/false"));
+    const wrapper = channel?.args.at(-1) ?? "";
+    expect(wrapper).toMatch(/^powershell\.exe .* -EncodedCommand /u);
+    const encodedScript = wrapper.split(" ").at(-1) ?? "";
+    const script = Buffer.from(encodedScript, "base64").toString("utf16le");
+    expect(script).toContain(".opencode-telegram\\ssh-workspaces\\");
+    expect(script).toContain("$env:ComSpec");
   });
 
   it("uses managed-key mode for custom ports such as Termux 8022", async () => {

@@ -81,6 +81,7 @@ export interface TailnetSshTargetDescription {
   authentication: string;
   passwordRequired: false;
   nativeTailscaleSsh: boolean;
+  remoteWorkspace: string;
 }
 
 interface PreparedConnection {
@@ -589,6 +590,7 @@ export async function describeTailnetSshTarget(
     authentication: authLabel(prepared.authMode),
     passwordRequired: false,
     nativeTailscaleSsh: prepared.authMode === "tailscale-ssh",
+    remoteWorkspace: prepared.remoteWorkspace,
   };
 }
 
