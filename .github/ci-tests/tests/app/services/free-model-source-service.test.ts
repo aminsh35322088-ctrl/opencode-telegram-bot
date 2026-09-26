@@ -79,6 +79,7 @@ describe("experimental free model source config", () => {
       expect(env.DEEPSEEK_TOKENS).toBe("ds-secret");
       expect(env.ROUTER_KEY).toBe("sk-router");
       expect(env.AUTH_TOKEN).toBe("internal-secret");
+      expect(env.QWEN_BX_FILE).toBe("/tmp/omni-data/qwen-bx.json");
       expect(env.SSL_CERT_FILE).toBe("/tmp/ca.pem");
     } finally {
       delete process.env.TELEGRAM_BOT_TOKEN;
@@ -116,6 +117,22 @@ describe("experimental free model source config", () => {
 
     await expect(startFreebuffAutoConnect()).rejects.toThrow("unexpected login origin");
     expect(getPendingFreebuffAutoConnect()).toBeNull();
+  });
+
+  it("can hide sources that are not actually ready", () => {
+    const available = new Set<FreeModelSourceID>(["gemini", "qwen"]);
+    const sources = buildFreeSourceProviderConfigs({
+      gemini: ["gemini-3.6-flash"],
+      qwen: ["qwen3.8-max"],
+      glm: ["glm-5.3-flash"],
+      ds: ["deepseek-chat"],
+      freebuff: ["z-ai/glm-5.3-flash"],
+    }, new Set(), available);
+
+    expect(sources.map((source) => source.id)).toEqual([
+      "experimental-gemini-web",
+      "experimental-qwen-web",
+    ]);
   });
 
   it("uses source-specific conservative catalogs when discovery is empty", () => {
