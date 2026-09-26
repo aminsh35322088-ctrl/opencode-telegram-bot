@@ -27,6 +27,7 @@ const HOSTKEY_DIR = process.env.SSH_HOSTKEY_DIR?.trim() || path.join(os.tmpdir()
 const NATIVE_KEX_ORDER = "ecdh-sha2-nistp256,curve25519-sha256";
 const REMOTE_WORKSPACE_ROOT = ".opencode-telegram/ssh-workspaces";
 const masterLocks = new Map<string, Promise<CommandResult>>();
+const authorizationLeases = new Set<string>();
 
 export type SshAuthMode = "tailscale-ssh" | "managed-key";
 
@@ -287,6 +288,19 @@ function controlPathFor(scope: string, device: TailscaleSshDevice, user: string,
   return path.join(CONTROL_DIR, `${connectionDigest(scope, device, user, port).slice(0, 32)}.sock`);
 }
 
+function authorizationLeaseKey(prepared: PreparedConnection): string {
+  return connectionDigest(
+    prepared.scope,
+    prepared.device,
+    prepared.user,
+    prepared.port,
+  );
+}
+
+function hasAuthorizationLease(prepared: PreparedConnection): boolean {
+  return authorizationLeases.has(authorizationLeaseKey(prepared));
+}
+
 function remoteWorkspaceIdFor(
   scope: string,
   device: TailscaleSshDevice,
@@ -517,7 +531,7 @@ async function ensureMaster(
       created: false,
       reused: false,
       result: failure(
-        "SSH authorization expired: there is no active SSH master for this Topic/server identity. Ask permission again before reconnecting.",
+        "SSH authorization is required for this Topic/server identity, username, and port.",
       ),
       prepared,
     };
@@ -602,6 +616,19 @@ export async function hasActiveTailnetSshConnection(
   return (await masterCheck(prepared, runner)).ok;
 }
 
+export async function hasTailnetSshAuthorization(
+  input: TailnetSshTarget,
+): Promise<boolean> {
+  return hasAuthorizationLease(await prepare(input));
+}
+
+export async function grantTailnetSshAuthorization(
+  input: TailnetSshTarget,
+): Promise<void> {
+  const prepared = await prepare(input);
+  authorizationLeases.add(authorizationLeaseKey(prepared));
+}
+
 function masterMetadata(master: MasterResult): Record<string, unknown> {
   return {
     persistentConnection: true,
@@ -609,7 +636,8 @@ function masterMetadata(master: MasterResult): Record<string, unknown> {
     connectionReused: master.reused,
     authorizationScope: master.prepared.scope,
     serverIdentity: master.prepared.device.identity,
-    reconnectRequiresPermission: true,
+    masterLossRequiresPermission: false,
+    authorizationBoundary: "topic+server-identity+username+port",
     remoteWorkspace: master.prepared.remoteWorkspace,
     remoteWorkspaceScope: "topic+server-identity+username+port",
   };
@@ -635,7 +663,7 @@ export async function checkTailnetSsh(
 
   const master = await ensureMaster(
     prepared,
-    input.allowConnectionStart === true,
+    input.allowConnectionStart === true || hasAuthorizationLease(prepared),
     runner,
   );
   return {
@@ -684,7 +712,7 @@ export async function debugTailnetSsh(
 
   const master = await ensureMaster(
     prepared,
-    input.allowConnectionStart === true,
+    input.allowConnectionStart === true || hasAuthorizationLease(prepared),
     runner,
     true,
   );
@@ -729,7 +757,7 @@ export async function execTailnetSsh(
   const prepared = await prepare(input);
   const master = await ensureMaster(
     prepared,
-    input.allowConnectionStart === true,
+    input.allowConnectionStart === true || hasAuthorizationLease(prepared),
     runner,
   );
   if (!master.ok) {
@@ -814,7 +842,7 @@ export async function transferTailnetSshFile(
 
   const master = await ensureMaster(
     prepared,
-    input.allowConnectionStart === true,
+    input.allowConnectionStart === true || hasAuthorizationLease(prepared),
     runner,
   );
   if (!master.ok) {
