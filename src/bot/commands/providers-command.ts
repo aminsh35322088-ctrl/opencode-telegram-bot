@@ -25,10 +25,18 @@ import {
   startFreebuffAutoConnect,
   type FreeModelSourceID,
 } from "../../app/services/free-model-source-service.js";
+import {
+  cancelFreeSourceLoginPairing,
+  createFreeSourceLoginPairing,
+  getFreeSourceLoginPairingStatus,
+  type PairableFreeModelSourceID,
+} from "../../app/services/free-source-login-pairing-service.js";
 
 type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key" | "free-source-secret";
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; freeSourceID?: FreeModelSourceID; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
+interface PendingFreeSourcePairing { id: string; sourceID: PairableFreeModelSourceID; helperUrl: string; expiresAt: number; }
+const freeSourcePairing = new TopicScopedValue<PendingFreeSourcePairing>();
 function messageId(ctx: Context): number | undefined { const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined; return canonical ?? ctx.callbackQuery?.message?.message_id; }
 function wizardKeyboard() { return new InlineKeyboard().text("✖ Cancel", "provider:cancel"); }
 export function isProviderWizardActive(): boolean { return providerWizard.isActive(); }
@@ -129,6 +137,53 @@ async function renderFreebuffAutoConnect(ctx: Context, id?: number, notice = "")
   ].filter(Boolean).join("\n"), keyboard, id);
 }
 
+function pairableSourceLabel(sourceID: PairableFreeModelSourceID): string {
+  if (sourceID === "qwen") return "Qwen Web";
+  if (sourceID === "glm") return "GLM Web (Z.AI)";
+  return "DeepSeek Web";
+}
+
+async function renderLocalFreeSourcePairing(ctx: Context, id?: number, notice = ""): Promise<void> {
+  const pending = freeSourcePairing.get();
+  if (!pending) {
+    await renderFreeModelSources(ctx, id, notice || "⌛ Login pairing expired. Start the connection again.\n\n");
+    return;
+  }
+  const remainingMinutes = Math.max(1, Math.ceil((pending.expiresAt - Date.now()) / 60_000));
+  const keyboard = new InlineKeyboard()
+    .url("🌐 Open Local Login Helper", pending.helperUrl).row()
+    .text("✅ Login finished · Check connection", "provider:free-source-pair-check").row()
+    .text("✍️ Paste token manually", `provider:free-source-manual:${pending.sourceID}`).row()
+    .text("✖ Cancel login", "provider:free-source-pair-cancel").row()
+    .text("← Free Model Sources", "provider:free-sources");
+  await render(ctx, [
+    notice,
+    `🔐 ${pairableSourceLabel(pending.sourceID)} · Local browser login`,
+    "",
+    "1. Open the helper page.",
+    "2. Download and run the generated Windows PowerShell helper.",
+    "3. A clean Chrome/Edge window opens. Sign in normally and complete any CAPTCHA/2FA yourself.",
+    "4. The helper captures only your resulting session token and sends it directly to this bot over HTTPS.",
+    "5. Return here and tap Check connection.",
+    "",
+    `Pairing expires in about ${remainingMinutes} minute(s) and is single-use.`,
+    "Your password is never read by the helper or sent to Telegram/Railway.",
+  ].filter(Boolean).join("\n"), keyboard, id);
+}
+
+async function beginLocalFreeSourcePairing(ctx: Context, sourceID: PairableFreeModelSourceID, id?: number): Promise<void> {
+  const previous = freeSourcePairing.get();
+  if (previous) cancelFreeSourceLoginPairing(previous.id);
+  try {
+    const pairing = createFreeSourceLoginPairing(sourceID);
+    freeSourcePairing.set(pairing);
+    await renderLocalFreeSourcePairing(ctx, id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Automatic login helper is unavailable";
+    await renderFreeModelSources(ctx, id, `❌ Could not start local login pairing.\n${message}\n\nManual token setup is still available.\n\n`);
+  }
+}
+
 async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void> {
   try {
     await startFreebuffAutoConnect();
@@ -147,11 +202,11 @@ function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceC
     case "freebuff":
       return { button: "Auto login", line: "🌐 Official browser login · token captured automatically" };
     case "qwen":
-      return { button: "Account recommended", line: "⚠️ Guest is network-dependent · account token recommended on Railway" };
+      return { button: "Local login", line: "🌐 Local browser login · no token copy/paste" };
     case "glm":
-      return { button: "Account required", line: "🔐 Account/device authorization required" };
+      return { button: "Local login", line: "🌐 Local browser login · no token copy/paste" };
     case "ds":
-      return { button: "Human login required", line: "🔐 Human account login/session required" };
+      return { button: "Local login", line: "🌐 Local browser login · no token copy/paste" };
   }
 }
 
@@ -174,8 +229,8 @@ async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): P
     "🆓 Free Model Sources",
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
-    "Gemini needs no input. Freebuff uses an official one-click browser login.",
-    "Qwen, GLM and DeepSeek still depend on upstream account/human authorization when guest access is unavailable.",
+    "Gemini needs no input. Freebuff uses its official browser approval flow.",
+    "Qwen, GLM and DeepSeek use a one-time local browser helper: sign in normally, then the session token is paired directly to the bot without manual cookie hunting.",
     "",
     ...lines,
     "",
@@ -295,6 +350,41 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     return true;
   }
   if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
+  if (data === "provider:free-source-pair-check") {
+    const pending = freeSourcePairing.get();
+    if (!pending) { await renderFreeModelSources(ctx, id, "⌛ Login pairing is no longer active.\n\n"); return true; }
+    const status = getFreeSourceLoginPairingStatus(pending.id);
+    if (status === "connected") {
+      freeSourcePairing.clear();
+      const notice = await applyAiChanges();
+      await renderFreeModelSources(ctx, id, `✅ ${pairableSourceLabel(pending.sourceID)} connected automatically.${notice}\n\n`);
+      return true;
+    }
+    if (status === "expired" || status === "missing") {
+      freeSourcePairing.clear();
+      await renderFreeModelSources(ctx, id, "⌛ Login pairing expired. Start a fresh connection.\n\n");
+      return true;
+    }
+    await renderLocalFreeSourcePairing(ctx, id, "⏳ Still waiting for the local browser helper to finish login.\n\n");
+    return true;
+  }
+  if (data === "provider:free-source-pair-cancel") {
+    const pending = freeSourcePairing.get();
+    if (pending) cancelFreeSourceLoginPairing(pending.id);
+    freeSourcePairing.clear();
+    await renderFreeModelSources(ctx, id, "Local browser login cancelled.\n\n");
+    return true;
+  }
+  if (data.startsWith("provider:free-source-manual:")) {
+    const sourceID = data.slice("provider:free-source-manual:".length) as FreeModelSourceID;
+    const pending = freeSourcePairing.get();
+    if (pending) cancelFreeSourceLoginPairing(pending.id);
+    freeSourcePairing.clear();
+    await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
+    const wizard = providerWizard.get();
+    if (wizard) wizard.freeSourceID = sourceID;
+    return true;
+  }
   if (data === "provider:freebuff-check") {
     const result = await checkFreebuffAutoConnect();
     if (result.status === "connected") {
@@ -337,6 +427,10 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     if (!source) { await renderFreeModelSources(ctx, id, "❌ Unknown free model source.\n\n"); return true; }
     if (sourceID === "freebuff" && !source.configured) {
       await beginFreebuffAutoConnect(ctx, id);
+      return true;
+    }
+    if (!source.configured && (sourceID === "qwen" || sourceID === "glm" || sourceID === "ds")) {
+      await beginLocalFreeSourcePairing(ctx, sourceID, id);
       return true;
     }
     await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
