@@ -91,7 +91,7 @@ function freeSourcePrompt(sourceID: FreeModelSourceID): string {
     case "gemini":
       return "✨ Gemini Web\n\nOptional account cookies\nSend the cookie header containing __Secure-1PSID and, when available, __Secure-1PSIDTS.\n\nGuest mode already works without this.\n🔒 Your message will be deleted immediately.";
     case "qwen":
-      return "🦞 Qwen Web\n\nOptional account token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode remains available without it, but some datacenter networks hit Qwen risk control.\n🔒 Your message will be deleted immediately.";
+      return "🦞 Qwen Web\n\nAccount token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode is network-dependent and is commonly rejected from datacenter hosts such as Railway.\n🔒 Your message will be deleted immediately.";
     case "glm":
       return "🧠 GLM Web (Z.AI)\n\nSend one Z.AI account token used by the bridge (ZAI_TOKEN).\n\nThis source needs account/device authorization for chat.\n🔒 Your message will be deleted immediately.";
     case "ds":
@@ -139,42 +139,43 @@ async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void
   }
 }
 
+function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceConnections>>[number]): { button: string; line: string } {
+  if (source.configured) return { button: "Connected", line: "✅ Connected" };
+  switch (source.id) {
+    case "gemini":
+      return { button: "Automatic guest", line: "⚡ Automatic guest · no input required" };
+    case "freebuff":
+      return { button: "Auto login", line: "🌐 Official browser login · token captured automatically" };
+    case "qwen":
+      return { button: "Account recommended", line: "⚠️ Guest is network-dependent · account token recommended on Railway" };
+    case "glm":
+      return { button: "Account required", line: "🔐 Account/device authorization required" };
+    case "ds":
+      return { button: "Human login required", line: "🔐 Human account login/session required" };
+  }
+}
+
 async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): Promise<void> {
   const sources = await listFreeModelSourceConnections();
   const enabled = getFreeModelSourcesEnabled();
   const keyboard = new InlineKeyboard();
 
   for (const source of sources) {
-    const state = source.configured
-      ? "Connected"
-      : source.id === "freebuff"
-        ? "Auto login"
-        : source.guestCapable
-          ? "Guest"
-          : "Needs connection";
-    keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${state}`), `provider:free-source:${source.id}`).row();
+    const state = freeSourceStatus(source);
+    keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${state.button}`), `provider:free-source:${source.id}`).row();
     if (source.configured) keyboard.text(`🗑 Remove ${source.label} credential`, `provider:free-source-remove:${source.id}`).row();
   }
   keyboard.text("← API Connections", "provider:menu");
 
-  const lines = sources.map((source) => {
-    const state = source.configured
-      ? "✅ Connected"
-      : source.id === "freebuff"
-        ? "🌐 Automatic browser login"
-        : source.guestCapable
-          ? "👻 Guest available"
-          : "🔐 Connection required";
-    return `${source.label} · ${state}`;
-  });
+  const lines = sources.map((source) => `${source.label} · ${freeSourceStatus(source).line}`);
 
   await render(ctx, [
     notice,
     "🆓 Free Model Sources",
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
-    "One local OmniRouter process exposes each source as a separate OpenCode provider.",
-    "No smart cross-provider fallback is enabled by this integration; explicit provider/model IDs are used.",
+    "Gemini needs no input. Freebuff uses an official one-click browser login.",
+    "Qwen, GLM and DeepSeek still depend on upstream account/human authorization when guest access is unavailable.",
     "",
     ...lines,
     "",
