@@ -96,7 +96,8 @@ describe("SSH/Cloudflare regression contract", () => {
     const config = JSON.parse(readFileSync(repoPath("opencode.json"), "utf8")) as {
       permission?: Record<string, unknown>;
     };
-    expect(config.permission?.ssh).toBe("ask");
+    expect(config.permission?.ssh).toBe("allow");
+    expect(config.permission?.["ssh-remote"]).toBe("ask");
     expect(config.permission?.tailscale).toBe("allow");
   });
 });
