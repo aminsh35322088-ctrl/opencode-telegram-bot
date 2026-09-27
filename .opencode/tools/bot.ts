@@ -374,7 +374,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions. To add MCP servers, Skills, or dynamic Integrations, use mcp.add / skills.add / integrations.add. When an add action returns status=question-required, immediately call the native question tool with the returned questionTool.arguments exactly; only call the same add action with confirmed=true after the user chooses Add. No permission request is needed for Extension installation. OAuth/API-key follow-up is handled by Telegram secure UI. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. To add MCP servers, Skills, or dynamic Integrations, call mcp.add / skills.add / integrations.add exactly once. When the result is status=question-required, immediately call the native question tool with questionTool.arguments exactly. After the user answers, the bot deterministically resumes installation itself; do not call the add action again. No permission request is needed. OAuth/API-key follow-up is handled by Telegram secure UI. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -389,7 +389,7 @@ export default tool({
     extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
     credential_id: tool.schema.string().optional().describe("Credential schema ID registered by an Extension. Never pass a secret value."),
     extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for OpenCode plugins. Use providers.ensure, mcp.add, skills.add, or integrations.add for all other Extension classes."),
-    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Optional auth selection after endpoint analysis. Omit for automatic MCP auth discovery. Raw secrets are never accepted."),
+    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Reserved for non-conversational Extension setup. MCP/Integration auth is selected automatically or through the returned Question options; raw secrets are never accepted."),
     confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
     paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
     free_suffix: tool.schema.string().optional().describe("Provider-advertised free model suffix, such as :free."),
@@ -404,7 +404,6 @@ export default tool({
     setting: tool.schema.enum(SETTINGS).optional().describe("Safe bot setting for settings.get/settings.set."),
     enabled: tool.schema.boolean().optional().describe("Boolean value for boolean settings."),
     repair: tool.schema.boolean().optional().describe("For mcp.debug, force-resync managed MCP definitions into the current Topic runtime before returning diagnostics."),
-    confirmed: tool.schema.boolean().optional().describe("For skills.add, mcp.add, and integrations.add: leave false/omitted for analysis + Question-tool preview; set true only after the user confirms through the native question tool."),
   },
   async execute(args, context) {
     const action = args.action as BotAction;
@@ -493,7 +492,6 @@ export default tool({
           sessionId: context.sessionID,
           projectDirectory: base,
           source: required(args.value, "value", action),
-          confirmed: args.confirmed === true,
         }));
       }
       const manager = await load<SkillManageModule>("app/services/skill-manage-service.js");
@@ -527,8 +525,6 @@ export default tool({
           kind: "mcp",
           source: required(args.value, "value", action),
           purpose: required(args.description, "description", action),
-          confirmed: args.confirmed === true,
-          authType: args.auth_type,
         })));
       }
       if (action === "mcp.debug") {
@@ -558,8 +554,6 @@ export default tool({
         kind: "integration",
         source: required(args.value, "value", action),
         purpose: required(args.description, "description", action),
-        confirmed: args.confirmed === true,
-        authType: args.auth_type,
       })));
     }
 
