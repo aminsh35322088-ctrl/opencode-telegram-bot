@@ -163,6 +163,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
+    summaryAggregator.beginRun(currentSession.id);
     startSessionStallWatchdog({
       sessionId: currentSession.id,
       directory: currentSession.directory,
