@@ -21,6 +21,7 @@ import {
   getPendingFreebuffAutoConnect,
   listFreeModelSourceConnections,
   restartFreeModelSources,
+  repairQwenGuestAccess,
   setFreeModelSourceCredential,
   startFreebuffAutoConnect,
   type FreeModelSourceID,
@@ -139,6 +140,41 @@ async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void
   }
 }
 
+async function renderQwenConnect(ctx: Context, id?: number, notice = ""): Promise<void> {
+  const keyboard = new InlineKeyboard()
+    .text("🛠 Retry automatic guest repair", "provider:qwen-auto").row()
+    .text("🔐 Connect Qwen account", "provider:qwen-manual").row()
+    .text("← Free Model Sources", "provider:free-sources");
+
+  await render(ctx, [
+    notice,
+    "🦞 Qwen Web",
+    "",
+    "The bot first tries guest mode automatically.",
+    "If Railway is challenged by Qwen/Baxia, it opens the bundled headless Chromium, captures the browser Baxia headers, stores them privately under /data, and live-tests Qwen again.",
+    "",
+    "You only need to provide the Qwen account token if the repaired guest session is still rejected by upstream.",
+  ].filter(Boolean).join("\n"), keyboard, id);
+}
+
+async function runQwenAutoRepair(ctx: Context, id?: number): Promise<void> {
+  await render(ctx,
+    "🦞 Qwen Web\n\n🛠 Repairing guest access…\n\nUsing the bundled Chromium to refresh Qwen/Baxia browser headers and then running a live Qwen probe.",
+    new InlineKeyboard().text("← Free Model Sources", "provider:free-sources"),
+    id,
+  );
+
+  const result = await repairQwenGuestAccess(true);
+  if (result.runtimeUsable) {
+    const notice = await applyAiChanges();
+    await renderFreeModelSources(ctx, id, `✅ Qwen guest access repaired automatically.${notice}\n\n`);
+    return;
+  }
+
+  const reason = result.runtimeReason || result.reason || "Qwen still rejected guest access after automatic browser repair.";
+  await renderQwenConnect(ctx, id, `⚠️ Automatic Qwen guest repair did not unlock this host.\n${reason}\n\n`);
+}
+
 function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceConnections>>[number]): { button: string; line: string } {
   if (source.runtimeUsable && source.runtimeMode === "account") return { button: "Connected", line: "✅ Connected · live runtime check passed" };
   if (source.runtimeUsable && source.runtimeMode === "guest") return { button: "Automatic guest", line: "⚡ Guest access verified on this host" };
@@ -154,9 +190,9 @@ function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceC
       return { button: "Auto login", line: "🌐 Official browser login · token captured automatically" };
     case "qwen":
       if (source.runtimeUsable === false) {
-        return { button: "Account required", line: "🔐 Guest rejected on this host · Qwen account token required" };
+        return { button: "Auto repair", line: "🛠 Guest rejected · automatic browser repair available" };
       }
-      return { button: "Auto-check guest", line: "🔎 Guest access is checked automatically when the runtime starts" };
+      return { button: "Auto guest", line: "🔎 Guest access is checked and repaired automatically on this host" };
     case "glm":
       return { button: "Account required", line: "🔐 Account/device authorization required" };
     case "ds":
@@ -184,8 +220,8 @@ async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): P
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
     "Gemini needs no input. Freebuff uses an official one-click browser login.",
-    "Qwen guest access is live-tested on this Railway host before its models are exposed.",
-    "If Qwen guest is rejected, its models are hidden until you connect an account token. GLM and DeepSeek still require upstream account/human authorization.",
+    "Qwen guest access is live-tested and automatically repaired with the bundled browser when Railway is challenged by Baxia.",
+    "Only if Qwen still rejects the repaired guest session do we ask for an account token. GLM and DeepSeek still require upstream account/human authorization.",
     "",
     ...lines,
     "",
@@ -305,6 +341,16 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     return true;
   }
   if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
+  if (data === "provider:qwen-auto") {
+    await runQwenAutoRepair(ctx, id);
+    return true;
+  }
+  if (data === "provider:qwen-manual") {
+    await start(ctx, "free-source-secret", freeSourcePrompt("qwen"));
+    const wizard = providerWizard.get();
+    if (wizard) wizard.freeSourceID = "qwen";
+    return true;
+  }
   if (data === "provider:freebuff-check") {
     const result = await checkFreebuffAutoConnect();
     if (result.status === "connected") {
@@ -353,8 +399,12 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
       await renderFreeModelSources(ctx, id, "✅ Gemini guest mode needs no credential. It is already available automatically.\n\n");
       return true;
     }
-    if (sourceID === "qwen" && !source.configured && source.runtimeUsable === true) {
-      await renderFreeModelSources(ctx, id, "✅ Qwen guest mode passed the live runtime check on this host. No token is needed right now.\n\n");
+    if (sourceID === "qwen" && !source.configured) {
+      if (source.runtimeUsable === true) {
+        await renderFreeModelSources(ctx, id, "✅ Qwen guest mode passed the live runtime check on this host. No token is needed right now.\n\n");
+      } else {
+        await renderQwenConnect(ctx, id);
+      }
       return true;
     }
     await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));

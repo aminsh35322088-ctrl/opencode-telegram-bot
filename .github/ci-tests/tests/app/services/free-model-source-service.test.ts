@@ -79,6 +79,7 @@ describe("experimental free model source config", () => {
       expect(env.DEEPSEEK_TOKENS).toBe("ds-secret");
       expect(env.ROUTER_KEY).toBe("sk-router");
       expect(env.AUTH_TOKEN).toBe("internal-secret");
+      expect(env.QWEN_BX_FILE).toBe("/tmp/omni-data/qwen-bx.json");
       expect(env.SSL_CERT_FILE).toBe("/tmp/ca.pem");
     } finally {
       delete process.env.TELEGRAM_BOT_TOKEN;

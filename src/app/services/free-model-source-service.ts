@@ -6,6 +6,7 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { getFreeModelSourcesEnabled, setFreeModelSourcesEnabled } from "../stores/settings-store.js";
+import { bootstrapQwenGuestHeaders, type QwenGuestBootstrapResult } from "./free-source-browser-bootstrap.js";
 
 export type FreeModelSourceID = "gemini" | "qwen" | "glm" | "ds" | "freebuff";
 
@@ -36,6 +37,11 @@ export type FreebuffAutoConnectResult =
   | { status: "connected"; account?: string }
   | { status: "expired" }
   | { status: "error"; message: string };
+
+export type QwenGuestRepairResult = QwenGuestBootstrapResult & {
+  runtimeUsable?: boolean;
+  runtimeReason?: string;
+};
 
 interface StoredFreeModelSourceCredentials {
   geminiCookies?: string;
@@ -472,7 +478,20 @@ async function refreshSourceRuntimeStatus(
   for (const source of SOURCES) {
     const configured = Boolean(credentials[source.credentialKey]);
     if (source.id === "qwen") {
-      next.qwen = await probeQwenUsability(internalToken, configured);
+      let status = await probeQwenUsability(internalToken, configured);
+      if (!configured && !status.usable) {
+        logger.info("[FreeModelSources] Qwen guest probe failed; attempting automatic browser bootstrap");
+        const repair = await bootstrapQwenGuestHeaders(path.join(getRuntimePaths().appHome, "omnirouter"));
+        if (repair.ok) {
+          status = await probeQwenUsability(internalToken, false);
+          if (!status.usable) {
+            status.reason = "Automatic Qwen browser bootstrap completed, but upstream still rejected guest access. Connect a Qwen account token.";
+          }
+        } else if (!repair.skipped) {
+          status.reason = "Automatic Qwen guest bootstrap failed. Connect a Qwen account token or retry automatic repair.";
+        }
+      }
+      next.qwen = status;
       continue;
     }
     if (configured) {
@@ -558,6 +577,40 @@ export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProvid
   return buildFreeSourceProviderConfigs(discoveredModels, configured, available);
 }
 
+export async function repairQwenGuestAccess(force = true): Promise<QwenGuestRepairResult> {
+  const credentials = await readCredentials();
+  if (credentials.qwenToken) {
+    return {
+      ok: false,
+      captured: false,
+      verified: false,
+      skipped: true,
+      reason: "Qwen already has an account token configured; guest repair is not needed.",
+      runtimeUsable: sourceRuntimeStatus.qwen?.usable,
+      runtimeReason: sourceRuntimeStatus.qwen?.reason,
+    };
+  }
+
+  const dataDir = path.join(getRuntimePaths().appHome, "omnirouter");
+  const repair = await bootstrapQwenGuestHeaders(dataDir, { force });
+  if (!repair.ok || !omniReady) {
+    return {
+      ...repair,
+      runtimeUsable: sourceRuntimeStatus.qwen?.usable,
+      runtimeReason: sourceRuntimeStatus.qwen?.reason,
+    };
+  }
+
+  const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
+  const status = await probeQwenUsability(internalToken, false);
+  sourceRuntimeStatus.qwen = status;
+  return {
+    ...repair,
+    runtimeUsable: status.usable,
+    runtimeReason: status.reason,
+  };
+}
+
 export function isFreeModelSourceRuntimeReady(): boolean {
   return omniReady;
 }
@@ -611,6 +664,7 @@ export function buildOmniEnvironment(
     RETRY_PER_PROVIDER: "1",
     QWEN_TOKEN: credentials.qwenToken ?? "",
     QWEN_TOKENS: "",
+    QWEN_BX_FILE: path.join(dataDir, "qwen-bx.json"),
     ZAI_TOKEN: credentials.glmToken ?? "",
     ZAI_TOKENS: "",
     DEEPSEEK_TOKENS: credentials.deepseekToken ?? "",
