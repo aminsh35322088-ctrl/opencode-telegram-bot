@@ -57,6 +57,64 @@ describe("bot/streaming/tool-call-streamer", () => {
     expect(editText).toHaveBeenCalledWith("s1", 10, "first\n\nsecond");
   });
 
+  it("starts a clean stream when the same session enters a new run generation", async () => {
+    vi.useFakeTimers();
+
+    let generation = 1;
+    let nextMessageId = 10;
+    const sendText = vi.fn(async () => nextMessageId++);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ToolCallStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+      resolveRunGeneration: () => generation,
+    });
+
+    streamer.append("s1", "old command");
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(1);
+    });
+
+    generation = 2;
+    streamer.append("s1", "new command");
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendText).toHaveBeenNthCalledWith(1, "s1", "old command");
+    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "new command");
+    expect(editText).not.toHaveBeenCalled();
+  });
+
+  it("drops a throttled stale-run sync before it reaches Telegram", async () => {
+    vi.useFakeTimers();
+
+    let generation = 1;
+    const sendText = vi.fn().mockResolvedValue(10);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ToolCallStreamer({
+      throttleMs: 200,
+      sendText,
+      editText,
+      deleteText,
+      resolveRunGeneration: () => generation,
+    });
+
+    streamer.append("s1", "stale command");
+    generation = 2;
+    streamer.append("s1", "current command");
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(sendText).toHaveBeenCalledWith("s1", "current command");
+    expect(editText).not.toHaveBeenCalled();
+  });
+
   it("keeps todo updates in a separate message stream", async () => {
     vi.useFakeTimers();
 
