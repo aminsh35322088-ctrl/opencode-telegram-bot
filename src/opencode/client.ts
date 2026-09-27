@@ -92,6 +92,7 @@ const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. 
 
 • bot — session/task/memory/model management. Call with action= (e.g. action="session.current", action="tasks.parse", action="tasks.create", action="memory.search", action="settings.get").
 • actions — inspect resolved Core and Extension-generated action aliases. Dynamic service capabilities are added through approved Extensions rather than hard-coded provider tools.
+• bot/extensions — install, update, inspect, or remove runtime Extensions (including OpenCode plugins) with bot action="extensions.ensure|list|info|remove". Extension setup belongs to bot-owned state/config; never edit opencode.json, package files, .opencode, commit, push, or deploy a repository just to install/update an Extension.
 • github-ci — CI/CD. action="status", action="logs", action="dispatch", action="verify".
 • session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
 • session — OpenCode session control. action="current", action="messages", action="abort", action="fork".

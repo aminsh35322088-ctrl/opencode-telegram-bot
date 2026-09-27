@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { deleteCustomProvider, listCustomProviders } from "./custom-provider-service.js";
+import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
 import { deleteMcpServer } from "./mcp-server-service.js";
 import { listManagedMcpServers } from "./mcp-server-store.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "./skill-manage-service.js";
 import { loadSkillsCatalog } from "./skills-catalog-service.js";
 import { getTailscaleRuntimeStatus, removeTailscaleIntegration } from "./tailscale-integration-service.js";
-import { listStoredExtensions, getStoredExtension, removeStoredExtension } from "./extension-store.js";
+import { listStoredExtensions, getStoredExtension, removeStoredExtension, saveStoredExtension } from "./extension-store.js";
 import { removeExtensionCredentials } from "./credential-vault-service.js";
 import { removeGeneratedActionsForExtension } from "./generated-action-store.js";
 import type { ExtensionRecord, ExtensionSummary } from "../types/extension.js";
@@ -134,6 +135,22 @@ export async function removeExtension(projectDirectory: string, id: string): Pro
 }> {
   const stored = await getStoredExtension(id);
   let removed = false;
+
+  if (stored?.resource.kind === "plugin") {
+    await removeStoredExtension(id);
+    try {
+      await reloadManagedOpenCodeConfig("extension_plugin_remove", { timeoutMs: 30_000 });
+    } catch (error) {
+      await saveStoredExtension(stored);
+      await reloadManagedOpenCodeConfig("extension_plugin_remove_rollback", { timeoutMs: 30_000 }).catch(() => {});
+      throw error;
+    }
+    const [credentialsRemoved, actionsRemoved] = await Promise.all([
+      removeExtensionCredentials(id),
+      removeGeneratedActionsForExtension(id),
+    ]);
+    return { removed: true, credentialsRemoved, actionsRemoved };
+  }
 
   if (stored?.resource.kind === "mcp") {
     removed = (await deleteMcpServer(stored.resource.projectDirectory, stored.resource.serverName)).deleted;

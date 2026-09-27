@@ -46,6 +46,9 @@ function normalizeResource(value: unknown): ExtensionRecord["resource"] | null {
   if (value.kind === "model-provider" && typeof value.providerId === "string" && value.providerId.trim()) {
     return { kind: "model-provider", providerId: value.providerId.trim() };
   }
+  if (value.kind === "plugin" && typeof value.specifier === "string" && value.specifier.trim()) {
+    return { kind: "plugin", specifier: value.specifier.trim() };
+  }
   if (value.kind === "integration" && typeof value.adapter === "string" && value.adapter.trim()) {
     return { kind: "integration", adapter: value.adapter.trim() };
   }
