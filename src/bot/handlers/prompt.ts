@@ -27,6 +27,7 @@ import { resolvePendingAttachments } from "../../app/services/prompt-attachment-
 import { startSessionStallWatchdog, stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
+import { ensureQwenGuestAccessFresh } from "../../app/services/free-model-source-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
 
 export function clearPromptResponseMode(_sessionId: string): void {}
@@ -131,6 +132,14 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = modelOverride ?? getStoredModel();
+    if (storedModel.providerID === "experimental-qwen-web") {
+      const refresh = await ensureQwenGuestAccessFresh();
+      if (refresh) {
+        logger.info(
+          `[FreeModelSources] Qwen preflight refresh completed: ok=${refresh.ok} verified=${refresh.verified} runtimeUsable=${refresh.runtimeUsable ?? "n/a"}`,
+        );
+      }
+    }
     const parts: Array<TextPartInput | FilePartInput> = [];
     if (text.trim()) parts.push({ type: "text", text });
     parts.push(...fileParts);
