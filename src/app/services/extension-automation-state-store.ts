@@ -18,6 +18,10 @@ function credentialDir(): string {
   return path.join(rootDir(), "credentials");
 }
 
+function addIntentDir(): string {
+  return path.join(rootDir(), "add-intents");
+}
+
 function sessionKey(sessionId: string): string {
   return createHash("sha256").update(sessionId).digest("hex");
 }
@@ -61,6 +65,10 @@ function credentialPath(challengeId: string): string {
   return path.join(credentialDir(), `${challengeId}.json`);
 }
 
+function addIntentPath(sessionId: string): string {
+  return path.join(addIntentDir(), `${sessionKey(sessionId)}.json`);
+}
+
 export function writeSharedPendingOAuth<T extends { sessionId: string }>(value: T): void {
   atomicWrite(oauthPath(value.sessionId), value);
 }
@@ -71,6 +79,37 @@ export function readSharedPendingOAuth<T>(sessionId: string): T | null {
 
 export function removeSharedPendingOAuth(sessionId: string): void {
   removeFile(oauthPath(sessionId));
+}
+
+export function writeSharedPendingAdd<T extends { sessionId: string }>(value: T): void {
+  atomicWrite(addIntentPath(value.sessionId), value);
+}
+
+export function readSharedPendingAdd<T>(sessionId: string): T | null {
+  return readJson<T>(addIntentPath(sessionId));
+}
+
+export function claimSharedPendingAdd<T>(sessionId: string): T | null {
+  const source = addIntentPath(sessionId);
+  const claimed = `${source}.claimed`;
+  try {
+    ensureDir(path.dirname(source));
+    fs.renameSync(source, claimed);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger.warn(`[Extensions] Could not claim shared add intent: session=${sessionId}`);
+    }
+    return null;
+  }
+  try {
+    return readJson<T>(claimed);
+  } finally {
+    removeFile(claimed);
+  }
+}
+
+export function removeSharedPendingAdd(sessionId: string): void {
+  removeFile(addIntentPath(sessionId));
 }
 
 export function writeSharedCredentialChallenge<T extends { id: string }>(value: T): void {
