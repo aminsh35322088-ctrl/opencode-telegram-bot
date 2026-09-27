@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { getStoredExtension } from "./extension-store.js";
 import { getExtensionCredentialStatus, saveExtensionCredential } from "./credential-vault-service.js";
 import type { ExtensionCredentialSchema } from "../types/extension.js";
+import {
+  listSharedCredentialChallenges,
+  readSharedCredentialChallenge,
+  removeSharedCredentialChallenge,
+  writeSharedCredentialChallenge,
+} from "./extension-automation-state-store.js";
 
 const CHALLENGE_TTL_MS = 10 * 60_000;
 
@@ -19,11 +25,13 @@ export interface SecureCredentialChallenge {
   used: boolean;
 }
 
-const challenges = new Map<string, SecureCredentialChallenge>();
-
 function prune(): void {
   const now = Date.now();
-  for (const [id, challenge] of challenges) if (challenge.used || challenge.expiresAt <= now) challenges.delete(id);
+  for (const challenge of listSharedCredentialChallenges<SecureCredentialChallenge>()) {
+    if (challenge.used || challenge.expiresAt <= now) {
+      removeSharedCredentialChallenge(challenge.id);
+    }
+  }
 }
 
 async function schemaFor(extensionId: string, credentialId: string): Promise<ExtensionCredentialSchema> {
@@ -53,7 +61,7 @@ export async function createSecureCredentialChallenge(input: {
     expiresAt: now + CHALLENGE_TTL_MS,
     used: false,
   };
-  challenges.set(challenge.id, challenge);
+  writeSharedCredentialChallenge(challenge);
   return {
     challengeId: challenge.id,
     status: "awaiting-user-input",
@@ -65,9 +73,14 @@ export async function createSecureCredentialChallenge(input: {
   };
 }
 
-export function bindSecureCredentialChallenge(challengeId: string, chatId: number, threadId: number | undefined, userId: number): SecureCredentialChallenge {
+export function bindSecureCredentialChallenge(
+  challengeId: string,
+  chatId: number,
+  threadId: number | undefined,
+  userId: number,
+): SecureCredentialChallenge {
   prune();
-  const challenge = challenges.get(challengeId);
+  const challenge = readSharedCredentialChallenge<SecureCredentialChallenge>(challengeId);
   if (!challenge || challenge.used || challenge.expiresAt <= Date.now()) throw new Error("Secure credential challenge expired.");
   if (challenge.chatId !== undefined && challenge.chatId !== chatId) throw new Error("Secure credential challenge scope mismatch.");
   if (challenge.threadId !== undefined && challenge.threadId !== threadId) throw new Error("Secure credential challenge Topic mismatch.");
@@ -75,44 +88,53 @@ export function bindSecureCredentialChallenge(challengeId: string, chatId: numbe
   challenge.chatId = chatId;
   challenge.userId = userId;
   if (threadId !== undefined) challenge.threadId = threadId;
+  writeSharedCredentialChallenge(challenge);
   return { ...challenge };
 }
 
 export function getSecureCredentialChallenge(challengeId: string): SecureCredentialChallenge | null {
   prune();
-  const challenge = challenges.get(challengeId);
+  const challenge = readSharedCredentialChallenge<SecureCredentialChallenge>(challengeId);
   return challenge ? { ...challenge } : null;
 }
 
 export function findSecureCredentialChallenge(chatId: number, threadId?: number): SecureCredentialChallenge | null {
   prune();
-  const matches = [...challenges.values()].filter((item) => !item.used && item.chatId === chatId && item.threadId === threadId);
-  if (matches.length !== 1) return null;
-  return { ...matches[0]! };
+  const matches = listSharedCredentialChallenges<SecureCredentialChallenge>()
+    .filter((item) => !item.used && item.chatId === chatId && item.threadId === threadId);
+  return matches.length === 1 ? { ...matches[0]! } : null;
 }
 
 export function findUnboundSecureCredentialChallenge(sessionId: string): SecureCredentialChallenge | null {
   prune();
-  const matches = [...challenges.values()].filter((item) => !item.used && item.sessionId === sessionId && item.chatId === undefined);
+  const matches = listSharedCredentialChallenges<SecureCredentialChallenge>()
+    .filter((item) => !item.used && item.sessionId === sessionId && item.chatId === undefined);
   return matches.length === 1 ? { ...matches[0]! } : null;
 }
 
-export async function submitSecureCredential(challengeId: string, chatId: number, threadId: number | undefined, userId: number, secret: string): Promise<SecureCredentialChallenge> {
+export async function submitSecureCredential(
+  challengeId: string,
+  chatId: number,
+  threadId: number | undefined,
+  userId: number,
+  secret: string,
+): Promise<SecureCredentialChallenge> {
   prune();
-  const challenge = challenges.get(challengeId);
+  const challenge = readSharedCredentialChallenge<SecureCredentialChallenge>(challengeId);
   if (!challenge || challenge.used || challenge.expiresAt <= Date.now()) throw new Error("Secure credential challenge expired.");
-  if (challenge.chatId !== chatId || challenge.threadId !== threadId || challenge.userId !== userId) throw new Error("Secure credential challenge scope mismatch.");
+  if (challenge.chatId !== chatId || challenge.threadId !== threadId || challenge.userId !== userId) {
+    throw new Error("Secure credential challenge scope mismatch.");
+  }
   await schemaFor(challenge.extensionId, challenge.credentialId);
   await saveExtensionCredential(challenge.extensionId, challenge.credentialId, secret);
   challenge.used = true;
-  challenges.delete(challengeId);
+  removeSharedCredentialChallenge(challengeId);
   return { ...challenge };
 }
 
 export function cancelSecureCredentialChallenge(challengeId: string): boolean {
-  const challenge = challenges.get(challengeId);
+  const challenge = readSharedCredentialChallenge<SecureCredentialChallenge>(challengeId);
   if (!challenge) return false;
-  challenge.used = true;
-  challenges.delete(challengeId);
+  removeSharedCredentialChallenge(challengeId);
   return true;
 }

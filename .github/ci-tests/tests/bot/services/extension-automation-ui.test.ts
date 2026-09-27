@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   pendingEnsure: vi.fn(),
   pendingOAuth: vi.fn(),
   verifyOAuth: vi.fn(),
+  completeOAuth: vi.fn(),
   storedExtension: vi.fn(),
   unboundChallenge: vi.fn(),
 }));
@@ -34,7 +35,7 @@ vi.mock("../../../src/app/services/extension-ensure-service.js", () => ({
   finalizeExtensionCredential: mocks.finalize,
   approveExtensionEnsure: vi.fn(),
   cancelExtensionEnsure: vi.fn(),
-  completeExtensionOAuth: vi.fn(),
+  completeExtensionOAuth: mocks.completeOAuth,
   findPendingExtensionEnsure: mocks.pendingEnsure,
   getExtensionEnsureRequest: vi.fn(() => null),
   getPendingExtensionOAuth: mocks.pendingOAuth,
@@ -66,12 +67,13 @@ import {
   presentPendingExtensionAutomation,
 } from "../../../src/bot/services/extension-automation-ui.js";
 
-function secureContext(deleteMessage: ReturnType<typeof vi.fn>): Context {
+function secureContext(deleteMessage: ReturnType<typeof vi.fn>, text = "super-secret"): Context {
   return {
     chat: { id: 100, type: "private" },
     from: { id: 42, is_bot: false, first_name: "User" },
-    message: { message_id: 900, text: "super-secret", date: 1, chat: { id: 100, type: "private" } },
+    message: { message_id: 900, text, date: 1, chat: { id: 100, type: "private" } },
     deleteMessage,
+    reply: vi.fn().mockResolvedValue({ message_id: 901 }),
     api: { editMessageText: vi.fn().mockResolvedValue(true) },
   } as unknown as Context;
 }
@@ -106,6 +108,7 @@ describe("Extension secure credential input", () => {
     mocks.pendingEnsure.mockReturnValue(null);
     mocks.pendingOAuth.mockReturnValue(null);
     mocks.verifyOAuth.mockResolvedValue({ status: "pending" });
+    mocks.completeOAuth.mockResolvedValue({ name: "Graphify" });
     mocks.unboundChallenge.mockReturnValue(null);
     mocks.storedExtension.mockResolvedValue(null);
   });
@@ -144,6 +147,15 @@ describe("Extension secure credential input", () => {
   });
 
   it("finishes MCP OAuth from the Check button and resumes the session", async () => {
+    mocks.pendingOAuth.mockReturnValue({
+      extensionId: "mcp:graphify",
+      projectDirectory: "/work/repo",
+      serverName: "graphify",
+      sessionId: "ses-secure",
+      oauthState: "oauth-state",
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      expiresAt: Date.now() + 60_000,
+    });
     mocks.verifyOAuth.mockResolvedValue({
       status: "ready",
       extension: { name: "Graphify" },
@@ -169,6 +181,50 @@ describe("Extension secure credential input", () => {
       { parse_mode: "HTML" },
     );
     expect(mocks.promptAsync).toHaveBeenCalled();
+  });
+
+  it("consumes a real OAuth callback before it can reach the model", async () => {
+    mocks.getSnapshot.mockReturnValue(null);
+    mocks.pendingOAuth.mockReturnValue({
+      extensionId: "mcp:graphify",
+      projectDirectory: "/work/repo",
+      serverName: "graphify",
+      sessionId: "ses-secure",
+      oauthState: "oauth-state",
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      expiresAt: Date.now() + 60_000,
+    });
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+    const callbackUrl =
+      "http://127.0.0.1:19876/mcp/oauth/callback?code=secret-code&state=oauth-state";
+    const ctx = secureContext(deleteMessage, callbackUrl);
+
+    await expect(handleSecureExtensionMessage(ctx)).resolves.toBe(true);
+
+    expect(deleteMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.completeOAuth).toHaveBeenCalledWith("ses-secure", callbackUrl);
+    expect(ctx.reply).toHaveBeenCalledWith("✅ Graphify connected");
+    expect(mocks.promptAsync).toHaveBeenCalled();
+  });
+
+  it("does not consume ordinary text merely because OAuth is pending", async () => {
+    mocks.getSnapshot.mockReturnValue(null);
+    mocks.pendingOAuth.mockReturnValue({
+      extensionId: "mcp:graphify",
+      projectDirectory: "/work/repo",
+      serverName: "graphify",
+      sessionId: "ses-secure",
+      oauthState: "oauth-state",
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      expiresAt: Date.now() + 60_000,
+    });
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+    const ctx = secureContext(deleteMessage, "can I do something else meanwhile?");
+
+    await expect(handleSecureExtensionMessage(ctx)).resolves.toBe(false);
+
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(mocks.completeOAuth).not.toHaveBeenCalled();
   });
 
   it("fails closed when Telegram cannot delete the secret message", async () => {

@@ -58,6 +58,7 @@ vi.mock("../../../src/app/services/extension-action-generator-service.js", () =>
   generateExtensionActions: mocks.generateActions,
 }));
 
+import { clearSharedExtensionAutomationState } from "../../../src/app/services/extension-automation-state-store.js";
 import {
   addMcpBackedExtension,
   addSkillExtension,
@@ -68,6 +69,7 @@ import {
 } from "../../../src/app/services/extension-ensure-service.js";
 describe("conversational Extension add flows", () => {
   beforeEach(() => {
+    clearSharedExtensionAutomationState();
     vi.clearAllMocks();
     mocks.listExtensions.mockResolvedValue([]);
     mocks.getExtension.mockResolvedValue(null);
