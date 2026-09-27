@@ -51,6 +51,10 @@ interface StoredFreeModelSourceCredentials {
   freebuffToken?: string;
 }
 
+interface StoredFreeModelSourceRuntime {
+  routerKey?: string;
+}
+
 interface SourceDefinition {
   id: FreeModelSourceID;
   providerID: string;
@@ -149,6 +153,7 @@ const STARTUP_TIMEOUT_MS = 15_000;
 const HEALTH_ATTEMPT_TIMEOUT_MS = 1_000;
 const HEALTH_POLL_MS = 250;
 const MODEL_DISCOVERY_TIMEOUT_MS = 5_000;
+const ROUTER_AUTH_TIMEOUT_MS = 3_000;
 const EXPECTED_OMNI_VERSION = "1.4.0";
 const PROCESS_EXIT_GRACE_MS = 2_500;
 const PROCESS_KILL_GRACE_MS = 1_500;
@@ -229,6 +234,60 @@ function ensureSecret(envKey: string, prefix = ""): string {
 
 function executablePath(): string {
   return process.env.OMNIROUTER_BINARY?.trim() || OMNI_BINARY;
+}
+
+function normalizeRuntimeSecrets(value: unknown): StoredFreeModelSourceRuntime {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const routerKey = typeof raw.routerKey === "string" ? raw.routerKey.trim() : "";
+  return routerKey ? { routerKey } : {};
+}
+
+export function extractPersistedOmniRouterKey(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const keys = (value as { keys?: unknown }).keys;
+  if (!Array.isArray(keys)) return undefined;
+
+  const enabled = keys
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
+    .filter((entry) => entry.enabled === true && typeof entry.key === "string" && entry.key.trim().length > 0);
+  const preferred = enabled.find((entry) => entry.name === "default") ?? enabled[0];
+  return typeof preferred?.key === "string" ? preferred.key.trim() : undefined;
+}
+
+async function readPersistedOmniRouterKey(dataDir: string): Promise<string | undefined> {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(dataDir, "omnirouter.json"), "utf8")) as unknown;
+    return extractPersistedOmniRouterKey(raw);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    logger.warn("[FreeModelSources] Cannot read persisted OmniRouter key state; falling back to app state", error);
+    return undefined;
+  }
+}
+
+async function resolveRouterKey(dataDir: string): Promise<string> {
+  const state = await readAppState();
+  const runtime = normalizeRuntimeSecrets(state.freeModelSourcesRuntime);
+  const storeKey = await readPersistedOmniRouterKey(dataDir);
+  const envKey = process.env[ROUTER_KEY_ENV]?.trim();
+
+  // Migration rule: an existing OmniRouter store is authoritative because
+  // upstream EnsureSeedKey() keeps the first enabled persisted key and ignores
+  // a different ROUTER_KEY on later starts.
+  const routerKey = storeKey || runtime.routerKey || envKey || ("sk-otb-" + randomBytes(24).toString("hex"));
+  process.env[ROUTER_KEY_ENV] = routerKey;
+
+  if (runtime.routerKey !== routerKey) {
+    await updateAppState((current) => ({
+      freeModelSourcesRuntime: {
+        ...normalizeRuntimeSecrets(current.freeModelSourcesRuntime),
+        routerKey,
+      },
+    }));
+  }
+
+  return routerKey;
 }
 
 function normalizeCredentials(value: unknown): StoredFreeModelSourceCredentials {
@@ -649,6 +708,18 @@ async function waitForOmni(processRef: ChildProcess, getSpawnError: () => Error 
   return false;
 }
 
+async function verifyRouterKey(routerKey: string): Promise<void> {
+  const response = await fetch(`${OMNI_BASE_URL}/v1/models`, {
+    headers: { Authorization: `Bearer ${routerKey}` },
+    signal: AbortSignal.timeout(ROUTER_AUTH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    await response.arrayBuffer().catch(() => undefined);
+    throw new Error(`OmniRouter rejected the internal OpenCode router key (HTTP ${response.status})`);
+  }
+  await response.arrayBuffer().catch(() => undefined);
+}
+
 export function buildOmniEnvironment(
   credentials: StoredFreeModelSourceCredentials,
   dataDir: string,
@@ -693,12 +764,12 @@ export function buildOmniEnvironment(
 async function startFreeModelSourcesInternal(): Promise<boolean> {
   if (omniReady && omniProcess && !childHasExited(omniProcess)) return true;
 
-  const routerKey = ensureSecret(ROUTER_KEY_ENV, "sk-otb-");
+  const dataDir = path.join(getRuntimePaths().appHome, "omnirouter");
+  await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+  const routerKey = await resolveRouterKey(dataDir);
   const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
   const adminPassword = ensureSecret(ADMIN_PASSWORD_ENV);
   const credentials = await readCredentials();
-  const dataDir = path.join(getRuntimePaths().appHome, "omnirouter");
-  await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
 
   let spawnError: Error | null = null;
   const child = spawn(executablePath(), [], {
@@ -726,6 +797,8 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
   try {
     const ready = await waitForOmni(child, () => spawnError);
     if (!ready) throw new Error("OmniRouter did not become ready");
+    await verifyRouterKey(routerKey);
+    logger.info("[FreeModelSources] internal OpenCode router key verified");
     await discoverAllModels(internalToken);
     if (childHasExited(child)) throw new Error("OmniRouter exited during model discovery");
     await refreshSourceRuntimeStatus(credentials, internalToken);
