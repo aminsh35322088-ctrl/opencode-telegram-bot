@@ -1506,10 +1506,14 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       if (isQwenRiskControlError(message)) {
         logger.warn(`[FreeModelSources] Qwen risk-control retry detected; refreshing Baxia headers: session=${sessionId}`);
-        const repair = await repairQwenGuestAccess(true);
-        logger.info(
-          `[FreeModelSources] Qwen retry refresh completed: session=${sessionId} ok=${repair.ok} verified=${repair.verified} runtimeUsable=${repair.runtimeUsable ?? "n/a"}`,
-        );
+        try {
+          const repair = await repairQwenGuestAccess(true);
+          logger.info(
+            `[FreeModelSources] Qwen retry refresh completed: session=${sessionId} ok=${repair.ok} verified=${repair.verified} runtimeUsable=${repair.runtimeUsable ?? "n/a"}`,
+          );
+        } catch (error) {
+          logger.warn(`[FreeModelSources] Qwen retry refresh failed: session=${sessionId}`, error);
+        }
       }
 
       if (isCompactProgressMode()) {
