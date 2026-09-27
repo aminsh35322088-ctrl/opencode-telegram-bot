@@ -539,10 +539,29 @@ async function refreshSourceRuntimeStatus(
   for (const source of SOURCES) {
     const configured = Boolean(credentials[source.credentialKey]);
     if (source.id === "qwen") {
-      let status = await probeQwenUsability(internalToken, configured);
+      const qwenDataDir = path.join(getRuntimePaths().appHome, "omnirouter");
+      let status: SourceRuntimeStatus | null = null;
+
+      if (!configured) {
+        const ageMs = await qwenBxAgeMs(qwenDataDir);
+        if (ageMs === null || ageMs > QWEN_BX_MAX_AGE_MS) {
+          logger.info(
+            `[FreeModelSources] Qwen Baxia headers are ${ageMs === null ? "missing" : `${Math.round(ageMs / 1000)}s old`}; refreshing before startup probe`,
+          );
+          const repair = await bootstrapQwenGuestHeaders(qwenDataDir, { force: true });
+          if (repair.ok) {
+            logger.info(`[FreeModelSources] Qwen startup browser verification: verified=${repair.verified}`);
+          } else {
+            const reason = (repair.reason ?? "unknown").replace(/[\r\n]+/g, " ").slice(0, 240);
+            logger.warn(`[FreeModelSources] Qwen startup browser refresh failed: reason=${reason}`);
+          }
+        }
+      }
+
+      status = await probeQwenUsability(internalToken, configured);
       if (!configured && !status.usable) {
         logger.info("[FreeModelSources] Qwen guest probe failed; attempting automatic browser bootstrap");
-        const repair = await bootstrapQwenGuestHeaders(path.join(getRuntimePaths().appHome, "omnirouter"));
+        const repair = await bootstrapQwenGuestHeaders(qwenDataDir, { force: true });
         if (repair.ok) {
           logger.info(`[FreeModelSources] Qwen browser bootstrap captured headers: verified=${repair.verified}`);
           status = await probeQwenUsability(internalToken, false);
