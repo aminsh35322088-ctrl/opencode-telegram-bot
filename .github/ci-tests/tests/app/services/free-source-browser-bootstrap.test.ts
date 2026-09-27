@@ -9,6 +9,8 @@ describe("Qwen guest browser bootstrap", () => {
     expect(script).toContain("bx-umidtoken");
     expect(script).toContain("bx-v");
     expect(script).toContain("/api/v2/chats/new");
+    expect(script).toContain("/api/v2/chat/completions");
+    expect(script).toContain("text/event-stream");
     expect(script).toContain("__OTB_QWEN_BX__");
   });
 
