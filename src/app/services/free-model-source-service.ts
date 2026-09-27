@@ -483,12 +483,18 @@ async function refreshSourceRuntimeStatus(
         logger.info("[FreeModelSources] Qwen guest probe failed; attempting automatic browser bootstrap");
         const repair = await bootstrapQwenGuestHeaders(path.join(getRuntimePaths().appHome, "omnirouter"));
         if (repair.ok) {
+          logger.info(`[FreeModelSources] Qwen browser bootstrap captured headers: verified=${repair.verified}`);
           status = await probeQwenUsability(internalToken, false);
           if (!status.usable) {
+            logger.warn(`[FreeModelSources] Qwen remained unavailable after browser bootstrap: ${status.reason ?? "unknown"}`);
             status.reason = "Automatic Qwen browser bootstrap completed, but upstream still rejected guest access. Connect a Qwen account token.";
           }
-        } else if (!repair.skipped) {
-          status.reason = "Automatic Qwen guest bootstrap failed. Connect a Qwen account token or retry automatic repair.";
+        } else {
+          const reason = (repair.reason ?? "unknown").replace(/[\r\n]+/g, " ").slice(0, 240);
+          logger.warn(`[FreeModelSources] Qwen browser bootstrap failed: skipped=${Boolean(repair.skipped)} reason=${reason}`);
+          if (!repair.skipped) {
+            status.reason = "Automatic Qwen guest bootstrap failed. Connect a Qwen account token or retry automatic repair.";
+          }
         }
       }
       next.qwen = status;
