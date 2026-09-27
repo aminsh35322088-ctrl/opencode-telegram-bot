@@ -47,17 +47,22 @@ function sanitizedBrowserEnv(dataDir: string): NodeJS.ProcessEnv {
   };
 }
 
-function captureScript(): string {
+export function captureScript(): string {
   return `async page => {
     const marker = ${JSON.stringify(MARKER)};
     let captured = null;
+    let completionHeaders = null;
     const onRequest = req => {
       if (!req.url().includes('/api/v2/')) return;
       const h = req.headers();
       const ua = h['bx-ua'];
       const umid = h['bx-umidtoken'];
       const v = h['bx-v'];
-      if (!captured && ua && umid && v) captured = { bxUA: ua, bxUmidToken: umid, bxV: v };
+      if (ua && umid && v) {
+        const headers = { bxUA: ua, bxUmidToken: umid, bxV: v };
+        if (!captured) captured = headers;
+        if (req.url().includes('/api/v2/chat/completions')) completionHeaders = headers;
+      }
     };
     const waf = text => {
       const low = String(text || '').toLowerCase();
@@ -196,7 +201,7 @@ function captureScript(): string {
         (String(probe.ct).toLowerCase().startsWith('text/event-stream') || probe.status > 0);
 
       return marker + JSON.stringify({
-        captured,
+        captured: completionHeaders || captured,
         verified,
         status: probe.status,
         reason: verified
