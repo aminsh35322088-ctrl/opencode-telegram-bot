@@ -7,7 +7,7 @@ This subsystem adds optional free model sources without changing the bot's stabl
 | Source | Login requirement | Transport/capability notes |
 | --- | --- | --- |
 | Gemini Web | Guest works; account cookies optional | text + real image transport + emulated tool calling |
-| Qwen Web | Guest is network-dependent; datacenter/Railway hosts may require an account token | text + emulated tool calling; image transport is deliberately **not** advertised |
+| Qwen Web | Guest is live-tested and automatically repaired with the bundled browser; account token is the final fallback | text + emulated tool calling; image transport is deliberately **not** advertised |
 | GLM Web (Z.AI) | account/device authorization required for reliable chat | text + real image transport + emulated tool calling |
 | DeepSeek Web | human account login/session required; no guest mode | text + emulated tool calling |
 | Freebuff | official browser login (automatic capture) or one normal account token | curated free catalog; text/tool integration, upstream seat/quota/geography controls remain authoritative |
@@ -15,7 +15,11 @@ This subsystem adds optional free model sources without changing the bot's stabl
 
 The feature is **OFF by default** under **Settings → Experimental → Free Model Sources**.
 
-Connections are managed under **Settings → API Connections → Free Model Sources**. Gemini guest mode is zero-input. Freebuff uses its official CLI-style browser login: the bot requests a login URL from Freebuff, the user approves it in the browser, then the bot reads the approved token from Freebuff's official status endpoint, verifies it against Codebuff, stores it privately, and reloads the runtime. Qwen, GLM and DeepSeek still require upstream account/human authorization when their guest path is unavailable; the UI does not label those states as fully automatic. Manual token paste remains available where needed. The bot accepts at most one credential per source and does not expose multi-account pooling or token rotation.
+Connections are managed under **Settings → API Connections → Free Model Sources**. Gemini guest mode is zero-input. Freebuff uses its official CLI-style browser login: the bot requests a login URL from Freebuff, the user approves it in the browser, then the bot reads the approved token from Freebuff's official status endpoint, verifies it against Codebuff, stores it privately, and reloads the runtime.
+
+Qwen is also zero-copy first: the runtime performs a live guest probe. If Railway is challenged by Qwen/Baxia, the bot reuses the Chromium already bundled in the production image through the pinned Playwright CLI, captures the browser-generated Baxia headers, writes `qwen-bx.json` under the persistent OmniRouter data directory with mode `0600`, and immediately probes Qwen again. Only if that repaired guest path is still rejected does the UI ask for a Qwen account token.
+
+GLM and DeepSeek still require upstream account/human authorization. Their available upstream flows do not provide a safe remote device-grant equivalent that the Telegram bot can complete without interactive browser/captcha/account steps. Manual token paste therefore remains available for those sources. The bot accepts at most one credential per source and does not expose multi-account pooling or token rotation.
 
 ## Runtime architecture
 
@@ -61,7 +65,7 @@ The bot advertises the **effective transport capability**, not upstream marketin
 
 - Gemini: Vision = true
 - GLM: Vision = true
-- Qwen: Vision = false in this bridge integration; guest access can be rejected from datacenter IPs, so account-token setup remains available
+- Qwen: Vision = false in this bridge integration; datacenter guest access is auto-repaired with persisted browser Baxia headers when possible, with account-token setup retained as fallback
 - DeepSeek: Vision = false
 - Freebuff: Vision = false conservatively
 - all five expose tool calling through their compatibility layer
