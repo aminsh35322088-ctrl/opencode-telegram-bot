@@ -3,6 +3,7 @@ import {
   buildFreeSourceProviderConfigs,
   buildOmniEnvironment,
   cancelFreebuffAutoConnect,
+  extractPersistedOmniRouterKey,
   checkFreebuffAutoConnect,
   getPendingFreebuffAutoConnect,
   startFreebuffAutoConnect,
@@ -86,6 +87,24 @@ describe("experimental free model source config", () => {
       delete process.env.GITHUB_TOKEN;
       delete process.env.SSL_CERT_FILE;
     }
+  });
+
+  it("adopts the persisted OmniRouter default key across bot restarts", () => {
+    expect(extractPersistedOmniRouterKey({
+      keys: [
+        { key: "sk-oauth", name: "cline", enabled: true },
+        { key: "sk-persisted-default", name: "default", enabled: true },
+      ],
+    })).toBe("sk-persisted-default");
+
+    expect(extractPersistedOmniRouterKey({
+      keys: [
+        { key: "sk-disabled", name: "default", enabled: false },
+        { key: "sk-first-enabled", name: "legacy", enabled: true },
+      ],
+    })).toBe("sk-first-enabled");
+
+    expect(extractPersistedOmniRouterKey({ keys: [] })).toBeUndefined();
   });
 
   it("starts the official Freebuff browser login and treats 401 status as pending", async () => {
