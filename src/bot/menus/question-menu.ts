@@ -8,6 +8,8 @@ import { interactionManager } from "../../app/managers/interaction-manager.js";
 import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
+import { resumePendingExtensionAddFromQuestion } from "../../app/services/extension-ensure-service.js";
+import { presentPendingExtensionAutomation } from "../services/extension-automation-ui.js";
 import { editRenderedBotPart, sendRenderedBotPart } from "../messages/telegram-text.js";
 import type { TelegramRenderedPart, TelegramRichBlock } from "../render/types.js";
 
@@ -170,22 +172,111 @@ export async function showNextQuestion(ctx: Context): Promise<void> {
   }
 }
 
+function collectQuestionAnswers(): string[][] {
+  const totalQuestions = questionManager.getTotalQuestions();
+  const allAnswers: string[][] = [];
+  for (let i = 0; i < totalQuestions; i++) {
+    const customAnswer = questionManager.getCustomAnswer(i);
+    const selectedAnswer = questionManager.getSelectedAnswer(i);
+    const answer = customAnswer || selectedAnswer || "";
+    allAnswers.push(answer ? answer.split("\n").filter((part) => part.trim()) : []);
+  }
+  return allAnswers;
+}
+
+async function presentExtensionResumeResult(
+  bot: Context["api"],
+  chatId: number,
+  sessionId: string,
+  result: Awaited<ReturnType<typeof resumePendingExtensionAddFromQuestion>>,
+): Promise<boolean> {
+  if (!result.handled) return false;
+
+  if (result.status === "cancelled") {
+    await bot.sendMessage(chatId, `❌ ${result.intent.name ?? "Extension"} setup cancelled`);
+    return true;
+  }
+
+  if (result.status === "failed") {
+    await bot.sendMessage(
+      chatId,
+      `⚠️ Could not add ${result.intent.name ?? "Extension"}: ${result.error}`,
+    );
+    return true;
+  }
+
+  if (result.result.status === "ready") {
+    await bot.sendMessage(
+      chatId,
+      `✅ ${result.result.extension.name} added. Its Actions were synchronized automatically.`,
+    );
+    return true;
+  }
+
+  const presented = await presentPendingExtensionAutomation(bot, chatId, sessionId);
+  if (!presented) {
+    await bot.sendMessage(
+      chatId,
+      result.result.status === "awaiting-oauth"
+        ? "🔐 Sign-in is required to finish adding this Extension."
+        : "🔑 A credential is required to finish adding this Extension.",
+    );
+  }
+  return true;
+}
+
 async function showPollSummary(bot: Context["api"], chatId: number): Promise<void> {
   const answers = questionManager.getAllAnswers();
   const totalQuestions = questionManager.getTotalQuestions();
+  const allAnswers = collectQuestionAnswers();
+  const questions = questionManager.getQuestions();
+  const currentSession = getCurrentSession();
 
   logger.info(
     `[QuestionHandler] Poll completed: ${answers.length}/${totalQuestions} questions answered`,
   );
 
-  // Send all answers to the OpenCode API
-  await sendAllAnswersToAgent(bot, chatId);
+  let extensionHandled = false;
+  if (currentSession?.id) {
+    try {
+      const extensionResult = await resumePendingExtensionAddFromQuestion({
+        sessionId: currentSession.id,
+        questions: questions.map((question) => ({
+          header: question.header,
+          question: question.question,
+        })),
+        answers: allAnswers,
+      });
+      extensionHandled = await presentExtensionResumeResult(
+        bot,
+        chatId,
+        currentSession.id,
+        extensionResult,
+      );
+      if (extensionResult.handled) {
+        logger.info(
+          `[Extensions] Question answer deterministically resumed pending add: session=${currentSession.id}, status=${extensionResult.status}`,
+        );
+      }
+    } catch (error) {
+      extensionHandled = true;
+      logger.error("[Extensions] Failed to resume pending add from Question answer:", error);
+      await bot.sendMessage(
+        chatId,
+        `⚠️ Extension setup failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  }
 
-  if (answers.length === 0) {
-    await bot.sendMessage(chatId, t("question.completed_no_answers"));
-  } else {
-    const summary = formatAnswersSummary(answers);
-    await bot.sendMessage(chatId, summary);
+  await sendAllAnswersToAgent(bot, chatId, allAnswers);
+
+  if (!extensionHandled) {
+    if (answers.length === 0) {
+      await bot.sendMessage(chatId, t("question.completed_no_answers"));
+    } else {
+      const summary = formatAnswersSummary(answers);
+      await bot.sendMessage(chatId, summary);
+    }
   }
 
   clearQuestionInteraction("question_completed");
@@ -193,7 +284,11 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
   logger.debug("[QuestionHandler] Poll completed and cleared");
 }
 
-async function sendAllAnswersToAgent(bot: Context["api"], chatId: number): Promise<void> {
+async function sendAllAnswersToAgent(
+  bot: Context["api"],
+  chatId: number,
+  allAnswers: string[][] = collectQuestionAnswers(),
+): Promise<void> {
   const currentProject = getCurrentProject();
   const currentSession = getCurrentSession();
   const requestID = questionManager.getRequestID();
@@ -212,35 +307,11 @@ async function sendAllAnswersToAgent(bot: Context["api"], chatId: number): Promi
     return;
   }
 
-  // Collect answers for all questions
-  // Format: Array<Array<string>> - for each question, an array of strings (selected options)
-  const allAnswers: string[][] = [];
-
-  for (let i = 0; i < totalQuestions; i++) {
-    const customAnswer = questionManager.getCustomAnswer(i);
-    const selectedAnswer = questionManager.getSelectedAnswer(i);
-
-    // Priority: custom answer > selected options
-    const answer = customAnswer || selectedAnswer || "";
-
-    if (answer) {
-      // Split by newlines if multiple options were selected (in multiple choice mode)
-      // Each option is formatted as "* Label: Description"
-      const answerParts = answer.split("\n").filter((part) => part.trim());
-      allAnswers.push(answerParts);
-    } else {
-      // Empty answer for unanswered questions
-      allAnswers.push([]);
-    }
-  }
-
   logger.info(
     `[QuestionHandler] Sending all ${totalQuestions} answers to agent via question.reply: requestID=${requestID}`,
   );
-  logger.debug(`[QuestionHandler] Answers payload:`, JSON.stringify(allAnswers, null, 2));
+  logger.debug("[QuestionHandler] Answers payload:", JSON.stringify(allAnswers, null, 2));
 
-  // CRITICAL: Fire-and-forget! Do not wait for question.reply to complete,
-  // otherwise it may block subsequent updates
   safeBackgroundTask({
     taskName: "question.reply",
     task: () =>
@@ -255,7 +326,6 @@ async function sendAllAnswersToAgent(bot: Context["api"], chatId: number): Promi
         void bot.sendMessage(chatId, t("question.send_answers_error")).catch(() => {});
         return;
       }
-
       logger.info("[QuestionHandler] All answers sent to agent successfully via question.reply");
     },
   });

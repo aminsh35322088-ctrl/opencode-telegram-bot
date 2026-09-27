@@ -13,6 +13,7 @@ class QuestionManager {
   getChatId(): number | null { return this.state().chatId; }
   isActiveForChat(chatId: number | undefined): boolean { const state = this.state(); return state.isActive && chatId !== undefined && (state.chatId === null || state.chatId === chatId); }
   getRequestID(): string | null { return this.state().requestID; }
+  getQuestions(): Question[] { return [...this.state().questions]; }
   getCurrentQuestion(): Question | null { const state = this.state(); return state.questions[state.currentIndex] ?? null; }
   selectOption(questionIndex: number, optionIndex: number): void { const state = this.state(); if (!state.isActive) return; const question = state.questions[questionIndex]; if (!question) return; const selected = state.selectedOptions.get(questionIndex) || new Set<number>(); if (question.multiple) { if (selected.has(optionIndex)) selected.delete(optionIndex); else selected.add(optionIndex); } else { selected.clear(); selected.add(optionIndex); } state.selectedOptions.set(questionIndex, selected); }
   getSelectedOptions(questionIndex: number): Set<number> { return this.state().selectedOptions.get(questionIndex) || new Set<number>(); }

@@ -9,7 +9,15 @@ import { resolveExtensionCredential } from "./credential-vault-service.js";
 import { extensionId, listExtensions } from "./extension-registry-service.js";
 import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
 import { generateExtensionActions } from "./extension-action-generator-service.js";
-import { readSharedPendingOAuth, removeSharedPendingOAuth, writeSharedPendingOAuth } from "./extension-automation-state-store.js";
+import {
+  claimSharedPendingAdd,
+  readSharedPendingAdd,
+  readSharedPendingOAuth,
+  removeSharedPendingAdd,
+  removeSharedPendingOAuth,
+  writeSharedPendingAdd,
+  writeSharedPendingOAuth,
+} from "./extension-automation-state-store.js";
 import type { ExtensionAuthType, ExtensionEnsureRequest, ExtensionKind, ExtensionRecord } from "../types/extension.js";
 
 const REQUEST_TTL_MS = 15 * 60_000;
@@ -282,6 +290,49 @@ function addQuestion(
   return { header, question, options, multiple: false };
 }
 
+interface PendingExtensionAddChoice {
+  label: string;
+  action: "add" | "cancel";
+  authType?: ExtensionAuthType;
+  source?: string;
+}
+
+interface PendingExtensionAddIntent {
+  sessionId: string;
+  projectDirectory: string;
+  kind: "mcp" | "skill" | "integration";
+  source: string;
+  name?: string;
+  purpose?: string;
+  question: { header: string; question: string };
+  choices: PendingExtensionAddChoice[];
+  createdAt: number;
+  expiresAt: number;
+}
+
+function writePendingAdd(
+  input: Omit<PendingExtensionAddIntent, "createdAt" | "expiresAt">,
+): PendingExtensionAddIntent {
+  const now = Date.now();
+  const intent: PendingExtensionAddIntent = {
+    ...input,
+    createdAt: now,
+    expiresAt: now + REQUEST_TTL_MS,
+  };
+  writeSharedPendingAdd(intent);
+  return intent;
+}
+
+function readPendingAdd(sessionId: string): PendingExtensionAddIntent | null {
+  const pending = readSharedPendingAdd<PendingExtensionAddIntent>(sessionId);
+  if (!pending) return null;
+  if (pending.sessionId !== sessionId || pending.expiresAt <= Date.now()) {
+    removeSharedPendingAdd(sessionId);
+    return null;
+  }
+  return pending;
+}
+
 export async function addSkillExtension(input: {
   sessionId: string;
   projectDirectory: string;
@@ -290,36 +341,63 @@ export async function addSkillExtension(input: {
 }): Promise<ConversationalExtensionAddResult> {
   const source = validateSource("skill", input.source);
   const resolved = await resolveSkillSource(source);
+
   if (resolved.kind === "list") {
+    if (input.confirmed) {
+      throw new Error("A concrete skill source is required before installation.");
+    }
+    const candidates = resolved.candidates.slice(0, 10);
+    const question = addQuestion(
+      "Choose Skill",
+      "Which skill do you want to add?",
+      candidates.map((candidate) => ({
+        label: candidate.name,
+        description: candidate.url,
+      })),
+    );
+    writePendingAdd({
+      sessionId: input.sessionId,
+      projectDirectory: input.projectDirectory,
+      kind: "skill",
+      source,
+      question: { header: question.header, question: question.question },
+      choices: candidates.map((candidate) => ({
+        label: candidate.name,
+        action: "add" as const,
+        source: candidate.url,
+      })),
+    });
     return {
       status: "question-required",
       kind: "skill",
-      preview: { source, candidates: resolved.candidates },
-      question: addQuestion(
-        "Choose Skill",
-        "Multiple skills were found. Choose one, then call skills.add again with that candidate URL.",
-        resolved.candidates.slice(0, 10).map((candidate) => ({
-          label: candidate.name,
-          description: candidate.url,
-        })),
-      ),
-      questionTool: {
-        tool: "question",
-        arguments: {
-          questions: [addQuestion(
-            "Choose Skill",
-            "Which skill do you want to add?",
-            resolved.candidates.slice(0, 10).map((candidate) => ({
-              label: candidate.name,
-              description: candidate.url,
-            })),
-          )],
-        },
-      },
+      preview: { source, candidates },
+      question,
+      questionTool: { tool: "question", arguments: { questions: [question] } },
     };
   }
 
   if (!input.confirmed) {
+    const question = addQuestion(
+      "Add Skill",
+      `Add ${resolved.skill.name} to the bot?`,
+      [
+        { label: "Add", description: resolved.skill.description },
+        { label: "Cancel", description: "Do not install this skill." },
+      ],
+    );
+    writePendingAdd({
+      sessionId: input.sessionId,
+      projectDirectory: input.projectDirectory,
+      kind: "skill",
+      source: resolved.skill.sourceUrl || source,
+      name: resolved.skill.name,
+      purpose: resolved.skill.description,
+      question: { header: question.header, question: question.question },
+      choices: [
+        { label: "Add", action: "add" },
+        { label: "Cancel", action: "cancel" },
+      ],
+    });
     return {
       status: "question-required",
       kind: "skill",
@@ -328,27 +406,8 @@ export async function addSkillExtension(input: {
         description: resolved.skill.description,
         source: resolved.skill.sourceUrl,
       },
-      question: addQuestion(
-        "Add Skill",
-        `Add ${resolved.skill.name} to the bot?`,
-        [
-          { label: "Add", description: resolved.skill.description },
-          { label: "Cancel", description: "Do not install this skill." },
-        ],
-      ),
-      questionTool: {
-        tool: "question",
-        arguments: {
-          questions: [addQuestion(
-            "Add Skill",
-            `Add ${resolved.skill.name} to the bot?`,
-            [
-              { label: "Add", description: resolved.skill.description },
-              { label: "Cancel", description: "Do not install this skill." },
-            ],
-          )],
-        },
-      },
+      question,
+      questionTool: { tool: "question", arguments: { questions: [question] } },
     };
   }
 
@@ -371,6 +430,7 @@ export async function addSkillExtension(input: {
   };
   await saveStoredExtension(extension);
   await generateExtensionActions(extension);
+  removeSharedPendingAdd(input.sessionId);
   return { status: "ready", extension };
 }
 
@@ -393,8 +453,8 @@ export async function addMcpBackedExtension(input: {
     throw new Error("Dynamic integrations may not install arbitrary local commands.");
   }
 
-  const analysis = isLocal ? null : await analyzeRemoteMcpEndpoint(source);
   if (!input.confirmed) {
+    const analysis = isLocal ? null : await analyzeRemoteMcpEndpoint(source);
     const options: ExtensionQuestionPreview["options"] = [
       { label: "Add", description: "Use OpenCode automatic MCP authentication discovery." },
     ];
@@ -405,6 +465,26 @@ export async function addMcpBackedExtension(input: {
       );
     }
     options.push({ label: "Cancel", description: "Do not add this Extension." });
+
+    const question = addQuestion(
+      input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
+      `Add ${name} to the bot?`,
+      options,
+    );
+    writePendingAdd({
+      sessionId: input.sessionId,
+      projectDirectory: input.projectDirectory,
+      kind: input.kind,
+      source,
+      name,
+      purpose,
+      question: { header: question.header, question: question.question },
+      choices: options.map((option) => ({
+        label: option.label,
+        action: option.label === "Cancel" ? "cancel" as const : "add" as const,
+        ...(option.authType ? { authType: option.authType } : {}),
+      })),
+    });
     return {
       status: "question-required",
       kind: input.kind,
@@ -415,21 +495,8 @@ export async function addMcpBackedExtension(input: {
         transport: isLocal ? "local" : "streamable-http",
         ...(analysis ? { endpoint: analysis } : {}),
       },
-      question: addQuestion(
-        input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
-        `Add ${name} to the bot?`,
-        options,
-      ),
-      questionTool: {
-        tool: "question",
-        arguments: {
-          questions: [addQuestion(
-            input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
-            `Add ${name} to the bot?`,
-            options,
-          )],
-        },
-      },
+      question,
+      questionTool: { tool: "question", arguments: { questions: [question] } },
     };
   }
 
@@ -451,6 +518,7 @@ export async function addMcpBackedExtension(input: {
       : runtimeNeedsOAuth
         ? "oauth"
         : requestedAuth ?? "none";
+
   if (isLocal && effectiveAuth !== "none") {
     throw new Error("Local MCP Extensions do not support remote authentication.");
   }
@@ -485,6 +553,7 @@ export async function addMcpBackedExtension(input: {
       sessionId: input.sessionId,
       projectDirectory: input.projectDirectory,
     });
+    removeSharedPendingAdd(input.sessionId);
     return {
       status: "awaiting-credential",
       extension,
@@ -504,6 +573,7 @@ export async function addMcpBackedExtension(input: {
       authorizationUrl: oauth.authorizationUrl,
       expiresAt: Date.now() + REQUEST_TTL_MS,
     });
+    removeSharedPendingAdd(input.sessionId);
     return {
       status: "awaiting-oauth",
       extension,
@@ -514,12 +584,117 @@ export async function addMcpBackedExtension(input: {
 
   if (server.status.status === "failed") {
     throw new Error(
-      `MCP server ${name} was added but did not connect. Retry mcp.add with auth_type if the endpoint requires a credential.`,
+      `MCP server ${name} was added but did not connect. Retry the add flow and choose a credential type if the endpoint requires one.`,
     );
   }
 
   await generateExtensionActions(extension);
+  removeSharedPendingAdd(input.sessionId);
   return { status: "ready", extension };
+}
+
+function selectedQuestionLabel(value: string): string {
+  const cleaned = value.replace(/^\*\s*/u, "").trim();
+  const colon = cleaned.indexOf(":");
+  return (colon >= 0 ? cleaned.slice(0, colon) : cleaned).trim();
+}
+
+export type ExtensionQuestionResumeResult =
+  | { handled: false }
+  | { handled: true; status: "cancelled"; intent: PendingExtensionAddIntent }
+  | { handled: true; status: "failed"; intent: PendingExtensionAddIntent; error: string }
+  | { handled: true; status: "resumed"; intent: PendingExtensionAddIntent; result: ExtensionApprovalResult };
+
+export async function resumePendingExtensionAddFromQuestion(input: {
+  sessionId: string;
+  questions: Array<{ header: string; question: string }>;
+  answers: string[][];
+}): Promise<ExtensionQuestionResumeResult> {
+  const pending = readPendingAdd(input.sessionId);
+  if (!pending) return { handled: false };
+
+  const questionIndex = input.questions.findIndex((question) =>
+    question.header.trim() === pending.question.header
+    && question.question.trim() === pending.question.question
+  );
+  if (questionIndex < 0) return { handled: false };
+
+  const claimed = claimSharedPendingAdd<PendingExtensionAddIntent>(input.sessionId);
+  if (!claimed || claimed.expiresAt <= Date.now()) return { handled: false };
+
+  const rawAnswer = input.answers[questionIndex]?.find((answer) => answer.trim()) ?? "";
+  const label = selectedQuestionLabel(rawAnswer);
+  const choice = claimed.choices.find(
+    (candidate) => candidate.label.toLocaleLowerCase() === label.toLocaleLowerCase(),
+  );
+  if (!choice) {
+    return {
+      handled: true,
+      status: "failed",
+      intent: claimed,
+      error: "The Extension question answer did not match an available option.",
+    };
+  }
+
+  if (choice.action === "cancel") {
+    return { handled: true, status: "cancelled", intent: claimed };
+  }
+
+  try {
+    if (claimed.kind === "skill") {
+      const result = await addSkillExtension({
+        sessionId: claimed.sessionId,
+        projectDirectory: claimed.projectDirectory,
+        source: choice.source ?? claimed.source,
+        confirmed: true,
+      });
+      if (result.status === "question-required") {
+        throw new Error("Skill selection did not resolve to a concrete skill.");
+      }
+      return { handled: true, status: "resumed", intent: claimed, result };
+    }
+
+    if (!claimed.name || !claimed.purpose) {
+      throw new Error("The pending MCP/Integration add intent is incomplete.");
+    }
+    const result = await addMcpBackedExtension({
+      sessionId: claimed.sessionId,
+      projectDirectory: claimed.projectDirectory,
+      name: claimed.name,
+      source: claimed.source,
+      purpose: claimed.purpose,
+      kind: claimed.kind,
+      confirmed: true,
+      ...(choice.authType ? { authType: choice.authType } : {}),
+    });
+    if (result.status === "question-required") {
+      throw new Error("Extension add unexpectedly returned another question.");
+    }
+    return { handled: true, status: "resumed", intent: claimed, result };
+  } catch (error) {
+    return {
+      handled: true,
+      status: "failed",
+      intent: claimed,
+      error: error instanceof Error ? error.message : "Extension setup failed.",
+    };
+  }
+}
+
+export function cancelPendingExtensionAddForQuestion(input: {
+  sessionId: string;
+  question: { header: string; question: string };
+}): boolean {
+  const pending = readPendingAdd(input.sessionId);
+  if (
+    !pending
+    || pending.question.header !== input.question.header.trim()
+    || pending.question.question !== input.question.question.trim()
+  ) {
+    return false;
+  }
+  removeSharedPendingAdd(input.sessionId);
+  return true;
 }
 
 export function getPendingExtensionOAuth(sessionId: string): PendingOAuth | null {
