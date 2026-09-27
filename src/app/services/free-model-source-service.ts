@@ -7,6 +7,7 @@ import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { getFreeModelSourcesEnabled, setFreeModelSourcesEnabled } from "../stores/settings-store.js";
 import { bootstrapQwenGuestHeaders, type QwenGuestBootstrapResult } from "./free-source-browser-bootstrap.js";
+import { probeQwenModel } from "./qwen-runtime-probe.js";
 
 export type FreeModelSourceID = "gemini" | "qwen" | "glm" | "ds" | "freebuff";
 
@@ -183,6 +184,7 @@ let omniReady = false;
 let lifecycleTail: Promise<void> = Promise.resolve();
 let discoveredModels: Partial<Record<FreeModelSourceID, string[]>> = {};
 let sourceRuntimeStatus: Partial<Record<FreeModelSourceID, SourceRuntimeStatus>> = {};
+let verifiedQwenModels = new Set<string>();
 let qwenRepairInFlight: Promise<QwenGuestRepairResult> | null = null;
 
 function sleep(ms: number): Promise<void> {
@@ -484,55 +486,25 @@ async function discoverAllModels(internalToken: string): Promise<void> {
   discoveredModels = Object.fromEntries(pairs) as Partial<Record<FreeModelSourceID, string[]>>;
 }
 
-async function probeQwenUsability(internalToken: string, configured: boolean): Promise<SourceRuntimeStatus> {
-  const model = discoveredModels.qwen?.[0] ?? "qwen3.8-max";
-  try {
-    const response = await fetch(`${OMNI_BASE_URL}/qwen/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${internalToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        max_tokens: 1,
-        messages: [{ role: "user", content: "Reply only OK." }],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (response.ok) {
-      await response.arrayBuffer().catch(() => undefined);
-      return { usable: true, mode: configured ? "account" : "guest" };
-    }
-
-    const body = await response.text().catch(() => "");
-    const normalized = body.toLowerCase();
-    const authRejected = response.status === 401 || response.status === 403
-      || normalized.includes("unauthorized")
-      || normalized.includes("rgv587")
-      || normalized.includes("risk-control")
-      || normalized.includes("captcha");
-    return {
-      usable: false,
-      mode: "connect-required",
-      reason: authRejected
-        ? "Qwen guest/account access was rejected from this host."
-        : `Qwen probe failed with HTTP ${response.status}.`,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      usable: false,
-      mode: configured ? "account" : "connect-required",
-      reason: `Qwen probe failed: ${message.slice(0, 160)}`,
-    };
+async function probeQwenUsability(configured: boolean): Promise<SourceRuntimeStatus> {
+  const models = discoveredModels.qwen ?? ["qwen3.8-max"];
+  const passing = new Set<string>();
+  const routerKey = ensureSecret(ROUTER_KEY_ENV);
+  for (const model of models) {
+    const result = await probeQwenModel(OMNI_BASE_URL, routerKey, model);
+    logger.info(
+      `[FreeModelSources] Qwen routed stream probe: model=${model} usable=${result.usable} outputChars=${result.outputChars} reason=${result.reason ?? "none"}`,
+    );
+    if (result.usable) passing.add(model);
   }
+  verifiedQwenModels = passing;
+  return passing.size > 0
+    ? { usable: true, mode: configured ? "account" : "guest" }
+    : { usable: false, mode: "connect-required", reason: "No Qwen model completed a real routed stream. Connect a Qwen account or retry later." };
 }
 
 async function refreshSourceRuntimeStatus(
   credentials: StoredFreeModelSourceCredentials,
-  internalToken: string,
 ): Promise<void> {
   const next: Partial<Record<FreeModelSourceID, SourceRuntimeStatus>> = {};
 
@@ -558,13 +530,13 @@ async function refreshSourceRuntimeStatus(
         }
       }
 
-      status = await probeQwenUsability(internalToken, configured);
+      status = await probeQwenUsability(configured);
       if (!configured && !status.usable) {
         logger.info("[FreeModelSources] Qwen guest probe failed; attempting automatic browser bootstrap");
         const repair = await bootstrapQwenGuestHeaders(qwenDataDir, { force: true });
         if (repair.ok) {
           logger.info(`[FreeModelSources] Qwen browser bootstrap captured headers: verified=${repair.verified}`);
-          status = await probeQwenUsability(internalToken, false);
+          status = await probeQwenUsability(false);
           if (!status.usable) {
             logger.warn(`[FreeModelSources] Qwen remained unavailable after browser bootstrap: ${status.reason ?? "unknown"}`);
             status.reason = "Automatic Qwen browser bootstrap completed, but upstream still rejected guest access. Connect a Qwen account token.";
@@ -660,7 +632,9 @@ export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProvid
     if (credentials[source.credentialKey]) configured.add(source.id);
     if (sourceRuntimeStatus[source.id]?.usable) available.add(source.id);
   }
-  return buildFreeSourceProviderConfigs(discoveredModels, configured, available);
+  return buildFreeSourceProviderConfigs(
+    { ...discoveredModels, qwen: [...verifiedQwenModels] }, configured, available,
+  );
 }
 
 export function isQwenRiskControlError(message: string): boolean {
@@ -703,8 +677,7 @@ export async function repairQwenGuestAccess(force = true): Promise<QwenGuestRepa
       };
     }
 
-    const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
-    const status = await probeQwenUsability(internalToken, false);
+    const status = await probeQwenUsability(false);
     sourceRuntimeStatus.qwen = status;
     return {
       ...repair,
@@ -863,7 +836,7 @@ async function startFreeModelSourcesInternal(): Promise<boolean> {
     logger.info("[FreeModelSources] internal OpenCode router key verified");
     await discoverAllModels(internalToken);
     if (childHasExited(child)) throw new Error("OmniRouter exited during model discovery");
-    await refreshSourceRuntimeStatus(credentials, internalToken);
+    await refreshSourceRuntimeStatus(credentials);
     if (childHasExited(child)) throw new Error("OmniRouter exited during source availability probes");
     omniReady = true;
     logger.info(
