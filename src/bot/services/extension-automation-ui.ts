@@ -52,7 +52,7 @@ async function resumeSession(sessionId: string, directory: string): Promise<void
     directory,
     parts: [{
       type: "text",
-      text: "Extension setup completed with explicit user approval. Continue the original request using the now-available capability. Do not repeat installation or ask for the credential value. If this Extension exposes useful runtime tools and it has no generated Action Pack yet, inspect those tools and register a small normalized namespaced pack with generated-actions.register; never re-enable an action the user disabled. For a newly added model provider, do one provider-level check of its public models/pricing/docs page and record only well-supported free-model policy evidence, rather than researching every model separately.",
+      text: "Extension setup completed. Continue the original request using the now-available capability. Do not repeat installation or ask for credential values. MCP/Integration and Skill Action Packs are synchronized automatically by the bot; use actions.list/resolve to discover them instead of regenerating them manually. For a newly added model provider, do one provider-level check of its public models/pricing/docs page and record only well-supported free-model policy evidence, rather than researching every model separately.",
     }],
   });
   if (error) logger.warn(`[Extensions] Could not resume session after setup: session=${sessionId}`);
@@ -71,6 +71,28 @@ export async function presentPendingExtensionAutomation(api: Api, chatId: number
     await api.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: approvalKeyboard(request.id) });
     return true;
   }
+  const oauth = getPendingExtensionOAuth(sessionId);
+  const oauthPresentationId = oauth ? `oauth:${sessionId}:${oauth.oauthState}` : null;
+  if (oauth && oauthPresentationId && !presented.has(oauthPresentationId)) {
+    presented.add(oauthPresentationId);
+    const extension = await getStoredExtension(oauth.extensionId);
+    await api.sendMessage(
+      chatId,
+      [
+        `🔐 <b>Sign in to ${extension?.name ?? oauth.serverName}</b>`,
+        "",
+        "1. Tap Sign in and finish authorization in your browser.",
+        "2. If the browser ends on an unavailable localhost page, copy the full callback URL.",
+        "3. Send that callback URL here; it is deleted immediately and never sent to the model.",
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().url("🔐 Sign in", oauth.authorizationUrl),
+      },
+    );
+    return true;
+  }
+
   const challenge = findUnboundSecureCredentialChallenge(sessionId);
   if (challenge && !presented.has(challenge.id)) {
     presented.add(challenge.id);

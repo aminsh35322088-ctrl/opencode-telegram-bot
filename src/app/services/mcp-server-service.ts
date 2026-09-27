@@ -29,6 +29,83 @@ import { listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
 export type McpServerType = "local" | "remote" | "unknown";
 export interface McpServerItem { name: string; status: McpStatus; type: McpServerType; }
 export interface McpOAuthStartResult { authorizationUrl: string; oauthState: string; }
+
+export interface McpEndpointAnalysis {
+  url: string;
+  reachable: boolean;
+  status: number | null;
+  authHint: "none-or-unknown" | "oauth-likely" | "credential-likely";
+  authorizationMetadataUrl?: string;
+  wwwAuthenticate?: string;
+  note: string;
+}
+
+export async function analyzeRemoteMcpEndpoint(remoteUrl: string): Promise<McpEndpointAnalysis> {
+  const value = remoteUrl.trim();
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("MCP remote URL must be an absolute HTTP(S) URL.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("MCP remote URL must be an absolute HTTP(S) URL.");
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json, text/event-stream",
+        "User-Agent": "opencode-telegram-bot",
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(8_000),
+    });
+    const challenge = response.headers.get("www-authenticate")?.trim() || undefined;
+    const metadataMatch = challenge?.match(/resource_metadata="([^"]+)"/iu);
+    const metadataUrl = metadataMatch?.[1];
+
+    if (metadataUrl) {
+      return {
+        url: url.toString(),
+        reachable: true,
+        status: response.status,
+        authHint: "oauth-likely",
+        authorizationMetadataUrl: metadataUrl,
+        ...(challenge ? { wwwAuthenticate: challenge.slice(0, 500) } : {}),
+        note: "OAuth protected-resource metadata was advertised by the MCP endpoint.",
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        url: url.toString(),
+        reachable: true,
+        status: response.status,
+        authHint: challenge?.toLowerCase().includes("bearer") ? "credential-likely" : "none-or-unknown",
+        ...(challenge ? { wwwAuthenticate: challenge.slice(0, 500) } : {}),
+        note: "The endpoint requires authentication; OpenCode will probe native OAuth after add.",
+      };
+    }
+
+    return {
+      url: url.toString(),
+      reachable: true,
+      status: response.status,
+      authHint: "none-or-unknown",
+      note: "Endpoint is reachable; final MCP capability/auth status will be determined by OpenCode.",
+    };
+  } catch (error) {
+    return {
+      url: url.toString(),
+      reachable: false,
+      status: null,
+      authHint: "none-or-unknown",
+      note: error instanceof Error ? error.message : "Endpoint probe failed.",
+    };
+  }
+}
 export interface McpLoginIdentity {
   label: string;
   email?: string;

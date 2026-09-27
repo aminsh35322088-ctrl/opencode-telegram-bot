@@ -5,7 +5,6 @@ import { deleteMcpServer } from "./mcp-server-service.js";
 import { listManagedMcpServers } from "./mcp-server-store.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "./skill-manage-service.js";
 import { loadSkillsCatalog } from "./skills-catalog-service.js";
-import { getTailscaleRuntimeStatus, removeTailscaleIntegration } from "./tailscale-integration-service.js";
 import { listStoredExtensions, getStoredExtension, removeStoredExtension, saveStoredExtension } from "./extension-store.js";
 import { removeExtensionCredentials } from "./credential-vault-service.js";
 import { removeGeneratedActionsForExtension } from "./generated-action-store.js";
@@ -64,11 +63,10 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
       .map((record) => record.resource.kind === "model-provider" ? record.resource.providerId : ""),
   );
 
-  const [mcps, skills, providers, tailscale] = await Promise.all([
+  const [mcps, skills, providers] = await Promise.all([
     listManagedMcpServers(projectDirectory),
     loadSkillsCatalog(projectDirectory).catch(() => []),
     listCustomProviders(),
-    getTailscaleRuntimeStatus().catch(() => null),
   ]);
 
   const discovered: ExtensionSummary[] = [
@@ -106,18 +104,6 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
         managed: true,
       })),
   ];
-
-  if (tailscale?.configured && !stored.some((item) => item.id === "integration:tailscale")) {
-    discovered.push({
-      id: "integration:tailscale",
-      name: "Tailscale",
-      kind: "integration",
-      source: "tailscale",
-      authType: "api-key",
-      status: tailscale.connected ? "ready" : "unknown",
-      managed: true,
-    });
-  }
 
   const byId = new Map<string, ExtensionSummary>();
   for (const item of [...stored.map(summaryFromStored), ...discovered]) byId.set(item.id, item);
@@ -158,9 +144,6 @@ export async function removeExtension(projectDirectory: string, id: string): Pro
     removed = await deleteGlobalSkill(stored.resource.skillName);
   } else if (stored?.resource.kind === "model-provider") {
     removed = await deleteCustomProvider(stored.resource.providerId);
-  } else if (stored?.resource.kind === "integration" && stored.resource.adapter === "tailscale") {
-    await removeTailscaleIntegration();
-    removed = true;
   } else if (id.startsWith("mcp:")) {
     const info = await getExtensionInfo(projectDirectory, id);
     removed = info ? (await deleteMcpServer(projectDirectory, info.name)).deleted : false;
@@ -173,9 +156,6 @@ export async function removeExtension(projectDirectory: string, id: string): Pro
       const provider = (await listCustomProviders()).find((item) => item.name === info.name || extensionId("model-provider", item.id) === id);
       removed = provider ? await deleteCustomProvider(provider.id) : false;
     }
-  } else if (id === "integration:tailscale") {
-    await removeTailscaleIntegration();
-    removed = true;
   }
 
   const [credentialsRemoved, actionsRemoved] = await Promise.all([

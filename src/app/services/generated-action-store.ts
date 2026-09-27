@@ -3,10 +3,10 @@ import { isRecord } from "../../utils/type-guards.js";
 import type { AgentActionRisk } from "./agent-action-registry.js";
 import { getStoredExtension } from "./extension-store.js";
 
-export interface GeneratedActionInvocation {
-  kind: "mcp-tool";
-  tool: string;
-}
+export type GeneratedActionInvocation =
+  | { kind: "mcp-tool"; tool: string }
+  | { kind: "native-tool"; tool: string; arguments?: Record<string, string> }
+  | { kind: "action-tool"; tool: string; actionArgument: string; actionValue: string; arguments?: Record<string, string> };
 
 export interface GeneratedActionRecord {
   id: string;
@@ -43,7 +43,7 @@ function parseRecord(value: unknown): GeneratedActionRecord | null {
     typeof value.risk !== "string" ||
     !RISKS.has(value.risk as AgentActionRisk) ||
     typeof value.description !== "string" ||
-    value.invocation.kind !== "mcp-tool" ||
+    !["mcp-tool", "native-tool", "action-tool"].includes(String(value.invocation.kind)) ||
     typeof value.invocation.tool !== "string" ||
     typeof value.enabled !== "boolean" ||
     typeof value.userDisabled !== "boolean" ||
@@ -91,6 +91,7 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
   action?: string;
   category?: string;
   description: string;
+  invocation?: GeneratedActionInvocation;
 }>): Promise<GeneratedActionRecord[]> {
   const extension = await getStoredExtension(extensionId);
   if (!extension) throw new Error("Generated actions require an approved registered Extension.");
@@ -106,13 +107,24 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
     const action = candidate.action?.trim() || id.split(".").at(-1) || "invoke";
     const description = candidate.description.trim().slice(0, 500);
     if (!description) throw new Error(`Generated action ${id} requires a description.`);
-    return { id, tool, action, category: candidate.category?.trim().slice(0, 80) || "extension", description };
+    return {
+      id,
+      tool,
+      action,
+      category: candidate.category?.trim().slice(0, 80) || "extension",
+      description,
+      invocation: candidate.invocation ?? { kind: "mcp-tool" as const, tool },
+    };
   });
 
   let result: GeneratedActionRecord[] = [];
   await updateAppState((state) => {
     const current = parseState(state[STORE_KEY]);
-    const records = { ...current.records };
+    const nextIds = new Set(clean.map((candidate) => candidate.id));
+    const records = Object.fromEntries(
+      Object.entries(current.records).filter(([, record]) =>
+        record.extensionId !== extensionId || nextIds.has(record.id)),
+    );
     result = clean.map((candidate) => {
       const previous = records[candidate.id];
       if (previous && previous.extensionId !== extensionId) throw new Error(`Generated action id already belongs to another extension: ${candidate.id}`);
@@ -121,7 +133,7 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
         ...candidate,
         extensionId,
         risk: classifyRisk(candidate.id, candidate.action, candidate.tool),
-        invocation: { kind: "mcp-tool", tool: candidate.tool },
+        invocation: candidate.invocation,
         enabled: !userDisabled,
         userDisabled,
         createdAt: previous?.createdAt ?? now,

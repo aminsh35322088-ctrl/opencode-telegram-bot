@@ -11,6 +11,7 @@ export interface AgentActionInvocation {
   tool: string;
   actionArgument?: string;
   actionValue?: string;
+  arguments?: Record<string, string>;
 }
 
 export interface AgentActionDefinition {
@@ -45,8 +46,9 @@ export const CUSTOM_TOOL_ACTIONS = {
     "models.providers", "models.list", "models.search", "models.selection", "models.current", "models.refresh", "models.select",
     "agents.list", "agents.current", "agents.select",
     "variants.list", "variants.current", "variants.select",
-    "skills.list", "skills.ensure", "skills.create", "skills.update", "skills.delete", "skills.import", "commands.list",
-    "mcp.list", "mcp.ensure", "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "mcp.delete",
+    "skills.list", "skills.add", "skills.create", "skills.update", "skills.delete", "commands.list",
+    "mcp.list", "mcp.add", "mcp.debug", "mcp.enable", "mcp.rename", "mcp.delete",
+    "integrations.add",
     "extensions.list", "extensions.info", "extensions.ensure", "extensions.remove",
     "credentials.request", "credentials.status",
     "generated-actions.list", "generated-actions.register", "generated-actions.toggle",
@@ -120,6 +122,9 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.variants.select": "Select a validated variant for the current model.",
   "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
   "bot.settings.set": "Update a constrained safe bot setting.",
+  "bot.mcp.add": "Analyze a remote/local MCP source, return a Question-tool preview, and add it after explicit conversational confirmation. OAuth/API-key follow-up is handled by the bot.",
+  "bot.skills.add": "Analyze a skill source, return a Question-tool preview, and import it after conversational confirmation.",
+  "bot.integrations.add": "Analyze and add an MCP-backed service integration after Question-tool confirmation, then register it as an Extension.",
   "bot.mcp.debug": "Inspect and optionally repair MCP runtime synchronization without exposing credentials.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
   "media.video.prepare": "Extract bounded video keyframes and audio into the current worktree for model analysis.",
@@ -160,8 +165,8 @@ const BOT_READ = new Set([
   "integrations.github.list", "integrations.github.active", "version.info",
 ]);
 const BOT_MUTATING = new Set([
-  "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update", "skills.import",
-  "skills.ensure", "mcp.ensure", "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename",
+  "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update",
+  "skills.add", "mcp.add", "mcp.debug", "mcp.enable", "mcp.rename", "integrations.add",
   "extensions.ensure", "credentials.request", "generated-actions.register", "generated-actions.toggle", "providers.ensure", "providers.free-policy.set",
   "tasks.create", "settings.set", "memory.add", "memory.remove", "integrations.github.select",
 ]);
