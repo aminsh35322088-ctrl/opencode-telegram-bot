@@ -160,10 +160,24 @@ export async function bootstrapQwenGuestHeaders(
 
   const session = "otb-qwen-" + randomBytes(6).toString("hex");
   const scriptPath = path.join(dataDir, `.qwen-bootstrap-${session}.js`);
+  const configPath = path.join(dataDir, `.qwen-bootstrap-${session}.json`);
+  await fs.mkdir(path.join(dataDir, "browser-home"), { recursive: true, mode: 0o700 });
   await fs.writeFile(scriptPath, captureScript(), { mode: 0o600 });
+  await fs.writeFile(configPath, JSON.stringify({
+    browser: {
+      browserName: "chromium",
+      launchOptions: {
+        args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+      },
+      contextOptions: {
+        locale: "en-US",
+        viewport: { width: 1280, height: 850 },
+      },
+    },
+  }, null, 2) + "\n", { mode: 0o600 });
 
   try {
-    await runCli(["--raw", `-s=${session}`, "open", "about:blank"], dataDir);
+    await runCli(["--raw", `--config=${configPath}`, `-s=${session}`, "open", "about:blank"], dataDir);
     const stdout = await runCli(["--raw", `-s=${session}`, "run-code", `--filename=${scriptPath}`], dataDir);
     const payload = parseCaptureOutput(stdout);
     const bxUA = payload.captured?.bxUA?.trim();
@@ -199,6 +213,7 @@ export async function bootstrapQwenGuestHeaders(
   } finally {
     await runCli(["--raw", `-s=${session}`, "close"], dataDir).catch(() => {});
     await fs.rm(scriptPath, { force: true }).catch(() => {});
+    await fs.rm(configPath, { force: true }).catch(() => {});
   }
 }
 
