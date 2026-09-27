@@ -6,6 +6,7 @@ import {
   extractPersistedOmniRouterKey,
   checkFreebuffAutoConnect,
   getPendingFreebuffAutoConnect,
+  isQwenRiskControlError,
   startFreebuffAutoConnect,
   type FreeModelSourceID,
 } from "../../../src/app/services/free-model-source-service.js";
@@ -105,6 +106,12 @@ describe("experimental free model source config", () => {
     })).toBe("sk-first-enabled");
 
     expect(extractPersistedOmniRouterKey({ keys: [] })).toBeUndefined();
+  });
+
+  it("detects Qwen/Aliyun risk-control errors for automatic Baxia refresh", () => {
+    expect(isQwenRiskControlError("RGV587_ERROR: Aliyun risk-control challenged the request (WAF captcha)")).toBe(true);
+    expect(isQwenRiskControlError("Aliyun_WAF Baxia challenge")).toBe(true);
+    expect(isQwenRiskControlError("ordinary 503 upstream unavailable")).toBe(false);
   });
 
   it("starts the official Freebuff browser login and treats 401 status as pending", async () => {
