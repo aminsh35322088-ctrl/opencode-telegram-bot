@@ -51,7 +51,7 @@ export const CUSTOM_TOOL_ACTIONS = {
     "integrations.add",
     "extensions.list", "extensions.info", "extensions.ensure", "extensions.remove",
     "credentials.request", "credentials.status",
-    "generated-actions.list", "generated-actions.register", "generated-actions.toggle",
+    "generated-actions.list", "generated-actions.toggle",
     "session.current", "session.messages", "session.latest-assistant", "run.status",
     "tasks.list", "tasks.get", "tasks.parse", "tasks.create", "tasks.delete",
     "settings.get", "settings.set",
@@ -167,7 +167,7 @@ const BOT_READ = new Set([
 const BOT_MUTATING = new Set([
   "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update",
   "skills.add", "mcp.add", "mcp.debug", "mcp.enable", "mcp.rename", "integrations.add",
-  "extensions.ensure", "credentials.request", "generated-actions.register", "generated-actions.toggle", "providers.ensure", "providers.free-policy.set",
+  "extensions.ensure", "credentials.request", "generated-actions.toggle", "providers.ensure", "providers.free-policy.set",
   "tasks.create", "settings.set", "memory.add", "memory.remove", "integrations.github.select",
 ]);
 const BOT_DESTRUCTIVE = new Set(["skills.delete", "mcp.delete", "extensions.remove", "tasks.delete", "memory.clear", "integrations.github.remove"]);

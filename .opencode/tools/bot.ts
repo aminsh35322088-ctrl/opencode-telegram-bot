@@ -37,7 +37,6 @@ const BOT_ACTIONS = [
   "credentials.request",
   "credentials.status",
   "generated-actions.list",
-  "generated-actions.register",
   "generated-actions.toggle",
   "mcp.enable",
   "mcp.rename",
@@ -353,7 +352,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions. To add MCP servers, Skills, or dynamic Integrations, use mcp.add / skills.add / integrations.add. Their first call analyzes the source and returns a native Question-tool preview; call the native question tool, then repeat with confirmed=true after the user chooses Add. No permission request is needed for Extension installation. OAuth/API-key follow-up is handled by Telegram secure UI. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. To add MCP servers, Skills, or dynamic Integrations, use mcp.add / skills.add / integrations.add. When an add action returns status=question-required, immediately call the native question tool with the returned questionTool.arguments exactly; only call the same add action with confirmed=true after the user chooses Add. No permission request is needed for Extension installation. OAuth/API-key follow-up is handled by Telegram secure UI. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -585,24 +584,7 @@ export default tool({
         if (typeof args.enabled !== "boolean") throw new Error("generated-actions.toggle requires enabled=true|false");
         return json(await generated.setGeneratedActionEnabled(id, args.enabled));
       }
-      const body = required(args.body, "body", action);
-      const parsed: unknown = JSON.parse(body);
-      if (!Array.isArray(parsed)) throw new Error("generated-actions.register body must be a JSON array.");
-      const pack = parsed.map((item) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Invalid generated action.");
-        const value = item as Record<string, unknown>;
-        if (typeof value.id !== "string" || typeof value.tool !== "string" || typeof value.description !== "string") {
-          throw new Error("Generated action requires id, tool, and description.");
-        }
-        return {
-          id: value.id,
-          tool: value.tool,
-          ...(typeof value.action === "string" ? { action: value.action } : {}),
-          ...(typeof value.category === "string" ? { category: value.category } : {}),
-          description: value.description,
-        };
-      });
-      return json(await generated.registerGeneratedActionPack(required(extensionId, "extension_id", action), pack));
+      throw new Error(`Unsupported generated-actions operation: ${action}. Action packs are generated automatically by the bot.`);
     }
 
     if (action.startsWith("session.")) {

@@ -95,6 +95,17 @@ describe("conversational Extension add flows", () => {
         header: "Add MCP Server",
         multiple: false,
       },
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [
+            expect.objectContaining({
+              header: "Add MCP Server",
+              multiple: false,
+            }),
+          ],
+        },
+      },
     });
     expect(mocks.analyze).toHaveBeenCalledTimes(1);
     expect(mocks.createMcp).not.toHaveBeenCalled();

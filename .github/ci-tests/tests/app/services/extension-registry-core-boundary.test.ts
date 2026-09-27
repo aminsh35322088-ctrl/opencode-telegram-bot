@@ -21,7 +21,19 @@ vi.mock("../../../src/app/services/skills-catalog-service.js", () => ({
   loadSkillsCatalog: vi.fn(async () => []),
 }));
 vi.mock("../../../src/app/services/extension-store.js", () => ({
-  listStoredExtensions: vi.fn(async () => []),
+  listStoredExtensions: vi.fn(async () => [{
+    id: "integration:tailscale",
+    name: "Tailscale",
+    kind: "integration",
+    source: "tailscale",
+    purpose: "Legacy core integration record",
+    authType: "api-key",
+    credentialSchemas: [],
+    resource: { kind: "integration", adapter: "tailscale" },
+    createdAt: "2026-09-20T00:00:00.000Z",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    managed: true,
+  }]),
   getStoredExtension: vi.fn(async () => null),
   removeStoredExtension: vi.fn(),
   saveStoredExtension: vi.fn(),

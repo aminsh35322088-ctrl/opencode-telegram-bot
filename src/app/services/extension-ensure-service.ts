@@ -268,6 +268,10 @@ export type ConversationalExtensionAddResult =
       kind: "mcp" | "skill" | "integration";
       preview: Record<string, unknown>;
       question: ExtensionQuestionPreview;
+      questionTool: {
+        tool: "question";
+        arguments: { questions: ExtensionQuestionPreview[] };
+      };
     }
   | ExtensionApprovalResult;
 
@@ -300,6 +304,19 @@ export async function addSkillExtension(input: {
           description: candidate.url,
         })),
       ),
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [addQuestion(
+            "Choose Skill",
+            "Which skill do you want to add?",
+            resolved.candidates.slice(0, 10).map((candidate) => ({
+              label: candidate.name,
+              description: candidate.url,
+            })),
+          )],
+        },
+      },
     };
   }
 
@@ -320,6 +337,19 @@ export async function addSkillExtension(input: {
           { label: "Cancel", description: "Do not install this skill." },
         ],
       ),
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [addQuestion(
+            "Add Skill",
+            `Add ${resolved.skill.name} to the bot?`,
+            [
+              { label: "Add", description: resolved.skill.description },
+              { label: "Cancel", description: "Do not install this skill." },
+            ],
+          )],
+        },
+      },
     };
   }
 
@@ -391,6 +421,16 @@ export async function addMcpBackedExtension(input: {
         `Add ${name} to the bot?`,
         options,
       ),
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [addQuestion(
+            input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
+            `Add ${name} to the bot?`,
+            options,
+          )],
+        },
+      },
     };
   }
 

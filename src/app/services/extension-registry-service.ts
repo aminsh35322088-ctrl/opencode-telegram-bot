@@ -45,7 +45,8 @@ function summaryFromStored(record: ExtensionRecord): ExtensionSummary {
 export async function listExtensions(projectDirectory: string): Promise<ExtensionSummary[]> {
   const normalizedDirectory = normalizeDirectory(projectDirectory);
   const stored = (await listStoredExtensions()).filter((record) =>
-    record.resource.kind !== "mcp" || normalizeDirectory(record.resource.projectDirectory) === normalizedDirectory
+    record.id !== "integration:tailscale"
+    && (record.resource.kind !== "mcp" || normalizeDirectory(record.resource.projectDirectory) === normalizedDirectory)
   );
   const claimedMcpNames = new Set(
     stored
