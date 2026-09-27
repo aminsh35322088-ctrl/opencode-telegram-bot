@@ -366,6 +366,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           throw error;
         });
       },
+      resolveRunGeneration: (sessionId) => assistantRunState.getRunGeneration(sessionId),
     });
   }
 
@@ -400,6 +401,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
   private getLiveToolPrefix(callId: string): string {
     return `${RUNNING_ICON}${callId}`;
+  }
+
+  private getCompletedToolPrefix(callId: string): string {
+    return `done:${callId}`;
   }
 
   private handleRunningToolTick(tick: RunningToolTick): void {
@@ -1034,8 +1039,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       try {
         const message = formatToolInfo(toolInfo);
         if (message) {
-          this.toolCallStreamer.append(
+          this.toolCallStreamer.replaceByPrefix(
             toolInfo.sessionId,
+            this.getCompletedToolPrefix(toolInfo.callId),
             this.appendToolDuration(message, toolInfo.sessionId, toolInfo.callId),
             this.getToolStreamKey(toolInfo.tool),
           );
@@ -1056,6 +1062,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       const currentSession = getCurrentSession();
       if (!currentSession || currentSession.id !== sessionId) {
+        return;
+      }
+
+      if (subagents.length === 0) {
+        this.subagentSnapshots.delete(sessionId);
+        this.runningToolTracker.setHeartbeatActive(sessionId, false);
         return;
       }
 
