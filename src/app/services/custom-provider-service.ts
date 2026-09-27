@@ -63,7 +63,9 @@ interface StoredProvider extends CustomProvider {
 }
 interface StoredSttProvider {
   provider: "groq";
-  apiKey: string;
+  credentialId: string;
+  /** Legacy plaintext field, migrated to Credential Vault on read. */
+  apiKey?: string;
   model: string;
   updatedAt: string;
 }
@@ -74,6 +76,8 @@ interface ProviderStoreFile {
 
 const GROQ_STT_BASE_URL = "https://api.groq.com/openai/v1";
 const GROQ_STT_MODEL = "whisper-large-v3";
+const GROQ_STT_EXTENSION_ID = "model-provider:groq-stt";
+const GROQ_STT_CREDENTIAL_ID = "api-key";
 const LEGACY_GEMINI_IMAGE_ID = "gemini-image";
 const PROVIDER_ENV_PREFIX = "OPENCODE_TELEGRAM_PROVIDER_";
 const DEFAULT_CUSTOM_MODEL_INPUT_MODALITIES = ["text", "image"] as const;
@@ -240,8 +244,20 @@ function normalizeStore(value: unknown): ProviderStoreFile {
             : [],
         }))
     : [];
-  const stt = raw.stt && typeof raw.stt === "object" && typeof raw.stt.apiKey === "string"
-    ? { ...(raw.stt as StoredSttProvider), provider: "groq" as const }
+  const stt = raw.stt && typeof raw.stt === "object"
+    && (
+      typeof (raw.stt as Partial<StoredSttProvider>).credentialId === "string"
+      || typeof (raw.stt as Partial<StoredSttProvider>).apiKey === "string"
+    )
+    ? {
+        ...(raw.stt as StoredSttProvider),
+        provider: "groq" as const,
+        credentialId:
+          typeof (raw.stt as Partial<StoredSttProvider>).credentialId === "string"
+            && (raw.stt as Partial<StoredSttProvider>).credentialId?.trim()
+            ? (raw.stt as Partial<StoredSttProvider>).credentialId!.trim()
+            : GROQ_STT_CREDENTIAL_ID,
+      }
     : undefined;
   return stt ? { providers, stt } : { providers };
 }
@@ -265,9 +281,15 @@ export async function migrateLegacyCustomProviderCredentials(): Promise<number> 
     delete provider.apiKey;
     migrated += 1;
   }
+  const legacySttKey = store.stt?.apiKey?.trim();
+  if (store.stt && legacySttKey) {
+    await saveExtensionCredential(GROQ_STT_EXTENSION_ID, store.stt.credentialId, legacySttKey);
+    delete store.stt.apiKey;
+    migrated += 1;
+  }
   if (migrated > 0) {
     await writeStore(store);
-    logger.info(`[CustomProvider] Migrated ${migrated} legacy provider API key(s) into Credential Vault`);
+    logger.info(`[CustomProvider] Migrated ${migrated} legacy provider/STT credential(s) into Credential Vault`);
   }
   return migrated;
 }
@@ -316,13 +338,21 @@ async function providerApiKey(provider: StoredProvider): Promise<string> {
   return (await resolveExtensionCredential(providerExtensionId(provider.id), provider.credentialId))?.trim() ?? "";
 }
 
+async function sttApiKey(stt: StoredSttProvider | undefined): Promise<string> {
+  if (!stt) return "";
+  const legacy = stt.apiKey?.trim();
+  if (legacy) return legacy;
+  return (await resolveExtensionCredential(GROQ_STT_EXTENSION_ID, stt.credentialId))?.trim() ?? "";
+}
+
 async function applyProviderEnvironment(store: ProviderStoreFile): Promise<void> {
   for (const key of Object.keys(process.env)) if (key.startsWith(PROVIDER_ENV_PREFIX)) delete process.env[key];
   for (const provider of store.providers) {
     const key = await providerApiKey(provider);
     if (key) process.env[envKey(provider.id)] = key;
   }
-  if (store.stt?.apiKey.trim()) process.env[`${PROVIDER_ENV_PREFIX}GROQ_STT_API_KEY`] = store.stt.apiKey.trim();
+  const sttKey = await sttApiKey(store.stt);
+  if (sttKey) process.env[`${PROVIDER_ENV_PREFIX}GROQ_STT_API_KEY`] = sttKey;
 }
 
 export async function listCustomProviders(): Promise<CustomProvider[]> {
@@ -515,15 +545,35 @@ export async function configureGroqStt(apiKey: string, beforeSave: () => void = 
   const payload = (await response.json()) as { data?: Array<{ id?: unknown }> };
   if (!(payload.data ?? []).some((model) => model.id === GROQ_STT_MODEL)) throw new Error(`Groq account does not expose ${GROQ_STT_MODEL}`);
   const store = await readStore();
-  await writeStore({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } }, beforeSave);
-  await applyProviderEnvironment({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } });
+  const previousKey = await sttApiKey(store.stt);
+  await saveExtensionCredential(GROQ_STT_EXTENSION_ID, GROQ_STT_CREDENTIAL_ID, key);
+  const nextStt: StoredSttProvider = {
+    provider: "groq",
+    credentialId: GROQ_STT_CREDENTIAL_ID,
+    model: GROQ_STT_MODEL,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await writeStore({ ...store, stt: nextStt }, beforeSave);
+  } catch (error) {
+    if (previousKey) {
+      await saveExtensionCredential(GROQ_STT_EXTENSION_ID, GROQ_STT_CREDENTIAL_ID, previousKey);
+    } else {
+      await removeExtensionCredentials(GROQ_STT_EXTENSION_ID);
+    }
+    throw error;
+  }
+  await applyProviderEnvironment({ ...store, stt: nextStt });
   logger.info(`[CustomProvider] Groq STT configured and verified: model=${GROQ_STT_MODEL}`);
 }
 
 export async function getGroqSttConfig(): Promise<{ apiUrl: string; apiKey: string; model: string } | undefined> {
   const store = await readStore();
   await applyProviderEnvironment(store);
-  return store.stt?.apiKey?.trim() ? { apiUrl: GROQ_STT_BASE_URL, apiKey: store.stt.apiKey.trim(), model: store.stt.model } : undefined;
+  const apiKey = await sttApiKey(store.stt);
+  return store.stt && apiKey
+    ? { apiUrl: GROQ_STT_BASE_URL, apiKey, model: store.stt.model }
+    : undefined;
 }
 
 export async function isGroqSttConfigured(): Promise<boolean> {
@@ -535,6 +585,7 @@ export async function removeGroqStt(): Promise<boolean> {
   if (!store.stt) return false;
   delete store.stt;
   await writeStore(store);
+  await removeExtensionCredentials(GROQ_STT_EXTENSION_ID);
   await applyProviderEnvironment(store);
   return true;
 }

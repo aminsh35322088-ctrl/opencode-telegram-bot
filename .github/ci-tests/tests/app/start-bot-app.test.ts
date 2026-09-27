@@ -29,6 +29,10 @@ const mocked = vi.hoisted(() => ({
   githubInitializeMock: vi.fn(),
   syncCustomConfigMock: vi.fn(),
   migrateProviderCredentialsMock: vi.fn(),
+  migrateFreeSourceCredentialsMock: vi.fn(),
+  migrateImageAiCredentialsMock: vi.fn(),
+  initializeFreeSourcesMock: vi.fn(),
+  stopFreeSourcesMock: vi.fn(),
   cleanupLegacyConfigMock: vi.fn(),
   migrateExtensionDefaultsMock: vi.fn(),
   listStoredExtensionsMock: vi.fn(),
@@ -89,6 +93,16 @@ vi.mock("../../src/app/services/github-integration-service.js", () => ({
 vi.mock("../../src/app/services/custom-provider-service.js", () => ({
   syncOpenCodeCustomConfig: mocked.syncCustomConfigMock,
   migrateLegacyCustomProviderCredentials: mocked.migrateProviderCredentialsMock,
+}));
+
+vi.mock("../../src/app/services/free-model-source-service.js", () => ({
+  migrateLegacyFreeModelSourceCredentials: mocked.migrateFreeSourceCredentialsMock,
+  initializeFreeModelSources: mocked.initializeFreeSourcesMock,
+  stopFreeModelSources: mocked.stopFreeSourcesMock,
+}));
+
+vi.mock("../../src/app/services/image-ai-provider-service.js", () => ({
+  migrateLegacyImageAiCredentials: mocked.migrateImageAiCredentialsMock,
 }));
 
 vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
@@ -273,6 +287,10 @@ describe("app/start-bot-app", () => {
     mocked.githubInitializeMock.mockReset();
     mocked.syncCustomConfigMock.mockReset();
     mocked.migrateProviderCredentialsMock.mockReset();
+    mocked.migrateFreeSourceCredentialsMock.mockReset();
+    mocked.migrateImageAiCredentialsMock.mockReset();
+    mocked.initializeFreeSourcesMock.mockReset();
+    mocked.stopFreeSourcesMock.mockReset();
     mocked.cleanupLegacyConfigMock.mockReset();
     mocked.migrateExtensionDefaultsMock.mockReset();
     mocked.listStoredExtensionsMock.mockReset();
@@ -296,6 +314,10 @@ describe("app/start-bot-app", () => {
     mocked.githubInitializeMock.mockResolvedValue(false);
     mocked.syncCustomConfigMock.mockResolvedValue("");
     mocked.migrateProviderCredentialsMock.mockResolvedValue(0);
+    mocked.migrateFreeSourceCredentialsMock.mockResolvedValue(0);
+    mocked.migrateImageAiCredentialsMock.mockResolvedValue(0);
+    mocked.initializeFreeSourcesMock.mockResolvedValue(false);
+    mocked.stopFreeSourcesMock.mockResolvedValue(undefined);
     mocked.cleanupLegacyConfigMock.mockResolvedValue(undefined);
     mocked.migrateExtensionDefaultsMock.mockResolvedValue({ seeded: 0 });
     mocked.listStoredExtensionsMock.mockResolvedValue([]);

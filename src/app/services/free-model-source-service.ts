@@ -8,6 +8,11 @@ import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { getFreeModelSourcesEnabled, setFreeModelSourcesEnabled } from "../stores/settings-store.js";
 import { bootstrapQwenGuestHeaders, type QwenGuestBootstrapResult } from "./free-source-browser-bootstrap.js";
 import { probeQwenModel } from "./qwen-runtime-probe.js";
+import {
+  removeExtensionCredential,
+  resolveExtensionCredential,
+  saveExtensionCredential,
+} from "./credential-vault-service.js";
 
 export type FreeModelSourceID = "gemini" | "qwen" | "glm" | "ds" | "freebuff";
 
@@ -50,10 +55,6 @@ interface StoredFreeModelSourceCredentials {
   glmToken?: string;
   deepseekToken?: string;
   freebuffToken?: string;
-}
-
-interface StoredFreeModelSourceRuntime {
-  routerKey?: string;
 }
 
 interface SourceDefinition {
@@ -163,6 +164,9 @@ const FREEBUFF_API_BASE = "https://codebuff.com";
 const FREEBUFF_REQUEST_TIMEOUT_MS = 12_000;
 const FREEBUFF_LOGIN_TTL_MS = 60 * 60_000;
 const QWEN_BX_MAX_AGE_MS = 10 * 60_000;
+const FREE_SOURCE_CREDENTIAL_ID = "credential";
+const OMNI_ROUTER_EXTENSION_ID = "internal:omnirouter";
+const OMNI_ROUTER_CREDENTIAL_ID = "router-key";
 
 interface PendingFreebuffLogin {
   loginUrl: string;
@@ -240,13 +244,6 @@ function executablePath(): string {
   return process.env.OMNIROUTER_BINARY?.trim() || OMNI_BINARY;
 }
 
-function normalizeRuntimeSecrets(value: unknown): StoredFreeModelSourceRuntime {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const raw = value as Record<string, unknown>;
-  const routerKey = typeof raw.routerKey === "string" ? raw.routerKey.trim() : "";
-  return routerKey ? { routerKey } : {};
-}
-
 export function extractPersistedOmniRouterKey(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const keys = (value as { keys?: unknown }).keys;
@@ -272,25 +269,38 @@ async function readPersistedOmniRouterKey(dataDir: string): Promise<string | und
 
 async function resolveRouterKey(dataDir: string): Promise<string> {
   const state = await readAppState();
-  const runtime = normalizeRuntimeSecrets(state.freeModelSourcesRuntime);
-  const storeKey = await readPersistedOmniRouterKey(dataDir);
+  const legacyRuntime = state.freeModelSourcesRuntime;
+  const legacyRouterKey =
+    legacyRuntime && typeof legacyRuntime === "object" && !Array.isArray(legacyRuntime)
+      && typeof (legacyRuntime as Record<string, unknown>).routerKey === "string"
+      ? String((legacyRuntime as Record<string, unknown>).routerKey).trim()
+      : "";
+  const persistedKey = await readPersistedOmniRouterKey(dataDir);
+  const vaultKey = (
+    await resolveExtensionCredential(OMNI_ROUTER_EXTENSION_ID, OMNI_ROUTER_CREDENTIAL_ID)
+  )?.trim();
   const envKey = process.env[ROUTER_KEY_ENV]?.trim();
 
-  // Migration rule: an existing OmniRouter store is authoritative because
-  // upstream EnsureSeedKey() keeps the first enabled persisted key and ignores
-  // a different ROUTER_KEY on later starts.
-  const routerKey = storeKey || runtime.routerKey || envKey || ("sk-otb-" + randomBytes(24).toString("hex"));
+  // Existing OmniRouter state stays authoritative so the upstream key file and
+  // the bot never drift after restarts. Bot-owned copies live only in Vault.
+  const routerKey =
+    persistedKey
+    || vaultKey
+    || legacyRouterKey
+    || envKey
+    || ("sk-otb-" + randomBytes(24).toString("hex"));
   process.env[ROUTER_KEY_ENV] = routerKey;
 
-  if (runtime.routerKey !== routerKey) {
-    await updateAppState((current) => ({
-      freeModelSourcesRuntime: {
-        ...normalizeRuntimeSecrets(current.freeModelSourcesRuntime),
-        routerKey,
-      },
-    }));
+  if (vaultKey !== routerKey) {
+    await saveExtensionCredential(
+      OMNI_ROUTER_EXTENSION_ID,
+      OMNI_ROUTER_CREDENTIAL_ID,
+      routerKey,
+    );
   }
-
+  if (legacyRuntime !== undefined) {
+    await updateAppState({ freeModelSourcesRuntime: undefined });
+  }
   return routerKey;
 }
 
@@ -305,9 +315,53 @@ function normalizeCredentials(value: unknown): StoredFreeModelSourceCredentials 
   return out;
 }
 
-async function readCredentials(): Promise<StoredFreeModelSourceCredentials> {
+function freeSourceExtensionId(sourceID: FreeModelSourceID): string {
+  return `integration:free-model-source:${sourceID}`;
+}
+
+export async function migrateLegacyFreeModelSourceCredentials(): Promise<number> {
   const state = await readAppState();
-  return normalizeCredentials(state.freeModelSources);
+  const legacy = normalizeCredentials(state.freeModelSources);
+  let migrated = 0;
+
+  for (const source of SOURCES) {
+    const legacyCredential = legacy[source.credentialKey]?.trim();
+    if (!legacyCredential) continue;
+    const extensionId = freeSourceExtensionId(source.id);
+    const existing = await resolveExtensionCredential(
+      extensionId,
+      FREE_SOURCE_CREDENTIAL_ID,
+    );
+    if (!existing) {
+      await saveExtensionCredential(
+        extensionId,
+        FREE_SOURCE_CREDENTIAL_ID,
+        legacyCredential,
+      );
+      migrated += 1;
+    }
+  }
+
+  if (Object.keys(legacy).length > 0) {
+    await updateAppState({ freeModelSources: {} });
+  }
+  return migrated;
+}
+
+async function readCredentials(): Promise<StoredFreeModelSourceCredentials> {
+  await migrateLegacyFreeModelSourceCredentials();
+  const resolved: StoredFreeModelSourceCredentials = {};
+
+  for (const source of SOURCES) {
+    const credential = (
+      await resolveExtensionCredential(
+        freeSourceExtensionId(source.id),
+        FREE_SOURCE_CREDENTIAL_ID,
+      )
+    )?.trim();
+    if (credential) resolved[source.credentialKey] = credential;
+  }
+  return resolved;
 }
 
 function validateFreebuffLoginUrl(raw: unknown): string {
@@ -416,9 +470,17 @@ export async function setFreeModelSourceCredential(sourceID: FreeModelSourceID, 
   if (!source) throw new Error("Unknown free model source");
   const credential = value.trim();
   if (!credential) throw new Error("Credential is empty");
+  await saveExtensionCredential(
+    freeSourceExtensionId(sourceID),
+    FREE_SOURCE_CREDENTIAL_ID,
+    credential,
+  );
+  // Ensure a legacy plaintext copy never survives a new write.
   await updateAppState((state) => {
     const current = normalizeCredentials(state.freeModelSources);
-    return { freeModelSources: { ...current, [source.credentialKey]: credential } };
+    if (!current[source.credentialKey]) return {};
+    delete current[source.credentialKey];
+    return { freeModelSources: current };
   });
 }
 
@@ -426,15 +488,19 @@ export async function clearFreeModelSourceCredential(sourceID: FreeModelSourceID
   if (sourceID === "freebuff") pendingFreebuffLogin = null;
   const source = SOURCES.find((item) => item.id === sourceID);
   if (!source) return false;
-  let removed = false;
+  const removedVault = await removeExtensionCredential(
+    freeSourceExtensionId(sourceID),
+    FREE_SOURCE_CREDENTIAL_ID,
+  );
+  let removedLegacy = false;
   await updateAppState((state) => {
     const current = normalizeCredentials(state.freeModelSources);
     if (!current[source.credentialKey]) return {};
-    removed = true;
+    removedLegacy = true;
     delete current[source.credentialKey];
     return { freeModelSources: current };
   });
-  return removed;
+  return removedVault || removedLegacy;
 }
 
 export async function listFreeModelSourceConnections(): Promise<FreeModelSourceConnection[]> {

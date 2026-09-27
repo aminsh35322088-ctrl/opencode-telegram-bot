@@ -14,6 +14,7 @@ import { initializeTailscaleIntegration, stopTailscaleIntegration } from "../ser
 import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
 import { migrateBundledExtensionsToManagedState } from "../services/extension-defaults-service.js";
 import { listStoredExtensions } from "../services/extension-store.js";
+import { migrateLegacyImageAiCredentials } from "../services/image-ai-provider-service.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearServiceStateFile } from "../../runtime/service/manager.js";
@@ -24,7 +25,7 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
-import { initializeFreeModelSources, stopFreeModelSources } from "../services/free-model-source-service.js";
+import { initializeFreeModelSources, migrateLegacyFreeModelSourceCredentials, stopFreeModelSources } from "../services/free-model-source-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -130,6 +131,14 @@ export async function startBotApp(): Promise<void> {
   process.on("uncaughtException", uncaughtExceptionHandler);
 
   await loadSettings();
+  await migrateLegacyFreeModelSourceCredentials().catch((error) => {
+    logger.warn("[FreeModelSources] Could not migrate legacy credentials into Credential Vault", error);
+    return 0;
+  });
+  await migrateLegacyImageAiCredentials().catch((error) => {
+    logger.warn("[ImageAI] Could not migrate legacy credentials into Credential Vault", error);
+    return 0;
+  });
   const freeModelSourcesReady = await initializeFreeModelSources().catch((error) => {
     logger.warn("[FreeModelSources] Startup initialization failed; continuing without experimental free sources", error);
     return false;
