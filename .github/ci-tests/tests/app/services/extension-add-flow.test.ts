@@ -65,6 +65,7 @@ import {
   completeExtensionOAuth,
   finalizeExtensionCredential,
   getPendingExtensionOAuth,
+  resumePendingExtensionAddFromQuestion,
   verifyPendingExtensionOAuth,
 } from "../../../src/app/services/extension-ensure-service.js";
 describe("conversational Extension add flows", () => {
@@ -121,6 +122,113 @@ describe("conversational Extension add flows", () => {
     expect(mocks.createMcp).not.toHaveBeenCalled();
     expect(mocks.saveExtension).not.toHaveBeenCalled();
   });
+  it("resumes MCP installation from the Question answer without a second model add call", async () => {
+    mocks.createMcp.mockResolvedValue({
+      name: "graphify",
+      type: "remote",
+      status: { status: "needs_auth" },
+    });
+    mocks.startOAuth.mockResolvedValue({
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      oauthState: "oauth-state",
+    });
+
+    const preview = await addMcpBackedExtension({
+      sessionId: "ses-deterministic",
+      projectDirectory: "/work/repo",
+      name: "graphify",
+      kind: "mcp",
+      source: "https://api.graphify.com/mcp",
+      purpose: "Repository graph analysis",
+    });
+    expect(preview.status).toBe("question-required");
+    if (preview.status !== "question-required") throw new Error("Expected question preview");
+
+    const resumed = await resumePendingExtensionAddFromQuestion({
+      sessionId: "ses-deterministic",
+      questions: [{
+        header: preview.question.header,
+        question: preview.question.question,
+      }],
+      answers: [["* Add: Use OpenCode automatic MCP authentication discovery."]],
+    });
+
+    expect(resumed).toMatchObject({
+      handled: true,
+      status: "resumed",
+      result: {
+        status: "awaiting-oauth",
+        authorizationUrl: "https://graphify.example/oauth/authorize",
+      },
+    });
+    expect(mocks.createMcp).toHaveBeenCalledTimes(1);
+    expect(mocks.startOAuth).toHaveBeenCalledWith("/work/repo", "graphify");
+    expect(getPendingExtensionOAuth("ses-deterministic")).toMatchObject({
+      serverName: "graphify",
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+    });
+  });
+
+  it("resumes Skill installation from the Question answer without a second model add call", async () => {
+    mocks.resolveSkill.mockResolvedValue({
+      kind: "single",
+      skill: {
+        name: "deploy-check",
+        description: "Check deployments before release",
+        content: "# Deploy check",
+        sourceUrl: "https://github.com/example/skills/tree/main/deploy-check",
+      },
+    });
+
+    const preview = await addSkillExtension({
+      sessionId: "ses-skill-deterministic",
+      projectDirectory: "/work/repo",
+      source: "https://github.com/example/skills/tree/main/deploy-check",
+    });
+    expect(preview.status).toBe("question-required");
+    if (preview.status !== "question-required") throw new Error("Expected question preview");
+
+    const resumed = await resumePendingExtensionAddFromQuestion({
+      sessionId: "ses-skill-deterministic",
+      questions: [{
+        header: preview.question.header,
+        question: preview.question.question,
+      }],
+      answers: [["* Add: Check deployments before release"]],
+    });
+
+    expect(resumed).toMatchObject({
+      handled: true,
+      status: "resumed",
+      result: {
+        status: "ready",
+        extension: { id: "skill:deploy-check", kind: "skill" },
+      },
+    });
+    expect(mocks.writeSkill).toHaveBeenCalledWith("deploy-check", "# Deploy check");
+    expect(mocks.generateActions).toHaveBeenCalledWith(expect.objectContaining({
+      id: "skill:deploy-check",
+    }));
+  });
+
+  it("does not resume a pending Extension from an unrelated Question", async () => {
+    await addMcpBackedExtension({
+      sessionId: "ses-unrelated",
+      projectDirectory: "/work/repo",
+      name: "graphify",
+      kind: "mcp",
+      source: "https://api.graphify.com/mcp",
+      purpose: "Repository graph analysis",
+    });
+
+    await expect(resumePendingExtensionAddFromQuestion({
+      sessionId: "ses-unrelated",
+      questions: [{ header: "Other", question: "Do something else?" }],
+      answers: [["* Yes: do it"]],
+    })).resolves.toEqual({ handled: false });
+    expect(mocks.createMcp).not.toHaveBeenCalled();
+  });
+
   it("auto-detects needs_auth and starts OAuth without a permission request", async () => {
     mocks.createMcp.mockResolvedValue({
       name: "graphify",
