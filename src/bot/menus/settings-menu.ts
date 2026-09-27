@@ -148,13 +148,14 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "⚙️ <b>Settings</b>",
       "",
       "🧠 Model Center",
-      "🐙 GitHub",
+      "🐙 GitHub · 🌐 Tailscale",
       "🧩 Extensions",
       "⚡ Actions",
     ].join("\n"),
     keyboard: new InlineKeyboard()
       .text("🧠 Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
-      .text("🐙 GitHub", SETTINGS_GITHUB_CALLBACK).row()
+      .text("🐙 GitHub", SETTINGS_GITHUB_CALLBACK)
+      .text("🌐 Tailscale", "integration:tailscale").row()
       .text("🧩 Extensions", SETTINGS_EXTENSIONS_CALLBACK).row()
       .text("⚡ Actions", SETTINGS_ACTIONS_CALLBACK).row()
       .text("⋯ More", SETTINGS_MORE_CALLBACK),

@@ -8,6 +8,7 @@ import {
   finalizeExtensionCredential,
   getExtensionEnsureRequest,
   getPendingExtensionOAuth,
+  verifyPendingExtensionOAuth,
 } from "../../app/services/extension-ensure-service.js";
 import {
   bindSecureCredentialChallenge,
@@ -52,7 +53,7 @@ async function resumeSession(sessionId: string, directory: string): Promise<void
     directory,
     parts: [{
       type: "text",
-      text: "Extension setup completed with explicit user approval. Continue the original request using the now-available capability. Do not repeat installation or ask for the credential value. If this Extension exposes useful runtime tools and it has no generated Action Pack yet, inspect those tools and register a small normalized namespaced pack with generated-actions.register; never re-enable an action the user disabled. For a newly added model provider, do one provider-level check of its public models/pricing/docs page and record only well-supported free-model policy evidence, rather than researching every model separately.",
+      text: "Extension setup completed. Continue the original request using the now-available capability. Do not repeat installation or ask for credential values. MCP/Integration and Skill Action Packs are synchronized automatically by the bot; use actions.list/resolve to discover them instead of regenerating them manually. For a newly added model provider, do one provider-level check of its public models/pricing/docs page and record only well-supported free-model policy evidence, rather than researching every model separately.",
     }],
   });
   if (error) logger.warn(`[Extensions] Could not resume session after setup: session=${sessionId}`);
@@ -71,6 +72,30 @@ export async function presentPendingExtensionAutomation(api: Api, chatId: number
     await api.sendMessage(chatId, text, { parse_mode: "HTML", reply_markup: approvalKeyboard(request.id) });
     return true;
   }
+  const oauth = getPendingExtensionOAuth(sessionId);
+  const oauthPresentationId = oauth ? `oauth:${sessionId}:${oauth.oauthState}` : null;
+  if (oauth && oauthPresentationId && !presented.has(oauthPresentationId)) {
+    presented.add(oauthPresentationId);
+    const extension = await getStoredExtension(oauth.extensionId);
+    await api.sendMessage(
+      chatId,
+      [
+        `🔐 <b>Sign in to ${extension?.name ?? oauth.serverName}</b>`,
+        "",
+        "1. Tap Sign in and finish authorization in your browser.",
+        "2. If the browser ends on an unavailable localhost page, copy the full callback URL.",
+        "3. Send that callback URL here; it is deleted immediately and never sent to the model.",
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard()
+          .url("🔐 Sign in", oauth.authorizationUrl)
+          .text("✅ Check", "oauthauto:check"),
+      },
+    );
+    return true;
+  }
+
   const challenge = findUnboundSecureCredentialChallenge(sessionId);
   if (challenge && !presented.has(challenge.id)) {
     presented.add(challenge.id);
@@ -91,10 +116,41 @@ async function editReady(ctx: Context, name: string): Promise<void> {
 
 export async function handleExtensionAutomationCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
-  if (!data || (!data.startsWith("extauto:") && !data.startsWith("credauto:"))) return false;
+  if (!data || (!data.startsWith("extauto:") && !data.startsWith("credauto:") && !data.startsWith("oauthauto:"))) return false;
   const [, action, id] = data.split(":");
-  if (!action || !id || !ctx.chat?.id) return true;
+  if (!action || !ctx.chat?.id) return true;
   const threadId = threadIdFromContext(ctx);
+
+  if (data.startsWith("oauthauto:")) {
+    if (action !== "check") return true;
+    const sessionId = currentSessionId();
+    if (!sessionId) {
+      await ctx.answerCallbackQuery({ text: "No active Topic session.", show_alert: true }).catch(() => {});
+      return true;
+    }
+    try {
+      const result = await verifyPendingExtensionOAuth(sessionId);
+      if (result.status === "ready" && result.extension) {
+        await ctx.answerCallbackQuery({ text: "Connected ✅" }).catch(() => {});
+        await editReady(ctx, result.extension.name);
+        const session = getCurrentSession();
+        await resumeSession(sessionId, getTopicRuntimeContext()?.directory ?? session?.directory ?? process.cwd());
+        return true;
+      }
+      await ctx.answerCallbackQuery({
+        text: "Still waiting for sign-in. Finish authorization, then tap Check again.",
+        show_alert: true,
+      }).catch(() => {});
+    } catch (error) {
+      await ctx.answerCallbackQuery({
+        text: error instanceof Error ? error.message.slice(0, 190) : "Could not verify sign-in.",
+        show_alert: true,
+      }).catch(() => {});
+    }
+    return true;
+  }
+
+  if (!id) return true;
 
   if (data.startsWith("extauto:")) {
     const request = getExtensionEnsureRequest(id);

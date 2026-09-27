@@ -21,15 +21,15 @@ const BOT_ACTIONS = [
   "variants.current",
   "variants.select",
   "skills.list",
-  "skills.ensure",
+  "skills.add",
   "skills.create",
   "skills.update",
   "skills.delete",
-  "skills.import",
   "commands.list",
   "mcp.list",
-  "mcp.ensure",
+  "mcp.add",
   "mcp.debug",
+  "integrations.add",
   "extensions.list",
   "extensions.info",
   "extensions.ensure",
@@ -37,10 +37,7 @@ const BOT_ACTIONS = [
   "credentials.request",
   "credentials.status",
   "generated-actions.list",
-  "generated-actions.register",
   "generated-actions.toggle",
-  "mcp.add-local",
-  "mcp.add-remote",
   "mcp.enable",
   "mcp.rename",
   "mcp.delete",
@@ -222,7 +219,18 @@ interface ExtensionRegistryModule {
   removeExtension(projectDirectory: string, id: string): Promise<unknown>;
 }
 interface ExtensionEnsureModule {
-  requestExtensionEnsure(input: { sessionId: string; projectDirectory: string; name: string; kind: "integration" | "mcp" | "skill" | "model-provider" | "plugin"; source: string; purpose: string; authType?: "none" | "oauth" | "api-key" | "bearer" }): Promise<unknown>;
+  requestExtensionEnsure(input: { sessionId: string; projectDirectory: string; name: string; kind: "model-provider" | "plugin"; source: string; purpose: string; authType?: "none" | "api-key" }): Promise<unknown>;
+  addSkillExtension(input: { sessionId: string; projectDirectory: string; source: string; confirmed?: boolean }): Promise<unknown>;
+  addMcpBackedExtension(input: {
+    sessionId: string;
+    projectDirectory: string;
+    name: string;
+    source: string;
+    purpose: string;
+    kind: "mcp" | "integration";
+    confirmed?: boolean;
+    authType?: "none" | "oauth" | "api-key" | "bearer";
+  }): Promise<unknown>;
 }
 interface CredentialModule {
   createSecureCredentialChallenge(input: { extensionId: string; credentialId: string; sessionId: string; projectDirectory: string }): Promise<unknown>;
@@ -344,7 +352,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions: projects/worktrees, model-agent-variant selection, Extensions (including OpenCode plugins), skills/MCP, sessions, scheduled tasks, safe settings, memory, provider metadata, integrations, and version state. Extension installation/update is runtime configuration owned by the bot; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. To add MCP servers, Skills, or dynamic Integrations, use mcp.add / skills.add / integrations.add. When an add action returns status=question-required, immediately call the native question tool with the returned questionTool.arguments exactly; only call the same add action with confirmed=true after the user chooses Add. No permission request is needed for Extension installation. OAuth/API-key follow-up is handled by Telegram secure UI. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -358,8 +366,8 @@ export default tool({
     value: tool.schema.string().optional().describe("Extension source URL/specifier, version-pinned OpenCode plugin specifier, MCP URL/command, rename target, or settings value."),
     extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
     credential_id: tool.schema.string().optional().describe("Credential schema ID registered by an Extension. Never pass a secret value."),
-    extension_kind: tool.schema.enum(["integration", "mcp", "skill", "model-provider", "plugin"]).optional().describe("Extension kind for extensions.ensure. Use plugin for OpenCode plugins; plugin updates are stored in bot-owned runtime config, never the project repository."),
-    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Declared auth type for Extension setup; raw secrets are never accepted."),
+    extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for OpenCode plugins. Use providers.ensure, mcp.add, skills.add, or integrations.add for all other Extension classes."),
+    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Optional auth selection after endpoint analysis. Omit for automatic MCP auth discovery. Raw secrets are never accepted."),
     confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
     paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
     free_suffix: tool.schema.string().optional().describe("Provider-advertised free model suffix, such as :free."),
@@ -374,6 +382,7 @@ export default tool({
     setting: tool.schema.enum(SETTINGS).optional().describe("Safe bot setting for settings.get/settings.set."),
     enabled: tool.schema.boolean().optional().describe("Boolean value for boolean settings."),
     repair: tool.schema.boolean().optional().describe("For mcp.debug, force-resync managed MCP definitions into the current Topic runtime before returning diagnostics."),
+    confirmed: tool.schema.boolean().optional().describe("For skills.add, mcp.add, and integrations.add: leave false/omitted for analysis + Question-tool preview; set true only after the user confirms through the native question tool."),
   },
   async execute(args, context) {
     const action = args.action as BotAction;
@@ -456,30 +465,19 @@ export default tool({
     if (action.startsWith("skills.")) {
       const catalog = await load<SkillsCatalogModule>("app/services/skills-catalog-service.js");
       if (action === "skills.list") return json(await catalog.loadSkillsCatalog(base));
-      if (action === "skills.ensure") {
+      if (action === "skills.add") {
         const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
-        return json(await ensure.requestExtensionEnsure({
+        return json(await ensure.addSkillExtension({
           sessionId: context.sessionID,
           projectDirectory: base,
-          name: required(args.name, "name", action),
-          kind: "skill",
           source: required(args.value, "value", action),
-          purpose: required(args.description, "description", action),
-          authType: "none",
+          confirmed: args.confirmed === true,
         }));
       }
       const manager = await load<SkillManageModule>("app/services/skill-manage-service.js");
       if (action === "skills.delete") {
         const name = required(args.name, "name", action);
         return json({ ok: await manager.deleteGlobalSkill(name), name });
-      }
-      if (action === "skills.import") {
-        const url = required(args.value, "value", action);
-        const importer = await load<SkillImportModule>("app/services/skill-import-service.js");
-        const source = await importer.resolveSkillSource(url);
-        if (source.kind === "list") return json({ ok: false, requiresSelection: true, candidates: source.candidates });
-        const location = await manager.writeGlobalSkillRaw(source.skill.name, source.skill.content);
-        return json({ ok: true, name: source.skill.name, description: source.skill.description, sourceUrl: source.skill.sourceUrl, location });
       }
       const name = required(args.name, "name", action);
       const description = required(args.description, "description", action);
@@ -498,16 +496,17 @@ export default tool({
     if (action.startsWith("mcp.")) {
       const service = await load<McpModule>("app/services/mcp-server-service.js");
       if (action === "mcp.list") return json(await service.loadMcpServers(base));
-      if (action === "mcp.ensure") {
+      if (action === "mcp.add") {
         const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
-        return json(await ensure.requestExtensionEnsure({
+        return json(await ensure.addMcpBackedExtension({
           sessionId: context.sessionID,
           projectDirectory: base,
           name: required(args.name, "name", action),
           kind: "mcp",
           source: required(args.value, "value", action),
           purpose: required(args.description, "description", action),
-          authType: args.auth_type ?? "none",
+          confirmed: args.confirmed === true,
+          authType: args.auth_type,
         }));
       }
       if (action === "mcp.debug") {
@@ -525,10 +524,21 @@ export default tool({
         const newName = required(args.value, "value", action);
         return json({ ok: true, server: await service.renameMcpServer(base, name, newName) });
       }
-      const value = required(args.value, "value", action);
-      const type = action === "mcp.add-remote" ? "remote" : "local";
-      await service.createMcpServerFromInput({ projectDirectory: base, name, type, value });
-      return json({ ok: true, name, type });
+      throw new Error(`Unsupported MCP action: ${action}`);
+    }
+
+    if (action === "integrations.add") {
+      const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
+      return json(await ensure.addMcpBackedExtension({
+        sessionId: context.sessionID,
+        projectDirectory: base,
+        name: required(args.name, "name", action),
+        kind: "integration",
+        source: required(args.value, "value", action),
+        purpose: required(args.description, "description", action),
+        confirmed: args.confirmed === true,
+        authType: args.auth_type,
+      }));
     }
 
     if (action.startsWith("extensions.")) {
@@ -536,12 +546,13 @@ export default tool({
       if (action === "extensions.list") return json(await registry.listExtensions(base));
       if (action === "extensions.info") return json(await registry.getExtensionInfo(base, required(args.extension_id, "extension_id", action)));
       if (action === "extensions.remove") return json(await registry.removeExtension(base, required(args.extension_id, "extension_id", action)));
+      const kind = "plugin" as const;
       const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
       return json(await ensure.requestExtensionEnsure({
         sessionId: context.sessionID,
         projectDirectory: base,
         name: required(args.name, "name", action),
-        kind: args.extension_kind ?? "integration",
+        kind,
         source: required(args.value, "value", action),
         purpose: required(args.description, "description", action),
         authType: args.auth_type ?? "none",
@@ -573,24 +584,7 @@ export default tool({
         if (typeof args.enabled !== "boolean") throw new Error("generated-actions.toggle requires enabled=true|false");
         return json(await generated.setGeneratedActionEnabled(id, args.enabled));
       }
-      const body = required(args.body, "body", action);
-      const parsed: unknown = JSON.parse(body);
-      if (!Array.isArray(parsed)) throw new Error("generated-actions.register body must be a JSON array.");
-      const pack = parsed.map((item) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Invalid generated action.");
-        const value = item as Record<string, unknown>;
-        if (typeof value.id !== "string" || typeof value.tool !== "string" || typeof value.description !== "string") {
-          throw new Error("Generated action requires id, tool, and description.");
-        }
-        return {
-          id: value.id,
-          tool: value.tool,
-          ...(typeof value.action === "string" ? { action: value.action } : {}),
-          ...(typeof value.category === "string" ? { category: value.category } : {}),
-          description: value.description,
-        };
-      });
-      return json(await generated.registerGeneratedActionPack(required(extensionId, "extension_id", action), pack));
+      throw new Error(`Unsupported generated-actions operation: ${action}. Action packs are generated automatically by the bot.`);
     }
 
     if (action.startsWith("session.")) {

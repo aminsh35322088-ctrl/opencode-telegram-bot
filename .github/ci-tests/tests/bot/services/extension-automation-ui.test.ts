@@ -8,6 +8,11 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   finalize: vi.fn(),
   promptAsync: vi.fn(),
+  pendingEnsure: vi.fn(),
+  pendingOAuth: vi.fn(),
+  verifyOAuth: vi.fn(),
+  storedExtension: vi.fn(),
+  unboundChallenge: vi.fn(),
 }));
 
 vi.mock("../../../src/app/managers/interaction-manager.js", () => ({
@@ -23,20 +28,21 @@ vi.mock("../../../src/app/services/secure-credential-broker.js", () => ({
   submitSecureCredential: mocks.submit,
   bindSecureCredentialChallenge: vi.fn(),
   cancelSecureCredentialChallenge: vi.fn(),
-  findUnboundSecureCredentialChallenge: vi.fn(() => null),
+  findUnboundSecureCredentialChallenge: mocks.unboundChallenge,
 }));
 vi.mock("../../../src/app/services/extension-ensure-service.js", () => ({
   finalizeExtensionCredential: mocks.finalize,
   approveExtensionEnsure: vi.fn(),
   cancelExtensionEnsure: vi.fn(),
   completeExtensionOAuth: vi.fn(),
-  findPendingExtensionEnsure: vi.fn(() => null),
+  findPendingExtensionEnsure: mocks.pendingEnsure,
   getExtensionEnsureRequest: vi.fn(() => null),
-  getPendingExtensionOAuth: vi.fn(() => null),
+  getPendingExtensionOAuth: mocks.pendingOAuth,
+  verifyPendingExtensionOAuth: mocks.verifyOAuth,
 }));
 
 vi.mock("../../../src/app/services/extension-store.js", () => ({
-  getStoredExtension: vi.fn(),
+  getStoredExtension: mocks.storedExtension,
 }));
 
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({
@@ -54,7 +60,11 @@ vi.mock("../../../src/opencode/client.js", () => ({
 vi.mock("../../../src/utils/logger.js", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
-import { handleSecureExtensionMessage } from "../../../src/bot/services/extension-automation-ui.js";
+import {
+  handleExtensionAutomationCallback,
+  handleSecureExtensionMessage,
+  presentPendingExtensionAutomation,
+} from "../../../src/bot/services/extension-automation-ui.js";
 
 function secureContext(deleteMessage: ReturnType<typeof vi.fn>): Context {
   return {
@@ -93,6 +103,72 @@ describe("Extension secure credential input", () => {
     });
     mocks.finalize.mockResolvedValue({ name: "Graphify" });
     mocks.promptAsync.mockResolvedValue({ data: true, error: undefined });
+    mocks.pendingEnsure.mockReturnValue(null);
+    mocks.pendingOAuth.mockReturnValue(null);
+    mocks.verifyOAuth.mockResolvedValue({ status: "pending" });
+    mocks.unboundChallenge.mockReturnValue(null);
+    mocks.storedExtension.mockResolvedValue(null);
+  });
+
+  it("presents pending MCP OAuth as a direct Telegram Sign in button", async () => {
+    mocks.pendingOAuth.mockReturnValue({
+      extensionId: "mcp:graphify",
+      projectDirectory: "/work/repo",
+      serverName: "graphify",
+      sessionId: "ses-secure",
+      oauthState: "oauth-state",
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      expiresAt: Date.now() + 60_000,
+    });
+    mocks.storedExtension.mockResolvedValue({ name: "Graphify" });
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 1 });
+    const api = { sendMessage } as never;
+
+    await expect(
+      presentPendingExtensionAutomation(api, 100, "ses-secure"),
+    ).resolves.toBe(true);
+
+    const call = sendMessage.mock.calls[0]!;
+    expect(call[1]).toContain("Sign in to Graphify");
+    const options = call[2] as {
+      reply_markup: { inline_keyboard: Array<Array<{ text: string; url?: string }>> };
+    };
+    expect(options.reply_markup.inline_keyboard[0]?.[0]).toMatchObject({
+      text: "🔐 Sign in",
+      url: "https://graphify.example/oauth/authorize",
+    });
+    expect(options.reply_markup.inline_keyboard[0]?.[1]).toMatchObject({
+      text: "✅ Check",
+      callback_data: "oauthauto:check",
+    });
+  });
+
+  it("finishes MCP OAuth from the Check button and resumes the session", async () => {
+    mocks.verifyOAuth.mockResolvedValue({
+      status: "ready",
+      extension: { name: "Graphify" },
+    });
+    const answerCallbackQuery = vi.fn().mockResolvedValue(true);
+    const editMessageText = vi.fn().mockResolvedValue(true);
+    const ctx = {
+      chat: { id: 100, type: "private" },
+      callbackQuery: {
+        data: "oauthauto:check",
+        message: { message_id: 701, chat: { id: 100, type: "private" } },
+      },
+      answerCallbackQuery,
+      editMessageText,
+    } as unknown as Context;
+
+    await expect(handleExtensionAutomationCallback(ctx)).resolves.toBe(true);
+
+    expect(mocks.verifyOAuth).toHaveBeenCalledWith("ses-secure");
+    expect(answerCallbackQuery).toHaveBeenCalledWith({ text: "Connected ✅" });
+    expect(editMessageText).toHaveBeenCalledWith(
+      "✅ <b>Graphify</b> ready",
+      { parse_mode: "HTML" },
+    );
+    expect(mocks.promptAsync).toHaveBeenCalled();
   });
 
   it("fails closed when Telegram cannot delete the secret message", async () => {

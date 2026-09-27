@@ -185,6 +185,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
     ["extauto", { name: "extension-automation", handlers: [handleExtensionAutomationCallback], errorScope: "interaction" }],
     ["credauto", { name: "credential-automation", handlers: [handleExtensionAutomationCallback], errorScope: "interaction" }],
+    ["oauthauto", { name: "extension-oauth-automation", handlers: [handleExtensionAutomationCallback], errorScope: "interaction" }],
   ]);
 
   bot.on("callback_query:data", async (ctx) => {

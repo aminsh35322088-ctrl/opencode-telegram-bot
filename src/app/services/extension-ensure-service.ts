@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, startMcpOAuth } from "./mcp-server-service.js";
+import { analyzeRemoteMcpEndpoint, createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, loadMcpServers, startMcpOAuth } from "./mcp-server-service.js";
 import { resolveSkillSource } from "./skill-import-service.js";
 import { writeGlobalSkillRaw } from "./skill-manage-service.js";
 import { discoverModels, saveCustomProvider } from "./custom-provider-service.js";
@@ -8,6 +8,7 @@ import { createSecureCredentialChallenge } from "./secure-credential-broker.js";
 import { resolveExtensionCredential } from "./credential-vault-service.js";
 import { extensionId, listExtensions } from "./extension-registry-service.js";
 import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
+import { generateExtensionActions } from "./extension-action-generator-service.js";
 import type { ExtensionAuthType, ExtensionEnsureRequest, ExtensionKind, ExtensionRecord } from "../types/extension.js";
 
 const REQUEST_TTL_MS = 15 * 60_000;
@@ -23,6 +24,7 @@ interface PendingOAuth {
   serverName: string;
   sessionId: string;
   oauthState: string;
+  authorizationUrl: string;
   expiresAt: number;
 }
 
@@ -141,10 +143,10 @@ export async function requestExtensionEnsure(input: {
   sessionId: string;
   projectDirectory: string;
   name: string;
-  kind: ExtensionKind;
+  kind: "model-provider" | "plugin";
   source: string;
   purpose: string;
-  authType?: ExtensionAuthType;
+  authType?: "none" | "api-key";
 }): Promise<{ status: "ready" | "approval-required"; extensionId: string; requestId?: string; expiresAt?: number }> {
   prune();
   const name = input.name.trim().slice(0, 100);
@@ -228,22 +230,6 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
       return { status: "ready", extension };
     }
 
-    if (request.kind === "skill") {
-      const resolved = await resolveSkillSource(request.source);
-      if (resolved.kind !== "single") throw new Error("Skill source resolves to multiple candidates; use a direct skill source URL.");
-      const location = await writeGlobalSkillRaw(resolved.skill.name, resolved.skill.content);
-      const extension = recordFor(request, { kind: "skill", skillName: resolved.skill.name });
-      extension.source = resolved.skill.sourceUrl || request.source;
-      extension.name = resolved.skill.name;
-      extension.id = extensionId("skill", resolved.skill.name);
-      extension.updatedAt = new Date().toISOString();
-      await saveStoredExtension(extension);
-      request.status = "ready";
-      requests.delete(id);
-      void location;
-      return { status: "ready", extension };
-    }
-
     if (request.kind === "model-provider") {
       if (request.authType !== "api-key") throw new Error("Model providers currently require the registered API-key credential schema.");
       const providerId = extensionId("model-provider", request.name).slice("model-provider:".length);
@@ -260,51 +246,7 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
       return { status: "awaiting-credential", extension, challengeId: challenge.challengeId, credentialId: "api-key" };
     }
 
-    const serverName = request.name;
-    const isLocal = request.kind === "mcp" && request.source.startsWith("local:");
-    if (request.kind === "integration" && isLocal) throw new Error("Dynamic integrations may not install arbitrary local commands.");
-    const value = isLocal ? request.source.slice("local:".length).trim() : request.source;
-    await createMcpServerFromInput({
-      projectDirectory: request.projectDirectory,
-      name: serverName,
-      type: isLocal ? "local" : "remote",
-      value,
-    });
-    const extension = recordFor(request, { kind: "mcp", serverName, projectDirectory: request.projectDirectory });
-    await saveStoredExtension(extension);
-
-    if (request.authType === "oauth") {
-      if (isLocal) throw new Error("Local MCP extensions cannot use remote OAuth.");
-      const oauth = await startMcpOAuth(request.projectDirectory, serverName);
-      oauthBySession.set(request.sessionId, {
-        extensionId: extension.id,
-        projectDirectory: request.projectDirectory,
-        serverName,
-        sessionId: request.sessionId,
-        oauthState: oauth.oauthState,
-        expiresAt: Date.now() + REQUEST_TTL_MS,
-      });
-      request.status = "awaiting-credential";
-      requests.delete(id);
-      return { status: "awaiting-oauth", extension, authorizationUrl: oauth.authorizationUrl, oauthState: oauth.oauthState };
-    }
-
-    const credentialId = request.authType === "bearer" ? "bearer" : request.authType === "api-key" ? "api-key" : null;
-    if (credentialId) {
-      const challenge = await createSecureCredentialChallenge({
-        extensionId: extension.id,
-        credentialId,
-        sessionId: request.sessionId,
-        projectDirectory: request.projectDirectory,
-      });
-      request.status = "awaiting-credential";
-      requests.delete(id);
-      return { status: "awaiting-credential", extension, challengeId: challenge.challengeId, credentialId };
-    }
-
-    request.status = "ready";
-    requests.delete(id);
-    return { status: "ready", extension };
+    throw new Error("Unsupported approval-based Extension kind.");
   } catch (error) {
     request.status = "failed";
     request.error = error instanceof Error ? error.message : "Extension setup failed.";
@@ -312,10 +254,298 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
   }
 }
 
+
+export interface ExtensionQuestionPreview {
+  header: string;
+  question: string;
+  options: Array<{ label: string; description: string; authType?: ExtensionAuthType }>;
+  multiple: false;
+}
+
+export type ConversationalExtensionAddResult =
+  | {
+      status: "question-required";
+      kind: "mcp" | "skill" | "integration";
+      preview: Record<string, unknown>;
+      question: ExtensionQuestionPreview;
+      questionTool: {
+        tool: "question";
+        arguments: { questions: ExtensionQuestionPreview[] };
+      };
+    }
+  | ExtensionApprovalResult;
+
+function addQuestion(
+  header: string,
+  question: string,
+  options: ExtensionQuestionPreview["options"],
+): ExtensionQuestionPreview {
+  return { header, question, options, multiple: false };
+}
+
+export async function addSkillExtension(input: {
+  sessionId: string;
+  projectDirectory: string;
+  source: string;
+  confirmed?: boolean;
+}): Promise<ConversationalExtensionAddResult> {
+  const source = validateSource("skill", input.source);
+  const resolved = await resolveSkillSource(source);
+  if (resolved.kind === "list") {
+    return {
+      status: "question-required",
+      kind: "skill",
+      preview: { source, candidates: resolved.candidates },
+      question: addQuestion(
+        "Choose Skill",
+        "Multiple skills were found. Choose one, then call skills.add again with that candidate URL.",
+        resolved.candidates.slice(0, 10).map((candidate) => ({
+          label: candidate.name,
+          description: candidate.url,
+        })),
+      ),
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [addQuestion(
+            "Choose Skill",
+            "Which skill do you want to add?",
+            resolved.candidates.slice(0, 10).map((candidate) => ({
+              label: candidate.name,
+              description: candidate.url,
+            })),
+          )],
+        },
+      },
+    };
+  }
+
+  if (!input.confirmed) {
+    return {
+      status: "question-required",
+      kind: "skill",
+      preview: {
+        name: resolved.skill.name,
+        description: resolved.skill.description,
+        source: resolved.skill.sourceUrl,
+      },
+      question: addQuestion(
+        "Add Skill",
+        `Add ${resolved.skill.name} to the bot?`,
+        [
+          { label: "Add", description: resolved.skill.description },
+          { label: "Cancel", description: "Do not install this skill." },
+        ],
+      ),
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [addQuestion(
+            "Add Skill",
+            `Add ${resolved.skill.name} to the bot?`,
+            [
+              { label: "Add", description: resolved.skill.description },
+              { label: "Cancel", description: "Do not install this skill." },
+            ],
+          )],
+        },
+      },
+    };
+  }
+
+  await writeGlobalSkillRaw(resolved.skill.name, resolved.skill.content);
+  const now = new Date().toISOString();
+  const id = extensionId("skill", resolved.skill.name);
+  const previous = await getStoredExtension(id);
+  const extension: ExtensionRecord = {
+    id,
+    name: resolved.skill.name,
+    kind: "skill",
+    source: resolved.skill.sourceUrl || source,
+    purpose: resolved.skill.description,
+    authType: "none",
+    credentialSchemas: [],
+    resource: { kind: "skill", skillName: resolved.skill.name },
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+    managed: true,
+  };
+  await saveStoredExtension(extension);
+  await generateExtensionActions(extension);
+  return { status: "ready", extension };
+}
+
+export async function addMcpBackedExtension(input: {
+  sessionId: string;
+  projectDirectory: string;
+  name: string;
+  source: string;
+  purpose: string;
+  kind: "mcp" | "integration";
+  confirmed?: boolean;
+  authType?: ExtensionAuthType;
+}): Promise<ConversationalExtensionAddResult> {
+  const name = input.name.trim().slice(0, 100);
+  const purpose = input.purpose.trim().slice(0, 500);
+  if (!name || !purpose) throw new Error("Extension name and purpose are required.");
+  const source = validateSource(input.kind, input.source);
+  const isLocal = source.startsWith("local:");
+  if (input.kind === "integration" && isLocal) {
+    throw new Error("Dynamic integrations may not install arbitrary local commands.");
+  }
+
+  const analysis = isLocal ? null : await analyzeRemoteMcpEndpoint(source);
+  if (!input.confirmed) {
+    const options: ExtensionQuestionPreview["options"] = [
+      { label: "Add", description: "Use OpenCode automatic MCP authentication discovery." },
+    ];
+    if (analysis?.authHint === "credential-likely") {
+      options.push(
+        { label: "API key", description: "Add it and request an API key securely.", authType: "api-key" },
+        { label: "Bearer token", description: "Add it and request a Bearer token securely.", authType: "bearer" },
+      );
+    }
+    options.push({ label: "Cancel", description: "Do not add this Extension." });
+    return {
+      status: "question-required",
+      kind: input.kind,
+      preview: {
+        name,
+        source,
+        purpose,
+        transport: isLocal ? "local" : "streamable-http",
+        ...(analysis ? { endpoint: analysis } : {}),
+      },
+      question: addQuestion(
+        input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
+        `Add ${name} to the bot?`,
+        options,
+      ),
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [addQuestion(
+            input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
+            `Add ${name} to the bot?`,
+            options,
+          )],
+        },
+      },
+    };
+  }
+
+  const value = isLocal ? source.slice("local:".length).trim() : source;
+  const server = await createMcpServerFromInput({
+    projectDirectory: input.projectDirectory,
+    name,
+    type: isLocal ? "local" : "remote",
+    value,
+  });
+
+  const requestedAuth = input.authType;
+  const runtimeNeedsOAuth =
+    !isLocal
+    && (server.status.status === "needs_auth" || server.status.status === "needs_client_registration");
+  const effectiveAuth: ExtensionAuthType =
+    requestedAuth === "api-key" || requestedAuth === "bearer"
+      ? requestedAuth
+      : runtimeNeedsOAuth
+        ? "oauth"
+        : requestedAuth ?? "none";
+  if (isLocal && effectiveAuth !== "none") {
+    throw new Error("Local MCP Extensions do not support remote authentication.");
+  }
+
+  const requestLike: ExtensionEnsureRequest = {
+    id: randomUUID(),
+    sessionId: input.sessionId,
+    projectDirectory: input.projectDirectory,
+    name,
+    kind: input.kind,
+    source,
+    purpose,
+    authType: effectiveAuth,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + REQUEST_TTL_MS,
+    status: "installing",
+  };
+  const extension = recordFor(requestLike, {
+    kind: "mcp",
+    serverName: name,
+    projectDirectory: input.projectDirectory,
+  });
+  const previous = await getStoredExtension(extension.id);
+  if (previous) extension.createdAt = previous.createdAt;
+  await saveStoredExtension(extension);
+
+  if (effectiveAuth === "api-key" || effectiveAuth === "bearer") {
+    const credentialId = effectiveAuth === "api-key" ? "api-key" : "bearer";
+    const challenge = await createSecureCredentialChallenge({
+      extensionId: extension.id,
+      credentialId,
+      sessionId: input.sessionId,
+      projectDirectory: input.projectDirectory,
+    });
+    return {
+      status: "awaiting-credential",
+      extension,
+      challengeId: challenge.challengeId,
+      credentialId,
+    };
+  }
+
+  if (effectiveAuth === "oauth") {
+    const oauth = await startMcpOAuth(input.projectDirectory, name);
+    oauthBySession.set(input.sessionId, {
+      extensionId: extension.id,
+      projectDirectory: input.projectDirectory,
+      serverName: name,
+      sessionId: input.sessionId,
+      oauthState: oauth.oauthState,
+      authorizationUrl: oauth.authorizationUrl,
+      expiresAt: Date.now() + REQUEST_TTL_MS,
+    });
+    return {
+      status: "awaiting-oauth",
+      extension,
+      authorizationUrl: oauth.authorizationUrl,
+      oauthState: oauth.oauthState,
+    };
+  }
+
+  if (server.status.status === "failed") {
+    throw new Error(
+      `MCP server ${name} was added but did not connect. Retry mcp.add with auth_type if the endpoint requires a credential.`,
+    );
+  }
+
+  await generateExtensionActions(extension);
+  return { status: "ready", extension };
+}
+
 export function getPendingExtensionOAuth(sessionId: string): PendingOAuth | null {
   prune();
   const pending = oauthBySession.get(sessionId);
   return pending ? { ...pending } : null;
+}
+
+export async function verifyPendingExtensionOAuth(sessionId: string): Promise<{
+  status: "ready" | "pending";
+  extension?: ExtensionRecord;
+}> {
+  prune();
+  const pending = oauthBySession.get(sessionId);
+  if (!pending) throw new Error("No extension OAuth flow is pending.");
+
+  const servers = await loadMcpServers(pending.projectDirectory);
+  const server = servers.find((item) => item.name === pending.serverName);
+  if (!server || server.status.status !== "connected") return { status: "pending" };
+
+  oauthBySession.delete(sessionId);
+  const extension = await getStoredExtension(pending.extensionId);
+  if (!extension) throw new Error("Extension disappeared while OAuth was pending.");
+  await generateExtensionActions(extension);
+  return { status: "ready", extension };
 }
 
 export async function completeExtensionOAuth(sessionId: string, callbackUrl: string): Promise<ExtensionRecord> {
@@ -330,6 +560,7 @@ export async function completeExtensionOAuth(sessionId: string, callbackUrl: str
   oauthBySession.delete(sessionId);
   const extension = await getStoredExtension(pending.extensionId);
   if (!extension) throw new Error("Extension disappeared while OAuth was pending.");
+  await generateExtensionActions(extension);
   return extension;
 }
 
@@ -361,6 +592,7 @@ export async function finalizeExtensionCredential(extensionIdValue: string): Pro
         secret,
       });
     }
+    await generateExtensionActions(extension);
     return extension;
   }
 
