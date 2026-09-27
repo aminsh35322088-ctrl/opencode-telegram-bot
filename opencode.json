@@ -21,7 +21,6 @@
     "image-inspect": "allow",
     "safe-download": "allow",
     "send-file": "allow",
-    "railway": "allow",
     "tailscale": "allow",
     "ssh": "allow",
     "ssh-remote": "ask",
