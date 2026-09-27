@@ -133,11 +133,15 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = modelOverride ?? getStoredModel();
     if (storedModel.providerID === "experimental-qwen-web") {
-      const refresh = await ensureQwenGuestAccessFresh();
-      if (refresh) {
-        logger.info(
-          `[FreeModelSources] Qwen preflight refresh completed: ok=${refresh.ok} verified=${refresh.verified} runtimeUsable=${refresh.runtimeUsable ?? "n/a"}`,
-        );
+      try {
+        const refresh = await ensureQwenGuestAccessFresh();
+        if (refresh) {
+          logger.info(
+            `[FreeModelSources] Qwen preflight refresh completed: ok=${refresh.ok} verified=${refresh.verified} runtimeUsable=${refresh.runtimeUsable ?? "n/a"}`,
+          );
+        }
+      } catch (error) {
+        logger.warn("[FreeModelSources] Qwen preflight refresh failed; allowing OpenCode to apply normal provider handling", error);
       }
     }
     const parts: Array<TextPartInput | FilePartInput> = [];
