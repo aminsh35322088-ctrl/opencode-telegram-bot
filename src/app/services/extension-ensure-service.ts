@@ -43,8 +43,14 @@ function validateSource(kind: ExtensionKind, source: string): string {
   }
   let url: URL;
   try { url = new URL(value); } catch { throw new Error("Extension source must be an absolute HTTP(S) URL."); }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
-    throw new Error("Extension source must be an HTTP(S) URL without embedded credentials.");
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new Error("Extension source must be an HTTP(S) URL without embedded credentials or fragments.");
+  }
+  const sensitiveQueryKey = [...url.searchParams.keys()].find((key) =>
+    /(?:^|[_-])(api[_-]?key|token|secret|password|authorization|access[_-]?token|refresh[_-]?token)(?:$|[_-])/iu.test(key)
+  );
+  if (sensitiveQueryKey) {
+    throw new Error("Extension source URL must not embed credentials in query parameters.");
   }
   return url.toString();
 }

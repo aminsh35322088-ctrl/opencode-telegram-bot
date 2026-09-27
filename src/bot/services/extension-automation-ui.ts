@@ -202,9 +202,12 @@ export async function handleSecureExtensionMessage(ctx: Context): Promise<boolea
       interactionManager.clear("secure_credential_expired");
       return false;
     }
-    await ctx.deleteMessage().catch(() => {});
     try {
       if (!ctx.from?.id) throw new Error("Secure credential input requires an authenticated Telegram user.");
+      if (ctx.chat.type !== "private") {
+        throw new Error("Secure credential input is restricted to the private bot chat.");
+      }
+      await ctx.deleteMessage();
       const completed = await submitSecureCredential(secure.challengeId, ctx.chat.id, threadId, ctx.from.id, text);
       const extension = await finalizeExtensionCredential(completed.extensionId);
       interactionManager.clear("secure_credential_completed");
@@ -215,15 +218,22 @@ export async function handleSecureExtensionMessage(ctx: Context): Promise<boolea
     } catch (error) {
       interactionManager.clear("secure_credential_failed");
       logger.warn("[Extensions] Secure credential validation failed", error instanceof Error ? error.name : "UnknownError");
-      if (secure.messageId) await ctx.api.editMessageText(ctx.chat.id, secure.messageId, "❌ Credential rejected. Ask the model to retry authentication.").catch(() => {});
+      if (secure.messageId) await ctx.api.editMessageText(
+        ctx.chat.id,
+        secure.messageId,
+        "❌ Secure credential input failed. The secret was not stored. Ask the model to retry authentication.",
+      ).catch(() => {});
     }
     return true;
   }
   if (session) {
     const oauth = getPendingExtensionOAuth(session);
     if (oauth) {
-      await ctx.deleteMessage().catch(() => {});
       try {
+        if (ctx.chat.type !== "private") {
+          throw new Error("Extension OAuth callback is restricted to the private bot chat.");
+        }
+        await ctx.deleteMessage();
         const extension = await completeExtensionOAuth(session, text);
         await ctx.reply(`✅ ${extension.name} connected`);
         await resumeSession(oauth.sessionId, oauth.projectDirectory);
