@@ -717,9 +717,10 @@ class SummaryAggregator {
     this.clearSubagentStateForParent(sessionId);
     const generation = assistantRunState.getRunGeneration(sessionId);
     if (generation !== null) this.subagentRunGenerationByParent.set(sessionId, generation);
-    if (this.onSubagentCallback) {
-      this.dispatchCallback("subagent run reset", () => this.onSubagentCallback?.(sessionId, []));
-    }
+    // The downstream snapshot must be cleared in the same turn as the run
+    // transition. Deferring this allows a heartbeat to render the previous run
+    // once more before the reset callback executes.
+    this.onSubagentCallback?.(sessionId, []);
   }
 
   private emitSubagentState(): void {
