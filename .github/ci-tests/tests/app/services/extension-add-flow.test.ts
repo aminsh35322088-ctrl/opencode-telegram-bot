@@ -192,6 +192,15 @@ describe("conversational Extension add flows", () => {
       status: "question-required",
       kind: "skill",
       preview: { name: "deploy-check" },
+      questionTool: {
+        tool: "question",
+        arguments: {
+          questions: [{
+            header: "Add Skill",
+            multiple: false,
+          }],
+        },
+      },
     });
     expect(mocks.writeSkill).not.toHaveBeenCalled();
 
