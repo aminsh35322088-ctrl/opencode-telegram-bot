@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
+import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
 /** Runtime persistence owned by the bot. User configuration lives in app-state.json. */
 export const PERSISTENT_STATE = {
@@ -65,4 +66,14 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
   }));
   const failures = results.filter((item) => !item.ok).map((item) => item.target);
   if (failures.length) throw new Error(`Could not remove obsolete bot configuration: ${failures.join(", ")}`);
+
+  // Railway used to be a hard-coded user Integration. Purge its legacy account
+  // records (including tokens) during the generic persistence migration. The
+  // hosting platform metadata under RAILWAY_* is unrelated and remains intact.
+  const state = await readAppState();
+  if (state.integrations && typeof state.integrations === "object" && !Array.isArray(state.integrations) && "railway" in state.integrations) {
+    const integrations = { ...state.integrations };
+    delete integrations.railway;
+    await updateAppState({ integrations });
+  }
 }

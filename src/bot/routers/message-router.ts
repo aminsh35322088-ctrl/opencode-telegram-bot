@@ -49,6 +49,7 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
+import { handleSecureExtensionMessage, isSecureExtensionInputActive } from "../services/extension-automation-ui.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -201,7 +202,8 @@ function isBotAwaitingTextInput(): boolean {
     isIntegrationWizardActive() ||
     isMcpTextWizardActive() ||
     isSkillWizardActive() ||
-    isSkillImportActive()
+    isSkillImportActive() ||
+    isSecureExtensionInputActive()
   );
 }
 
@@ -223,6 +225,10 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     agentArtifactDeliveryService.setChatId(ctx.chat.id);
+
+    // Secure Extension input is intercepted before any normal routing/logging.
+    // The credential text must never enter prompt merging, memory, OpenCode, or wizard handlers.
+    if (await handleSecureExtensionMessage(ctx)) return;
 
     logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`);
 

@@ -163,7 +163,7 @@ async function waitForSocket(timeoutMs = 10_000): Promise<boolean> {
 export async function ensureTailscaleDaemon(): Promise<void> {
   if (await socketReady()) return;
   if (!await waitForSocket()) {
-    throw new Error("The shared tailscaled socket is unavailable. Railway entrypoint must own the single daemon.");
+    throw new Error("The shared tailscaled socket is unavailable. The container entrypoint must own the single daemon.");
   }
 }
 
@@ -230,7 +230,7 @@ export async function removeTailscaleIntegration(): Promise<void> {
 }
 
 export async function stopTailscaleIntegration(): Promise<void> {
-  // The daemon is owned by railway-entrypoint.sh and intentionally outlives the bot process.
+  // The daemon is owned by the container entrypoint and intentionally outlives the bot process.
 }
 
 function normalizeTarget(value: string): string {

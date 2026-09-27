@@ -82,7 +82,7 @@ export async function setActiveGithubAccount(id: string): Promise<GithubAccount>
 
 export async function initializeGithubIntegration(): Promise<boolean> {
   // GitHub credentials are owned by the bot's persistent Integrations store.
-  // Railway environment variables are intentionally not a credential source.
+  // Host environment variables are intentionally not a credential source.
   const index = await readIndex();
   delete process.env.GITHUB_TOKEN;
   delete process.env.GH_TOKEN;

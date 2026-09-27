@@ -3,7 +3,7 @@ import net from "node:net";
 import { tool } from "@opencode-ai/plugin";
 
 export default tool({
-  description: "Diagnose DNS, HTTP(S), and TCP connectivity from the Railway runtime. Select the diagnostic directly through action=dns, action=http, or action=tcp.",
+  description: "Diagnose DNS, HTTP(S), and TCP connectivity from the current bot runtime. Select the diagnostic directly through action=dns, action=http, or action=tcp.",
   args: {
     action: tool.schema.enum(["dns", "http", "tcp"]).describe("Network diagnostic action."),
     target: tool.schema.string().describe("Hostname, IP, URL, or host:port target."),

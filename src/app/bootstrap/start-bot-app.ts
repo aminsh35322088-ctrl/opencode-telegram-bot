@@ -7,10 +7,9 @@ import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
 import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
-import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
+import { migrateLegacyCustomProviderCredentials, syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeGithubIntegration } from "../services/github-integration-service.js";
-import { initializeRailwayIntegration } from "../services/railway-integration-service.js";
 import { initializeTailscaleIntegration, stopTailscaleIntegration } from "../services/tailscale-integration-service.js";
 import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
@@ -139,14 +138,10 @@ export async function startBotApp(): Promise<void> {
     return false;
   });
   logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
-  const railwayConfigured = await initializeRailwayIntegration().catch((error) => {
-    logger.warn(
-      "[RailwayIntegration] Could not initialize stored Railway integration; continuing without Railway integration",
-      error,
-    );
-    return false;
+  await migrateLegacyCustomProviderCredentials().catch((error) => {
+    logger.warn("[CustomProvider] Could not migrate legacy provider credentials; continuing with legacy compatibility", error);
+    return 0;
   });
-  logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
   const tailscaleConnected = await initializeTailscaleIntegration().catch((error) => {
     logger.warn("[Tailscale] Could not initialize stored Tailnet integration; continuing without Tailnet access", error);
     return false;

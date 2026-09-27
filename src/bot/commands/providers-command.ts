@@ -92,7 +92,7 @@ function freeSourcePrompt(sourceID: FreeModelSourceID): string {
     case "gemini":
       return "✨ Gemini Web\n\nOptional account cookies\nSend the cookie header containing __Secure-1PSID and, when available, __Secure-1PSIDTS.\n\nGuest mode already works without this.\n🔒 Your message will be deleted immediately.";
     case "qwen":
-      return "🦞 Qwen Web\n\nAccount token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode is network-dependent and is commonly rejected from datacenter hosts such as Railway.\n🔒 Your message will be deleted immediately.";
+      return "🦞 Qwen Web\n\nAccount token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode is network-dependent and is commonly rejected from datacenter hosts.\n🔒 Your message will be deleted immediately.";
     case "glm":
       return "🧠 GLM Web (Z.AI)\n\nSend one Z.AI account token used by the bridge (ZAI_TOKEN).\n\nThis source needs account/device authorization for chat.\n🔒 Your message will be deleted immediately.";
     case "ds":
@@ -151,7 +151,7 @@ async function renderQwenConnect(ctx: Context, id?: number, notice = ""): Promis
     "🦞 Qwen Web",
     "",
     "The bot first tries guest mode automatically.",
-    "If Railway is challenged by Qwen/Baxia, it opens the bundled headless Chromium, captures the browser Baxia headers, stores them privately under /data, and live-tests Qwen again.",
+    "If this runtime is challenged by Qwen/Baxia, it opens the bundled headless Chromium, captures the browser Baxia headers, stores them privately under /data, and live-tests Qwen again.",
     "",
     "You only need to provide the Qwen account token if the repaired guest session is still rejected by upstream.",
   ].filter(Boolean).join("\n"), keyboard, id);
@@ -220,7 +220,7 @@ async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): P
     "",
     `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
     "Gemini needs no input. Freebuff uses an official one-click browser login.",
-    "Qwen guest access is live-tested and automatically repaired with the bundled browser when Railway is challenged by Baxia.",
+    "Qwen guest access is live-tested and automatically repaired with the bundled browser when the runtime is challenged by Baxia.",
     "Only if Qwen still rejects the repaired guest session do we ask for an account token. GLM and DeepSeek still require upstream account/human authorization.",
     "",
     ...lines,

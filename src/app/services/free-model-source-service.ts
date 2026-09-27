@@ -787,7 +787,7 @@ export function buildOmniEnvironment(
   };
 
   // Do not inherit the bot's process.env: it can contain Telegram, GitHub,
-  // Railway and provider secrets unrelated to OmniRouter. Only harmless
+  // Host and provider secrets unrelated to OmniRouter. Only harmless
   // runtime hints needed by Go/TLS/temp handling are copied explicitly.
   for (const key of ["SSL_CERT_FILE", "SSL_CERT_DIR", "TMPDIR", "TZ", "LANG", "LC_ALL"] as const) {
     const value = process.env[key];

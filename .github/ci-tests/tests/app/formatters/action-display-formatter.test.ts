@@ -24,10 +24,6 @@ describe("friendly action display", () => {
       icon: "🗂️",
       label: "Switch Browser Tab",
     });
-    expect(getFriendlyActionDisplay("railway", { action: "logs" })).toEqual({
-      icon: "📜",
-      label: "Read Railway Logs",
-    });
     expect(getFriendlyActionDisplay("git", { action: "status" })).toEqual({
       icon: "🌿",
       label: "Check Git Status",
