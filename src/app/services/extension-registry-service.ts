@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { deleteCustomProvider, listCustomProviders } from "./custom-provider-service.js";
 import { deleteMcpServer } from "./mcp-server-service.js";
 import { listManagedMcpServers } from "./mcp-server-store.js";
@@ -13,8 +14,20 @@ function safePart(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 80) || "extension";
 }
 
-export function extensionId(kind: ExtensionRecord["kind"], name: string): string {
-  return `${kind}:${safePart(name)}`;
+function normalizeDirectory(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/u, "");
+}
+
+function scopeHash(projectDirectory: string): string {
+  return createHash("sha256").update(normalizeDirectory(projectDirectory)).digest("hex").slice(0, 10);
+}
+
+export function extensionId(kind: ExtensionRecord["kind"], name: string, projectDirectory?: string): string {
+  const base = `${kind}:${safePart(name)}`;
+  if ((kind === "mcp" || kind === "integration") && projectDirectory?.trim()) {
+    return `${base}:${scopeHash(projectDirectory)}`;
+  }
+  return base;
 }
 
 function summaryFromStored(record: ExtensionRecord): ExtensionSummary {
@@ -30,7 +43,10 @@ function summaryFromStored(record: ExtensionRecord): ExtensionSummary {
 }
 
 export async function listExtensions(projectDirectory: string): Promise<ExtensionSummary[]> {
-  const stored = await listStoredExtensions();
+  const normalizedDirectory = normalizeDirectory(projectDirectory);
+  const stored = (await listStoredExtensions()).filter((record) =>
+    record.resource.kind !== "mcp" || normalizeDirectory(record.resource.projectDirectory) === normalizedDirectory
+  );
   const claimedMcpNames = new Set(
     stored
       .filter((record) => record.resource.kind === "mcp")
@@ -58,7 +74,7 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
     ...mcps
       .filter((item) => !claimedMcpNames.has(item.name))
       .map((item) => ({
-        id: extensionId("mcp", item.name),
+        id: extensionId("mcp", item.name, projectDirectory),
         name: item.name,
         kind: "mcp" as const,
         source: item.config.type === "remote" ? item.config.url : item.config.command.join(" "),

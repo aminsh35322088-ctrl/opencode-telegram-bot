@@ -1,6 +1,7 @@
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { isRecord } from "../../utils/type-guards.js";
 import type { AgentActionRisk } from "./agent-action-registry.js";
+import { getStoredExtension } from "./extension-store.js";
 
 export interface GeneratedActionInvocation {
   kind: "mcp-tool";
@@ -67,8 +68,8 @@ function classifyRisk(id: string, action: string, tool: string): AgentActionRisk
   if (/(delete|destroy|remove|purge|drop|terminate)/u.test(value)) return "destructive";
   if (/(exec|shell|command|deploy|restart|redeploy|create|update|set|write|upload|trigger|cancel)/u.test(value)) return "mutating";
   if (/(download|export|save)/u.test(value)) return "write";
-  if (/(http|request|fetch|search|external)/u.test(value)) return "external";
-  return "read";
+  if (/(list|get|read|status|inspect|describe|resolve|query|search|view|show)/u.test(value)) return "read";
+  return "external";
 }
 
 function normalizeId(value: string): string {
@@ -91,9 +92,15 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
   category?: string;
   description: string;
 }>): Promise<GeneratedActionRecord[]> {
+  const extension = await getStoredExtension(extensionId);
+  if (!extension) throw new Error("Generated actions require an approved registered Extension.");
+  const namespace = extension.name.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ".").replace(/^\.+|\.+$/gu, "") || "extension";
   const now = new Date().toISOString();
   const clean = actions.slice(0, 100).map((candidate) => {
     const id = normalizeId(candidate.id);
+    if (!id.startsWith(namespace + ".")) {
+      throw new Error(`Generated action ${id} must use the Extension namespace ${namespace}.*`);
+    }
     const tool = candidate.tool.trim();
     if (!tool || tool.length > 128) throw new Error(`Generated action ${id} has an invalid tool name.`);
     const action = candidate.action?.trim() || id.split(".").at(-1) || "invoke";

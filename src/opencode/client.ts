@@ -91,7 +91,7 @@ function extractPromptText(parts: PromptPart[]): string {
 const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. Use them instead of raw bash/read/write when a purpose-built action exists.
 
 • bot — session/task/memory/model management. Call with action= (e.g. action="session.current", action="tasks.parse", action="tasks.create", action="memory.search", action="settings.get").
-• railway — deployment operations. action="deploy-latest" (latest commit), action="status", action="logs", action="variables".
+• actions — inspect resolved Core and Extension-generated action aliases. Dynamic service capabilities are added through approved Extensions rather than hard-coded provider tools.
 • github-ci — CI/CD. action="status", action="logs", action="dispatch", action="verify".
 • session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
 • session — OpenCode session control. action="current", action="messages", action="abort", action="fork".

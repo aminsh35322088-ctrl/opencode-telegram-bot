@@ -18,7 +18,7 @@ OPENCODE_DATA_VOLUME_BUDGET_MB="${OPENCODE_DATA_VOLUME_BUDGET_MB:-500}"
 OPENCODE_DATA_VOLUME_WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
 OPENCODE_DATA_VOLUME_CRITICAL_MB="${OPENCODE_DATA_VOLUME_CRITICAL_MB:-100}"
 
-unset GH_TOKEN GITHUB_TOKEN RAILWAY_TOKEN RAILWAY_API_TOKEN 2>/dev/null || true
+unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
 GH_HOST="${GH_HOST:-github.com}"
 GH_PROMPT_DISABLED="1"
 export OPENCODE_API_URL OPENCODE_AUTO_RESTART_ENABLED OPENCODE_AUTO_START_IN_CONTAINER
@@ -129,33 +129,8 @@ fi
 exec /usr/bin/gh "$@"
 EOF
 
-cat > "$INTEGRATION_BIN_DIR/railway" <<'EOF'
-#!/bin/sh
-set -eu
-STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
-TOKEN=""
-TOKEN_TYPE=""
-if [ -f "$STATE_FILE" ]; then
-  TOKEN_TYPE="$(jq -r '(.integrations.railway // {}) as $r | (($r.accounts // []) | map(select(.id == $r.activeId)) + ($r.accounts // [])) | .[0].tokenType // empty' "$STATE_FILE" 2>/dev/null || true)"
-  TOKEN="$(jq -r '(.integrations.railway // {}) as $r | (($r.accounts // []) | map(select(.id == $r.activeId)) + ($r.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
-fi
-if [ -n "$TOKEN" ]; then
-  if [ "$TOKEN_TYPE" = "project" ]; then
-    RAILWAY_TOKEN="$TOKEN"
-    unset RAILWAY_API_TOKEN 2>/dev/null || true
-    export RAILWAY_TOKEN
-  else
-    RAILWAY_API_TOKEN="$TOKEN"
-    unset RAILWAY_TOKEN 2>/dev/null || true
-    export RAILWAY_API_TOKEN
-  fi
-else
-  unset RAILWAY_TOKEN RAILWAY_API_TOKEN 2>/dev/null || true
-fi
-exec /usr/local/bin/railway "$@"
-EOF
-chmod 700 "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
-chown node:node "$INTEGRATION_BIN_DIR/gh" "$INTEGRATION_BIN_DIR/railway"
+chmod 700 "$INTEGRATION_BIN_DIR/gh"
+chown node:node "$INTEGRATION_BIN_DIR/gh"
 
 cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
@@ -210,9 +185,9 @@ printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
 printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable), railway=$(/usr/local/bin/railway --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable)"
 printf '%s\n' "[railway] Runtime dependencies: ${OPENCODE_RUNTIME_NODE_DEPS}"
-printf '%s\n' "[railway] GitHub/Railway integrations: credentials loaded dynamically from persistent bot state"
+printf '%s\n' "[railway] GitHub native integration credentials load dynamically from persistent bot state"
 
 # Version probes above run as root and may create root-owned cache dirs (e.g. opencode --version
 # writes /data/.cache/opencode). The bot runs as node, so restore ownership before startup.

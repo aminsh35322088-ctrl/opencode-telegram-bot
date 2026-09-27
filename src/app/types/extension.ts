@@ -9,7 +9,7 @@ export interface ExtensionCredentialSchema {
   label: string;
   type: "api-key" | "bearer";
   transport: {
-    kind: "authorization-bearer" | "provider-api-key";
+    kind: "authorization-bearer" | "api-key-header" | "provider-api-key";
   };
 }
 

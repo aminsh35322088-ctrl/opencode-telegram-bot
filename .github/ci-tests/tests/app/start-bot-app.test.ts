@@ -27,8 +27,8 @@ const mocked = vi.hoisted(() => ({
   flushLoggerMock: vi.fn(),
   getGlobalSettingsMock: vi.fn(() => ({})),
   githubInitializeMock: vi.fn(),
-  railwayInitializeMock: vi.fn(),
   syncCustomConfigMock: vi.fn(),
+  migrateProviderCredentialsMock: vi.fn(),
   cleanupLegacyConfigMock: vi.fn(),
   modelCatalogStartMock: vi.fn(),
   modelCatalogStopMock: vi.fn(),
@@ -84,12 +84,9 @@ vi.mock("../../src/app/services/github-integration-service.js", () => ({
   initializeGithubIntegration: mocked.githubInitializeMock,
 }));
 
-vi.mock("../../src/app/services/railway-integration-service.js", () => ({
-  initializeRailwayIntegration: mocked.railwayInitializeMock,
-}));
-
 vi.mock("../../src/app/services/custom-provider-service.js", () => ({
   syncOpenCodeCustomConfig: mocked.syncCustomConfigMock,
+  migrateLegacyCustomProviderCredentials: mocked.migrateProviderCredentialsMock,
 }));
 
 vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
@@ -264,8 +261,8 @@ describe("app/start-bot-app", () => {
     mocked.flushLoggerMock.mockReset();
     mocked.getGlobalSettingsMock.mockReset().mockReturnValue({});
     mocked.githubInitializeMock.mockReset();
-    mocked.railwayInitializeMock.mockReset();
     mocked.syncCustomConfigMock.mockReset();
+    mocked.migrateProviderCredentialsMock.mockReset();
     mocked.cleanupLegacyConfigMock.mockReset();
     mocked.modelCatalogStartMock.mockReset();
     mocked.modelCatalogStopMock.mockReset();
@@ -285,8 +282,8 @@ describe("app/start-bot-app", () => {
     mocked.getLogFilePathMock.mockReturnValue(null);
     mocked.flushLoggerMock.mockResolvedValue(undefined);
     mocked.githubInitializeMock.mockResolvedValue(false);
-    mocked.railwayInitializeMock.mockResolvedValue(false);
     mocked.syncCustomConfigMock.mockResolvedValue("");
+    mocked.migrateProviderCredentialsMock.mockResolvedValue(0);
     mocked.cleanupLegacyConfigMock.mockResolvedValue(undefined);
     mocked.deliverySenderMock.mockReturnValue(vi.fn());
 

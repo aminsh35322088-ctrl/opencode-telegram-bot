@@ -8,6 +8,49 @@ interface ExtensionStoreState {
 }
 
 const STORE_KEY = "extensions";
+const CREDENTIAL_TYPES = new Set(["api-key", "bearer"]);
+const CREDENTIAL_TRANSPORTS = new Set(["authorization-bearer", "api-key-header", "provider-api-key"]);
+
+function normalizeCredentialSchemas(value: unknown): ExtensionRecord["credentialSchemas"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.label !== "string" ||
+      typeof item.type !== "string" ||
+      !CREDENTIAL_TYPES.has(item.type) ||
+      !isRecord(item.transport) ||
+      typeof item.transport.kind !== "string" ||
+      !CREDENTIAL_TRANSPORTS.has(item.transport.kind)
+    ) return [];
+    return [{
+      id: item.id.trim(),
+      label: item.label.trim(),
+      type: item.type as "api-key" | "bearer",
+      transport: { kind: item.transport.kind as "authorization-bearer" | "api-key-header" | "provider-api-key" },
+    }];
+  }).filter((item) => item.id && item.label);
+}
+
+function normalizeResource(value: unknown): ExtensionRecord["resource"] | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null;
+  if (value.kind === "mcp" && typeof value.serverName === "string" && typeof value.projectDirectory === "string") {
+    const serverName = value.serverName.trim();
+    const projectDirectory = value.projectDirectory.trim();
+    return serverName && projectDirectory ? { kind: "mcp", serverName, projectDirectory } : null;
+  }
+  if (value.kind === "skill" && typeof value.skillName === "string" && value.skillName.trim()) {
+    return { kind: "skill", skillName: value.skillName.trim() };
+  }
+  if (value.kind === "model-provider" && typeof value.providerId === "string" && value.providerId.trim()) {
+    return { kind: "model-provider", providerId: value.providerId.trim() };
+  }
+  if (value.kind === "integration" && typeof value.adapter === "string" && value.adapter.trim()) {
+    return { kind: "integration", adapter: value.adapter.trim() };
+  }
+  return null;
+}
 
 function normalizeRecord(value: unknown): ExtensionRecord | null {
   if (!isRecord(value)) return null;
@@ -24,9 +67,8 @@ function normalizeRecord(value: unknown): ExtensionRecord | null {
     typeof value.managed !== "boolean" ||
     !isRecord(value.resource)
   ) return null;
-  const schemas = Array.isArray(value.credentialSchemas)
-    ? value.credentialSchemas.filter((item) => isRecord(item) && typeof item.id === "string" && typeof item.label === "string" && typeof item.type === "string" && isRecord(item.transport))
-    : [];
+  const resource = normalizeResource(value.resource);
+  if (!resource) return null;
   return {
     id: value.id.trim(),
     name: value.name.trim(),
@@ -34,8 +76,8 @@ function normalizeRecord(value: unknown): ExtensionRecord | null {
     source: value.source.trim(),
     ...(typeof value.purpose === "string" && value.purpose.trim() ? { purpose: value.purpose.trim() } : {}),
     authType: value.authType as ExtensionRecord["authType"],
-    credentialSchemas: schemas as ExtensionRecord["credentialSchemas"],
-    resource: value.resource as ExtensionRecord["resource"],
+    credentialSchemas: normalizeCredentialSchemas(value.credentialSchemas),
+    resource,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     managed: value.managed,

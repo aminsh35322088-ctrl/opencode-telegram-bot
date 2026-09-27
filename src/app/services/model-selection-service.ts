@@ -309,7 +309,7 @@ export async function reconcileAllStoredModelSelections(options?: {
 
   // Topic model selections are persisted independently from the global model.
   // A provider can disappear after a runtime availability check (for example,
-  // Qwen guest being rejected on Railway) while a Topic still points at it.
+  // Qwen guest being rejected on a datacenter runtime) while a Topic still points at it.
   // Reconcile every stored Topic against the same fresh runtime catalog so a
   // stale provider/model cannot survive and fail later during prompt dispatch.
   const states = await listTopicRuntimeStates();

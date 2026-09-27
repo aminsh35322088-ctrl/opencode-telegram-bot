@@ -64,6 +64,7 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { clearPausedSession, isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { ResponseStreamer, type StreamingMessagePayload } from "../streaming/response-streamer.js";
 import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
+import { presentPendingExtensionAutomation } from "./extension-automation-ui.js";
 import { RunningToolTracker, type RunningToolTick } from "../streaming/running-tool-tracker.js";
 import { CompactProgressStreamer } from "../streaming/compact-progress-streamer.js";
 import {
@@ -942,6 +943,17 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       // A failed call is just as finished as a successful one: leaving it tracked
       // would keep its timer ticking for a tool that already stopped running.
       const isTerminal = status === "completed" || status === "error";
+
+      if (status === "completed" && this.botInstance) {
+        const chatId = this.getChatIdForSession(toolInfo.sessionId);
+        if (chatId !== null) {
+          void presentPendingExtensionAutomation(
+            this.sessionScopedApi(toolInfo.sessionId),
+            chatId,
+            toolInfo.sessionId,
+          ).catch((error) => logger.warn("[Extensions] Failed to present pending automation UI", error));
+        }
+      }
 
       if (isTerminal) {
         if (tracksElapsed) {

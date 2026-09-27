@@ -55,7 +55,7 @@ function credentialSchemas(kind: ExtensionKind, authType: ExtensionAuthType): Ex
       id: "api-key",
       label: kind === "model-provider" ? "Provider API key" : "API key",
       type: "api-key",
-      transport: { kind: kind === "model-provider" ? "provider-api-key" : "authorization-bearer" },
+      transport: { kind: kind === "model-provider" ? "provider-api-key" : "api-key-header" },
     }];
   }
   if (authType === "bearer") {
@@ -67,7 +67,7 @@ function credentialSchemas(kind: ExtensionKind, authType: ExtensionAuthType): Ex
 function recordFor(request: ExtensionEnsureRequest, resource: ExtensionRecord["resource"]): ExtensionRecord {
   const now = new Date().toISOString();
   return {
-    id: extensionId(request.kind, request.name),
+    id: extensionId(request.kind, request.name, request.projectDirectory),
     name: request.name,
     kind: request.kind,
     source: request.source,
@@ -95,7 +95,7 @@ export async function requestExtensionEnsure(input: {
   const purpose = input.purpose.trim().slice(0, 500);
   if (!name || !purpose) throw new Error("Extension name and purpose are required.");
   const source = validateSource(input.kind, input.source);
-  const id = extensionId(input.kind, name);
+  const id = extensionId(input.kind, name, input.projectDirectory);
   const existing = (await listExtensions(input.projectDirectory)).find((item) => item.id === id);
   if (existing) return { status: "ready", extensionId: id };
 
@@ -259,14 +259,24 @@ export async function finalizeExtensionCredential(extensionIdValue: string): Pro
 
   if (extension.resource.kind === "mcp") {
     if (extension.authType !== "bearer" && extension.authType !== "api-key") throw new Error("Unsupported MCP credential type.");
-    await configureSecureMcpAuth({
-      projectDirectory: extension.resource.projectDirectory,
-      serverName: extension.resource.serverName,
-      remoteUrl: extension.source,
-      mode: extension.authType === "bearer" ? "bearer" : "api-key",
-      ...(extension.authType === "api-key" ? { headerName: "X-API-Key" } : {}),
-      secret,
-    });
+    if (extension.authType === "bearer") {
+      await configureSecureMcpAuth({
+        projectDirectory: extension.resource.projectDirectory,
+        serverName: extension.resource.serverName,
+        remoteUrl: extension.source,
+        mode: "bearer",
+        secret,
+      });
+    } else {
+      await configureSecureMcpAuth({
+        projectDirectory: extension.resource.projectDirectory,
+        serverName: extension.resource.serverName,
+        remoteUrl: extension.source,
+        mode: "api-key",
+        headerName: "X-API-Key",
+        secret,
+      });
+    }
     return extension;
   }
 

@@ -13,6 +13,7 @@ export interface SecureCredentialChallenge {
   projectDirectory: string;
   chatId?: number;
   threadId?: number;
+  userId?: number;
   requestedAt: number;
   expiresAt: number;
   used: boolean;
@@ -64,13 +65,15 @@ export async function createSecureCredentialChallenge(input: {
   };
 }
 
-export function bindSecureCredentialChallenge(challengeId: string, chatId: number, threadId?: number): SecureCredentialChallenge {
+export function bindSecureCredentialChallenge(challengeId: string, chatId: number, threadId: number | undefined, userId: number): SecureCredentialChallenge {
   prune();
   const challenge = challenges.get(challengeId);
   if (!challenge || challenge.used || challenge.expiresAt <= Date.now()) throw new Error("Secure credential challenge expired.");
   if (challenge.chatId !== undefined && challenge.chatId !== chatId) throw new Error("Secure credential challenge scope mismatch.");
   if (challenge.threadId !== undefined && challenge.threadId !== threadId) throw new Error("Secure credential challenge Topic mismatch.");
+  if (challenge.userId !== undefined && challenge.userId !== userId) throw new Error("Secure credential challenge user mismatch.");
   challenge.chatId = chatId;
+  challenge.userId = userId;
   if (threadId !== undefined) challenge.threadId = threadId;
   return { ...challenge };
 }
@@ -88,11 +91,17 @@ export function findSecureCredentialChallenge(chatId: number, threadId?: number)
   return { ...matches[0]! };
 }
 
-export async function submitSecureCredential(challengeId: string, chatId: number, threadId: number | undefined, secret: string): Promise<SecureCredentialChallenge> {
+export function findUnboundSecureCredentialChallenge(sessionId: string): SecureCredentialChallenge | null {
+  prune();
+  const matches = [...challenges.values()].filter((item) => !item.used && item.sessionId === sessionId && item.chatId === undefined);
+  return matches.length === 1 ? { ...matches[0]! } : null;
+}
+
+export async function submitSecureCredential(challengeId: string, chatId: number, threadId: number | undefined, userId: number, secret: string): Promise<SecureCredentialChallenge> {
   prune();
   const challenge = challenges.get(challengeId);
   if (!challenge || challenge.used || challenge.expiresAt <= Date.now()) throw new Error("Secure credential challenge expired.");
-  if (challenge.chatId !== chatId || challenge.threadId !== threadId) throw new Error("Secure credential challenge scope mismatch.");
+  if (challenge.chatId !== chatId || challenge.threadId !== threadId || challenge.userId !== userId) throw new Error("Secure credential challenge scope mismatch.");
   await schemaFor(challenge.extensionId, challenge.credentialId);
   await saveExtensionCredential(challenge.extensionId, challenge.credentialId, secret);
   challenge.used = true;

@@ -187,8 +187,6 @@ async function clearFactoryPersistentState(): Promise<void> {
   }
   delete process.env.GITHUB_TOKEN;
   delete process.env.GH_TOKEN;
-  delete process.env.RAILWAY_TOKEN;
-  delete process.env.RAILWAY_API_TOKEN;
   logger.info("[TelegramReset] Cleared registered Bot persistent state, integrations, and Model Center preferences");
 }
 export async function factoryReset(api: Api, chatId: number): Promise<{ deleted: number; failed: number; orphanedWorkspaces: number; memoriesCleared: number }> {
