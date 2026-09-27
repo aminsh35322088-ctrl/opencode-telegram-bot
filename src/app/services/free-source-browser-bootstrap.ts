@@ -10,6 +10,7 @@ const QWEN_URL = "https://chat.qwen.ai";
 const MARKER = "__OTB_QWEN_BX__";
 const COMMAND_TIMEOUT_MS = 70_000;
 const CAPTURE_COOLDOWN_MS = 30 * 60_000;
+const BOOTSTRAP_STATUS_VERSION = 2;
 
 export interface QwenGuestBootstrapResult {
   ok: boolean;
@@ -114,11 +115,24 @@ function captureScript(): string {
 }
 
 function parseCaptureOutput(stdout: string): CapturePayload {
-  const index = stdout.lastIndexOf(MARKER);
+  const trimmed = stdout.trim();
+  let decoded = trimmed;
+
+  // playwright-cli run-code JSON.stringify()s the function return value before
+  // exposing it as the tool result. Because our function intentionally returns
+  // a marker-prefixed JSON string, --raw therefore prints a JSON-encoded
+  // string (quotes + escaped inner JSON). Decode that outer layer first.
+  try {
+    const outer = JSON.parse(trimmed) as unknown;
+    if (typeof outer === "string") decoded = outer;
+  } catch {
+    // Older/alternate CLI output can already be the raw marker string.
+  }
+
+  const index = decoded.lastIndexOf(MARKER);
   if (index < 0) throw new Error("Playwright did not return a Qwen capture payload");
-  const raw = stdout.slice(index + MARKER.length).trim();
-  const line = raw.split(/\r?\n/, 1)[0] ?? "";
-  const parsed = JSON.parse(line) as CapturePayload;
+  const raw = decoded.slice(index + MARKER.length).trim();
+  const parsed = JSON.parse(raw) as CapturePayload;
   return parsed && typeof parsed === "object" ? parsed : {};
 }
 
@@ -136,7 +150,8 @@ async function readRecentFailure(statusPath: string): Promise<string | null> {
   try {
     const stat = await fs.stat(statusPath);
     if (Date.now() - stat.mtimeMs >= CAPTURE_COOLDOWN_MS) return null;
-    const body = JSON.parse(await fs.readFile(statusPath, "utf8")) as { reason?: unknown };
+    const body = JSON.parse(await fs.readFile(statusPath, "utf8")) as { version?: unknown; reason?: unknown };
+    if (body.version !== BOOTSTRAP_STATUS_VERSION) return null;
     return typeof body.reason === "string" ? body.reason : "recent automatic Qwen repair failed";
   } catch {
     return null;
@@ -186,7 +201,7 @@ export async function bootstrapQwenGuestHeaders(
 
     if (!bxUA || !bxUmidToken || !bxV) {
       const reason = payload.reason || "Qwen browser bootstrap did not capture complete Baxia headers";
-      await fs.writeFile(statusPath, JSON.stringify({ ok: false, reason, attemptedAt: Date.now() }) + "\n", { mode: 0o600 });
+      await fs.writeFile(statusPath, JSON.stringify({ version: BOOTSTRAP_STATUS_VERSION, ok: false, reason, attemptedAt: Date.now() }) + "\n", { mode: 0o600 });
       return { ok: false, captured: false, verified: false, reason };
     }
 
@@ -208,7 +223,7 @@ export async function bootstrapQwenGuestHeaders(
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    await fs.writeFile(statusPath, JSON.stringify({ ok: false, reason, attemptedAt: Date.now() }) + "\n", { mode: 0o600 }).catch(() => {});
+    await fs.writeFile(statusPath, JSON.stringify({ version: BOOTSTRAP_STATUS_VERSION, ok: false, reason, attemptedAt: Date.now() }) + "\n", { mode: 0o600 }).catch(() => {});
     return { ok: false, captured: false, verified: false, reason };
   } finally {
     await runCli(["--raw", `-s=${session}`, "close"], dataDir).catch(() => {});

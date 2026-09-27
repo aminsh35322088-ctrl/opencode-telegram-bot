@@ -22,6 +22,16 @@ describe("Qwen guest browser bootstrap", () => {
     expect(__test.parseCaptureOutput(output)).toEqual(payload);
   });
 
+  it("decodes the JSON-string wrapper emitted by playwright-cli run-code", () => {
+    const payload = {
+      captured: { bxUA: "ua", bxUmidToken: "umid", bxV: "2.5.37" },
+      verified: true,
+      status: 200,
+    };
+    const wrapped = JSON.stringify("__OTB_QWEN_BX__" + JSON.stringify(payload));
+    expect(__test.parseCaptureOutput(wrapped)).toEqual(payload);
+  });
+
   it("rejects Playwright output without the expected result marker", () => {
     expect(() => __test.parseCaptureOutput("unexpected output")).toThrow(
       "Playwright did not return a Qwen capture payload",
