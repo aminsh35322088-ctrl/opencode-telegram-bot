@@ -161,6 +161,7 @@ const FREEBUFF_LOGIN_BASE = "https://freebuff.com";
 const FREEBUFF_API_BASE = "https://codebuff.com";
 const FREEBUFF_REQUEST_TIMEOUT_MS = 12_000;
 const FREEBUFF_LOGIN_TTL_MS = 60 * 60_000;
+const QWEN_BX_MAX_AGE_MS = 10 * 60_000;
 
 interface PendingFreebuffLogin {
   loginUrl: string;
@@ -182,6 +183,7 @@ let omniReady = false;
 let lifecycleTail: Promise<void> = Promise.resolve();
 let discoveredModels: Partial<Record<FreeModelSourceID, string[]>> = {};
 let sourceRuntimeStatus: Partial<Record<FreeModelSourceID, SourceRuntimeStatus>> = {};
+let qwenRepairInFlight: Promise<QwenGuestRepairResult> | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -642,38 +644,79 @@ export async function getBuiltInFreeProviderConfigs(): Promise<BuiltInFreeProvid
   return buildFreeSourceProviderConfigs(discoveredModels, configured, available);
 }
 
-export async function repairQwenGuestAccess(force = true): Promise<QwenGuestRepairResult> {
-  const credentials = await readCredentials();
-  if (credentials.qwenToken) {
-    return {
-      ok: false,
-      captured: false,
-      verified: false,
-      skipped: true,
-      reason: "Qwen already has an account token configured; guest repair is not needed.",
-      runtimeUsable: sourceRuntimeStatus.qwen?.usable,
-      runtimeReason: sourceRuntimeStatus.qwen?.reason,
-    };
-  }
+export function isQwenRiskControlError(message: string): boolean {
+  return /rgv587|risk-control|waf captcha|aliyun_waf|baxia/i.test(message);
+}
 
-  const dataDir = path.join(getRuntimePaths().appHome, "omnirouter");
-  const repair = await bootstrapQwenGuestHeaders(dataDir, { force });
-  if (!repair.ok || !omniReady) {
+async function qwenBxAgeMs(dataDir: string): Promise<number | null> {
+  try {
+    const stat = await fs.stat(path.join(dataDir, "qwen-bx.json"));
+    return Math.max(0, Date.now() - stat.mtimeMs);
+  } catch {
+    return null;
+  }
+}
+
+export async function repairQwenGuestAccess(force = true): Promise<QwenGuestRepairResult> {
+  if (qwenRepairInFlight) return qwenRepairInFlight;
+
+  const task = (async (): Promise<QwenGuestRepairResult> => {
+    const credentials = await readCredentials();
+    if (credentials.qwenToken) {
+      return {
+        ok: false,
+        captured: false,
+        verified: false,
+        skipped: true,
+        reason: "Qwen already has an account token configured; guest repair is not needed.",
+        runtimeUsable: sourceRuntimeStatus.qwen?.usable,
+        runtimeReason: sourceRuntimeStatus.qwen?.reason,
+      };
+    }
+
+    const dataDir = path.join(getRuntimePaths().appHome, "omnirouter");
+    const repair = await bootstrapQwenGuestHeaders(dataDir, { force });
+    if (!repair.ok || !omniReady) {
+      return {
+        ...repair,
+        runtimeUsable: sourceRuntimeStatus.qwen?.usable,
+        runtimeReason: sourceRuntimeStatus.qwen?.reason,
+      };
+    }
+
+    const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
+    const status = await probeQwenUsability(internalToken, false);
+    sourceRuntimeStatus.qwen = status;
     return {
       ...repair,
-      runtimeUsable: sourceRuntimeStatus.qwen?.usable,
-      runtimeReason: sourceRuntimeStatus.qwen?.reason,
+      runtimeUsable: status.usable,
+      runtimeReason: status.reason,
     };
-  }
+  })();
 
-  const internalToken = ensureSecret(INTERNAL_TOKEN_ENV);
-  const status = await probeQwenUsability(internalToken, false);
-  sourceRuntimeStatus.qwen = status;
-  return {
-    ...repair,
-    runtimeUsable: status.usable,
-    runtimeReason: status.reason,
-  };
+  qwenRepairInFlight = task;
+  try {
+    return await task;
+  } finally {
+    if (qwenRepairInFlight === task) qwenRepairInFlight = null;
+  }
+}
+
+export async function ensureQwenGuestAccessFresh(
+  maxAgeMs = QWEN_BX_MAX_AGE_MS,
+): Promise<QwenGuestRepairResult | null> {
+  if (!getFreeModelSourcesEnabled() || !omniReady) return null;
+  const credentials = await readCredentials();
+  if (credentials.qwenToken) return null;
+
+  const dataDir = path.join(getRuntimePaths().appHome, "omnirouter");
+  const ageMs = await qwenBxAgeMs(dataDir);
+  if (ageMs !== null && ageMs <= maxAgeMs) return null;
+
+  logger.info(
+    `[FreeModelSources] Qwen Baxia headers are ${ageMs === null ? "missing" : `${Math.round(ageMs / 1000)}s old`}; refreshing before prompt`,
+  );
+  return repairQwenGuestAccess(true);
 }
 
 export function isFreeModelSourceRuntimeReady(): boolean {
