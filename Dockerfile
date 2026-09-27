@@ -1,5 +1,5 @@
 FROM golang:1.25-bookworm AS omnirouter-builder
-ARG OMNIROUTER_REF=ce94f1166c3c5168fe0e94d6fb83c002fbaa80ef
+ARG OMNIROUTER_REF=e891e1b6a18351741e070372b3da16ba06b689c8
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone https://github.com/Godde3s/omnirouter.git omnirouter \
