@@ -63,6 +63,7 @@ describe("expanded model-facing action surface", () => {
     expect(bot).not.toContain('"mcp.add-remote"');
     expect(bot).not.toContain('"mcp.add-local"');
     expect(bot).not.toContain('"skills.import"');
+    expect(bot).not.toContain('"generated-actions.register"');
     expect(bot).not.toContain('"mcp.disable"');
     const [ssh, tailscale] = await Promise.all([fs.readFile(".opencode/tools/ssh.ts", "utf8"), fs.readFile(".opencode/tools/tailscale.ts", "utf8")]);
     for (const action of ["check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);

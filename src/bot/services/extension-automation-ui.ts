@@ -8,6 +8,7 @@ import {
   finalizeExtensionCredential,
   getExtensionEnsureRequest,
   getPendingExtensionOAuth,
+  verifyPendingExtensionOAuth,
 } from "../../app/services/extension-ensure-service.js";
 import {
   bindSecureCredentialChallenge,
@@ -87,7 +88,9 @@ export async function presentPendingExtensionAutomation(api: Api, chatId: number
       ].join("\n"),
       {
         parse_mode: "HTML",
-        reply_markup: new InlineKeyboard().url("🔐 Sign in", oauth.authorizationUrl),
+        reply_markup: new InlineKeyboard()
+          .url("🔐 Sign in", oauth.authorizationUrl)
+          .text("✅ Check", "oauthauto:check"),
       },
     );
     return true;
@@ -113,10 +116,41 @@ async function editReady(ctx: Context, name: string): Promise<void> {
 
 export async function handleExtensionAutomationCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
-  if (!data || (!data.startsWith("extauto:") && !data.startsWith("credauto:"))) return false;
+  if (!data || (!data.startsWith("extauto:") && !data.startsWith("credauto:") && !data.startsWith("oauthauto:"))) return false;
   const [, action, id] = data.split(":");
-  if (!action || !id || !ctx.chat?.id) return true;
+  if (!action || !ctx.chat?.id) return true;
   const threadId = threadIdFromContext(ctx);
+
+  if (data.startsWith("oauthauto:")) {
+    if (action !== "check") return true;
+    const sessionId = currentSessionId();
+    if (!sessionId) {
+      await ctx.answerCallbackQuery({ text: "No active Topic session.", show_alert: true }).catch(() => {});
+      return true;
+    }
+    try {
+      const result = await verifyPendingExtensionOAuth(sessionId);
+      if (result.status === "ready" && result.extension) {
+        await ctx.answerCallbackQuery({ text: "Connected ✅" }).catch(() => {});
+        await editReady(ctx, result.extension.name);
+        const session = getCurrentSession();
+        await resumeSession(sessionId, getTopicRuntimeContext()?.directory ?? session?.directory ?? process.cwd());
+        return true;
+      }
+      await ctx.answerCallbackQuery({
+        text: "Still waiting for sign-in. Finish authorization, then tap Check again.",
+        show_alert: true,
+      }).catch(() => {});
+    } catch (error) {
+      await ctx.answerCallbackQuery({
+        text: error instanceof Error ? error.message.slice(0, 190) : "Could not verify sign-in.",
+        show_alert: true,
+      }).catch(() => {});
+    }
+    return true;
+  }
+
+  if (!id) return true;
 
   if (data.startsWith("extauto:")) {
     const request = getExtensionEnsureRequest(id);

@@ -99,7 +99,7 @@ export async function buildActionsSettingsView(): Promise<{ text: string; keyboa
   keyboard.text("← Settings", "settings:back");
   return {
     text: actions.length
-      ? "⚡ <b>Actions</b>\n\nOnly model-generated Extension actions appear here. Tap an action to enable or disable it."
+      ? "⚡ <b>Actions</b>\n\nExtension actions are generated automatically after setup. Tap an action to enable or disable it."
       : "⚡ <b>Actions</b>\n\nNo generated Extension actions yet.",
     keyboard,
   };

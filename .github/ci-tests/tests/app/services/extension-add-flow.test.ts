@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   createMcp: vi.fn(),
   startOAuth: vi.fn(),
   completeOAuth: vi.fn(),
+  loadMcps: vi.fn(),
   configureSecure: vi.fn(),
   resolveSkill: vi.fn(),
   writeSkill: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   listExtensions: vi.fn(),
   createChallenge: vi.fn(),
   generateActions: vi.fn(),
+  resolveCredential: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
@@ -21,6 +23,7 @@ vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
   createMcpServerFromInput: mocks.createMcp,
   startMcpOAuth: mocks.startOAuth,
   completeMcpOAuth: mocks.completeOAuth,
+  loadMcpServers: mocks.loadMcps,
   configureSecureMcpAuth: mocks.configureSecure,
 }));
 vi.mock("../../../src/app/services/skill-import-service.js", () => ({
@@ -40,7 +43,7 @@ vi.mock("../../../src/app/services/secure-credential-broker.js", () => ({
   createSecureCredentialChallenge: mocks.createChallenge,
 }));
 vi.mock("../../../src/app/services/credential-vault-service.js", () => ({
-  resolveExtensionCredential: vi.fn(),
+  resolveExtensionCredential: mocks.resolveCredential,
 }));
 vi.mock("../../../src/app/services/extension-registry-service.js", () => ({
   extensionId: (kind: string, name: string) => `${kind}:${name.toLowerCase()}`,
@@ -58,7 +61,10 @@ vi.mock("../../../src/app/services/extension-action-generator-service.js", () =>
 import {
   addMcpBackedExtension,
   addSkillExtension,
+  completeExtensionOAuth,
+  finalizeExtensionCredential,
   getPendingExtensionOAuth,
+  verifyPendingExtensionOAuth,
 } from "../../../src/app/services/extension-ensure-service.js";
 describe("conversational Extension add flows", () => {
   beforeEach(() => {
@@ -76,6 +82,8 @@ describe("conversational Extension add flows", () => {
       challengeId: "challenge-1",
     });
     mocks.generateActions.mockResolvedValue(2);
+    mocks.resolveCredential.mockResolvedValue("secret-value");
+    mocks.loadMcps.mockResolvedValue([]);
   });
 
   it("analyzes an MCP endpoint and requires native Question confirmation before mutation", async () => {
@@ -142,6 +150,97 @@ describe("conversational Extension add flows", () => {
       authorizationUrl: "https://graphify.example/oauth/authorize",
     });
   });
+  it("completes MCP OAuth from the Check path when OpenCode reports connected", async () => {
+    mocks.createMcp.mockResolvedValue({
+      name: "graphify",
+      type: "remote",
+      status: { status: "needs_auth" },
+    });
+    mocks.startOAuth.mockResolvedValue({
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      oauthState: "oauth-state",
+    });
+    const extension = {
+      id: "mcp:graphify",
+      name: "graphify",
+      kind: "mcp",
+      source: "https://api.graphify.com/mcp",
+      purpose: "Repository graph analysis",
+      authType: "oauth",
+      credentialSchemas: [],
+      resource: { kind: "mcp", serverName: "graphify", projectDirectory: "/work/repo" },
+      createdAt: "2026-09-27T00:00:00.000Z",
+      updatedAt: "2026-09-27T00:00:00.000Z",
+      managed: true,
+    };
+    mocks.getExtension.mockResolvedValue(extension);
+    mocks.loadMcps.mockResolvedValue([
+      { name: "graphify", type: "remote", status: { status: "connected" } },
+    ]);
+
+    await addMcpBackedExtension({
+      sessionId: "ses-oauth-check",
+      projectDirectory: "/work/repo",
+      name: "graphify",
+      kind: "mcp",
+      source: "https://api.graphify.com/mcp",
+      purpose: "Repository graph analysis",
+      confirmed: true,
+    });
+
+    await expect(verifyPendingExtensionOAuth("ses-oauth-check")).resolves.toEqual({
+      status: "ready",
+      extension,
+    });
+    expect(getPendingExtensionOAuth("ses-oauth-check")).toBeNull();
+    expect(mocks.generateActions).toHaveBeenCalledWith(extension);
+  });
+
+  it("auto-generates Actions after OAuth completes", async () => {
+    mocks.createMcp.mockResolvedValue({
+      name: "graphify",
+      type: "remote",
+      status: { status: "needs_auth" },
+    });
+    mocks.startOAuth.mockResolvedValue({
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      oauthState: "oauth-state",
+    });
+    const extension = {
+      id: "mcp:graphify",
+      name: "graphify",
+      kind: "mcp",
+      source: "https://api.graphify.com/mcp",
+      purpose: "Repository graph analysis",
+      authType: "oauth",
+      credentialSchemas: [],
+      resource: { kind: "mcp", serverName: "graphify", projectDirectory: "/work/repo" },
+      createdAt: "2026-09-27T00:00:00.000Z",
+      updatedAt: "2026-09-27T00:00:00.000Z",
+      managed: true,
+    };
+    mocks.getExtension.mockResolvedValue(extension);
+
+    await addMcpBackedExtension({
+      sessionId: "ses-oauth-complete",
+      projectDirectory: "/work/repo",
+      name: "graphify",
+      kind: "mcp",
+      source: "https://api.graphify.com/mcp",
+      purpose: "Repository graph analysis",
+      confirmed: true,
+    });
+
+    await expect(
+      completeExtensionOAuth(
+        "ses-oauth-complete",
+        "http://localhost/callback?code=abc&state=oauth-state",
+      ),
+    ).resolves.toEqual(extension);
+    expect(mocks.completeOAuth).toHaveBeenCalledWith("/work/repo", "graphify", "abc");
+    expect(mocks.generateActions).toHaveBeenCalledWith(extension);
+  });
+
   it("uses secure credential input when API-key auth is selected", async () => {
     mocks.createMcp.mockResolvedValue({
       name: "private-mcp",
@@ -170,6 +269,39 @@ describe("conversational Extension add flows", () => {
       sessionId: "ses-key",
       credentialId: "api-key",
     }));
+  });
+
+  it("auto-generates Actions after secure API-key validation", async () => {
+    const extension = {
+      id: "mcp:private-mcp",
+      name: "private-mcp",
+      kind: "mcp",
+      source: "https://mcp.example.com/mcp",
+      purpose: "Private tools",
+      authType: "api-key",
+      credentialSchemas: [{
+        id: "api-key",
+        label: "API key",
+        type: "api-key",
+        transport: { kind: "api-key-header" },
+      }],
+      resource: { kind: "mcp", serverName: "private-mcp", projectDirectory: "/work/repo" },
+      createdAt: "2026-09-27T00:00:00.000Z",
+      updatedAt: "2026-09-27T00:00:00.000Z",
+      managed: true,
+    };
+    mocks.getExtension.mockResolvedValue(extension);
+
+    await expect(finalizeExtensionCredential("mcp:private-mcp")).resolves.toEqual(extension);
+    expect(mocks.configureSecure).toHaveBeenCalledWith({
+      projectDirectory: "/work/repo",
+      serverName: "private-mcp",
+      remoteUrl: "https://mcp.example.com/mcp",
+      mode: "api-key",
+      headerName: "X-API-Key",
+      secret: "secret-value",
+    });
+    expect(mocks.generateActions).toHaveBeenCalledWith(extension);
   });
 
   it("previews a Skill, then imports it and auto-generates its Action after confirmation", async () => {

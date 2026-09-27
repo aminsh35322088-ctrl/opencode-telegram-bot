@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { analyzeRemoteMcpEndpoint, createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, startMcpOAuth } from "./mcp-server-service.js";
+import { analyzeRemoteMcpEndpoint, createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, loadMcpServers, startMcpOAuth } from "./mcp-server-service.js";
 import { resolveSkillSource } from "./skill-import-service.js";
 import { writeGlobalSkillRaw } from "./skill-manage-service.js";
 import { discoverModels, saveCustomProvider } from "./custom-provider-service.js";
@@ -527,6 +527,25 @@ export function getPendingExtensionOAuth(sessionId: string): PendingOAuth | null
   prune();
   const pending = oauthBySession.get(sessionId);
   return pending ? { ...pending } : null;
+}
+
+export async function verifyPendingExtensionOAuth(sessionId: string): Promise<{
+  status: "ready" | "pending";
+  extension?: ExtensionRecord;
+}> {
+  prune();
+  const pending = oauthBySession.get(sessionId);
+  if (!pending) throw new Error("No extension OAuth flow is pending.");
+
+  const servers = await loadMcpServers(pending.projectDirectory);
+  const server = servers.find((item) => item.name === pending.serverName);
+  if (!server || server.status.status !== "connected") return { status: "pending" };
+
+  oauthBySession.delete(sessionId);
+  const extension = await getStoredExtension(pending.extensionId);
+  if (!extension) throw new Error("Extension disappeared while OAuth was pending.");
+  await generateExtensionActions(extension);
+  return { status: "ready", extension };
 }
 
 export async function completeExtensionOAuth(sessionId: string, callbackUrl: string): Promise<ExtensionRecord> {
