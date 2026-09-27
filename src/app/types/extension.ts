@@ -1,4 +1,4 @@
-export const EXTENSION_KINDS = ["integration", "mcp", "skill", "model-provider"] as const;
+export const EXTENSION_KINDS = ["integration", "mcp", "skill", "model-provider", "plugin"] as const;
 export type ExtensionKind = (typeof EXTENSION_KINDS)[number];
 
 export const EXTENSION_AUTH_TYPES = ["none", "oauth", "api-key", "bearer"] as const;
@@ -25,6 +25,7 @@ export interface ExtensionRecord {
     | { kind: "mcp"; serverName: string; projectDirectory: string }
     | { kind: "skill"; skillName: string }
     | { kind: "model-provider"; providerId: string }
+    | { kind: "plugin"; specifier: string }
     | { kind: "integration"; adapter: string };
   createdAt: string;
   updatedAt: string;

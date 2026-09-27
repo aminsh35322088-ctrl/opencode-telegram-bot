@@ -222,7 +222,7 @@ interface ExtensionRegistryModule {
   removeExtension(projectDirectory: string, id: string): Promise<unknown>;
 }
 interface ExtensionEnsureModule {
-  requestExtensionEnsure(input: { sessionId: string; projectDirectory: string; name: string; kind: "integration" | "mcp" | "skill" | "model-provider"; source: string; purpose: string; authType?: "none" | "oauth" | "api-key" | "bearer" }): Promise<unknown>;
+  requestExtensionEnsure(input: { sessionId: string; projectDirectory: string; name: string; kind: "integration" | "mcp" | "skill" | "model-provider" | "plugin"; source: string; purpose: string; authType?: "none" | "oauth" | "api-key" | "bearer" }): Promise<unknown>;
 }
 interface CredentialModule {
   createSecureCredentialChallenge(input: { extensionId: string; credentialId: string; sessionId: string; projectDirectory: string }): Promise<unknown>;
@@ -344,7 +344,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions: projects/worktrees, model-agent-variant selection, skills/MCP, sessions, scheduled tasks, safe settings, memory, provider metadata, integrations, and version state. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions: projects/worktrees, model-agent-variant selection, Extensions (including OpenCode plugins), skills/MCP, sessions, scheduled tasks, safe settings, memory, provider metadata, integrations, and version state. Extension installation/update is runtime configuration owned by the bot; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -355,10 +355,10 @@ export default tool({
     name: tool.schema.string().optional().describe("Skill, MCP, Extension, or generated-action name."),
     description: tool.schema.string().optional().describe("Skill description or concise reason/purpose for an Extension."),
     body: tool.schema.string().optional().describe("Skill body or JSON payload for generated actions/provider free-policy."),
-    value: tool.schema.string().optional().describe("Extension source URL, MCP URL/command, rename target, or settings value."),
+    value: tool.schema.string().optional().describe("Extension source URL/specifier, version-pinned OpenCode plugin specifier, MCP URL/command, rename target, or settings value."),
     extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
     credential_id: tool.schema.string().optional().describe("Credential schema ID registered by an Extension. Never pass a secret value."),
-    extension_kind: tool.schema.enum(["integration", "mcp", "skill", "model-provider"]).optional().describe("Extension kind for extensions.ensure."),
+    extension_kind: tool.schema.enum(["integration", "mcp", "skill", "model-provider", "plugin"]).optional().describe("Extension kind for extensions.ensure. Use plugin for OpenCode plugins; plugin updates are stored in bot-owned runtime config, never the project repository."),
     auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Declared auth type for Extension setup; raw secrets are never accepted."),
     confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
     paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
@@ -385,6 +385,7 @@ export default tool({
         media: "Use the media tool for STT and configured image generation/editing.",
         sessionRecovery: "Use session-recovery for inspect/abort/continue.",
         dynamicMcpTools: "Connected MCP servers expose their model tools directly through OpenCode.",
+        extensionStorage: "Extension setup is bot-owned runtime configuration. Use extensions.ensure/remove; never edit opencode.json, package files, .opencode, commit, push, or deploy merely to install/update an Extension.",
       } });
     }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
+import { listStoredExtensions } from "./extension-store.js";
 import { getBuiltInFreeProviderConfigs } from "./free-model-source-service.js";
 import {
   removeExtensionCredentials,
@@ -778,17 +779,29 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
     providers[source.id] = source.config;
   }
 
-  return JSON.stringify({ $schema: "https://opencode.ai/config.json", provider: providers }, null, 2);
+  const plugin = (await listStoredExtensions())
+    .filter((extension) => extension.resource.kind === "plugin")
+    .map((extension) => extension.resource.kind === "plugin" ? extension.resource.specifier : "")
+    .filter(Boolean);
+
+  return JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    provider: providers,
+    ...(plugin.length > 0 ? { plugin: [...new Set(plugin)] } : {}),
+  }, null, 2);
 }
 
 async function writeOpenCodeCustomConfigFile(configPath?: string): Promise<string> {
-  const target = configPath ?? path.join(getRuntimePaths().appHome, ".config", "opencode-telegram", "custom-providers.json");
+  const target = configPath ?? path.join(getRuntimePaths().appHome, ".config", "opencode-telegram", "managed-opencode.json");
   await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await fs.writeFile(target, await buildOpenCodeCustomConfig(), { mode: 0o600 });
   return target;
 }
 
 export async function syncOpenCodeCustomConfig(): Promise<string> {
+  // This bot-owned file is the managed OpenCode runtime overlay. It contains
+  // provider definitions plus approved global plugin Extensions. Project
+  // repositories are never mutated to install or update runtime Extensions.
   // Config sync is intentionally network-free. Unverified custom models remain
   // fail-closed until an active/selected model is verified explicitly.
   return writeOpenCodeCustomConfigFile();

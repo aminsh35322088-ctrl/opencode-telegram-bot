@@ -37,7 +37,15 @@ export async function buildExtensionsSettingsView(projectDirectory: string): Pro
   const extensions = await listExtensions(projectDirectory);
   const keyboard = new InlineKeyboard();
   for (const extension of extensions) {
-    const icon = extension.kind === "mcp" ? "🔗" : extension.kind === "skill" ? "🧠" : extension.kind === "model-provider" ? "🤖" : "🔌";
+    const icon = extension.kind === "mcp"
+      ? "🔗"
+      : extension.kind === "skill"
+        ? "🧠"
+        : extension.kind === "model-provider"
+          ? "🤖"
+          : extension.kind === "plugin"
+            ? "🧩"
+            : "🔌";
     keyboard.text(`${icon} ${extension.name} · ${extension.kind}`, SETTINGS_EXTENSION_SELECT_PREFIX + ref(extension.id)).row();
   }
   keyboard.text("← Settings", "settings:back");

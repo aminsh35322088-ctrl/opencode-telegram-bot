@@ -3,10 +3,11 @@ import { createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, sta
 import { resolveSkillSource } from "./skill-import-service.js";
 import { writeGlobalSkillRaw } from "./skill-manage-service.js";
 import { discoverModels, saveCustomProvider } from "./custom-provider-service.js";
+import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
 import { createSecureCredentialChallenge } from "./secure-credential-broker.js";
 import { resolveExtensionCredential } from "./credential-vault-service.js";
 import { extensionId, listExtensions } from "./extension-registry-service.js";
-import { saveStoredExtension, getStoredExtension } from "./extension-store.js";
+import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
 import type { ExtensionAuthType, ExtensionEnsureRequest, ExtensionKind, ExtensionRecord } from "../types/extension.js";
 
 const REQUEST_TTL_MS = 15 * 60_000;
@@ -28,6 +29,54 @@ interface PendingOAuth {
 const requests = new Map<string, ExtensionEnsureRequest>();
 const oauthBySession = new Map<string, PendingOAuth>();
 
+const NPM_PLUGIN_SPECIFIER =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[^\s@]+$/iu;
+const GIT_HTTPS_MARKER = "git+https://";
+const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+const IMMUTABLE_GIT_REF = /^(?:v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|[0-9a-f]{40})$/iu;
+
+export function validatePluginSpecifier(source: string): string {
+  const value = source.trim();
+  if (!value || value.length > 2048) throw new Error("Plugin specifier is required.");
+  if (/[\u0000-\u0020\u007f]/u.test(value)) {
+    throw new Error("Plugin specifier must not contain whitespace or control characters.");
+  }
+  if (value.startsWith("file:") || value.startsWith(".") || value.startsWith("/") || value.includes("\\")) {
+    throw new Error("Managed plugins must not use local/project filesystem paths.");
+  }
+
+  const markerIndex = value.indexOf(GIT_HTTPS_MARKER);
+  if (markerIndex >= 0) {
+    const alias = value.slice(0, markerIndex);
+    if (alias && !/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@$/iu.test(alias)) {
+      throw new Error("Invalid git-backed plugin alias.");
+    }
+    let url: URL;
+    try {
+      url = new URL(value.slice(markerIndex + 4));
+    } catch {
+      throw new Error("Invalid git-backed plugin URL.");
+    }
+    if (url.protocol !== "https:" || url.username || url.password || url.search) {
+      throw new Error("Git-backed plugins must use credential-free HTTPS URLs without query parameters.");
+    }
+    const ref = url.hash.slice(1).trim();
+    if (!ref || !IMMUTABLE_GIT_REF.test(ref)) {
+      throw new Error("Git-backed plugins must pin an immutable semantic-version tag or full commit SHA.");
+    }
+    return value;
+  }
+
+  if (!NPM_PLUGIN_SPECIFIER.test(value)) {
+    throw new Error("Plugins must use a version-pinned npm specifier or git+https specifier with an explicit ref.");
+  }
+  const version = value.slice(value.lastIndexOf("@") + 1);
+  if (!version || !EXACT_SEMVER.test(version)) {
+    throw new Error("Managed npm plugins must pin an exact semantic version.");
+  }
+  return value;
+}
+
 function prune(): void {
   const now = Date.now();
   for (const [id, request] of requests) if (request.expiresAt <= now || ["cancelled", "ready", "failed"].includes(request.status)) requests.delete(id);
@@ -37,6 +86,7 @@ function prune(): void {
 function validateSource(kind: ExtensionKind, source: string): string {
   const value = source.trim();
   if (!value || value.length > 4096) throw new Error("Extension source is required.");
+  if (kind === "plugin") return validatePluginSpecifier(value);
   if (kind === "mcp" && value.startsWith("local:")) {
     if (!value.slice("local:".length).trim()) throw new Error("Local MCP command is empty.");
     return value;
@@ -103,7 +153,14 @@ export async function requestExtensionEnsure(input: {
   const source = validateSource(input.kind, input.source);
   const id = extensionId(input.kind, name, input.projectDirectory);
   const existing = (await listExtensions(input.projectDirectory)).find((item) => item.id === id);
-  if (existing) return { status: "ready", extensionId: id };
+  if (existing) {
+    const stored = await getStoredExtension(id);
+    const isPluginUpdate =
+      input.kind === "plugin" &&
+      stored?.resource.kind === "plugin" &&
+      stored.source !== source;
+    if (!isPluginUpdate) return { status: "ready", extensionId: id };
+  }
 
   const now = Date.now();
   const request: ExtensionEnsureRequest = {
@@ -150,6 +207,27 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
   request.status = "installing";
 
   try {
+    if (request.kind === "plugin") {
+      if (request.authType !== "none") {
+        throw new Error("OpenCode plugins do not accept credentials through Extension setup.");
+      }
+      const extension = recordFor(request, { kind: "plugin", specifier: request.source });
+      const previous = await getStoredExtension(extension.id);
+      if (previous) extension.createdAt = previous.createdAt;
+      await saveStoredExtension(extension);
+      try {
+        await reloadManagedOpenCodeConfig("extension_plugin_change", { timeoutMs: 30_000 });
+      } catch (error) {
+        if (previous) await saveStoredExtension(previous);
+        else await removeStoredExtension(extension.id);
+        await reloadManagedOpenCodeConfig("extension_plugin_rollback", { timeoutMs: 30_000 }).catch(() => {});
+        throw error;
+      }
+      request.status = "ready";
+      requests.delete(id);
+      return { status: "ready", extension };
+    }
+
     if (request.kind === "skill") {
       const resolved = await resolveSkillSource(request.source);
       if (resolved.kind !== "single") throw new Error("Skill source resolves to multiple candidates; use a direct skill source URL.");

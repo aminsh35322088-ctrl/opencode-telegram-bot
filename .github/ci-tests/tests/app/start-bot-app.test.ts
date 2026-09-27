@@ -30,6 +30,8 @@ const mocked = vi.hoisted(() => ({
   syncCustomConfigMock: vi.fn(),
   migrateProviderCredentialsMock: vi.fn(),
   cleanupLegacyConfigMock: vi.fn(),
+  migrateExtensionDefaultsMock: vi.fn(),
+  listStoredExtensionsMock: vi.fn(),
   modelCatalogStartMock: vi.fn(),
   modelCatalogStopMock: vi.fn(),
   deliverySenderMock: vi.fn(),
@@ -96,6 +98,14 @@ vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
 
 vi.mock("../../src/app/services/persistent-state-registry.js", () => ({
   cleanupLegacyUserConfiguration: mocked.cleanupLegacyConfigMock,
+}));
+
+vi.mock("../../src/app/services/extension-defaults-service.js", () => ({
+  migrateBundledExtensionsToManagedState: mocked.migrateExtensionDefaultsMock,
+}));
+
+vi.mock("../../src/app/services/extension-store.js", () => ({
+  listStoredExtensions: mocked.listStoredExtensionsMock,
 }));
 
 vi.mock("../../src/utils/runtime-observability.js", () => ({
@@ -264,6 +274,8 @@ describe("app/start-bot-app", () => {
     mocked.syncCustomConfigMock.mockReset();
     mocked.migrateProviderCredentialsMock.mockReset();
     mocked.cleanupLegacyConfigMock.mockReset();
+    mocked.migrateExtensionDefaultsMock.mockReset();
+    mocked.listStoredExtensionsMock.mockReset();
     mocked.modelCatalogStartMock.mockReset();
     mocked.modelCatalogStopMock.mockReset();
     mocked.deliverySenderMock.mockReset();
@@ -285,6 +297,8 @@ describe("app/start-bot-app", () => {
     mocked.syncCustomConfigMock.mockResolvedValue("");
     mocked.migrateProviderCredentialsMock.mockResolvedValue(0);
     mocked.cleanupLegacyConfigMock.mockResolvedValue(undefined);
+    mocked.migrateExtensionDefaultsMock.mockResolvedValue({ seeded: 0 });
+    mocked.listStoredExtensionsMock.mockResolvedValue([]);
     mocked.deliverySenderMock.mockReturnValue(vi.fn());
 
     registeredProcessHandlers.clear();
