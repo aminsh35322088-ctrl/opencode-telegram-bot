@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const PLAYWRIGHT_CLI = "playwright-cli";
 const QWEN_URL = "https://chat.qwen.ai";
+const QWEN_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
 const MARKER = "__OTB_QWEN_BX__";
 const COMMAND_TIMEOUT_MS = 70_000;
 const CAPTURE_COOLDOWN_MS = 30 * 60_000;
@@ -61,12 +62,16 @@ function captureScript(): string {
     page.on('request', onRequest);
     try {
       await page.goto(${JSON.stringify(QWEN_URL)}, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      for (let i = 0; i < 16 && !captured; i++) await page.waitForTimeout(500);
 
       const probe = await page.evaluate(async () => {
         const ts = Date.now();
+        const waf = text => {
+          const low = String(text || '').toLowerCase();
+          return low.includes('rgv587') || low.includes('x5secdata') ||
+            low.includes('_____tmd_____') || low.includes('aliyun_waf');
+        };
         try {
-          const res = await fetch('/api/v2/chats/new', {
+          const newRes = await fetch('/api/v2/chats/new', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -83,14 +88,73 @@ function captureScript(): string {
               project_id: '',
             }),
           });
-          const body = await res.text();
-          return { status: res.status, body: body.slice(0, 400) };
+          const newText = await newRes.text();
+          let chatId = null;
+          try { chatId = JSON.parse(newText)?.data?.id || null; } catch {}
+          if (!chatId || waf(newText)) {
+            return { step: 'chats/new', status: newRes.status, body: newText.slice(0, 500), verified: false };
+          }
+
+          const fid = crypto.randomUUID().replace(/-/g, '');
+          const child = crypto.randomUUID().replace(/-/g, '');
+          const completionRes = await fetch('/api/v2/chat/completions?chat_id=' + encodeURIComponent(chatId), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'text/event-stream',
+              source: 'web',
+              version: '0.2.91',
+              'x-request-id': crypto.randomUUID(),
+              'x-accel-buffering': 'no',
+            },
+            body: JSON.stringify({
+              stream: true,
+              incremental_output: true,
+              chat_id: chatId,
+              chat_mode: 'guest',
+              model: 'qwen3.8-max',
+              parent_id: null,
+              messages: [{
+                fid,
+                parentId: null,
+                childrenIds: [child],
+                role: 'user',
+                content: 'Reply only OK.',
+                user_action: 'chat',
+                files: [],
+                timestamp: ts,
+                models: ['qwen3.8-max'],
+                chat_type: 't2t',
+                feature_config: {
+                  thinking_enabled: true,
+                  output_schema: 'phase',
+                  thinking_mode: 'Auto',
+                  thinking_format: 'summary',
+                },
+                extra: { meta: { subChatType: 't2t' } },
+                sub_chat_type: 't2t',
+                parent_id: null,
+              }],
+              timestamp: ts,
+            }),
+          });
+          const completionText = await completionRes.text();
+          const contentType = completionRes.headers.get('content-type') || '';
+          const blocked = waf(completionText);
+          const verified = !blocked && completionRes.ok && contentType.toLowerCase().includes('text/event-stream');
+          return {
+            step: 'completions',
+            status: completionRes.status,
+            contentType,
+            body: completionText.slice(0, 700),
+            verified,
+          };
         } catch (error) {
-          return { status: 0, body: String(error).slice(0, 400) };
+          return { step: 'exception', status: 0, body: String(error).slice(0, 500), verified: false };
         }
       });
 
-      for (let i = 0; i < 12 && !captured; i++) await page.waitForTimeout(500);
+      for (let i = 0; i < 8 && !captured; i++) await page.waitForTimeout(250);
       if (!captured) {
         return marker + JSON.stringify({
           verified: false,
@@ -99,14 +163,13 @@ function captureScript(): string {
         });
       }
 
-      const body = String(probe.body || '').toLowerCase();
-      const waf = body.includes('rgv587') || body.includes('x5secdata') ||
-        body.includes('_____tmd_____') || body.includes('aliyun_waf');
       return marker + JSON.stringify({
         captured,
-        verified: probe.status > 0 && !waf,
+        verified: Boolean(probe.verified),
         status: probe.status,
-        reason: waf ? 'Qwen still returned an Aliyun/Baxia challenge in-browser' : undefined,
+        reason: probe.verified
+          ? undefined
+          : 'Qwen full in-browser guest completion did not pass Baxia verification',
       });
     } finally {
       page.off('request', onRequest);
@@ -185,6 +248,7 @@ export async function bootstrapQwenGuestHeaders(
         args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
       },
       contextOptions: {
+        userAgent: QWEN_USER_AGENT,
         locale: "en-US",
         viewport: { width: 1280, height: 850 },
       },

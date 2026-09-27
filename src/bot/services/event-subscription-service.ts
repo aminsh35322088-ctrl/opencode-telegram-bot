@@ -90,6 +90,7 @@ import { dispatchNextQueuedPrompt } from "../handlers/prompt-queue-dispatch.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
+import { isQwenRiskControlError, repairQwenGuestAccess } from "../../app/services/free-model-source-service.js";
 import { updateTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import {
   backgroundSessionTracker,
@@ -1501,6 +1502,18 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       const currentSession = getCurrentSession();
       if (!currentSession || currentSession.id !== sessionId) {
         return;
+      }
+
+      if (isQwenRiskControlError(message)) {
+        logger.warn(`[FreeModelSources] Qwen risk-control retry detected; refreshing Baxia headers: session=${sessionId}`);
+        try {
+          const repair = await repairQwenGuestAccess(true);
+          logger.info(
+            `[FreeModelSources] Qwen retry refresh completed: session=${sessionId} ok=${repair.ok} verified=${repair.verified} runtimeUsable=${repair.runtimeUsable ?? "n/a"}`,
+          );
+        } catch (error) {
+          logger.warn(`[FreeModelSources] Qwen retry refresh failed: session=${sessionId}`, error);
+        }
       }
 
       if (isCompactProgressMode()) {
