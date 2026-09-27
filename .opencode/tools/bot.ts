@@ -263,6 +263,28 @@ function required(value: string | undefined, field: string, action: BotAction): 
 
 function json(value: unknown): string { return JSON.stringify(value, null, 2).slice(0, 30000); }
 
+function modelSafeExtensionAddResult(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = value as Record<string, unknown>;
+  const status = typeof result.status === "string" ? result.status : "";
+  if (status !== "awaiting-oauth" && status !== "awaiting-credential") return value;
+
+  const extension = result.extension && typeof result.extension === "object"
+    ? result.extension as Record<string, unknown>
+    : {};
+  return {
+    status,
+    extension: {
+      id: extension.id,
+      name: extension.name,
+      kind: extension.kind,
+    },
+    telegramUi: status === "awaiting-oauth"
+      ? "A Sign in button is being presented to the user in Telegram. Do not print or request the OAuth URL/code."
+      : "A secure credential input is being presented to the user in Telegram. Do not ask for or repeat the secret.",
+  };
+}
+
 function expandMinuteBase(base: string): number[] {
   if (base === "*") return Array.from({ length: 60 }, (_, index) => index);
   if (base.includes("-")) {
@@ -498,7 +520,7 @@ export default tool({
       if (action === "mcp.list") return json(await service.loadMcpServers(base));
       if (action === "mcp.add") {
         const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
-        return json(await ensure.addMcpBackedExtension({
+        return json(modelSafeExtensionAddResult(await ensure.addMcpBackedExtension({
           sessionId: context.sessionID,
           projectDirectory: base,
           name: required(args.name, "name", action),
@@ -507,7 +529,7 @@ export default tool({
           purpose: required(args.description, "description", action),
           confirmed: args.confirmed === true,
           authType: args.auth_type,
-        }));
+        })));
       }
       if (action === "mcp.debug") {
         return json(await service.debugMcpServer(base, args.name, { repair: args.repair === true }));
@@ -529,7 +551,7 @@ export default tool({
 
     if (action === "integrations.add") {
       const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
-      return json(await ensure.addMcpBackedExtension({
+      return json(modelSafeExtensionAddResult(await ensure.addMcpBackedExtension({
         sessionId: context.sessionID,
         projectDirectory: base,
         name: required(args.name, "name", action),
@@ -538,7 +560,7 @@ export default tool({
         purpose: required(args.description, "description", action),
         confirmed: args.confirmed === true,
         authType: args.auth_type,
-      }));
+      })));
     }
 
     if (action.startsWith("extensions.")) {

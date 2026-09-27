@@ -924,6 +924,21 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         markToolCallStarted(toolInfo.sessionId, toolInfo.callId);
       }
 
+      // Extension auth UI is session-routed and must not depend on the global
+      // foreground session. In multi-Topic operation another Topic may be
+      // current while this tool completes; dropping the presentation here would
+      // strand OAuth/API-key setup and leak the raw auth flow back to the model.
+      if (status === "completed" && this.botInstance) {
+        const chatId = this.getChatIdForSession(toolInfo.sessionId);
+        if (chatId !== null) {
+          void presentPendingExtensionAutomation(
+            this.sessionScopedApi(toolInfo.sessionId),
+            chatId,
+            toolInfo.sessionId,
+          ).catch((error) => logger.warn("[Extensions] Failed to present pending automation UI", error));
+        }
+      }
+
       if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
         logger.debug(`[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
         return;
@@ -943,17 +958,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       // A failed call is just as finished as a successful one: leaving it tracked
       // would keep its timer ticking for a tool that already stopped running.
       const isTerminal = status === "completed" || status === "error";
-
-      if (status === "completed" && this.botInstance) {
-        const chatId = this.getChatIdForSession(toolInfo.sessionId);
-        if (chatId !== null) {
-          void presentPendingExtensionAutomation(
-            this.sessionScopedApi(toolInfo.sessionId),
-            chatId,
-            toolInfo.sessionId,
-          ).catch((error) => logger.warn("[Extensions] Failed to present pending automation UI", error));
-        }
-      }
 
       if (isTerminal) {
         if (tracksElapsed) {

@@ -9,6 +9,7 @@ import { resolveExtensionCredential } from "./credential-vault-service.js";
 import { extensionId, listExtensions } from "./extension-registry-service.js";
 import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
 import { generateExtensionActions } from "./extension-action-generator-service.js";
+import { readSharedPendingOAuth, removeSharedPendingOAuth, writeSharedPendingOAuth } from "./extension-automation-state-store.js";
 import type { ExtensionAuthType, ExtensionEnsureRequest, ExtensionKind, ExtensionRecord } from "../types/extension.js";
 
 const REQUEST_TTL_MS = 15 * 60_000;
@@ -29,7 +30,6 @@ interface PendingOAuth {
 }
 
 const requests = new Map<string, ExtensionEnsureRequest>();
-const oauthBySession = new Map<string, PendingOAuth>();
 
 const NPM_PLUGIN_SPECIFIER =
   /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[^\s@]+$/iu;
@@ -82,7 +82,6 @@ export function validatePluginSpecifier(source: string): string {
 function prune(): void {
   const now = Date.now();
   for (const [id, request] of requests) if (request.expiresAt <= now || ["cancelled", "ready", "failed"].includes(request.status)) requests.delete(id);
-  for (const [sessionId, pending] of oauthBySession) if (pending.expiresAt <= now) oauthBySession.delete(sessionId);
 }
 
 function validateSource(kind: ExtensionKind, source: string): string {
@@ -496,7 +495,7 @@ export async function addMcpBackedExtension(input: {
 
   if (effectiveAuth === "oauth") {
     const oauth = await startMcpOAuth(input.projectDirectory, name);
-    oauthBySession.set(input.sessionId, {
+    writeSharedPendingOAuth<PendingOAuth>({
       extensionId: extension.id,
       projectDirectory: input.projectDirectory,
       serverName: name,
@@ -525,8 +524,13 @@ export async function addMcpBackedExtension(input: {
 
 export function getPendingExtensionOAuth(sessionId: string): PendingOAuth | null {
   prune();
-  const pending = oauthBySession.get(sessionId);
-  return pending ? { ...pending } : null;
+  const pending = readSharedPendingOAuth<PendingOAuth>(sessionId);
+  if (!pending) return null;
+  if (pending.expiresAt <= Date.now()) {
+    removeSharedPendingOAuth(sessionId);
+    return null;
+  }
+  return { ...pending };
 }
 
 export async function verifyPendingExtensionOAuth(sessionId: string): Promise<{
@@ -534,14 +538,14 @@ export async function verifyPendingExtensionOAuth(sessionId: string): Promise<{
   extension?: ExtensionRecord;
 }> {
   prune();
-  const pending = oauthBySession.get(sessionId);
+  const pending = getPendingExtensionOAuth(sessionId);
   if (!pending) throw new Error("No extension OAuth flow is pending.");
 
   const servers = await loadMcpServers(pending.projectDirectory);
   const server = servers.find((item) => item.name === pending.serverName);
   if (!server || server.status.status !== "connected") return { status: "pending" };
 
-  oauthBySession.delete(sessionId);
+  removeSharedPendingOAuth(sessionId);
   const extension = await getStoredExtension(pending.extensionId);
   if (!extension) throw new Error("Extension disappeared while OAuth was pending.");
   await generateExtensionActions(extension);
@@ -550,14 +554,14 @@ export async function verifyPendingExtensionOAuth(sessionId: string): Promise<{
 
 export async function completeExtensionOAuth(sessionId: string, callbackUrl: string): Promise<ExtensionRecord> {
   prune();
-  const pending = oauthBySession.get(sessionId);
+  const pending = getPendingExtensionOAuth(sessionId);
   if (!pending) throw new Error("No extension OAuth flow is pending.");
   const url = new URL(callbackUrl);
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
   if (!state || state !== pending.oauthState || !code) throw new Error("OAuth callback does not match the pending extension.");
   await completeMcpOAuth(pending.projectDirectory, pending.serverName, code);
-  oauthBySession.delete(sessionId);
+  removeSharedPendingOAuth(sessionId);
   const extension = await getStoredExtension(pending.extensionId);
   if (!extension) throw new Error("Extension disappeared while OAuth was pending.");
   await generateExtensionActions(extension);

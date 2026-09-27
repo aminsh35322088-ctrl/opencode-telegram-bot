@@ -129,12 +129,16 @@ export async function handleExtensionAutomationCallback(ctx: Context): Promise<b
       return true;
     }
     try {
+      const pending = getPendingExtensionOAuth(sessionId);
+      if (!pending) {
+        await ctx.answerCallbackQuery({ text: "This sign-in request expired.", show_alert: true }).catch(() => {});
+        return true;
+      }
       const result = await verifyPendingExtensionOAuth(sessionId);
       if (result.status === "ready" && result.extension) {
         await ctx.answerCallbackQuery({ text: "Connected ✅" }).catch(() => {});
         await editReady(ctx, result.extension.name);
-        const session = getCurrentSession();
-        await resumeSession(sessionId, getTopicRuntimeContext()?.directory ?? session?.directory ?? process.cwd());
+        await resumeSession(sessionId, pending.projectDirectory);
         return true;
       }
       await ctx.answerCallbackQuery({
@@ -244,6 +248,15 @@ export function isSecureExtensionInputActive(): boolean {
   return Boolean(secureInteraction());
 }
 
+function looksLikeOAuthCallback(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return Boolean(url.searchParams.get("code") && url.searchParams.get("state"));
+  } catch {
+    return false;
+  }
+}
+
 export async function handleSecureExtensionMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text;
   if (!text || !ctx.chat?.id) return false;
@@ -284,7 +297,7 @@ export async function handleSecureExtensionMessage(ctx: Context): Promise<boolea
   }
   if (session) {
     const oauth = getPendingExtensionOAuth(session);
-    if (oauth) {
+    if (oauth && looksLikeOAuthCallback(text)) {
       try {
         if (ctx.chat.type !== "private") {
           throw new Error("Extension OAuth callback is restricted to the private bot chat.");
