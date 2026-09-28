@@ -3,7 +3,9 @@ import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { getMcpDiscoveryHeaders } from "./mcp-server-service.js";
 import { loadManagedMcpServer } from "./mcp-server-store.js";
 
@@ -33,6 +35,27 @@ async function listTools(client: Client): Promise<string[]> {
   return [...names].sort();
 }
 
+function createDiscoveryClient(): Client {
+  return new Client(
+    { name: "opencode-telegram-bot-action-discovery", version: "1.0.0" },
+    { capabilities: {} },
+  );
+}
+
+async function discoverWithTransport(
+  serverName: string,
+  transport: Transport,
+): Promise<string[]> {
+  const client = createDiscoveryClient();
+  try {
+    await client.connect(transport, { timeout: DISCOVERY_TIMEOUT_MS });
+    const names = await listTools(client);
+    return names.map((name) => prefixedToolId(serverName, name));
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
 export async function discoverMcpToolIds(
   projectDirectory: string,
   serverName: string,
@@ -40,13 +63,10 @@ export async function discoverMcpToolIds(
   const managed = await loadManagedMcpServer(projectDirectory, serverName);
   if (!managed) throw new Error(`Managed MCP server not found: ${serverName}.`);
 
-  const client = new Client(
-    { name: "opencode-telegram-bot-action-discovery", version: "1.0.0" },
-    { capabilities: {} },
-  );
-
-  const transport = managed.config.type === "local"
-    ? new StdioClientTransport({
+  if (managed.config.type === "local") {
+    return discoverWithTransport(
+      serverName,
+      new StdioClientTransport({
         command: managed.config.command[0]!,
         args: managed.config.command.slice(1),
         cwd: managed.config.cwd ?? projectDirectory,
@@ -55,21 +75,32 @@ export async function discoverMcpToolIds(
           ...(managed.config.environment ?? {}),
         },
         stderr: "pipe",
-      })
-    : new StreamableHTTPClientTransport(
-        new URL(managed.config.url),
-        {
-          requestInit: {
-            headers: await getMcpDiscoveryHeaders(projectDirectory, serverName),
-          },
-        },
-      );
+      }),
+    );
+  }
 
+  const url = new URL(managed.config.url);
+  const headers = await getMcpDiscoveryHeaders(projectDirectory, serverName);
   try {
-    await client.connect(transport, { timeout: DISCOVERY_TIMEOUT_MS });
-    const names = await listTools(client);
-    return names.map((name) => prefixedToolId(serverName, name));
-  } finally {
-    await client.close().catch(() => {});
+    return await discoverWithTransport(
+      serverName,
+      new StreamableHTTPClientTransport(url, {
+        requestInit: { headers },
+      }),
+    );
+  } catch (streamableError) {
+    try {
+      return await discoverWithTransport(
+        serverName,
+        new SSEClientTransport(url, {
+          requestInit: { headers },
+        }),
+      );
+    } catch (sseError) {
+      throw new AggregateError(
+        [streamableError, sseError],
+        `MCP tool discovery failed for ${serverName} over Streamable HTTP and SSE.`,
+      );
+    }
   }
 }
