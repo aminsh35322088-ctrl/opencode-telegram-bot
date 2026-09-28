@@ -52,7 +52,9 @@ describe("MCP Extension record and generated tool actions", () => {
       tools: [
         { name: "deploy_latest", description: "Deploy the latest build." },
         { name: "read log", description: "Read service logs.", inputSchema: { required: ["service"] } },
-        { name: "github/get_issue", description: "Fetch an issue." },
+        // `required` without a `properties` map is legal JSON Schema and must
+        // still surface required argument names.
+        { name: "github/get_issue", description: "Fetch an issue.", inputSchema: { required: ["number"] } },
       ],
     });
 
@@ -76,6 +78,7 @@ describe("MCP Extension record and generated tool actions", () => {
     expect(actions.every((action) => action.tool === "mcp" && action.action === "call")).toBe(true);
     const byId = new Map(actions.map((action) => [action.id, action]));
     expect(byId.get("railway.read-log")?.description).toContain("Required arguments: service");
+    expect(byId.get("railway.github-get-issue")?.description).toBe("Fetch an issue. Required arguments: number.");
     expect(byId.get("railway.deploy-latest")?.description).toBe("Deploy the latest build.");
   });
 
