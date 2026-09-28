@@ -5,6 +5,7 @@ import { classifyModelPrice, type ModelPrice } from "./model-price-classifier.js
 import { getUnifiedProviderRevisionData, getUnifiedRuntimePriceMetadata } from "./unified-model-catalog-service.js";
 import { peekModelsDevProviderPrices, scheduleModelsDevPriceRefresh } from "./models-dev-price-service.js";
 import { getProviderFreePolicy, type ProviderFreePolicy } from "./provider-free-policy-service.js";
+import { getFreeLlmCatalogProvider } from "./free-llm-catalog-service.js";
 
 const MAX_PRICE_AGE_MS = 15 * 60_000;
 export async function getProviderPriceRevision(providerID: string): Promise<string> {
@@ -94,10 +95,27 @@ function mergeProviderFreePolicy(modelId: string, current: ModelPrice, policy: P
 /** Returns cached evidence immediately; any Models.dev refresh is background-only. */
 export async function getProviderModelPrices(providerID: string): Promise<Map<string, ModelPrice>> {
   const result = new Map<string, ModelPrice>();
-  const [config, providerPolicy] = await Promise.all([
+  const [config, providerPolicy, credentiallessProvider] = await Promise.all([
     getCustomProviderConfig(providerID),
     getProviderFreePolicy(providerID),
+    getFreeLlmCatalogProvider(providerID),
   ]);
+
+  if (
+    !config &&
+    credentiallessProvider?.status === "verified" &&
+    credentiallessProvider.integration === "direct-openai" &&
+    credentiallessProvider.enabledByDefault === true &&
+    credentiallessProvider.auth.userCredentialRequired === false
+  ) {
+    for (const model of credentiallessProvider.models) {
+      result.set(model.id, {
+        group: "free",
+        reason: "Credentialless catalog verifies this provider/model path as free without user-supplied credentials.",
+      });
+    }
+    return result;
+  }
   if (config) {
     const url = new URL(config.apiUrl.trim());
     const catalog = peekProviderCatalog(url.toString().replace(/\/$/, ""), config.apiKey);
