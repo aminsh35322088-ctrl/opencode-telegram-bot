@@ -2,12 +2,17 @@ import fs from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("Extension automation boundary", () => {
-  it("exposes automatic setup only for Skills and plugins", async () => {
+  it("keeps Extension auto-setup on Skills/plugins while MCP uses its own managed actions", async () => {
     const source = await fs.readFile(".opencode/tools/bot.ts", "utf8");
 
     expect(source).toContain('"skills.add"');
     expect(source).toContain('"extensions.ensure"');
-    expect(source).not.toContain('"mcp.add"');
+    expect(source).toContain('extension_kind: tool.schema.enum(["plugin"])');
+    // MCP is provisioned through dedicated bot-managed actions, never through
+    // the Extension approval flow.
+    expect(source).toContain('"mcp.add"');
+    expect(source).toContain('"mcp.tools"');
+    expect(source).toContain('"mcp.call"');
     expect(source).not.toContain('"integrations.add"');
     expect(source).not.toContain('"providers.ensure"');
     expect(source).not.toContain('"credentials.request"');

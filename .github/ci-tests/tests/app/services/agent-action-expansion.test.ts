@@ -7,7 +7,7 @@ const REQUIRED = [
   "telegram.context.current", "telegram.reply.resolve", "telegram.forward.inspect", "telegram.media.fetch",
   "media.video.prepare", "media.stt.status", "media.stt.transcribe",
   "media.image.models", "media.image.current", "media.image.generate", "media.image.edit",
-  "bot.mcp.list", "bot.mcp.debug", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
+  "bot.mcp.list", "bot.mcp.debug", "bot.mcp.add", "bot.mcp.tools", "bot.mcp.call", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
   "bot.skills.list", "bot.skills.add", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
@@ -28,6 +28,9 @@ describe("expanded model-facing action surface", () => {
     expect(getAgentAction("session.diff")?.risk).toBe("read");
     expect(getAgentAction("bot.skills.add")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.debug")?.risk).toBe("mutating");
+    expect(getAgentAction("bot.mcp.add")?.risk).toBe("mutating");
+    expect(getAgentAction("bot.mcp.tools")?.risk).toBe("read");
+    expect(getAgentAction("bot.mcp.call")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.rename")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.delete")?.risk).toBe("destructive");
     expect(getAgentAction("ssh.check")?.risk).toBe("read");
@@ -51,7 +54,9 @@ describe("expanded model-facing action surface", () => {
     for (const action of ["context.current", "reply.resolve", "forward.inspect", "media.fetch"]) expect(telegram).toContain(`"${action}"`);
     expect(media).toContain('"video.prepare"');
     for (const action of ["session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort", "session.diff", "session.todo", "session.children"]) expect(session).toContain(`"${action.replace("session.", "")}"`);
-    expect(bot).not.toContain('"mcp.add"');
+    expect(bot).toContain('"mcp.add"');
+    expect(bot).toContain('"mcp.tools"');
+    expect(bot).toContain('"mcp.call"');
     expect(bot).toContain('"skills.add"');
     expect(bot).not.toContain('"integrations.add"');
     expect(bot).toContain('"mcp.debug"');

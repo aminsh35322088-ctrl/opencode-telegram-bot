@@ -28,6 +28,9 @@ const BOT_ACTIONS = [
   "commands.list",
   "mcp.list",
   "mcp.debug",
+  "mcp.add",
+  "mcp.tools",
+  "mcp.call",
   "extensions.list",
   "extensions.info",
   "extensions.ensure",
@@ -149,7 +152,9 @@ interface CommandCatalogModule { loadCommandCatalog(projectDirectory: string): P
 interface McpModule {
   loadMcpServers(projectDirectory: string): Promise<unknown[]>;
   debugMcpServer(projectDirectory: string, serverName?: string, options?: { repair?: boolean }): Promise<unknown>;
-  createMcpServerFromInput(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<void>;
+  createMcpServerFromInput(options: { projectDirectory: string; name: string; type: "local" | "remote"; value: string }): Promise<unknown>;
+  listMcpServerTools(projectDirectory: string, serverName: string): Promise<unknown>;
+  callMcpServerTool(projectDirectory: string, serverName: string, toolName: string, args: Record<string, unknown>): Promise<unknown>;
   setMcpServerEnabled(projectDirectory: string, serverName: string, enable: boolean): Promise<void>;
   renameMcpServer(projectDirectory: string, serverName: string, newName: string): Promise<unknown>;
   deleteMcpServer(projectDirectory: string, serverName: string): Promise<{ deleted: boolean; name: string }>;
@@ -242,6 +247,25 @@ function required(value: string | undefined, field: string, action: BotAction): 
 
 function json(value: unknown): string { return JSON.stringify(value, null, 2).slice(0, 30000); }
 
+function isHttpEndpoint(value: string): boolean {
+  return /^https?:\/\//iu.test(value.trim());
+}
+
+function parseJsonObject(value: string | undefined, field: string, action: BotAction): Record<string, unknown> {
+  const raw = value?.trim();
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${action} requires ${field} to be a JSON object`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${action} requires ${field} to be a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 
 function expandMinuteBase(base: string): number[] {
   if (base === "*") return Array.from({ length: 60 }, (_, index) => index);
@@ -332,7 +356,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions. Automatic Extension setup is intentionally limited to Skills and OpenCode plugins. Use skills.add for detected Skill sources and plugin-only extensions.ensure for detected plugins. MCP servers, integrations, and model providers are not installed automatically from model chat. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. Use skills.add for detected Skill sources and plugin-only extensions.ensure for detected plugins. MCP servers are managed with mcp.add/mcp.tools/mcp.call; mcp.add provisions a server the bot owns, mcp.tools reports its capabilities, and mcp.call invokes a single tool. Integrations and model providers are not installed automatically from model chat. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -345,7 +369,10 @@ export default tool({
     body: tool.schema.string().optional().describe("Skill body or JSON payload for generated actions/provider free-policy."),
     value: tool.schema.string().optional().describe("Extension source URL/specifier, version-pinned OpenCode plugin specifier, MCP URL/command, rename target, or settings value."),
     extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
-    extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for detected OpenCode plugins; automatic setup of MCP servers, integrations, and model providers is disabled."),
+    extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for detected OpenCode plugins. MCP servers are managed separately through mcp.add; integrations and model providers are not installed automatically from model chat."),
+    mcp_type: tool.schema.enum(["local", "remote"]).optional().describe("For mcp.add: transport for a new MCP server. Defaults to remote when value looks like an HTTP(S) URL, otherwise local."),
+    tool_name: tool.schema.string().optional().describe("For mcp.call: MCP tool name reported by mcp.tools."),
+    args: tool.schema.string().optional().describe("For mcp.call: JSON object of MCP tool arguments."),
     confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
     paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
     free_suffix: tool.schema.string().optional().describe("Provider-advertised free model suffix, such as :free."),
@@ -371,7 +398,7 @@ export default tool({
         media: "Use the media tool for STT and configured image generation/editing.",
         sessionRecovery: "Use session-recovery for inspect/abort/continue.",
         dynamicMcpTools: "Connected MCP servers expose their model tools directly through OpenCode.",
-        extensionStorage: "Automatic setup is limited to skills.add and plugin-only extensions.ensure. MCP servers, integrations, and model providers require explicit user-managed configuration.",
+        extensionStorage: "Automatic setup is limited to skills.add and plugin-only extensions.ensure. MCP servers are provisioned through mcp.add and invoked through mcp.call. Integrations and model providers require explicit user-managed configuration.",
       } });
     }
 
@@ -474,6 +501,26 @@ export default tool({
       if (action === "mcp.list") return json(await service.loadMcpServers(base));
       if (action === "mcp.debug") {
         return json(await service.debugMcpServer(base, args.name, { repair: args.repair === true }));
+      }
+      if (action === "mcp.add") {
+        const name = required(args.name, "name", action);
+        const value = required(args.value, "value", action);
+        const type = args.mcp_type ?? (isHttpEndpoint(value) ? "remote" : "local");
+        const server = await service.createMcpServerFromInput({ projectDirectory: base, name, type, value });
+        return json({ ok: true, server, tools: await service.listMcpServerTools(base, name).catch((error) => ({
+          unavailable: error instanceof Error ? error.message : String(error),
+        })) });
+      }
+      if (action === "mcp.tools") {
+        return json(await service.listMcpServerTools(base, required(args.name, "name", action)));
+      }
+      if (action === "mcp.call") {
+        return json(await service.callMcpServerTool(
+          base,
+          required(args.name, "name", action),
+          required(args.tool_name, "tool_name", action),
+          parseJsonObject(args.args, "args", action),
+        ));
       }
       const name = required(args.name, "name", action);
       if (action === "mcp.enable") {

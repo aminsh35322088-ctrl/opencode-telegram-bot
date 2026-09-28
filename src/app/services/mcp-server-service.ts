@@ -25,6 +25,12 @@ import {
   type ManagedMcpServer,
 } from "./mcp-server-store.js";
 import { listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
+import {
+  callMcpTool as callMcpToolOverTransport,
+  listMcpTools as listMcpToolsOverTransport,
+  type McpCallResult,
+  type McpToolDescriptor,
+} from "./mcp-client-service.js";
 
 export type McpServerType = "local" | "remote" | "unknown";
 export interface McpServerItem { name: string; status: McpStatus; type: McpServerType; }
@@ -1338,4 +1344,66 @@ export async function renameMcpServer(
   const current = (await loadMcpServers(projectDirectory)).find((server) => server.name === targetName);
   if (!current) throw new Error(`Renamed MCP server "${targetName}" is not visible in the current runtime.`);
   return current;
+}
+
+export type { McpCallResult, McpToolDescriptor };
+
+/**
+ * Resolves the bot-managed transport configuration for a server. Only servers
+ * the bot itself provisioned are usable here: an arbitrary OpenCode-defined
+ * server may live outside managed state and its env/credentials would be
+ * unavailable, so calling it would silently fail with confusing errors.
+ */
+async function resolveManagedMcpConfig(
+  projectDirectory: string,
+  serverName: string,
+): Promise<{ config: ManagedMcpConfig; headers: Record<string, string> }> {
+  const name = serverName.trim();
+  if (!name) throw new Error("MCP server name is required.");
+
+  const record =
+    (await loadManagedMcpServer(projectDirectory, name)) ??
+    (await listManagedMcpServers()).find((candidate) => candidate.name === name) ??
+    null;
+  if (!record) {
+    throw new Error(
+      `MCP server "${name}" is not managed by the bot. Add it through /mcps or bot mcp.add before calling its tools.`,
+    );
+  }
+
+  if (record.config.type !== "remote") {
+    return { config: record.config, headers: {} };
+  }
+
+  const credential = await loadMcpCredential(record.projectDirectory, name).catch(() => null);
+  const remoteUrl = credential
+    ? assertSecureRemoteUrl(credential.remoteUrl)
+    : assertSecureRemoteUrl(record.config.url);
+  const headers = await getMcpDiscoveryHeaders(record.projectDirectory, name);
+  return { config: { ...record.config, type: "remote", url: remoteUrl }, headers };
+}
+
+export async function listMcpServerTools(
+  projectDirectory: string,
+  serverName: string,
+  options: { timeoutMs?: number } = {},
+): Promise<{ server: string; tools: McpToolDescriptor[] }> {
+  const { config, headers } = await resolveManagedMcpConfig(projectDirectory, serverName);
+  const tools = await listMcpToolsOverTransport(config, { headers, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) });
+  return { server: serverName.trim(), tools };
+}
+
+export async function callMcpServerTool(
+  projectDirectory: string,
+  serverName: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  options: { timeoutMs?: number } = {},
+): Promise<{ server: string; tool: string; result: McpCallResult }> {
+  const { config, headers } = await resolveManagedMcpConfig(projectDirectory, serverName);
+  const result = await callMcpToolOverTransport(config, toolName, args, {
+    headers,
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+  });
+  return { server: serverName.trim(), tool: toolName.trim(), result };
 }
