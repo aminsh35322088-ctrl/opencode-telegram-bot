@@ -3,11 +3,7 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 
-const CATALOG_REPO = "aminsh35322088-ctrl/Free-LLM-Catalog";
-const CATALOG_REF = "main";
-const CATALOG_PATH = "catalog.json";
-const GITHUB_API_URL = `https://api.github.com/repos/${CATALOG_REPO}/contents/${CATALOG_PATH}?ref=${CATALOG_REF}`;
-const RAW_URL = `https://raw.githubusercontent.com/${CATALOG_REPO}/${CATALOG_REF}/${CATALOG_PATH}`;
+const RAW_URL = "https://raw.githubusercontent.com/aminsh35322088-ctrl/Free-LLM-Catalog/main/catalog.json";
 const REQUEST_TIMEOUT_MS = 8_000;
 const MEMORY_TTL_MS = 15 * 60_000;
 const CACHE_FILE = "free-llm-catalog-cache.json";
@@ -58,6 +54,7 @@ interface MemorySnapshot {
 
 let memory: MemorySnapshot | null = null;
 let inFlight: Promise<FreeLlmCatalog> | null = null;
+let remoteEtag: string | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -185,33 +182,39 @@ async function writeDiskCache(catalog: FreeLlmCatalog): Promise<void> {
   await fs.rename(temp, target);
 }
 
-async function fetchCatalogFromGithub(): Promise<FreeLlmCatalog> {
-  const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
-  if (token) {
-    const response = await fetch(GITHUB_API_URL, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "opencode-telegram-bot/free-llm-catalog",
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) throw new Error(`GitHub catalog request failed: HTTP ${response.status}`);
-    const payload = await response.json() as unknown;
-    if (!isRecord(payload) || payload.encoding !== "base64" || typeof payload.content !== "string") {
-      throw new Error("GitHub returned an invalid catalog file payload.");
-    }
-    const decoded = Buffer.from(payload.content.replace(/\s+/g, ""), "base64").toString("utf8");
-    return parseFreeLlmCatalog(JSON.parse(decoded) as unknown);
-  }
+interface RemoteCatalogResult {
+  catalog: FreeLlmCatalog;
+  changed: boolean;
+}
+
+async function fetchPublicCatalog(): Promise<RemoteCatalogResult> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Cache-Control": "no-cache",
+    "User-Agent": "opencode-telegram-bot/free-llm-catalog",
+  };
+  if (remoteEtag) headers["If-None-Match"] = remoteEtag;
 
   const response = await fetch(RAW_URL, {
-    headers: { "User-Agent": "opencode-telegram-bot/free-llm-catalog" },
+    headers,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+
+  if (response.status === 304) {
+    const cached = memory?.catalog ?? await readDiskCache();
+    if (!cached) throw new Error("Catalog returned HTTP 304 but no last-known-good snapshot exists.");
+    return { catalog: cached, changed: false };
+  }
   if (!response.ok) throw new Error(`Public catalog request failed: HTTP ${response.status}`);
-  return parseFreeLlmCatalog(await response.json() as unknown);
+
+  const catalog = parseFreeLlmCatalog(await response.json() as unknown);
+  const nextEtag = response.headers.get("etag");
+  if (nextEtag) remoteEtag = nextEtag;
+  const changed =
+    !memory ||
+    memory.catalog.generatedAt !== catalog.generatedAt ||
+    JSON.stringify(memory.catalog.providers) !== JSON.stringify(catalog.providers);
+  return { catalog, changed };
 }
 
 export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Promise<FreeLlmCatalog> {
@@ -221,7 +224,8 @@ export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Pro
 
   const request = (async () => {
     try {
-      const catalog = await fetchCatalogFromGithub();
+      const remote = await fetchPublicCatalog();
+      const catalog = remote.catalog;
       memory = { catalog, fetchedAt: Date.now() };
       const direct = catalog.providers
         .filter((provider) =>
@@ -231,9 +235,11 @@ export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Pro
         )
         .map((provider) => provider.runtimeId ?? provider.id);
       logger.info(
-        `[FreeLLMCatalog] Loaded catalog: generatedAt=${catalog.generatedAt}, providers=${catalog.providers.length}, direct=${direct.join(",") || "none"}`,
+        `[FreeLLMCatalog] Public catalog ${remote.changed ? "updated" : "unchanged"}: generatedAt=${catalog.generatedAt}, providers=${catalog.providers.length}, direct=${direct.join(",") || "none"}`,
       );
-      await writeDiskCache(catalog).catch((error) => logger.warn("[FreeLLMCatalog] Could not persist catalog cache", error));
+      if (remote.changed) {
+        await writeDiskCache(catalog).catch((error) => logger.warn("[FreeLLMCatalog] Could not persist catalog cache", error));
+      }
       return catalog;
     } catch (error) {
       const cached = memory?.catalog ?? await readDiskCache();
@@ -306,8 +312,14 @@ async function loadCachedFreeLlmCatalog(): Promise<FreeLlmCatalog> {
  * Explicit network refresh. Call this only from lifecycle/background refresh
  * paths; config generation and UI price reads intentionally stay network-free.
  */
-export async function refreshFreeLlmCatalog(): Promise<FreeLlmCatalog> {
-  return loadFreeLlmCatalog({ force: true });
+export async function refreshFreeLlmCatalog(): Promise<{ catalog: FreeLlmCatalog; changed: boolean }> {
+  const previous = memory?.catalog;
+  const catalog = await loadFreeLlmCatalog({ force: true });
+  const changed =
+    !previous ||
+    previous.generatedAt !== catalog.generatedAt ||
+    JSON.stringify(previous.providers) !== JSON.stringify(catalog.providers);
+  return { catalog, changed };
 }
 
 export async function buildFreeLlmOpenCodeProviders(): Promise<Record<string, unknown>> {
@@ -323,4 +335,5 @@ export function getFreeLlmCatalogProvider(providerId: string): FreeLlmCatalogPro
 export function __resetFreeLlmCatalogForTests(): void {
   memory = null;
   inFlight = null;
+  remoteEtag = null;
 }
