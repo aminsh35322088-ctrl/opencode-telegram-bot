@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/config.js", () => ({
   config: {
@@ -22,19 +23,52 @@ vi.mock("../../src/app/services/mcp-server-service.js", () => ({
   loadMcpServers,
 }));
 
+vi.mock("../../src/app/services/opencode-managed-config-service.js", () => ({
+  reloadManagedOpenCodeConfig: vi.fn(),
+}));
+vi.mock("../../src/app/services/skills-catalog-service.js", () => ({
+  loadSkillsCatalog: vi.fn().mockResolvedValue([]),
+}));
+
 import {
   buildExtensionDetailView,
   resolveMcpServerRef,
   SETTINGS_EXTENSION_MCP_PREFIX,
 } from "../../src/bot/menus/extension-settings-menu.js";
 import { ref } from "../../src/bot/menus/menu-ref.js";
+import { saveStoredExtension } from "../../src/app/services/extension-store.js";
 
 const AIRPLANE = { name: "railway", type: "remote", status: { status: "needs_auth" } };
 
 describe("MCP sign-in deep link from Extensions", () => {
+  let home = "";
+
+  beforeEach(async () => {
+    home = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-signin-deeplink-"));
+    process.env.OPENCODE_TELEGRAM_HOME = home;
+    const now = new Date().toISOString();
+    await saveStoredExtension({
+      id: "mcp:railway",
+      name: "railway",
+      kind: "mcp",
+      source: "https://mcp.railway.com",
+      authType: "none",
+      credentialSchemas: [],
+      resource: { kind: "mcp", serverName: "railway", projectDirectory: home },
+      createdAt: now,
+      updatedAt: now,
+      managed: true,
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.OPENCODE_TELEGRAM_HOME;
+    await fs.rm(home, { recursive: true, force: true });
+  });
+
   it("emits a callback that identifies the server instead of routing to the list", async () => {
     loadMcpServers.mockResolvedValue([AIRPLANE]);
-    const view = await buildExtensionDetailView("/work/repo", "mcp:railway");
+    const view = await buildExtensionDetailView(home, "mcp:railway");
     const signIn = view.keyboard.inline_keyboard
       .flat()
       .find((button) => typeof button?.text === "string" && button.text.includes("Sign in"));
@@ -65,8 +99,8 @@ describe("MCP sign-in deep link from Extensions", () => {
     expect(source).not.toContain('case SETTINGS_EXTENSION_MCP_CALLBACK');
     // The MCP list command must not be the sign-in destination.
     const signInBlock = source.slice(
-      source.indexOf("SETTINGS_EXTENSION_MCP_PREFIX)) {"),
-      source.indexOf("SETTINGS_EXTENSION_REMOVE_PREFIX)) {"),
+      source.indexOf("if (callbackData.startsWith(SETTINGS_EXTENSION_MCP_PREFIX)) {"),
+      source.indexOf("if (callbackData.startsWith(SETTINGS_EXTENSION_REMOVE_PREFIX)) {"),
     );
     expect(signInBlock).toContain("renderMcpDetailView");
     expect(signInBlock).not.toContain("mcpsCommand");
@@ -74,7 +108,7 @@ describe("MCP sign-in deep link from Extensions", () => {
 
   it("keeps the sign-in button hidden once a server is connected", async () => {
     loadMcpServers.mockResolvedValue([{ name: "railway", type: "remote", status: { status: "connected" } }]);
-    const view = await buildExtensionDetailView("/work/repo", "mcp:railway");
+    const view = await buildExtensionDetailView(home, "mcp:railway");
     const labels = view.keyboard.inline_keyboard.flat().map((b) => (b as { text?: string } | null)?.text ?? "");
     expect(labels.some((label) => label.includes("Sign in"))).toBe(false);
   });
