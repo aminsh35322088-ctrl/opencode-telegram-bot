@@ -223,6 +223,16 @@ export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Pro
     try {
       const catalog = await fetchCatalogFromGithub();
       memory = { catalog, fetchedAt: Date.now() };
+      const direct = catalog.providers
+        .filter((provider) =>
+          provider.status === "verified" &&
+          provider.integration === "direct-openai" &&
+          provider.enabledByDefault === true
+        )
+        .map((provider) => provider.runtimeId ?? provider.id);
+      logger.info(
+        `[FreeLLMCatalog] Loaded catalog: generatedAt=${catalog.generatedAt}, providers=${catalog.providers.length}, direct=${direct.join(",") || "none"}`,
+      );
       await writeDiskCache(catalog).catch((error) => logger.warn("[FreeLLMCatalog] Could not persist catalog cache", error));
       return catalog;
     } catch (error) {
