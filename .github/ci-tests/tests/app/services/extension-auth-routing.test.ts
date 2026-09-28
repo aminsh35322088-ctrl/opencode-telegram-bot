@@ -38,16 +38,20 @@ describe("Extension automation boundary", () => {
     expect(ui).not.toContain("secure-extension-credential");
   });
 
-  it("auto-discovers only managed Skills in the Extension registry", async () => {
+  it("auto-discovers only managed Skills and lists bot-managed MCP runtime status", async () => {
     const source = await fs.readFile(
       "src/app/services/extension-registry-service.ts",
       "utf8",
     );
 
-    expect(source).toContain('record.kind === "skill" || record.kind === "plugin"');
+    // The registry now surfaces bot-managed MCP alongside Skills and plugins.
+    // It reads runtime connection state for MCP but must not pull in
+    // integration adapters or model providers, which stay out of model chat.
+    expect(source).toContain('record.kind === "skill" || record.kind === "plugin" || record.kind === "mcp"');
     expect(source).toContain("loadSkillsCatalog");
+    expect(source).toContain("loadMcpServers");
+    expect(source).toContain("deleteMcpServer");
     expect(source).not.toContain("listManagedMcpServers");
     expect(source).not.toContain("listCustomProviders");
-    expect(source).not.toContain("loadMcpServers");
   });
 });

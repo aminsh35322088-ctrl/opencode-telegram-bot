@@ -1,4 +1,5 @@
 import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
+import { deleteMcpServer, loadMcpServers } from "./mcp-server-service.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "./skill-manage-service.js";
 import { loadSkillsCatalog } from "./skills-catalog-service.js";
 import {
@@ -20,7 +21,7 @@ function safePart(value: string): string {
     .slice(0, 80) || "extension";
 }
 
-export function extensionId(kind: "skill" | "plugin", name: string): string {
+export function extensionId(kind: "skill" | "plugin" | "mcp", name: string): string {
   return `${kind}:${safePart(name)}`;
 }
 
@@ -38,8 +39,16 @@ function summaryFromStored(record: ExtensionRecord): ExtensionSummary {
 
 export async function listExtensions(projectDirectory: string): Promise<ExtensionSummary[]> {
   const stored = (await listStoredExtensions()).filter(
-    (record) => record.kind === "skill" || record.kind === "plugin",
+    (record) => record.kind === "skill" || record.kind === "plugin" || record.kind === "mcp",
   );
+  // MCP connection state lives in the OpenCode runtime, not in bot state. Read
+  // it so the Extensions list can distinguish a working server from one the
+  // user still has to authenticate.
+  const mcpStatus = new Map<string, string>();
+  if (stored.some((record) => record.kind === "mcp")) {
+    const servers = await loadMcpServers(projectDirectory).catch(() => []);
+    for (const server of servers) mcpStatus.set(server.name, server.status.status);
+  }
   const claimedSkills = new Set(
     stored
       .filter((record) => record.resource.kind === "skill")
@@ -60,10 +69,21 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
     }));
 
   const byId = new Map<string, ExtensionSummary>();
-  for (const item of [...stored.map(summaryFromStored), ...discoveredSkills]) {
-    byId.set(item.id, item);
+  for (const record of stored) {
+    const summary = summaryFromStored(record);
+    if (record.kind === "mcp" && record.resource.kind === "mcp") {
+      summary.status = mcpExtensionStatus(mcpStatus.get(record.resource.serverName));
+    }
+    byId.set(summary.id, summary);
   }
+  for (const item of discoveredSkills) byId.set(item.id, item);
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function mcpExtensionStatus(runtimeStatus: string | undefined): ExtensionSummary["status"] {
+  if (runtimeStatus === "connected") return "ready";
+  if (runtimeStatus === undefined) return "unknown";
+  return "needs-auth";
 }
 
 export async function getExtensionInfo(
@@ -93,6 +113,10 @@ export async function removeExtension(
     }
   } else if (stored?.resource.kind === "skill") {
     await deleteGlobalSkill(stored.resource.skillName);
+    await removeStoredExtension(id);
+  } else if (stored?.resource.kind === "mcp") {
+    // Remove the server itself so the Extension row cannot outlive it.
+    await deleteMcpServer(projectDirectory, stored.resource.serverName).catch(() => undefined);
     await removeStoredExtension(id);
   } else if (id.startsWith("skill:")) {
     const info = await getExtensionInfo(projectDirectory, id);

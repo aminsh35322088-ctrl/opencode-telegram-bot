@@ -14,6 +14,7 @@ export const SETTINGS_MORE_CALLBACK = "settings:more";
 export const SETTINGS_EXTENSION_SELECT_PREFIX = "settings:extension:";
 export const SETTINGS_EXTENSION_REMOVE_PREFIX = "settings:extension_remove:";
 export const SETTINGS_ACTION_TOGGLE_PREFIX = "settings:action_toggle:";
+export const SETTINGS_EXTENSION_MCP_CALLBACK = "settings:extension_mcp";
 
 function ref(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -67,20 +68,52 @@ export async function buildExtensionDetailView(projectDirectory: string, id: str
   if (!extension) {
     return { text: "Extension not found.", keyboard: new InlineKeyboard().text("← Extensions", SETTINGS_EXTENSIONS_CALLBACK) };
   }
-  return {
-    text: [
-      `🧩 <b>${extension.name}</b>`,
+  const actions = await listGeneratedActions(id);
+  const actionCount = actions.length;
+  const lines = [
+    `🧩 <b>${extension.name}</b>`,
+    "",
+    `Type · ${extension.kind}`,
+    `Status · ${statusLabel(extension.status)}`,
+    `Auth · ${extension.authType}`,
+    `Source · <code>${escapeHtml(extension.source)}</code>`,
+  ];
+  if (actionCount > 0) {
+    lines.push(
+      `Actions · ${actionCount}`,
       "",
-      `Type · ${extension.kind}`,
-      `Status · ${extension.status}`,
-      `Auth · ${extension.authType}`,
-      `Source · <code>${extension.source.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</code>`,
-    ].join("\n"),
-    keyboard: new InlineKeyboard()
-      .text("🗑 Remove", SETTINGS_EXTENSION_REMOVE_PREFIX + ref(extension.id))
-      .row()
-      .text("← Extensions", SETTINGS_EXTENSIONS_CALLBACK),
-  };
+      ...actions
+        .slice(0, 10)
+        .map((action) => `${action.enabled ? "✅" : "⚪"} <code>${escapeHtml(action.id)}</code>`),
+    );
+    if (actionCount > 10) lines.push(`…and ${actionCount - 10} more in Actions.`);
+  }
+  // An MCP server that is not connected still needs the user to sign in. Route
+  // to the MCP flow, which owns the OAuth/credential wizards.
+  if (extension.kind === "mcp" && extension.status !== "ready") {
+    lines.push("", "Sign in from the MCP screen to finish setup.");
+  }
+
+  const keyboard = new InlineKeyboard();
+  if (extension.kind === "mcp" && extension.status !== "ready") {
+    keyboard.text("🔐 Sign in / Configure", SETTINGS_EXTENSION_MCP_CALLBACK).row();
+  }
+  keyboard
+    .text("🗑 Remove", SETTINGS_EXTENSION_REMOVE_PREFIX + ref(extension.id))
+    .row()
+    .text("← Extensions", SETTINGS_EXTENSIONS_CALLBACK);
+  return { text: lines.join("\n"), keyboard };
+}
+
+function escapeHtml(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function statusLabel(status: string): string {
+  if (status === "ready") return "connected";
+  if (status === "needs-auth") return "needs sign-in";
+  if (status === "unknown") return "not connected";
+  return status;
 }
 
 export async function buildActionsSettingsView(): Promise<{ text: string; keyboard: InlineKeyboard }> {
