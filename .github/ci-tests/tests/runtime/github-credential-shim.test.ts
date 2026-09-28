@@ -56,6 +56,10 @@ describe("Railway entrypoint GitHub credential shims", () => {
     writeFileSync(
       gh,
       extractHeredoc(source, /cat > "\$INTEGRATION_BIN_DIR\/gh" <<'EOF'\n([\s\S]*?)\nEOF\n/)
+        // The shim hardcodes its gh config dir under /data, which a CI runner
+        // cannot create. Redirect it into the sandbox: the behaviour under test
+        // is token propagation, not where gh keeps its config.
+        .replaceAll("/data/.config/gh", path.join(dir, "gh-config"))
         .replace("/usr/bin/gh", stub),
     );
     chmodSync(gh, 0o755);
