@@ -11,11 +11,11 @@ import {
   type ExecuteCommandDeps,
 } from "../callbacks/command-catalog-callback-handler.js";
 import {
-import { deleteInputMessage } from "../commands/panel-render.js";
   clearSkillsInteraction,
   executeSkill,
   parseSkillsMetadata,
 } from "../callbacks/skills-catalog-callback-handler.js";
+import { deleteInputMessage } from "../commands/panel-render.js";
 
 
 async function editPanel(
