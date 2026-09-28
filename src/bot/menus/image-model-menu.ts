@@ -19,7 +19,6 @@ import type { ModelPrice } from "../../app/services/model-price-classifier.js";
 import { refreshModelCatalog } from "../../app/services/model-selection-service.js";
 import type { ImageModelSelection } from "../../app/types/image-model.js";
 import {
-import { escapeHtml } from "../commands/panel-render.js";
   SETTINGS_BACK_CALLBACK,
   SETTINGS_DEFAULT_MODELS_CALLBACK,
   SETTINGS_IMAGE_MODEL_CALLBACK,
@@ -125,6 +124,7 @@ export async function buildImageModelSettingsView(
   const override = getCurrentTopicImageModelOverride();
   const current = override ?? globalDefault;
   const source = topic ? (override ? "Topic Override" : "Main Default") : "Main Default";
+import { escapeHtml } from "../commands/panel-render.js";
 
   const keyboard = new InlineKeyboard();
   if (topic && override) keyboard.text("↩️ Use Main Default", RESET_CALLBACK).row();

@@ -3,7 +3,6 @@ import { getDefaultCapabilityModel, getDefaultImageModel, getFreeModelDetectionE
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 import {
-import { escapeHtml } from "../commands/panel-render.js";
   SETTINGS_ACTIONS_CALLBACK,
   SETTINGS_EXTENSIONS_CALLBACK,
   SETTINGS_GITHUB_CALLBACK,
@@ -282,6 +281,7 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
   }
   const percent = Math.max(0, Math.round((info.tokensUsed / info.tokensLimit) * 100));
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
+import { escapeHtml } from "../commands/panel-render.js";
   return {
     text: [
       "🧠 <b>Context Health</b>",

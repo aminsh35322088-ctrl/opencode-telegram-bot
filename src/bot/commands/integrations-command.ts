@@ -5,7 +5,7 @@ import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, lis
 import { getManagedSshPublicKey } from "../../app/services/ssh-key-service.js";
 import { clearProviderWizard } from "./providers-command.js";
 import { buildGithubSettingsView } from "../menus/extension-settings-menu.js";
-import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
+import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
