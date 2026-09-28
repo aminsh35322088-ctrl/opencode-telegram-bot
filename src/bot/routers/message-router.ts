@@ -6,7 +6,7 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { handleTaskTextInput } from "../commands/task-command.js";
 import { handleProviderWizardMessage, isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
-import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
+import { handleIntegrationMessage, isIntegrationWizardActive, clearIntegrationWizard } from "../commands/integrations-command.js";
 import { handleModelSearchTextInput } from "../callbacks/model-center-callback-handler.js";
 import { handleQuestionTextAnswer } from "../callbacks/question-callback-handler.js";
 import { handleRenameTextAnswer } from "../callbacks/rename-callback-handler.js";
@@ -153,7 +153,7 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
     if (isIntegrationWizardActive()) {
       clearIntegrationWizard();
       clearProviderWizard();
-      await integrationsCommand(ctx as never);
+      await settingsCommand(ctx as never);
       return true;
     }
 
@@ -294,7 +294,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     if (isIntegrationWizardActive()) {
       clearIntegrationWizard();
       clearProviderWizard();
-      await integrationsCommand(ctx as never);
     }
   });
 

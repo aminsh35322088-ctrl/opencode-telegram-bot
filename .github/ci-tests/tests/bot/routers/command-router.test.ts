@@ -70,7 +70,6 @@ describe("bot/routers/command-router", () => {
       "settings",
       "topic_settings",
       "providers",
-      "integrations",
       "opencode_start",
       "opencode_stop",
       "worktree",

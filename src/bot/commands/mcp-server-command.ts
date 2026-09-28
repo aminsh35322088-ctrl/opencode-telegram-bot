@@ -31,7 +31,7 @@ import {
   buildMcpsWizardKeyboard,
 } from "../menus/mcp-server-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
-import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
+import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
 
 interface PendingMcpAdd {
   step: "name" | "type" | "value";
@@ -75,20 +75,7 @@ const mcpAuthWizard = new TopicScopedValue<PendingMcpAuth>();
 const mcpCredentialWizard = new TopicScopedValue<PendingMcpCredential>();
 const mcpRenameWizard = new TopicScopedValue<PendingMcpRename>();
 
-function callbackMessageId(ctx: Context): number | null {
-  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
-  const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined;
-  if (typeof canonical === "number") return canonical;
-  const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) return null;
-  return typeof message.message_id === "number" ? message.message_id : null;
-}
 
-function deleteInput(ctx: Context): Promise<unknown> {
-  const messageId = ctx.message?.message_id;
-  if (!ctx.chat?.id || !messageId) return Promise.resolve();
-  return ctx.api.deleteMessage(ctx.chat.id, messageId).catch(() => undefined);
-}
 
 async function renderWizard(
   ctx: Context,
@@ -97,9 +84,7 @@ async function renderWizard(
   keyboard: InlineKeyboard = buildMcpsWizardKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
-    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
-  });
+  await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
 function isMcpAddInteractionActive(): boolean {
@@ -812,7 +797,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
         pendingCredential.step === "menu" ? "callback" : "mixed",
       );
     }
-    await deleteInput(ctx);
+    await deleteInputMessage(ctx);
 
     if (pendingCredential.step === "header-name" && pendingCredential.mode === "custom-header") {
       pendingCredential.headerName = text;
@@ -873,7 +858,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   const pendingAuth = mcpAuthWizard.get();
   if (pendingAuth) {
     if (!isMcpAuthInteractionActive()) transitionMcpAuthWizard(pendingAuth);
-    await deleteInput(ctx);
+    await deleteInputMessage(ctx);
 
     let callbackUrl: URL;
     try {
@@ -952,7 +937,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   const pendingRename = mcpRenameWizard.get();
   if (pendingRename) {
     if (!isMcpRenameInteractionActive()) transitionMcpRenameWizard(pendingRename);
-    await deleteInput(ctx);
+    await deleteInputMessage(ctx);
     if (text.length > 128) {
       await renderWizard(
         ctx,
@@ -994,7 +979,7 @@ export async function handleMcpsMessage(ctx: Context): Promise<boolean> {
   if (!pending) return false;
   if (!isMcpAddInteractionActive()) transitionMcpWizard(pending);
 
-  await deleteInput(ctx);
+  await deleteInputMessage(ctx);
 
   if (pending.step === "name") {
     if (text.length > 128) {

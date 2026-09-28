@@ -14,6 +14,7 @@ import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
+import { deleteInputMessage } from "./panel-render.js";
 
 type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
@@ -22,7 +23,6 @@ function messageId(ctx: Context): number | undefined { const chatId = ctx.chat?.
 function wizardKeyboard() { return new InlineKeyboard().text("✖ Cancel", "provider:cancel"); }
 export function isProviderWizardActive(): boolean { return providerWizard.isActive(); }
 export function clearProviderWizard(): void { providerWizard.clear(); }
-async function deleteInput(ctx: Context) { if (ctx.chat && ctx.message) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
 async function render(ctx: Context, text: string, keyboard: InlineKeyboard, id?: number) {
   const options = { reply_markup: appendHomeNavigation(keyboard) };
   const targetId = id ?? messageId(ctx);
@@ -236,17 +236,17 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
   if (!ctx.chat || !text || !s) return false;
   if (text.startsWith("/") || text === "❌ Cancel" || text === "✖ Cancel") { clearProviderWizard(); return false; }
   if (Date.now() > s.expires) {
-    await deleteInput(ctx);
+    await deleteInputMessage(ctx);
     clearProviderWizard();
     await renderProviders(ctx, s.messageId, "⌛ Setup expired.\n\n");
     return true;
   }
   if (s.busy) {
-    await deleteInput(ctx);
+    await deleteInputMessage(ctx);
     await editWizard(ctx, s.messageId, "🔎 Checking connection\n\nVerification is already running.\nWait for it to finish, or tap Cancel.");
     return true;
   }
-  await deleteInput(ctx);
+  await deleteInputMessage(ctx);
   let saved = false;
   const guard = () => { if (providerWizard.get() !== s || Date.now() > s.expires) throw new DOMException("Setup cancelled", "AbortError"); };
   try {

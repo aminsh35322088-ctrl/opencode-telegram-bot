@@ -20,7 +20,7 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { isProviderWizardActive, clearProviderWizard, providersCommand } from "../commands/providers-command.js";
-import { isIntegrationWizardActive, clearIntegrationWizard, integrationsCommand } from "../commands/integrations-command.js";
+import { isIntegrationWizardActive, clearIntegrationWizard } from "../commands/integrations-command.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
@@ -175,7 +175,7 @@ async function handleReplyKeyboardInput(
     if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.abort)) { await abortCurrentOperation(ctx); return; }
     if (isExact(text, "❌ Cancel")) {
       if (isProviderWizardActive()) { clearProviderWizard(); await providersCommand(ctx as never); return; }
-      if (isIntegrationWizardActive()) { clearIntegrationWizard(); await integrationsCommand(ctx as never); return; }
+      if (isIntegrationWizardActive()) { clearIntegrationWizard(); await settingsCommand(ctx as never); return; }
       return;
     }
     if (scope.aiTopic && isExact(text, topicModelButton)) { if (await menuAllowed(ctx)) await topicModelsCommand(ctx); return; }

@@ -1,11 +1,13 @@
-import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
-import { getActiveGithubAccount } from "../../app/services/github-integration-service.js";
+import { getActiveGithubAccount, listGithubAccounts } from "../../app/services/github-integration-service.js";
 import {
   getExtensionInfo,
   listExtensions,
 } from "../../app/services/extension-registry-service.js";
 import { listGeneratedActions } from "../../app/services/generated-action-store.js";
+import { loadMcpServers } from "../../app/services/mcp-server-service.js";
+import { ref as hashRef } from "./menu-ref.js";
+import { escapeHtml } from "../commands/panel-render.js";
 
 export const SETTINGS_GITHUB_CALLBACK = "settings:github";
 export const SETTINGS_EXTENSIONS_CALLBACK = "settings:extensions";
@@ -14,24 +16,44 @@ export const SETTINGS_MORE_CALLBACK = "settings:more";
 export const SETTINGS_EXTENSION_SELECT_PREFIX = "settings:extension:";
 export const SETTINGS_EXTENSION_REMOVE_PREFIX = "settings:extension_remove:";
 export const SETTINGS_ACTION_TOGGLE_PREFIX = "settings:action_toggle:";
-export const SETTINGS_EXTENSION_MCP_CALLBACK = "settings:extension_mcp";
+export const SETTINGS_EXTENSION_MCP_PREFIX = "settings:extension_mcp:";
 
-function ref(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 12);
-}
+const ref = hashRef;
 
-export async function buildGithubSettingsView(): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const account = await getActiveGithubAccount();
-  const identity = account?.username ? `@${account.username}` : account?.name;
-  return {
-    text: account
-      ? `🐙 <b>GitHub</b>\n\nConnected as <b>${identity ?? "GitHub account"}</b>`
-      : "🐙 <b>GitHub</b>\n\nNot connected",
-    keyboard: new InlineKeyboard()
-      .text(account ? "🔄 Reconnect" : "🔐 Connect", "integration:github:add")
+/**
+ * Single GitHub management surface. This used to be a reduced duplicate of the
+ * legacy Integrations hub: it only reported the active account, its Connect
+ * button jumped into the `integration:` namespace, and finishing that wizard
+ * dumped the user into a different menu, losing the Settings back-stack.
+ *
+ * Account list, selection and removal now live here, reusing the same
+ * `integration:github:*` callbacks that already implement the wizard, so no
+ * handler had to be rewritten.
+ */
+export async function buildGithubSettingsView(notice?: string): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const accounts = await listGithubAccounts();
+  const active = await getActiveGithubAccount();
+  const keyboard = new InlineKeyboard();
+  for (const account of accounts) {
+    const label = account.id === active?.id ? `✅ ${account.name}` : account.name;
+    keyboard
       .row()
-      .text("← Settings", "settings:back"),
-  };
+      .text(label, `integration:github:select:${account.id}`)
+      .text("🗑️", `integration:github:remove:${account.id}`);
+  }
+  keyboard.row().text(accounts.length > 0 ? "➕ Add GitHub account" : "🔐 Connect GitHub", "integration:github:add");
+
+  const lines: string[] = [];
+  if (notice) lines.push(notice, "");
+  lines.push("🐙 <b>GitHub</b>", "");
+  if (active) {
+    const identity = active.username ? `@${active.username}` : active.name;
+    lines.push(`Active · <b>${escapeHtml(identity)}</b>`);
+  } else {
+    lines.push("Not connected.");
+  }
+  if (accounts.length > 1) lines.push("", `${accounts.length} accounts stored.`);
+  return { text: lines.join("\n"), keyboard: keyboard.row().text("← Settings", "settings:back") };
 }
 
 export async function buildExtensionsSettingsView(projectDirectory: string): Promise<{ text: string; keyboard: InlineKeyboard }> {
@@ -56,6 +78,10 @@ export async function buildExtensionsSettingsView(projectDirectory: string): Pro
       : "🧩 <b>Extensions</b>\n\nNo Extensions installed yet. Ask the model to add what you need.",
     keyboard,
   };
+}
+
+export async function resolveMcpServerRef(projectDirectory: string, shortRef: string): Promise<string | null> {
+  return mcpServerNameForRef(projectDirectory, shortRef);
 }
 
 export async function resolveExtensionRef(projectDirectory: string, shortRef: string): Promise<string | null> {
@@ -96,7 +122,11 @@ export async function buildExtensionDetailView(projectDirectory: string, id: str
 
   const keyboard = new InlineKeyboard();
   if (extension.kind === "mcp" && extension.status !== "ready") {
-    keyboard.text("🔐 Sign in / Configure", SETTINGS_EXTENSION_MCP_CALLBACK).row();
+    // Carry the server so the handler can open that server's detail view
+    // directly. The list screen cannot do this: its callbacks are index-based
+    // against a snapshot, which is meaningless from the Extensions surface.
+    const serverKey = extension.id.startsWith("mcp:") ? extension.id.slice("mcp:".length) : extension.id;
+    keyboard.text("🔐 Sign in / Configure", SETTINGS_EXTENSION_MCP_PREFIX + ref(serverKey)).row();
   }
   keyboard
     .text("🗑 Remove", SETTINGS_EXTENSION_REMOVE_PREFIX + ref(extension.id))
@@ -105,9 +135,6 @@ export async function buildExtensionDetailView(projectDirectory: string, id: str
   return { text: lines.join("\n"), keyboard };
 }
 
-function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
 
 function statusLabel(status: string): string {
   if (status === "ready") return "connected";
@@ -141,4 +168,10 @@ export async function buildActionsSettingsView(): Promise<{ text: string; keyboa
 export async function resolveGeneratedActionRef(shortRef: string): Promise<string | null> {
   const actions = await listGeneratedActions();
   return actions.find((action) => ref(action.id) === shortRef)?.id ?? null;
+}
+
+async function mcpServerNameForRef(projectDirectory: string, shortRef: string): Promise<string | null> {
+  const servers = await loadMcpServers(projectDirectory);
+  const match = servers.find((server) => hashRef(server.name.trim().toLowerCase()) === shortRef);
+  return match?.name ?? null;
 }

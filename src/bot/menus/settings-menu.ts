@@ -8,6 +8,7 @@ import {
   SETTINGS_GITHUB_CALLBACK,
   SETTINGS_MORE_CALLBACK,
 } from "./extension-settings-menu.js";
+import { escapeHtml } from "../commands/panel-render.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
@@ -39,8 +40,6 @@ export const SETTINGS_DEFAULT_FORMAT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}defa
 export const SETTINGS_DEFAULT_FOOTER_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_footer`;
 export const SETTINGS_DEFAULT_DIFF_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_diff`;
 export const SETTINGS_DEFAULT_QUEUE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_queue`;
-export const SETTINGS_MCP_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}mcp`;
-export const SETTINGS_SKILLS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}skills`;
 export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
 export const SETTINGS_MEMORY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}memory`;
 export const SETTINGS_MEMORY_DELETE_PREFIX = `${SETTINGS_MEMORY_CALLBACK}:delete:`;
@@ -336,7 +335,6 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
 
 const MEMORY_LIST_LIMIT = 10;
 
-function escapeHtml(value: string): string { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
 export function buildMemorySettingsView(memories: Array<{ id: string; scope: string; content: string }>): { text: string; keyboard: InlineKeyboard } {
   const keyboard = new InlineKeyboard();

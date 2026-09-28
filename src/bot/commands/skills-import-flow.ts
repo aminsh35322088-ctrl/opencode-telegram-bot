@@ -6,7 +6,7 @@ import { fetchSkillFromGitHub, resolveSkillSource } from "../../app/services/ski
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearSkillWizard } from "./skills-wizard.js";
-import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
+import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
 
 export const SKILLS_IMPORT_CALLBACK_PREFIX = "skills:imp_";
 export const SKILLS_IMPORT_CALLBACK_CONFIRM = `${SKILLS_IMPORT_CALLBACK_PREFIX}confirm`;
@@ -24,14 +24,6 @@ interface SkillImportState {
 
 let state: SkillImportState | null = null;
 
-function callbackMessageId(ctx: Context): number | null {
-  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
-  const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined;
-  if (typeof canonical === "number") return canonical;
-  const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) return null;
-  return typeof message.message_id === "number" ? message.message_id : null;
-}
 
 function activeState(): SkillImportState | null {
   if (!state) return null;
@@ -63,15 +55,9 @@ async function editImportPanel(
   keyboard: InlineKeyboard = navigationKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
-    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
-  });
+  await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
-async function deleteInput(ctx: Context): Promise<void> {
-  if (!ctx.chat?.id || !ctx.message?.message_id) return;
-  await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
-}
 
 export async function startSkillImport(ctx: Context): Promise<void> {
   clearSkillWizard();
@@ -129,7 +115,7 @@ export async function handleSkillImportMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text?.trim();
   if (!text || text.startsWith("/")) return false;
 
-  await deleteInput(ctx);
+  await deleteInputMessage(ctx);
   try {
     const resolved = await resolveSkillSource(text);
     if (resolved.kind === "single") {

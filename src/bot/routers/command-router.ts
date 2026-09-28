@@ -2,7 +2,7 @@ import type { Bot, Context, NextFunction } from "grammy";
 import { config } from "../../config.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { providersCommand, handleProviderWizardMessage, clearProviderWizard } from "../commands/providers-command.js";
-import { integrationsCommand, handleIntegrationMessage } from "../commands/integrations-command.js";
+import { handleIntegrationMessage } from "../commands/integrations-command.js";
 import { opencodeStartCommand } from "../commands/opencode-start-command.js";
 import { opencodeStopCommand } from "../commands/opencode-stop-command.js";
 import { worktreeCommand } from "../commands/worktree-command.js";
@@ -110,7 +110,6 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
     if (await requireAiTopic(ctx, "topic_settings")) await settingsCommand(ctx as never);
   });
   bot.command("providers", providersCommand);
-  bot.command("integrations", integrationsCommand);
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", (ctx) => opencodeStopCommand(ctx, { clearRuntimeState: deps.clearRuntimeState }));
   bot.command("worktree", worktreeCommand);

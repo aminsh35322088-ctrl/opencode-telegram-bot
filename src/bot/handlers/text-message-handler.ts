@@ -15,11 +15,8 @@ import {
   executeSkill,
   parseSkillsMetadata,
 } from "../callbacks/skills-catalog-callback-handler.js";
+import { deleteInputMessage } from "../commands/panel-render.js";
 
-async function deleteInput(ctx: Context): Promise<void> {
-  if (!ctx.chat?.id || !ctx.message?.message_id) return;
-  await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
-}
 
 async function editPanel(
   ctx: Context,
@@ -41,7 +38,7 @@ export async function handleCommandTextArguments(ctx: Context, deps: ExecuteComm
   if (!metadata || metadata.stage !== "confirm") return false;
 
   const argumentsText = text.trim();
-  await deleteInput(ctx);
+  await deleteInputMessage(ctx);
   if (!argumentsText) {
     await editPanel(ctx, metadata.messageId, t("commands.arguments_empty"), "commands:list_back");
     return true;
@@ -66,7 +63,7 @@ export async function handleSkillTextArguments(ctx: Context, deps: ExecuteComman
   if (!metadata || metadata.stage !== "confirm") return false;
 
   const argumentsText = text.trim();
-  await deleteInput(ctx);
+  await deleteInputMessage(ctx);
   if (!argumentsText) {
     await editPanel(ctx, metadata.messageId, t("skills.arguments_empty"), "skills:list_back");
     return true;

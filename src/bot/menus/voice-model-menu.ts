@@ -11,6 +11,7 @@ import {
 } from "../../app/stores/settings-store.js";
 import type { ModelRef } from "../../app/types/model-capability.js";
 import { SETTINGS_BACK_CALLBACK, SETTINGS_DEFAULT_MODELS_CALLBACK, SETTINGS_VOICE_MODEL_CALLBACK } from "./settings-menu.js";
+import { escapeHtml } from "../commands/panel-render.js";
 
 const PICK_PREFIX = SETTINGS_VOICE_MODEL_CALLBACK + ":pick:";
 const RESET_CALLBACK = SETTINGS_VOICE_MODEL_CALLBACK + ":reset";
@@ -19,7 +20,6 @@ const MANAGE_CONNECTIONS_CALLBACK = "provider:connections";
 const CHOICE_TTL_MS = 15 * 60_000;
 const choices = new Map<string, { scope: string; ref: ModelRef; expiresAt: number }>();
 
-function html(value: string): string { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
 function scope(ctx: Context): string {
   const message = ctx.callbackQuery?.message ?? ctx.message;
   const threadID = message && "message_thread_id" in message ? message.message_thread_id ?? 0 : 0;
@@ -32,7 +32,7 @@ function token(ctx: Context, ref: ModelRef): string {
   return PICK_PREFIX + id;
 }
 function same(left: ModelRef | undefined, right: ModelRef): boolean { return left?.providerID === right.providerID && left.modelID === right.modelID; }
-function format(ref: ModelRef | undefined): string { return ref ? `${html(ref.providerID)}/${html(ref.modelID)}` : "Not configured"; }
+function format(ref: ModelRef | undefined): string { return ref ? `${escapeHtml(ref.providerID)}/${escapeHtml(ref.modelID)}` : "Not configured"; }
 
 export async function buildVoiceModelSettingsView(ctx: Context, notice = ""): Promise<{ text: string; keyboard: InlineKeyboard }> {
   const models = (await listUnifiedModelCatalog()).filter((entry) => entry.capabilities.operations.speechToText === true);
