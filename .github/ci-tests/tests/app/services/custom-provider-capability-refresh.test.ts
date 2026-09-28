@@ -39,10 +39,7 @@ vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
   listTopicRuntimeStates: mocks.topicStates,
 }));
 vi.mock("../../../src/config.js", () => ({
-  config: {
-    telegram: { token: "provider-refresh-test-token" },
-    opencode: { model: { provider: "", modelId: "" } },
-  },
+  config: { opencode: { model: { provider: "", modelId: "" } } },
 }));
 
 import {

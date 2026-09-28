@@ -91,8 +91,7 @@ function extractPromptText(parts: PromptPart[]): string {
 const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. Use them instead of raw bash/read/write when a purpose-built action exists.
 
 • bot — session/task/memory/model management. Call with action= (e.g. action="session.current", action="tasks.parse", action="tasks.create", action="memory.search", action="settings.get").
-• actions — inspect resolved Core and Extension-generated action aliases. Dynamic service capabilities are added through approved Extensions rather than hard-coded provider tools.
-• bot/extensions — MCP servers, Skills, and dynamic integrations have dedicated add actions. Call bot action="mcp.add", "skills.add", or "integrations.add" once, then present questionTool.arguments exactly with the native question tool. Never request OpenCode permission for ordinary Extension installation and never guess an MCP auth mode. Remote MCP/Integration Question choices are Add, API key, Bearer token, or Cancel. Add means OpenCode probes the real runtime status; when native OAuth is required the bot starts it automatically and Telegram presents Sign in + Check. API keys/tokens are collected through Telegram secure input and verified before activation. Use extensions.ensure only for OpenCode plugins and providers.ensure for model providers. Extension setup belongs to bot-owned state/config; never edit opencode.json, package files, .opencode, commit, push, or deploy a repository just to install/update an Extension.
+• railway — deployment operations. action="deploy-latest" (latest commit), action="status", action="logs", action="variables".
 • github-ci — CI/CD. action="status", action="logs", action="dispatch", action="verify".
 • session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
 • session — OpenCode session control. action="current", action="messages", action="abort", action="fork".

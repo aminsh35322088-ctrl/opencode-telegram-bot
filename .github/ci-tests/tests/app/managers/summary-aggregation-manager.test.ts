@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { summaryAggregator } from "../../../src/app/managers/summary-aggregation-manager.js";
-import { assistantRunState } from "../../../src/app/managers/assistant-run-state-manager.js";
 import { logger } from "../../../src/utils/logger.js";
 import { defined } from "../../helpers/defined.js";
 
@@ -24,7 +23,6 @@ describe("summary/aggregator", () => {
   beforeEach(() => {
     mocked.getCurrentProjectMock.mockReset();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "p1", worktree: "D:/repo", name: "repo" });
-    assistantRunState.__resetForTests();
     summaryAggregator.clear();
     summaryAggregator.setOnCleared(() => {});
     summaryAggregator.setOnTool(() => {});
@@ -174,60 +172,6 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onRootToolUpdate).not.toHaveBeenCalled();
-  });
-
-  it("does not carry completed subagents into a later run of the same session", async () => {
-    const onSubagent = vi.fn();
-    summaryAggregator.setOnSubagent(onSubagent);
-    summaryAggregator.setSession("root-session");
-
-    assistantRunState.startRun("root-session", { startedAt: 100 });
-    summaryAggregator.beginRun("root-session");
-    summaryAggregator.processEvent({
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "old-subtask",
-          sessionID: "root-session",
-          messageID: "old-root-message",
-          type: "subtask",
-          prompt: "old review",
-          description: "old review",
-          agent: "general",
-        },
-      },
-    } as unknown as Event);
-
-    expect(onSubagent.mock.lastCall?.[1]).toEqual([
-      expect.objectContaining({ description: "old review" }),
-    ]);
-
-    assistantRunState.finishRun("root-session", "test_boundary");
-    assistantRunState.startRun("root-session", { startedAt: 200 });
-    summaryAggregator.beginRun("root-session");
-    summaryAggregator.processEvent({
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "new-subtask",
-          sessionID: "root-session",
-          messageID: "new-root-message",
-          type: "subtask",
-          prompt: "new review",
-          description: "new review",
-          agent: "general",
-        },
-      },
-    } as unknown as Event);
-
-    await vi.waitFor(() => {
-      expect(onSubagent.mock.lastCall?.[1]).toEqual([
-        expect.objectContaining({ description: "new review" }),
-      ]);
-    });
-    expect(onSubagent.mock.lastCall?.[1]).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ description: "old review" })]),
-    );
   });
 
   it("emits live subagent updates with per-session model, context, cost, and current tool", () => {

@@ -4,7 +4,6 @@ import { peekProviderCatalog } from "./provider-catalog-service.js";
 import { classifyModelPrice, type ModelPrice } from "./model-price-classifier.js";
 import { getUnifiedProviderRevisionData, getUnifiedRuntimePriceMetadata } from "./unified-model-catalog-service.js";
 import { peekModelsDevProviderPrices, scheduleModelsDevPriceRefresh } from "./models-dev-price-service.js";
-import { getProviderFreePolicy, type ProviderFreePolicy } from "./provider-free-policy-service.js";
 
 const MAX_PRICE_AGE_MS = 15 * 60_000;
 export async function getProviderPriceRevision(providerID: string): Promise<string> {
@@ -77,27 +76,10 @@ function mergePriceEvidence(primary: ModelPrice, secondary: ModelPrice | undefin
   return secondary.group === "hint" ? secondary : primary;
 }
 
-function mergeProviderFreePolicy(modelId: string, current: ModelPrice, policy: ProviderFreePolicy | null): ModelPrice {
-  if (!policy) return current;
-  const listed = policy.freeModels.includes(modelId) || Boolean(policy.freeSuffix && modelId.endsWith(policy.freeSuffix));
-  if (!listed) return current;
-  const evidence: ModelPrice = policy.confidence === "high"
-    ? { group: "free", reason: `Provider-level validation advertises this model as free${policy.source ? ` (${policy.source})` : ""}.` }
-    : { group: "hint", reason: "Provider-level validation lists this model as free, but confidence is not high." };
-  if (current.group === "paid" || current.group === "conflict") {
-    return { group: "conflict", reason: `${current.reason} Provider-level free-model policy disagrees.` };
-  }
-  if (current.group === "free" || current.group === "conditional") return current;
-  return evidence;
-}
-
 /** Returns cached evidence immediately; any Models.dev refresh is background-only. */
 export async function getProviderModelPrices(providerID: string): Promise<Map<string, ModelPrice>> {
   const result = new Map<string, ModelPrice>();
-  const [config, providerPolicy] = await Promise.all([
-    getCustomProviderConfig(providerID),
-    getProviderFreePolicy(providerID),
-  ]);
+  const config = await getCustomProviderConfig(providerID);
   if (config) {
     const url = new URL(config.apiUrl.trim());
     const catalog = peekProviderCatalog(url.toString().replace(/\/$/, ""), config.apiKey);
@@ -105,7 +87,7 @@ export async function getProviderModelPrices(providerID: string): Promise<Map<st
     const officialFreeSuffix = url.protocol === "https:" && url.hostname === "openrouter.ai";
     for (const record of catalog.records) {
       const id = String(record.id).trim();
-      const price = mergeProviderFreePolicy(id, classifyModelPrice(record, { officialFreeSuffix }), providerPolicy);
+      const price = classifyModelPrice(record, { officialFreeSuffix });
       const previous = result.get(id);
       result.set(id, previous && previous.group !== price.group ? { group: "conflict", reason: "Duplicate model records disagree." } : price);
     }

@@ -48,7 +48,6 @@ import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { buildMainStatusText, keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
-import { handleExtensionAutomationCallback } from "../services/extension-automation-ui.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -183,9 +182,6 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
     ["worktree", { name: "worktree", handlers: [(ctx) => handleWorktreeCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["provider", { name: "provider", handlers: [handleProviderCallback], errorScope: "interaction" }],
     ["integration", { name: "integration", handlers: [handleIntegrationsCallback], errorScope: "interaction" }],
-    ["extauto", { name: "extension-automation", handlers: [handleExtensionAutomationCallback], errorScope: "interaction" }],
-    ["credauto", { name: "credential-automation", handlers: [handleExtensionAutomationCallback], errorScope: "interaction" }],
-    ["oauthauto", { name: "extension-oauth-automation", handlers: [handleExtensionAutomationCallback], errorScope: "interaction" }],
   ]);
 
   bot.on("callback_query:data", async (ctx) => {

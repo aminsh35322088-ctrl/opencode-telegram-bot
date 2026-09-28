@@ -17,8 +17,6 @@ export interface AssistantRunResolvedInfo {
 
 export interface AssistantRunInfo extends AssistantRunStartInfo {
   sessionId: string;
-  generation: number;
-  runId: string;
   actualAgent?: string | undefined;
   actualProviderID?: string | undefined;
   actualModelID?: string | undefined;
@@ -27,16 +25,12 @@ export interface AssistantRunInfo extends AssistantRunStartInfo {
 
 class AssistantRunState {
   private readonly runs = new Map<string, AssistantRunInfo>();
-  private readonly generations = new Map<string, number>();
 
   startRun(sessionId: string, info: AssistantRunStartInfo): void {
     if (!sessionId) return;
     resetStreamThrottle(sessionId);
-    const generation = (this.generations.get(sessionId) ?? 0) + 1;
-    this.generations.set(sessionId, generation);
-    const runId = `${sessionId}:${generation}:${info.startedAt}`;
-    this.runs.set(sessionId, { sessionId, generation, runId, startedAt: info.startedAt, configuredAgent: info.configuredAgent, configuredProviderID: info.configuredProviderID, configuredModelID: info.configuredModelID, hasCompletedResponse: false });
-    logger.debug(`[AssistantRunState] Started run: session=${sessionId}, generation=${generation}, runId=${runId}, agent=${info.configuredAgent || "unknown"}, model=${info.configuredProviderID || "unknown"}/${info.configuredModelID || "unknown"}`);
+    this.runs.set(sessionId, { sessionId, startedAt: info.startedAt, configuredAgent: info.configuredAgent, configuredProviderID: info.configuredProviderID, configuredModelID: info.configuredModelID, hasCompletedResponse: false });
+    logger.debug(`[AssistantRunState] Started run: session=${sessionId}, agent=${info.configuredAgent || "unknown"}, model=${info.configuredProviderID || "unknown"}/${info.configuredModelID || "unknown"}`);
   }
 
   private getScopedSessionId(): string | undefined { return getTopicRuntimeContext()?.sessionId; }
@@ -56,10 +50,6 @@ class AssistantRunState {
   }
 
   getRun(sessionId: string): AssistantRunInfo | null { const run = this.runs.get(sessionId); return run ? { ...run } : null; }
-
-  getRunGeneration(sessionId: string): number | null {
-    return this.runs.get(sessionId)?.generation ?? null;
-  }
 
   markResponseCompleted(sessionId: string, info?: AssistantRunResolvedInfo): void {
     const run = this.runs.get(sessionId);
@@ -96,7 +86,6 @@ class AssistantRunState {
   __resetForTests(): void {
     resetAllStreamThrottles();
     this.runs.clear();
-    this.generations.clear();
   }
 }
 
