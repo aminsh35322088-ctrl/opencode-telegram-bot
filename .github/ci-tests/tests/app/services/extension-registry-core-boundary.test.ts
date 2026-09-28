@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   stored: vi.fn(),
   skills: vi.fn(),
+  mcp: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/opencode-managed-config-service.js", () => ({
@@ -24,6 +25,10 @@ vi.mock("../../../src/app/services/extension-store.js", () => ({
 vi.mock("../../../src/app/services/credential-vault-service.js", () => ({
   removeExtensionCredentials: vi.fn(async () => 0),
 }));
+vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
+  loadMcpServers: mocks.mcp,
+  deleteMcpServer: vi.fn(async () => ({ deleted: true, name: "graphify" })),
+}));
 vi.mock("../../../src/app/services/generated-action-store.js", () => ({
   removeGeneratedActionsForExtension: vi.fn(async () => 0),
 }));
@@ -34,6 +39,7 @@ describe("Extension registry boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.skills.mockResolvedValue([]);
+    mocks.mcp.mockResolvedValue([]);
     mocks.stored.mockResolvedValue([
       {
         id: "integration:tailscale",
@@ -62,8 +68,30 @@ describe("Extension registry boundary", () => {
     ]);
   });
 
-  it("keeps core integrations and MCP servers out of Extensions", async () => {
-    await expect(listExtensions("/work/repo")).resolves.toEqual([]);
+  it("keeps core integrations out of Extensions", async () => {
+    // Tailscale stays a Core integration. Only Skills, plugins, and bot-managed
+    // MCP servers belong in the Extensions surface.
+    const result = await listExtensions("/work/repo");
+    expect(result.map((item) => item.id)).toEqual(["mcp:graphify"]);
+    expect(result.some((item) => item.id === "integration:tailscale")).toBe(false);
+  });
+
+  it("reports a bot-managed MCP server with its live runtime status", async () => {
+    mocks.mcp.mockResolvedValue([
+      { name: "graphify", type: "remote", status: { status: "connected" } },
+    ]);
+
+    await expect(listExtensions("/work/repo")).resolves.toEqual([
+      expect.objectContaining({ id: "mcp:graphify", kind: "mcp", status: "ready" }),
+    ]);
+  });
+
+  it("marks an unlisted MCP server as not connected rather than ready", async () => {
+    mocks.mcp.mockResolvedValue([]);
+
+    await expect(listExtensions("/work/repo")).resolves.toEqual([
+      expect.objectContaining({ id: "mcp:graphify", status: "unknown" }),
+    ]);
   });
 
   it("auto-discovers managed Skills", async () => {
@@ -81,6 +109,7 @@ describe("Extension registry boundary", () => {
         kind: "skill",
         status: "ready",
       }),
+      expect.objectContaining({ id: "mcp:graphify", kind: "mcp" }),
     ]);
   });
 });
