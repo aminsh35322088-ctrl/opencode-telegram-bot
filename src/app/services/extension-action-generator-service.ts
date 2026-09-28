@@ -2,6 +2,7 @@ import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import type { ExtensionRecord } from "../types/extension.js";
 import { registerGeneratedActionPack, removeGeneratedActionsForExtension } from "./generated-action-store.js";
+import { discoverMcpToolIds } from "./mcp-tool-discovery-service.js";
 
 function authorizationHeader(): string | undefined {
   if (!config.opencode.password) return undefined;
@@ -15,7 +16,7 @@ function namespace(value: string): string {
     .replace(/^\.+|\.+$/gu, "") || "extension";
 }
 
-async function listRuntimeToolIds(directory: string): Promise<string[]> {
+async function listOpenCodeToolIds(directory: string): Promise<string[]> {
   const url = new URL("/experimental/tool/ids", config.opencode.apiUrl);
   url.searchParams.set("directory", directory);
   const auth = authorizationHeader();
@@ -66,10 +67,28 @@ export async function generateExtensionActions(extension: ExtensionRecord): Prom
   if (extension.resource.kind !== "mcp") return 0;
 
   try {
-    const ids = mcpToolIds(
-      extension.resource.serverName,
-      await listRuntimeToolIds(extension.resource.projectDirectory),
+    const serverName = extension.resource.serverName;
+    const primaryIds = mcpToolIds(
+      serverName,
+      await listOpenCodeToolIds(extension.resource.projectDirectory),
     );
+    let ids = primaryIds;
+    if (ids.length === 0) {
+      try {
+        ids = mcpToolIds(
+          serverName,
+          await discoverMcpToolIds(
+            extension.resource.projectDirectory,
+            serverName,
+          ),
+        );
+      } catch (error) {
+        logger.debug(
+          `[Extensions] Direct MCP tool discovery unavailable for ${extension.id}`,
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+    }
     if (ids.length === 0) {
       await removeGeneratedActionsForExtension(extension.id);
       return 0;

@@ -67,6 +67,9 @@ describe("expanded model-facing action surface", () => {
     expect(bot).not.toContain("confirmed=true");
     expect(bot).not.toContain('"generated-actions.register"');
     expect(bot).not.toContain('"mcp.disable"');
+    expect(bot).not.toContain("auth_type: tool.schema");
+    expect(bot).toContain('extension_kind: tool.schema.enum(["plugin"])');
+    expect(bot).not.toContain("context.ask(");
     const [ssh, tailscale] = await Promise.all([fs.readFile(".opencode/tools/ssh.ts", "utf8"), fs.readFile(".opencode/tools/tailscale.ts", "utf8")]);
     for (const action of ["check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);
     for (const action of ["status", "devices", "ping", "ssh-public-key"]) expect(tailscale).toContain(`"${action}"`);

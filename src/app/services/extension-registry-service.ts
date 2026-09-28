@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { deleteCustomProvider, listCustomProviders } from "./custom-provider-service.js";
 import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
-import { deleteMcpServer } from "./mcp-server-service.js";
+import { deleteMcpServer, loadMcpServers } from "./mcp-server-service.js";
 import { listManagedMcpServers } from "./mcp-server-store.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "./skill-manage-service.js";
 import { loadSkillsCatalog } from "./skills-catalog-service.js";
@@ -30,14 +30,27 @@ export function extensionId(kind: ExtensionRecord["kind"], name: string, project
   return base;
 }
 
-function summaryFromStored(record: ExtensionRecord): ExtensionSummary {
+function mcpSummaryStatus(
+  status: string | undefined,
+): ExtensionSummary["status"] {
+  if (status === "connected") return "ready";
+  if (status === "needs_auth" || status === "needs_client_registration") return "needs-auth";
+  return "unknown";
+}
+
+function summaryFromStored(
+  record: ExtensionRecord,
+  runtimeStatusByName: ReadonlyMap<string, string>,
+): ExtensionSummary {
   return {
     id: record.id,
     name: record.name,
     kind: record.kind,
     source: record.source,
     authType: record.authType,
-    status: "ready",
+    status: record.resource.kind === "mcp"
+      ? mcpSummaryStatus(runtimeStatusByName.get(record.resource.serverName))
+      : "ready",
     managed: record.managed,
   };
 }
@@ -64,11 +77,15 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
       .map((record) => record.resource.kind === "model-provider" ? record.resource.providerId : ""),
   );
 
-  const [mcps, skills, providers] = await Promise.all([
+  const [mcps, runtimeMcps, skills, providers] = await Promise.all([
     listManagedMcpServers(projectDirectory),
+    loadMcpServers(projectDirectory).catch(() => []),
     loadSkillsCatalog(projectDirectory).catch(() => []),
     listCustomProviders(),
   ]);
+  const runtimeStatusByName = new Map(
+    runtimeMcps.map((item) => [item.name, item.status.status] as const),
+  );
 
   const discovered: ExtensionSummary[] = [
     ...mcps
@@ -107,7 +124,7 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
   ];
 
   const byId = new Map<string, ExtensionSummary>();
-  for (const item of [...stored.map(summaryFromStored), ...discovered]) byId.set(item.id, item);
+  for (const item of [...stored.map((record) => summaryFromStored(record, runtimeStatusByName)), ...discovered]) byId.set(item.id, item);
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 

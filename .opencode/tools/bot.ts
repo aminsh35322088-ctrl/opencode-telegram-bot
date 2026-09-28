@@ -374,7 +374,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions. Skills and plugins can use the managed install flow. MCP servers and dynamic Integrations are always user-directed: call mcp.add / integrations.add once to analyze the endpoint and return a native Question with explicit auth choices (OAuth / API key / Bearer / no auth / cancel). Never infer or auto-select an MCP auth mode. After the user chooses, the bot resumes that exact selected path. OAuth may finish either by the user pasting a localhost callback URL or by tapping Check after browser sign-in. API keys/tokens use Telegram secure input and are verified before activation. No permission request is needed. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. MCP servers, Skills, and dynamic Integrations use dedicated add actions and native Question confirmation; ordinary Extension installation never uses permission asks. For remote MCP/Integration setup, call mcp.add / integrations.add once to analyze the endpoint and return Add / API key / Bearer / Cancel. Never infer auth_type. Choosing Add lets OpenCode determine the real runtime status; if native OAuth is required, the bot starts it automatically and Telegram shows Sign in + Check. API keys/tokens use Telegram secure input and are verified before activation. Extension setup is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -389,7 +389,6 @@ export default tool({
     extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
     credential_id: tool.schema.string().optional().describe("Credential schema ID registered by an Extension. Never pass a secret value."),
     extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for OpenCode plugins. Use providers.ensure, mcp.add, skills.add, or integrations.add for all other Extension classes."),
-    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Internal/manual Extension auth selection. MCP/Integration callers must not infer this value; the user chooses it through the returned Question flow. Raw secrets are never accepted."),
     confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
     paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
     free_suffix: tool.schema.string().optional().describe("Provider-advertised free model suffix, such as :free."),
@@ -415,7 +414,7 @@ export default tool({
         media: "Use the media tool for STT and configured image generation/editing.",
         sessionRecovery: "Use session-recovery for inspect/abort/continue.",
         dynamicMcpTools: "Connected MCP servers expose their model tools directly through OpenCode.",
-        extensionStorage: "Extension setup is bot-owned runtime configuration. Use extensions.ensure/remove; never edit opencode.json, package files, .opencode, commit, push, or deploy merely to install/update an Extension.",
+        extensionStorage: "Extension setup is bot-owned runtime configuration. Use mcp.add, skills.add, integrations.add, providers.ensure, or plugin-only extensions.ensure; never edit opencode.json, package files, .opencode, commit, push, or deploy merely to install/update an Extension.",
       } });
     }
 
@@ -571,7 +570,7 @@ export default tool({
         kind,
         source: required(args.value, "value", action),
         purpose: required(args.description, "description", action),
-        authType: args.auth_type ?? "none",
+        authType: "none",
       }));
     }
 
