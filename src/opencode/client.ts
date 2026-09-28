@@ -92,7 +92,7 @@ const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. 
 
 • bot — session/task/memory/model management. Call with action= (e.g. action="session.current", action="tasks.parse", action="tasks.create", action="memory.search", action="settings.get").
 • actions — inspect resolved Core and Extension-generated action aliases. Dynamic service capabilities are added through approved Extensions rather than hard-coded provider tools.
-• bot/extensions — automatic setup is limited to detected Skills and OpenCode plugins. Use bot action="skills.add" for Skill sources and plugin-only "extensions.ensure" for plugin sources. Do not install MCP servers, dynamic integrations, or model providers from model chat; those require explicit user-managed configuration.
+• bot/extensions — automatic setup is limited to detected Skills and OpenCode plugins. Use bot action="skills.add" for Skill sources and plugin-only "extensions.ensure" for plugin sources. MCP servers are provisioned with bot action="mcp.add", inspected with action="mcp.tools", and invoked with action="mcp.call". Do not install dynamic integrations or model providers from model chat; those require explicit user-managed configuration.
 • github-ci — CI/CD. action="status", action="logs", action="dispatch", action="verify".
 • session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
 • session — OpenCode session control. action="current", action="messages", action="abort", action="fork".
