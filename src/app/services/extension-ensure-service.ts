@@ -6,9 +6,13 @@ import { extensionId, listExtensions } from "./extension-registry-service.js";
 import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
 import { generateExtensionActions } from "./extension-action-generator-service.js";
 import {
+  claimSharedEnsureRequest,
   claimSharedPendingAdd,
-  readSharedPendingAdd,
+  listSharedEnsureRequests,
+  readSharedEnsureRequest,
+  removeSharedEnsureRequest,
   removeSharedPendingAdd,
+  writeSharedEnsureRequest,
   writeSharedPendingAdd,
 } from "./extension-automation-state-store.js";
 import type { ExtensionEnsureRequest, ExtensionRecord } from "../types/extension.js";
@@ -20,8 +24,6 @@ type PluginEnsureRequest = Omit<ExtensionEnsureRequest, "kind" | "authType"> & {
   kind: "plugin";
   authType: "none";
 };
-
-const requests = new Map<string, PluginEnsureRequest>();
 
 const NPM_PLUGIN_SPECIFIER =
   /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[^\s@]+$/iu;
@@ -71,10 +73,9 @@ export function validatePluginSpecifier(source: string): string {
   return value;
 }
 
-function prune(): void {
-  const now = Date.now();
-  for (const [id, request] of requests) if (request.expiresAt <= now || ["cancelled", "ready", "failed"].includes(request.status)) requests.delete(id);
-}
+// Requests live on disk because they are created in the OpenCode server
+// process and consumed in the Telegram bot process. Expiry and terminal
+// statuses are enforced on read instead of by sweeping a local collection.
 
 function validateSource(kind: "plugin" | "skill", source: string): string {
   const value = source.trim();
@@ -120,7 +121,6 @@ export async function requestExtensionEnsure(input: {
   source: string;
   purpose: string;
 }): Promise<{ status: "ready" | "approval-required"; extensionId: string; requestId?: string; expiresAt?: number }> {
-  prune();
   const name = input.name.trim().slice(0, 100);
   const purpose = input.purpose.trim().slice(0, 500);
   if (!name || !purpose) throw new Error("Extension name and purpose are required.");
@@ -150,35 +150,36 @@ export async function requestExtensionEnsure(input: {
     expiresAt: now + REQUEST_TTL_MS,
     status: "awaiting-approval",
   };
-  requests.set(request.id, request);
+  writeSharedEnsureRequest(request);
   return { status: "approval-required", extensionId: id, requestId: request.id, expiresAt: request.expiresAt };
 }
 
+function isLiveApprovalRequest(request: ExtensionEnsureRequest | null): request is ExtensionEnsureRequest {
+  return request !== null
+    && request.status === "awaiting-approval"
+    && request.expiresAt > Date.now();
+}
+
 export function getExtensionEnsureRequest(id: string): ExtensionEnsureRequest | null {
-  prune();
-  const request = requests.get(id);
-  return request ? { ...request } : null;
+  const request = readSharedEnsureRequest(id);
+  return isLiveApprovalRequest(request) ? request : null;
 }
 
 export function findPendingExtensionEnsure(sessionId: string): ExtensionEnsureRequest | null {
-  prune();
-  const matches = [...requests.values()].filter((request) => request.sessionId === sessionId && request.status === "awaiting-approval");
-  return matches.length === 1 ? { ...matches[0]! } : null;
+  const matches = listSharedEnsureRequests(sessionId).filter(isLiveApprovalRequest);
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 export function cancelExtensionEnsure(id: string): boolean {
-  const request = requests.get(id);
-  if (!request) return false;
-  request.status = "cancelled";
-  requests.delete(id);
+  if (!isLiveApprovalRequest(readSharedEnsureRequest(id))) return false;
+  removeSharedEnsureRequest(id);
   return true;
 }
 
 export async function approveExtensionEnsure(id: string): Promise<ExtensionApprovalResult> {
-  prune();
-  const request = requests.get(id);
-  if (!request || request.status !== "awaiting-approval") throw new Error("Extension approval request expired.");
-  request.status = "installing";
+  // Claim by rename so a double-tap or a second Topic cannot install twice.
+  const request = claimSharedEnsureRequest(id);
+  if (!isLiveApprovalRequest(request)) throw new Error("Extension approval request expired.");
 
   try {
     if (request.kind === "plugin") {
@@ -194,15 +195,19 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
         await reloadManagedOpenCodeConfig("extension_plugin_rollback", { timeoutMs: 30_000 }).catch(() => {});
         throw error;
       }
-      request.status = "ready";
-      requests.delete(id);
+      removeSharedEnsureRequest(id);
       return { status: "ready", extension };
     }
 
     throw new Error("Unsupported approval-based Extension kind.");
   } catch (error) {
-    request.status = "failed";
-    request.error = error instanceof Error ? error.message : "Extension setup failed.";
+    // Keep a terminal record so the UI can report the failure instead of
+    // silently presenting an expired-looking request.
+    writeSharedEnsureRequest({
+      ...request,
+      status: "failed",
+      error: error instanceof Error ? error.message : "Extension setup failed.",
+    });
     throw error;
   }
 }
