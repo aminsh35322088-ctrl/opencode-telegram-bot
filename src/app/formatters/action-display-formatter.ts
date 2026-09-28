@@ -54,6 +54,7 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "bot.commands.list": { icon: "⌨️", label: "List Commands" },
   "bot.extensions.list": { icon: "🧩", label: "List Extensions" },
   "bot.extensions.info": { icon: "ℹ️", label: "Inspect Extension" },
+  "bot.extensions.inspect": { icon: "🔎", label: "Inspect Source" },
   "bot.extensions.ensure": { icon: "🧩", label: "Install Plugin" },
   "bot.extensions.remove": { icon: "🗑️", label: "Remove Extension" },
   "bot.generated-actions.list": { icon: "⚡", label: "List Extension Actions" },
