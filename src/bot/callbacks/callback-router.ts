@@ -126,7 +126,10 @@ async function handleMainNavigationCallback(ctx: Context, data: string, bot: Bot
 }
 
 async function handleSettingsChildNavigation(ctx: Context, data: string): Promise<boolean> {
-  const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "mcps:parent_back" || data === "integration:advanced";
+  // `mcps:parent_back` is deliberately absent: the MCP callback handler
+  // implements the same transition and additionally tears down the add wizard.
+  // Intercepting it here shadowed that handler, so the wizard state leaked.
+  const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "integration:advanced";
   if (isAdvancedBack) {
     clearGeneralPanelWizardState(`advanced_back:${data}`);
     await ctx.answerCallbackQuery().catch(() => {});

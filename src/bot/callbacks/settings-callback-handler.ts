@@ -1,8 +1,7 @@
 import { clearProviderPriceViews } from "../menus/provider-price-view.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { mcpsCommand } from "../commands/mcp-server-command.js";
-import { skillsCommand } from "../commands/skills-catalog-command.js";
+import { mcpsCommand, renderMcpDetailView } from "../commands/mcp-server-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
@@ -23,7 +22,8 @@ import {
   resolveGeneratedActionRef,
   SETTINGS_ACTIONS_CALLBACK,
   SETTINGS_ACTION_TOGGLE_PREFIX,
-  SETTINGS_EXTENSION_MCP_CALLBACK,
+  SETTINGS_EXTENSION_MCP_PREFIX,
+  resolveMcpServerRef,
   SETTINGS_EXTENSION_REMOVE_PREFIX,
   SETTINGS_EXTENSION_SELECT_PREFIX,
   SETTINGS_EXTENSIONS_CALLBACK,
@@ -33,6 +33,7 @@ import {
 import { removeExtension } from "../../app/services/extension-registry-service.js";
 import { setGeneratedActionEnabled, listGeneratedActions } from "../../app/services/generated-action-store.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
+import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
 import {
   buildDefaultModelsSettingsView,
@@ -75,7 +76,6 @@ import {
   SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK,
   SETTINGS_FACTORY_RESET_FINAL_CALLBACK,
   SETTINGS_MESSAGE_FORMAT_CALLBACK,
-  SETTINGS_MCP_CALLBACK,
   SETTINGS_MODEL_CALLBACK,
   SETTINGS_NOTIFICATIONS_CALLBACK,
   SETTINGS_PROMPT_QUEUE_CALLBACK,
@@ -83,7 +83,6 @@ import {
   SETTINGS_RESET_HISTORY_CANCEL_CALLBACK,
   SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK,
   SETTINGS_RESPONSE_STREAMING_CALLBACK,
-  SETTINGS_SKILLS_CALLBACK,
   SETTINGS_THINKING_CONTENT_CALLBACK,
   SETTINGS_TOPIC_DEFAULTS_CALLBACK,
   SETTINGS_VARIANT_CALLBACK,
@@ -154,6 +153,22 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       return true;
     }
 
+    if (callbackData.startsWith(SETTINGS_EXTENSION_MCP_PREFIX)) {
+      // MCP sign-in and credential setup live in the MCP wizard. Open the
+      // specific server's detail view so the auth buttons are one tap away;
+      // routing to mcpsCommand would only re-render the list screen.
+      const projectDirectory = getCurrentSessionDirectory();
+      const serverName = await resolveMcpServerRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_MCP_PREFIX.length));
+      const messageId = ctx.chat?.id ? getMainNavigationMessageId(ctx.chat.id) : undefined;
+      if (!serverName || typeof messageId !== "number") {
+        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
+        return true;
+      }
+      await ctx.answerCallbackQuery().catch(() => {});
+      await renderMcpDetailView(ctx, messageId, projectDirectory, serverName);
+      return true;
+    }
+
     if (callbackData.startsWith(SETTINGS_EXTENSION_REMOVE_PREFIX)) {
       const projectDirectory = getCurrentSessionDirectory();
       const id = await resolveExtensionRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_REMOVE_PREFIX.length));
@@ -202,9 +217,6 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         return true;
       }
       case SETTINGS_ACTIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, await buildActionsSettingsView(), "back"); return true;
-      // MCP sign-in and credential setup live in the MCP wizard; hand off to it
-      // so the user finishes authentication without leaving the Extensions flow.
-      case SETTINGS_EXTENSION_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx); return true;
       case SETTINGS_MORE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMoreSettingsView(), "back"); return true;
       case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
       case SETTINGS_FREE_DETECTION_CALLBACK: {
@@ -218,8 +230,6 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       }
       case SETTINGS_ADVANCED_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
       case SETTINGS_TOPIC_DEFAULTS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicDefaultsSettingsView(), "back"); return true;
-      case SETTINGS_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx as never); return true;
-      case SETTINGS_SKILLS_CALLBACK: await ctx.answerCallbackQuery(); await skillsCommand(ctx as never); return true;
       case SETTINGS_COMMANDS_CALLBACK: await ctx.answerCallbackQuery(); await commandsCommand(ctx as never); return true;
       case SETTINGS_MEMORY_CALLBACK: {
         await ctx.answerCallbackQuery();

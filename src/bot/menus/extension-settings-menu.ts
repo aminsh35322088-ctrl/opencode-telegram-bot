@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import { getActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import {
@@ -6,6 +5,8 @@ import {
   listExtensions,
 } from "../../app/services/extension-registry-service.js";
 import { listGeneratedActions } from "../../app/services/generated-action-store.js";
+import { loadMcpServers } from "../../app/services/mcp-server-service.js";
+import { ref as hashRef } from "./menu-ref.js";
 
 export const SETTINGS_GITHUB_CALLBACK = "settings:github";
 export const SETTINGS_EXTENSIONS_CALLBACK = "settings:extensions";
@@ -14,11 +15,9 @@ export const SETTINGS_MORE_CALLBACK = "settings:more";
 export const SETTINGS_EXTENSION_SELECT_PREFIX = "settings:extension:";
 export const SETTINGS_EXTENSION_REMOVE_PREFIX = "settings:extension_remove:";
 export const SETTINGS_ACTION_TOGGLE_PREFIX = "settings:action_toggle:";
-export const SETTINGS_EXTENSION_MCP_CALLBACK = "settings:extension_mcp";
+export const SETTINGS_EXTENSION_MCP_PREFIX = "settings:extension_mcp:";
 
-function ref(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 12);
-}
+const ref = hashRef;
 
 export async function buildGithubSettingsView(): Promise<{ text: string; keyboard: InlineKeyboard }> {
   const account = await getActiveGithubAccount();
@@ -56,6 +55,10 @@ export async function buildExtensionsSettingsView(projectDirectory: string): Pro
       : "🧩 <b>Extensions</b>\n\nNo Extensions installed yet. Ask the model to add what you need.",
     keyboard,
   };
+}
+
+export async function resolveMcpServerRef(projectDirectory: string, shortRef: string): Promise<string | null> {
+  return mcpServerNameForRef(projectDirectory, shortRef);
 }
 
 export async function resolveExtensionRef(projectDirectory: string, shortRef: string): Promise<string | null> {
@@ -96,7 +99,11 @@ export async function buildExtensionDetailView(projectDirectory: string, id: str
 
   const keyboard = new InlineKeyboard();
   if (extension.kind === "mcp" && extension.status !== "ready") {
-    keyboard.text("🔐 Sign in / Configure", SETTINGS_EXTENSION_MCP_CALLBACK).row();
+    // Carry the server so the handler can open that server's detail view
+    // directly. The list screen cannot do this: its callbacks are index-based
+    // against a snapshot, which is meaningless from the Extensions surface.
+    const serverKey = extension.id.startsWith("mcp:") ? extension.id.slice("mcp:".length) : extension.id;
+    keyboard.text("🔐 Sign in / Configure", SETTINGS_EXTENSION_MCP_PREFIX + ref(serverKey)).row();
   }
   keyboard
     .text("🗑 Remove", SETTINGS_EXTENSION_REMOVE_PREFIX + ref(extension.id))
@@ -141,4 +148,10 @@ export async function buildActionsSettingsView(): Promise<{ text: string; keyboa
 export async function resolveGeneratedActionRef(shortRef: string): Promise<string | null> {
   const actions = await listGeneratedActions();
   return actions.find((action) => ref(action.id) === shortRef)?.id ?? null;
+}
+
+async function mcpServerNameForRef(projectDirectory: string, shortRef: string): Promise<string | null> {
+  const servers = await loadMcpServers(projectDirectory);
+  const match = servers.find((server) => hashRef(server.name.trim().toLowerCase()) === shortRef);
+  return match?.name ?? null;
 }
