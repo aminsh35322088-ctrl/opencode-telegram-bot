@@ -74,7 +74,9 @@ describe("MCP Extension record and generated tool actions", () => {
       { kind: "mcp-tool", server: "railway", tool: "read log" },
     ]);
     expect(actions.every((action) => action.tool === "mcp" && action.action === "call")).toBe(true);
-    expect(actions[1]?.description).toContain("Required arguments: service");
+    const byId = new Map(actions.map((action) => [action.id, action]));
+    expect(byId.get("railway.read-log")?.description).toContain("Required arguments: service");
+    expect(byId.get("railway.deploy-latest")?.description).toBe("Deploy the latest build.");
   });
 
   it("classifies risk from the MCP tool name", async () => {
