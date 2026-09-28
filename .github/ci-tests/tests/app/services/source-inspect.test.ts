@@ -44,16 +44,29 @@ const ROOT_LISTING = [
 ];
 
 describe("extension source inspection", () => {
-  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  // The suite config restores mocks before every test, so the fetch spy has to
+  // be installed per test rather than once for the describe block.
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     resolveSkillSource.mockReset();
     analyzeRemoteMcpEndpoint.mockReset();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
-    fetchSpy.mockReset();
+    fetchSpy.mockRestore();
   });
+
+  /** Routes by URL so assertions do not depend on call order. */
+  function routeFetch(routes: Array<[RegExp, () => Response]>): void {
+    fetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const match = routes.find(([pattern]) => pattern.test(url));
+      if (!match) throw new Error(`Unexpected fetch: ${url}`);
+      return match[1]();
+    });
+  }
 
   it("classifies a pinned npm plugin specifier without any network call", async () => {
     const result = await inspectExtensionSource("left-pad@1.3.0");
@@ -75,10 +88,11 @@ describe("extension source inspection", () => {
   });
 
   it("detects an OpenCode plugin repository and resolves an immutable commit", async () => {
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse(ROOT_LISTING))
-      .mockResolvedValueOnce(jsonResponse({ name: "superpowers", description: "Reusable skills." }))
-      .mockResolvedValueOnce(jsonResponse({ sha: "a".repeat(40) }));
+    routeFetch([
+      [/\/contents\?/, () => jsonResponse(ROOT_LISTING)],
+      [/\/pkg$/, () => jsonResponse({ name: "superpowers", description: "Reusable skills." })],
+      [/\/commits\//, () => jsonResponse({ sha: "a".repeat(40) })],
+    ]);
 
     const result = await inspectExtensionSource("https://github.com/obra/superpowers");
     expect(result).toMatchObject({
@@ -93,10 +107,11 @@ describe("extension source inspection", () => {
   });
 
   it("warns when a plugin commit cannot be resolved so it cannot be installed unverified", async () => {
-    fetchSpy
-      .mockResolvedValueOnce(jsonResponse(ROOT_LISTING))
-      .mockResolvedValueOnce(jsonResponse({ name: "pkg" }))
-      .mockResolvedValueOnce(jsonResponse({ message: "Not Found" }, 404));
+    routeFetch([
+      [/\/contents\?/, () => jsonResponse(ROOT_LISTING)],
+      [/\/pkg$/, () => jsonResponse({ name: "pkg" })],
+      [/\/commits\//, () => jsonResponse({ message: "Not Found" }, 404)],
+    ]);
 
     const result = await inspectExtensionSource("https://github.com/owner/repo");
     expect(result.kind).toBe("plugin");
@@ -104,7 +119,7 @@ describe("extension source inspection", () => {
   });
 
   it("falls back to skill detection when the repository is not a plugin", async () => {
-    fetchSpy.mockResolvedValueOnce(jsonResponse([{ type: "file", name: "README.md" }]));
+    routeFetch([[/\/contents\?/, () => jsonResponse([{ type: "file", name: "README.md" }])]]);
     resolveSkillSource.mockResolvedValue({
       kind: "single",
       skill: { name: "brainstorming", description: "Design before coding.", content: "x", sourceUrl: "u" },
@@ -115,7 +130,7 @@ describe("extension source inspection", () => {
   });
 
   it("summarizes a repository containing many skills", async () => {
-    fetchSpy.mockResolvedValueOnce(jsonResponse([{ type: "file", name: "README.md" }]));
+    routeFetch([[/\/contents\?/, () => jsonResponse([{ type: "file", name: "README.md" }])]]);
     resolveSkillSource.mockResolvedValue({
       kind: "list",
       candidates: [{ name: "brainstorming", url: "u1" }, { name: "systematic-debugging", url: "u2" }],
@@ -129,7 +144,7 @@ describe("extension source inspection", () => {
   });
 
   it("reports unknown when a repository is neither plugin nor skill", async () => {
-    fetchSpy.mockResolvedValueOnce(jsonResponse([{ type: "file", name: "README.md" }]));
+    routeFetch([[/\/contents\?/, () => jsonResponse([{ type: "file", name: "README.md" }])]]);
     resolveSkillSource.mockRejectedValue(new Error("No SKILL.md found in this location"));
 
     const result = await inspectExtensionSource("https://github.com/owner/plain-repo");
