@@ -233,7 +233,8 @@ export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Pro
         return cached;
       }
       logger.warn("[FreeLLMCatalog] Catalog unavailable and no last-known-good cache exists", error);
-      return { schemaVersion: 1, generatedAt: new Date(0).toISOString(), providers: [] };
+      const emptyCatalog: FreeLlmCatalog = { schemaVersion: 1, generatedAt: new Date(0).toISOString(), providers: [] };
+      return emptyCatalog;
     }
   })();
 
