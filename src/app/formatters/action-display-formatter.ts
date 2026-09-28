@@ -62,6 +62,7 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "bot.mcp.add": { icon: "➕", label: "Add MCP Server" },
   "bot.mcp.tools": { icon: "🧰", label: "List MCP Tools" },
   "bot.mcp.call": { icon: "⚡", label: "Call MCP Tool" },
+  "bot.mcp.sync": { icon: "🔄", label: "Sync MCP Actions" },
   "bot.mcp.enable": { icon: "✅", label: "Enable MCP Server" },
   "bot.mcp.rename": { icon: "✏️", label: "Rename MCP Server" },
   "bot.mcp.delete": { icon: "🗑️", label: "Delete MCP Server" },

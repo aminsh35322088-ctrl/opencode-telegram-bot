@@ -4,7 +4,7 @@ import type { AgentActionRisk } from "./agent-action-registry.js";
 import { getStoredExtension } from "./extension-store.js";
 
 export type GeneratedActionInvocation =
-  | { kind: "mcp-tool"; tool: string }
+  | { kind: "mcp-tool"; tool: string; server?: string }
   | { kind: "native-tool"; tool: string; arguments?: Record<string, string> }
   | { kind: "action-tool"; tool: string; actionArgument: string; actionValue: string; arguments?: Record<string, string> };
 
@@ -45,6 +45,7 @@ function parseRecord(value: unknown): GeneratedActionRecord | null {
     typeof value.description !== "string" ||
     !["mcp-tool", "native-tool", "action-tool"].includes(String(value.invocation.kind)) ||
     typeof value.invocation.tool !== "string" ||
+    (value.invocation.server !== undefined && typeof value.invocation.server !== "string") ||
     typeof value.enabled !== "boolean" ||
     typeof value.userDisabled !== "boolean" ||
     typeof value.createdAt !== "string" ||
@@ -65,10 +66,17 @@ function parseState(value: unknown): GeneratedActionState {
 
 function classifyRisk(id: string, action: string, tool: string): AgentActionRisk {
   const value = `${id} ${action} ${tool}`.toLowerCase();
-  if (/(delete|destroy|remove|purge|drop|terminate)/u.test(value)) return "destructive";
-  if (/(exec|shell|command|deploy|restart|redeploy|create|update|set|write|upload|trigger|cancel)/u.test(value)) return "mutating";
-  if (/(download|export|save)/u.test(value)) return "write";
-  if (/(list|get|read|status|inspect|describe|resolve|query|search|view|show)/u.test(value)) return "read";
+  // Match whole segments rather than substrings. MCP tool names are
+  // free-form and routinely contain a mutating keyword inside a read verb
+  // (`list_deployments`, `show_updates`): substring matching would classify
+  // those reads as mutations purely because `deploy`/`update` appears in them.
+  // Precedence is unchanged, so a genuinely mutating name still wins.
+  const segments = new Set(value.split(/[^a-z0-9]+/u).filter(Boolean));
+  const has = (...keywords: string[]): boolean => keywords.some((keyword) => segments.has(keyword));
+  if (has("delete", "destroy", "remove", "purge", "drop", "terminate")) return "destructive";
+  if (has("exec", "shell", "command", "deploy", "restart", "redeploy", "create", "update", "set", "write", "upload", "trigger", "cancel")) return "mutating";
+  if (has("download", "export", "save")) return "write";
+  if (has("list", "get", "read", "status", "inspect", "describe", "resolve", "query", "search", "view", "show")) return "read";
   return "external";
 }
 
@@ -76,6 +84,14 @@ function normalizeId(value: string): string {
   const id = value.trim().toLowerCase();
   if (!ID_PATTERN.test(id)) throw new Error("Generated action id is invalid.");
   return id;
+}
+
+/**
+ * Namespace every generated action of an Extension must live under. Exported so
+ * producers cannot drift from the prefix the store validates against.
+ */
+export function generatedActionNamespace(extensionName: string): string {
+  return extensionName.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ".").replace(/^\.+|\.+$/gu, "") || "extension";
 }
 
 export async function listGeneratedActions(extensionId?: string): Promise<GeneratedActionRecord[]> {
@@ -95,7 +111,7 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
 }>): Promise<GeneratedActionRecord[]> {
   const extension = await getStoredExtension(extensionId);
   if (!extension) throw new Error("Generated actions require an approved registered Extension.");
-  const namespace = extension.name.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ".").replace(/^\.+|\.+$/gu, "") || "extension";
+  const namespace = generatedActionNamespace(extension.name);
   const now = new Date().toISOString();
   const clean = actions.slice(0, 100).map((candidate) => {
     const id = normalizeId(candidate.id);

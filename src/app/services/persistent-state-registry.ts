@@ -4,6 +4,7 @@ import { getRuntimePaths } from "../../runtime/paths.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { removeExtensionCredentials } from "./credential-vault-service.js";
 import { listStoredExtensions, removeStoredExtension } from "./extension-store.js";
+import type { ExtensionRecord } from "../types/extension.js";
 import { listGeneratedActions, removeGeneratedActionsForExtension } from "./generated-action-store.js";
 
 /** Runtime persistence owned by the bot. User configuration lives in app-state.json. */
@@ -105,12 +106,22 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
   }
   if (Object.keys(patch).length > 0) await updateAppState(patch);
 
-  // The model-chat Extension installer is now intentionally limited to Skills
-  // and Plugins. Purge stale auto-created MCP/Integration/provider registry
-  // records and their generated Actions without touching the user's manual MCP
-  // server definitions or custom-provider configuration.
+  // Skills and Plugins stay the Extension auto-install kinds. MCP records are
+  // now also legitimate: they are produced by the bot-managed mcp.add/mcp.sync
+  // path and own the generated Actions that mirror each server's tools. Every
+  // other kind (auto-created Integration/model-provider leftovers) is still
+  // purged, without touching the user's manual MCP server definitions or
+  // custom-provider configuration.
+  // Bot-managed MCP records are keyed exactly `mcp:<lowercased server name>` by
+  // mcp-extension-service. A record that does not follow that shape is a
+  // retired auto-created leftover and stays eligible for purging.
+  const isManagedMcpExtension = (extension: ExtensionRecord): boolean =>
+    extension.kind === "mcp"
+    && extension.managed
+    && extension.resource.kind === "mcp"
+    && extension.id === `mcp:${extension.resource.serverName.trim().toLowerCase()}`;
   const obsoleteExtensions = (await listStoredExtensions()).filter(
-    (extension) => extension.kind !== "skill" && extension.kind !== "plugin",
+    (extension) => extension.kind !== "skill" && extension.kind !== "plugin" && !isManagedMcpExtension(extension),
   );
   for (const extension of obsoleteExtensions) {
     await removeGeneratedActionsForExtension(extension.id);
@@ -128,15 +139,21 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
   }
 
   // Remove orphaned generated Actions even when the corresponding retired
-  // Extension record was already deleted in an earlier deployment.
+  // Extension record was already deleted in an earlier deployment. Actions are
+  // only orphaned when no live Extension record still owns them, so managed MCP
+  // tool Actions survive startup.
+  const liveExtensionIds = new Set((await listStoredExtensions()).map((extension) => extension.id));
   const generated = await listGeneratedActions();
   const retiredActionExtensionIds = new Set(
     generated
       .map((action) => action.extensionId)
       .filter((id) =>
-        id.startsWith("mcp:")
-        || id.startsWith("integration:")
-        || id.startsWith("model-provider:"),
+        !liveExtensionIds.has(id)
+        && (
+          id.startsWith("mcp:")
+          || id.startsWith("integration:")
+          || id.startsWith("model-provider:")
+        ),
       ),
   );
   for (const extensionId of retiredActionExtensionIds) {
