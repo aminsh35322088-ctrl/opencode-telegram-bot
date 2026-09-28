@@ -23,6 +23,7 @@ import {
   SETTINGS_DEFAULT_MODELS_CALLBACK,
   SETTINGS_IMAGE_MODEL_CALLBACK,
 } from "./settings-menu.js";
+import { escapeHtml } from "../commands/panel-render.js";
 
 const PICK_PREFIX = SETTINGS_IMAGE_MODEL_CALLBACK + ":pick:";
 const RESET_CALLBACK = SETTINGS_IMAGE_MODEL_CALLBACK + ":reset";
@@ -124,7 +125,6 @@ export async function buildImageModelSettingsView(
   const override = getCurrentTopicImageModelOverride();
   const current = override ?? globalDefault;
   const source = topic ? (override ? "Topic Override" : "Main Default") : "Main Default";
-import { escapeHtml } from "../commands/panel-render.js";
 
   const keyboard = new InlineKeyboard();
   if (topic && override) keyboard.text("↩️ Use Main Default", RESET_CALLBACK).row();

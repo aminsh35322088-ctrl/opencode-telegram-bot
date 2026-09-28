@@ -8,6 +8,7 @@ import {
   SETTINGS_GITHUB_CALLBACK,
   SETTINGS_MORE_CALLBACK,
 } from "./extension-settings-menu.js";
+import { escapeHtml } from "../commands/panel-render.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
@@ -281,7 +282,6 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
   }
   const percent = Math.max(0, Math.round((info.tokensUsed / info.tokensLimit) * 100));
   const health = percent < 60 ? "🟢 Healthy" : percent < 80 ? "🟡 Getting large" : percent < 95 ? "🟠 Nearly full" : "🔴 Critical";
-import { escapeHtml } from "../commands/panel-render.js";
   return {
     text: [
       "🧠 <b>Context Health</b>",
