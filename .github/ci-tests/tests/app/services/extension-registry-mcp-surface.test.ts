@@ -19,6 +19,7 @@ vi.mock("../../../src/config.js", () => ({
 
 const loadMcpServers = vi.hoisted(() => vi.fn());
 const deleteMcpServer = vi.hoisted(() => vi.fn());
+const loadSkillsCatalog = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
   loadMcpServers,
@@ -29,8 +30,10 @@ vi.mock("../../../src/app/services/opencode-managed-config-service.js", () => ({
   reloadManagedOpenCodeConfig: vi.fn(),
 }));
 
+// The suite config sets mockReset, so implementations are re-armed in
+// beforeEach rather than in the module factory.
 vi.mock("../../../src/app/services/skills-catalog-service.js", () => ({
-  loadSkillsCatalog: vi.fn().mockResolvedValue([]),
+  loadSkillsCatalog,
 }));
 
 import {
@@ -48,6 +51,7 @@ describe("Extension registry MCP surface", () => {
   beforeEach(async () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "registry-mcp-surface-"));
     process.env.OPENCODE_TELEGRAM_HOME = home;
+    loadSkillsCatalog.mockResolvedValue([]);
     await saveStoredExtension({
       id: "mcp:railway",
       name: "railway",
