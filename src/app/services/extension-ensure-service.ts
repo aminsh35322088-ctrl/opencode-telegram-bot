@@ -5,7 +5,7 @@ import { writeGlobalSkillRaw } from "./skill-manage-service.js";
 import { discoverModels, saveCustomProvider } from "./custom-provider-service.js";
 import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
 import { createSecureCredentialChallenge } from "./secure-credential-broker.js";
-import { resolveExtensionCredential } from "./credential-vault-service.js";
+import { removeExtensionCredential, resolveExtensionCredential } from "./credential-vault-service.js";
 import { extensionId, listExtensions } from "./extension-registry-service.js";
 import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
 import { generateExtensionActions } from "./extension-action-generator-service.js";
@@ -347,13 +347,14 @@ export async function addSkillExtension(input: {
       throw new Error("A concrete skill source is required before installation.");
     }
     const candidates = resolved.candidates.slice(0, 10);
+    const candidateOptions = candidates.map((candidate) => ({
+      label: candidate.name,
+      description: candidate.url,
+    }));
     const question = addQuestion(
       "Choose Skill",
       "Which skill do you want to add?",
-      candidates.map((candidate) => ({
-        label: candidate.name,
-        description: candidate.url,
-      })),
+      [...candidateOptions, { label: "Cancel", description: "Do not install a skill from this source." }],
     );
     writePendingAdd({
       sessionId: input.sessionId,
@@ -361,11 +362,14 @@ export async function addSkillExtension(input: {
       kind: "skill",
       source,
       question: { header: question.header, question: question.question },
-      choices: candidates.map((candidate) => ({
-        label: candidate.name,
-        action: "add" as const,
-        source: candidate.url,
-      })),
+      choices: [
+        ...candidates.map((candidate) => ({
+          label: candidate.name,
+          action: "add" as const,
+          source: candidate.url,
+        })),
+        { label: "Cancel", action: "cancel" as const },
+      ],
     });
     return {
       status: "question-required",
@@ -458,45 +462,36 @@ export async function addMcpBackedExtension(input: {
     const options: ExtensionQuestionPreview["options"] = isLocal
       ? [
           {
-            label: "Add local",
-            description: "Add this local MCP command without remote authentication.",
-            authType: "none",
+            label: "Add",
+            description: "Add this local MCP command.",
           },
           { label: "Cancel", description: "Do not add this Extension." },
         ]
       : [
           {
-            label: "Sign in (OAuth)",
+            label: "Add",
             description: analysis?.authHint === "oauth-likely"
-              ? "Recommended by endpoint analysis. Open the provider sign-in page, then paste a localhost callback URL or tap Check."
-              : "Use browser-based OAuth sign-in. You can paste a localhost callback URL or tap Check afterward.",
-            authType: "oauth",
+              ? "Add it and let OpenCode determine the live MCP auth state; browser sign-in will start automatically if required."
+              : "Add it and let OpenCode determine the live MCP connection/auth state.",
           },
           {
             label: "API key",
             description: analysis?.authHint === "credential-likely"
               ? "Endpoint appears credential-protected. Enter an API key through secure Telegram input."
-              : "Use this if the provider gave you an API key.",
+              : "Use this only if the provider gave you an API key.",
             authType: "api-key",
           },
           {
             label: "Bearer token",
-            description: "Use this if the provider gave you a Bearer token.",
+            description: "Use this only if the provider gave you a Bearer token.",
             authType: "bearer",
-          },
-          {
-            label: "No auth",
-            description: "Only use this when the MCP endpoint is public and requires no authentication.",
-            authType: "none",
           },
           { label: "Cancel", description: "Do not add this Extension." },
         ];
 
     const question = addQuestion(
       input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
-      isLocal
-        ? `Add ${name} to the bot?`
-        : `How should ${name} authenticate?`,
+      `Add ${name} to the bot?`,
       options,
     );
     writePendingAdd({
@@ -529,43 +524,38 @@ export async function addMcpBackedExtension(input: {
   }
 
   const value = isLocal ? source.slice("local:".length).trim() : source;
-  const server = await createMcpServerFromInput({
-    projectDirectory: input.projectDirectory,
-    name,
-    type: isLocal ? "local" : "remote",
-    value,
-  });
-
-  const effectiveAuth: ExtensionAuthType = input.authType ?? "none";
-
-  if (isLocal && effectiveAuth !== "none") {
+  const selectedAuth = input.authType;
+  if (isLocal && selectedAuth && selectedAuth !== "none") {
     throw new Error("Local MCP Extensions do not support remote authentication.");
   }
 
-  const requestLike: ExtensionEnsureRequest = {
-    id: randomUUID(),
-    sessionId: input.sessionId,
-    projectDirectory: input.projectDirectory,
-    name,
-    kind: input.kind,
-    source,
-    purpose,
-    authType: effectiveAuth,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + REQUEST_TTL_MS,
-    status: "installing",
+  const buildExtension = (authType: ExtensionAuthType): ExtensionRecord => {
+    const requestLike: ExtensionEnsureRequest = {
+      id: randomUUID(),
+      sessionId: input.sessionId,
+      projectDirectory: input.projectDirectory,
+      name,
+      kind: input.kind,
+      source,
+      purpose,
+      authType,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + REQUEST_TTL_MS,
+      status: "installing",
+    };
+    return recordFor(requestLike, {
+      kind: "mcp",
+      serverName: name,
+      projectDirectory: input.projectDirectory,
+    });
   };
-  const extension = recordFor(requestLike, {
-    kind: "mcp",
-    serverName: name,
-    projectDirectory: input.projectDirectory,
-  });
-  const previous = await getStoredExtension(extension.id);
-  if (previous) extension.createdAt = previous.createdAt;
-  await saveStoredExtension(extension);
 
-  if (effectiveAuth === "api-key" || effectiveAuth === "bearer") {
-    const credentialId = effectiveAuth === "api-key" ? "api-key" : "bearer";
+  if (selectedAuth === "api-key" || selectedAuth === "bearer") {
+    const extension = buildExtension(selectedAuth);
+    const previous = await getStoredExtension(extension.id);
+    if (previous) extension.createdAt = previous.createdAt;
+    await saveStoredExtension(extension);
+    const credentialId = selectedAuth === "api-key" ? "api-key" : "bearer";
     const challenge = await createSecureCredentialChallenge({
       extensionId: extension.id,
       credentialId,
@@ -581,45 +571,63 @@ export async function addMcpBackedExtension(input: {
     };
   }
 
-  if (effectiveAuth === "oauth") {
-    const oauth = await startMcpOAuth(input.projectDirectory, name);
-    writeSharedPendingOAuth<PendingOAuth>({
-      extensionId: extension.id,
-      projectDirectory: input.projectDirectory,
-      serverName: name,
-      sessionId: input.sessionId,
-      oauthState: oauth.oauthState,
-      authorizationUrl: oauth.authorizationUrl,
-      expiresAt: Date.now() + REQUEST_TTL_MS,
-    });
-    removeSharedPendingAdd(input.sessionId);
-    return {
-      status: "awaiting-oauth",
-      extension,
-      authorizationUrl: oauth.authorizationUrl,
-      oauthState: oauth.oauthState,
-    };
-  }
-
-  if (
-    effectiveAuth === "none"
-    && (server.status.status === "needs_auth" || server.status.status === "needs_client_registration")
-  ) {
-    await removeStoredExtension(extension.id).catch(() => {});
-    await deleteMcpServer(input.projectDirectory, name).catch(() => false);
+  if (selectedAuth === "oauth") {
     throw new Error(
-      `MCP server ${name} requires authentication. Run mcp.add again and explicitly choose Sign in (OAuth), API key, or Bearer token.`,
+      "OAuth is runtime-detected for MCP Extensions; use Add and let OpenCode determine whether sign-in is required.",
     );
   }
+
+  const server = await createMcpServerFromInput({
+    projectDirectory: input.projectDirectory,
+    name,
+    type: isLocal ? "local" : "remote",
+    value,
+  });
 
   if (server.status.status === "failed") {
-    await removeStoredExtension(extension.id).catch(() => {});
     await deleteMcpServer(input.projectDirectory, name).catch(() => false);
     throw new Error(
-      `MCP server ${name} did not connect. Run mcp.add again and choose the correct manual authentication option.`,
+      `MCP server ${name} did not connect. Retry the add flow and choose API key or Bearer only when the provider explicitly requires one.`,
     );
   }
 
+  if (server.status.status === "needs_auth" || server.status.status === "needs_client_registration") {
+    const extension = buildExtension("oauth");
+    const previous = await getStoredExtension(extension.id);
+    if (previous) extension.createdAt = previous.createdAt;
+    await saveStoredExtension(extension);
+    try {
+      const oauth = await startMcpOAuth(input.projectDirectory, name);
+      writeSharedPendingOAuth<PendingOAuth>({
+        extensionId: extension.id,
+        projectDirectory: input.projectDirectory,
+        serverName: name,
+        sessionId: input.sessionId,
+        oauthState: oauth.oauthState,
+        authorizationUrl: oauth.authorizationUrl,
+        expiresAt: Date.now() + REQUEST_TTL_MS,
+      });
+      removeSharedPendingAdd(input.sessionId);
+      return {
+        status: "awaiting-oauth",
+        extension,
+        authorizationUrl: oauth.authorizationUrl,
+        oauthState: oauth.oauthState,
+      };
+    } catch (error) {
+      await removeStoredExtension(extension.id).catch(() => {});
+      await deleteMcpServer(input.projectDirectory, name).catch(() => false);
+      const detail = error instanceof Error ? error.message : "OpenCode could not start OAuth.";
+      throw new Error(
+        `MCP server ${name} requires authentication, but native OAuth could not start: ${detail}. Retry and choose API key or Bearer only if the provider documents one of those methods.`,
+      );
+    }
+  }
+
+  const extension = buildExtension("none");
+  const previous = await getStoredExtension(extension.id);
+  if (previous) extension.createdAt = previous.createdAt;
+  await saveStoredExtension(extension);
   await generateExtensionActions(extension);
   removeSharedPendingAdd(input.sessionId);
   return { status: "ready", extension };
@@ -783,42 +791,49 @@ export async function finalizeExtensionCredential(extensionIdValue: string): Pro
   const secret = await resolveExtensionCredential(extension.id, schema.id);
   if (!secret) throw new Error("Extension credential is missing.");
 
-  if (extension.resource.kind === "mcp") {
-    if (extension.authType !== "bearer" && extension.authType !== "api-key") throw new Error("Unsupported MCP credential type.");
-    if (extension.authType === "bearer") {
-      await configureSecureMcpAuth({
-        projectDirectory: extension.resource.projectDirectory,
-        serverName: extension.resource.serverName,
-        remoteUrl: extension.source,
-        mode: "bearer",
-        secret,
-      });
-    } else {
-      await configureSecureMcpAuth({
-        projectDirectory: extension.resource.projectDirectory,
-        serverName: extension.resource.serverName,
-        remoteUrl: extension.source,
-        mode: "api-key",
-        headerName: "X-API-Key",
-        secret,
-      });
+  try {
+    if (extension.resource.kind === "mcp") {
+      if (extension.authType !== "bearer" && extension.authType !== "api-key") {
+        throw new Error("Unsupported MCP credential type.");
+      }
+      if (extension.authType === "bearer") {
+        await configureSecureMcpAuth({
+          projectDirectory: extension.resource.projectDirectory,
+          serverName: extension.resource.serverName,
+          remoteUrl: extension.source,
+          mode: "bearer",
+          secret,
+        });
+      } else {
+        await configureSecureMcpAuth({
+          projectDirectory: extension.resource.projectDirectory,
+          serverName: extension.resource.serverName,
+          remoteUrl: extension.source,
+          mode: "api-key",
+          headerName: "X-API-Key",
+          secret,
+        });
+      }
+      await generateExtensionActions(extension);
+      return extension;
     }
-    await generateExtensionActions(extension);
-    return extension;
-  }
 
-  if (extension.resource.kind === "model-provider") {
-    const models = await discoverModels(extension.source, secret);
-    await saveCustomProvider({
-      id: extension.resource.providerId,
-      name: extension.name,
-      baseURL: extension.source,
-      apiKey: secret,
-      models,
-      capability: "general",
-    });
-    return extension;
-  }
+    if (extension.resource.kind === "model-provider") {
+      const models = await discoverModels(extension.source, secret);
+      await saveCustomProvider({
+        id: extension.resource.providerId,
+        name: extension.name,
+        baseURL: extension.source,
+        apiKey: secret,
+        models,
+        capability: "general",
+      });
+      return extension;
+    }
 
-  throw new Error("Credential finalization is not supported for this extension.");
+    throw new Error("Credential finalization is not supported for this extension.");
+  } catch (error) {
+    await removeExtensionCredential(extension.id, schema.id).catch(() => {});
+    throw error;
+  }
 }

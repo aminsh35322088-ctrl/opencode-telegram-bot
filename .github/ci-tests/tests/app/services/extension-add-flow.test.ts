@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   createChallenge: vi.fn(),
   generateActions: vi.fn(),
   resolveCredential: vi.fn(),
+  removeCredential: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
@@ -46,6 +47,7 @@ vi.mock("../../../src/app/services/secure-credential-broker.js", () => ({
 }));
 vi.mock("../../../src/app/services/credential-vault-service.js", () => ({
   resolveExtensionCredential: mocks.resolveCredential,
+  removeExtensionCredential: mocks.removeCredential,
 }));
 vi.mock("../../../src/app/services/extension-registry-service.js", () => ({
   extensionId: (kind: string, name: string) => `${kind}:${name.toLowerCase()}`,
@@ -88,6 +90,7 @@ describe("conversational Extension add flows", () => {
     });
     mocks.generateActions.mockResolvedValue(2);
     mocks.resolveCredential.mockResolvedValue("secret-value");
+    mocks.removeCredential.mockResolvedValue(false);
     mocks.loadMcps.mockResolvedValue([]);
     mocks.deleteMcp.mockResolvedValue(true);
     mocks.removeExtension.mockResolvedValue(undefined);
@@ -124,12 +127,11 @@ describe("conversational Extension add flows", () => {
     });
     expect(result).toMatchObject({
       question: {
-        question: "How should graphify authenticate?",
+        question: "Add graphify to the bot?",
         options: [
-          expect.objectContaining({ label: "Sign in (OAuth)", authType: "oauth" }),
+          expect.objectContaining({ label: "Add" }),
           expect.objectContaining({ label: "API key", authType: "api-key" }),
           expect.objectContaining({ label: "Bearer token", authType: "bearer" }),
-          expect.objectContaining({ label: "No auth", authType: "none" }),
           expect.objectContaining({ label: "Cancel" }),
         ],
       },
@@ -166,7 +168,7 @@ describe("conversational Extension add flows", () => {
         header: preview.question.header,
         question: preview.question.question,
       }],
-      answers: [["* Sign in (OAuth): Recommended by endpoint analysis. Open the provider sign-in page, then paste a localhost callback URL or tap Check."]],
+      answers: [["* Add: Add it and let OpenCode determine the live MCP auth state; browser sign-in will start automatically if required."]],
     });
 
     expect(resumed).toMatchObject({
@@ -245,7 +247,7 @@ describe("conversational Extension add flows", () => {
     expect(mocks.createMcp).not.toHaveBeenCalled();
   });
 
-  it("does not auto-select OAuth when the user did not choose it", async () => {
+  it("starts native OAuth automatically when Add reaches an auth-required runtime state", async () => {
     mocks.createMcp.mockResolvedValue({
       name: "graphify",
       type: "remote",
@@ -264,12 +266,22 @@ describe("conversational Extension add flows", () => {
       source: "https://api.graphify.com/mcp",
       purpose: "Repository graph analysis",
       confirmed: true,
-      authType: "none",
-    })).rejects.toThrow(/requires authentication/i);
+    })).resolves.toMatchObject({
+      status: "awaiting-oauth",
+      authorizationUrl: "https://graphify.example/oauth/authorize",
+      oauthState: "oauth-state",
+      extension: {
+        name: "graphify",
+        kind: "mcp",
+        authType: "oauth",
+      },
+    });
 
-    expect(mocks.startOAuth).not.toHaveBeenCalled();
-    expect(mocks.removeExtension).toHaveBeenCalled();
-    expect(mocks.deleteMcp).toHaveBeenCalledWith("/work/repo", "graphify");
+    expect(mocks.startOAuth).toHaveBeenCalledWith("/work/repo", "graphify");
+    expect(mocks.deleteMcp).not.toHaveBeenCalled();
+    expect(mocks.saveExtension).toHaveBeenCalledWith(expect.objectContaining({
+      authType: "oauth",
+    }));
   });
   it("completes MCP OAuth from the Check path when OpenCode reports connected", async () => {
     mocks.createMcp.mockResolvedValue({
@@ -307,7 +319,6 @@ describe("conversational Extension add flows", () => {
       source: "https://api.graphify.com/mcp",
       purpose: "Repository graph analysis",
       confirmed: true,
-      authType: "oauth",
     });
 
     await expect(verifyPendingExtensionOAuth("ses-oauth-check")).resolves.toEqual({
@@ -351,7 +362,6 @@ describe("conversational Extension add flows", () => {
       source: "https://api.graphify.com/mcp",
       purpose: "Repository graph analysis",
       confirmed: true,
-      authType: "oauth",
     });
 
     await expect(
@@ -388,6 +398,7 @@ describe("conversational Extension add flows", () => {
       credentialId: "api-key",
     });
     expect(mocks.startOAuth).not.toHaveBeenCalled();
+    expect(mocks.createMcp).not.toHaveBeenCalled();
     expect(mocks.createChallenge).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "ses-key",
       credentialId: "api-key",
@@ -425,6 +436,135 @@ describe("conversational Extension add flows", () => {
       secret: "secret-value",
     });
     expect(mocks.generateActions).toHaveBeenCalledWith(extension);
+  });
+
+  it("removes an invalid MCP credential from the encrypted vault when validation fails", async () => {
+    const extension = {
+      id: "mcp:private-mcp",
+      name: "private-mcp",
+      kind: "mcp",
+      source: "https://mcp.example.com/mcp",
+      purpose: "Private tools",
+      authType: "api-key",
+      credentialSchemas: [{
+        id: "api-key",
+        label: "API key",
+        type: "api-key",
+        transport: { kind: "api-key-header" },
+      }],
+      resource: { kind: "mcp", serverName: "private-mcp", projectDirectory: "/work/repo" },
+      createdAt: "2026-09-27T00:00:00.000Z",
+      updatedAt: "2026-09-27T00:00:00.000Z",
+      managed: true,
+    };
+    mocks.getExtension.mockResolvedValue(extension);
+    mocks.configureSecure.mockRejectedValueOnce(new Error("MCP credential did not authenticate."));
+
+    await expect(finalizeExtensionCredential("mcp:private-mcp")).rejects.toThrow(
+      /did not authenticate/i,
+    );
+
+    expect(mocks.removeCredential).toHaveBeenCalledWith("mcp:private-mcp", "api-key");
+    expect(mocks.generateActions).not.toHaveBeenCalled();
+  });
+
+  it("registers an MCP-backed dynamic Integration and auto-generates its Action Pack", async () => {
+    mocks.createMcp.mockResolvedValue({
+      name: "railway",
+      type: "remote",
+      status: { status: "connected" },
+    });
+
+    const preview = await addMcpBackedExtension({
+      sessionId: "ses-integration",
+      projectDirectory: "/work/repo",
+      name: "railway",
+      kind: "integration",
+      source: "https://railway.example/mcp",
+      purpose: "Railway project operations",
+    });
+    expect(preview).toMatchObject({
+      status: "question-required",
+      kind: "integration",
+      question: {
+        header: "Add Integration",
+        question: "Add railway to the bot?",
+      },
+    });
+    if (preview.status !== "question-required") throw new Error("Expected integration question");
+
+    const resumed = await resumePendingExtensionAddFromQuestion({
+      sessionId: "ses-integration",
+      questions: [{
+        header: preview.question.header,
+        question: preview.question.question,
+      }],
+      answers: [["* Add: Add it and let OpenCode determine the live MCP connection/auth state."]],
+    });
+
+    expect(resumed).toMatchObject({
+      handled: true,
+      status: "resumed",
+      result: {
+        status: "ready",
+        extension: {
+          name: "railway",
+          kind: "integration",
+          authType: "none",
+          resource: {
+            kind: "mcp",
+            serverName: "railway",
+            projectDirectory: "/work/repo",
+          },
+        },
+      },
+    });
+    expect(mocks.generateActions).toHaveBeenCalledWith(expect.objectContaining({
+      name: "railway",
+      kind: "integration",
+    }));
+  });
+
+  it("offers Cancel when a Skill source contains multiple candidates", async () => {
+    mocks.resolveSkill.mockResolvedValue({
+      kind: "list",
+      candidates: [
+        { name: "deploy-check", url: "https://github.com/example/skills/tree/main/deploy-check" },
+        { name: "release-check", url: "https://github.com/example/skills/tree/main/release-check" },
+      ],
+    });
+
+    const preview = await addSkillExtension({
+      sessionId: "ses-skill-list",
+      projectDirectory: "/work/repo",
+      source: "https://github.com/example/skills",
+    });
+    expect(preview).toMatchObject({
+      status: "question-required",
+      kind: "skill",
+      question: {
+        header: "Choose Skill",
+        options: [
+          expect.objectContaining({ label: "deploy-check" }),
+          expect.objectContaining({ label: "release-check" }),
+          expect.objectContaining({ label: "Cancel" }),
+        ],
+      },
+    });
+    if (preview.status !== "question-required") throw new Error("Expected skill selection question");
+
+    await expect(resumePendingExtensionAddFromQuestion({
+      sessionId: "ses-skill-list",
+      questions: [{
+        header: preview.question.header,
+        question: preview.question.question,
+      }],
+      answers: [["* Cancel: Do not install a skill from this source."]],
+    })).resolves.toMatchObject({
+      handled: true,
+      status: "cancelled",
+    });
+    expect(mocks.writeSkill).not.toHaveBeenCalled();
   });
 
   it("previews a Skill, then imports it and auto-generates its Action after confirmation", async () => {
