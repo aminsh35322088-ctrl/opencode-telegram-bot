@@ -23,6 +23,7 @@ import {
   resolveGeneratedActionRef,
   SETTINGS_ACTIONS_CALLBACK,
   SETTINGS_ACTION_TOGGLE_PREFIX,
+  SETTINGS_EXTENSION_MCP_CALLBACK,
   SETTINGS_EXTENSION_REMOVE_PREFIX,
   SETTINGS_EXTENSION_SELECT_PREFIX,
   SETTINGS_EXTENSIONS_CALLBACK,
@@ -201,6 +202,9 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         return true;
       }
       case SETTINGS_ACTIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, await buildActionsSettingsView(), "back"); return true;
+      // MCP sign-in and credential setup live in the MCP wizard; hand off to it
+      // so the user finishes authentication without leaving the Extensions flow.
+      case SETTINGS_EXTENSION_MCP_CALLBACK: await ctx.answerCallbackQuery(); await mcpsCommand(ctx); return true;
       case SETTINGS_MORE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMoreSettingsView(), "back"); return true;
       case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
       case SETTINGS_FREE_DETECTION_CALLBACK: {
