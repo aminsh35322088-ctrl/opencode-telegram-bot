@@ -125,12 +125,14 @@ GH_CONFIG_DIR="/data/.config/gh/accounts/$ACCOUNT_ID"
 mkdir -p "$GH_CONFIG_DIR"
 chmod 700 "$GH_CONFIG_DIR"
 export GH_CONFIG_DIR
+# The active token is normally not stored in app-state.json: it lives in the
+# Credential Vault and reaches us through the environment the bot process
+# already exported. Never drop an inherited token, otherwise every gh call
+# loses authentication. A legacy plaintext state token still wins.
 if [ -n "$TOKEN" ]; then
   GH_TOKEN="$TOKEN"
   GITHUB_TOKEN="$TOKEN"
   export GH_TOKEN GITHUB_TOKEN
-else
-  unset GH_TOKEN GITHUB_TOKEN 2>/dev/null || true
 fi
 exec /usr/bin/gh "$@"
 EOF
@@ -145,6 +147,13 @@ STATE_FILE="${OPENCODE_TELEGRAM_HOME:-/data}/app-state.json"
 TOKEN=""
 if [ -f "$STATE_FILE" ]; then
   TOKEN="$(jq -r '(.integrations.github // {}) as $g | (($g.accounts // []) | map(select(.id == $g.activeId)) + ($g.accounts // [])) | .[0].token // empty' "$STATE_FILE" 2>/dev/null || true)"
+fi
+# app-state.json no longer carries a plaintext token: the Credential Vault
+# resolves it and the bot exports it into the environment we inherit here.
+# Without this fallback git cannot answer its own credential prompt and
+# fails with "could not read Username for 'https://github.com'".
+if [ -z "$TOKEN" ]; then
+  TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 fi
 if [ -n "$TOKEN" ]; then
   printf '%s\n' 'username=x-access-token'
