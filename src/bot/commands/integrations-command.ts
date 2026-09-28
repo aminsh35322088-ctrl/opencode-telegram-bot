@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
+import { addGithubAccount, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, listTailscaleDevices, reconnectTailscale, removeTailscaleIntegration } from "../../app/services/tailscale-integration-service.js";
 import { getManagedSshPublicKey } from "../../app/services/ssh-key-service.js";
 import { clearProviderWizard } from "./providers-command.js";

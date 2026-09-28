@@ -14,7 +14,7 @@ import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
 import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
-import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
+import { deleteInputMessage } from "./panel-render.js";
 
 type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
 interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }

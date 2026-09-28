@@ -1,7 +1,7 @@
 import { clearProviderPriceViews } from "../menus/provider-price-view.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { mcpsCommand, renderMcpDetailView } from "../commands/mcp-server-command.js";
+import { renderMcpDetailView } from "../commands/mcp-server-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
