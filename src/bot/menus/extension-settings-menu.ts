@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { getActiveGithubAccount } from "../../app/services/github-integration-service.js";
+import { getActiveGithubAccount, listGithubAccounts } from "../../app/services/github-integration-service.js";
 import {
   getExtensionInfo,
   listExtensions,
@@ -19,18 +19,40 @@ export const SETTINGS_EXTENSION_MCP_PREFIX = "settings:extension_mcp:";
 
 const ref = hashRef;
 
-export async function buildGithubSettingsView(): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const account = await getActiveGithubAccount();
-  const identity = account?.username ? `@${account.username}` : account?.name;
-  return {
-    text: account
-      ? `🐙 <b>GitHub</b>\n\nConnected as <b>${identity ?? "GitHub account"}</b>`
-      : "🐙 <b>GitHub</b>\n\nNot connected",
-    keyboard: new InlineKeyboard()
-      .text(account ? "🔄 Reconnect" : "🔐 Connect", "integration:github:add")
+/**
+ * Single GitHub management surface. This used to be a reduced duplicate of the
+ * legacy Integrations hub: it only reported the active account, its Connect
+ * button jumped into the `integration:` namespace, and finishing that wizard
+ * dumped the user into a different menu, losing the Settings back-stack.
+ *
+ * Account list, selection and removal now live here, reusing the same
+ * `integration:github:*` callbacks that already implement the wizard, so no
+ * handler had to be rewritten.
+ */
+export async function buildGithubSettingsView(notice?: string): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const accounts = await listGithubAccounts();
+  const active = await getActiveGithubAccount();
+  const keyboard = new InlineKeyboard();
+  for (const account of accounts) {
+    const label = account.id === active?.id ? `✅ ${account.name}` : account.name;
+    keyboard
       .row()
-      .text("← Settings", "settings:back"),
-  };
+      .text(label, `integration:github:select:${account.id}`)
+      .text("🗑️", `integration:github:remove:${account.id}`);
+  }
+  keyboard.row().text(accounts.length > 0 ? "➕ Add GitHub account" : "🔐 Connect GitHub", "integration:github:add");
+
+  const lines: string[] = [];
+  if (notice) lines.push(notice, "");
+  lines.push("🐙 <b>GitHub</b>", "");
+  if (active) {
+    const identity = active.username ? `@${active.username}` : active.name;
+    lines.push(`Active · <b>${escapeHtml(identity)}</b>`);
+  } else {
+    lines.push("Not connected.");
+  }
+  if (accounts.length > 1) lines.push("", `${accounts.length} accounts stored.`);
+  return { text: lines.join("\n"), keyboard: keyboard.row().text("← Settings", "settings:back") };
 }
 
 export async function buildExtensionsSettingsView(projectDirectory: string): Promise<{ text: string; keyboard: InlineKeyboard }> {

@@ -50,7 +50,7 @@ vi.mock("../../../src/bot/commands/abort-command.js", () => ({ abortCurrentOpera
 vi.mock("../../../src/bot/commands/pause-command.js", () => ({ pauseCurrentChat: mocks.pauseCurrentChat, resumePausedChat: mocks.resumePausedChat }));
 vi.mock("../../../src/bot/services/telegram-topic-delete-handler.js", () => ({ showTelegramTopicDeleteConfirmation: mocks.showTelegramTopicDeleteConfirmation }));
 vi.mock("../../../src/bot/commands/providers-command.js", () => ({ isProviderWizardActive: mocks.isProviderWizardActive, clearProviderWizard: vi.fn(), providersCommand: vi.fn() }));
-vi.mock("../../../src/bot/commands/integrations-command.js", () => ({ isIntegrationWizardActive: mocks.isIntegrationWizardActive, clearIntegrationWizard: vi.fn(), integrationsCommand: vi.fn() }));
+vi.mock("../../../src/bot/commands/integrations-command.js", () => ({ isIntegrationWizardActive: mocks.isIntegrationWizardActive, clearIntegrationWizard: vi.fn() }));
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { registerReplyKeyboardRouter } from "../../../src/bot/routers/reply-keyboard-router.js";

@@ -129,7 +129,9 @@ async function handleSettingsChildNavigation(ctx: Context, data: string): Promis
   // `mcps:parent_back` is deliberately absent: the MCP callback handler
   // implements the same transition and additionally tears down the add wizard.
   // Intercepting it here shadowed that handler, so the wizard state leaked.
-  const isAdvancedBack = data === "commands:back" || data === "skills:back" || data === "integration:advanced";
+  // `integration:advanced` went away with the legacy Integrations hub, which
+  // was the only thing that ever emitted it.
+  const isAdvancedBack = data === "commands:back" || data === "skills:back";
   if (isAdvancedBack) {
     clearGeneralPanelWizardState(`advanced_back:${data}`);
     await ctx.answerCallbackQuery().catch(() => {});

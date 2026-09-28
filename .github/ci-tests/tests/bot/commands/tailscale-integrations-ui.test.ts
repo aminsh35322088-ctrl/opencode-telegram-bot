@@ -54,7 +54,6 @@ import {
   handleIntegrationMessage,
   handleIntegrationsCallback,
   isIntegrationWizardActive,
-  showIntegrationsMenu,
 } from "../../../src/bot/commands/integrations-command.js";
 
 function callbackContext(data: string): Context {
@@ -107,16 +106,18 @@ describe("Tailscale Integrations UI", () => {
     clearIntegrationWizard();
   });
 
-  it("shows Tailscale as a first-class integration without a separate SSH server hub", async () => {
-    const ctx = callbackContext("integration:menu");
-    await showIntegrationsMenu(ctx);
+  it("reaches Tailscale from the Settings root without a separate SSH server hub", async () => {
+    const ctx = callbackContext("integration:tailscale");
+    await handleIntegrationsCallback(ctx);
 
     const call = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(call?.[2]).toContain("Tailscale: ⚪ Not configured");
+    expect(call?.[2]).toContain("Tailscale");
     const callbacks = call?.[3]?.reply_markup.inline_keyboard.flat().map((button: { callback_data?: string }) => button.callback_data);
-    expect(callbacks).toContain("integration:tailscale");
+    expect(callbacks).toContain("integration:tailscale:connect");
+    expect(callbacks).toContain("settings:back");
     expect(callbacks.some((value: string | undefined) => value?.includes("ssh:server"))).toBe(false);
   });
+
 
   it("connects from the canonical panel, deletes the auth-key message, and never echoes the key", async () => {
     const start = callbackContext("integration:tailscale:connect");

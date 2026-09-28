@@ -1,10 +1,10 @@
-import type { CommandContext, Context } from "grammy";
+import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { addGithubAccount, getActiveGithubAccount, listGithubAccounts, removeGithubAccount, setActiveGithubAccount } from "../../app/services/github-integration-service.js";
 import { configureTailscale, disconnectTailscale, getTailscaleRuntimeStatus, listTailscaleDevices, reconnectTailscale, removeTailscaleIntegration } from "../../app/services/tailscale-integration-service.js";
 import { getManagedSshPublicKey } from "../../app/services/ssh-key-service.js";
 import { clearProviderWizard } from "./providers-command.js";
-import { buildAdvancedSettingsView } from "../menus/settings-menu.js";
+import { buildGithubSettingsView } from "../menus/extension-settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
@@ -27,8 +27,23 @@ function callbackMessageId(ctx: Context): number | null {
   return typeof message.message_id === "number" ? message.message_id : null;
 }
 function wizardKeyboard(): InlineKeyboard {
-  return appendHomeNavigation(new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Integrations", "integration:menu"));
+  return appendHomeNavigation(new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Settings", "settings:back"));
 }
+export async function showGithubSettingsMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
+  const view = await buildGithubSettingsView(notice);
+  const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
+  if (targetMessageId !== null && ctx.chat?.id) {
+    try {
+      await ctx.api.editMessageText(ctx.chat.id, targetMessageId, view.text, { reply_markup: view.keyboard });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.toLowerCase().includes("message is not modified")) throw error;
+    }
+    return;
+  }
+  await ctx.reply(view.text, { reply_markup: view.keyboard });
+}
+
 export function isIntegrationWizardActive(): boolean {
   const pending = integrationWizard.get();
   return Boolean(pending?.github || pending?.tailscale);
@@ -46,39 +61,6 @@ async function editWizard(ctx: Context, messageId: number, text: string): Promis
     throw error;
   }
 }
-export async function showIntegrationsMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
-  const githubAccounts = await listGithubAccounts();
-  const githubActive = await getActiveGithubAccount();
-  const tailscale = await getTailscaleRuntimeStatus();
-  const keyboard = new InlineKeyboard().text("➕ Add GitHub account", "integration:github:add");
-  for (const account of githubAccounts) {
-    const label = account.id === githubActive?.id ? `✅ ${account.name}` : account.name;
-    keyboard.row().text(label, `integration:github:select:${account.id}`).text("🗑️", `integration:github:remove:${account.id}`);
-  }
-  keyboard.row().text(`🌐 Tailscale · ${tailscale.connected ? "Connected" : tailscale.configured ? "Disconnected" : "Not set"}`, "integration:tailscale");
-  keyboard.row().text("← Settings", "settings:back").text("🏠 Home", "main:home");
-  const body = `🔌 Legacy Connections
-
-GitHub is a native Core integration. Other services are managed as Extensions.
-
-GitHub: ${githubActive?.name ?? "Not connected"}
-Tailscale: ${tailscale.connected ? "🟢 Connected" : tailscale.configured ? "⚪ Disconnected" : "⚪ Not configured"}`;
-  const text = notice ? `${notice}
-
-${body}` : body;
-  const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
-  if (targetMessageId !== null && ctx.chat?.id) {
-    try {
-      await ctx.api.editMessageText(ctx.chat.id, targetMessageId, text, { reply_markup: keyboard });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!message.toLowerCase().includes("message is not modified")) throw error;
-    }
-    return;
-  }
-  await ctx.reply(text, { reply_markup: keyboard });
-}
-export async function integrationsCommand(ctx: CommandContext<Context>): Promise<void> { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx as Context); }
 
 async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
   const status = await getTailscaleRuntimeStatus();
@@ -92,7 +74,7 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
     keyboard.text("🖥 Tailnet Devices", "integration:tailscale:devices").text("🔑 Change Auth Key", "integration:tailscale:connect").row();
     keyboard.text("🔐 SSH Public Key", "integration:tailscale:ssh-key").text("🗑 Forget Tailnet", "integration:tailscale:remove").row();
   }
-  keyboard.text("← Integrations", "integration:menu").text("🏠 Home", "main:home");
+  keyboard.text("← Settings", "settings:back").text("🏠 Home", "main:home");
 
   const body = [
     "🌐 Tailscale",
@@ -153,11 +135,8 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (!data.startsWith("integration:")) return false;
   const chatId = ctx.chat?.id;
   if (!chatId) return true;
-  if (data === "integration:close") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery({ text: "Closed" }).catch(() => {}); await ctx.deleteMessage().catch(() => {}); return true; }
-  if (data === "integration:advanced") { clearIntegrationWizard(); clearProviderWizard(); await ctx.answerCallbackQuery().catch(() => {}); const view = buildAdvancedSettingsView(); await replyWithInlineMenu(ctx, { menuKind: "settings", text: view.text, keyboard: view.keyboard }); return true; }
   await ctx.answerCallbackQuery().catch(() => {});
-  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); const id = state?.github?.messageId ?? state?.tailscale?.messageId; if (state?.tailscale) await showTailscaleMenu(ctx, id, "❌ Setup cancelled."); else await showIntegrationsMenu(ctx, id, "❌ Setup cancelled."); return true; }
-  if (data === "integration:menu") { clearIntegrationWizard(); clearProviderWizard(); await showIntegrationsMenu(ctx); return true; }
+  if (data === "integration:cancel") { const state = integrationWizard.get(); clearIntegrationWizard(); clearProviderWizard(); const id = state?.github?.messageId ?? state?.tailscale?.messageId; if (state?.tailscale) await showTailscaleMenu(ctx, id, "❌ Setup cancelled."); else await showGithubSettingsMenu(ctx, id, "❌ Setup cancelled."); return true; }
   if (data === "integration:tailscale") { clearIntegrationWizard(); clearProviderWizard(); await showTailscaleMenu(ctx); return true; }
   if (data === "integration:tailscale:devices") { clearIntegrationWizard(); await showTailscaleDevices(ctx); return true; }
   if (data === "integration:tailscale:ssh-key") {
@@ -180,8 +159,8 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
   if (data === "integration:tailscale:remove") { const id = callbackMessageId(ctx); if (id !== null && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, "🗑 Forget Tailscale?\n\nThis logs the bot out of the Tailnet and removes the encrypted auth key from bot state.", { reply_markup: new InlineKeyboard().text("🗑 Forget", "integration:tailscale:remove:confirm").text("Cancel", "integration:tailscale") }); return true; }
   if (data === "integration:tailscale:remove:confirm") { await removeTailscaleIntegration(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale configuration removed."); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
-  if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
-  if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "GitHub account removed" : "GitHub account not found" }).catch(() => {}); await showIntegrationsMenu(ctx); return true; }
+  if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showGithubSettingsMenu(ctx); return true; }
+  if (data.startsWith("integration:github:remove:")) { const removed = await removeGithubAccount(data.slice("integration:github:remove:".length)); await ctx.answerCallbackQuery({ text: removed ? "GitHub account removed" : "GitHub account not found" }).catch(() => {}); await showGithubSettingsMenu(ctx); return true; }
   return true;
 }
 export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
@@ -211,4 +190,4 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
     return true;
   }
 }
-async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInput(ctx); try { await showIntegrationsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
+async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInput(ctx); try { await showGithubSettingsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
