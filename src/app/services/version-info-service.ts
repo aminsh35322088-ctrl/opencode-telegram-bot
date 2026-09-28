@@ -36,6 +36,7 @@ const VERSION_COMMANDS: VersionCommand[] = [
   { name: "Git", command: "git", args: ["--version"], kind: "tool" },
   { name: "Git LFS", command: "git", args: ["lfs", "version"], kind: "tool" },
   { name: "GitHub CLI", command: "gh", args: ["--version"], kind: "tool" },
+  { name: "Railway CLI", command: "railway", args: ["--version"], kind: "tool" },
   { name: "Playwright CLI", command: "playwright-cli", args: ["--version"], kind: "tool" },
   { name: "pnpm", command: "pnpm", args: ["--version"], kind: "tool" },
   { name: "tsx", command: "tsx", args: ["--version"], kind: "tool" },

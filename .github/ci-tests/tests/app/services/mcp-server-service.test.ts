@@ -76,7 +76,6 @@ vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
 }));
 
 import {
-  analyzeRemoteMcpEndpoint,
   completeMcpOAuth,
   configureSecureMcpAuth,
   createMcpServerFromInput,
@@ -119,49 +118,6 @@ describe("app/services/mcp-server-service", () => {
     mockedManaged.markDeleted.mockReset().mockResolvedValue(undefined);
     mockedManaged.clearDeleted.mockReset().mockResolvedValue(undefined);
     mockedTopics.list.mockReset().mockResolvedValue([]);
-  });
-
-  it("detects OAuth protected-resource metadata advertised by a remote MCP endpoint", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", {
-      status: 401,
-      headers: {
-        "WWW-Authenticate":
-          'Bearer resource_metadata="https://api.graphify.com/.well-known/oauth-protected-resource"',
-      },
-    })));
-
-    await expect(analyzeRemoteMcpEndpoint("https://api.graphify.com/mcp")).resolves.toMatchObject({
-      url: "https://api.graphify.com/mcp",
-      reachable: true,
-      status: 401,
-      authHint: "oauth-likely",
-      authorizationMetadataUrl:
-        "https://api.graphify.com/.well-known/oauth-protected-resource",
-    });
-  });
-
-  it("classifies a plain Bearer challenge as credential-likely without inventing OAuth", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", {
-      status: 401,
-      headers: { "WWW-Authenticate": "Bearer realm=\"mcp\"" },
-    })));
-
-    await expect(analyzeRemoteMcpEndpoint("https://mcp.example.com/mcp")).resolves.toMatchObject({
-      reachable: true,
-      status: 401,
-      authHint: "credential-likely",
-    });
-  });
-
-  it("keeps endpoint analysis non-destructive when the probe cannot connect", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
-
-    await expect(analyzeRemoteMcpEndpoint("https://offline.example/mcp")).resolves.toMatchObject({
-      reachable: false,
-      status: null,
-      authHint: "none-or-unknown",
-      note: "network down",
-    });
   });
 
   it("parses a dictionary-form catalog", () => {

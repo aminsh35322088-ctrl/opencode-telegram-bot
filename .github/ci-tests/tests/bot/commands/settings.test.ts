@@ -5,7 +5,7 @@ describe("settings UI", () => {
   it("builds the current settings menu", () => {
     const view = buildSettingsMenuView();
     expect(view.text).toContain("Settings");
-    expect(view.keyboard.inline_keyboard).toHaveLength(5);
+    expect(view.keyboard.inline_keyboard).toHaveLength(6);
   });
 
   it("exposes compact output in appearance settings", () => {

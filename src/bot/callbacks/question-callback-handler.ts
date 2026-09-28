@@ -9,7 +9,6 @@ import {
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
-import { cancelPendingExtensionAddForQuestion } from "../../app/services/extension-ensure-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { alert, cancelPrompt } from "./feedback.js";
@@ -147,14 +146,6 @@ async function rejectPendingQuestion(reason: string): Promise<void> {
 }
 
 async function handleCancelPoll(ctx: Context): Promise<void> {
-  const session = getCurrentSession();
-  const question = questionManager.getCurrentQuestion();
-  if (session?.id && question) {
-    cancelPendingExtensionAddForQuestion({
-      sessionId: session.id,
-      question: { header: question.header, question: question.question },
-    });
-  }
   await rejectPendingQuestion("user_cancelled");
   questionManager.cancel();
   clearQuestionInteraction("question_cancelled");

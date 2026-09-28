@@ -14,33 +14,12 @@ import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineM
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { handleImageModelSettingsCallback } from "../menus/image-model-menu.js";
 import { handleVoiceModelSettingsCallback } from "../menus/voice-model-menu.js";
-import { toggleFreeModelSources } from "../../app/services/free-model-source-service.js";
-import { applyAiChanges } from "../commands/providers-command.js";
-import {
-  buildActionsSettingsView,
-  buildExtensionDetailView,
-  buildExtensionsSettingsView,
-  buildGithubSettingsView,
-  resolveExtensionRef,
-  resolveGeneratedActionRef,
-  SETTINGS_ACTIONS_CALLBACK,
-  SETTINGS_ACTION_TOGGLE_PREFIX,
-  SETTINGS_EXTENSION_REMOVE_PREFIX,
-  SETTINGS_EXTENSION_SELECT_PREFIX,
-  SETTINGS_EXTENSIONS_CALLBACK,
-  SETTINGS_GITHUB_CALLBACK,
-  SETTINGS_MORE_CALLBACK,
-} from "../menus/extension-settings-menu.js";
-import { removeExtension } from "../../app/services/extension-registry-service.js";
-import { setGeneratedActionEnabled, listGeneratedActions } from "../../app/services/generated-action-store.js";
-import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 
 import {
   buildDefaultModelsSettingsView,
   buildExperimentalSettingsView,
   SETTINGS_EXPERIMENTAL_CALLBACK,
   SETTINGS_FREE_DETECTION_CALLBACK,
-  SETTINGS_FREE_SOURCES_CALLBACK,
   buildAdvancedSettingsView,
   buildAppearanceSettingsView,
   buildContextSettingsView,
@@ -97,7 +76,6 @@ import {
   SETTINGS_MEMORY_DELETE_PREFIX,
   buildMemoryClearConfirmationView,
   buildMemorySettingsView,
-  buildMoreSettingsView,
 } from "../menus/settings-menu.js";
 
 import { factoryReset, resetHistory } from "../../app/services/telegram-reset-service.js";
@@ -148,44 +126,6 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       return await handleVoiceModelSettingsCallback(ctx, callbackData);
     }
 
-    if (callbackData.startsWith(SETTINGS_EXTENSION_SELECT_PREFIX)) {
-      const projectDirectory = getCurrentSessionDirectory();
-      const id = await resolveExtensionRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_SELECT_PREFIX.length));
-      await ctx.answerCallbackQuery().catch(() => {});
-      await renderSettingsView(ctx, id ? await buildExtensionDetailView(projectDirectory, id) : await buildExtensionsSettingsView(projectDirectory), "back");
-      return true;
-    }
-
-    if (callbackData.startsWith(SETTINGS_EXTENSION_REMOVE_PREFIX)) {
-      const projectDirectory = getCurrentSessionDirectory();
-      const id = await resolveExtensionRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_REMOVE_PREFIX.length));
-      if (!id) {
-        await ctx.answerCallbackQuery({ text: "Extension not found", show_alert: true }).catch(() => {});
-        return true;
-      }
-      const result = await removeExtension(projectDirectory, id);
-      await ctx.answerCallbackQuery({ text: result.removed ? "Extension removed" : "Extension was already absent" }).catch(() => {});
-      await renderSettingsView(ctx, await buildExtensionsSettingsView(projectDirectory), "back");
-      return true;
-    }
-
-    if (callbackData.startsWith(SETTINGS_ACTION_TOGGLE_PREFIX)) {
-      const id = await resolveGeneratedActionRef(callbackData.slice(SETTINGS_ACTION_TOGGLE_PREFIX.length));
-      if (!id) {
-        await ctx.answerCallbackQuery({ text: "Action not found", show_alert: true }).catch(() => {});
-        return true;
-      }
-      const current = (await listGeneratedActions()).find((item) => item.id === id);
-      if (!current) {
-        await ctx.answerCallbackQuery({ text: "Action not found", show_alert: true }).catch(() => {});
-        return true;
-      }
-      await setGeneratedActionEnabled(id, !current.enabled);
-      await ctx.answerCallbackQuery({ text: current.enabled ? "Action disabled" : "Action enabled" }).catch(() => {});
-      await renderSettingsView(ctx, await buildActionsSettingsView(), "back");
-      return true;
-    }
-
     switch (callbackData) {
       // Topic Settings keeps its per-topic model selector. Global Settings uses the unified Default Models hub.
       case SETTINGS_TOPIC_MODELS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicModelsSettingsView(), "back"); return true;
@@ -197,27 +137,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_APPEARANCE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAppearanceSettingsView(), "both"); return true;
       case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "both"); return true;
       case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "both"); return true;
-      case SETTINGS_GITHUB_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, await buildGithubSettingsView(), "back"); return true;
-      case SETTINGS_EXTENSIONS_CALLBACK: {
-        await ctx.answerCallbackQuery();
-        await renderSettingsView(ctx, await buildExtensionsSettingsView(getCurrentSessionDirectory()), "back");
-        return true;
-      }
-      case SETTINGS_ACTIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, await buildActionsSettingsView(), "back"); return true;
-      case SETTINGS_MORE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMoreSettingsView(), "back"); return true;
       case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
-      case SETTINGS_FREE_SOURCES_CALLBACK: {
-        const result = await toggleFreeModelSources();
-        if (!result.success) {
-          await ctx.answerCallbackQuery({ text: "Free model source runtime could not start.", show_alert: true });
-          return true;
-        }
-        const reloadNotice = await applyAiChanges();
-        if (reloadNotice) logger.warn("[FreeModelSources] OpenCode reload reported a warning");
-        await ctx.answerCallbackQuery({ text: result.enabled ? "Free Model Sources enabled" : "Free Model Sources disabled" });
-        await renderSettingsView(ctx, buildExperimentalSettingsView(), "back");
-        return true;
-      }
       case SETTINGS_FREE_DETECTION_CALLBACK: {
         await ctx.answerCallbackQuery();
         const enabled = !getFreeModelDetectionEnabled();

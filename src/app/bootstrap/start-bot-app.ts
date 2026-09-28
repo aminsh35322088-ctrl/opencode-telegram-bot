@@ -7,14 +7,12 @@ import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
 import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
-import { migrateLegacyCustomProviderCredentials, syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
+import { syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeGithubIntegration } from "../services/github-integration-service.js";
+import { initializeRailwayIntegration } from "../services/railway-integration-service.js";
 import { initializeTailscaleIntegration, stopTailscaleIntegration } from "../services/tailscale-integration-service.js";
 import { cleanupLegacyUserConfiguration } from "../services/persistent-state-registry.js";
-import { migrateBundledExtensionsToManagedState } from "../services/extension-defaults-service.js";
-import { listStoredExtensions } from "../services/extension-store.js";
-import { migrateLegacyImageAiCredentials } from "../services/image-ai-provider-service.js";
 import { getRuntimeMode } from "../../runtime/mode.js";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { clearServiceStateFile } from "../../runtime/service/manager.js";
@@ -25,7 +23,6 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
-import { initializeFreeModelSources, migrateLegacyFreeModelSourceCredentials, stopFreeModelSources } from "../services/free-model-source-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -83,10 +80,6 @@ export async function startBotApp(): Promise<void> {
   logger.info(`Allowed User ID: ${config.telegram.allowedUserId}`);
   logger.debug(`[Runtime] Application start mode: ${mode}`);
   await cleanupLegacyUserConfiguration();
-  const extensionMigration = await migrateBundledExtensionsToManagedState();
-  if (extensionMigration.seeded > 0) {
-    logger.info(`[Extensions] Migrated bundled runtime Extensions into bot state: seeded=${extensionMigration.seeded}`);
-  }
 
   let serviceStateCleared = false;
   const clearManagedServiceState = async (): Promise<void> => {
@@ -131,19 +124,6 @@ export async function startBotApp(): Promise<void> {
   process.on("uncaughtException", uncaughtExceptionHandler);
 
   await loadSettings();
-  await migrateLegacyFreeModelSourceCredentials().catch((error) => {
-    logger.warn("[FreeModelSources] Could not migrate legacy credentials into Credential Vault", error);
-    return 0;
-  });
-  await migrateLegacyImageAiCredentials().catch((error) => {
-    logger.warn("[ImageAI] Could not migrate legacy credentials into Credential Vault", error);
-    return 0;
-  });
-  const freeModelSourcesReady = await initializeFreeModelSources().catch((error) => {
-    logger.warn("[FreeModelSources] Startup initialization failed; continuing without experimental free sources", error);
-    return false;
-  });
-  logger.info(`[FreeModelSources] ${freeModelSourcesReady ? "ready" : "disabled/unavailable"}`);
   await reconcileOrphanedTopicState();
   const githubConfigured = await initializeGithubIntegration().catch((error) => {
     logger.warn(
@@ -153,10 +133,14 @@ export async function startBotApp(): Promise<void> {
     return false;
   });
   logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
-  await migrateLegacyCustomProviderCredentials().catch((error) => {
-    logger.warn("[CustomProvider] Could not migrate legacy provider credentials; continuing with legacy compatibility", error);
-    return 0;
+  const railwayConfigured = await initializeRailwayIntegration().catch((error) => {
+    logger.warn(
+      "[RailwayIntegration] Could not initialize stored Railway integration; continuing without Railway integration",
+      error,
+    );
+    return false;
   });
+  logger.info(`[RailwayIntegration] ${railwayConfigured ? "configured" : "not configured"}`);
   const tailscaleConnected = await initializeTailscaleIntegration().catch((error) => {
     logger.warn("[Tailscale] Could not initialize stored Tailnet integration; continuing without Tailnet access", error);
     return false;
@@ -164,13 +148,8 @@ export async function startBotApp(): Promise<void> {
   logger.info(`[Tailscale] ${tailscaleConnected ? "connected" : "not connected"}`);
   try {
     process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig();
-    const managedPlugins = (await listStoredExtensions())
-      .filter((extension) => extension.resource.kind === "plugin").length;
-    logger.info(
-      `[Extensions] Managed OpenCode config ready: path=${process.env.OPENCODE_CONFIG}, plugins=${managedPlugins}`,
-    );
   } catch (error) {
-    logger.warn("[CustomProvider] Could not prepare managed OpenCode config; continuing without it", error);
+    logger.warn("[CustomProvider] Could not prepare provider config; continuing without it", error);
   }
   startModelCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
@@ -239,7 +218,6 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
-    void stopFreeModelSources().catch((error) => logger.warn("[FreeModelSources] Failed to stop OmniRouter cleanly", error));
     void stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     shutdownTimeout = setTimeout(() => {
       logger.warn(`[App] Shutdown did not finish in ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit.`);
@@ -292,7 +270,6 @@ export async function startBotApp(): Promise<void> {
     cleanupBotRuntime("app_shutdown_complete");
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
-    await stopFreeModelSources().catch((error) => logger.warn("[FreeModelSources] Failed to stop OmniRouter cleanly", error));
     await stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     await clearManagedServiceState().catch((error) =>
       logger.warn("[App] Failed to clear managed service state", error),

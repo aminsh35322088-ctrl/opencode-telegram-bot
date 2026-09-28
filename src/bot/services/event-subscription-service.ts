@@ -64,7 +64,6 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { clearPausedSession, isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { ResponseStreamer, type StreamingMessagePayload } from "../streaming/response-streamer.js";
 import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
-import { presentPendingExtensionAutomation } from "./extension-automation-ui.js";
 import { RunningToolTracker, type RunningToolTick } from "../streaming/running-tool-tracker.js";
 import { CompactProgressStreamer } from "../streaming/compact-progress-streamer.js";
 import {
@@ -91,7 +90,6 @@ import { dispatchNextQueuedPrompt } from "../handlers/prompt-queue-dispatch.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
-import { isQwenRiskControlError, repairQwenGuestAccess } from "../../app/services/free-model-source-service.js";
 import { updateTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import {
   backgroundSessionTracker,
@@ -367,7 +365,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           throw error;
         });
       },
-      resolveRunGeneration: (sessionId) => assistantRunState.getRunGeneration(sessionId),
     });
   }
 
@@ -402,10 +399,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
   private getLiveToolPrefix(callId: string): string {
     return `${RUNNING_ICON}${callId}`;
-  }
-
-  private getCompletedToolPrefix(callId: string): string {
-    return `done:${callId}`;
   }
 
   private handleRunningToolTick(tick: RunningToolTick): void {
@@ -924,21 +917,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         markToolCallStarted(toolInfo.sessionId, toolInfo.callId);
       }
 
-      // Extension auth UI is session-routed and must not depend on the global
-      // foreground session. In multi-Topic operation another Topic may be
-      // current while this tool completes; dropping the presentation here would
-      // strand OAuth/API-key setup and leak the raw auth flow back to the model.
-      if (status === "completed" && this.botInstance) {
-        const chatId = this.getChatIdForSession(toolInfo.sessionId);
-        if (chatId !== null) {
-          void presentPendingExtensionAutomation(
-            this.sessionScopedApi(toolInfo.sessionId),
-            chatId,
-            toolInfo.sessionId,
-          ).catch((error) => logger.warn("[Extensions] Failed to present pending automation UI", error));
-        }
-      }
-
       if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
         logger.debug(`[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
         return;
@@ -1055,9 +1033,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       try {
         const message = formatToolInfo(toolInfo);
         if (message) {
-          this.toolCallStreamer.replaceByPrefix(
+          this.toolCallStreamer.append(
             toolInfo.sessionId,
-            this.getCompletedToolPrefix(toolInfo.callId),
             this.appendToolDuration(message, toolInfo.sessionId, toolInfo.callId),
             this.getToolStreamKey(toolInfo.tool),
           );
@@ -1078,12 +1055,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       const currentSession = getCurrentSession();
       if (!currentSession || currentSession.id !== sessionId) {
-        return;
-      }
-
-      if (subagents.length === 0) {
-        this.subagentSnapshots.delete(sessionId);
-        this.runningToolTracker.setHeartbeatActive(sessionId, false);
         return;
       }
 
@@ -1530,18 +1501,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       const currentSession = getCurrentSession();
       if (!currentSession || currentSession.id !== sessionId) {
         return;
-      }
-
-      if (isQwenRiskControlError(message)) {
-        logger.warn(`[FreeModelSources] Qwen risk-control retry detected; refreshing Baxia headers: session=${sessionId}`);
-        try {
-          const repair = await repairQwenGuestAccess(true);
-          logger.info(
-            `[FreeModelSources] Qwen retry refresh completed: session=${sessionId} ok=${repair.ok} verified=${repair.verified} runtimeUsable=${repair.runtimeUsable ?? "n/a"}`,
-          );
-        } catch (error) {
-          logger.warn(`[FreeModelSources] Qwen retry refresh failed: session=${sessionId}`, error);
-        }
       }
 
       if (isCompactProgressMode()) {

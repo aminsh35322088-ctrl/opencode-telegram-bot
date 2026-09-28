@@ -16,7 +16,6 @@ interface ToolCallStreamerOptions {
   sendText: (sessionId: string, text: string) => Promise<number>;
   editText: (sessionId: string, telegramMessageId: number, text: string) => Promise<void>;
   deleteText: (sessionId: string, telegramMessageId: number) => Promise<void>;
-  resolveRunGeneration?: (sessionId: string) => number | null;
 }
 
 interface StreamEntry {
@@ -27,7 +26,6 @@ interface StreamEntry {
 interface StreamState {
   key: ToolStreamKey;
   sessionId: string;
-  runGeneration: number | null;
   entries: StreamEntry[];
   latestParts: string[];
   lastSentParts: string[];
@@ -122,7 +120,6 @@ export class ToolCallStreamer {
   private readonly sendText: ToolCallStreamerOptions["sendText"];
   private readonly editText: ToolCallStreamerOptions["editText"];
   private readonly deleteText: ToolCallStreamerOptions["deleteText"];
-  private readonly resolveRunGeneration: NonNullable<ToolCallStreamerOptions["resolveRunGeneration"]>;
   private readonly states: Map<string, StreamState> = new Map();
   private readonly allStates: Set<StreamState> = new Set();
 
@@ -131,7 +128,6 @@ export class ToolCallStreamer {
     this.sendText = options.sendText;
     this.editText = options.editText;
     this.deleteText = options.deleteText;
-    this.resolveRunGeneration = options.resolveRunGeneration ?? (() => null);
   }
 
   private resolveThrottleMs(sessionId: string): number {
@@ -266,15 +262,8 @@ export class ToolCallStreamer {
     streamKey: ToolStreamKey = DEFAULT_STREAM_KEY,
   ): StreamState {
     const stateId = this.getStateId(sessionId, streamKey);
-    const runGeneration = this.resolveRunGeneration(sessionId);
     const existing = this.states.get(stateId);
-    if (existing && existing.runGeneration !== runGeneration) {
-      this.cancelState(existing);
-      this.removeState(existing);
-      logger.debug(
-        `[ToolCallStreamer] Retired previous run stream: session=${sessionId}, key=${streamKey}, previousGeneration=${existing.runGeneration ?? "none"}, generation=${runGeneration ?? "none"}`,
-      );
-    } else if (existing && !existing.isBroken && !existing.cancelled && !existing.isBreaking) {
+    if (existing && !existing.isBroken && !existing.cancelled && !existing.isBreaking) {
       return existing;
     }
 
@@ -286,7 +275,6 @@ export class ToolCallStreamer {
     const state: StreamState = {
       key: streamKey,
       sessionId,
-      runGeneration,
       entries: [],
       latestParts: [],
       lastSentParts: [],
@@ -360,19 +348,7 @@ export class ToolCallStreamer {
     this.allStates.delete(state);
   }
 
-  private isStateCurrent(state: StreamState): boolean {
-    const stateId = this.getStateId(state.sessionId, state.key);
-    return (
-      this.states.get(stateId) === state &&
-      this.resolveRunGeneration(state.sessionId) === state.runGeneration
-    );
-  }
-
   private async syncState(state: StreamState, reason: string): Promise<boolean> {
-    if (!this.isStateCurrent(state)) {
-      return false;
-    }
-
     if (state.cancelled) {
       return false;
     }
@@ -382,7 +358,7 @@ export class ToolCallStreamer {
     }
 
     let rateLimitRetries = 0;
-    while (!state.isBroken && !state.cancelled && this.isStateCurrent(state)) {
+    while (!state.isBroken && !state.cancelled) {
       const parts = state.latestParts;
       const unchanged =
         parts.length === state.lastSentParts.length &&
@@ -452,7 +428,7 @@ export class ToolCallStreamer {
 
   private async syncMessages(state: StreamState, parts: string[]): Promise<void> {
     for (let index = 0; index < parts.length; index++) {
-      if (state.cancelled || !this.isStateCurrent(state)) {
+      if (state.cancelled) {
         return;
       }
 
@@ -474,7 +450,7 @@ export class ToolCallStreamer {
     }
 
     for (let index = state.telegramMessageIds.length - 1; index >= parts.length; index--) {
-      if (state.cancelled || !this.isStateCurrent(state)) {
+      if (state.cancelled) {
         return;
       }
 

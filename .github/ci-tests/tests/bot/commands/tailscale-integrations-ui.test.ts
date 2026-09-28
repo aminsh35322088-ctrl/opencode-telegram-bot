@@ -19,6 +19,15 @@ vi.mock("../../../src/app/services/github-integration-service.js", () => ({
   setActiveGithubAccount: async () => ({ id: "github", name: "GitHub" }),
 }));
 
+vi.mock("../../../src/app/services/railway-integration-service.js", () => ({
+  addRailwayAccount: async () => ({ id: "railway", name: "Railway" }),
+  getActiveRailwayAccount: async () => null,
+  listRailwayAccounts: async () => [],
+  removeRailwayAccount: async () => false,
+  setActiveRailwayAccount: async () => ({ id: "railway", name: "Railway" }),
+  validateRailwayToken: async () => ({ valid: false, reason: "invalid" }),
+}));
+
 vi.mock("../../../src/app/services/ssh-key-service.js", () => ({
   getManagedSshPublicKey: mocks.publicKey,
 }));

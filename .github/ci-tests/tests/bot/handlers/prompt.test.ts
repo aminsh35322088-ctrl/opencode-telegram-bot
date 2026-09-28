@@ -91,7 +91,6 @@ vi.mock("../../../src/app/managers/summary-aggregation-manager.js", () => ({
     setSession: mocked.setSessionSummaryMock,
     setBotAndChatId: mocked.setBotAndChatIdMock,
     clear: vi.fn(),
-    beginRun: vi.fn(),
   },
 }));
 

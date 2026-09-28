@@ -27,7 +27,6 @@ import { resolvePendingAttachments } from "../../app/services/prompt-attachment-
 import { startSessionStallWatchdog, stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
-import { ensureQwenGuestAccessFresh } from "../../app/services/free-model-source-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
 
 export function clearPromptResponseMode(_sessionId: string): void {}
@@ -132,18 +131,6 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = modelOverride ?? getStoredModel();
-    if (storedModel.providerID === "experimental-qwen-web") {
-      try {
-        const refresh = await ensureQwenGuestAccessFresh();
-        if (refresh) {
-          logger.info(
-            `[FreeModelSources] Qwen preflight refresh completed: ok=${refresh.ok} verified=${refresh.verified} runtimeUsable=${refresh.runtimeUsable ?? "n/a"}`,
-          );
-        }
-      } catch (error) {
-        logger.warn("[FreeModelSources] Qwen preflight refresh failed; allowing OpenCode to apply normal provider handling", error);
-      }
-    }
     const parts: Array<TextPartInput | FilePartInput> = [];
     if (text.trim()) parts.push({ type: "text", text });
     parts.push(...fileParts);
@@ -163,7 +150,6 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
-    summaryAggregator.beginRun(currentSession.id);
     startSessionStallWatchdog({
       sessionId: currentSession.id,
       directory: currentSession.directory,

@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const state = vi.hoisted(() => ({ enabled: false, sourcesEnabled: false, revision: "a", models: [] as any[], prices: new Map(), topic: undefined as unknown }));
+const state = vi.hoisted(() => ({ enabled: false, revision: "a", models: [] as any[], prices: new Map(), topic: undefined as unknown }));
 vi.mock("../../../src/app/stores/settings-store.js", async (original) => ({
   ...await original<typeof import("../../../src/app/stores/settings-store.js")>(),
   getFreeModelDetectionEnabled: () => state.enabled,
-  getFreeModelSourcesEnabled: () => state.sourcesEnabled,
   getCurrentTopicSettings: () => state.topic,
 }));
 vi.mock("../../../src/app/services/model-price-service.js", () => ({
@@ -15,22 +14,24 @@ vi.mock("../../../src/app/services/model-selection-service.js", async (original)
   getProviderModels: async () => state.models,
 }));
 vi.mock("../../../src/app/services/model-preferences-service.js", () => ({ getFavoriteModels: async () => [], getRecentModels: async () => [] }));
-import { buildMoreSettingsView, buildExperimentalSettingsView, SETTINGS_EXPERIMENTAL_CALLBACK, SETTINGS_ADVANCED_CALLBACK } from "../../../src/bot/menus/settings-menu.js";
+import { buildSettingsMenuView, buildExperimentalSettingsView, SETTINGS_EXPERIMENTAL_CALLBACK, SETTINGS_ADVANCED_CALLBACK } from "../../../src/bot/menus/settings-menu.js";
 import { buildModelCenterProvider, resolveModelCenterAction, resolveModelCenterFavoriteTarget } from "../../../src/bot/menus/model-center-menu.js";
 import { clearProviderPriceViews, getProviderPriceView } from "../../../src/bot/menus/provider-price-view.js";
 import { getProviderModelPrices } from "../../../src/app/services/model-price-service.js";
 const provider = { id: "p", name: "Provider", modelCount: 10 };
 beforeEach(() => {
-  clearProviderPriceViews(); state.enabled = false; state.sourcesEnabled = false; state.revision = "a"; state.topic = undefined;
+  clearProviderPriceViews(); state.enabled = false; state.revision = "a"; state.topic = undefined;
   state.models = Array.from({ length: 10 }, (_, i) => ({ providerID: "p", modelID: "model-" + i, name: "Model " + i }));
   state.prices = new Map([["model-0", { group: "paid" }], ["model-9", { group: "free" }]]);
 });
 describe("minimal experimental price UI", () => {
-  it("places Experimental immediately above Advanced in More Settings", () => {
-    const rows = buildMoreSettingsView().keyboard.inline_keyboard;
+  it("places Experimental immediately above Advanced in global settings", () => {
+    const rows = buildSettingsMenuView().keyboard.inline_keyboard;
     const advanced = rows.findIndex((row) => row.some((b: any) => b.callback_data === SETTINGS_ADVANCED_CALLBACK));
     expect((rows[advanced - 1][0] as any).callback_data).toBe(SETTINGS_EXPERIMENTAL_CALLBACK);
     expect(buildExperimentalSettingsView().keyboard.inline_keyboard[0][0].text).toContain("OFF");
+    state.topic = { model: { providerID: "p", modelID: "m" } };
+    expect(buildSettingsMenuView().keyboard.inline_keyboard.flat().some((b: any) => b.callback_data === SETTINGS_EXPERIMENTAL_CALLBACK)).toBe(false);
   });
   it("keeps the provider page simple and hides internal verification states", async () => {
     const view = await buildModelCenterProvider(provider, 0);

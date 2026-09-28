@@ -78,15 +78,6 @@ Commit and push early — GitHub is the durable store, the worktree is not. Afte
 git -C /data/opencode/opencode-telegram-bot worktree remove <path> && git worktree prune
 ```
 
-### Runtime Extensions are configuration, not repository changes
-
-- Installing, updating, removing, or authenticating a bot Extension (OpenCode plugin, MCP server, Skill, model provider, or Integration) is a runtime configuration operation.
-- Use the bot-owned Extension/Actions services and persistent app state. OpenCode plugin configuration is materialized into the bot-managed OpenCode config overlay under the bot data directory.
-- Never edit project/repository `opencode.json`, `package.json`, lockfiles, `.opencode/`, source code, or Git history merely to install/update/remove an Extension.
-- Never commit, push, open a PR, or deploy just to apply an Extension runtime change unless the user explicitly asks to change repository source.
-- A project directory may be used only as a scope/working-context identifier for an Extension. It is not authorization to mutate that project.
-- Git-backed plugins must be pinned to an explicit tag or commit; local/project filesystem plugin paths are rejected by the managed Extension flow.
-
 ### Surgical changes
 
 Touch only what is necessary. Do not refactor unrelated code or delete unrelated dead code.

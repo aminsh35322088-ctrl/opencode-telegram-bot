@@ -8,7 +8,6 @@ export interface AppState {
   settings?: Record<string, unknown>;
   modelPreferences?: Record<string, unknown>;
   customProviders?: Record<string, unknown>;
-  freeModelSources?: Record<string, unknown>;
   imageAi?: Record<string, unknown>;
   integrations?: Record<string, unknown>;
   mcpCredentials?: Record<string, unknown>;

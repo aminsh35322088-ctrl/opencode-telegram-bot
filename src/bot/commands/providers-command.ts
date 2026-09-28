@@ -13,22 +13,10 @@ import { buildSettingsMenuView } from "../menus/settings-menu.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
-import { getFreeModelSourcesEnabled, getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
-import {
-  cancelFreebuffAutoConnect,
-  checkFreebuffAutoConnect,
-  clearFreeModelSourceCredential,
-  getPendingFreebuffAutoConnect,
-  listFreeModelSourceConnections,
-  restartFreeModelSources,
-  repairQwenGuestAccess,
-  setFreeModelSourceCredential,
-  startFreebuffAutoConnect,
-  type FreeModelSourceID,
-} from "../../app/services/free-model-source-service.js";
+import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 
-type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key" | "free-source-secret";
-interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; freeSourceID?: FreeModelSourceID; messageId: number; expires: number; busy?: boolean; }
+type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
+interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
 function messageId(ctx: Context): number | undefined { const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined; return canonical ?? ctx.callbackQuery?.message?.message_id; }
 function wizardKeyboard() { return new InlineKeyboard().text("✖ Cancel", "provider:cancel"); }
@@ -79,163 +67,13 @@ async function restartOpenCodeAfterProviderChange(): Promise<void> {
   }
   await reconcileStoredModelSelection({ forceCatalogRefresh: true });
 }
-export async function applyAiChanges(): Promise<string> {
+async function applyAiChanges(): Promise<string> {
   try { await restartOpenCodeAfterProviderChange(); return ""; }
   catch { logger.warn("[Providers] Settings saved, but OpenCode refresh failed"); return "\n⚠️ Settings are saved. OpenCode could not reload them; restart the bot to apply."; }
 }
 function compactButtonLabel(value: string, max = 42): string {
   return value.length <= max ? value : value.slice(0, Math.max(1, max - 1)) + "…";
 }
-
-function freeSourcePrompt(sourceID: FreeModelSourceID): string {
-  switch (sourceID) {
-    case "gemini":
-      return "✨ Gemini Web\n\nOptional account cookies\nSend the cookie header containing __Secure-1PSID and, when available, __Secure-1PSIDTS.\n\nGuest mode already works without this.\n🔒 Your message will be deleted immediately.";
-    case "qwen":
-      return "🦞 Qwen Web\n\nAccount token\nSend the value of the chat.qwen.ai cookie named token.\n\nGuest mode is network-dependent and is commonly rejected from datacenter hosts.\n🔒 Your message will be deleted immediately.";
-    case "glm":
-      return "🧠 GLM Web (Z.AI)\n\nSend one Z.AI account token used by the bridge (ZAI_TOKEN).\n\nThis source needs account/device authorization for chat.\n🔒 Your message will be deleted immediately.";
-    case "ds":
-      return "🐋 DeepSeek Web\n\nSend one DeepSeek userToken value from your own logged-in chat.deepseek.com session.\n\nDeepSeek Web has no guest mode.\n🔒 Your message will be deleted immediately.";
-    case "freebuff":
-      return "🆓 Freebuff · Manual fallback\n\nNormally use the automatic browser login. If that flow is unavailable, send one Freebuff auth token from your own account here.\n\nThe integration uses one account/seat and respects upstream limits.\n🔒 Your message will be deleted immediately.";
-  }
-}
-
-
-async function renderFreebuffAutoConnect(ctx: Context, id?: number, notice = ""): Promise<void> {
-  const pending = getPendingFreebuffAutoConnect();
-  if (!pending) {
-    await renderFreeModelSources(ctx, id, notice || "⌛ Freebuff login session expired. Start the connection again.\n\n");
-    return;
-  }
-  const keyboard = new InlineKeyboard()
-    .url("🌐 Open Freebuff Login", pending.loginUrl).row()
-    .text("✅ I approved · Check connection", "provider:freebuff-check").row()
-    .text("✍️ Paste token manually", "provider:freebuff-manual").row()
-    .text("✖ Cancel login", "provider:freebuff-cancel").row()
-    .text("← Free Model Sources", "provider:free-sources");
-
-  await render(ctx, [
-    notice,
-    "🆓 Freebuff · Automatic connection",
-    "",
-    "1. Open the official Freebuff login link below.",
-    "2. Sign in / approve the CLI connection on freebuff.com.",
-    "3. Return here and tap “I approved · Check connection”.",
-    "",
-    "The bot then retrieves the account token from Freebuff's official login status endpoint, verifies it against Codebuff, saves it privately, and reloads OmniRouter/OpenCode.",
-    "",
-    "No token copy/paste is required.",
-  ].filter(Boolean).join("\n"), keyboard, id);
-}
-
-async function beginFreebuffAutoConnect(ctx: Context, id?: number): Promise<void> {
-  try {
-    await startFreebuffAutoConnect();
-    await renderFreebuffAutoConnect(ctx, id);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Freebuff login could not start";
-    await renderFreeModelSources(ctx, id, `❌ Automatic Freebuff login could not start.\n${message}\n\nManual token setup is still available by opening Freebuff again.\n\n`);
-  }
-}
-
-async function renderQwenConnect(ctx: Context, id?: number, notice = ""): Promise<void> {
-  const keyboard = new InlineKeyboard()
-    .text("🛠 Retry automatic guest repair", "provider:qwen-auto").row()
-    .text("🔐 Connect Qwen account", "provider:qwen-manual").row()
-    .text("← Free Model Sources", "provider:free-sources");
-
-  await render(ctx, [
-    notice,
-    "🦞 Qwen Web",
-    "",
-    "The bot first tries guest mode automatically.",
-    "If this runtime is challenged by Qwen/Baxia, it opens the bundled headless Chromium, captures the browser Baxia headers, stores them privately under /data, and live-tests Qwen again.",
-    "",
-    "You only need to provide the Qwen account token if the repaired guest session is still rejected by upstream.",
-  ].filter(Boolean).join("\n"), keyboard, id);
-}
-
-async function runQwenAutoRepair(ctx: Context, id?: number): Promise<void> {
-  await render(ctx,
-    "🦞 Qwen Web\n\n🛠 Repairing guest access…\n\nUsing the bundled Chromium to refresh Qwen/Baxia browser headers and then running a live Qwen probe.",
-    new InlineKeyboard().text("← Free Model Sources", "provider:free-sources"),
-    id,
-  );
-
-  const result = await repairQwenGuestAccess(true);
-  if (result.runtimeUsable) {
-    const notice = await applyAiChanges();
-    await renderFreeModelSources(ctx, id, `✅ Qwen guest access repaired automatically.${notice}\n\n`);
-    return;
-  }
-
-  const reason = result.runtimeReason || result.reason || "Qwen still rejected guest access after automatic browser repair.";
-  await renderQwenConnect(ctx, id, `⚠️ Automatic Qwen guest repair did not unlock this host.\n${reason}\n\n`);
-}
-
-function freeSourceStatus(source: Awaited<ReturnType<typeof listFreeModelSourceConnections>>[number]): { button: string; line: string } {
-  if (source.runtimeUsable && source.runtimeMode === "account") return { button: "Connected", line: "✅ Connected · live runtime check passed" };
-  if (source.runtimeUsable && source.runtimeMode === "guest") return { button: "Automatic guest", line: "⚡ Guest access verified on this host" };
-
-  if (source.configured && source.runtimeUsable === false) {
-    return { button: "Reconnect", line: "❌ Credential/runtime check failed · reconnect required" };
-  }
-
-  switch (source.id) {
-    case "gemini":
-      return { button: "Automatic guest", line: "⚡ Automatic guest · no input required" };
-    case "freebuff":
-      return { button: "Auto login", line: "🌐 Official browser login · token captured automatically" };
-    case "qwen":
-      if (source.runtimeUsable === false) {
-        return { button: "Auto repair", line: "🛠 Guest rejected · automatic browser repair available" };
-      }
-      return { button: "Auto guest", line: "🔎 Guest access is checked and repaired automatically on this host" };
-    case "glm":
-      return { button: "Account required", line: "🔐 Account/device authorization required" };
-    case "ds":
-      return { button: "Human login required", line: "🔐 Human account login/session required" };
-  }
-}
-
-async function renderFreeModelSources(ctx: Context, id?: number, notice = ""): Promise<void> {
-  const sources = await listFreeModelSourceConnections();
-  const enabled = getFreeModelSourcesEnabled();
-  const keyboard = new InlineKeyboard();
-
-  for (const source of sources) {
-    const state = freeSourceStatus(source);
-    keyboard.text(compactButtonLabel(`🆓 ${source.label} · ${state.button}`), `provider:free-source:${source.id}`).row();
-    if (source.configured) keyboard.text(`🗑 Remove ${source.label} credential`, `provider:free-source-remove:${source.id}`).row();
-  }
-  keyboard.text("← API Connections", "provider:menu");
-
-  const lines = sources.map((source) => `${source.label} · ${freeSourceStatus(source).line}`);
-
-  await render(ctx, [
-    notice,
-    "🆓 Free Model Sources",
-    "",
-    `Runtime · ${enabled ? "Enabled" : "Disabled"}`,
-    "Gemini needs no input. Freebuff uses an official one-click browser login.",
-    "Qwen guest access is live-tested and automatically repaired with the bundled browser when the runtime is challenged by Baxia.",
-    "Only if Qwen still rejects the repaired guest session do we ask for an account token. GLM and DeepSeek still require upstream account/human authorization.",
-    "",
-    ...lines,
-    "",
-    "OpenCode Zen · ✅ Native OpenCode provider (not duplicated here)",
-  ].filter(Boolean).join("\n"), keyboard, id);
-}
-
-async function applyFreeSourceCredentialChange(): Promise<string> {
-  if (!getFreeModelSourcesEnabled()) return "";
-  const restarted = await restartFreeModelSources();
-  if (!restarted) return "\n⚠️ Credential saved, but the experimental free-source runtime could not restart.";
-  return applyAiChanges();
-}
-
 async function renderImageProviders(ctx: Context, id?: number, notice = "") {
   const legacy = await listImageAiProviders();
   const cloudflare = legacy.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
@@ -305,7 +143,6 @@ async function renderProviders(ctx: Context, id?: number, notice = "") {
   }
 
   keyboard.text("➕ Add Provider", "provider:add:general").row();
-  keyboard.text("🆓 Free Model Sources", "provider:free-sources").row();
   keyboard.text("🎙 Transcription · " + (transcription ? "Configured" : "Not set"), "provider:slot:stt").row();
   keyboard.text("🎨 Image APIs · " + (imageAdapters ? imageAdapters + " connected" : "Optional"), "provider:image:engines").row();
   keyboard.text("← Settings", "provider:settings");
@@ -338,78 +175,6 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     const raw = data.slice("provider:slot:".length) as AiCapability;
     const capability: AiCapability = raw === "stt" ? "stt" : "general";
     await renderSlot(ctx, capability, id);
-    return true;
-  }
-  if (data === "provider:free-sources") { await renderFreeModelSources(ctx, id); return true; }
-  if (data === "provider:qwen-auto") {
-    await runQwenAutoRepair(ctx, id);
-    return true;
-  }
-  if (data === "provider:qwen-manual") {
-    await start(ctx, "free-source-secret", freeSourcePrompt("qwen"));
-    const wizard = providerWizard.get();
-    if (wizard) wizard.freeSourceID = "qwen";
-    return true;
-  }
-  if (data === "provider:freebuff-check") {
-    const result = await checkFreebuffAutoConnect();
-    if (result.status === "connected") {
-      const notice = await applyFreeSourceCredentialChange();
-      await renderFreeModelSources(ctx, id, `✅ Freebuff connected automatically${result.account ? " · " + result.account : ""}.${notice}\n\n`);
-      return true;
-    }
-    if (result.status === "pending") {
-      await renderFreebuffAutoConnect(ctx, id, "⏳ Freebuff is still waiting for approval. Finish login in the browser, then check again.\n\n");
-      return true;
-    }
-    if (result.status === "expired") {
-      await renderFreeModelSources(ctx, id, "⌛ Freebuff login session expired. Tap Freebuff to start a fresh login.\n\n");
-      return true;
-    }
-    await renderFreebuffAutoConnect(ctx, id, `❌ Freebuff connection check failed.\n${result.message}\n\n`);
-    return true;
-  }
-  if (data === "provider:freebuff-manual") {
-    await start(ctx, "free-source-secret", freeSourcePrompt("freebuff"));
-    const wizard = providerWizard.get();
-    if (wizard) wizard.freeSourceID = "freebuff";
-    return true;
-  }
-  if (data === "provider:freebuff-cancel") {
-    cancelFreebuffAutoConnect();
-    await renderFreeModelSources(ctx, id, "Freebuff automatic login cancelled.\n\n");
-    return true;
-  }
-  if (data.startsWith("provider:free-source-remove:")) {
-    const sourceID = data.slice("provider:free-source-remove:".length) as FreeModelSourceID;
-    const removed = await clearFreeModelSourceCredential(sourceID);
-    const notice = removed ? await applyFreeSourceCredentialChange() : "";
-    await renderFreeModelSources(ctx, id, removed ? `✅ Credential removed.${notice}\n\n` : "Credential was already absent.\n\n");
-    return true;
-  }
-  if (data.startsWith("provider:free-source:")) {
-    const sourceID = data.slice("provider:free-source:".length) as FreeModelSourceID;
-    const source = (await listFreeModelSourceConnections()).find((item) => item.id === sourceID);
-    if (!source) { await renderFreeModelSources(ctx, id, "❌ Unknown free model source.\n\n"); return true; }
-    if (sourceID === "freebuff" && !source.configured) {
-      await beginFreebuffAutoConnect(ctx, id);
-      return true;
-    }
-    if (sourceID === "gemini" && !source.configured && source.runtimeUsable !== false) {
-      await renderFreeModelSources(ctx, id, "✅ Gemini guest mode needs no credential. It is already available automatically.\n\n");
-      return true;
-    }
-    if (sourceID === "qwen" && !source.configured) {
-      if (source.runtimeUsable === true) {
-        await renderFreeModelSources(ctx, id, "✅ Qwen guest mode passed the live runtime check on this host. No token is needed right now.\n\n");
-      } else {
-        await renderQwenConnect(ctx, id);
-      }
-      return true;
-    }
-    await start(ctx, "free-source-secret", freeSourcePrompt(sourceID));
-    const wizard = providerWizard.get();
-    if (wizard) wizard.freeSourceID = sourceID;
     return true;
   }
   if (data === "provider:image:engines") { await renderImageProviders(ctx, id); return true; }
@@ -484,18 +249,6 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
   let saved = false;
   const guard = () => { if (providerWizard.get() !== s || Date.now() > s.expires) throw new DOMException("Setup cancelled", "AbortError"); };
   try {
-    if (s.step === "free-source-secret") {
-      const sourceID = s.freeSourceID;
-      if (!sourceID) throw new Error("Free model source context is missing");
-      guard();
-      await setFreeModelSourceCredential(sourceID, text);
-      saved = true;
-      const notice = await applyFreeSourceCredentialChange();
-      if (providerWizard.get() !== s) return true;
-      clearProviderWizard();
-      await renderFreeModelSources(ctx, s.messageId, `✅ Free model source credential saved.${notice}\n\n`);
-      return true;
-    }
     if (s.step === "stt-select") {
       const p = (await listCustomProviders()).find(p => p.id === s.providerID && p.capability === "stt");
       if (!p?.models.some(m => m.id === text)) throw new Error("Choose a model returned by this transcription provider");

@@ -31,6 +31,10 @@ const mocks = vi.hoisted(() => ({
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
   }),
+  clearRailwayTokenMock: vi.fn(async () => {
+    delete process.env.RAILWAY_TOKEN;
+    delete process.env.RAILWAY_API_TOKEN;
+  }),
   scheduledHasRunningMock: vi.fn(() => false),
   scheduledClearAllMock: vi.fn(() => true),
 }));
@@ -111,6 +115,9 @@ vi.mock("../../../src/app/services/persistent-state-registry.js", () => ({
 }));
 vi.mock("../../../src/app/services/github-integration-service.js", () => ({
   clearGithubToken: mocks.clearGithubTokenMock,
+}));
+vi.mock("../../../src/app/services/railway-integration-service.js", () => ({
+  clearRailwayToken: mocks.clearRailwayTokenMock,
 }));
 vi.mock("../../../src/app/services/scheduled-task-runtime-service.js", () => ({
   scheduledTaskRuntime: {
@@ -239,9 +246,10 @@ describe("telegram-reset-service", () => {
     expect(mocks.flushAppStateMock).not.toHaveBeenCalled();
     expect(mocks.resetSettingsMock).not.toHaveBeenCalled();
     expect(mocks.clearGithubTokenMock).not.toHaveBeenCalled();
+    expect(mocks.clearRailwayTokenMock).not.toHaveBeenCalled();
   });
 
-  it("clears bot-owned GitHub credentials but preserves host Railway environment on factory reset", async () => {
+  it("clears all integration runtime credentials on a successful factory reset", async () => {
     process.env.GITHUB_TOKEN = "github-a";
     process.env.GH_TOKEN = "github-b";
     process.env.RAILWAY_TOKEN = "railway-a";
@@ -253,7 +261,7 @@ describe("telegram-reset-service", () => {
     expect(mocks.scheduledClearAllMock).toHaveBeenCalledWith("factory_reset");
     expect(process.env.GITHUB_TOKEN).toBeUndefined();
     expect(process.env.GH_TOKEN).toBeUndefined();
-    expect(process.env.RAILWAY_TOKEN).toBe("railway-a");
-    expect(process.env.RAILWAY_API_TOKEN).toBe("railway-b");
+    expect(process.env.RAILWAY_TOKEN).toBeUndefined();
+    expect(process.env.RAILWAY_API_TOKEN).toBeUndefined();
   });
 });
