@@ -51,7 +51,13 @@ export async function editPanelMessage(
   replyMarkup?: InlineKeyboard,
 ): Promise<void> {
   try {
-    await ctx.api.editMessageText(ctx.chat!.id, messageId, text, replyMarkup);
+    // grammy's fourth argument is an options object, not a bare keyboard.
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      messageId,
+      text,
+      replyMarkup ? { reply_markup: replyMarkup } : undefined,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!/message is not modified/i.test(message)) throw error;
