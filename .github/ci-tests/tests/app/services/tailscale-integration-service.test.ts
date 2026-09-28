@@ -149,6 +149,43 @@ esac
     }));
   });
 
+  it("never silently chooses between duplicate live SSH hostnames", async () => {
+    const service = await import("../../../src/app/services/tailscale-integration-service.js");
+    await service.configureTailscale("tskey-auth-test");
+
+    const status = JSON.parse(await fs.readFile(statusFile, "utf8")) as {
+      Peer: Record<string, Record<string, unknown>>;
+    };
+    status.Peer.duplicate = {
+      HostName: "github-exit",
+      DNSName: "github-exit.example.ts.net.",
+      TailscaleIPs: ["100.64.0.99"],
+      Online: true,
+      Tags: ["tag:ssh"],
+      OS: "linux",
+      ID: "node-github-exit-duplicate",
+      sshHostKeys: ["ssh-ed25519 AAAADUPLICATE"],
+    };
+    await fs.writeFile(statusFile, JSON.stringify(status));
+
+    await expect(service.resolveTailscaleSshDevice("github-exit"))
+      .rejects.toThrow(/ambiguous/i);
+    await expect(service.resolveTailscaleSshDevice("100.64.0.99"))
+      .resolves.toEqual(expect.objectContaining({
+        name: "github-exit",
+        ips: ["100.64.0.99"],
+      }));
+
+    status.Peer.duplicate.Online = false;
+    await fs.writeFile(statusFile, JSON.stringify(status));
+    await expect(service.resolveTailscaleSshDevice("github-exit"))
+      .resolves.toEqual(expect.objectContaining({
+        name: "github-exit",
+        ips: ["100.64.0.10"],
+        online: true,
+      }));
+  });
+
   it("never spawns its own daemon and requires the shared socket", async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const service = await import("../../../src/app/services/tailscale-integration-service.js");

@@ -1,14 +1,17 @@
-export const AGENT_ACTION_SOURCES = ["opencode-core", "custom-tool", "plugin", "dynamic-mcp"] as const;
+import { listGeneratedActions } from "./generated-action-store.js";
+
+export const AGENT_ACTION_SOURCES = ["opencode-core", "custom-tool", "plugin", "dynamic-mcp", "generated-extension"] as const;
 export type AgentActionSource = (typeof AGENT_ACTION_SOURCES)[number];
 
 export const AGENT_ACTION_RISKS = ["read", "write", "external", "mutating", "destructive"] as const;
 export type AgentActionRisk = (typeof AGENT_ACTION_RISKS)[number];
 
 export interface AgentActionInvocation {
-  kind: "native-tool" | "action-tool";
+  kind: "native-tool" | "action-tool" | "mcp-tool";
   tool: string;
   actionArgument?: string;
   actionValue?: string;
+  arguments?: Record<string, string>;
 }
 
 export interface AgentActionDefinition {
@@ -43,15 +46,16 @@ export const CUSTOM_TOOL_ACTIONS = {
     "models.providers", "models.list", "models.search", "models.selection", "models.current", "models.refresh", "models.select",
     "agents.list", "agents.current", "agents.select",
     "variants.list", "variants.current", "variants.select",
-    "skills.list", "skills.create", "skills.update", "skills.delete", "skills.import", "commands.list",
-    "mcp.list", "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "mcp.delete",
+    "skills.list", "skills.add", "skills.create", "skills.update", "skills.delete", "commands.list",
+    "mcp.list", "mcp.debug", "mcp.enable", "mcp.rename", "mcp.delete",
+    "extensions.list", "extensions.info", "extensions.ensure", "extensions.remove",
+    "generated-actions.list", "generated-actions.toggle",
     "session.current", "session.messages", "session.latest-assistant", "run.status",
     "tasks.list", "tasks.get", "tasks.parse", "tasks.create", "tasks.delete",
     "settings.get", "settings.set",
     "memory.list", "memory.search", "memory.add", "memory.remove", "memory.clear",
-    "providers.list", "providers.get", "providers.stt-status",
+    "providers.list", "providers.get", "providers.free-policy.get", "providers.free-policy.set", "providers.stt-status",
     "integrations.github.list", "integrations.github.active", "integrations.github.select", "integrations.github.remove",
-    "integrations.railway.list", "integrations.railway.active", "integrations.railway.select", "integrations.railway.remove",
     "version.info",
   ],
   file: ["read", "write", "search", "grep", "info", "delete", "copy", "move"],
@@ -75,7 +79,6 @@ export const CUSTOM_TOOL_ACTIONS = {
   "network-diagnostics": ["dns", "http", "tcp"],
   tailscale: ["status", "devices", "ping", "ssh-public-key"],
   ssh: ["check", "debug", "exec", "upload", "download"],
-  railway: ["whoami", "status", "logs", "variables", "deploy", "deploy-latest"],
   "safe-download": ["download"],
   "send-file": ["send"],
   session: ["current", "messages", "latest-assistant", "fork", "revert", "unrevert", "summarize", "abort", "diff", "todo", "children"],
@@ -97,7 +100,7 @@ const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
   actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
   notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
   "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
-  media: "media", telegram: "telegram-context", "network-diagnostics": "network", tailscale: "remote-access", ssh: "remote-access", railway: "deployment",
+  media: "media", telegram: "telegram-context", "network-diagnostics": "network", tailscale: "remote-access", ssh: "remote-access",
   "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
   "system-diagnostics": "diagnostics",
 };
@@ -117,6 +120,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.variants.select": "Select a validated variant for the current model.",
   "bot.tasks.create": "Create and register a scheduled task using the current worktree, model, and agent.",
   "bot.settings.set": "Update a constrained safe bot setting.",
+  "bot.skills.add": "Analyze a skill source, return a Question-tool preview, and import it after conversational confirmation.",
   "bot.mcp.debug": "Inspect and optionally repair MCP runtime synchronization without exposing credentials.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
   "media.video.prepare": "Extract bounded video keyframes and audio into the current worktree for model analysis.",
@@ -151,16 +155,18 @@ const DESCRIPTIONS: Record<string, string> = {
 const BOT_READ = new Set([
   "capabilities.list", "projects.list", "worktree.context", "models.providers", "models.list", "models.search", "models.selection", "models.current",
   "agents.list", "agents.current", "variants.list", "variants.current", "skills.list", "commands.list", "mcp.list",
+  "extensions.list", "extensions.info", "generated-actions.list",
   "session.current", "session.messages", "session.latest-assistant", "session.diff", "session.todo", "session.children", "run.status", "tasks.list", "tasks.get", "tasks.parse", "settings.get",
-  "memory.list", "memory.search", "providers.list", "providers.get", "providers.stt-status",
-  "integrations.github.list", "integrations.github.active", "integrations.railway.list", "integrations.railway.active", "version.info",
+  "memory.list", "memory.search", "providers.list", "providers.get", "providers.free-policy.get", "providers.stt-status",
+  "integrations.github.list", "integrations.github.active", "version.info",
 ]);
 const BOT_MUTATING = new Set([
-  "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update", "skills.import",
-  "mcp.debug", "mcp.add-local", "mcp.add-remote", "mcp.enable", "mcp.rename", "tasks.create", "settings.set", "memory.add", "memory.remove",
-  "integrations.github.select", "integrations.railway.select",
+  "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update",
+  "skills.add", "mcp.debug", "mcp.enable", "mcp.rename",
+  "extensions.ensure", "generated-actions.toggle", "providers.free-policy.set",
+  "tasks.create", "settings.set", "memory.add", "memory.remove", "integrations.github.select",
 ]);
-const BOT_DESTRUCTIVE = new Set(["skills.delete", "mcp.delete", "tasks.delete", "memory.clear", "integrations.github.remove", "integrations.railway.remove"]);
+const BOT_DESTRUCTIVE = new Set(["skills.delete", "mcp.delete", "extensions.remove", "tasks.delete", "memory.clear", "integrations.github.remove"]);
 
 function customRisk(tool: string, action: string): AgentActionRisk {
   if (tool === "bot") {
@@ -198,7 +204,6 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     if (["click", "fill", "type", "press", "hover", "check", "uncheck", "select", "tab-new", "tab-select", "tab-close", "close"].includes(action)) return "mutating";
     return action === "pdf" ? "write" : "external";
   }
-  if (tool === "railway" && ["deploy", "deploy-latest"].includes(action)) return "mutating";
   if (tool === "session") {
     if (["revert", "abort"].includes(action)) return "destructive";
     if (["fork", "unrevert", "summarize"].includes(action)) return "mutating";
@@ -260,9 +265,9 @@ export function getAgentAction(id: string): AgentActionDefinition | null {
   return AGENT_ACTIONS.find((item) => item.id.toLowerCase() === normalized) ?? null;
 }
 
-export function listAgentActions(filters: AgentActionFilters = {}): AgentActionDefinition[] {
+function filterActions(actions: readonly AgentActionDefinition[], filters: AgentActionFilters): AgentActionDefinition[] {
   const query = filters.query?.trim().toLowerCase();
-  return AGENT_ACTIONS.filter((item) => {
+  return actions.filter((item) => {
     if (filters.tool && item.tool !== filters.tool) return false;
     if (filters.category && item.category !== filters.category) return false;
     if (filters.source && item.source !== filters.source) return false;
@@ -271,14 +276,47 @@ export function listAgentActions(filters: AgentActionFilters = {}): AgentActionD
   });
 }
 
-export function summarizeAgentActions(): Record<string, unknown> {
+export function listAgentActions(filters: AgentActionFilters = {}): AgentActionDefinition[] {
+  return filterActions(AGENT_ACTIONS, filters);
+}
+
+export async function listResolvedAgentActions(filters: AgentActionFilters = {}): Promise<AgentActionDefinition[]> {
+  const generated = (await listGeneratedActions())
+    .filter((item) => item.enabled)
+    .map((item): AgentActionDefinition => ({
+      id: item.id,
+      tool: item.tool,
+      action: item.action,
+      source: "generated-extension",
+      category: item.category,
+      risk: item.risk,
+      description: item.description,
+      invocation: item.invocation,
+    }));
+  return filterActions([...AGENT_ACTIONS, ...generated].sort((a, b) => a.id.localeCompare(b.id)), filters);
+}
+
+export async function getResolvedAgentAction(id: string): Promise<AgentActionDefinition | null> {
+  const normalized = id.trim().toLowerCase();
+  return (await listResolvedAgentActions()).find((item) => item.id.toLowerCase() === normalized) ?? null;
+}
+
+function summarize(actions: readonly AgentActionDefinition[]): Record<string, unknown> {
   const bySource: Record<string, number> = {}, byCategory: Record<string, number> = {}, byRisk: Record<string, number> = {};
-  for (const item of AGENT_ACTIONS) {
+  for (const item of actions) {
     bySource[item.source] = (bySource[item.source] ?? 0) + 1;
     byCategory[item.category] = (byCategory[item.category] ?? 0) + 1;
     byRisk[item.risk] = (byRisk[item.risk] ?? 0) + 1;
   }
-  return { total: AGENT_ACTIONS.length, bySource, byCategory, byRisk };
+  return { total: actions.length, bySource, byCategory, byRisk };
+}
+
+export function summarizeAgentActions(): Record<string, unknown> {
+  return summarize(AGENT_ACTIONS);
+}
+
+export async function summarizeResolvedAgentActions(): Promise<Record<string, unknown>> {
+  return summarize(await listResolvedAgentActions());
 }
 
 export function getAgentActionSources(): Record<string, unknown> {
@@ -290,6 +328,7 @@ export function getAgentActionSources(): Record<string, unknown> {
     },
     dynamic: {
       mcp: "Connected MCP servers inject server-defined tools at runtime; OpenCode exposes them directly rather than hard-coding them here.",
+      generatedExtensions: "Approved Extensions may register normalized action aliases. User-disabled generated actions stay disabled across regeneration.",
     },
   };
 }

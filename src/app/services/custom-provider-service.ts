@@ -5,6 +5,12 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
+import { listStoredExtensions } from "./extension-store.js";
+import {
+  removeExtensionCredentials,
+  resolveExtensionCredential,
+  saveExtensionCredential,
+} from "./credential-vault-service.js";
 
 export type AiCapability = "general" | "coding" | "image" | "stt";
 
@@ -50,11 +56,15 @@ function isVerifiedCustomAgentModel(model: CustomProviderModel | undefined): boo
 }
 
 interface StoredProvider extends CustomProvider {
-  apiKey: string;
+  credentialId: string;
+  /** Legacy plaintext field, migrated to Credential Vault on first read. */
+  apiKey?: string;
 }
 interface StoredSttProvider {
   provider: "groq";
-  apiKey: string;
+  credentialId: string;
+  /** Legacy plaintext field, migrated to Credential Vault on read. */
+  apiKey?: string;
   model: string;
   updatedAt: string;
 }
@@ -65,6 +75,8 @@ interface ProviderStoreFile {
 
 const GROQ_STT_BASE_URL = "https://api.groq.com/openai/v1";
 const GROQ_STT_MODEL = "whisper-large-v3";
+const GROQ_STT_EXTENSION_ID = "model-provider:groq-stt";
+const GROQ_STT_CREDENTIAL_ID = "api-key";
 const LEGACY_GEMINI_IMAGE_ID = "gemini-image";
 const PROVIDER_ENV_PREFIX = "OPENCODE_TELEGRAM_PROVIDER_";
 const DEFAULT_CUSTOM_MODEL_INPUT_MODALITIES = ["text", "image"] as const;
@@ -212,9 +224,10 @@ function normalizeStore(value: unknown): ProviderStoreFile {
   const raw = value as Partial<ProviderStoreFile>;
   const providers = Array.isArray(raw.providers)
     ? raw.providers
-        .filter((provider): provider is StoredProvider => Boolean(provider) && typeof provider.id === "string" && typeof provider.apiKey === "string" && (provider as { capability?: unknown }).capability !== "video")
+        .filter((provider): provider is StoredProvider => Boolean(provider) && typeof provider.id === "string" && (typeof provider.credentialId === "string" || typeof provider.apiKey === "string") && (provider as { capability?: unknown }).capability !== "video")
         .map((provider) => ({
           ...provider,
+          credentialId: typeof provider.credentialId === "string" && provider.credentialId.trim() ? provider.credentialId.trim() : "api-key",
           capability: normalizeCapability(provider.capability),
           models: Array.isArray(provider.models)
             ? provider.models
@@ -230,15 +243,54 @@ function normalizeStore(value: unknown): ProviderStoreFile {
             : [],
         }))
     : [];
-  const stt = raw.stt && typeof raw.stt === "object" && typeof raw.stt.apiKey === "string"
-    ? { ...(raw.stt as StoredSttProvider), provider: "groq" as const }
+  const stt = raw.stt && typeof raw.stt === "object"
+    && (
+      typeof (raw.stt as Partial<StoredSttProvider>).credentialId === "string"
+      || typeof (raw.stt as Partial<StoredSttProvider>).apiKey === "string"
+    )
+    ? {
+        ...(raw.stt as StoredSttProvider),
+        provider: "groq" as const,
+        credentialId:
+          typeof (raw.stt as Partial<StoredSttProvider>).credentialId === "string"
+            && (raw.stt as Partial<StoredSttProvider>).credentialId?.trim()
+            ? (raw.stt as Partial<StoredSttProvider>).credentialId!.trim()
+            : GROQ_STT_CREDENTIAL_ID,
+      }
     : undefined;
   return stt ? { providers, stt } : { providers };
+}
+
+function providerExtensionId(id: string): string {
+  return `model-provider:${id}`;
 }
 
 async function readStore(): Promise<ProviderStoreFile> {
   const state = await readAppState();
   return normalizeStore(state.customProviders);
+}
+
+export async function migrateLegacyCustomProviderCredentials(): Promise<number> {
+  const store = await readStore();
+  let migrated = 0;
+  for (const provider of store.providers) {
+    const legacyKey = provider.apiKey?.trim();
+    if (!legacyKey) continue;
+    await saveExtensionCredential(providerExtensionId(provider.id), provider.credentialId, legacyKey);
+    delete provider.apiKey;
+    migrated += 1;
+  }
+  const legacySttKey = store.stt?.apiKey?.trim();
+  if (store.stt && legacySttKey) {
+    await saveExtensionCredential(GROQ_STT_EXTENSION_ID, store.stt.credentialId, legacySttKey);
+    delete store.stt.apiKey;
+    migrated += 1;
+  }
+  if (migrated > 0) {
+    await writeStore(store);
+    logger.info(`[CustomProvider] Migrated ${migrated} legacy provider/STT credential(s) into Credential Vault`);
+  }
+  return migrated;
 }
 
 async function invalidateUnifiedCatalog(): Promise<void> {
@@ -279,15 +331,32 @@ function envKey(id: string): string {
   return `${PROVIDER_ENV_PREFIX}${id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
 }
 
-function applyProviderEnvironment(store: ProviderStoreFile): void {
+async function providerApiKey(provider: StoredProvider): Promise<string> {
+  const legacy = provider.apiKey?.trim();
+  if (legacy) return legacy;
+  return (await resolveExtensionCredential(providerExtensionId(provider.id), provider.credentialId))?.trim() ?? "";
+}
+
+async function sttApiKey(stt: StoredSttProvider | undefined): Promise<string> {
+  if (!stt) return "";
+  const legacy = stt.apiKey?.trim();
+  if (legacy) return legacy;
+  return (await resolveExtensionCredential(GROQ_STT_EXTENSION_ID, stt.credentialId))?.trim() ?? "";
+}
+
+async function applyProviderEnvironment(store: ProviderStoreFile): Promise<void> {
   for (const key of Object.keys(process.env)) if (key.startsWith(PROVIDER_ENV_PREFIX)) delete process.env[key];
-  for (const provider of store.providers) if (provider.apiKey.trim()) process.env[envKey(provider.id)] = provider.apiKey.trim();
-  if (store.stt?.apiKey.trim()) process.env[`${PROVIDER_ENV_PREFIX}GROQ_STT_API_KEY`] = store.stt.apiKey.trim();
+  for (const provider of store.providers) {
+    const key = await providerApiKey(provider);
+    if (key) process.env[envKey(provider.id)] = key;
+  }
+  const sttKey = await sttApiKey(store.stt);
+  if (sttKey) process.env[`${PROVIDER_ENV_PREFIX}GROQ_STT_API_KEY`] = sttKey;
 }
 
 export async function listCustomProviders(): Promise<CustomProvider[]> {
   const store = await readStore();
-  applyProviderEnvironment(store);
+  await applyProviderEnvironment(store);
   return store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID).map(toPublicProvider);
 }
 
@@ -307,17 +376,19 @@ export async function listCustomProvidersByCapability(capability: AiCapability):
 
 export async function getCustomProvider(id: string): Promise<CustomProvider | undefined> {
   const store = await readStore();
-  applyProviderEnvironment(store);
+  await applyProviderEnvironment(store);
   const provider = store.providers.find((item) => item.id === id);
   return provider && provider.id !== LEGACY_GEMINI_IMAGE_ID ? toPublicProvider(provider) : undefined;
 }
 
 export async function getCustomProviderConfig(id: string): Promise<{ apiUrl: string; apiKey: string; models: CustomProviderModel[]; capability: AiCapability } | undefined> {
   const store = await readStore();
-  applyProviderEnvironment(store);
+  await applyProviderEnvironment(store);
   const provider = store.providers.find((item) => item.id === id && item.id !== LEGACY_GEMINI_IMAGE_ID);
-  return provider?.apiKey?.trim()
-    ? { apiUrl: provider.baseURL, apiKey: provider.apiKey.trim(), models: provider.models, capability: normalizeCapability(provider.capability) }
+  if (!provider) return undefined;
+  const apiKey = await providerApiKey(provider);
+  return apiKey
+    ? { apiUrl: provider.baseURL, apiKey, models: provider.models, capability: normalizeCapability(provider.capability) }
     : undefined;
 }
 
@@ -473,15 +544,35 @@ export async function configureGroqStt(apiKey: string, beforeSave: () => void = 
   const payload = (await response.json()) as { data?: Array<{ id?: unknown }> };
   if (!(payload.data ?? []).some((model) => model.id === GROQ_STT_MODEL)) throw new Error(`Groq account does not expose ${GROQ_STT_MODEL}`);
   const store = await readStore();
-  await writeStore({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } }, beforeSave);
-  applyProviderEnvironment({ ...store, stt: { provider: "groq", apiKey: key, model: GROQ_STT_MODEL, updatedAt: new Date().toISOString() } });
+  const previousKey = await sttApiKey(store.stt);
+  await saveExtensionCredential(GROQ_STT_EXTENSION_ID, GROQ_STT_CREDENTIAL_ID, key);
+  const nextStt: StoredSttProvider = {
+    provider: "groq",
+    credentialId: GROQ_STT_CREDENTIAL_ID,
+    model: GROQ_STT_MODEL,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await writeStore({ ...store, stt: nextStt }, beforeSave);
+  } catch (error) {
+    if (previousKey) {
+      await saveExtensionCredential(GROQ_STT_EXTENSION_ID, GROQ_STT_CREDENTIAL_ID, previousKey);
+    } else {
+      await removeExtensionCredentials(GROQ_STT_EXTENSION_ID);
+    }
+    throw error;
+  }
+  await applyProviderEnvironment({ ...store, stt: nextStt });
   logger.info(`[CustomProvider] Groq STT configured and verified: model=${GROQ_STT_MODEL}`);
 }
 
 export async function getGroqSttConfig(): Promise<{ apiUrl: string; apiKey: string; model: string } | undefined> {
   const store = await readStore();
-  applyProviderEnvironment(store);
-  return store.stt?.apiKey?.trim() ? { apiUrl: GROQ_STT_BASE_URL, apiKey: store.stt.apiKey.trim(), model: store.stt.model } : undefined;
+  await applyProviderEnvironment(store);
+  const apiKey = await sttApiKey(store.stt);
+  return store.stt && apiKey
+    ? { apiUrl: GROQ_STT_BASE_URL, apiKey, model: store.stt.model }
+    : undefined;
 }
 
 export async function isGroqSttConfigured(): Promise<boolean> {
@@ -493,7 +584,8 @@ export async function removeGroqStt(): Promise<boolean> {
   if (!store.stt) return false;
   delete store.stt;
   await writeStore(store);
-  applyProviderEnvironment(store);
+  await removeExtensionCredentials(GROQ_STT_EXTENSION_ID);
+  await applyProviderEnvironment(store);
   return true;
 }
 
@@ -541,7 +633,8 @@ export async function saveCustomProvider(input: {
   const existing = store.providers.find((provider) => provider.id === id);
   if (existing && !input.id) throw new Error("A provider with this name already exists. Choose a different name.");
 
-  const preserveVerification = Boolean(existing && existing.baseURL === baseURL && existing.apiKey === key);
+  const existingKey = existing ? await providerApiKey(existing) : "";
+  const preserveVerification = Boolean(existing && existing.baseURL === baseURL && existingKey === key);
   const previousModels = preserveVerification
     ? new Map(existing!.models.map((model) => [model.id, model]))
     : new Map<string, CustomProviderModel>();
@@ -551,19 +644,21 @@ export async function saveCustomProvider(input: {
     return { ...model, toolCall: previous.toolCall === true, toolCallVerified: true };
   });
 
+  const credentialId = "api-key";
+  await saveExtensionCredential(providerExtensionId(id), credentialId, key);
   const provider: StoredProvider = {
     id,
     name,
     baseURL,
     models: modelsWithPreservedVerification,
     capability,
-    apiKey: key,
+    credentialId,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
   const next = { ...store, providers: [...store.providers.filter((item) => item.id !== id), provider] };
   await writeStore(next, input.beforeSave);
-  applyProviderEnvironment(next);
+  await applyProviderEnvironment(next);
   logger.info(`[CustomProvider] Saved provider ${id} capability=${capability} models=${provider.models.length}`);
   return toPublicProvider(provider);
 }
@@ -574,7 +669,8 @@ export async function deleteCustomProvider(id: string): Promise<boolean> {
   if (!provider) return false;
   const next = { ...store, providers: store.providers.filter((item) => item.id !== id) };
   await writeStore(next);
-  applyProviderEnvironment(next);
+  await removeExtensionCredentials(providerExtensionId(id));
+  await applyProviderEnvironment(next);
   return true;
 }
 
@@ -588,6 +684,7 @@ interface ToolCapabilityUpdate {
   providerUpdatedAt: string;
   providerBaseURL: string;
   providerApiKey: string;
+  providerCredentialId: string;
   modelId: string;
   toolCall: boolean;
   previousToolCall?: boolean;
@@ -607,22 +704,24 @@ async function collectToolCapabilityUpdates(
     if (
       !provider ||
       provider.id === LEGACY_GEMINI_IMAGE_ID ||
-      provider.capability === "stt" ||
-      !provider.apiKey.trim()
+      provider.capability === "stt"
     ) {
       continue;
     }
 
+    const apiKey = await providerApiKey(provider);
+    if (!apiKey) continue;
     const model = provider.models.find((item) => item.id === target.modelID);
     if (!model || model.toolCallVerified === true || !isChatModelMetadata(model)) continue;
 
-    const toolCall = await probeToolCallSupport(provider.baseURL, provider.apiKey, model.id);
+    const toolCall = await probeToolCallSupport(provider.baseURL, apiKey, model.id);
     if (toolCall === null) continue;
     updates.push({
       providerId: provider.id,
       providerUpdatedAt: provider.updatedAt,
       providerBaseURL: provider.baseURL,
-      providerApiKey: provider.apiKey,
+      providerApiKey: apiKey,
+      providerCredentialId: provider.credentialId,
       modelId: model.id,
       toolCall,
       ...(typeof model.toolCall === "boolean" ? { previousToolCall: model.toolCall } : {}),
@@ -643,7 +742,7 @@ async function persistToolCapabilityUpdates(updates: readonly ToolCapabilityUpda
         update.providerId === provider.id &&
         update.providerUpdatedAt === provider.updatedAt &&
         update.providerBaseURL === provider.baseURL &&
-        update.providerApiKey === provider.apiKey
+        update.providerCredentialId === provider.credentialId
       );
       if (!matching.length) return provider;
 
@@ -678,7 +777,7 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
         update.providerId === provider.id &&
         update.providerUpdatedAt === provider.updatedAt &&
         update.providerBaseURL === provider.baseURL &&
-        update.providerApiKey === provider.apiKey
+        update.providerCredentialId === provider.credentialId
       );
       if (!matching.length) return provider;
 
@@ -706,11 +805,11 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
 // fan out inference probes across every model exposed by a provider.
 export async function buildOpenCodeCustomConfig(): Promise<string> {
   const store = await readStore();
-  applyProviderEnvironment(store);
+  await applyProviderEnvironment(store);
   const providers: Record<string, unknown> = {};
 
   for (const provider of store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID && p.capability !== "stt")) {
-    if (!provider.apiKey?.trim()) {
+    if (!(await providerApiKey(provider))) {
       logger.warn(`[CustomProvider] Skipping provider ${provider.id}: API key is empty`);
       continue;
     }
@@ -726,17 +825,29 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
     };
   }
 
-  return JSON.stringify({ $schema: "https://opencode.ai/config.json", provider: providers }, null, 2);
+  const plugin = (await listStoredExtensions())
+    .filter((extension) => extension.resource.kind === "plugin")
+    .map((extension) => extension.resource.kind === "plugin" ? extension.resource.specifier : "")
+    .filter(Boolean);
+
+  return JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    provider: providers,
+    ...(plugin.length > 0 ? { plugin: [...new Set(plugin)] } : {}),
+  }, null, 2);
 }
 
 async function writeOpenCodeCustomConfigFile(configPath?: string): Promise<string> {
-  const target = configPath ?? path.join(getRuntimePaths().appHome, ".config", "opencode-telegram", "custom-providers.json");
+  const target = configPath ?? path.join(getRuntimePaths().appHome, ".config", "opencode-telegram", "managed-opencode.json");
   await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await fs.writeFile(target, await buildOpenCodeCustomConfig(), { mode: 0o600 });
   return target;
 }
 
 export async function syncOpenCodeCustomConfig(): Promise<string> {
+  // This bot-owned file is the managed OpenCode runtime overlay. It contains
+  // provider definitions plus approved global plugin Extensions. Project
+  // repositories are never mutated to install or update runtime Extensions.
   // Config sync is intentionally network-free. Unverified custom models remain
   // fail-closed until an active/selected model is verified explicitly.
   return writeOpenCodeCustomConfigFile();

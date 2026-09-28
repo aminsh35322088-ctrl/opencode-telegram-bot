@@ -91,7 +91,8 @@ function extractPromptText(parts: PromptPart[]): string {
 const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. Use them instead of raw bash/read/write when a purpose-built action exists.
 
 • bot — session/task/memory/model management. Call with action= (e.g. action="session.current", action="tasks.parse", action="tasks.create", action="memory.search", action="settings.get").
-• railway — deployment operations. action="deploy-latest" (latest commit), action="status", action="logs", action="variables".
+• actions — inspect resolved Core and Extension-generated action aliases. Dynamic service capabilities are added through approved Extensions rather than hard-coded provider tools.
+• bot/extensions — automatic setup is limited to detected Skills and OpenCode plugins. Use bot action="skills.add" for Skill sources and plugin-only "extensions.ensure" for plugin sources. Do not install MCP servers, dynamic integrations, or model providers from model chat; those require explicit user-managed configuration.
 • github-ci — CI/CD. action="status", action="logs", action="dispatch", action="verify".
 • session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
 • session — OpenCode session control. action="current", action="messages", action="abort", action="fork".

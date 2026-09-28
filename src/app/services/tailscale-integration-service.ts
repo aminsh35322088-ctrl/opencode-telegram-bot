@@ -163,7 +163,7 @@ async function waitForSocket(timeoutMs = 10_000): Promise<boolean> {
 export async function ensureTailscaleDaemon(): Promise<void> {
   if (await socketReady()) return;
   if (!await waitForSocket()) {
-    throw new Error("The shared tailscaled socket is unavailable. Railway entrypoint must own the single daemon.");
+    throw new Error("The shared tailscaled socket is unavailable. The container entrypoint must own the single daemon.");
   }
 }
 
@@ -230,7 +230,7 @@ export async function removeTailscaleIntegration(): Promise<void> {
 }
 
 export async function stopTailscaleIntegration(): Promise<void> {
-  // The daemon is owned by railway-entrypoint.sh and intentionally outlives the bot process.
+  // The daemon is owned by the container entrypoint and intentionally outlives the bot process.
 }
 
 function normalizeTarget(value: string): string {
@@ -287,11 +287,40 @@ export async function resolveTailscaleSshDevice(targetValue: string): Promise<Ta
   const target = normalizeTarget(targetValue);
   if (!target) throw new Error("SSH target is required.");
   const devices = await listTailscaleDevices();
-  const device = devices.find((candidate) => {
-    const names = [candidate.name, candidate.dnsName, ...candidate.ips].filter((value): value is string => Boolean(value)).map(normalizeTarget);
+  const matches = devices.filter((candidate) => {
+    const names = [candidate.name, candidate.dnsName, ...candidate.ips]
+      .filter((value): value is string => Boolean(value))
+      .map(normalizeTarget);
     return names.includes(target) || names.some((name) => name.split(".")[0] === target);
   });
-  if (!device) throw new Error("Target is not visible in the bot's Tailnet netmap.");
+  if (matches.length === 0) throw new Error("Target is not visible in the bot's Tailnet netmap.");
+
+  // An exact Tailscale IP is always an unambiguous operator choice. For a
+  // hostname/MagicDNS target, prefer the sole online tag:ssh peer when stale
+  // duplicate entries exist. Never silently pick between multiple live peers
+  // sharing the same name: that could execute commands on the wrong machine.
+  const exactIpMatches = matches.filter((candidate) =>
+    candidate.ips.some((ip) => normalizeTarget(ip) === target),
+  );
+  let device: TailscaleSshDevice;
+  if (exactIpMatches.length === 1) {
+    device = exactIpMatches[0]!;
+  } else if (matches.length === 1) {
+    device = matches[0]!;
+  } else {
+    const eligible = matches.filter(
+      (candidate) => candidate.online && candidate.tags.includes("tag:ssh"),
+    );
+    if (eligible.length === 1) {
+      device = eligible[0]!;
+    } else {
+      throw new Error(
+        `Tailnet SSH target "${targetValue.trim()}" is ambiguous: ${matches.length} devices match this name. `
+        + "Wait for stale ephemeral nodes to disappear or target an exact Tailscale IP.",
+      );
+    }
+  }
+
   if (!device.tags.includes("tag:ssh")) throw new Error(`Tailnet device "${device.name}" is visible but missing tag:ssh.`);
   if (!device.online) throw new Error(`Tailnet SSH device "${device.name}" is offline.`);
   return device;

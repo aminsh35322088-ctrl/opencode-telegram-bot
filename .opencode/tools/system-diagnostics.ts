@@ -12,7 +12,7 @@ async function command(bin: string, args: string[]): Promise<string> {
 }
 
 export default tool({
-  description: "Inspect the current Railway container through explicit summary, processes, or disk actions.",
+  description: "Inspect the current bot container through explicit summary, processes, or disk actions.",
   args: {
     action: tool.schema.enum(["summary", "processes", "disk"]).describe("System diagnostics action to execute."),
   },

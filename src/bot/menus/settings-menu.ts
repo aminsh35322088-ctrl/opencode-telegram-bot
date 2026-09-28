@@ -2,6 +2,12 @@ import { InlineKeyboard } from "grammy";
 import { getDefaultCapabilityModel, getDefaultImageModel, getFreeModelDetectionEnabled, getCompactOutputMode, getCurrentTopicCapabilityOverride, getCurrentTopicImageModelOverride, getCurrentTopicSettings, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
+import {
+  SETTINGS_ACTIONS_CALLBACK,
+  SETTINGS_EXTENSIONS_CALLBACK,
+  SETTINGS_GITHUB_CALLBACK,
+  SETTINGS_MORE_CALLBACK,
+} from "./extension-settings-menu.js";
 
 export const SETTINGS_CALLBACK_PREFIX = "settings:";
 export const SETTINGS_MODEL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}model`;
@@ -140,22 +146,18 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
     text: [
       "⚙️ <b>Settings</b>",
       "",
-      "Global configuration and defaults for the bot.",
-      "",
-      "🧠 <b>Default Model Center</b> · Primary + capability helpers in one place.",
-      "🧩 <b>Topic Defaults</b> · Copied into newly created Topics.",
-      "🔌 <b>API Connections</b> · Add and manage model API connections.",
-      "🔗 <b>Integrations</b> · Manage connected services.",
-      "🧪 <b>Experimental</b> · Optional features under evaluation.",
-      "🧰 <b>Advanced</b> · OpenCode tools and destructive data controls.",
+      "🧠 Model Center",
+      "🐙 GitHub · 🌐 Tailscale",
+      "🧩 Extensions",
+      "⚡ Actions",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("🧠 Default Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
-      .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
-      .text("🔌 API Connections", "provider:menu").row()
-      .text("🔗 Integrations", "integration:menu").row()
-      .text("🧪 Experimental", SETTINGS_EXPERIMENTAL_CALLBACK).row()
-      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK),
+      .text("🧠 Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
+      .text("🐙 GitHub", SETTINGS_GITHUB_CALLBACK)
+      .text("🌐 Tailscale", "integration:tailscale").row()
+      .text("🧩 Extensions", SETTINGS_EXTENSIONS_CALLBACK).row()
+      .text("⚡ Actions", SETTINGS_ACTIONS_CALLBACK).row()
+      .text("⋯ More", SETTINGS_MORE_CALLBACK),
   };
 }
 
@@ -299,10 +301,19 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
   };
 }
 
+export function buildMoreSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: "⋯ <b>More Settings</b>",
+    keyboard: new InlineKeyboard()
+      .text("🧩 Topic Defaults", SETTINGS_TOPIC_DEFAULTS_CALLBACK).row()
+      .text("🧪 Experimental", SETTINGS_EXPERIMENTAL_CALLBACK).row()
+      .text("🧰 Advanced", SETTINGS_ADVANCED_CALLBACK).row()
+      .text("← Settings", SETTINGS_BACK_CALLBACK),
+  };
+}
+
 export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
   const keyboard = new InlineKeyboard()
-    .text("🔗 MCP Servers", SETTINGS_MCP_CALLBACK).row()
-    .text("🧠 Skills", SETTINGS_SKILLS_CALLBACK).row()
     .text("🧩 Custom Commands", SETTINGS_COMMANDS_CALLBACK).row()
     .text("💾 Persistent Memory", SETTINGS_MEMORY_CALLBACK).row()
     .text("🧹 Clear Conversation History", SETTINGS_RESET_HISTORY_CALLBACK).row()
@@ -314,8 +325,6 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
       "",
       "Tools and maintenance controls for this bot.",
       "",
-      "🔗 <b>MCP Servers</b> · inspect and manage Model Context Protocol integrations.",
-      "🧠 <b>Skills</b> · inspect available reusable skills.",
       "🧩 <b>Custom Commands</b> · inspect bot/OpenCode command definitions.",
       "💾 <b>Persistent Memory</b> · review and delete memories saved via /remember.",
       "🧹 <b>Clear Conversation History</b> · remove managed Topics and conversation state while keeping global configuration.",
@@ -415,7 +424,15 @@ export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKe
 
 export function buildExperimentalSettingsView(): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: "🧪 <b>Experimental</b>\n\nFree Model Detection adds experimental pricing hints to model lists. Results may be incomplete or wrong and never filter, select, or reroute a model. Applies to the whole bot.",
-    keyboard: new InlineKeyboard().text("Free Model Detection: " + formatBooleanSettingValue(getFreeModelDetectionEnabled()), SETTINGS_FREE_DETECTION_CALLBACK).row().text("← Back", SETTINGS_BACK_CALLBACK),
+    text: [
+      "🧪 <b>Experimental</b>",
+      "",
+      "🎨 <b>Free Model Detection</b> adds experimental pricing hints to model lists. It never filters, selects, or reroutes a model.",
+      "",
+      "Classification can change as provider metadata changes.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("Free Model Detection: " + formatBooleanSettingValue(getFreeModelDetectionEnabled()), SETTINGS_FREE_DETECTION_CALLBACK).row()
+      .text("← Back", SETTINGS_BACK_CALLBACK),
   };
 }

@@ -46,14 +46,19 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "bot.variants.current": { icon: "🧩", label: "Check Current Variant" },
   "bot.variants.select": { icon: "🎯", label: "Select Model Variant" },
   "bot.skills.list": { icon: "🎓", label: "List Skills" },
+  "bot.skills.add": { icon: "📥", label: "Add Skill" },
   "bot.skills.create": { icon: "✨", label: "Create Skill" },
   "bot.skills.update": { icon: "✏️", label: "Update Skill" },
   "bot.skills.delete": { icon: "🗑️", label: "Delete Skill" },
   "bot.skills.import": { icon: "📥", label: "Import Skill" },
   "bot.commands.list": { icon: "⌨️", label: "List Commands" },
+  "bot.extensions.list": { icon: "🧩", label: "List Extensions" },
+  "bot.extensions.info": { icon: "ℹ️", label: "Inspect Extension" },
+  "bot.extensions.ensure": { icon: "🧩", label: "Install Plugin" },
+  "bot.extensions.remove": { icon: "🗑️", label: "Remove Extension" },
+  "bot.generated-actions.list": { icon: "⚡", label: "List Extension Actions" },
+  "bot.generated-actions.toggle": { icon: "🔘", label: "Toggle Extension Action" },
   "bot.mcp.list": { icon: "🔌", label: "List MCP Servers" },
-  "bot.mcp.add-local": { icon: "➕", label: "Add Local MCP Server" },
-  "bot.mcp.add-remote": { icon: "🌐", label: "Add Remote MCP Server" },
   "bot.mcp.enable": { icon: "✅", label: "Enable MCP Server" },
   "bot.mcp.rename": { icon: "✏️", label: "Rename MCP Server" },
   "bot.mcp.delete": { icon: "🗑️", label: "Delete MCP Server" },
@@ -80,10 +85,6 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "bot.integrations.github.active": { icon: "🐙", label: "Check Active GitHub Integration" },
   "bot.integrations.github.select": { icon: "🎯", label: "Select GitHub Integration" },
   "bot.integrations.github.remove": { icon: "🗑️", label: "Remove GitHub Integration" },
-  "bot.integrations.railway.list": { icon: "🚆", label: "List Railway Integrations" },
-  "bot.integrations.railway.active": { icon: "🚆", label: "Check Active Railway Integration" },
-  "bot.integrations.railway.select": { icon: "🎯", label: "Select Railway Integration" },
-  "bot.integrations.railway.remove": { icon: "🗑️", label: "Remove Railway Integration" },
   "bot.version.info": { icon: "🏷️", label: "Check Bot Version" },
 
   "file.read": { icon: "📖", label: "Read File" },
@@ -170,12 +171,6 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "browser.console": { icon: "🖥️", label: "Inspect Browser Console" },
   "browser.pdf": { icon: "📄", label: "Save Page as PDF" },
 
-  "railway.whoami": { icon: "👤", label: "Check Railway Account" },
-  "railway.status": { icon: "🚦", label: "Check Railway Status" },
-  "railway.logs": { icon: "📜", label: "Read Railway Logs" },
-  "railway.variables": { icon: "🔐", label: "Inspect Railway Variables" },
-  "railway.deploy": { icon: "🚀", label: "Deploy to Railway" },
-  "railway.deploy-latest": { icon: "🚀", label: "Deploy Latest Revision" },
   "media.stt.status": { icon: "🎙️", label: "Check Speech-to-Text" },
   "media.stt.transcribe": { icon: "🎙️", label: "Transcribe Audio" },
   "media.video.prepare": { icon: "🎞️", label: "Prepare Video" },
@@ -258,7 +253,6 @@ const TOOL_META: Record<string, FriendlyActionDisplay> = {
   "network-diagnostics": { icon: "🌐", label: "Network" },
   tailscale: { icon: "🌐", label: "Tailscale" },
   ssh: { icon: "🔐", label: "SSH" },
-  railway: { icon: "🚆", label: "Railway" },
   "safe-download": { icon: "📥", label: "Download" },
   "send-file": { icon: "📤", label: "File" },
   session: { icon: "💬", label: "Session" },
@@ -336,7 +330,6 @@ function titleCaseToken(value: string): string {
       if (lower === "http") return "HTTP";
       if (lower === "tcp") return "TCP";
       if (lower === "github") return "GitHub";
-      if (lower === "railway") return "Railway";
       return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
     })
     .join(" ");
@@ -378,8 +371,6 @@ function singleActionLabel(tool: string, action: string): string | null {
     case "requests": return "Inspect Network Requests";
     case "console": return "Inspect Browser Console";
     case "pdf": return "Save Page as PDF";
-    case "whoami": return "Check Railway Account";
-    case "deploy-latest": return "Deploy Latest Revision";
     case "cleanup-safe": return "Clean Storage Safely";
     case "list-all": return "List All Sessions";
     case "test-file": return "Run File Tests";
