@@ -36,21 +36,11 @@ mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /dat
 
 rm -rf /data/.cache/npm /data/.npm /data/.cache/tsx /data/.cache/opencode
 
-# OmniRouter and the experimental Qwen guest bridge are retired. Remove only
-# their known runtime directory and marker-bearing generated artifacts before
-# OpenCode starts; unrelated user MCP/provider/Skill/Plugin state is preserved.
+# OmniRouter and its experimental guest bridges are retired. Only the
+# dedicated runtime directory is removed here; app-state/vault migration owns
+# the known legacy metadata and secrets. Never scan/delete unrelated OpenCode
+# user data by content.
 rm -rf /data/omnirouter
-for root in /data/.config/opencode/plugin /data/.config/opencode/plugins /data/.local/share/opencode /data/workspace/.opencode/plugin /data/workspace/.opencode/plugins /data/workspace/.opencode/tools /data/run
-do
-  [ -d "$root" ] || continue
-  find "$root" -type f -size -2097152c -print 2>/dev/null |
-    while IFS= read -r file; do
-      if grep -Eqi 'QwenDiag|experimental-qwen-web|omnirouter|free-model-source' "$file" 2>/dev/null; then
-        printf '%s\n' "[railway] Removing retired OmniRouter/Qwen artifact: $file"
-        rm -f -- "$file"
-      fi
-    done
-done
 
 DATA_FREE_KB="$(df -Pk /data | awk 'NR==2 {print $4}')"
 DATA_USED_KB="$(df -Pk /data | awk 'NR==2 {print $3}')"

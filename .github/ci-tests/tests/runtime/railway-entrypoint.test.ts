@@ -19,12 +19,10 @@ describe("Railway entrypoint repository bootstrap", () => {
     expect(source).toContain("git -C '$PERSISTENT_REPO_DIR' clean -ffd");
   });
 
-  it("removes only retired OmniRouter/Qwen generated runtime artifacts", () => {
+  it("removes the retired OmniRouter runtime without content-scanning user data", () => {
     expect(source).toContain("rm -rf /data/omnirouter");
-    expect(source).toContain("QwenDiag|experimental-qwen-web|omnirouter|free-model-source");
-    expect(source).toContain("/data/.local/share/opencode");
-    expect(source).toContain("/data/workspace/.opencode/plugin");
-    expect(source).toContain("/data/workspace/.opencode/tools");
+    expect(source).not.toContain("QwenDiag|experimental-qwen-web|omnirouter|free-model-source");
+    expect(source).not.toContain("find \"$root\" -type f");
     expect(source).not.toContain("rm -rf /data/.config/opencode");
     expect(source).not.toContain("rm -rf /data/workspace/.opencode");
   });
