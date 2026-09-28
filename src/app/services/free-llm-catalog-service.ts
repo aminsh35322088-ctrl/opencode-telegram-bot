@@ -292,12 +292,31 @@ export function buildOpenCodeProvidersFromCatalog(catalog: FreeLlmCatalog): Reco
   return providers;
 }
 
-export async function buildFreeLlmOpenCodeProviders(): Promise<Record<string, unknown>> {
-  return buildOpenCodeProvidersFromCatalog(await loadFreeLlmCatalog());
+async function loadCachedFreeLlmCatalog(): Promise<FreeLlmCatalog> {
+  if (memory) return memory.catalog;
+  const cached = await readDiskCache();
+  if (cached) {
+    memory = { catalog: cached, fetchedAt: Date.now() };
+    return cached;
+  }
+  return { schemaVersion: 1, generatedAt: new Date(0).toISOString(), providers: [] };
 }
 
-export async function getFreeLlmCatalogProvider(providerId: string): Promise<FreeLlmCatalogProvider | null> {
-  const catalog = await loadFreeLlmCatalog();
+/**
+ * Explicit network refresh. Call this only from lifecycle/background refresh
+ * paths; config generation and UI price reads intentionally stay network-free.
+ */
+export async function refreshFreeLlmCatalog(): Promise<FreeLlmCatalog> {
+  return loadFreeLlmCatalog({ force: true });
+}
+
+export async function buildFreeLlmOpenCodeProviders(): Promise<Record<string, unknown>> {
+  return buildOpenCodeProvidersFromCatalog(await loadCachedFreeLlmCatalog());
+}
+
+export function getFreeLlmCatalogProvider(providerId: string): FreeLlmCatalogProvider | null {
+  const catalog = memory?.catalog;
+  if (!catalog) return null;
   return catalog.providers.find((provider) => (provider.runtimeId ?? provider.id) === providerId) ?? null;
 }
 
