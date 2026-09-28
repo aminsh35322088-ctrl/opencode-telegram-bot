@@ -8,6 +8,7 @@ import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } fro
 import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { migrateLegacyCustomProviderCredentials, syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
+import { refreshFreeLlmCatalog } from "../services/free-llm-catalog-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeGithubIntegration } from "../services/github-integration-service.js";
 import { initializeTailscaleIntegration, stopTailscaleIntegration } from "../services/tailscale-integration-service.js";
@@ -143,6 +144,9 @@ export async function startBotApp(): Promise<void> {
     return false;
   });
   logger.info(`[GithubIntegration] ${githubConfigured ? "configured" : "not configured"}`);
+  await refreshFreeLlmCatalog().catch((error) => {
+    logger.warn("[FreeLLMCatalog] Startup refresh failed; cached/empty catalog will be used", error);
+  });
   await migrateLegacyCustomProviderCredentials().catch((error) => {
     logger.warn("[CustomProvider] Could not migrate legacy provider credentials; continuing with legacy compatibility", error);
     return 0;
