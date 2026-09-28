@@ -27,9 +27,12 @@ const mocked = vi.hoisted(() => ({
   flushLoggerMock: vi.fn(),
   getGlobalSettingsMock: vi.fn(() => ({})),
   githubInitializeMock: vi.fn(),
-  railwayInitializeMock: vi.fn(),
   syncCustomConfigMock: vi.fn(),
+  migrateProviderCredentialsMock: vi.fn(),
+  migrateImageAiCredentialsMock: vi.fn(),
   cleanupLegacyConfigMock: vi.fn(),
+  migrateExtensionDefaultsMock: vi.fn(),
+  listStoredExtensionsMock: vi.fn(),
   modelCatalogStartMock: vi.fn(),
   modelCatalogStopMock: vi.fn(),
   deliverySenderMock: vi.fn(),
@@ -84,12 +87,13 @@ vi.mock("../../src/app/services/github-integration-service.js", () => ({
   initializeGithubIntegration: mocked.githubInitializeMock,
 }));
 
-vi.mock("../../src/app/services/railway-integration-service.js", () => ({
-  initializeRailwayIntegration: mocked.railwayInitializeMock,
-}));
-
 vi.mock("../../src/app/services/custom-provider-service.js", () => ({
   syncOpenCodeCustomConfig: mocked.syncCustomConfigMock,
+  migrateLegacyCustomProviderCredentials: mocked.migrateProviderCredentialsMock,
+}));
+
+vi.mock("../../src/app/services/image-ai-provider-service.js", () => ({
+  migrateLegacyImageAiCredentials: mocked.migrateImageAiCredentialsMock,
 }));
 
 vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
@@ -99,6 +103,14 @@ vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
 
 vi.mock("../../src/app/services/persistent-state-registry.js", () => ({
   cleanupLegacyUserConfiguration: mocked.cleanupLegacyConfigMock,
+}));
+
+vi.mock("../../src/app/services/extension-defaults-service.js", () => ({
+  migrateBundledExtensionsToManagedState: mocked.migrateExtensionDefaultsMock,
+}));
+
+vi.mock("../../src/app/services/extension-store.js", () => ({
+  listStoredExtensions: mocked.listStoredExtensionsMock,
 }));
 
 vi.mock("../../src/utils/runtime-observability.js", () => ({
@@ -264,9 +276,12 @@ describe("app/start-bot-app", () => {
     mocked.flushLoggerMock.mockReset();
     mocked.getGlobalSettingsMock.mockReset().mockReturnValue({});
     mocked.githubInitializeMock.mockReset();
-    mocked.railwayInitializeMock.mockReset();
     mocked.syncCustomConfigMock.mockReset();
+    mocked.migrateProviderCredentialsMock.mockReset();
+    mocked.migrateImageAiCredentialsMock.mockReset();
     mocked.cleanupLegacyConfigMock.mockReset();
+    mocked.migrateExtensionDefaultsMock.mockReset();
+    mocked.listStoredExtensionsMock.mockReset();
     mocked.modelCatalogStartMock.mockReset();
     mocked.modelCatalogStopMock.mockReset();
     mocked.deliverySenderMock.mockReset();
@@ -285,9 +300,12 @@ describe("app/start-bot-app", () => {
     mocked.getLogFilePathMock.mockReturnValue(null);
     mocked.flushLoggerMock.mockResolvedValue(undefined);
     mocked.githubInitializeMock.mockResolvedValue(false);
-    mocked.railwayInitializeMock.mockResolvedValue(false);
     mocked.syncCustomConfigMock.mockResolvedValue("");
+    mocked.migrateProviderCredentialsMock.mockResolvedValue(0);
+    mocked.migrateImageAiCredentialsMock.mockResolvedValue(0);
     mocked.cleanupLegacyConfigMock.mockResolvedValue(undefined);
+    mocked.migrateExtensionDefaultsMock.mockResolvedValue({ seeded: 0 });
+    mocked.listStoredExtensionsMock.mockResolvedValue([]);
     mocked.deliverySenderMock.mockReturnValue(vi.fn());
 
     registeredProcessHandlers.clear();

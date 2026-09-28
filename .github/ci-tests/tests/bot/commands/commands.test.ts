@@ -36,6 +36,7 @@ const mocked = vi.hoisted(() => ({
   setSessionSummaryMock: vi.fn(),
   setBotAndChatIdMock: vi.fn(),
   clearSummaryMock: vi.fn(),
+  beginRunSummaryMock: vi.fn(),
   ensureEventSubscriptionMock: vi.fn(),
   safeBackgroundTaskMock: vi.fn(),
   suppressionRegisterMock: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock("../../../src/app/managers/summary-aggregation-manager.js", () => ({
     setSession: mocked.setSessionSummaryMock,
     setBotAndChatId: mocked.setBotAndChatIdMock,
     clear: mocked.clearSummaryMock,
+    beginRun: mocked.beginRunSummaryMock,
   },
 }));
 
@@ -219,6 +221,7 @@ describe("bot/commands/commands", () => {
     mocked.setSessionSummaryMock.mockReset();
     mocked.setBotAndChatIdMock.mockReset();
     mocked.clearSummaryMock.mockReset();
+    mocked.beginRunSummaryMock.mockReset();
     mocked.ensureEventSubscriptionMock.mockReset();
     mocked.safeBackgroundTaskMock.mockReset();
     mocked.suppressionRegisterMock.mockReset();

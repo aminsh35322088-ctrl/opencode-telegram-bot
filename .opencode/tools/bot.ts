@@ -21,15 +21,19 @@ const BOT_ACTIONS = [
   "variants.current",
   "variants.select",
   "skills.list",
+  "skills.add",
   "skills.create",
   "skills.update",
   "skills.delete",
-  "skills.import",
   "commands.list",
   "mcp.list",
   "mcp.debug",
-  "mcp.add-local",
-  "mcp.add-remote",
+  "extensions.list",
+  "extensions.info",
+  "extensions.ensure",
+  "extensions.remove",
+  "generated-actions.list",
+  "generated-actions.toggle",
   "mcp.enable",
   "mcp.rename",
   "mcp.delete",
@@ -51,15 +55,13 @@ const BOT_ACTIONS = [
   "memory.clear",
   "providers.list",
   "providers.get",
+  "providers.free-policy.get",
+  "providers.free-policy.set",
   "providers.stt-status",
   "integrations.github.list",
   "integrations.github.active",
   "integrations.github.select",
   "integrations.github.remove",
-  "integrations.railway.list",
-  "integrations.railway.active",
-  "integrations.railway.select",
-  "integrations.railway.remove",
   "version.info",
 ] as const;
 
@@ -206,11 +208,23 @@ interface GithubIntegrationModule {
   setActiveGithubAccount(id: string): Promise<unknown>;
   removeGithubAccount(id: string): Promise<boolean>;
 }
-interface RailwayIntegrationModule {
-  listRailwayAccounts(): Promise<unknown[]>;
-  getActiveRailwayAccount(): Promise<unknown>;
-  setActiveRailwayAccount(id: string): Promise<unknown>;
-  removeRailwayAccount(id: string): Promise<boolean>;
+interface ExtensionRegistryModule {
+  listExtensions(projectDirectory: string): Promise<unknown[]>;
+  getExtensionInfo(projectDirectory: string, id: string): Promise<unknown>;
+  removeExtension(projectDirectory: string, id: string): Promise<unknown>;
+}
+interface ExtensionEnsureModule {
+  requestExtensionEnsure(input: { sessionId: string; projectDirectory: string; name: string; kind: "plugin"; source: string; purpose: string }): Promise<unknown>;
+  addSkillExtension(input: { sessionId: string; projectDirectory: string; source: string; confirmed?: boolean }): Promise<unknown>;
+}
+interface GeneratedActionsModule {
+  listGeneratedActions(extensionId?: string): Promise<unknown[]>;
+  registerGeneratedActionPack(extensionId: string, actions: Array<{ id: string; tool: string; action?: string; category?: string; description: string }>): Promise<unknown[]>;
+  setGeneratedActionEnabled(id: string, enabled: boolean): Promise<unknown>;
+}
+interface ProviderFreePolicyModule {
+  getProviderFreePolicy(providerId: string): Promise<unknown>;
+  setProviderFreePolicy(input: { providerId: string; freeSuffix?: string; freeModels: string[]; paidByDefault: boolean; confidence: "low" | "medium" | "high"; source?: string }): Promise<unknown>;
 }
 interface VersionModule { getVersionSnapshot(): Promise<unknown>; }
 
@@ -227,6 +241,7 @@ function required(value: string | undefined, field: string, action: BotAction): 
 }
 
 function json(value: unknown): string { return JSON.stringify(value, null, 2).slice(0, 30000); }
+
 
 function expandMinuteBase(base: string): number[] {
   if (base === "*") return Array.from({ length: 60 }, (_, index) => index);
@@ -317,7 +332,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions: projects/worktrees, model-agent-variant selection, skills/MCP, sessions, scheduled tasks, safe settings, memory, provider metadata, integrations, and version state. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. Automatic Extension setup is intentionally limited to Skills and OpenCode plugins. Use skills.add for detected Skill sources and plugin-only extensions.ensure for detected plugins. MCP servers, integrations, and model providers are not installed automatically from model chat. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -325,10 +340,16 @@ export default tool({
     variant: tool.schema.string().optional().describe("Model variant for selection actions."),
     agent: tool.schema.string().optional().describe("Agent name for agents.select."),
     query: tool.schema.string().optional().describe("Search query for model or memory search."),
-    name: tool.schema.string().optional().describe("Skill or MCP server name."),
-    description: tool.schema.string().optional().describe("Skill description for create/update."),
-    body: tool.schema.string().optional().describe("Skill body for create/update."),
-    value: tool.schema.string().optional().describe("MCP URL/command, MCP rename target, or settings value."),
+    name: tool.schema.string().optional().describe("Skill, MCP, Extension, or generated-action name."),
+    description: tool.schema.string().optional().describe("Skill description or concise reason/purpose for an Extension."),
+    body: tool.schema.string().optional().describe("Skill body or JSON payload for generated actions/provider free-policy."),
+    value: tool.schema.string().optional().describe("Extension source URL/specifier, version-pinned OpenCode plugin specifier, MCP URL/command, rename target, or settings value."),
+    extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
+    extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for detected OpenCode plugins; automatic setup of MCP servers, integrations, and model providers is disabled."),
+    confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
+    paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
+    free_suffix: tool.schema.string().optional().describe("Provider-advertised free model suffix, such as :free."),
+    source_url: tool.schema.string().optional().describe("Public provider policy/docs source URL."),
     scope: tool.schema.enum(["user", "project"]).optional().describe("Memory scope; defaults to user."),
     content: tool.schema.string().optional().describe("Memory content for memory.add."),
     id: tool.schema.string().optional().describe("Memory, task, or integration account ID."),
@@ -350,6 +371,7 @@ export default tool({
         media: "Use the media tool for STT and configured image generation/editing.",
         sessionRecovery: "Use session-recovery for inspect/abort/continue.",
         dynamicMcpTools: "Connected MCP servers expose their model tools directly through OpenCode.",
+        extensionStorage: "Automatic setup is limited to skills.add and plugin-only extensions.ensure. MCP servers, integrations, and model providers require explicit user-managed configuration.",
       } });
     }
 
@@ -420,18 +442,18 @@ export default tool({
     if (action.startsWith("skills.")) {
       const catalog = await load<SkillsCatalogModule>("app/services/skills-catalog-service.js");
       if (action === "skills.list") return json(await catalog.loadSkillsCatalog(base));
+      if (action === "skills.add") {
+        const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
+        return json(await ensure.addSkillExtension({
+          sessionId: context.sessionID,
+          projectDirectory: base,
+          source: required(args.value, "value", action),
+        }));
+      }
       const manager = await load<SkillManageModule>("app/services/skill-manage-service.js");
       if (action === "skills.delete") {
         const name = required(args.name, "name", action);
         return json({ ok: await manager.deleteGlobalSkill(name), name });
-      }
-      if (action === "skills.import") {
-        const url = required(args.value, "value", action);
-        const importer = await load<SkillImportModule>("app/services/skill-import-service.js");
-        const source = await importer.resolveSkillSource(url);
-        if (source.kind === "list") return json({ ok: false, requiresSelection: true, candidates: source.candidates });
-        const location = await manager.writeGlobalSkillRaw(source.skill.name, source.skill.content);
-        return json({ ok: true, name: source.skill.name, description: source.skill.description, sourceUrl: source.skill.sourceUrl, location });
       }
       const name = required(args.name, "name", action);
       const description = required(args.description, "description", action);
@@ -465,10 +487,38 @@ export default tool({
         const newName = required(args.value, "value", action);
         return json({ ok: true, server: await service.renameMcpServer(base, name, newName) });
       }
-      const value = required(args.value, "value", action);
-      const type = action === "mcp.add-remote" ? "remote" : "local";
-      await service.createMcpServerFromInput({ projectDirectory: base, name, type, value });
-      return json({ ok: true, name, type });
+      throw new Error(`Unsupported MCP action: ${action}`);
+    }
+
+
+    if (action.startsWith("extensions.")) {
+      const registry = await load<ExtensionRegistryModule>("app/services/extension-registry-service.js");
+      if (action === "extensions.list") return json(await registry.listExtensions(base));
+      if (action === "extensions.info") return json(await registry.getExtensionInfo(base, required(args.extension_id, "extension_id", action)));
+      if (action === "extensions.remove") return json(await registry.removeExtension(base, required(args.extension_id, "extension_id", action)));
+      const kind = "plugin" as const;
+      const ensure = await load<ExtensionEnsureModule>("app/services/extension-ensure-service.js");
+      return json(await ensure.requestExtensionEnsure({
+        sessionId: context.sessionID,
+        projectDirectory: base,
+        name: required(args.name, "name", action),
+        kind,
+        source: required(args.value, "value", action),
+        purpose: required(args.description, "description", action),
+      }));
+    }
+
+
+    if (action.startsWith("generated-actions.")) {
+      const generated = await load<GeneratedActionsModule>("app/services/generated-action-store.js");
+      const extensionId = args.extension_id?.trim();
+      if (action === "generated-actions.list") return json(await generated.listGeneratedActions(extensionId));
+      if (action === "generated-actions.toggle") {
+        const id = required(args.id, "id", action);
+        if (typeof args.enabled !== "boolean") throw new Error("generated-actions.toggle requires enabled=true|false");
+        return json(await generated.setGeneratedActionEnabled(id, args.enabled));
+      }
+      throw new Error(`Unsupported generated-actions operation: ${action}. Action packs are generated automatically by the bot.`);
     }
 
     if (action.startsWith("session.")) {
@@ -560,6 +610,25 @@ export default tool({
       const service = await load<ProviderModule>("app/services/custom-provider-service.js");
       if (action === "providers.list") return json(await service.listCustomProviders());
       if (action === "providers.stt-status") return json({ configured: await service.isGroqSttConfigured() });
+      if (action === "providers.free-policy.get") {
+        const policy = await load<ProviderFreePolicyModule>("app/services/provider-free-policy-service.js");
+        return json(await policy.getProviderFreePolicy(required(args.provider_id, "provider_id", action)));
+      }
+      if (action === "providers.free-policy.set") {
+        const policy = await load<ProviderFreePolicyModule>("app/services/provider-free-policy-service.js");
+        const providerId = required(args.provider_id, "provider_id", action);
+        const freeModels = args.body?.trim() ? JSON.parse(args.body) as unknown : [];
+        if (!Array.isArray(freeModels) || !freeModels.every((item) => typeof item === "string")) throw new Error("providers.free-policy.set body must be a JSON array of model IDs.");
+        if (typeof args.paid_by_default !== "boolean" || !args.confidence) throw new Error("providers.free-policy.set requires paid_by_default and confidence.");
+        return json(await policy.setProviderFreePolicy({
+          providerId,
+          freeModels,
+          paidByDefault: args.paid_by_default,
+          confidence: args.confidence,
+          ...(args.free_suffix?.trim() ? { freeSuffix: args.free_suffix.trim() } : {}),
+          ...(args.source_url?.trim() ? { source: args.source_url.trim() } : {}),
+        }));
+      }
       return json((await service.getCustomProvider(required(args.provider_id, "provider_id", action))) ?? null);
     }
 
@@ -570,15 +639,6 @@ export default tool({
       const id = required(args.id, "id", action);
       if (action === "integrations.github.select") return json({ ok: true, account: await service.setActiveGithubAccount(id) });
       return json({ ok: await service.removeGithubAccount(id), id });
-    }
-
-    if (action.startsWith("integrations.railway.")) {
-      const service = await load<RailwayIntegrationModule>("app/services/railway-integration-service.js");
-      if (action === "integrations.railway.list") return json(await service.listRailwayAccounts());
-      if (action === "integrations.railway.active") return json(await service.getActiveRailwayAccount());
-      const id = required(args.id, "id", action);
-      if (action === "integrations.railway.select") return json({ ok: true, account: await service.setActiveRailwayAccount(id) });
-      return json({ ok: await service.removeRailwayAccount(id), id });
     }
 
     if (action === "version.info") {

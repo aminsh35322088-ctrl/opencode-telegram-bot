@@ -67,13 +67,14 @@ async function restartOpenCodeAfterProviderChange(): Promise<void> {
   }
   await reconcileStoredModelSelection({ forceCatalogRefresh: true });
 }
-async function applyAiChanges(): Promise<string> {
+export async function applyAiChanges(): Promise<string> {
   try { await restartOpenCodeAfterProviderChange(); return ""; }
   catch { logger.warn("[Providers] Settings saved, but OpenCode refresh failed"); return "\n⚠️ Settings are saved. OpenCode could not reload them; restart the bot to apply."; }
 }
 function compactButtonLabel(value: string, max = 42): string {
   return value.length <= max ? value : value.slice(0, Math.max(1, max - 1)) + "…";
 }
+
 async function renderImageProviders(ctx: Context, id?: number, notice = "") {
   const legacy = await listImageAiProviders();
   const cloudflare = legacy.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);

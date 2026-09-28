@@ -7,8 +7,8 @@ const REQUIRED = [
   "telegram.context.current", "telegram.reply.resolve", "telegram.forward.inspect", "telegram.media.fetch",
   "media.video.prepare", "media.stt.status", "media.stt.transcribe",
   "media.image.models", "media.image.current", "media.image.generate", "media.image.edit",
-  "bot.mcp.list", "bot.mcp.debug", "bot.mcp.add-local", "bot.mcp.add-remote", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
-  "bot.skills.list", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "bot.skills.import", "skill.load",
+  "bot.mcp.list", "bot.mcp.debug", "bot.mcp.enable", "bot.mcp.rename", "bot.mcp.delete",
+  "bot.skills.list", "bot.skills.add", "bot.skills.create", "bot.skills.update", "bot.skills.delete", "skill.load",
   "session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort",
   "session.diff", "session.todo", "session.children",
   "tailscale.status", "tailscale.devices", "tailscale.ping", "tailscale.ssh-public-key", "ssh.check", "ssh.debug", "ssh.exec", "ssh.upload", "ssh.download",
@@ -26,6 +26,7 @@ describe("expanded model-facing action surface", () => {
     expect(getAgentAction("telegram.media.fetch")?.risk).toBe("write");
     expect(getAgentAction("session.revert")?.risk).toBe("destructive");
     expect(getAgentAction("session.diff")?.risk).toBe("read");
+    expect(getAgentAction("bot.skills.add")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.debug")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.rename")?.risk).toBe("mutating");
     expect(getAgentAction("bot.mcp.delete")?.risk).toBe("destructive");
@@ -50,10 +51,24 @@ describe("expanded model-facing action surface", () => {
     for (const action of ["context.current", "reply.resolve", "forward.inspect", "media.fetch"]) expect(telegram).toContain(`"${action}"`);
     expect(media).toContain('"video.prepare"');
     for (const action of ["session.fork", "session.revert", "session.unrevert", "session.summarize", "session.abort", "session.diff", "session.todo", "session.children"]) expect(session).toContain(`"${action.replace("session.", "")}"`);
+    expect(bot).not.toContain('"mcp.add"');
+    expect(bot).toContain('"skills.add"');
+    expect(bot).not.toContain('"integrations.add"');
     expect(bot).toContain('"mcp.debug"');
     expect(bot).toContain('"mcp.rename"');
     expect(bot).toContain('"mcp.delete"');
+    expect(bot).not.toContain('"mcp.add-remote"');
+    expect(bot).not.toContain('"mcp.add-local"');
+    expect(bot).not.toContain('"skills.import"');
+    expect(bot).not.toContain('"providers.ensure"');
+    expect(bot).not.toContain('"credentials.request"');
+    expect(bot).not.toContain("args.confirmed");
+    expect(bot).not.toContain("confirmed=true");
+    expect(bot).not.toContain('"generated-actions.register"');
     expect(bot).not.toContain('"mcp.disable"');
+    expect(bot).not.toContain("auth_type: tool.schema");
+    expect(bot).toContain('extension_kind: tool.schema.enum(["plugin"])');
+    expect(bot).not.toContain("context.ask(");
     const [ssh, tailscale] = await Promise.all([fs.readFile(".opencode/tools/ssh.ts", "utf8"), fs.readFile(".opencode/tools/tailscale.ts", "utf8")]);
     for (const action of ["check", "debug", "exec", "upload", "download"]) expect(ssh).toContain(`"${action}"`);
     for (const action of ["status", "devices", "ping", "ssh-public-key"]) expect(tailscale).toContain(`"${action}"`);

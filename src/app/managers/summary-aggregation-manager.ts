@@ -10,6 +10,7 @@ import { extractErrorMessage } from "../../utils/opencode-error.js";
 import { isRecord } from "../../utils/type-guards.js";
 import { getCurrentProject } from "../stores/settings-store.js";
 import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../services/topic-runtime-context.js";
+import { assistantRunState } from "./assistant-run-state-manager.js";
 
 function withTopicContextPreserved<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => TResult,
@@ -338,6 +339,7 @@ class SummaryAggregator {
   private pendingChildSessionIdsByParent: Map<string, string[]> = new Map();
   private fallbackSubagentCardIdsByParent: Map<string, string[]> = new Map();
   private readonly lastSubagentSnapshotByParent = new Map<string, string>();
+  private readonly subagentRunGenerationByParent = new Map<string, number>();
 
   setBotAndChatId(bot: Bot, chatId: number): void {
     this.bot = bot;
@@ -607,6 +609,7 @@ class SummaryAggregator {
     this.pendingChildSessionIdsByParent.clear();
     this.fallbackSubagentCardIdsByParent.clear();
     this.lastSubagentSnapshotByParent.clear();
+    this.subagentRunGenerationByParent.clear();
     this.permissionQueue = Promise.resolve();
     this.messageCount = 0;
 
@@ -675,9 +678,56 @@ class SummaryAggregator {
     }
   }
 
+  private clearSubagentStateForParent(parentSessionId: string): void {
+    const removedCardIds = new Set<string>();
+    for (const [cardId, state] of this.subagentStates) {
+      if (state.parentSessionId !== parentSessionId) continue;
+      removedCardIds.add(cardId);
+      if (state.sessionId) this.subagentCardIdBySessionId.delete(state.sessionId);
+      this.subagentStates.delete(cardId);
+    }
+
+    if (removedCardIds.size > 0) {
+      this.subagentOrder = this.subagentOrder.filter((cardId) => !removedCardIds.has(cardId));
+    }
+
+    for (const [sessionId, parentId] of this.trackedSessionParents) {
+      if (sessionId !== parentSessionId && parentId === parentSessionId) {
+        this.trackedSessionParents.delete(sessionId);
+      }
+    }
+
+    this.pendingSubagentCardIdsByParent.delete(parentSessionId);
+    this.pendingChildSessionIdsByParent.delete(parentSessionId);
+    this.fallbackSubagentCardIdsByParent.delete(parentSessionId);
+    this.lastSubagentSnapshotByParent.delete(parentSessionId);
+  }
+
+  private ensureSubagentRunScope(parentSessionId: string): void {
+    const generation = assistantRunState.getRunGeneration(parentSessionId);
+    if (generation === null) return;
+    if (this.subagentRunGenerationByParent.get(parentSessionId) === generation) return;
+
+    this.clearSubagentStateForParent(parentSessionId);
+    this.subagentRunGenerationByParent.set(parentSessionId, generation);
+  }
+
+  beginRun(sessionId: string): void {
+    if (!sessionId) return;
+    this.clearSubagentStateForParent(sessionId);
+    const generation = assistantRunState.getRunGeneration(sessionId);
+    if (generation !== null) this.subagentRunGenerationByParent.set(sessionId, generation);
+    // The downstream snapshot must be cleared in the same turn as the run
+    // transition. Deferring this allows a heartbeat to render the previous run
+    // once more before the reset callback executes.
+    this.onSubagentCallback?.(sessionId, []);
+  }
+
   private emitSubagentState(): void {
     const active = this.activeSessionId();
-    if (!active || !this.onSubagentCallback || this.subagentOrder.length === 0) {
+    if (!active) return;
+    this.ensureSubagentRunScope(active);
+    if (!this.onSubagentCallback || this.subagentOrder.length === 0) {
       return;
     }
 
@@ -898,6 +948,7 @@ class SummaryAggregator {
     parentSessionId: string,
     input?: { [key: string]: unknown },
   ): void {
+    this.ensureSubagentRunScope(parentSessionId);
     const subagent = this.findNextSubagentForTaskTool(parentSessionId);
     if (!subagent || !input) {
       return;
@@ -924,6 +975,7 @@ class SummaryAggregator {
 
     const parentSessionId =
       this.trackedSessionParents.get(sessionId) ?? this.activeSessionId() ?? sessionId;
+    this.ensureSubagentRunScope(parentSessionId);
     this.removeFromQueue(this.pendingChildSessionIdsByParent, parentSessionId, sessionId);
     const state = this.createSubagentState(parentSessionId, sessionId);
     this.getQueue(this.fallbackSubagentCardIdsByParent, parentSessionId).push(state.cardId);
@@ -938,6 +990,7 @@ class SummaryAggregator {
     prompt: string,
     command?: string,
   ): void {
+    this.ensureSubagentRunScope(parentSessionId);
     const fallbackCardId = this.dequeue(this.fallbackSubagentCardIdsByParent, parentSessionId);
     if (fallbackCardId) {
       const fallbackState = this.subagentStates.get(fallbackCardId);
@@ -969,6 +1022,7 @@ class SummaryAggregator {
   }
 
   private trackChildSession(sessionId: string, parentSessionId: string): void {
+    this.ensureSubagentRunScope(parentSessionId);
     this.trackedSessionParents.set(sessionId, parentSessionId);
 
     const pendingCardId = this.dequeue(this.pendingSubagentCardIdsByParent, parentSessionId);
@@ -1477,7 +1531,7 @@ class SummaryAggregator {
           JSON.stringify(state, null, 2),
         );
 
-        const completedKey = `completed-${part.callID}`;
+        const completedKey = `completed-${part.sessionID}-${part.callID}`;
 
         if (!this.processedToolStates.has(completedKey)) {
           this.rememberBounded(this.processedToolStates, completedKey, MAX_TRACKED_PROCESSED_TOOL_STATES);

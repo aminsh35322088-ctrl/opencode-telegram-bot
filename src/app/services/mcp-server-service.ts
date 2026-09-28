@@ -29,6 +29,83 @@ import { listTopicRuntimeStates } from "../stores/topic-runtime-state-store.js";
 export type McpServerType = "local" | "remote" | "unknown";
 export interface McpServerItem { name: string; status: McpStatus; type: McpServerType; }
 export interface McpOAuthStartResult { authorizationUrl: string; oauthState: string; }
+
+export interface McpEndpointAnalysis {
+  url: string;
+  reachable: boolean;
+  status: number | null;
+  authHint: "none-or-unknown" | "oauth-likely" | "credential-likely";
+  authorizationMetadataUrl?: string;
+  wwwAuthenticate?: string;
+  note: string;
+}
+
+export async function analyzeRemoteMcpEndpoint(remoteUrl: string): Promise<McpEndpointAnalysis> {
+  const value = remoteUrl.trim();
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("MCP remote URL must be an absolute HTTP(S) URL.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("MCP remote URL must be an absolute HTTP(S) URL.");
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json, text/event-stream",
+        "User-Agent": "opencode-telegram-bot",
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(8_000),
+    });
+    const challenge = response.headers.get("www-authenticate")?.trim() || undefined;
+    const metadataMatch = challenge?.match(/resource_metadata="([^"]+)"/iu);
+    const metadataUrl = metadataMatch?.[1];
+
+    if (metadataUrl) {
+      return {
+        url: url.toString(),
+        reachable: true,
+        status: response.status,
+        authHint: "oauth-likely",
+        authorizationMetadataUrl: metadataUrl,
+        ...(challenge ? { wwwAuthenticate: challenge.slice(0, 500) } : {}),
+        note: "OAuth protected-resource metadata was advertised by the MCP endpoint.",
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        url: url.toString(),
+        reachable: true,
+        status: response.status,
+        authHint: challenge?.toLowerCase().includes("bearer") ? "credential-likely" : "none-or-unknown",
+        ...(challenge ? { wwwAuthenticate: challenge.slice(0, 500) } : {}),
+        note: "The endpoint requires authentication; OpenCode will probe native OAuth after add.",
+      };
+    }
+
+    return {
+      url: url.toString(),
+      reachable: true,
+      status: response.status,
+      authHint: "none-or-unknown",
+      note: "Endpoint is reachable; final MCP capability/auth status will be determined by OpenCode.",
+    };
+  } catch (error) {
+    return {
+      url: url.toString(),
+      reachable: false,
+      status: null,
+      authHint: "none-or-unknown",
+      note: error instanceof Error ? error.message : "Endpoint probe failed.",
+    };
+  }
+}
 export interface McpLoginIdentity {
   label: string;
   email?: string;
@@ -652,6 +729,53 @@ function oauthAuthFileCandidates(): string[] {
   if (xdgDataHome) candidates.add(path.join(xdgDataHome, "opencode", "mcp-auth.json"));
   if (home) candidates.add(path.join(home, ".local", "share", "opencode", "mcp-auth.json"));
   return [...candidates];
+}
+
+async function readMcpOAuthAccessToken(serverName: string): Promise<string | null> {
+  const name = serverName.trim();
+  if (!name) return null;
+  for (const candidate of oauthAuthFileCandidates()) {
+    try {
+      const parsed: unknown = JSON.parse(await fs.readFile(candidate, "utf8"));
+      if (!isRecord(parsed)) continue;
+      const entry = parsed[name];
+      if (!isRecord(entry) || !isRecord(entry.tokens)) continue;
+      const accessToken = entry.tokens.accessToken;
+      if (typeof accessToken === "string" && accessToken.trim()) return accessToken.trim();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.debug("[McpServer] Native OAuth token lookup failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+  }
+  return null;
+}
+
+export async function getMcpDiscoveryHeaders(
+  projectDirectory: string,
+  serverName: string,
+): Promise<Record<string, string>> {
+  try {
+    const credential = await loadMcpCredential(projectDirectory, serverName);
+    if (credential?.mode === "bearer") {
+      return { Authorization: `Bearer ${assertSafeHeaderValue(credential.secret)}` };
+    }
+    if (credential?.mode === "api-key" || credential?.mode === "custom-header") {
+      return {
+        [assertSafeHeaderName(credential.headerName)]: assertSafeHeaderValue(credential.secret),
+      };
+    }
+  } catch (error) {
+    logger.debug(
+      `[McpServer] Stored credential unavailable for tool discovery: server=${serverName}`,
+      error instanceof Error ? error.name : "UnknownError",
+    );
+  }
+
+  const accessToken = await readMcpOAuthAccessToken(serverName);
+  return accessToken
+    ? { Authorization: `Bearer ${assertSafeHeaderValue(accessToken)}` }
+    : {};
 }
 
 function decodeJwtIdentity(accessToken: string): Omit<McpLoginIdentity, "providerHost"> | null {

@@ -197,6 +197,7 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
     configuredProviderID: storedModel.providerID,
     configuredModelID: storedModel.modelID,
   });
+  summaryAggregator.beginRun(session.id);
   externalUserInputSuppressionManager.register(session.id, args ? `/${params.commandName} ${args}` : `/${params.commandName}`);
 
   safeBackgroundTask({
