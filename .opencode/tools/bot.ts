@@ -31,6 +31,7 @@ const BOT_ACTIONS = [
   "mcp.add",
   "mcp.tools",
   "mcp.call",
+  "mcp.sync",
   "extensions.list",
   "extensions.info",
   "extensions.ensure",
@@ -159,6 +160,12 @@ interface McpModule {
   renameMcpServer(projectDirectory: string, serverName: string, newName: string): Promise<unknown>;
   deleteMcpServer(projectDirectory: string, serverName: string): Promise<{ deleted: boolean; name: string }>;
 }
+interface McpExtensionModule {
+  ensureMcpExtension(input: { serverName: string; projectDirectory: string; source: string }): Promise<unknown>;
+  syncMcpExtensionActions(input: { serverName: string; projectDirectory: string }): Promise<unknown>;
+  removeMcpExtension(serverName: string): Promise<boolean>;
+  renameMcpExtension(fromName: string, toName: string): Promise<void>;
+}
 interface SessionModule {
   getEffectiveCurrentSession(): Promise<{ id: string; title: string; directory: string } | null>;
 }
@@ -246,6 +253,37 @@ function required(value: string | undefined, field: string, action: BotAction): 
 }
 
 function json(value: unknown): string { return JSON.stringify(value, null, 2).slice(0, 30000); }
+
+/**
+ * Registers the managed MCP Extension record and mirrors its discovered tools
+ * into the generated-action catalog. Both steps are best-effort: a server that
+ * needs credentials cannot be probed yet, so the Extension must still exist and
+ * report why no actions were generated. `mcp.sync` retries after the user
+ * finishes authenticating from /mcps.
+ */
+async function syncMcpActions(
+  projectDirectory: string,
+  serverName: string,
+  source?: string,
+): Promise<{ extensionId: string; actions: number; tools: number; truncated: boolean } | { extensionId: string; actionsUnavailable: string }> {
+  const extensions = await load<McpExtensionModule>("app/services/mcp-extension-service.js");
+  const extension = await extensions.ensureMcpExtension({
+    serverName,
+    projectDirectory,
+    source: source ?? serverName,
+  });
+  const id = (extension as { id: string }).id;
+  try {
+    const result = await extensions.syncMcpExtensionActions({ serverName, projectDirectory }) as {
+      created: number;
+      discovered: number;
+      truncated: boolean;
+    };
+    return { extensionId: id, actions: result.created, tools: result.discovered, truncated: result.truncated };
+  } catch (error) {
+    return { extensionId: id, actionsUnavailable: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 function isHttpEndpoint(value: string): boolean {
   return /^https?:\/\//iu.test(value.trim());
@@ -507,12 +545,14 @@ export default tool({
         const value = required(args.value, "value", action);
         const type = args.mcp_type ?? (isHttpEndpoint(value) ? "remote" : "local");
         const server = await service.createMcpServerFromInput({ projectDirectory: base, name, type, value });
-        return json({ ok: true, server, tools: await service.listMcpServerTools(base, name).catch((error) => ({
-          unavailable: error instanceof Error ? error.message : String(error),
-        })) });
+        const actions = await syncMcpActions(base, name, value);
+        return json({ ok: true, server, actions });
       }
       if (action === "mcp.tools") {
         return json(await service.listMcpServerTools(base, required(args.name, "name", action)));
+      }
+      if (action === "mcp.sync") {
+        return json(await syncMcpActions(base, required(args.name, "name", action)));
       }
       if (action === "mcp.call") {
         return json(await service.callMcpServerTool(
@@ -528,11 +568,15 @@ export default tool({
         return json({ ok: true, name, enabled: true });
       }
       if (action === "mcp.delete") {
-        return json(await service.deleteMcpServer(base, name));
+        const deleted = await service.deleteMcpServer(base, name);
+        await load<McpExtensionModule>("app/services/mcp-extension-service.js").removeMcpExtension(name);
+        return json(deleted);
       }
       if (action === "mcp.rename") {
         const newName = required(args.value, "value", action);
-        return json({ ok: true, server: await service.renameMcpServer(base, name, newName) });
+        const server = await service.renameMcpServer(base, name, newName);
+        await load<McpExtensionModule>("app/services/mcp-extension-service.js").renameMcpExtension(name, newName);
+        return json({ ok: true, server });
       }
       throw new Error(`Unsupported MCP action: ${action}`);
     }
