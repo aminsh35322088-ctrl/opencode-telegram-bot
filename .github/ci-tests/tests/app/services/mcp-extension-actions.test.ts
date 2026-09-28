@@ -61,10 +61,11 @@ describe("MCP Extension record and generated tool actions", () => {
 
     expect(result).toMatchObject({ created: 3, discovered: 3, truncated: false });
     const actions = await listGeneratedActions(mcpExtensionId("railway"));
+    // listGeneratedActions returns records sorted by id.
     expect(actions.map((action) => action.id)).toEqual([
       "railway.deploy-latest",
-      "railway.read-log",
       "railway.github-get-issue",
+      "railway.read-log",
     ]);
     // The real MCP tool name is preserved even though the action ID is slugified.
     expect(actions.map((action) => action.invocation)).toEqual([
