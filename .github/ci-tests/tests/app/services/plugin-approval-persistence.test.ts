@@ -17,14 +17,17 @@ vi.mock("../../../src/config.js", () => ({
   },
 }));
 
-const reloadManagedOpenCodeConfig = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const reloadManagedOpenCodeConfig = vi.hoisted(() => vi.fn());
+const loadSkillsCatalog = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../src/app/services/opencode-managed-config-service.js", () => ({
   reloadManagedOpenCodeConfig,
 }));
 
+// The suite config sets mockReset, so implementations are re-armed in
+// beforeEach rather than in the module factory.
 vi.mock("../../../src/app/services/skills-catalog-service.js", () => ({
-  loadSkillsCatalog: vi.fn().mockResolvedValue([]),
+  loadSkillsCatalog,
 }));
 
 import {
@@ -51,6 +54,8 @@ describe("plugin approval request persistence across processes", () => {
   beforeEach(async () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "plugin-approval-"));
     process.env.OPENCODE_TELEGRAM_HOME = home;
+    reloadManagedOpenCodeConfig.mockResolvedValue(undefined);
+    loadSkillsCatalog.mockResolvedValue([]);
   });
 
   afterEach(async () => {
