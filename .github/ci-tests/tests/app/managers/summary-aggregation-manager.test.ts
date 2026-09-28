@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { summaryAggregator } from "../../../src/app/managers/summary-aggregation-manager.js";
+import { clearPausedSession, setPausedSession } from "../../../src/app/managers/paused-session-manager.js";
 import { logger } from "../../../src/utils/logger.js";
 import { defined } from "../../helpers/defined.js";
 
@@ -23,6 +24,7 @@ describe("summary/aggregator", () => {
   beforeEach(() => {
     mocked.getCurrentProjectMock.mockReset();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "p1", worktree: "D:/repo", name: "repo" });
+    clearPausedSession();
     summaryAggregator.clear();
     summaryAggregator.setOnCleared(() => {});
     summaryAggregator.setOnTool(() => {});
@@ -417,6 +419,34 @@ describe("summary/aggregator", () => {
       expect(card.finishedAt).toEqual(expect.any(Number));
       expect(card.finishedAt).toBeGreaterThanOrEqual(card.createdAt);
       expect(card.currentToolStartedAt).toBeUndefined();
+    });
+
+    it("keeps the same child resumable when parent pause makes it idle", () => {
+      const onSubagent = vi.fn();
+      summaryAggregator.setOnSubagent(onSubagent);
+      startSubagent();
+      emitChildTool("call-1");
+      setPausedSession({
+        id: "root-session",
+        title: "Paused parent",
+        directory: "D:/repo",
+      });
+
+      summaryAggregator.processEvent({
+        type: "session.idle",
+        properties: { sessionID: "child-session-1" },
+      } as unknown as Event);
+
+      const card = onSubagent.mock.lastCall?.[1][0];
+      expect(card).toEqual(
+        expect.objectContaining({
+          sessionId: "child-session-1",
+          parentSessionId: "root-session",
+          status: "paused",
+        }),
+      );
+      expect(card.finishedAt).toBeUndefined();
+      clearPausedSession("root-session");
     });
 
     it("re-emits and restarts timing for an identical tool with a new call id", async () => {

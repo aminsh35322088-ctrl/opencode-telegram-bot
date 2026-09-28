@@ -48,6 +48,7 @@ import { createMainInlineKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { buildMainStatusText, keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
+import { handleSubagentTopicCallback } from "./subagent-topic-callback-handler.js";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -174,6 +175,9 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
       (ctx) => handleSessionPreviewCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }),
       (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }),
     ], errorScope: "interaction" }],
+    ["subagent", { name: "subagent", handlers: [
+      (ctx) => handleSubagentTopicCallback(ctx, { ensureEventSubscription: deps.ensureEventSubscription }),
+    ], errorScope: "none" }],
     ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }],
     ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
     ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }],

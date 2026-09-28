@@ -108,6 +108,10 @@ function formatSubagentActivity(subagent: SubagentInfo, now: number): string {
     return `❌ ${message}`;
   }
 
+  if (subagent.status === "paused") {
+    return "⏸️ Paused with parent chat";
+  }
+
   const toolStep = formatToolStep(subagent);
   if (toolStep) {
     const elapsed = formatToolElapsed(subagent, now);
