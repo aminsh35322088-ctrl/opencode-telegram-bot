@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discoverMcpToolIds } from "../../../src/app/services/mcp-tool-discovery-service.js";
 import { saveManagedMcpServer } from "../../../src/app/services/mcp-server-store.js";
@@ -50,5 +52,87 @@ describe("MCP tool discovery fallback", () => {
     await expect(discoverMcpToolIds(home, "pingtest")).resolves.toEqual([
       "pingtest_ping_test",
     ]);
+  });
+
+  it("falls back to legacy SSE for remote MCP tool discovery", async () => {
+    let stream: ServerResponse | null = null;
+    let baseUrl = "";
+    const send = (message: unknown) => {
+      stream?.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
+    };
+    const server = createServer(async (request, response) => {
+      if (request.method === "POST" && request.url === "/mcp") {
+        response.writeHead(405).end();
+        return;
+      }
+      if (request.method === "GET" && request.url === "/mcp") {
+        stream = response;
+        response.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        response.write(`event: endpoint\ndata: ${baseUrl}/messages\n\n`);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/messages") {
+        let body = "";
+        for await (const chunk of request) body += chunk.toString();
+        response.writeHead(202).end();
+        const message = JSON.parse(body) as {
+          id?: string | number;
+          method?: string;
+          params?: { protocolVersion?: string };
+        };
+        if (message.method === "initialize") {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: message.params?.protocolVersion ?? "2025-06-18",
+              capabilities: { tools: { listChanged: false } },
+              serverInfo: { name: "legacy-sse-test", version: "1.0.0" },
+            },
+          });
+        } else if (message.method === "tools/list") {
+          send({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              tools: [{
+                name: "legacy_ping",
+                description: "Legacy SSE ping",
+                inputSchema: { type: "object", properties: {} },
+              }],
+            },
+          });
+        }
+        return;
+      }
+      response.writeHead(404).end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+      await saveManagedMcpServer({
+        projectDirectory: home,
+        name: "legacymcp",
+        config: {
+          type: "remote",
+          url: `${baseUrl}/mcp`,
+        },
+      });
+      await expect(discoverMcpToolIds(home, "legacymcp")).resolves.toEqual([
+        "legacymcp_legacy_ping",
+      ]);
+    } finally {
+      stream?.end();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 });
