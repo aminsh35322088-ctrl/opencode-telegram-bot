@@ -40,7 +40,7 @@ rm -rf /data/.cache/npm /data/.npm /data/.cache/tsx /data/.cache/opencode
 # their known runtime directory and marker-bearing generated artifacts before
 # OpenCode starts; unrelated user MCP/provider/Skill/Plugin state is preserved.
 rm -rf /data/omnirouter
-for root in /data/.config/opencode/plugin /data/.config/opencode/plugins /data/workspace/.opencode/plugin /data/workspace/.opencode/plugins /data/workspace/.opencode/tools /data/run
+for root in /data/.config/opencode/plugin /data/.config/opencode/plugins /data/.local/share/opencode /data/workspace/.opencode/plugin /data/workspace/.opencode/plugins /data/workspace/.opencode/tools /data/run
 do
   [ -d "$root" ] || continue
   find "$root" -type f -size -2097152c -print 2>/dev/null |
