@@ -9,6 +9,7 @@ import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settin
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { migrateLegacyCustomProviderCredentials, syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
 import { refreshFreeLlmCatalog } from "../services/free-llm-catalog-service.js";
+import { startFreeLlmCatalogRefreshService, stopFreeLlmCatalogRefreshService } from "../services/free-llm-catalog-refresh-service.js";
 import { startModelCatalogRefreshService, stopModelCatalogRefreshService } from "../services/model-catalog-refresh-service.js";
 import { initializeGithubIntegration } from "../services/github-integration-service.js";
 import { initializeTailscaleIntegration, stopTailscaleIntegration } from "../services/tailscale-integration-service.js";
@@ -167,6 +168,7 @@ export async function startBotApp(): Promise<void> {
     logger.warn("[CustomProvider] Could not prepare managed OpenCode config; continuing without it", error);
   }
   startModelCatalogRefreshService();
+  startFreeLlmCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
   const bot = createBot();
 
@@ -230,6 +232,7 @@ export async function startBotApp(): Promise<void> {
     logger.info(`[App] Received ${signal}, shutting down...`);
     runtimeObservabilityWatchdog.stop();
     stopModelCatalogRefreshService();
+    stopFreeLlmCatalogRefreshService();
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
@@ -274,6 +277,7 @@ export async function startBotApp(): Promise<void> {
   } finally {
     runtimeObservabilityWatchdog.stop();
     stopModelCatalogRefreshService();
+    stopFreeLlmCatalogRefreshService();
     process.off("unhandledRejection", unhandledRejectionHandler);
     process.off("uncaughtException", uncaughtExceptionHandler);
     process.off("SIGINT", handleSigint);
