@@ -36,6 +36,7 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { createTopicAwareApi, getUnscopedTelegramApi } from "./telegram-topic-runtime.js";
+import { subagentTopicInspector } from "./subagent-topic-inspector.js";
 import { clearPromptResponseMode } from "../handlers/prompt.js";
 import {
   reconcileBusyState,
@@ -316,6 +317,29 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
         return sentMessage.message_id;
       },
+      sendTextForStream: async (sessionId, text, streamKey) => {
+        if (!this.botInstance) {
+          throw new Error("Bot context missing for tool stream send");
+        }
+        if (!assistantRunState.hasActiveRun(sessionId)) {
+          throw new Error(`Tool stream session mismatch for send: ${sessionId}`);
+        }
+
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
+        const subagentKeyboard =
+          streamKey === "subagent"
+            ? subagentTopicInspector.buildParentKeyboard(
+                this.subagentSnapshots.get(sessionId) ?? [],
+              )
+            : null;
+        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
+          disable_notification: true,
+          ...(subagentKeyboard ? { reply_markup: subagentKeyboard } : {}),
+        });
+        return sentMessage.message_id;
+      },
       editText: async (sessionId, messageId, text) => {
         if (!this.botInstance) {
           throw new Error("Bot context missing for tool stream edit");
@@ -338,6 +362,33 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           }
 
           throw error;
+        }
+      },
+      editTextForStream: async (sessionId, messageId, text, streamKey) => {
+        if (!this.botInstance) {
+          throw new Error("Bot context missing for tool stream edit");
+        }
+        if (!assistantRunState.hasActiveRun(sessionId)) {
+          throw new Error(`Tool stream session mismatch for edit: ${sessionId}`);
+        }
+
+        const chatId = this.getChatIdForSession(sessionId);
+        if (!chatId) throw new Error("No chat ID for session");
+
+        const subagentKeyboard =
+          streamKey === "subagent"
+            ? subagentTopicInspector.buildParentKeyboard(
+                this.subagentSnapshots.get(sessionId) ?? [],
+              )
+            : null;
+        try {
+          await this.botInstance.api.editMessageText(chatId, messageId, text, {
+            ...(subagentKeyboard ? { reply_markup: subagentKeyboard } : {}),
+          });
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+          if (!errorMessage.includes("message is not modified")) throw error;
         }
       },
       deleteText: async (sessionId, messageId) => {
@@ -365,6 +416,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           throw error;
         });
       },
+      resolveRenderRevision: (sessionId, streamKey) =>
+        streamKey === "subagent"
+          ? subagentTopicInspector.parentKeyboardFingerprint(
+              this.subagentSnapshots.get(sessionId) ?? [],
+            )
+          : "",
     });
   }
 
@@ -1593,6 +1650,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
       }
 
+      subagentTopicInspector.processEvent(
+        event as EventStreamItem,
+        directory,
+        this.botInstance ? getUnscopedTelegramApi(this.botInstance.api) : null,
+      );
       summaryAggregator.processEvent(event);
     }).catch((err) => {
       logger.error("Failed to subscribe to events:", err);

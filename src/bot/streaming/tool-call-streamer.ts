@@ -16,6 +16,23 @@ interface ToolCallStreamerOptions {
   sendText: (sessionId: string, text: string) => Promise<number>;
   editText: (sessionId: string, telegramMessageId: number, text: string) => Promise<void>;
   deleteText: (sessionId: string, telegramMessageId: number) => Promise<void>;
+  sendTextForStream?: (
+    sessionId: string,
+    text: string,
+    streamKey: ToolStreamKey,
+  ) => Promise<number>;
+  editTextForStream?: (
+    sessionId: string,
+    telegramMessageId: number,
+    text: string,
+    streamKey: ToolStreamKey,
+  ) => Promise<void>;
+  deleteTextForStream?: (
+    sessionId: string,
+    telegramMessageId: number,
+    streamKey: ToolStreamKey,
+  ) => Promise<void>;
+  resolveRenderRevision?: (sessionId: string, streamKey: ToolStreamKey) => string;
 }
 
 interface StreamEntry {
@@ -37,6 +54,7 @@ interface StreamState {
   isBreaking: boolean;
   fatalErrorMessage: string | null;
   fatalErrorLogged: boolean;
+  lastRenderRevision: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -120,6 +138,10 @@ export class ToolCallStreamer {
   private readonly sendText: ToolCallStreamerOptions["sendText"];
   private readonly editText: ToolCallStreamerOptions["editText"];
   private readonly deleteText: ToolCallStreamerOptions["deleteText"];
+  private readonly sendTextForStream: NonNullable<ToolCallStreamerOptions["sendTextForStream"]>;
+  private readonly editTextForStream: NonNullable<ToolCallStreamerOptions["editTextForStream"]>;
+  private readonly deleteTextForStream: NonNullable<ToolCallStreamerOptions["deleteTextForStream"]>;
+  private readonly resolveRenderRevision: NonNullable<ToolCallStreamerOptions["resolveRenderRevision"]>;
   private readonly states: Map<string, StreamState> = new Map();
   private readonly allStates: Set<StreamState> = new Set();
 
@@ -128,6 +150,16 @@ export class ToolCallStreamer {
     this.sendText = options.sendText;
     this.editText = options.editText;
     this.deleteText = options.deleteText;
+    this.sendTextForStream =
+      options.sendTextForStream ?? ((sessionId, text) => this.sendText(sessionId, text));
+    this.editTextForStream =
+      options.editTextForStream ??
+      ((sessionId, telegramMessageId, text) =>
+        this.editText(sessionId, telegramMessageId, text));
+    this.deleteTextForStream =
+      options.deleteTextForStream ??
+      ((sessionId, telegramMessageId) => this.deleteText(sessionId, telegramMessageId));
+    this.resolveRenderRevision = options.resolveRenderRevision ?? (() => "");
   }
 
   private resolveThrottleMs(sessionId: string): number {
@@ -286,6 +318,7 @@ export class ToolCallStreamer {
       isBreaking: false,
       fatalErrorMessage: null,
       fatalErrorLogged: false,
+      lastRenderRevision: "",
     };
 
     this.states.set(stateId, state);
@@ -360,9 +393,11 @@ export class ToolCallStreamer {
     let rateLimitRetries = 0;
     while (!state.isBroken && !state.cancelled) {
       const parts = state.latestParts;
+      const renderRevision = this.resolveRenderRevision(state.sessionId, state.key);
       const unchanged =
         parts.length === state.lastSentParts.length &&
-        parts.every((part, index) => state.lastSentParts[index] === part);
+        parts.every((part, index) => state.lastSentParts[index] === part) &&
+        renderRevision === state.lastRenderRevision;
 
       if (unchanged) {
         return state.telegramMessageIds.length > 0;
@@ -374,6 +409,7 @@ export class ToolCallStreamer {
 
       try {
         await this.syncMessages(state, parts);
+        state.lastRenderRevision = renderRevision;
         if (state.cancelled) {
           return false;
         }
@@ -439,12 +475,12 @@ export class ToolCallStreamer {
       const currentMessageId = state.telegramMessageIds[index];
 
       if (currentMessageId) {
-        await this.editText(state.sessionId, currentMessageId, text);
+        await this.editTextForStream(state.sessionId, currentMessageId, text, state.key);
         state.lastSentParts[index] = text;
         continue;
       }
 
-      const messageId = await this.sendText(state.sessionId, text);
+      const messageId = await this.sendTextForStream(state.sessionId, text, state.key);
       state.telegramMessageIds[index] = messageId;
       state.lastSentParts[index] = text;
     }
@@ -456,7 +492,7 @@ export class ToolCallStreamer {
 
       const messageId = state.telegramMessageIds[index];
       if (messageId) {
-        await this.deleteText(state.sessionId, messageId);
+        await this.deleteTextForStream(state.sessionId, messageId, state.key);
       }
       state.telegramMessageIds.pop();
       state.lastSentParts.pop();

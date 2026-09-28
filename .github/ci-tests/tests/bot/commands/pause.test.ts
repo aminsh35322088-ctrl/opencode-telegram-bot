@@ -5,8 +5,11 @@ import { pauseCurrentChat } from "../../../src/bot/commands/pause-command.js";
 const mocked = vi.hoisted(() => ({
   status: vi.fn(),
   messages: vi.fn(),
+  children: vi.fn(),
   abort: vi.fn(),
   setPausedSession: vi.fn(),
+  setPausedSubagents: vi.fn(),
+  getPausedSubagents: vi.fn(),
   isChatPaused: vi.fn(),
   getKeyboard: vi.fn(),
   setPaused: vi.fn(),
@@ -15,7 +18,13 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
-  opencodeClient: { session: { status: mocked.status, messages: mocked.messages } },
+  opencodeClient: {
+    session: {
+      status: mocked.status,
+      messages: mocked.messages,
+      children: mocked.children,
+    },
+  },
 }));
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
@@ -29,8 +38,10 @@ vi.mock("../../../src/bot/commands/abort-command.js", () => ({
 vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
   clearPausedSession: vi.fn(),
   getPausedSession: vi.fn(),
+  getPausedSubagents: mocked.getPausedSubagents,
   isChatPaused: mocked.isChatPaused,
   setPausedSession: mocked.setPausedSession,
+  setPausedSubagents: mocked.setPausedSubagents,
 }));
 
 vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
@@ -67,6 +78,17 @@ vi.mock("../../../src/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock("../../../src/app/managers/summary-aggregation-manager.js", () => ({
+  summaryAggregator: { getSubagentsForParent: vi.fn(() => []), clear: vi.fn() },
+}));
+
+vi.mock("../../../src/bot/services/subagent-topic-inspector.js", () => ({
+  subagentTopicInspector: {
+    pauseForParent: vi.fn(async () => {}),
+    resumeForParent: vi.fn(async () => {}),
+  },
+}));
+
 describe("bot/commands/pause", () => {
   it("recovers the Resume keyboard when the confirmed-pause notification is rejected", async () => {
     const reply = vi.fn().mockRejectedValueOnce(new Error("Bad Request: can't parse entities")).mockResolvedValue({ message_id: 89 });
@@ -83,6 +105,8 @@ describe("bot/commands/pause", () => {
     vi.clearAllMocks();
     mocked.status.mockResolvedValue({ data: { "session-1": { type: "busy" } }, error: null });
     mocked.messages.mockResolvedValue({ data: [], error: null });
+    mocked.children.mockResolvedValue({ data: [], error: null });
+    mocked.getPausedSubagents.mockReturnValue([]);
     mocked.abort.mockResolvedValue("confirmed");
     mocked.isChatPaused.mockReturnValue(false);
     mocked.getKeyboard.mockReturnValue({ keyboard: [[{ text: "▶️ Resume" }]] });
@@ -102,7 +126,42 @@ describe("bot/commands/pause", () => {
       expect.objectContaining({ reply_markup: expect.any(Object), parse_mode: "HTML" }),
     );
     expect(editMessageText).not.toHaveBeenCalled();
-    expect(mocked.abort).toHaveBeenCalledWith(ctx, { notifyUser: false, restoreControls: false });
+    expect(mocked.abort).toHaveBeenCalledWith(ctx, {
+      notifyUser: false,
+      restoreControls: false,
+      closeSubagentTopics: false,
+    });
     expect(mocked.updateTopicRuntimeStateSync).toHaveBeenCalledWith(777, 42, { runState: "paused" });
   });
+
+  it("preserves active child session IDs before interrupting the parent", async () => {
+    mocked.children.mockResolvedValue({
+      data: [{ id: "child-1", title: "Inspect cache", agent: "explore" }],
+      error: null,
+    });
+    mocked.status.mockResolvedValue({
+      data: {
+        "session-1": { type: "busy" },
+        "child-1": { type: "busy" },
+      },
+      error: null,
+    });
+
+    const ctx = {
+      chat: { id: 777 },
+      reply: vi.fn().mockResolvedValue({ message_id: 90 }),
+      api: {},
+    } as unknown as Context;
+
+    await pauseCurrentChat(ctx);
+
+    expect(mocked.setPausedSubagents).toHaveBeenCalledWith("session-1", [
+      {
+        sessionId: "child-1",
+        agent: "explore",
+        title: "Inspect cache",
+      },
+    ]);
+  });
+
 });

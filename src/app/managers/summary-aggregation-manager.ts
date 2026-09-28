@@ -10,6 +10,7 @@ import { extractErrorMessage } from "../../utils/opencode-error.js";
 import { isRecord } from "../../utils/type-guards.js";
 import { getCurrentProject } from "../stores/settings-store.js";
 import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../services/topic-runtime-context.js";
+import { isChatPaused } from "./paused-session-manager.js";
 
 function withTopicContextPreserved<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => TResult,
@@ -121,7 +122,7 @@ type TokensCallback = (tokens: TokensInfo, isCompleted: boolean) => void;
 
 type CostCallback = (cost: number) => void;
 
-export type SubagentStatus = "pending" | "running" | "completed" | "error";
+export type SubagentStatus = "pending" | "running" | "paused" | "completed" | "error";
 
 export interface SubagentInfo {
   cardId: string;
@@ -675,15 +676,10 @@ class SummaryAggregator {
     }
   }
 
-  private emitSubagentState(): void {
-    const active = this.activeSessionId();
-    if (!active || !this.onSubagentCallback || this.subagentOrder.length === 0) {
-      return;
-    }
-
-    const subagents = this.subagentOrder
+  getSubagentsForParent(parentSessionId: string): SubagentInfo[] {
+    return this.subagentOrder
       .map((cardId) => this.subagentStates.get(cardId))
-      .filter((state): state is SubagentState => state?.parentSessionId === active)
+      .filter((state): state is SubagentState => state?.parentSessionId === parentSessionId)
       .map((state) => ({
         cardId: state.cardId,
         sessionId: state.sessionId,
@@ -707,6 +703,15 @@ class SummaryAggregator {
         finishedAt: state.finishedAt,
         updatedAt: state.updatedAt,
       }));
+  }
+
+  private emitSubagentState(): void {
+    const active = this.activeSessionId();
+    if (!active || !this.onSubagentCallback || this.subagentOrder.length === 0) {
+      return;
+    }
+
+    const subagents = this.getSubagentsForParent(active);
 
     const snapshot = JSON.stringify(
       subagents.map((subagent) => ({
@@ -1047,6 +1052,9 @@ class SummaryAggregator {
     if (typeof info.cost === "number") {
       subagent.cost = info.cost;
     }
+    subagent.status = "running";
+    subagent.terminalMessage = undefined;
+    subagent.finishedAt = undefined;
     subagent.updatedAt = Date.now();
     this.emitSubagentState();
   }
@@ -1065,6 +1073,7 @@ class SummaryAggregator {
     if (status === "running") {
       subagent.status = "running";
       subagent.terminalMessage = undefined;
+      subagent.finishedAt = undefined;
     }
 
     if (status === "pending" && subagent.status === "pending") {
@@ -1088,6 +1097,7 @@ class SummaryAggregator {
     const subagent = this.getOrCreateSubagentForSession(sessionId);
     subagent.status = "running";
     subagent.terminalMessage = undefined;
+    subagent.finishedAt = undefined;
     subagent.currentTool = undefined;
     subagent.currentToolInput = undefined;
     subagent.currentToolTitle = snapshot?.trim() || subagent.currentToolTitle;
@@ -1109,6 +1119,7 @@ class SummaryAggregator {
     const subagent = this.getOrCreateSubagentForSession(sessionId);
     subagent.status = "running";
     subagent.terminalMessage = undefined;
+    subagent.finishedAt = undefined;
     subagent.tokens = {
       input: tokens.input,
       output: tokens.output,
@@ -1120,6 +1131,20 @@ class SummaryAggregator {
     if (snapshot?.trim()) {
       subagent.currentToolTitle = snapshot.trim();
     }
+    subagent.updatedAt = Date.now();
+    this.emitSubagentState();
+  }
+
+  private setSubagentPausedStatus(sessionId: string): void {
+    const cardId = this.subagentCardIdBySessionId.get(sessionId);
+    if (!cardId) return;
+
+    const subagent = this.subagentStates.get(cardId);
+    if (!subagent) return;
+
+    subagent.status = "paused";
+    subagent.terminalMessage = undefined;
+    subagent.finishedAt = undefined;
     subagent.updatedAt = Date.now();
     this.emitSubagentState();
   }
@@ -2100,8 +2125,16 @@ class SummaryAggregator {
     const { sessionID } = event.properties;
 
     if (this.isTrackedChildSession(sessionID)) {
-      logger.info(`[Aggregator] Subagent session became idle: ${sessionID}`);
-      this.setSubagentTerminalStatus(sessionID, "completed");
+      const parentSessionId = this.trackedSessionParents.get(sessionID);
+      if (parentSessionId && isChatPaused(parentSessionId)) {
+        logger.info(
+          `[Aggregator] Subagent session paused with parent: child=${sessionID} parent=${parentSessionId}`,
+        );
+        this.setSubagentPausedStatus(sessionID);
+      } else {
+        logger.info(`[Aggregator] Subagent session became idle: ${sessionID}`);
+        this.setSubagentTerminalStatus(sessionID, "completed");
+      }
       return;
     }
 
@@ -2159,8 +2192,16 @@ class SummaryAggregator {
     }
 
     if (sessionID && this.isTrackedChildSession(sessionID)) {
-      logger.warn(`[Aggregator] Subagent session error: ${sessionID}: ${message}`);
-      this.setSubagentTerminalStatus(sessionID, "error", message);
+      const parentSessionId = this.trackedSessionParents.get(sessionID);
+      if (parentSessionId && isChatPaused(parentSessionId)) {
+        logger.info(
+          `[Aggregator] Suppressing pause-induced child error: child=${sessionID} parent=${parentSessionId}`,
+        );
+        this.setSubagentPausedStatus(sessionID);
+      } else {
+        logger.warn(`[Aggregator] Subagent session error: ${sessionID}: ${message}`);
+        this.setSubagentTerminalStatus(sessionID, "error", message);
+      }
       return;
     }
 
