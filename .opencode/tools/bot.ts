@@ -34,6 +34,7 @@ const BOT_ACTIONS = [
   "mcp.sync",
   "extensions.list",
   "extensions.info",
+  "extensions.inspect",
   "extensions.ensure",
   "extensions.remove",
   "generated-actions.list",
@@ -159,6 +160,9 @@ interface McpModule {
   setMcpServerEnabled(projectDirectory: string, serverName: string, enable: boolean): Promise<void>;
   renameMcpServer(projectDirectory: string, serverName: string, newName: string): Promise<unknown>;
   deleteMcpServer(projectDirectory: string, serverName: string): Promise<{ deleted: boolean; name: string }>;
+}
+interface SourceInspectModule {
+  inspectExtensionSource(value: string): Promise<unknown>;
 }
 interface McpExtensionModule {
   ensureMcpExtension(input: { serverName: string; projectDirectory: string; source: string }): Promise<unknown>;
@@ -394,7 +398,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions. Use skills.add for detected Skill sources and plugin-only extensions.ensure for detected plugins. MCP servers are managed with mcp.add/mcp.tools/mcp.call; mcp.add provisions a server the bot owns, mcp.tools reports its capabilities, and mcp.call invokes a single tool. Integrations and model providers are not installed automatically from model chat. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. extensions.inspect classifies a source URL or plugin specifier (read-only) so you can describe it and ask the user to confirm before installing with skills.add, extensions.ensure, or mcp.add. Use skills.add for detected Skill sources and plugin-only extensions.ensure for detected plugins. MCP servers are managed with mcp.add/mcp.tools/mcp.call; mcp.add provisions a server the bot owns, mcp.tools reports its capabilities, and mcp.call invokes a single tool. Integrations and model providers are not installed automatically from model chat. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -585,6 +589,12 @@ export default tool({
     if (action.startsWith("extensions.")) {
       const registry = await load<ExtensionRegistryModule>("app/services/extension-registry-service.js");
       if (action === "extensions.list") return json(await registry.listExtensions(base));
+      if (action === "extensions.inspect") {
+        // Read-only classification of a user-supplied source. Describe it to the
+        // user and ask for confirmation before calling skills.add/extensions.ensure/mcp.add.
+        const inspect = await load<SourceInspectModule>("app/services/source-inspect-service.js");
+        return json(await inspect.inspectExtensionSource(required(args.value, "value", action)));
+      }
       if (action === "extensions.info") return json(await registry.getExtensionInfo(base, required(args.extension_id, "extension_id", action)));
       if (action === "extensions.remove") return json(await registry.removeExtension(base, required(args.extension_id, "extension_id", action)));
       const kind = "plugin" as const;
