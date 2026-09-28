@@ -10,6 +10,7 @@ import {
   claimSharedPendingAdd,
   listSharedEnsureRequests,
   readSharedEnsureRequest,
+  readSharedPendingAdd,
   removeSharedEnsureRequest,
   removeSharedPendingAdd,
   writeSharedEnsureRequest,
@@ -160,6 +161,10 @@ function isLiveApprovalRequest(request: ExtensionEnsureRequest | null): request 
     && request.expiresAt > Date.now();
 }
 
+function isLivePluginRequest(request: ExtensionEnsureRequest | null): request is PluginEnsureRequest {
+  return isLiveApprovalRequest(request) && request.kind === "plugin" && request.authType === "none";
+}
+
 export function getExtensionEnsureRequest(id: string): ExtensionEnsureRequest | null {
   const request = readSharedEnsureRequest(id);
   return isLiveApprovalRequest(request) ? request : null;
@@ -179,27 +184,23 @@ export function cancelExtensionEnsure(id: string): boolean {
 export async function approveExtensionEnsure(id: string): Promise<ExtensionApprovalResult> {
   // Claim by rename so a double-tap or a second Topic cannot install twice.
   const request = claimSharedEnsureRequest(id);
-  if (!isLiveApprovalRequest(request)) throw new Error("Extension approval request expired.");
+  if (!isLivePluginRequest(request)) throw new Error("Extension approval request expired.");
 
   try {
-    if (request.kind === "plugin") {
-      const extension = recordFor(request, { kind: "plugin", specifier: request.source });
-      const previous = await getStoredExtension(extension.id);
-      if (previous) extension.createdAt = previous.createdAt;
-      await saveStoredExtension(extension);
-      try {
-        await reloadManagedOpenCodeConfig("extension_plugin_change", { timeoutMs: 30_000 });
-      } catch (error) {
-        if (previous) await saveStoredExtension(previous);
-        else await removeStoredExtension(extension.id);
-        await reloadManagedOpenCodeConfig("extension_plugin_rollback", { timeoutMs: 30_000 }).catch(() => {});
-        throw error;
-      }
-      removeSharedEnsureRequest(id);
-      return { status: "ready", extension };
+    const extension = recordFor(request, { kind: "plugin", specifier: request.source });
+    const previous = await getStoredExtension(extension.id);
+    if (previous) extension.createdAt = previous.createdAt;
+    await saveStoredExtension(extension);
+    try {
+      await reloadManagedOpenCodeConfig("extension_plugin_change", { timeoutMs: 30_000 });
+    } catch (error) {
+      if (previous) await saveStoredExtension(previous);
+      else await removeStoredExtension(extension.id);
+      await reloadManagedOpenCodeConfig("extension_plugin_rollback", { timeoutMs: 30_000 }).catch(() => {});
+      throw error;
     }
-
-    throw new Error("Unsupported approval-based Extension kind.");
+    removeSharedEnsureRequest(id);
+    return { status: "ready", extension };
   } catch (error) {
     // Keep a terminal record so the UI can report the failure instead of
     // silently presenting an expired-looking request.
