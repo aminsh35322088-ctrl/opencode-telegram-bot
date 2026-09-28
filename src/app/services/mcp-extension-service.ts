@@ -54,10 +54,13 @@ function describeTool(tool: McpToolDescriptor): string {
   return `${summary}${suffix}`.slice(0, 500);
 }
 
+/**
+ * JSON Schema keeps `required` independent of `properties`, so a server may
+ * declare required argument names without shipping a properties map. Read
+ * `required` on its own rather than gating it on `properties`.
+ */
 function collectRequiredProperties(schema: Record<string, unknown> | undefined): string[] {
   if (!schema) return [];
-  const properties = schema.properties;
-  if (typeof properties !== "object" || properties === null) return [];
   const required = Array.isArray(schema.required) ? schema.required : [];
   return required.filter((name): name is string => typeof name === "string" && name.trim().length > 0).slice(0, 12);
 }
