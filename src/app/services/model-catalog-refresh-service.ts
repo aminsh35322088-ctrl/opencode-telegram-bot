@@ -8,6 +8,7 @@ import {
   type CustomProviderModel,
 } from "./custom-provider-service.js";
 import { refreshModelCatalog } from "./model-selection-service.js";
+import { refreshFreeLlmCatalog } from "./free-llm-catalog-service.js";
 import { logger } from "../../utils/logger.js";
 import { opencodeClient } from "../../opencode/client.js";
 
@@ -46,6 +47,17 @@ export async function refreshAllCustomProviderModels(): Promise<void> {
 
   refreshInFlight = (async () => {
     let changed = false;
+
+    try {
+      const freeCatalog = await refreshFreeLlmCatalog();
+      if (freeCatalog.changed) {
+        changed = true;
+        logger.info("[ModelCatalog] Free LLM public catalog changed; staging refreshed OpenCode provider config");
+      }
+    } catch (error) {
+      logger.warn("[ModelCatalog] Free LLM public catalog refresh failed; keeping last-known-good catalog", error);
+    }
+
     const providers = await listCustomProviders();
 
     for (const provider of providers) {
@@ -114,7 +126,7 @@ export function startModelCatalogRefreshService(): void {
     void refreshAllCustomProviderModels().catch((error) => logger.warn("[ModelCatalog] Scheduled refresh failed", error));
   }, REFRESH_INTERVAL_MS);
   refreshTimer.unref?.();
-  logger.info(`[ModelCatalog] Automatic provider model refresh enabled: every ${REFRESH_INTERVAL_MS / 60000} minutes`);
+  logger.info(`[ModelCatalog] Automatic custom + public Free LLM catalog refresh enabled: every ${REFRESH_INTERVAL_MS / 60000} minutes`);
 }
 
 export function stopModelCatalogRefreshService(): void {
