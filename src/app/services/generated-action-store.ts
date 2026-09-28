@@ -66,10 +66,17 @@ function parseState(value: unknown): GeneratedActionState {
 
 function classifyRisk(id: string, action: string, tool: string): AgentActionRisk {
   const value = `${id} ${action} ${tool}`.toLowerCase();
-  if (/(delete|destroy|remove|purge|drop|terminate)/u.test(value)) return "destructive";
-  if (/(exec|shell|command|deploy|restart|redeploy|create|update|set|write|upload|trigger|cancel)/u.test(value)) return "mutating";
-  if (/(download|export|save)/u.test(value)) return "write";
-  if (/(list|get|read|status|inspect|describe|resolve|query|search|view|show)/u.test(value)) return "read";
+  // Match whole segments rather than substrings. MCP tool names are
+  // free-form and routinely contain a mutating keyword inside a read verb
+  // (`list_deployments`, `show_updates`): substring matching would classify
+  // those reads as mutations purely because `deploy`/`update` appears in them.
+  // Precedence is unchanged, so a genuinely mutating name still wins.
+  const segments = new Set(value.split(/[^a-z0-9]+/u).filter(Boolean));
+  const has = (...keywords: string[]): boolean => keywords.some((keyword) => segments.has(keyword));
+  if (has("delete", "destroy", "remove", "purge", "drop", "terminate")) return "destructive";
+  if (has("exec", "shell", "command", "deploy", "restart", "redeploy", "create", "update", "set", "write", "upload", "trigger", "cancel")) return "mutating";
+  if (has("download", "export", "save")) return "write";
+  if (has("list", "get", "read", "status", "inspect", "describe", "resolve", "query", "search", "view", "show")) return "read";
   return "external";
 }
 
