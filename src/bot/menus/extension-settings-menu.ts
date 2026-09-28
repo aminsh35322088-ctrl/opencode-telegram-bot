@@ -7,6 +7,7 @@ import {
 import { listGeneratedActions } from "../../app/services/generated-action-store.js";
 import { loadMcpServers } from "../../app/services/mcp-server-service.js";
 import { ref as hashRef } from "./menu-ref.js";
+import { escapeHtml } from "../commands/panel-render.js";
 
 export const SETTINGS_GITHUB_CALLBACK = "settings:github";
 export const SETTINGS_EXTENSIONS_CALLBACK = "settings:extensions";
@@ -134,9 +135,6 @@ export async function buildExtensionDetailView(projectDirectory: string, id: str
   return { text: lines.join("\n"), keyboard };
 }
 
-function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
 
 function statusLabel(status: string): string {
   if (status === "ready") return "connected";

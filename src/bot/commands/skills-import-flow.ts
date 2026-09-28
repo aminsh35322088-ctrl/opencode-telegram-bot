@@ -6,7 +6,7 @@ import { fetchSkillFromGitHub, resolveSkillSource } from "../../app/services/ski
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearSkillWizard } from "./skills-wizard.js";
-import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
+import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
 
 export const SKILLS_IMPORT_CALLBACK_PREFIX = "skills:imp_";
 export const SKILLS_IMPORT_CALLBACK_CONFIRM = `${SKILLS_IMPORT_CALLBACK_PREFIX}confirm`;
@@ -24,14 +24,6 @@ interface SkillImportState {
 
 let state: SkillImportState | null = null;
 
-function callbackMessageId(ctx: Context): number | null {
-  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
-  const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined;
-  if (typeof canonical === "number") return canonical;
-  const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) return null;
-  return typeof message.message_id === "number" ? message.message_id : null;
-}
 
 function activeState(): SkillImportState | null {
   if (!state) return null;
@@ -68,10 +60,6 @@ async function editImportPanel(
   });
 }
 
-async function deleteInput(ctx: Context): Promise<void> {
-  if (!ctx.chat?.id || !ctx.message?.message_id) return;
-  await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
-}
 
 export async function startSkillImport(ctx: Context): Promise<void> {
   clearSkillWizard();
@@ -129,7 +117,7 @@ export async function handleSkillImportMessage(ctx: Context): Promise<boolean> {
   const text = ctx.message?.text?.trim();
   if (!text || text.startsWith("/")) return false;
 
-  await deleteInput(ctx);
+  await deleteInputMessage(ctx);
   try {
     const resolved = await resolveSkillSource(text);
     if (resolved.kind === "single") {

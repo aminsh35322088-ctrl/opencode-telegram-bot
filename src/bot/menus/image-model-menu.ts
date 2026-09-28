@@ -19,6 +19,7 @@ import type { ModelPrice } from "../../app/services/model-price-classifier.js";
 import { refreshModelCatalog } from "../../app/services/model-selection-service.js";
 import type { ImageModelSelection } from "../../app/types/image-model.js";
 import {
+import { escapeHtml } from "../commands/panel-render.js";
   SETTINGS_BACK_CALLBACK,
   SETTINGS_DEFAULT_MODELS_CALLBACK,
   SETTINGS_IMAGE_MODEL_CALLBACK,
@@ -38,12 +39,6 @@ interface ImageModelChoice {
 
 const choices = new Map<string, ImageModelChoice>();
 
-function html(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
 
 function scope(ctx: Context): string {
   const message = ctx.callbackQuery?.message ?? ctx.message;
@@ -61,9 +56,9 @@ function formatSelection(
   const entry = catalog.find((candidate) =>
     catalogEntryMatchesSelection(candidate, selection));
   if (!entry) {
-    return html(selection.providerID) + " · " + html(selection.modelID) + " · unavailable";
+    return escapeHtml(selection.providerID) + " · " + escapeHtml(selection.modelID) + " · unavailable";
   }
-  return html(entry.providerName) + " · " + html(entry.modelName);
+  return escapeHtml(entry.providerName) + " · " + escapeHtml(entry.modelName);
 }
 
 async function priceMaps(

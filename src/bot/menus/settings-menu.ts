@@ -3,6 +3,7 @@ import { getDefaultCapabilityModel, getDefaultImageModel, getFreeModelDetectionE
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { INLINE_MENU_CANCEL_PREFIX } from "./inline-menu.js";
 import {
+import { escapeHtml } from "../commands/panel-render.js";
   SETTINGS_ACTIONS_CALLBACK,
   SETTINGS_EXTENSIONS_CALLBACK,
   SETTINGS_GITHUB_CALLBACK,
@@ -334,7 +335,6 @@ export function buildAdvancedSettingsView(): { text: string; keyboard: InlineKey
 
 const MEMORY_LIST_LIMIT = 10;
 
-function escapeHtml(value: string): string { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
 export function buildMemorySettingsView(memories: Array<{ id: string; scope: string; content: string }>): { text: string; keyboard: InlineKeyboard } {
   const keyboard = new InlineKeyboard();

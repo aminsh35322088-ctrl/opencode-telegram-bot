@@ -8,24 +8,12 @@ import { buildGithubSettingsView } from "../menus/extension-settings-menu.js";
 import { appendHomeNavigation, replyWithInlineMenu } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
-import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
+import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingTailscale { step: "auth-key"; messageId: number; }
 interface PendingState { github?: PendingGithub; tailscale?: PendingTailscale; }
 
 const integrationWizard = new TopicScopedValue<PendingState>();
-function callbackMessageId(ctx: Context): number | null {
-  const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
-  if (typeof chatId === "number") {
-    const canonical = getMainNavigationMessageId(chatId);
-    if (typeof canonical === "number" && Number.isInteger(canonical) && canonical > 0) {
-      return canonical;
-    }
-  }
-  const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) return null;
-  return typeof message.message_id === "number" ? message.message_id : null;
-}
 function wizardKeyboard(): InlineKeyboard {
   return appendHomeNavigation(new InlineKeyboard().text("❌ Cancel", "integration:cancel").text("← Settings", "settings:back"));
 }
@@ -51,7 +39,6 @@ export function isIntegrationWizardActive(): boolean {
 export function clearIntegrationWizard(): void {
   integrationWizard.clear();
 }
-async function deleteInput(ctx: Context): Promise<void> { const messageId = ctx.message?.message_id; if (ctx.chat?.id && messageId) await ctx.api.deleteMessage(ctx.chat.id, messageId).catch(() => {}); }
 async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> {
   try {
     await ctx.api.editMessageText(ctx.chat!.id, callbackMessageId(ctx) ?? messageId, text, { reply_markup: wizardKeyboard() });
@@ -171,11 +158,11 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
   const tailscale = state.tailscale;
   try {
     if (github) {
-      if (github.step === "name") { github.name = text; github.step = "token"; await deleteInput(ctx); await editWizard(ctx, github.messageId, "➕ Add GitHub Account\n\n2/2 · Personal Access Token\n\nSend the token as a message. Telegram will delete it when possible."); return true; }
-      await deleteInput(ctx); const account = await addGithubAccount(github.name!, text); await finishWizard(ctx, github.messageId, `✅ GitHub account “${account.name}” added and selected.`); return true;
+      if (github.step === "name") { github.name = text; github.step = "token"; await deleteInputMessage(ctx); await editWizard(ctx, github.messageId, "➕ Add GitHub Account\n\n2/2 · Personal Access Token\n\nSend the token as a message. Telegram will delete it when possible."); return true; }
+      await deleteInputMessage(ctx); const account = await addGithubAccount(github.name!, text); await finishWizard(ctx, github.messageId, `✅ GitHub account “${account.name}” added and selected.`); return true;
     }
     if (tailscale) {
-      await deleteInput(ctx);
+      await deleteInputMessage(ctx);
       await editWizard(ctx, tailscale.messageId, "🌐 Connecting Tailscale…\n\nStarting userspace networking and verifying Tailnet authentication.");
       await configureTailscale(text);
       clearIntegrationWizard();
@@ -190,4 +177,4 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
     return true;
   }
 }
-async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInput(ctx); try { await showGithubSettingsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
+async function finishWizard(ctx: Context, messageId: number, notice: string): Promise<void> { await deleteInputMessage(ctx); try { await showGithubSettingsMenu(ctx, messageId, notice); } finally { clearIntegrationWizard(); } }
