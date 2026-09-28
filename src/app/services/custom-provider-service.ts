@@ -1,4 +1,5 @@
 import { fetchProviderCatalog } from "./provider-catalog-service.js";
+import { buildFreeLlmOpenCodeProviders } from "./free-llm-catalog-service.js";
 import { isChatModelMetadata } from "./model-eligibility-service.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -806,7 +807,7 @@ async function rollbackToolCapabilityUpdates(updates: readonly ToolCapabilityUpd
 export async function buildOpenCodeCustomConfig(): Promise<string> {
   const store = await readStore();
   await applyProviderEnvironment(store);
-  const providers: Record<string, unknown> = {};
+  const providers: Record<string, unknown> = await buildFreeLlmOpenCodeProviders();
 
   for (const provider of store.providers.filter((p) => p.id !== LEGACY_GEMINI_IMAGE_ID && p.capability !== "stt")) {
     if (!(await providerApiKey(provider))) {
