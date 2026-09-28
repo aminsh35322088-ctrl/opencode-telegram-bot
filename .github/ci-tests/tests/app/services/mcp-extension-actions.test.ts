@@ -70,8 +70,8 @@ describe("MCP Extension record and generated tool actions", () => {
     // The real MCP tool name is preserved even though the action ID is slugified.
     expect(actions.map((action) => action.invocation)).toEqual([
       { kind: "mcp-tool", server: "railway", tool: "deploy_latest" },
-      { kind: "mcp-tool", server: "railway", tool: "read log" },
       { kind: "mcp-tool", server: "railway", tool: "github/get_issue" },
+      { kind: "mcp-tool", server: "railway", tool: "read log" },
     ]);
     expect(actions.every((action) => action.tool === "mcp" && action.action === "call")).toBe(true);
     expect(actions[1]?.description).toContain("Required arguments: service");
