@@ -36,6 +36,22 @@ mkdir -p /data/logs /data/run /data/.config /data/.local/share /data/.cache /dat
 
 rm -rf /data/.cache/npm /data/.npm /data/.cache/tsx /data/.cache/opencode
 
+# OmniRouter and the experimental Qwen guest bridge are retired. Remove only
+# their known runtime directory and marker-bearing generated artifacts before
+# OpenCode starts; unrelated user MCP/provider/Skill/Plugin state is preserved.
+rm -rf /data/omnirouter
+for root in /data/.config/opencode/plugin /data/.config/opencode/plugins /data/workspace/.opencode/plugin /data/workspace/.opencode/plugins /data/workspace/.opencode/tools /data/run
+do
+  [ -d "$root" ] || continue
+  find "$root" -type f -size -2097152c -print 2>/dev/null |
+    while IFS= read -r file; do
+      if grep -Eqi 'QwenDiag|experimental-qwen-web|omnirouter|free-model-source' "$file" 2>/dev/null; then
+        printf '%s\n' "[railway] Removing retired OmniRouter/Qwen artifact: $file"
+        rm -f -- "$file"
+      fi
+    done
+done
+
 DATA_FREE_KB="$(df -Pk /data | awk 'NR==2 {print $4}')"
 DATA_USED_KB="$(df -Pk /data | awk 'NR==2 {print $3}')"
 DATA_TOTAL_KB="$(df -Pk /data | awk 'NR==2 {print $2}')"
@@ -167,7 +183,7 @@ if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; 
   fi
   su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
   REPO_REVISION="${RAILWAY_GIT_COMMIT_SHA:-origin/$REPO_BRANCH}"
-  su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
+  su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' clean -ffd && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
   REPO_HEAD="$(su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
   printf '%s\n' "[railway] Persistent repository checkout ready: ${PERSISTENT_REPO_DIR} (${REPO_BRANCH}@${REPO_HEAD})"
 else
