@@ -47,7 +47,7 @@ export const CUSTOM_TOOL_ACTIONS = {
     "agents.list", "agents.current", "agents.select",
     "variants.list", "variants.current", "variants.select",
     "skills.list", "skills.add", "skills.create", "skills.update", "skills.delete", "commands.list",
-    "mcp.list", "mcp.debug", "mcp.add", "mcp.tools", "mcp.call", "mcp.enable", "mcp.rename", "mcp.delete",
+    "mcp.list", "mcp.debug", "mcp.add", "mcp.tools", "mcp.call", "mcp.sync", "mcp.enable", "mcp.rename", "mcp.delete",
     "extensions.list", "extensions.info", "extensions.ensure", "extensions.remove",
     "generated-actions.list", "generated-actions.toggle",
     "session.current", "session.messages", "session.latest-assistant", "run.status",
@@ -125,6 +125,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "bot.mcp.add": "Provision a bot-managed MCP server from a remote URL or a local command, then report the tools it exposes.",
   "bot.mcp.tools": "List the tools a bot-managed MCP server exposes, including their input schemas.",
   "bot.mcp.call": "Invoke a single tool on a bot-managed MCP server with explicit JSON arguments.",
+  "bot.mcp.sync": "Re-discover a bot-managed MCP server's tools and refresh its generated action pack.",
   "media.stt.transcribe": "Transcribe a bounded audio file from the current worktree.",
   "media.video.prepare": "Extract bounded video keyframes and audio into the current worktree for model analysis.",
   "media.image.generate": "Generate an image with the effective Main/Topic Image Model and save it to the worktree.",
@@ -165,7 +166,7 @@ const BOT_READ = new Set([
 ]);
 const BOT_MUTATING = new Set([
   "models.refresh", "models.select", "agents.select", "variants.select", "skills.create", "skills.update",
-  "skills.add", "mcp.add", "mcp.call", "mcp.debug", "mcp.enable", "mcp.rename",
+  "skills.add", "mcp.add", "mcp.call", "mcp.sync", "mcp.debug", "mcp.enable", "mcp.rename",
   "extensions.ensure", "generated-actions.toggle", "providers.free-policy.set",
   "tasks.create", "settings.set", "memory.add", "memory.remove", "integrations.github.select",
 ]);

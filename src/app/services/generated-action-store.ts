@@ -4,7 +4,7 @@ import type { AgentActionRisk } from "./agent-action-registry.js";
 import { getStoredExtension } from "./extension-store.js";
 
 export type GeneratedActionInvocation =
-  | { kind: "mcp-tool"; tool: string }
+  | { kind: "mcp-tool"; tool: string; server?: string }
   | { kind: "native-tool"; tool: string; arguments?: Record<string, string> }
   | { kind: "action-tool"; tool: string; actionArgument: string; actionValue: string; arguments?: Record<string, string> };
 
@@ -45,6 +45,7 @@ function parseRecord(value: unknown): GeneratedActionRecord | null {
     typeof value.description !== "string" ||
     !["mcp-tool", "native-tool", "action-tool"].includes(String(value.invocation.kind)) ||
     typeof value.invocation.tool !== "string" ||
+    (value.invocation.server !== undefined && typeof value.invocation.server !== "string") ||
     typeof value.enabled !== "boolean" ||
     typeof value.userDisabled !== "boolean" ||
     typeof value.createdAt !== "string" ||
@@ -78,6 +79,14 @@ function normalizeId(value: string): string {
   return id;
 }
 
+/**
+ * Namespace every generated action of an Extension must live under. Exported so
+ * producers cannot drift from the prefix the store validates against.
+ */
+export function generatedActionNamespace(extensionName: string): string {
+  return extensionName.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ".").replace(/^\.+|\.+$/gu, "") || "extension";
+}
+
 export async function listGeneratedActions(extensionId?: string): Promise<GeneratedActionRecord[]> {
   const state = await readAppState();
   return Object.values(parseState(state[STORE_KEY]).records)
@@ -95,7 +104,7 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
 }>): Promise<GeneratedActionRecord[]> {
   const extension = await getStoredExtension(extensionId);
   if (!extension) throw new Error("Generated actions require an approved registered Extension.");
-  const namespace = extension.name.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ".").replace(/^\.+|\.+$/gu, "") || "extension";
+  const namespace = generatedActionNamespace(extension.name);
   const now = new Date().toISOString();
   const clean = actions.slice(0, 100).map((candidate) => {
     const id = normalizeId(candidate.id);
