@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 const getMainNavigationMessageId = vi.hoisted(() => vi.fn());
-vi.mock("../../../src/app/stores/settings-store.js", () => ({ getMainNavigationMessageId }));
+vi.mock("../../src/app/stores/settings-store.js", () => ({ getMainNavigationMessageId }));
 
 const {
   callbackMessageId,
   escapeHtml,
-} = await import("../../../src/bot/commands/panel-render.js");
+} = await import("../../src/bot/commands/panel-render.js");
 
 /**
  * `callbackMessageId` had four near-identical copies across command modules and

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../src/config.js", () => ({
+vi.mock("../../src/config.js", () => ({
   config: {
     telegram: { token: "123456:navigation-dedup", allowedUserId: 1 },
     opencode: {
@@ -19,14 +19,14 @@ const listGithubAccounts = vi.hoisted(() => vi.fn());
 const getActiveGithubAccount = vi.hoisted(() => vi.fn());
 const loadMcpServers = vi.hoisted(() => vi.fn());
 
-vi.mock("../../../src/app/services/github-integration-service.js", () => ({
+vi.mock("../../src/app/services/github-integration-service.js", () => ({
   listGithubAccounts,
   getActiveGithubAccount,
 }));
 
-vi.mock("../../../src/app/services/mcp-server-service.js", () => ({ loadMcpServers }));
+vi.mock("../../src/app/services/mcp-server-service.js", () => ({ loadMcpServers }));
 
-import { buildGithubSettingsView } from "../../../src/bot/menus/extension-settings-menu.js";
+import { buildGithubSettingsView } from "../../src/bot/menus/extension-settings-menu.js";
 
 const flat = (keyboard: { inline_keyboard: unknown[][] }): Array<{ text?: string; callback_data?: string }> =>
   keyboard.inline_keyboard.flat().filter(Boolean) as Array<{ text?: string; callback_data?: string }>;

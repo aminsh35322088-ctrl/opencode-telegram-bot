@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../../src/config.js", () => ({
+vi.mock("../../src/config.js", () => ({
   config: {
     telegram: { token: "123456:navigation-mcp-signin", allowedUserId: 1 },
     opencode: {
@@ -18,7 +18,7 @@ vi.mock("../../../src/config.js", () => ({
 
 const loadMcpServers = vi.hoisted(() => vi.fn());
 
-vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
+vi.mock("../../src/app/services/mcp-server-service.js", () => ({
   loadMcpServers,
 }));
 
@@ -26,8 +26,8 @@ import {
   buildExtensionDetailView,
   resolveMcpServerRef,
   SETTINGS_EXTENSION_MCP_PREFIX,
-} from "../../../src/bot/menus/extension-settings-menu.js";
-import { ref } from "../../../src/bot/menus/menu-ref.js";
+} from "../../src/bot/menus/extension-settings-menu.js";
+import { ref } from "../../src/bot/menus/menu-ref.js";
 
 const AIRPLANE = { name: "railway", type: "remote", status: { status: "needs_auth" } };
 
