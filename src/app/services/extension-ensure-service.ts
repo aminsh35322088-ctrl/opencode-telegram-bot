@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { analyzeRemoteMcpEndpoint, createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, loadMcpServers, startMcpOAuth } from "./mcp-server-service.js";
+import { analyzeRemoteMcpEndpoint, createMcpServerFromInput, configureSecureMcpAuth, completeMcpOAuth, deleteMcpServer, loadMcpServers, startMcpOAuth } from "./mcp-server-service.js";
 import { resolveSkillSource } from "./skill-import-service.js";
 import { writeGlobalSkillRaw } from "./skill-manage-service.js";
 import { discoverModels, saveCustomProvider } from "./custom-provider-service.js";
@@ -455,20 +455,48 @@ export async function addMcpBackedExtension(input: {
 
   if (!input.confirmed) {
     const analysis = isLocal ? null : await analyzeRemoteMcpEndpoint(source);
-    const options: ExtensionQuestionPreview["options"] = [
-      { label: "Add", description: "Use OpenCode automatic MCP authentication discovery." },
-    ];
-    if (analysis?.authHint === "credential-likely") {
-      options.push(
-        { label: "API key", description: "Add it and request an API key securely.", authType: "api-key" },
-        { label: "Bearer token", description: "Add it and request a Bearer token securely.", authType: "bearer" },
-      );
-    }
-    options.push({ label: "Cancel", description: "Do not add this Extension." });
+    const options: ExtensionQuestionPreview["options"] = isLocal
+      ? [
+          {
+            label: "Add local",
+            description: "Add this local MCP command without remote authentication.",
+            authType: "none",
+          },
+          { label: "Cancel", description: "Do not add this Extension." },
+        ]
+      : [
+          {
+            label: "Sign in (OAuth)",
+            description: analysis?.authHint === "oauth-likely"
+              ? "Recommended by endpoint analysis. Open the provider sign-in page, then paste a localhost callback URL or tap Check."
+              : "Use browser-based OAuth sign-in. You can paste a localhost callback URL or tap Check afterward.",
+            authType: "oauth",
+          },
+          {
+            label: "API key",
+            description: analysis?.authHint === "credential-likely"
+              ? "Endpoint appears credential-protected. Enter an API key through secure Telegram input."
+              : "Use this if the provider gave you an API key.",
+            authType: "api-key",
+          },
+          {
+            label: "Bearer token",
+            description: "Use this if the provider gave you a Bearer token.",
+            authType: "bearer",
+          },
+          {
+            label: "No auth",
+            description: "Only use this when the MCP endpoint is public and requires no authentication.",
+            authType: "none",
+          },
+          { label: "Cancel", description: "Do not add this Extension." },
+        ];
 
     const question = addQuestion(
       input.kind === "mcp" ? "Add MCP Server" : "Add Integration",
-      `Add ${name} to the bot?`,
+      isLocal
+        ? `Add ${name} to the bot?`
+        : `How should ${name} authenticate?`,
       options,
     );
     writePendingAdd({
@@ -508,16 +536,7 @@ export async function addMcpBackedExtension(input: {
     value,
   });
 
-  const requestedAuth = input.authType;
-  const runtimeNeedsOAuth =
-    !isLocal
-    && (server.status.status === "needs_auth" || server.status.status === "needs_client_registration");
-  const effectiveAuth: ExtensionAuthType =
-    requestedAuth === "api-key" || requestedAuth === "bearer"
-      ? requestedAuth
-      : runtimeNeedsOAuth
-        ? "oauth"
-        : requestedAuth ?? "none";
+  const effectiveAuth: ExtensionAuthType = input.authType ?? "none";
 
   if (isLocal && effectiveAuth !== "none") {
     throw new Error("Local MCP Extensions do not support remote authentication.");
@@ -582,9 +601,22 @@ export async function addMcpBackedExtension(input: {
     };
   }
 
-  if (server.status.status === "failed") {
+  if (
+    effectiveAuth === "none"
+    && (server.status.status === "needs_auth" || server.status.status === "needs_client_registration")
+  ) {
+    await removeStoredExtension(extension.id).catch(() => {});
+    await deleteMcpServer(input.projectDirectory, name).catch(() => false);
     throw new Error(
-      `MCP server ${name} was added but did not connect. Retry the add flow and choose a credential type if the endpoint requires one.`,
+      `MCP server ${name} requires authentication. Run mcp.add again and explicitly choose Sign in (OAuth), API key, or Bearer token.`,
+    );
+  }
+
+  if (server.status.status === "failed") {
+    await removeStoredExtension(extension.id).catch(() => {});
+    await deleteMcpServer(input.projectDirectory, name).catch(() => false);
+    throw new Error(
+      `MCP server ${name} did not connect. Run mcp.add again and choose the correct manual authentication option.`,
     );
   }
 

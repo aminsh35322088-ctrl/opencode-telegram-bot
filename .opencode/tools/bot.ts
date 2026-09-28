@@ -374,7 +374,7 @@ async function readSettings(): Promise<Record<SettingName, unknown>> {
 
 export default tool({
   description:
-    "Access the bot control plane through explicit model-facing actions. To add MCP servers, Skills, or dynamic Integrations, call mcp.add / skills.add / integrations.add exactly once. When the result is status=question-required, immediately call the native question tool with questionTool.arguments exactly. After the user answers, the bot deterministically resumes installation itself; do not call the add action again. No permission request is needed. OAuth/API-key follow-up is handled by Telegram secure UI. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
+    "Access the bot control plane through explicit model-facing actions. Skills and plugins can use the managed install flow. MCP servers and dynamic Integrations are always user-directed: call mcp.add / integrations.add once to analyze the endpoint and return a native Question with explicit auth choices (OAuth / API key / Bearer / no auth / cancel). Never infer or auto-select an MCP auth mode. After the user chooses, the bot resumes that exact selected path. OAuth may finish either by the user pasting a localhost callback URL or by tapping Check after browser sign-in. API keys/tokens use Telegram secure input and are verified before activation. No permission request is needed. Extension installation/update is bot-owned runtime configuration; never edit, commit, push, or deploy project/repository files merely to install an Extension. Secrets are never returned or accepted here.",
   args: {
     action: tool.schema.enum(BOT_ACTIONS).describe("Bot capability action to execute."),
     provider_id: tool.schema.string().optional().describe("Provider ID for model/provider actions."),
@@ -389,7 +389,7 @@ export default tool({
     extension_id: tool.schema.string().optional().describe("Registered Extension ID."),
     credential_id: tool.schema.string().optional().describe("Credential schema ID registered by an Extension. Never pass a secret value."),
     extension_kind: tool.schema.enum(["plugin"]).optional().describe("extensions.ensure is reserved for OpenCode plugins. Use providers.ensure, mcp.add, skills.add, or integrations.add for all other Extension classes."),
-    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Reserved for non-conversational Extension setup. MCP/Integration auth is selected automatically or through the returned Question options; raw secrets are never accepted."),
+    auth_type: tool.schema.enum(["none", "oauth", "api-key", "bearer"]).optional().describe("Internal/manual Extension auth selection. MCP/Integration callers must not infer this value; the user chooses it through the returned Question flow. Raw secrets are never accepted."),
     confidence: tool.schema.enum(["low", "medium", "high"]).optional().describe("Provider-level free-model policy confidence."),
     paid_by_default: tool.schema.boolean().optional().describe("Provider free-policy fallback when a model is not explicitly listed."),
     free_suffix: tool.schema.string().optional().describe("Provider-advertised free model suffix, such as :free."),

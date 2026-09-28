@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   startOAuth: vi.fn(),
   completeOAuth: vi.fn(),
   loadMcps: vi.fn(),
+  deleteMcp: vi.fn(),
   configureSecure: vi.fn(),
   resolveSkill: vi.fn(),
   writeSkill: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("../../../src/app/services/mcp-server-service.js", () => ({
   startMcpOAuth: mocks.startOAuth,
   completeMcpOAuth: mocks.completeOAuth,
   loadMcpServers: mocks.loadMcps,
+  deleteMcpServer: mocks.deleteMcp,
   configureSecureMcpAuth: mocks.configureSecure,
 }));
 vi.mock("../../../src/app/services/skill-import-service.js", () => ({
@@ -87,6 +89,8 @@ describe("conversational Extension add flows", () => {
     mocks.generateActions.mockResolvedValue(2);
     mocks.resolveCredential.mockResolvedValue("secret-value");
     mocks.loadMcps.mockResolvedValue([]);
+    mocks.deleteMcp.mockResolvedValue(true);
+    mocks.removeExtension.mockResolvedValue(undefined);
   });
 
   it("analyzes an MCP endpoint and requires native Question confirmation before mutation", async () => {
@@ -116,6 +120,18 @@ describe("conversational Extension add flows", () => {
             }),
           ],
         },
+      },
+    });
+    expect(result).toMatchObject({
+      question: {
+        question: "How should graphify authenticate?",
+        options: [
+          expect.objectContaining({ label: "Sign in (OAuth)", authType: "oauth" }),
+          expect.objectContaining({ label: "API key", authType: "api-key" }),
+          expect.objectContaining({ label: "Bearer token", authType: "bearer" }),
+          expect.objectContaining({ label: "No auth", authType: "none" }),
+          expect.objectContaining({ label: "Cancel" }),
+        ],
       },
     });
     expect(mocks.analyze).toHaveBeenCalledTimes(1);
@@ -150,7 +166,7 @@ describe("conversational Extension add flows", () => {
         header: preview.question.header,
         question: preview.question.question,
       }],
-      answers: [["* Add: Use OpenCode automatic MCP authentication discovery."]],
+      answers: [["* Sign in (OAuth): Recommended by endpoint analysis. Open the provider sign-in page, then paste a localhost callback URL or tap Check."]],
     });
 
     expect(resumed).toMatchObject({
@@ -229,7 +245,7 @@ describe("conversational Extension add flows", () => {
     expect(mocks.createMcp).not.toHaveBeenCalled();
   });
 
-  it("auto-detects needs_auth and starts OAuth without a permission request", async () => {
+  it("does not auto-select OAuth when the user did not choose it", async () => {
     mocks.createMcp.mockResolvedValue({
       name: "graphify",
       type: "remote",
@@ -240,7 +256,7 @@ describe("conversational Extension add flows", () => {
       oauthState: "oauth-state",
     });
 
-    const result = await addMcpBackedExtension({
+    await expect(addMcpBackedExtension({
       sessionId: "ses-oauth",
       projectDirectory: "/work/repo",
       name: "graphify",
@@ -248,17 +264,12 @@ describe("conversational Extension add flows", () => {
       source: "https://api.graphify.com/mcp",
       purpose: "Repository graph analysis",
       confirmed: true,
-    });
+      authType: "none",
+    })).rejects.toThrow(/requires authentication/i);
 
-    expect(result).toMatchObject({
-      status: "awaiting-oauth",
-      authorizationUrl: "https://graphify.example/oauth/authorize",
-    });
-    expect(mocks.startOAuth).toHaveBeenCalledWith("/work/repo", "graphify");
-    expect(getPendingExtensionOAuth("ses-oauth")).toMatchObject({
-      serverName: "graphify",
-      authorizationUrl: "https://graphify.example/oauth/authorize",
-    });
+    expect(mocks.startOAuth).not.toHaveBeenCalled();
+    expect(mocks.removeExtension).toHaveBeenCalled();
+    expect(mocks.deleteMcp).toHaveBeenCalledWith("/work/repo", "graphify");
   });
   it("completes MCP OAuth from the Check path when OpenCode reports connected", async () => {
     mocks.createMcp.mockResolvedValue({
@@ -296,6 +307,7 @@ describe("conversational Extension add flows", () => {
       source: "https://api.graphify.com/mcp",
       purpose: "Repository graph analysis",
       confirmed: true,
+      authType: "oauth",
     });
 
     await expect(verifyPendingExtensionOAuth("ses-oauth-check")).resolves.toEqual({
@@ -339,6 +351,7 @@ describe("conversational Extension add flows", () => {
       source: "https://api.graphify.com/mcp",
       purpose: "Repository graph analysis",
       confirmed: true,
+      authType: "oauth",
     });
 
     await expect(

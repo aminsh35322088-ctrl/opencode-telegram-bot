@@ -16,9 +16,17 @@ describe("friendly action display", () => {
   });
 
   it("uses purpose-specific labels for representative nested actions", () => {
-    expect(getFriendlyActionDisplay("bot", { action: "mcp.add-local" })).toEqual({
-      icon: "➕",
-      label: "Add Local MCP Server",
+    expect(getFriendlyActionDisplay("bot", { action: "mcp.add" })).toEqual({
+      icon: "🌐",
+      label: "Add MCP Server",
+    });
+    expect(getFriendlyActionDisplay("bot", { action: "skills.add" })).toEqual({
+      icon: "📥",
+      label: "Add Skill",
+    });
+    expect(getFriendlyActionDisplay("bot", { action: "integrations.add" })).toEqual({
+      icon: "🧩",
+      label: "Add Integration",
     });
     expect(getFriendlyActionDisplay("browser", { action: "tab-select" })).toEqual({
       icon: "🗂️",
