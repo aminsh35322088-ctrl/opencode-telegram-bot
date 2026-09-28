@@ -8,7 +8,7 @@ import { buildGithubSettingsView } from "../menus/extension-settings-menu.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
-import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
+import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
 interface PendingGithub { step: "name" | "token"; name?: string; messageId: number; }
 interface PendingTailscale { step: "auth-key"; messageId: number; }
 interface PendingState { github?: PendingGithub; tailscale?: PendingTailscale; }
@@ -40,13 +40,9 @@ export function clearIntegrationWizard(): void {
   integrationWizard.clear();
 }
 async function editWizard(ctx: Context, messageId: number, text: string): Promise<void> {
-  try {
-    await ctx.api.editMessageText(ctx.chat!.id, callbackMessageId(ctx) ?? messageId, text, { reply_markup: wizardKeyboard() });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.toLowerCase().includes("message is not modified")) return;
-    throw error;
-  }
+  const target = callbackMessageId(ctx) ?? messageId;
+  if (typeof target !== "number" || !ctx.chat?.id) return;
+  await editPanelMessage(ctx, target, text, wizardKeyboard());
 }
 
 async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {

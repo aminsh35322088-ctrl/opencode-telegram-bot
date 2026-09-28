@@ -6,7 +6,7 @@ import { fetchSkillFromGitHub, resolveSkillSource } from "../../app/services/ski
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearSkillWizard } from "./skills-wizard.js";
-import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
+import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
 
 export const SKILLS_IMPORT_CALLBACK_PREFIX = "skills:imp_";
 export const SKILLS_IMPORT_CALLBACK_CONFIRM = `${SKILLS_IMPORT_CALLBACK_PREFIX}confirm`;
@@ -55,9 +55,7 @@ async function editImportPanel(
   keyboard: InlineKeyboard = navigationKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
-    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
-  });
+  await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
 

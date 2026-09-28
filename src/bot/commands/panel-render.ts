@@ -1,4 +1,4 @@
-import type { Context } from "grammy";
+import { InlineKeyboard, type Context } from "grammy";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
 /**
@@ -48,7 +48,7 @@ export async function editPanelMessage(
   ctx: Context,
   messageId: number,
   text: string,
-  replyMarkup?: Parameters<Context["api"]["editMessageText"]>[2],
+  replyMarkup?: InlineKeyboard,
 ): Promise<void> {
   try {
     await ctx.api.editMessageText(ctx.chat!.id, messageId, text, replyMarkup);

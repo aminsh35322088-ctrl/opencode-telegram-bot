@@ -31,7 +31,7 @@ import {
   buildMcpsWizardKeyboard,
 } from "../menus/mcp-server-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
-import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
+import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
 
 interface PendingMcpAdd {
   step: "name" | "type" | "value";
@@ -84,9 +84,7 @@ async function renderWizard(
   keyboard: InlineKeyboard = buildMcpsWizardKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
-    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
-  });
+  await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
 function isMcpAddInteractionActive(): boolean {

@@ -3,7 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { isValidSkillName, updateGlobalSkill, writeGlobalSkill } from "../../app/services/skill-manage-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
-import { callbackMessageId, deleteInputMessage } from "./panel-render.js";
+import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
 
 type WizardMode = "create" | "edit";
 type WizardStep = "name" | "description" | "body";
@@ -62,9 +62,7 @@ async function editWizardPanel(
   keyboard: InlineKeyboard = wizardKeyboard(),
 ): Promise<void> {
   if (!ctx.chat?.id) return;
-  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { reply_markup: keyboard }).catch((error) => {
-    if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
-  });
+  await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
 
