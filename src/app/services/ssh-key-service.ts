@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
 const SSH_KEYGEN_BIN = process.env.SSH_KEYGEN_BIN?.trim() || "/usr/bin/ssh-keygen";
 const KEY_DIR = process.env.SSH_KEY_DIR?.trim() || "/data/ssh";
 const PRIVATE_KEY = path.join(KEY_DIR, "id_ed25519");
@@ -21,7 +19,7 @@ async function ensurePermissions(): Promise<void> {
 }
 async function generateKeypair(): Promise<void> {
   const temp = path.join(KEY_DIR, `.id_ed25519.${process.pid}.${Date.now()}`);
-  await execFileAsync(SSH_KEYGEN_BIN, [
+  await budgetedExecFile("ssh-keygen", SSH_KEYGEN_BIN, [
     "-q", "-t", "ed25519", "-N", "", "-C", "opencode-bot@tailscale", "-f", temp,
   ], { timeout: 15_000, maxBuffer: 1024 * 1024 });
   await fs.chmod(temp, 0o600);

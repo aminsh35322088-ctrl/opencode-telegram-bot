@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
 import packageJson from "../../../package.json" with { type: "json" };
 
-const execFileAsync = promisify(execFile);
 const OPENCODE_VERSION_FILE = "/app/.opencode-version";
 const RELEASE_NOTES_DIR = "/app/docs/release-notes";
 const BOT_VERSION_NOTIFIED_FILE = "/data/.last-bot-version-notified-v3";
@@ -58,7 +56,7 @@ const VERSION_COMMANDS: VersionCommand[] = [
 function firstLine(value: string): string { return value.split("\n", 1)[0]?.trim() ?? value.trim(); }
 function extractVersion(value: string): string { const line = firstLine(value).replace(/^v(?=\d)/i, ""); const match = line.match(/\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/); return match?.[0] ?? (line || "unknown"); }
 async function readTextFile(path: string): Promise<string | null> { try { const value = (await readFile(path, "utf8")).trim(); return value || null; } catch { return null; } }
-async function commandVersion(command: VersionCommand): Promise<VersionEntry | null> { try { const { stdout, stderr } = await execFileAsync(command.command, command.args, { timeout: 3000, windowsHide: true }); const output = stdout.trim() || stderr.trim(); if (!output) return null; return { name: command.name, version: extractVersion(output), kind: command.kind }; } catch { return null; } }
+async function commandVersion(command: VersionCommand): Promise<VersionEntry | null> { try { const { stdout, stderr } = await budgetedExecFile("version-probe", command.command, command.args, { timeout: 3000, windowsHide: true }); const output = stdout.trim() || stderr.trim(); if (!output) return null; return { name: command.name, version: extractVersion(output), kind: command.kind }; } catch { return null; } }
 async function dependencyVersions(): Promise<VersionEntry[]> { const dependencies = packageJson.dependencies ?? {}; const entries: VersionEntry[] = []; for (const name of Object.keys(dependencies)) { try { const metadata = JSON.parse(await readFile(`/app/node_modules/${name}/package.json`, "utf8")) as { version?: unknown }; if (typeof metadata.version === "string") entries.push({ name, version: metadata.version, kind: "dependency" }); } catch { entries.push({ name, version: "not installed", kind: "dependency" }); } } return entries; }
 export async function getOpenCodeVersion(): Promise<string> { return (await readTextFile(OPENCODE_VERSION_FILE)) ?? "unknown"; }
 export interface VersionSnapshot { botVersion: string; openCodeVersion: string; nodeVersion: string; entries: VersionEntry[]; }

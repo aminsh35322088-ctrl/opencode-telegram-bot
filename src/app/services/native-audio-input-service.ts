@@ -1,13 +1,11 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import type { ModelExecutionCapabilities } from "../types/model-capability.js";
 import { nativeAudioTransportAccepts } from "./model-execution-capability-service.js";
 import { logger } from "../../utils/logger.js";
 
-const execFileAsync = promisify(execFile);
 const FFMPEG_TIMEOUT_MS = 30_000;
 
 export interface PreparedNativeAudioInput {
@@ -58,7 +56,7 @@ export async function prepareNativeAudioInput(
     const args = target === "audio/wav"
       ? ["-v", "error", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", output]
       : ["-v", "error", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "64k", output];
-    await execFileAsync("ffmpeg", args, { timeout: FFMPEG_TIMEOUT_MS });
+    await budgetedExecFile("media", "ffmpeg", args, { timeout: FFMPEG_TIMEOUT_MS });
     const converted = await fs.readFile(output);
     if (!converted.length) return null;
     return { buffer: converted, filename: path.basename(output), mimeType: target, transcoded: true };

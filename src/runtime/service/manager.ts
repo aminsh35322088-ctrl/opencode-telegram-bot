@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { exec, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { budgetedExec, budgetedSpawn } from "../process-budget.js";
 import { getRuntimePaths } from "../paths.js";
 import { buildServiceChildEnv } from "./env.js";
 import { logger } from "../../utils/logger.js";
@@ -13,7 +12,6 @@ import type {
   ServiceOperationResult,
 } from "./types.js";
 
-const execAsync = promisify(exec);
 const SERVICE_STATE_FILE_NAME = "bot-service.json";
 const PROCESS_EXIT_POLL_MS = 100;
 const DEFAULT_STOP_TIMEOUT_MS = 5000;
@@ -92,7 +90,7 @@ function isProcessAlive(pid: number): boolean {
 async function getProcessCreationTime(pid: number): Promise<Date | null> {
   try {
     if (process.platform === "win32") {
-      const { stdout } = await execAsync(
+      const { stdout } = await budgetedExec("diagnostic",
         `powershell -NoProfile -Command "Get-WmiObject Win32_Process -Filter 'ProcessId=${pid}' | Select-Object -ExpandProperty CreationDate"`,
       );
       const dateStr = stdout.trim().split(/\r?\n/).find((l) => l.trim().length > 0)?.trim();
@@ -108,7 +106,7 @@ async function getProcessCreationTime(pid: number): Promise<Date | null> {
       );
     }
 
-    const { stdout } = await execAsync(`ps -o lstart= -p ${pid}`);
+    const { stdout } = await budgetedExec("diagnostic", `ps -o lstart= -p ${pid}`, { timeout: 5_000 });
     const dateStr = stdout.trim();
     if (!dateStr) {
       return null;
@@ -146,7 +144,7 @@ function getServiceEntryScriptPath(): string {
 
 async function stopWindowsProcess(pid: number, timeoutMs: number): Promise<void> {
   try {
-    await execAsync(`taskkill /PID ${pid} /T`);
+    await budgetedExec("cleanup", `taskkill /PID ${pid} /T`, { timeout: 5_000 });
   } catch {
     // Continue with forced stop if the process is still alive.
   }
@@ -155,7 +153,7 @@ async function stopWindowsProcess(pid: number, timeoutMs: number): Promise<void>
     return;
   }
 
-  await execAsync(`taskkill /F /PID ${pid} /T`);
+  await budgetedExec("cleanup", `taskkill /F /PID ${pid} /T`, { timeout: 5_000 });
   await waitForProcessExit(pid, timeoutMs);
 }
 
@@ -272,7 +270,7 @@ export async function startBotDaemon(mode?: string): Promise<ServiceOperationRes
       childArgs.push("--mode", mode);
     }
 
-    const childProcess = spawn(process.execPath, childArgs, {
+    const childProcess = await budgetedSpawn("bot-daemon", process.execPath, childArgs, {
       detached: true,
       stdio: ["ignore", logFileDescriptor, logFileDescriptor],
       windowsHide: true,

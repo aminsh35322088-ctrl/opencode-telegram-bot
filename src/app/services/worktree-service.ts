@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { GitWorktreeContext, GitWorktreeEntry } from "../types/worktree.js";
@@ -69,26 +69,11 @@ function parseGitWorktreeList(stdout: string): ParsedGitWorktreeEntry[] {
 }
 
 async function runGitWorktreeList(worktree: string): Promise<ParsedGitWorktreeEntry[]> {
-  const stdout = await new Promise<string>((resolve, reject) => {
-    execFile(
-      "git",
-      ["worktree", "list", "--porcelain"],
-      {
-        cwd: worktree,
-        windowsHide: true,
-        maxBuffer: GIT_WORKTREE_LIST_MAX_BUFFER,
-      },
-      (error, output) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve(output);
-      },
-    );
+  const { stdout } = await budgetedExecFile("git", "git", ["worktree", "list", "--porcelain"], {
+    cwd: worktree,
+    windowsHide: true,
+    maxBuffer: GIT_WORKTREE_LIST_MAX_BUFFER,
   });
-
   return parseGitWorktreeList(stdout);
 }
 

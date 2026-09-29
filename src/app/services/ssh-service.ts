@@ -1,9 +1,8 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import {
   getTailscaleSocketPath,
   pingTailscaleSshDevice,
@@ -16,7 +15,6 @@ import {
 } from "./ssh-key-service.js";
 import { findTelegramTopicBindingBySessionId } from "./telegram-topic-store.js";
 
-const execFileAsync = promisify(execFile);
 const SSH_BIN = process.env.SSH_REAL_BIN?.trim() || "/usr/bin/ssh";
 const SCP_BIN = process.env.SCP_REAL_BIN?.trim() || "/usr/bin/scp";
 const TAILSCALE_BIN = process.env.TAILSCALE_BIN?.trim() || "/usr/local/bin/tailscale";
@@ -108,7 +106,7 @@ interface MasterResult {
 
 export async function runCommand(request: CommandRequest): Promise<CommandResult> {
   try {
-    const { stdout, stderr } = await execFileAsync(request.bin, request.args, {
+    const { stdout, stderr } = await budgetedExecFile("ssh", request.bin, request.args, {
       timeout: request.timeoutMs,
       maxBuffer: 8 * 1024 * 1024,
       env: request.env ?? process.env,

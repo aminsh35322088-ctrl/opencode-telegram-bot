@@ -185,7 +185,7 @@ export class OpencodeAutoRestartService {
     logger.info(`[OpenCodeAutoRestart] ${prefix}: preparing local OpenCode server on port=${this.localTarget.port}`);
     await this.stopExistingServerIfNeeded();
     logger.info(`[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`);
-    const childProcess = startLocalOpencodeServer(this.localTarget);
+    const childProcess = await startLocalOpencodeServer(this.localTarget);
     const pid = childProcess.pid ?? null;
     this.managedServerPid = pid;
     childProcess.once("error", (error) => logger.error(`[OpenCodeAutoRestart] OpenCode server process failed to start: pid=${pid ?? "unknown"}`, error));

@@ -132,6 +132,14 @@ For bugs, identify the root cause, implement the fix, verify the affected path, 
 
 When the user explicitly asks for a fix/change, direct GitHub changes are authorized. Keep commits focused and descriptive.
 
+## Process budget and Railway limits
+
+Every OS child process started by the bot must go through `src/runtime/process-budget.ts`; direct `spawn`, `exec`, `execFile`, or `Bun.spawn` calls are forbidden outside that registry. This includes OpenCode, bot daemons, local MCP servers, media tools, SSH/SCP, Tailscale CLI, Git/worktree helpers, diagnostics, and version probes. The CI policy test enforces this rule.
+
+Treat Railway cgroup memory/CPU limits as the runtime source of truth. Admission must account for process category, concurrency, reserved memory, pressure ceiling, timeout/lifetime, and the global process ceiling. Do not bypass a rejected lease with an unbudgeted retry. See `docs/PROCESS_BUDGET.md` for the current envelope.
+
+When the Telegram Core runtime is mounted, OpenCode child processes are governed separately by Core when `OPENCODE_TELEGRAM_PROCESS_BUDGET=1`; shell commands, MCP stdio, LSP, PTY, utility, and helper processes must remain inside that internal budget too. The upstream npm OpenCode build does not implement this flag, so do not claim per-child OpenCode enforcement is active until the production runtime source has migrated to Telegram Core.
+
 ## Runtime diagnostics
 
 For a stuck coding session, use the existing runtime diagnostics and recovery tools. Keep operational diagnostics separate from application execution paths.

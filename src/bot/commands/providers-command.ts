@@ -60,7 +60,7 @@ async function restartOpenCodeAfterProviderChange(): Promise<void> {
   const target = resolveLocalOpencodeTarget(config.opencode.apiUrl);
   if (target) {
     const pid = await findServerPid(target.port); if (pid) await killServerProcess(pid);
-    await new Promise(r => setTimeout(r, 500)); startLocalOpencodeServer(target).unref();
+    await new Promise(r => setTimeout(r, 500)); (await startLocalOpencodeServer(target)).unref();
     const refreshed = await waitForOpencodeReadyAndRefresh("provider_change");
     if (!refreshed) throw new Error("OpenCode did not become ready after provider restart.");
     return;

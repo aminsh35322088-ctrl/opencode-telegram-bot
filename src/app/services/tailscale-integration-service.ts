@@ -1,12 +1,10 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { promisify } from "node:util";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
-const execFileAsync = promisify(execFile);
 const TAILSCALE_BIN = process.env.TAILSCALE_BIN?.trim() || "/usr/local/bin/tailscale";
 const HOSTNAME = "opencode-bot";
 const KEY_SALT = Buffer.from("opencode-telegram-bot:tailscale:v1", "utf8");
@@ -135,7 +133,7 @@ function normalizeAuthKey(value: string): string {
 async function cli(args: string[], timeout = 12_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const { socket } = paths();
   try {
-    const { stdout, stderr } = await execFileAsync(TAILSCALE_BIN, [`--socket=${socket}`, ...args], {
+    const { stdout, stderr } = await budgetedExecFile("tailscale", TAILSCALE_BIN, [`--socket=${socket}`, ...args], {
       timeout,
       maxBuffer: 4 * 1024 * 1024,
       encoding: "utf8",
@@ -151,11 +149,11 @@ async function socketReady(): Promise<boolean> {
   return fs.stat(paths().socket).then((stat) => stat.isSocket()).catch(() => false);
 }
 
-async function waitForSocket(timeoutMs = 10_000): Promise<boolean> {
+async function waitForSocket(timeoutMs = 1_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await socketReady()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
 }

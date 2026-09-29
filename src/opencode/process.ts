@@ -1,9 +1,8 @@
-import { exec, spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, statSync, truncateSync } from "node:fs";
 import * as path from "node:path";
-import { promisify } from "node:util";
+import { budgetedExec, budgetedSpawn } from "../runtime/process-budget.js";
 
-const execAsync = promisify(exec);
 const DEFAULT_OPENCODE_PORT = 4096;
 const PROCESS_EXIT_POLL_MS = 100;
 const DEFAULT_OPENCODE_LOG_DIR = "/data/logs";
@@ -156,13 +155,13 @@ function openOpencodeLogFile(fileName: string): number {
   return openSync(logPath, "a", 0o640);
 }
 
-export function startLocalOpencodeServer(target: LocalOpencodeTarget): ChildProcess {
+export async function startLocalOpencodeServer(target: LocalOpencodeTarget): Promise<ChildProcess> {
   const spawnCommand = createOpencodeServeSpawnCommand(target);
   const stdoutFd = openOpencodeLogFile("opencode-server.stdout.log");
   const stderrFd = openOpencodeLogFile("opencode-server.stderr.log");
 
   try {
-    return spawn(spawnCommand.command, spawnCommand.args, {
+    return await budgetedSpawn("opencode-server", spawnCommand.command, spawnCommand.args, {
       detached: true,
       stdio: ["ignore", stdoutFd, stderrFd],
       windowsHide: spawnCommand.windowsHide,
@@ -246,7 +245,7 @@ export function findUnixListeningPidInSs(stdout: string, port: number): number |
 
 async function findWindowsServerPid(port: number): Promise<number | null> {
   try {
-    const { stdout } = await execAsync("netstat -ano | findstr LISTENING");
+    const { stdout } = await budgetedExec("diagnostic", "netstat -ano | findstr LISTENING", { timeout: 5_000 });
     return findWindowsListeningPidInNetstat(stdout, port);
   } catch {
     return null;
@@ -266,7 +265,7 @@ function parseUnixPidList(stdout: string): number | null {
 
 async function findUnixServerPid(port: number): Promise<number | null> {
   try {
-    const { stdout } = await execAsync(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`);
+    const { stdout } = await budgetedExec("diagnostic", `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`, { timeout: 5_000 });
     const pid = parseUnixPidList(stdout);
     if (pid !== null) {
       return pid;
@@ -276,7 +275,7 @@ async function findUnixServerPid(port: number): Promise<number | null> {
   }
 
   try {
-    const { stdout } = await execAsync("ss -ltnp");
+    const { stdout } = await budgetedExec("diagnostic", "ss -ltnp", { timeout: 5_000 });
     return findUnixListeningPidInSs(stdout, port);
   } catch {
     return null;
@@ -312,7 +311,7 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
 
 async function killWindowsProcess(pid: number, timeoutMs: number): Promise<boolean> {
   try {
-    await execAsync(`taskkill /PID ${pid} /T`);
+    await budgetedExec("cleanup", `taskkill /PID ${pid} /T`, { timeout: 5_000 });
   } catch {
     // Continue with forced stop if the process is still alive.
   }
@@ -322,7 +321,7 @@ async function killWindowsProcess(pid: number, timeoutMs: number): Promise<boole
   }
 
   try {
-    await execAsync(`taskkill /F /PID ${pid} /T`);
+    await budgetedExec("cleanup", `taskkill /F /PID ${pid} /T`, { timeout: 5_000 });
   } catch {
     return !isProcessAlive(pid);
   }

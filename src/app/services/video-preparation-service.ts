@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
+import { budgetedExecFile } from "../../runtime/process-budget.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { logger } from "../../utils/logger.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_FRAMES = 12;
 const FRAME_WIDTH = 512;
 const FFMPEG_TIMEOUT_MS = 60_000;
@@ -22,11 +20,11 @@ export async function extractVideoFrames(videoBuffer: Buffer, sourceFilename: st
     await fs.writeFile(inputPath, videoBuffer);
     let durationSec = 0;
     try {
-      const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", inputPath], { timeout: FFPROBE_TIMEOUT_MS });
+      const { stdout } = await budgetedExecFile("media-probe", "ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", inputPath], { timeout: FFPROBE_TIMEOUT_MS });
       durationSec = Number.parseFloat(stdout.trim()) || 0;
     } catch { durationSec = 0; }
     const fps = durationSec > 0 ? Math.min(1, MAX_FRAMES / durationSec) : 1;
-    await execFileAsync("ffmpeg", ["-v", "error", "-i", inputPath, "-vf", `fps=${fps.toFixed(4)},scale=${FRAME_WIDTH}:-2`, "-frames:v", String(MAX_FRAMES), "-q:v", "4", path.join(dir, "frame-%02d.jpg")], { timeout: FFMPEG_TIMEOUT_MS });
+    await budgetedExecFile("media", "ffmpeg", ["-v", "error", "-i", inputPath, "-vf", `fps=${fps.toFixed(4)},scale=${FRAME_WIDTH}:-2`, "-frames:v", String(MAX_FRAMES), "-q:v", "4", path.join(dir, "frame-%02d.jpg")], { timeout: FFMPEG_TIMEOUT_MS });
     const names = (await fs.readdir(dir)).filter((name) => /^frame-\d+\.jpg$/u.test(name)).sort();
     const frames: ExtractedVideoFrame[] = [];
     for (const name of names) frames.push({ filename: name, buffer: await fs.readFile(path.join(dir, name)) });
@@ -43,7 +41,7 @@ export async function extractVideoAudio(videoBuffer: Buffer, sourceFilename: str
     const inputPath = path.join(dir, `input${extension}`);
     const outputPath = path.join(dir, "audio.ogg");
     await fs.writeFile(inputPath, videoBuffer);
-    await execFileAsync("ffmpeg", ["-v", "error", "-i", inputPath, "-vn", "-acodec", "libvorbis", "-q:a", "4", outputPath], { timeout: FFMPEG_TIMEOUT_MS });
+    await budgetedExecFile("media", "ffmpeg", ["-v", "error", "-i", inputPath, "-vn", "-acodec", "libvorbis", "-q:a", "4", outputPath], { timeout: FFMPEG_TIMEOUT_MS });
     const buffer = await fs.readFile(outputPath);
     return buffer.length ? { buffer, filename: "audio.ogg" } : null;
   } catch (error) {

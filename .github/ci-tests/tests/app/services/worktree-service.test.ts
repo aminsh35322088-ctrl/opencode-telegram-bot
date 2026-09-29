@@ -1,13 +1,34 @@
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocked = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
-  statMock: vi.fn(),
-  readFileMock: vi.fn(),
-}));
+const mocked = vi.hoisted(() => {
+  const execFileMock = vi.fn();
+  const customPromisify = Symbol.for("nodejs.util.promisify.custom");
+  (execFileMock as typeof execFileMock & Record<symbol, unknown>)[customPromisify] = (
+    file: string,
+    args: string[],
+    options: unknown,
+  ) =>
+    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFileMock(
+        file,
+        args,
+        options,
+        (error: Error | null, stdout: string, stderr: string) => {
+          if (error) reject(Object.assign(error, { stdout, stderr }));
+          else resolve({ stdout, stderr });
+        },
+      );
+    });
+  return {
+    execFileMock,
+    statMock: vi.fn(),
+    readFileMock: vi.fn(),
+  };
+});
 
-vi.mock("node:child_process", () => ({
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
   execFile: mocked.execFileMock,
 }));
 

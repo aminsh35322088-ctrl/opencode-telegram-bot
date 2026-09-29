@@ -107,7 +107,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
 
     const statusMessage = await ctx.reply(t("opencode_start.starting"));
 
-    const childProcess = startLocalOpencodeServer(localTarget);
+    const childProcess = await startLocalOpencodeServer(localTarget);
 
     childProcess.once("error", (error) => {
       logger.error("[Bot] OpenCode server process failed to start", error);

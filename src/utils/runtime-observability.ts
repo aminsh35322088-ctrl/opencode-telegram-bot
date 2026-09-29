@@ -1,6 +1,7 @@
 import os from "node:os";
 import { config } from "../config.js";
 import { getCurrentSession } from "../app/services/session-service.js";
+import { getProcessBudgetSnapshot } from "../runtime/process-budget.js";
 import { logger } from "./logger.js";
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -19,6 +20,10 @@ type WatchdogSnapshot = {
   health: "healthy" | "unhealthy" | "timeout" | "unknown";
   healthLatencyMs: number | null;
   eventLoopLagMs: number;
+  serviceMemoryMb: number;
+  serviceMemoryLimitMb: number | null;
+  serviceMemoryPressure: number | null;
+  activeChildProcesses: number;
 };
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -145,10 +150,11 @@ export class RuntimeObservabilityWatchdog {
 
     const session = getCurrentSession();
     const sessionId = session?.id ?? null;
-    const [health, sessionResult, eventLoopLagMs] = await Promise.all([
+    const [health, sessionResult, eventLoopLagMs, processSnapshot] = await Promise.all([
       checkHealth(),
       sessionId ? checkSession(sessionId) : Promise.resolve({ status: "not-found" as const, elapsedMs: 0 }),
       measureEventLoopLag(),
+      getProcessBudgetSnapshot(),
     ]);
 
     const now = Date.now();
@@ -184,12 +190,22 @@ export class RuntimeObservabilityWatchdog {
       health: health.status,
       healthLatencyMs: health.latencyMs,
       eventLoopLagMs,
+      serviceMemoryMb: Math.round(processSnapshot.memoryUsedBytes / 1024 / 1024),
+      serviceMemoryLimitMb: processSnapshot.memoryLimitBytes ? Math.round(processSnapshot.memoryLimitBytes / 1024 / 1024) : null,
+      serviceMemoryPressure: processSnapshot.memoryPressure,
+      activeChildProcesses: processSnapshot.activeCount,
     };
     this.lastSnapshot = snapshot;
 
     logger.info(
-      `[RuntimeWatchdog] phase=heartbeat reason=${reason} pid=${process.pid} uptimeSec=${Math.round(process.uptime())} rssMb=${Math.round(process.memoryUsage().rss / 1024 / 1024)} heapUsedMb=${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} cpuLoad1=${os.loadavg()[0]?.toFixed(2) ?? "unknown"} session=${sessionId ?? "none"} sessionState=${sessionResult.status} busyForMs=${sessionBusyForMs} sessionCheckMs=${sessionResult.elapsedMs} health=${health.status} healthLatencyMs=${health.latencyMs ?? "unknown"} eventLoopLagMs=${eventLoopLagMs}`,
+      `[RuntimeWatchdog] phase=heartbeat reason=${reason} pid=${process.pid} uptimeSec=${Math.round(process.uptime())} rssMb=${Math.round(process.memoryUsage().rss / 1024 / 1024)} heapUsedMb=${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} serviceMemoryMb=${snapshot.serviceMemoryMb} serviceMemoryLimitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"} serviceMemoryPressure=${snapshot.serviceMemoryPressure === null ? "unknown" : (snapshot.serviceMemoryPressure * 100).toFixed(1) + "%"} activeChildProcesses=${snapshot.activeChildProcesses} serviceProcessCount=${processSnapshot.serviceProcessCount ?? "unknown"} childKinds=${JSON.stringify(processSnapshot.activeByKind)} cpuLimit=${processSnapshot.cpuLimitCores?.toFixed(2) ?? "unknown"} cpuLoad1=${os.loadavg()[0]?.toFixed(2) ?? "unknown"} session=${sessionId ?? "none"} sessionState=${sessionResult.status} busyForMs=${sessionBusyForMs} sessionCheckMs=${sessionResult.elapsedMs} health=${health.status} healthLatencyMs=${health.latencyMs ?? "unknown"} eventLoopLagMs=${eventLoopLagMs}`,
     );
+
+    if (snapshot.serviceMemoryPressure !== null && snapshot.serviceMemoryPressure >= 0.95) {
+      logger.error(`[RuntimeWatchdog] phase=memory_critical pressure=${(snapshot.serviceMemoryPressure * 100).toFixed(1)}% serviceMemoryMb=${snapshot.serviceMemoryMb} limitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"}`);
+    } else if (snapshot.serviceMemoryPressure !== null && snapshot.serviceMemoryPressure >= 0.88) {
+      logger.warn(`[RuntimeWatchdog] phase=memory_pressure pressure=${(snapshot.serviceMemoryPressure * 100).toFixed(1)}% serviceMemoryMb=${snapshot.serviceMemoryMb} limitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"}`);
+    }
 
     if (eventLoopLagMs >= this.eventLoopCriticalMs) {
       logger.error(`[RuntimeWatchdog] phase=event_loop_critical lagMs=${eventLoopLagMs}`);

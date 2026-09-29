@@ -22,7 +22,7 @@ async function restartOpenCodeAfterGeminiChange(): Promise<void> {
   const pid = await findServerPid(target.port);
   if (pid) await killServerProcess(pid);
   await new Promise((resolve) => setTimeout(resolve, 500));
-  startLocalOpencodeServer(target).unref();
+  (await startLocalOpencodeServer(target)).unref();
   const refreshed = await waitForOpencodeReadyAndRefresh("gemini_provider_change");
   if (!refreshed) throw new Error("OpenCode did not become ready after Gemini provider restart.");
 }

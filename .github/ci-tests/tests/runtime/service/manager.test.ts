@@ -129,6 +129,10 @@ describe("runtime/service/manager", () => {
     spawnMock.mockReturnValue({
       pid: 4321,
       unref: vi.fn(),
+      once: vi.fn(),
+      kill: vi.fn(),
+      exitCode: null,
+      signalCode: null,
     });
 
     const result = await startBotDaemon("installed");

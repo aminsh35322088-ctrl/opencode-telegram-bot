@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { budgetedSpawn } from "../../runtime/process-budget.js";
 import type { ManagedMcpConfig } from "./mcp-server-store.js";
 import { logger } from "../../utils/logger.js";
 
@@ -93,7 +93,7 @@ async function openStdioSession(config: Extract<ManagedMcpConfig, { type: "local
   const [command, ...args] = config.command;
   if (!command) throw new Error("MCP local command is required.");
 
-  const child = spawn(command, args, {
+  const child = await budgetedSpawn("mcp-server", command, args, {
     ...(config.cwd ? { cwd: config.cwd } : {}),
     ...(config.environment ? { env: { ...process.env, ...config.environment } } : {}),
     stdio: ["pipe", "pipe", "pipe"],
