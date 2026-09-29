@@ -68,8 +68,8 @@ describe("Free LLM catalog", () => {
     });
 
     const providers = buildOpenCodeProvidersFromCatalog(catalog);
-    expect(Object.keys(providers)).toEqual(["runtime-direct"]);
-    expect(providers["runtime-direct"]).toEqual({
+    expect(Object.keys(providers)).toEqual(["free-runtime-direct"]);
+    expect(providers["free-runtime-direct"]).toEqual({
       npm: "@ai-sdk/openai-compatible",
       name: "Direct",
       options: { baseURL: "https://direct.example/v1" },
@@ -106,7 +106,7 @@ describe("Free LLM catalog", () => {
       ],
     });
 
-    expect(buildOpenCodeProvidersFromCatalog(catalog).horde).toMatchObject({
+    expect(buildOpenCodeProvidersFromCatalog(catalog)["free-horde"]).toMatchObject({
       options: {
         baseURL: "https://example.test/v1",
         apiKey: "0000000000",
@@ -152,6 +152,30 @@ describe("Free LLM catalog", () => {
     });
 
     expect(buildOpenCodeProvidersFromCatalog(catalog)).toEqual({});
+  });
+
+  it("namespaces catalog runtime ids to avoid collisions with OpenCode built-ins", () => {
+    const catalog = parseFreeLlmCatalog({
+      schemaVersion: 1,
+      generatedAt: "2026-09-29T00:00:00Z",
+      providers: [
+        {
+          id: "kilo-anonymous",
+          runtimeId: "kilo",
+          name: "Kilo Anonymous",
+          status: "verified",
+          integration: "direct-openai",
+          enabledByDefault: true,
+          baseURL: "https://api.kilo.ai/api/gateway",
+          auth: { mode: "none", userCredentialRequired: false },
+          models: [{ id: "kilo-auto/free", name: "Auto Free" }],
+        },
+      ],
+    });
+
+    const providers = buildOpenCodeProvidersFromCatalog(catalog);
+    expect(providers).toHaveProperty("free-kilo");
+    expect(providers).not.toHaveProperty("kilo");
   });
 
   it("fetches the public raw catalog without using GitHub credentials", async () => {
