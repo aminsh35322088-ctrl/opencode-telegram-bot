@@ -6,6 +6,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { alert, failure } from "./feedback.js";
 import { clearActiveInlineMenu, ensureActiveInlineMenu } from "../menus/inline-menu.js";
+import { runCoreSessionTask } from "../../core/native-core-service.js";
 
 /**
  * Handle compact confirmation callback
@@ -54,12 +55,14 @@ export async function handleCompactConfirm(ctx: Context): Promise<boolean> {
     );
 
     // Call summarize API (AI compaction)
-    const { error } = await opencodeClient.session.summarize({
-      sessionID: session.id,
-      directory: session.directory,
-      providerID: storedModel.providerID,
-      modelID: storedModel.modelID,
-    });
+    const { error } = await runCoreSessionTask(session.id, session.directory, "session_summarize", ({ signal }) =>
+      opencodeClient.session.summarize({
+        sessionID: session.id,
+        directory: session.directory,
+        providerID: storedModel.providerID,
+        modelID: storedModel.modelID,
+      }, { signal }),
+    );
 
     if (error) {
       logger.error("[ContextHandler] Compact failed:", error);

@@ -5,16 +5,13 @@ import {
   findPendingExtensionEnsure,
   getExtensionEnsureRequest,
 } from "../../app/services/extension-ensure-service.js";
-import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
-import { getCurrentSession } from "../../app/services/session-service.js";
-import { opencodeClient } from "../../opencode/client.js";
-import { logger } from "../../utils/logger.js";
+import { beginCoreRunForSession, captureCurrentCoreBindingOwner, dispatchCorePrompt, finishCoreRunForSession } from "../../core/native-core-service.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
+import { markAttachedSessionBusy, markAttachedSessionIdle } from "../../app/services/attach-service.js";
+import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
 
 const presented = new Set<string>();
-
-function currentSessionId(): string | null {
-  return getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id ?? null;
-}
 
 function approvalKeyboard(requestId: string): InlineKeyboard {
   return new InlineKeyboard()
@@ -24,16 +21,28 @@ function approvalKeyboard(requestId: string): InlineKeyboard {
     .text("ℹ️ Info", `extauto:i:${requestId}`);
 }
 
-async function resumeSession(sessionId: string, directory: string): Promise<void> {
-  const { error } = await opencodeClient.session.promptAsync({
-    sessionID: sessionId,
-    directory,
-    parts: [{
-      type: "text",
-      text: "Plugin setup completed. Continue the original request using the installed plugin. Do not repeat installation.",
-    }],
-  });
-  if (error) logger.warn(`[Extensions] Could not resume session after plugin setup: session=${sessionId}`);
+async function resumeSession(sessionId: string, directory: string, run: Awaited<ReturnType<typeof beginCoreRunForSession>>): Promise<void> {
+  try {
+    foregroundSessionState.markBusy(sessionId, directory);
+    await markAttachedSessionBusy(sessionId);
+    assistantRunState.startRun(sessionId, { startedAt: Date.now() }, run.runId);
+    summaryAggregator.beginRun(sessionId);
+    const result = await dispatchCorePrompt(run, {
+      sessionID: sessionId,
+      directory,
+      parts: [{
+        type: "text",
+        text: "Plugin setup completed. Continue the original request using the installed plugin. Do not repeat installation.",
+      }],
+    });
+    if ("error" in result && result.error) throw result.error;
+  } catch (error) {
+    assistantRunState.clearRun(sessionId, "extension_resume_error");
+    finishCoreRunForSession(sessionId);
+    foregroundSessionState.markIdle(sessionId);
+    await markAttachedSessionIdle(sessionId);
+    throw error;
+  }
 }
 
 export async function presentPendingExtensionAutomation(
@@ -72,7 +81,9 @@ export async function handleExtensionAutomationCallback(ctx: Context): Promise<b
     await ctx.answerCallbackQuery({ text: "This plugin request expired.", show_alert: true }).catch(() => {});
     return true;
   }
-  if (currentSessionId() !== request.sessionId) {
+  let owner;
+  try { owner = captureCurrentCoreBindingOwner(); } catch { /* No bound AI Topic. */ }
+  if (owner?.sessionId !== request.sessionId || owner.directory !== request.projectDirectory) {
     await ctx.answerCallbackQuery({ text: "This approval belongs to another Topic.", show_alert: true }).catch(() => {});
     return true;
   }
@@ -96,8 +107,14 @@ export async function handleExtensionAutomationCallback(ctx: Context): Promise<b
   if (action !== "a") return true;
 
   await ctx.answerCallbackQuery().catch(() => {});
-  const result = await approveExtensionEnsure(id);
-  await editReady(ctx, result.extension.name);
-  await resumeSession(request.sessionId, request.projectDirectory);
+  const run = await beginCoreRunForSession(request.sessionId, request.projectDirectory, "extension_resume");
+  try {
+    const result = await approveExtensionEnsure(id);
+    await editReady(ctx, result.extension.name);
+    await resumeSession(request.sessionId, request.projectDirectory, run);
+  } catch (error) {
+    finishCoreRunForSession(request.sessionId);
+    throw error;
+  }
   return true;
 }

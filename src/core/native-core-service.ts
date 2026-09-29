@@ -3,6 +3,8 @@ import type { Api } from "grammy";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import {
   RailwayResourceGovernor,
+  GrammyRichMessagePort,
+  GrammyNativeMarkdownStreamPort,
   SerialTaskQueue,
   TelegramNativeCore,
   sameBinding,
@@ -343,19 +345,8 @@ export async function initializeNativeCore(
         throw new Error("Core outbound sink is not used by the bot adapter");
       },
     },
-    richMessagePort: {
-      async sendDraft() {
-        throw new Error("Core rich draft port is not enabled in the bot adapter");
-      },
-      async sendFinal() {
-        throw new Error("Core rich final port is not enabled in the bot adapter");
-      },
-    },
-    nativeMarkdownStreamPort: {
-      async streamMarkdown() {
-        throw new Error("Core markdown stream port is not enabled in the bot adapter");
-      },
-    },
+    richMessagePort: new GrammyRichMessagePort(api),
+    nativeMarkdownStreamPort: new GrammyNativeMarkdownStreamPort(api),
     abortRun: async (run) => {
       await opencodeClient.session.abort({
         sessionID: run.sessionId,
@@ -611,6 +602,20 @@ export async function dispatchCoreOwnedTask<T>(
   }
 
   return worker.executeTask(run, label, task, options);
+}
+
+export async function runCoreSessionTask<T>(
+  sessionId: string,
+  directory: string,
+  operation: string,
+  task: (context: CoreOwnedTaskContext) => Promise<T>,
+): Promise<T> {
+  const run = await beginCoreRunForSession(sessionId, directory, operation);
+  try {
+    return await dispatchCoreOwnedTask(run, operation, task);
+  } finally {
+    finishCoreRunForSession(sessionId);
+  }
 }
 
 export function finishCoreRun(run: RunIdentity): boolean {
