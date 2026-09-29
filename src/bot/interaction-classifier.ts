@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import path from "node:path";
 import { keyboardManager } from "./keyboards/keyboard-manager.js";
 import { MAIN_BUTTONS, TOPIC_BUTTONS } from "./keyboards/main-reply-keyboard.js";
 import { getStoredModel } from "../app/services/model-selection-service.js";
@@ -95,12 +96,12 @@ export async function resolveReplyKeyboardContext(ctx: Context): Promise<ReplyKe
 
   const runtime = getTopicRuntimeContext();
   const core = resolveCoreTopicBinding(chatId, threadId);
-  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId === core?.sessionId) {
+  if (core && runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId === core.sessionId && core.normalizedDirectory === path.resolve(runtime.directory ?? "")) {
     return { scope: "ai-topic", sessionId: runtime.sessionId };
   }
 
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  if (binding && core?.sessionId === binding.sessionId) return { scope: "ai-topic", sessionId: core.sessionId };
+  if (binding && core?.sessionId === binding.sessionId && core.normalizedDirectory === path.resolve(binding.directory)) return { scope: "ai-topic", sessionId: core.sessionId };
 
   return { scope: "main" };
 }

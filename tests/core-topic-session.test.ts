@@ -77,3 +77,39 @@ test("a rotated Core Topic rejects stale metadata for session and keyboard routi
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("keyboard routing rejects stale metadata when the Core directory changes", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "core-stale-directory-test-"));
+  const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+  const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+  const previousUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+  process.env.OPENCODE_TELEGRAM_HOME = home;
+  process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
+  process.env.TELEGRAM_ALLOWED_USER_ID = "1";
+  try {
+    await initializeNativeCore({} as Api, []);
+    await saveTelegramTopicBinding({
+      chatId: 1, threadId: 2, sessionId: "same", directory: "/old-workspace",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const ctx = { chat: { id: 1 }, message: { message_thread_id: 2 } } as Context;
+    await runInTopicRuntimeContext({ chatId: 1, threadId: 2, sessionId: "same", directory: "/old-workspace" }, async () => {
+      assert.equal((await resolveReplyKeyboardContext(ctx)).scope, "ai-topic");
+      await rotateCoreTopicBinding(
+        { chatId: 1, threadId: 2, sessionId: "same", directory: "/old-workspace" },
+        { sessionId: "same", directory: "/new-workspace" },
+      );
+      assert.equal(await getEffectiveCurrentSession(), null);
+      assert.equal((await resolveReplyKeyboardContext(ctx)).scope, "main");
+    });
+  } finally {
+    await shutdownNativeCore();
+    if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+    else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+    if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+    else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+    if (previousUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
+    else process.env.TELEGRAM_ALLOWED_USER_ID = previousUser;
+    await rm(home, { recursive: true, force: true });
+  }
+});

@@ -33,6 +33,7 @@ import { getCurrentSession } from "../../app/services/session-service.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import path from "node:path";
 import { classifyReplyKeyboardInteraction, getRawReplyKeyboardText } from "../interaction-classifier.js";
 
 function normalized(text: string): string {
@@ -68,9 +69,9 @@ async function getTopicScope(ctx: Context): Promise<{ topicMode: boolean; aiTopi
   if (typeof threadId !== "number" || threadId <= 1) return { topicMode: false, aiTopic: false };
   const runtime = getTopicRuntimeContext();
   const core = resolveCoreTopicBinding(chatId, threadId);
-  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId === core?.sessionId) return { topicMode: true, aiTopic: true };
+  if (core && runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId === core.sessionId && core.normalizedDirectory === path.resolve(runtime.directory ?? "")) return { topicMode: true, aiTopic: true };
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  return binding && core?.sessionId === binding.sessionId ? { topicMode: true, aiTopic: true } : { topicMode: false, aiTopic: false };
+  return binding && core?.sessionId === binding.sessionId && core.normalizedDirectory === path.resolve(binding.directory) ? { topicMode: true, aiTopic: true } : { topicMode: false, aiTopic: false };
 }
 
 function isExact(text: string, candidate: string): boolean { return normalized(text) === normalized(candidate); }
