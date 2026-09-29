@@ -169,6 +169,7 @@ su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper
 su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
 
 PERSISTENT_REPO_DIR="/data/opencode/opencode-telegram-bot"
+BOOTSTRAP_GIT_TIMEOUT_SEC="${BOOTSTRAP_GIT_TIMEOUT_SEC:-120}"
 if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; then
   REPO_URL="https://github.com/${RAILWAY_GIT_REPO_OWNER}/${RAILWAY_GIT_REPO_NAME}.git"
   REPO_BRANCH="${RAILWAY_GIT_BRANCH:-main}"
@@ -176,13 +177,13 @@ if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; 
   if [ ! -d "$PERSISTENT_REPO_DIR/.git" ]; then
     rm -rf "$PERSISTENT_REPO_DIR"
     printf '%s\n' "[railway] Creating persistent repository checkout: ${REPO_URL}"
-    su -s /bin/sh node -c "git clone --filter=blob:none --no-tags '$REPO_URL' '$PERSISTENT_REPO_DIR'"
+    timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git clone --filter=blob:none --no-tags '$REPO_URL' '$PERSISTENT_REPO_DIR'"
   else
     su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' remote set-url origin '$REPO_URL'"
   fi
-  su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
+  timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
   REPO_REVISION="${RAILWAY_GIT_COMMIT_SHA:-origin/$REPO_BRANCH}"
-  su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' clean -ffd && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
+  timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' clean -ffd && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
   REPO_HEAD="$(su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
   printf '%s\n' "[railway] Persistent repository checkout ready: ${PERSISTENT_REPO_DIR} (${REPO_BRANCH}@${REPO_HEAD})"
 else
@@ -221,8 +222,10 @@ mkdir -p "$TAILSCALE_STATE_DIR" "$TAILSCALE_SOCKET_DIR"
 chown -R node:node "$TAILSCALE_STATE_DIR" "$TAILSCALE_SOCKET_DIR"
 rm -f "$TAILSCALE_SOCKET"
 
-printf '%s\n' "[railway] Starting the single shared Tailscale userspace daemon"
-su -s /bin/sh node -c "exec /usr/local/bin/tailscaled --tun=userspace-networking --state='$TAILSCALE_STATE' --socket='$TAILSCALE_SOCKET' >>'$TAILSCALE_LOG' 2>&1" &
+TAILSCALED_GOMEMLIMIT="${TAILSCALED_GOMEMLIMIT:-160MiB}"
+TAILSCALED_GOMAXPROCS="${TAILSCALED_GOMAXPROCS:-1}"
+printf '%s\n' "[railway] Starting the single shared Tailscale userspace daemon (GOMEMLIMIT=${TAILSCALED_GOMEMLIMIT}, GOMAXPROCS=${TAILSCALED_GOMAXPROCS})"
+su -s /bin/sh node -c "exec env GOMEMLIMIT='$TAILSCALED_GOMEMLIMIT' GOMAXPROCS='$TAILSCALED_GOMAXPROCS' /usr/local/bin/tailscaled --tun=userspace-networking --state='$TAILSCALE_STATE' --socket='$TAILSCALE_SOCKET' >>'$TAILSCALE_LOG' 2>&1" &
 TAILSCALED_PID="$!"
 
 i=0

@@ -12,6 +12,10 @@ describe("Railway Tailscale single-daemon contract", () => {
     expect(entrypoint).toContain('TAILSCALE_STATE="$TAILSCALE_STATE_DIR/tailscaled.state"');
     expect(entrypoint).toContain('TAILSCALE_SOCKET_DIR="/data/run/tailscale"');
     expect(entrypoint).toContain('TAILSCALE_SOCKET="$TAILSCALE_SOCKET_DIR/tailscaled.sock"');
+    expect(entrypoint).toContain('TAILSCALED_GOMEMLIMIT="${TAILSCALED_GOMEMLIMIT:-160MiB}"');
+    expect(entrypoint).toContain('TAILSCALED_GOMAXPROCS="${TAILSCALED_GOMAXPROCS:-1}"');
+    expect(entrypoint).toContain("GOMEMLIMIT='$TAILSCALED_GOMEMLIMIT'");
+    expect(entrypoint).toContain("GOMAXPROCS='$TAILSCALED_GOMAXPROCS'");
     expect(entrypoint).not.toContain("--state=mem:");
   });
 

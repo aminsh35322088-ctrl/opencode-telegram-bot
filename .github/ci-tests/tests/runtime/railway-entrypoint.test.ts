@@ -10,8 +10,11 @@ describe("Railway entrypoint repository bootstrap", () => {
     expect(source).toContain("RAILWAY_GIT_REPO_OWNER");
     expect(source).toContain("RAILWAY_GIT_REPO_NAME");
     expect(source).toContain("RAILWAY_GIT_COMMIT_SHA");
+    expect(source).toContain('BOOTSTRAP_GIT_TIMEOUT_SEC="${BOOTSTRAP_GIT_TIMEOUT_SEC:-120}"');
     expect(source).toContain("git clone --filter=blob:none --no-tags");
+    expect(source).toContain('timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git clone');
     expect(source).toContain("git -C \'$PERSISTENT_REPO_DIR\' fetch --prune origin");
+    expect(source).toContain('timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C');
     expect(source).toContain("Persistent repository checkout ready");
   });
 
