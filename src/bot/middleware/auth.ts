@@ -17,6 +17,8 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { abortCurrentOperation } from "../commands/abort-command.js";
+import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import path from "node:path";
 
 const SESSION_CONTINUE_CALLBACK_PREFIX = "session:continue:";
 
@@ -200,6 +202,11 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   if (topic) {
     const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
     if (binding) {
+      const coreBinding = resolveCoreTopicBinding(topic.chatId, topic.threadId);
+      if (!coreBinding || coreBinding.sessionId !== binding.sessionId || coreBinding.normalizedDirectory !== path.resolve(binding.directory)) {
+        logger.warn(`[TelegramTopics] Rejected stale Topic metadata: chat=${topic.chatId}, thread=${topic.threadId}`);
+        return;
+      }
       // Bind/attach must run inside this Topic's runtime context: otherwise
       // keyboard/session state lands on the shared main instance and can
       // clobber or mis-read the state of other concurrently streaming Topics.

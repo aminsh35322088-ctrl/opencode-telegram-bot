@@ -49,6 +49,8 @@ import { buildMainStatusText, keyboardManager } from "../keyboards/keyboard-mana
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 import { handleExtensionAutomationCallback } from "../services/extension-automation-ui.js";
+import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import path from "node:path";
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
@@ -73,7 +75,10 @@ async function resolveCallbackTopicSession(ctx: Context): Promise<string | null>
   const threadId = "message_thread_id" in callbackMessage ? callbackMessage.message_thread_id : undefined;
   if (typeof threadId !== "number" || threadId <= 1) return null;
   const binding = await findTelegramTopicBindingByThread(callbackMessage.chat.id, threadId);
-  if (!binding) return null;
+  const coreBinding = resolveCoreTopicBinding(callbackMessage.chat.id, threadId);
+  if (!binding || !coreBinding || coreBinding.sessionId !== binding.sessionId || coreBinding.normalizedDirectory !== path.resolve(binding.directory)) {
+    throw new Error(`Callback Topic metadata does not match Core binding: chat=${callbackMessage.chat.id}, thread=${threadId}`);
+  }
   const current = getCurrentSession();
   if (current?.id !== binding.sessionId || current.directory !== binding.directory) {
     setCurrentSession({ id: binding.sessionId, title: binding.title || `Session ${binding.sessionId.slice(0, 8)}`, directory: binding.directory });

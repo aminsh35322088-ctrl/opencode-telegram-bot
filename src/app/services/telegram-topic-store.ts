@@ -114,12 +114,6 @@ export async function findTelegramTopicBindingBySession(
   );
 }
 
-export async function findTelegramTopicBindingBySessionId(
-  sessionId: string,
-): Promise<TelegramTopicBinding | null> {
-  return (await readBindings()).find((binding) => binding.sessionId === sessionId) ?? null;
-}
-
 export async function findTelegramTopicBindingByThread(
   chatId: number,
   threadId: number,
@@ -129,18 +123,6 @@ export async function findTelegramTopicBindingByThread(
       (binding) => binding.chatId === chatId && binding.threadId === threadId,
     ) ?? null
   );
-}
-
-export async function findTelegramTopicBindingByDirectory(
-  directory: string,
-): Promise<TelegramTopicBinding | null> {
-  return (await readBindings()).find((binding) => binding.directory === directory) ?? null;
-}
-
-export async function findTelegramTopicBindingsByDirectory(
-  directory: string,
-): Promise<TelegramTopicBinding[]> {
-  return (await readBindings()).filter((binding) => binding.directory === directory);
 }
 
 export async function saveTelegramTopicBinding(

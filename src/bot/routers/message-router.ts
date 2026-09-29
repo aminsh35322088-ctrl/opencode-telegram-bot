@@ -48,7 +48,6 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
-import { agentArtifactDeliveryService } from "../services/agent-artifact-delivery-service.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -222,7 +221,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
 
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
 
     logger.debug(`[Bot] Received text message: ${text.startsWith("/") ? `command=\"${text}\"` : `prompt (length=${text.length})`}, chatId=${ctx.chat.id}`);
 
@@ -275,7 +273,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
       await next();
       return;
     }
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
     await next();
@@ -383,7 +380,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
@@ -395,7 +391,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
@@ -412,7 +407,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     if (!ctx.chat) { await next(); return; }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
 
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
@@ -426,7 +420,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     if (!ctx.chat) { await next(); return; }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
 
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
@@ -440,7 +433,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     if (!ctx.chat) { await next(); return; }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
 
     if (isGeneralTopicPromptBlocked(ctx)) {
       await rejectGeneralTopicPrompt(ctx);
@@ -458,7 +450,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     }
     const sessionId = getTopicRuntimeContext()?.sessionId ?? getCurrentSession()?.id;
     deps.setTelegramContext(bot, ctx.chat.id, sessionId);
-    agentArtifactDeliveryService.setChatId(ctx.chat.id);
     await handleDocumentMessage(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 }

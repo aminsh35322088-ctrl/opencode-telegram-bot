@@ -6,6 +6,9 @@ import { createTelegramBotOptions } from "../telegram-client-options.js";
 import { logger } from "../../utils/logger.js";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { isCurrentCoreSessionRoute, resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import type { BindingIdentity } from "@opencode-telegram/native-runtime";
+import { createCoreSessionApi } from "./core-session-api.js";
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const DEBOUNCE_MS = 1500;
@@ -106,13 +109,12 @@ function captionFor(filePath: string, size: number): string {
   return `📎 ${path.basename(filePath)} · ${sizeMb} MB`;
 }
 
-type DeliveryScope = { chatId: number; threadId: number; sessionId?: string; generation: object; sessionGeneration?: object };
+type DeliveryScope = { route: BindingIdentity; generation: object; sessionGeneration?: object };
 
 class AgentArtifactDeliveryService {
   private botInstance: Bot | null = null;
   private readonly pending = new Map<string, { timer: ReturnType<typeof setTimeout>; scope: DeliveryScope }>();
-  private readonly lastDelivered = new Map<string, { signature: string; at: number; sessionId?: string }>();
-  private chatId: number | null = null;
+  private readonly lastDelivered = new Map<string, { signature: string; at: number; sessionId: string }>();
   private generation = {};
   private readonly sessionGenerations = new Map<string, object>();
 
@@ -121,10 +123,6 @@ class AgentArtifactDeliveryService {
       this.botInstance = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
     }
     return this.botInstance;
-  }
-
-  setChatId(chatId: number | null): void {
-    this.chatId = chatId;
   }
 
   processEvent(event: Event): void {
@@ -140,9 +138,11 @@ class AgentArtifactDeliveryService {
     // Capture identity before asynchronous inspection or delayed delivery.
     // Never resolve the destination from a later foreground chat selection.
     const runtime = getTopicRuntimeContext();
-    const scope: DeliveryScope | null = runtime
-      ? { chatId: runtime.chatId, threadId: runtime.threadId, sessionId: runtime.sessionId, generation: this.generation, sessionGeneration: runtime.sessionId ? this.sessionGenerations.get(runtime.sessionId) : undefined }
-      : this.chatId === null ? null : { chatId: this.chatId, threadId: 0, generation: this.generation };
+    const route = runtime ? resolveCoreTopicBinding(runtime.chatId, runtime.threadId) : null;
+    const scope: DeliveryScope | null = route && runtime?.sessionId === route.sessionId &&
+      runtime.directory && path.resolve(runtime.directory) === route.normalizedDirectory
+      ? { route, generation: this.generation, sessionGeneration: this.sessionGenerations.get(route.sessionId) }
+      : null;
     if (!scope) {
       logger.warn(`[Artifact] No Telegram destination at event time; refusing delivery for generated file`);
       return;
@@ -163,7 +163,7 @@ class AgentArtifactDeliveryService {
   retireSession(sessionId: string): void {
     this.sessionGenerations.set(sessionId, {});
     for (const [key, entry] of this.pending) {
-      if (entry.scope.sessionId !== sessionId) continue;
+      if (entry.scope.route.sessionId !== sessionId) continue;
       clearTimeout(entry.timer);
       this.pending.delete(key);
     }
@@ -173,8 +173,9 @@ class AgentArtifactDeliveryService {
   }
 
   private isCurrent(scope: DeliveryScope): boolean {
-    return scope.generation === this.generation && (!scope.sessionId ||
-      scope.sessionGeneration === this.sessionGenerations.get(scope.sessionId));
+    return scope.generation === this.generation &&
+      scope.sessionGeneration === this.sessionGenerations.get(scope.route.sessionId) &&
+      isCurrentCoreSessionRoute(scope.route);
   }
 
   clear(): void {
@@ -183,7 +184,6 @@ class AgentArtifactDeliveryService {
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
     this.lastDelivered.clear();
-    this.chatId = null;
   }
 
   private async scheduleAutoDetection(filePath: string, scope: DeliveryScope): Promise<void> {
@@ -204,7 +204,7 @@ class AgentArtifactDeliveryService {
       return;
     }
 
-    const key = JSON.stringify([scope.chatId, scope.threadId, scope.sessionId ?? null, filePath]);
+    const key = JSON.stringify([scope.route.bindingId, scope.route.bindingGeneration, filePath]);
     const previous = this.pending.get(key);
     if (previous) clearTimeout(previous.timer);
 
@@ -219,7 +219,7 @@ class AgentArtifactDeliveryService {
     try {
       if (isSensitiveArtifactPath(filePath)) return;
       if (!this.isCurrent(scope)) return;
-      const targetChatId = scope.chatId;
+      const targetChatId = scope.route.chatId;
       const stat = await fs.stat(filePath).catch(() => null);
       if (!stat?.isFile() || stat.size > MAX_FILE_SIZE_BYTES || stat.size === 0) {
         logger.warn(`[Artifact] Skipping unavailable/empty/oversized file: ${filePath}`);
@@ -232,13 +232,12 @@ class AgentArtifactDeliveryService {
       const now = Date.now();
       if (previous && (previous.signature === signature || now - previous.at < DELIVERY_COOLDOWN_MS)) return;
 
-      await this.bot.api.sendDocument(targetChatId, new InputFile(filePath), {
+      await createCoreSessionApi(this.bot.api, scope.route.sessionId).sendDocument(targetChatId, new InputFile(filePath), {
         caption: captionFor(filePath, stat.size),
         disable_notification: true,
-        ...(scope && scope.threadId > 1 ? { message_thread_id: scope.threadId } : {}),
       });
 
-      if (this.isCurrent(scope)) this.lastDelivered.set(key, { signature, at: now, sessionId: scope.sessionId });
+      if (this.isCurrent(scope)) this.lastDelivered.set(key, { signature, at: now, sessionId: scope.route.sessionId });
       logger.info(`[Artifact] Delivered generated file to Telegram chat ${targetChatId}: ${filePath} (${stat.size} bytes)`);
     } catch (error) {
       logger.error(`[Artifact] Failed to deliver generated file: ${filePath}`, error);

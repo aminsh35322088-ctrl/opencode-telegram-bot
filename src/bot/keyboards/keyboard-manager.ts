@@ -454,19 +454,6 @@ class KeyboardManager {
   public isInitialized(sessionId?: string): boolean { return Boolean(this.state(sessionId)) || (!sessionId && Boolean(this.api)); }
   public getThreadIdForSession(sessionId?: string): number | undefined { return this.state(sessionId)?.threadId; }
 
-  /**
-   * Authoritative delivery target for a Topic session. Async session output
-   * must be pinned to this thread so it cannot leak into All/General even when
-   * the chat-global bot context was last clobbered by unbound inbound traffic.
-   */
-  public getTopicSendTarget(sessionId?: string): { chatId: number; threadId: number } | undefined {
-    const state = this.state(sessionId);
-    const chatId = state?.chatId;
-    const threadId = state?.threadId;
-    if (!state || chatId === undefined || threadId === undefined || threadId <= 1) return undefined;
-    return { chatId, threadId };
-  }
-
   public clearSession(sessionId: string): void {
     const key = this.key(sessionId);
     this.states.delete(key);

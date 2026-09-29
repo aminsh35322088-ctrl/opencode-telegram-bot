@@ -5,7 +5,7 @@ import { isRecord } from "../utils/type-guards.js";
 import { isExpectedOpencodeUnavailableError } from "../utils/opencode-error.js";
 import { agentArtifactDeliveryService } from "../bot/services/agent-artifact-delivery-service.js";
 import { isDeterministicProviderRetryError } from "./provider-error-policy.js";
-import { findTelegramTopicBindingsByDirectory, findTelegramTopicBindingBySessionId } from "../app/services/telegram-topic-store.js";
+import { getNativeCore, isCurrentCoreSessionRoute, resolveCoreEventRoute } from "../core/native-core-service.js";
 import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { topicTelemetry } from "../utils/topic-observability.js";
 import { markAbortExpected } from "../app/managers/abort-suppression-manager.js";
@@ -57,7 +57,72 @@ async function readNextWithIdleTimeout<T>(iterator: AsyncIterator<T>, signal: Ab
 }
 async function consumeEventStream(stream: AsyncGenerator<unknown, unknown, unknown>, controller: AbortController, onEvent: (event: EventLike) => void): Promise<void> { const iterator = stream[Symbol.asyncIterator](); try { while (!controller.signal.aborted) { const result = await readNextWithIdleTimeout(iterator, controller.signal); if (result.done) return; if (isEventLike(result.value)) onEvent(result.value); } } finally { controller.abort(); void iterator.return?.(undefined as never)?.catch(() => undefined); } }
 function createStreamController(parentSignal: AbortSignal): { controller: AbortController; cleanup: () => void } { const controller = new AbortController(); const onAbort = () => controller.abort(parentSignal.reason); if (parentSignal.aborted) controller.abort(parentSignal.reason); else parentSignal.addEventListener("abort", onAbort, { once: true }); return { controller, cleanup: () => parentSignal.removeEventListener("abort", onAbort) }; }
-async function dispatchEventToSubscribers(event: EventLike, scopedDirectory: string | undefined, candidates: Subscriber[], isCurrent: () => boolean): Promise<void> { if (!isCurrent()) return; const sessionId = getSessionId(event); if (sessionId && retiredSessions.has(sessionId)) { topicTelemetry("stale_session_route_blocked", { sessionId, directory: scopedDirectory }, { type: event.type }); return; } const eventDirectory = getEventDirectory(event); let binding = sessionId ? await findTelegramTopicBindingBySessionId(sessionId) : null; let directoryBindingCount = 0; if (!binding) { const directoryForLookup = scopedDirectory ?? eventDirectory; if (directoryForLookup) { const directoryBindings = await findTelegramTopicBindingsByDirectory(directoryForLookup); directoryBindingCount = directoryBindings.length; if (directoryBindings.length === 1) binding = directoryBindings[0] ?? null; else if (directoryBindings.length > 1 && sessionId) binding = directoryBindings.find((candidate) => candidate.sessionId === sessionId) ?? null; else if (directoryBindings.length > 1) { topicTelemetry("ambiguous_directory_route_blocked", { directory: directoryForLookup }, { type: event.type, bindingCount: directoryBindings.length }); return; } } } const effectiveDirectory = normalizeDirectory(scopedDirectory ?? eventDirectory ?? binding?.directory ?? ""); const targets = candidates.filter((subscriber) => { if (!isCurrent() || ![...subscribers.values()].includes(subscriber)) return false; if (effectiveDirectory && normalizeDirectory(subscriber.directory) !== effectiveDirectory) return false; if (binding) return !subscriber.sessionId || subscriber.sessionId === binding.sessionId; return !subscriber.sessionId || subscriber.sessionId === sessionId; }); topicTelemetry("event_seen", { chatId: binding?.chatId, threadId: binding?.threadId, sessionId: binding?.sessionId ?? sessionId ?? undefined, directory: binding?.directory ?? eventDirectory ?? scopedDirectory ?? undefined }, { type: event.type, targets: targets.length, directoryBindingCount, routed: targets.length > 0 }, "debug"); if (targets.length === 0) return; topicTelemetry("event_dispatch", { chatId: binding?.chatId, threadId: binding?.threadId, sessionId: binding?.sessionId ?? sessionId ?? undefined, directory: binding?.directory ?? eventDirectory ?? scopedDirectory ?? undefined }, { type: event.type, targets: targets.length, directoryBindingCount }, "debug"); const sdkEvent = event as unknown as Event; for (const target of targets) { const invoke = async () => { if (!isCurrent() || ![...subscribers.values()].includes(target)) return; try { agentArtifactDeliveryService.processEvent(sdkEvent); await target.callback(sdkEvent); } catch (error) { logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error); } }; if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) await runInTopicRuntimeContext({ chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId, directory: binding.directory }, invoke); else await invoke(); } }
+async function dispatchEventToSubscribers(
+  event: EventLike,
+  scopedDirectory: string | undefined,
+  candidates: Subscriber[],
+  isCurrent: () => boolean,
+): Promise<void> {
+  if (!isCurrent()) return;
+  const sessionId = getSessionId(event);
+  if (sessionId && retiredSessions.has(sessionId)) {
+    topicTelemetry("stale_session_route_blocked", { sessionId, directory: scopedDirectory }, { type: event.type });
+    return;
+  }
+  const eventDirectory = getEventDirectory(event);
+  if (scopedDirectory && eventDirectory && normalizeDirectory(scopedDirectory) !== normalizeDirectory(eventDirectory)) {
+    topicTelemetry("foreign_directory_route_blocked", { sessionId: sessionId ?? undefined, directory: scopedDirectory }, { type: event.type });
+    return;
+  }
+  const directory = scopedDirectory ?? eventDirectory;
+  const binding = resolveCoreEventRoute(sessionId, directory ?? null);
+  const directoryBindingCount = directory
+    ? getNativeCore()?.bindings.registry.list().filter((candidate) =>
+        normalizeDirectory(candidate.normalizedDirectory) === normalizeDirectory(directory)
+      ).length ?? 0
+    : 0;
+  if (!binding && directoryBindingCount > 1 && !sessionId) {
+    topicTelemetry("ambiguous_directory_route_blocked", { directory: directory ?? undefined }, { type: event.type, bindingCount: directoryBindingCount });
+    return;
+  }
+  const effectiveDirectory = normalizeDirectory(directory ?? binding?.normalizedDirectory ?? "");
+  const targets = candidates.filter((subscriber) => {
+    if (!isCurrent() || ![...subscribers.values()].includes(subscriber)) return false;
+    if (effectiveDirectory && normalizeDirectory(subscriber.directory) !== effectiveDirectory) return false;
+    if (binding) return !subscriber.sessionId || subscriber.sessionId === binding.sessionId;
+    return !subscriber.sessionId || subscriber.sessionId === sessionId;
+  });
+  topicTelemetry("event_seen", {
+    chatId: binding?.chatId,
+    threadId: binding?.threadId,
+    sessionId: binding?.sessionId ?? sessionId ?? undefined,
+    directory: binding?.normalizedDirectory ?? eventDirectory ?? scopedDirectory ?? undefined,
+  }, { type: event.type, targets: targets.length, directoryBindingCount, routed: targets.length > 0 }, "debug");
+  if (targets.length === 0) return;
+  const sdkEvent = event as unknown as Event;
+  for (const target of targets) {
+    const invoke = async () => {
+      if (!isCurrent() || ![...subscribers.values()].includes(target)) return;
+      if (binding && !isCurrentCoreSessionRoute(binding)) return;
+      try {
+        agentArtifactDeliveryService.processEvent(sdkEvent);
+        await target.callback(sdkEvent);
+      } catch (error) {
+        logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error);
+      }
+    };
+    if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) {
+      await runInTopicRuntimeContext({
+        chatId: binding.chatId,
+        threadId: binding.threadId,
+        sessionId: binding.sessionId,
+        directory: binding.normalizedDirectory,
+      }, invoke);
+    } else {
+      await invoke();
+    }
+  }
+}
 function dispatchKey(event: EventLike, scopedDirectory?: string): string { const sessionId = getSessionId(event); if (sessionId) return `session:${sessionId}`; return `directory:${normalizeDirectory(scopedDirectory ?? getEventDirectory(event) ?? "")}`; }
 function dispatchToSubscribers(event: EventLike, scopedDirectory?: string): void {
   const key = dispatchKey(event, scopedDirectory);

@@ -11,10 +11,23 @@ export interface TelegramTopicRuntimeDependencies { ensureEventSubscription: (di
 let runtimeDependencies: TelegramTopicRuntimeDependencies | null = null;
 export function setTelegramTopicRuntimeDependencies(dependencies: TelegramTopicRuntimeDependencies): void { runtimeDependencies = dependencies; }
 export function getTelegramTopicRuntimeDependencies(): TelegramTopicRuntimeDependencies | null { return runtimeDependencies; }
-const TOPIC_SEND_METHODS = new Set(["sendMessage", "sendMessageDraft", "sendRichMessage", "sendRichMessageDraft", "sendPhoto", "sendVideo", "sendAnimation", "sendAudio", "sendDocument", "sendPaidMedia", "sendSticker", "sendVideoNote", "sendVoice", "sendLocation", "sendVenue", "sendContact", "sendPoll", "sendDice", "sendInvoice", "sendGame", "sendMediaGroup", "sendChatAction"]);
+const TOPIC_SEND_OPTIONS_INDEX: Readonly<Record<string, number>> = {
+  sendMessage: 2, sendMessageDraft: 3, sendRichMessage: 2, sendRichMessageDraft: 3,
+  sendPhoto: 2, sendVideo: 2, sendAnimation: 2, sendAudio: 2, sendDocument: 2,
+  sendPaidMedia: 3, sendSticker: 2, sendVideoNote: 2, sendVoice: 2,
+  sendLocation: 3, sendVenue: 5, sendContact: 3, sendPoll: 3, sendDice: 2,
+  sendInvoice: 6, sendGame: 2, sendMediaGroup: 2, sendChatAction: 2,
+};
 type ApiLike = Api;
 function isOptionsObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function addThreadToArgs(args: unknown[], threadId: number): unknown[] { if (threadId <= 1) return args; const patched = [...args]; for (let index = patched.length - 1; index >= 0; index -= 1) { if (!isOptionsObject(patched[index])) continue; const options = patched[index] as Record<string, unknown>; if (typeof options.message_thread_id === "number") return patched; patched[index] = { ...options, message_thread_id: threadId }; return patched; } patched.push({ message_thread_id: threadId }); return patched; }
+function addThreadToArgs(args: unknown[], optionsIndex: number, threadId: number): unknown[] {
+  if (threadId <= 1) return args;
+  const patched = [...args];
+  const options = isOptionsObject(patched[optionsIndex]) ? patched[optionsIndex] : {};
+  if (typeof options.message_thread_id === "number") return patched;
+  patched[optionsIndex] = { ...options, message_thread_id: threadId };
+  return patched;
+}
 
 // Topic-aware API proxies are convenient for session output, but they must never
 // leak into chat-global UI managers. Keep a reversible chain so callers that own
@@ -37,14 +50,15 @@ export function createTopicAwareApi(api: ApiLike, explicitTopic?: TelegramTopicC
       const value = Reflect.get(target, property, receiver);
       if (typeof value !== "function") return value;
       const methodName = String(property);
-      if (!TOPIC_SEND_METHODS.has(methodName)) return value.bind(target);
+      const optionsIndex = TOPIC_SEND_OPTIONS_INDEX[methodName];
+      if (optionsIndex === undefined) return value.bind(target);
       return (...args: unknown[]) => {
         const runtimeContext = getTopicRuntimeContext();
         const topic = explicitTopic ?? (runtimeContext ? { chatId: runtimeContext.chatId, threadId: runtimeContext.threadId } : null);
         if (!topic) return value.apply(target, args);
         const chatId = typeof args[0] === "number" ? args[0] : undefined;
         if (chatId !== undefined && chatId !== topic.chatId) return value.apply(target, args);
-        return value.apply(target, addThreadToArgs(args, topic.threadId));
+        return value.apply(target, addThreadToArgs(args, optionsIndex, topic.threadId));
       };
     },
   }) as ApiLike;

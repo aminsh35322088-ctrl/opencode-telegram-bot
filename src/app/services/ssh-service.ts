@@ -13,7 +13,7 @@ import {
   getManagedSshKnownHostsPath,
   getManagedSshPrivateKeyPath,
 } from "./ssh-key-service.js";
-import { findTelegramTopicBindingBySessionId } from "./telegram-topic-store.js";
+import { resolveCoreSessionRoute } from "../../core/native-core-service.js";
 
 const SSH_BIN = process.env.SSH_REAL_BIN?.trim() || "/usr/bin/ssh";
 const SCP_BIN = process.env.SCP_REAL_BIN?.trim() || "/usr/bin/scp";
@@ -580,7 +580,8 @@ async function runOverMaster(
 export async function resolveTailnetSshScope(sessionId: string): Promise<string> {
   const session = sessionId.trim();
   if (!session) return "session:unknown";
-  const binding = await findTelegramTopicBindingBySessionId(session).catch(() => null);
+  let binding: ReturnType<typeof resolveCoreSessionRoute> | null = null;
+  try { binding = resolveCoreSessionRoute(session); } catch { /* No exact Core Topic binding. */ }
   return binding
     ? `topic:${binding.chatId}:${binding.threadId}`
     : `session:${session}`;

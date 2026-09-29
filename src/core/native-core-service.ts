@@ -313,6 +313,51 @@ export function getNativeCore(): TelegramNativeCore | null {
   return nativeCore;
 }
 
+export function resolveCoreSessionRoute(sessionId: string, directory?: string): BindingIdentity {
+  const matches = requireCore().bindings.registry.list().filter((binding) =>
+    binding.sessionId === sessionId &&
+    (directory === undefined || binding.normalizedDirectory === normalizeDirectory(directory))
+  );
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one Core Topic binding for session ${sessionId}; found ${matches.length}`);
+  }
+  return matches[0]!;
+}
+
+export function isCurrentCoreSessionRoute(route: BindingIdentity): boolean {
+  return nativeCore?.bindings.registry.getExact(route) != null;
+}
+
+export function resolveCoreTopicBinding(chatId: number, threadId: number): BindingIdentity | null {
+  if (!nativeCore || threadId <= 1) return null;
+  return nativeCore.bindings.registry.getById(coreBindingId(chatId, threadId));
+}
+
+export function resolveCoreEventRoute(sessionId: string | null, directory: string | null): BindingIdentity | null {
+  if (!nativeCore) return null;
+  const normalized = directory ? normalizeDirectory(directory) : null;
+  const bindings = nativeCore.bindings.registry.list();
+  if (sessionId) {
+    const known = bindings.filter((binding) => binding.sessionId === sessionId);
+    if (known.length > 0 && normalized && known.every((binding) => binding.normalizedDirectory !== normalized)) {
+      return null;
+    }
+    const exact = bindings.filter((binding) =>
+      binding.sessionId === sessionId && (!normalized || binding.normalizedDirectory === normalized)
+    );
+    if (exact.length === 1) return exact[0]!;
+    if (exact.length > 1 || !normalized) return null;
+  }
+  if (!normalized) return null;
+  const matches = bindings.filter((binding) => binding.normalizedDirectory === normalized);
+  if (matches.length !== 1) return null;
+  const binding = matches[0]!;
+  // Unknown session IDs may be child agents. They only inherit the parent
+  // Topic while it owns an active Core run; otherwise old sessions stay out.
+  if (sessionId && !nativeCore.runs.current(binding.bindingId)) return null;
+  return binding;
+}
+
 async function cleanupCoreBinding(api: Api, identity: BindingIdentity): Promise<void> {
   const { cleanupTelegramTopicBindingResources } = await import(
     "../app/services/telegram-topic-delete-service.js"
@@ -512,17 +557,7 @@ export async function beginCoreRunForSession(
 ): Promise<RunIdentity> {
   const core = requireCore();
   const normalized = normalizeDirectory(directory);
-  const matches = core.bindings.registry
-    .list()
-    .filter(
-      (candidate) =>
-        candidate.sessionId === sessionId &&
-        candidate.normalizedDirectory === normalized,
-    );
-  if (matches.length !== 1) {
-    throw new Error(`Expected exactly one Core Topic binding for session ${sessionId}; found ${matches.length}`);
-  }
-  const binding = matches[0]!;
+  const binding = resolveCoreSessionRoute(sessionId, normalized);
 
   if (requireInteractiveTopic) {
     const context = getTopicRuntimeContext();
