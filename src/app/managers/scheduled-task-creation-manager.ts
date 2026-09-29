@@ -1,11 +1,17 @@
+import type { CoreBindingOwner } from "../../core/types.js";
 import type { ParsedTaskSchedule, ScheduledTaskModel, TaskCreationState } from "../types/scheduled-task.js";
-import { cloneParsedTaskSchedule, cloneScheduledTaskModel } from "../types/scheduled-task.js";
+import {
+  cloneCoreBindingOwner,
+  cloneParsedTaskSchedule,
+  cloneScheduledTaskModel,
+} from "../types/scheduled-task.js";
 import { logger } from "../../utils/logger.js";
 import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 
 function cloneState(state: TaskCreationState): TaskCreationState {
   return {
     ...state,
+    coreBinding: cloneCoreBindingOwner(state.coreBinding),
     model: cloneScheduledTaskModel(state.model),
     parsedSchedule: state.parsedSchedule ? cloneParsedTaskSchedule(state.parsedSchedule) : null,
   };
@@ -32,6 +38,7 @@ class TaskCreationManager {
   start(
     projectId: string,
     projectWorktree: string,
+    coreBinding: CoreBindingOwner,
     model: ScheduledTaskModel,
     agent: string,
   ): TaskCreationState {
@@ -39,6 +46,7 @@ class TaskCreationManager {
       stage: "awaiting_schedule",
       projectId,
       projectWorktree,
+      coreBinding: cloneCoreBindingOwner(coreBinding),
       agent,
       model: cloneScheduledTaskModel(model),
       scheduleText: null,

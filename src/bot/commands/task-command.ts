@@ -19,6 +19,10 @@ import {
   type ScheduledTask,
 } from "../../app/types/scheduled-task.js";
 import { logger } from "../../utils/logger.js";
+import {
+  captureCurrentCoreBindingOwner,
+  type CoreBindingOwner,
+} from "../../core/native-core-service.js";
 
 const TASK_PROMPT_PREVIEW_LENGTH = 100;
 
@@ -250,6 +254,7 @@ async function deleteMessageIfPresent(
 function buildScheduledTask(
   projectId: string,
   projectWorktree: string,
+  coreBinding: CoreBindingOwner,
   agent: string,
   model: ScheduledTask["model"],
   scheduleText: string,
@@ -260,6 +265,7 @@ function buildScheduledTask(
     id: randomUUID(),
     projectId,
     projectWorktree,
+    coreBinding: { ...coreBinding },
     agent,
     model,
     scheduleText,
@@ -301,10 +307,25 @@ export async function taskCommand(ctx: CommandContext<Context>): Promise<void> {
     return;
   }
 
+  let coreBinding: CoreBindingOwner;
+  try {
+    coreBinding = captureCurrentCoreBindingOwner();
+  } catch (error) {
+    logger.warn("[TaskCommand] Rejected scheduled task creation outside an exact AI Topic", error);
+    await ctx.reply(t("general.topic_only_prompt"));
+    return;
+  }
+
   const currentModel = createScheduledTaskModel(getStoredModel());
   const currentAgent = getStoredAgent();
 
-  taskCreationManager.start(currentProject.id, currentProject.worktree, currentModel, currentAgent);
+  taskCreationManager.start(
+    currentProject.id,
+    coreBinding.directory,
+    coreBinding,
+    currentModel,
+    currentAgent,
+  );
   interactionManager.start({
     kind: "task",
     expectedInput: "text",
@@ -448,6 +469,7 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
     const task = buildScheduledTask(
       flowState.projectId,
       flowState.projectWorktree,
+      flowState.coreBinding,
       flowState.agent,
       flowState.model,
       flowState.scheduleText,

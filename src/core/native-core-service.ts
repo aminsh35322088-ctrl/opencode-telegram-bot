@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Api } from "grammy";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import {
+  RailwayResourceGovernor,
   SerialTaskQueue,
   TelegramNativeCore,
   sameBinding,
@@ -17,13 +18,19 @@ import { getRuntimePaths } from "../runtime/paths.js";
 import { logger } from "../utils/logger.js";
 import { resolveCatalogModel } from "../app/services/model-selection-service.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
+import type {
+  CoreAbortTarget,
+  CoreBindingOwner,
+  CoreOwnedTaskContext,
+  CoreTopicBindingInput,
+} from "./types.js";
 
-export interface CoreTopicBindingInput {
-  chatId: number;
-  threadId: number;
-  sessionId: string;
-  directory: string;
-}
+export type {
+  CoreAbortTarget,
+  CoreBindingOwner,
+  CoreOwnedTaskContext,
+  CoreTopicBindingInput,
+} from "./types.js";
 
 export interface CorePromptOptions {
   sessionID: string;
@@ -36,9 +43,33 @@ export interface CorePromptOptions {
 
 type PromptAsyncResult = Awaited<ReturnType<typeof opencodeClient.session.promptAsync>>;
 
+const MiB = 1024 * 1024;
 const PROMPT_DISPATCH_TIMEOUT_MS = 30_000;
 const QUEUE_CANCELLATION_GRACE_MS = 2_000;
 const WORKER_STOP_TIMEOUT_MS = 5_000;
+const DEFAULT_SERVICE_MEMORY_LIMIT_BYTES = 1024 * MiB;
+
+function resolveServiceMemoryLimitBytes(): number {
+  const cgroupLimit = RailwayResourceGovernor.serviceMemoryLimitBytes();
+  if (cgroupLimit) return cgroupLimit;
+
+  const configuredMb = Number.parseInt(process.env.BOT_PROCESS_MEMORY_LIMIT_MB ?? "", 10);
+  if (Number.isSafeInteger(configuredMb) && configuredMb > 0) {
+    return configuredMb * MiB;
+  }
+  return DEFAULT_SERVICE_MEMORY_LIMIT_BYTES;
+}
+
+function createRailwayResourcePolicy() {
+  const limit = resolveServiceMemoryLimitBytes();
+  return {
+    softRssBytes: Math.floor(limit * 0.82),
+    hardRssBytes: Math.floor(limit * 0.94),
+    maxWorkers: 8,
+    maxRestartsPerBinding: 3,
+    restartWindowMs: 5 * 60_000,
+  };
+}
 
 function resolveBotId(): string {
   const tokenPrefix = config.telegram.token.split(":", 1)[0]?.trim();
@@ -113,6 +144,7 @@ class BotTopicWorker implements TopicWorker {
   readonly #queue: SerialTaskQueue;
   #binding: BindingIdentity;
   #activeRun: RunIdentity | null = null;
+  #activeAbortTarget: CoreAbortTarget | null = null;
   #stopController = new AbortController();
   #started = false;
   #stopped = false;
@@ -148,7 +180,8 @@ class BotTopicWorker implements TopicWorker {
   async executeTask<T>(
     run: RunIdentity,
     label: string,
-    task: (signal: AbortSignal) => Promise<T>,
+    task: (context: CoreOwnedTaskContext) => Promise<T>,
+    options: { abortTarget?: CoreAbortTarget | null } = {},
   ): Promise<T> {
     if (!this.#started || this.#stopped) throw new Error("topic worker is not active");
     if (run.bindingId !== this.bindingId || run.workerGeneration !== this.generation) {
@@ -161,10 +194,34 @@ class BotTopicWorker implements TopicWorker {
       throw new Error("topic worker already owns an active run");
     }
     this.#activeRun = run;
+    const initialAbortTarget =
+      options.abortTarget === undefined
+        ? { sessionId: run.sessionId, directory: run.normalizedDirectory }
+        : options.abortTarget;
+    this.#activeAbortTarget = initialAbortTarget
+      ? {
+          sessionId: initialAbortTarget.sessionId,
+          directory: normalizeDirectory(initialAbortTarget.directory),
+        }
+      : null;
+
+    const setAbortTarget = (target: CoreAbortTarget | null): void => {
+      if (!this.#activeRun || !sameRun(this.#activeRun, run) || this.#stopped) {
+        throw new Error("cannot mutate abort target for an inactive Core run");
+      }
+      this.#activeAbortTarget = target
+        ? { sessionId: target.sessionId, directory: normalizeDirectory(target.directory) }
+        : null;
+    };
+
     try {
       return await this.#queue.enqueue(
         label,
-        (queueSignal) => task(AbortSignal.any([queueSignal, this.#stopController.signal])),
+        (queueSignal) =>
+          task({
+            signal: AbortSignal.any([queueSignal, this.#stopController.signal]),
+            setAbortTarget,
+          }),
       );
     } catch (error) {
       this.complete(run);
@@ -183,14 +240,16 @@ class BotTopicWorker implements TopicWorker {
     const result = await this.executeTask(
       run,
       `prompt:${run.runId}`,
-      (signal) => promptAsyncWithModelRecovery(options, signal),
+      ({ signal }) => promptAsyncWithModelRecovery(options, signal),
     );
     if ("error" in result && result.error) this.complete(run);
     return result;
   }
 
   complete(run: RunIdentity): void {
-    if (this.#activeRun && sameRun(this.#activeRun, run)) this.#activeRun = null;
+    if (!this.#activeRun || !sameRun(this.#activeRun, run)) return;
+    this.#activeRun = null;
+    this.#activeAbortTarget = null;
   }
 
   async stop(reason: string): Promise<void> {
@@ -199,8 +258,10 @@ class BotTopicWorker implements TopicWorker {
     workersByLease.delete(workerLeaseKey(this.bindingId, this.generation));
     this.#stopController.abort(new Error(reason));
     const active = this.#activeRun;
+    const abortTarget = this.#activeAbortTarget;
     this.#activeRun = null;
-    if (!active) return;
+    this.#activeAbortTarget = null;
+    if (!active || !abortTarget) return;
 
     const controller = new AbortController();
     const timer = setTimeout(
@@ -209,7 +270,7 @@ class BotTopicWorker implements TopicWorker {
     );
     try {
       await opencodeClient.session.abort(
-        { sessionID: active.sessionId, directory: active.normalizedDirectory },
+        { sessionID: abortTarget.sessionId, directory: abortTarget.directory },
         { signal: controller.signal },
       );
     } catch (error) {
@@ -268,6 +329,10 @@ export async function initializeNativeCore(
     "core",
     "bindings.json",
   );
+  const railwayPolicy = createRailwayResourcePolicy();
+  logger.info(
+    `[Core] Railway memory policy: soft=${Math.round(railwayPolicy.softRssBytes / MiB)}MiB hard=${Math.round(railwayPolicy.hardRssBytes / MiB)}MiB maxWorkers=${railwayPolicy.maxWorkers}`,
+  );
   const core = await TelegramNativeCore.open({
     bindingStorePath,
     workerFactory,
@@ -299,13 +364,7 @@ export async function initializeNativeCore(
     cleanupBinding: (identity) => cleanupCoreBinding(api, identity),
     admissionPolicy: ({ route }) =>
       route.kind === "topic" && route.threadId > 1 ? "MODEL_ALLOWED" : "CONTROL_ONLY",
-    railwayPolicy: {
-      softRssBytes: 320 * 1024 * 1024,
-      hardRssBytes: 448 * 1024 * 1024,
-      maxWorkers: 8,
-      maxRestartsPerBinding: 3,
-      restartWindowMs: 5 * 60_000,
-    },
+    railwayPolicy,
   });
 
   for (const binding of bindings) {
@@ -385,6 +444,74 @@ export async function rotateCoreTopicBinding(
   });
 }
 
+export function captureCurrentCoreBindingOwner(): CoreBindingOwner {
+  const core = requireCore();
+  const context = getTopicRuntimeContext();
+  if (
+    !context ||
+    context.threadId <= 1 ||
+    !context.sessionId ||
+    !context.directory
+  ) {
+    throw new Error("Scheduled model execution requires an exact AI Topic binding");
+  }
+
+  const binding = core.bindings.registry.getById(
+    coreBindingId(context.chatId, context.threadId),
+  );
+  if (
+    !binding ||
+    binding.sessionId !== context.sessionId ||
+    binding.normalizedDirectory !== normalizeDirectory(context.directory)
+  ) {
+    throw new Error("Current Topic context does not match the authoritative Core binding");
+  }
+
+  return {
+    bindingId: binding.bindingId,
+    botId: binding.botId,
+    chatId: binding.chatId,
+    threadId: binding.threadId,
+    sessionId: binding.sessionId,
+    directory: binding.normalizedDirectory,
+    bindingGeneration: binding.bindingGeneration,
+  };
+}
+
+export async function beginCoreRunForOwner(
+  owner: CoreBindingOwner,
+  operation: string,
+): Promise<RunIdentity> {
+  const core = requireCore();
+  const current = core.bindings.registry.getById(owner.bindingId);
+  if (
+    !current ||
+    current.botId !== owner.botId ||
+    current.chatId !== owner.chatId ||
+    current.threadId !== owner.threadId ||
+    current.sessionId !== owner.sessionId ||
+    current.normalizedDirectory !== normalizeDirectory(owner.directory) ||
+    current.bindingGeneration !== owner.bindingGeneration
+  ) {
+    throw new Error(`Stale Core binding owner rejected: ${owner.bindingId}`);
+  }
+
+  const allowed = await core.modelAllowed(
+    {
+      kind: "topic",
+      botId: current.botId,
+      chatId: current.chatId,
+      threadId: current.threadId,
+    },
+    operation,
+  );
+  if (!allowed) {
+    throw new Error(`Core admission rejected model operation: ${operation}`);
+  }
+
+  return core.beginRun(current.bindingId);
+}
+
 export async function beginCoreRunForSession(
   sessionId: string,
   directory: string,
@@ -457,7 +584,32 @@ export async function dispatchCorePrompt(
   return worker.execute(run, options);
 }
 
-function finishCoreRun(run: RunIdentity): boolean {
+export async function dispatchCoreOwnedTask<T>(
+  run: RunIdentity,
+  label: string,
+  task: (context: CoreOwnedTaskContext) => Promise<T>,
+  options: { abortTarget?: CoreAbortTarget | null } = {},
+): Promise<T> {
+  const core = requireCore();
+  if (!core.runs.accepts(run)) {
+    throw new Error("Core run was fenced before owned task dispatch");
+  }
+  const binding = core.bindings.registry.getExact(run);
+  if (!binding) throw new Error("Core binding changed before owned task dispatch");
+
+  const worker = await core.workers.ensure(binding);
+  if (
+    !(worker instanceof BotTopicWorker) ||
+    worker.generation !== run.workerGeneration ||
+    !core.workers.isCurrent(binding, worker)
+  ) {
+    throw new Error("Core worker changed before owned task dispatch");
+  }
+
+  return worker.executeTask(run, label, task, options);
+}
+
+export function finishCoreRun(run: RunIdentity): boolean {
   const core = nativeCore;
   if (!core) return false;
   workersByLease.get(workerLeaseKey(run.bindingId, run.workerGeneration))?.complete(run);

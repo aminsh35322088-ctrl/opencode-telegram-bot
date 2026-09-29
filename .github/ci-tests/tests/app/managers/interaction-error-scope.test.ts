@@ -85,7 +85,21 @@ describe("app/managers/interaction-error-scope", () => {
   });
 
   it("clears taskCreationManager and the matching interaction for the taskCreation scope", () => {
-    taskCreationManager.start("project-1", "D:/repo", { providerID: "p", modelID: "m", variant: null }, "build");
+    taskCreationManager.start(
+      "project-1",
+      "D:/repo",
+      {
+        bindingId: "telegram:123:1:42",
+        botId: "123",
+        chatId: 1,
+        threadId: 42,
+        sessionId: "session-1",
+        directory: "D:/repo",
+        bindingGeneration: 1,
+      },
+      { providerID: "p", modelID: "m", variant: null },
+      "build",
+    );
     interactionManager.start({ kind: "task", expectedInput: "text", metadata: {} });
 
     clearInteractionErrorState("taskCreation", "test_cleanup");

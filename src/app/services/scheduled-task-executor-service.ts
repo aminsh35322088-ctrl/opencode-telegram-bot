@@ -9,6 +9,12 @@ import {
 } from "./scheduled-task-session-ignore-service.js";
 import type { ScheduledTask, ScheduledTaskExecutionResult } from "../types/scheduled-task.js";
 import { markAbortExpected } from "../managers/abort-suppression-manager.js";
+import {
+  beginCoreRunForOwner,
+  dispatchCoreOwnedTask,
+  finishCoreRun,
+  type CoreOwnedTaskContext,
+} from "../../core/native-core-service.js";
 
 const SCHEDULED_TASK_SESSION_TITLE = "Scheduled task run";
 const EXECUTION_POLL_INTERVAL_MS = 2000;
@@ -393,6 +399,7 @@ async function waitForScheduledTaskResult(
   taskId: string,
   sessionId: string,
   directory: string,
+  signal: AbortSignal,
 ): Promise<string> {
   const startedAtMs = Date.now();
   const executionTimeoutMs = getExecutionTimeoutMs();
@@ -402,6 +409,7 @@ async function waitForScheduledTaskResult(
   let completedEmptyResultReadCount = 0;
 
   while (true) {
+    signal.throwIfAborted();
     if (Date.now() - startedAtMs >= executionTimeoutMs) {
       throw new Error(createExecutionTimeoutMessage());
     }
@@ -496,14 +504,17 @@ async function waitForScheduledTaskResult(
   }
 }
 
-export async function executeScheduledTask(
+async function executeScheduledTaskWithinCore(
   task: ScheduledTask,
+  context: CoreOwnedTaskContext,
 ): Promise<ScheduledTaskExecutionResult> {
+  const { signal, setAbortTarget } = context;
   const startedAt = new Date().toISOString();
   let sessionId: string | null = null;
   let deleteTemporarySession = true;
 
   try {
+    signal.throwIfAborted();
     await cleanupScheduledTaskSessionIgnores();
 
     const { data: session, error: createError } = await opencodeClient.session.create({
@@ -516,6 +527,7 @@ export async function executeScheduledTask(
     }
 
     sessionId = session.id;
+    setAbortTarget({ sessionId: session.id, directory: session.directory });
     await registerScheduledTaskSessionIgnore(session.id);
 
     const promptOptions: {
@@ -543,13 +555,21 @@ export async function executeScheduledTask(
       promptOptions.variant = task.model.variant;
     }
 
-    const { error: promptError } = await opencodeClient.session.promptAsync(promptOptions);
+    const { error: promptError } = await opencodeClient.session.promptAsync(
+      promptOptions,
+      { signal },
+    );
 
     if (promptError) {
       throw promptError || new Error("Scheduled task prompt execution failed");
     }
 
-    const resultText = await waitForScheduledTaskResult(task.id, session.id, session.directory);
+    const resultText = await waitForScheduledTaskResult(
+      task.id,
+      session.id,
+      session.directory,
+      signal,
+    );
 
     return {
       taskId: task.id,
@@ -560,6 +580,9 @@ export async function executeScheduledTask(
       errorMessage: null,
     };
   } catch (error) {
+    if (signal.aborted && sessionId) {
+      await abortScheduledTaskSession(sessionId, task.projectWorktree);
+    }
     const errorMessage = toErrorMessage(error);
     if (error instanceof ScheduledTaskEmptyAssistantResponseError && sessionId) {
       deleteTemporarySession = false;
@@ -600,5 +623,47 @@ export async function executeScheduledTask(
         );
       }
     }
+  }
+}
+
+export async function executeScheduledTask(
+  task: ScheduledTask,
+): Promise<ScheduledTaskExecutionResult> {
+  const startedAt = new Date().toISOString();
+  if (!task.coreBinding) {
+    return {
+      taskId: task.id,
+      status: "error",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      resultText: null,
+      errorMessage: "Scheduled task has no authoritative Core Topic binding.",
+    };
+  }
+
+  let run;
+  try {
+    run = await beginCoreRunForOwner(task.coreBinding, "scheduled_task");
+    return await dispatchCoreOwnedTask(
+      run,
+      `scheduled-task:${task.id}`,
+      (context) => executeScheduledTaskWithinCore(task, context),
+      { abortTarget: null },
+    );
+  } catch (error) {
+    const errorMessage = toErrorMessage(error);
+    logger.warn(
+      `[ScheduledTaskExecutor] Core admission failed: id=${task.id}, message=${errorMessage}`,
+    );
+    return {
+      taskId: task.id,
+      status: "error",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      resultText: null,
+      errorMessage,
+    };
+  } finally {
+    if (run) finishCoreRun(run);
   }
 }

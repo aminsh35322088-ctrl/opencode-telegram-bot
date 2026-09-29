@@ -22,6 +22,7 @@ const mocked = vi.hoisted(() => ({
   addScheduledTaskMock: vi.fn(),
   listScheduledTasksMock: vi.fn(),
   registerTaskMock: vi.fn(),
+  captureCoreOwnerMock: vi.fn(),
 }));
 
 vi.mock("../../../src/config.js", () => ({
@@ -91,6 +92,10 @@ vi.mock("../../../src/app/services/scheduled-task-runtime-service.js", () => ({
   },
 }));
 
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  captureCurrentCoreBindingOwner: mocked.captureCoreOwnerMock,
+}));
+
 function createCommandContext(): Context {
   return {
     chat: { id: 777 },
@@ -149,6 +154,15 @@ describe("bot/commands/task", () => {
     mocked.addScheduledTaskMock.mockReset();
     mocked.listScheduledTasksMock.mockReset();
     mocked.registerTaskMock.mockReset();
+    mocked.captureCoreOwnerMock.mockReset().mockReturnValue({
+      bindingId: "telegram:123456:777:42",
+      botId: "123456",
+      chatId: 777,
+      threadId: 42,
+      sessionId: "session-topic",
+      directory: "D:\\Projects\\Repo",
+      bindingGeneration: 1,
+    });
     mocked.taskLimit = 10;
     mocked.addScheduledTaskMock.mockResolvedValue(undefined);
     mocked.listScheduledTasksMock.mockReturnValue([]);
@@ -180,6 +194,19 @@ describe("bot/commands/task", () => {
         projectWorktree: "D:\\Projects\\Repo",
       },
     });
+  });
+
+  it("fails closed when scheduled task creation is attempted outside an exact AI Topic", async () => {
+    mocked.captureCoreOwnerMock.mockImplementationOnce(() => {
+      throw new Error("Scheduled model execution requires an exact AI Topic binding");
+    });
+    const ctx = createCommandContext();
+
+    await taskCommand(ctx as never);
+
+    expect(ctx.reply).toHaveBeenCalledWith(t("general.topic_only_prompt"));
+    expect(taskCreationManager.isActive()).toBe(false);
+    expect(interactionManager.getSnapshot()).toBeNull();
   });
 
   it("does not start flow when task limit is reached", async () => {
@@ -243,6 +270,12 @@ describe("bot/commands/task", () => {
       expect.objectContaining({
         projectId: "project-1",
         projectWorktree: "D:\\Projects\\Repo",
+        coreBinding: expect.objectContaining({
+          bindingId: "telegram:123456:777:42",
+          threadId: 42,
+          sessionId: "session-topic",
+          bindingGeneration: 1,
+        }),
         agent: "build",
         model: {
           providerID: "openai",

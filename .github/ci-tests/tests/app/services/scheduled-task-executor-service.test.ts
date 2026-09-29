@@ -18,6 +18,10 @@ const mocked = vi.hoisted(() => ({
   cleanupIgnoresMock: vi.fn(),
   registerIgnoreMock: vi.fn(),
   loggerWarnMock: vi.fn(),
+  beginCoreRunMock: vi.fn(),
+  dispatchCoreOwnedTaskMock: vi.fn(),
+  finishCoreRunMock: vi.fn(),
+  setAbortTargetMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -63,12 +67,27 @@ vi.mock("../../../src/app/services/scheduled-task-session-ignore-service.js", ()
   registerScheduledTaskSessionIgnore: mocked.registerIgnoreMock,
 }));
 
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  beginCoreRunForOwner: mocked.beginCoreRunMock,
+  dispatchCoreOwnedTask: mocked.dispatchCoreOwnedTaskMock,
+  finishCoreRun: mocked.finishCoreRunMock,
+}));
+
 function createTask(partial: Partial<ScheduledOnceTask> = {}): ScheduledOnceTask {
   return {
     id: "task-1",
     kind: "once",
     projectId: "project-1",
     projectWorktree: "D:\\Projects\\Repo",
+    coreBinding: {
+      bindingId: "telegram:123456:777:42",
+      botId: "123456",
+      chatId: 777,
+      threadId: 42,
+      sessionId: "topic-session",
+      directory: "D:\\Projects\\Repo",
+      bindingGeneration: 1,
+    },
     agent: "build",
     model: {
       providerID: "openai",
@@ -172,6 +191,32 @@ describe("app/services/scheduled-task-executor-service", () => {
     mocked.cleanupIgnoresMock.mockReset();
     mocked.registerIgnoreMock.mockReset();
     mocked.loggerWarnMock.mockReset();
+    mocked.beginCoreRunMock.mockReset().mockResolvedValue({
+      bindingId: "telegram:123456:777:42",
+      botId: "123456",
+      chatId: 777,
+      threadId: 42,
+      sessionId: "topic-session",
+      normalizedDirectory: "D:\\Projects\\Repo",
+      bindingGeneration: 1,
+      runId: "scheduled-run",
+      workerGeneration: 1,
+    });
+    mocked.dispatchCoreOwnedTaskMock
+      .mockReset()
+      .mockImplementation(
+        async (
+          _run: unknown,
+          _label: string,
+          task: (context: { signal: AbortSignal; setAbortTarget: (target: unknown) => void }) => Promise<unknown>,
+        ) =>
+          task({
+            signal: new AbortController().signal,
+            setAbortTarget: mocked.setAbortTargetMock,
+          }),
+      );
+    mocked.finishCoreRunMock.mockReset().mockReturnValue(true);
+    mocked.setAbortTargetMock.mockReset();
     mocked.questionListMock.mockResolvedValue({ data: [], error: null });
     mocked.questionRejectMock.mockResolvedValue({ data: true, error: null });
     mocked.permissionListMock.mockResolvedValue({ data: [], error: null });
@@ -184,6 +229,24 @@ describe("app/services/scheduled-task-executor-service", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("rejects a stale Core binding owner before creating an OpenCode session", async () => {
+    mocked.beginCoreRunMock.mockRejectedValueOnce(
+      new Error("Stale Core binding owner rejected: telegram:123456:777:42"),
+    );
+
+    await expect(executeScheduledTask(createTask())).resolves.toMatchObject({
+      taskId: "task-1",
+      status: "error",
+      resultText: null,
+      errorMessage: expect.stringMatching(/stale core binding owner/i),
+    });
+
+    expect(mocked.createMock).not.toHaveBeenCalled();
+    expect(mocked.promptAsyncMock).not.toHaveBeenCalled();
+    expect(mocked.dispatchCoreOwnedTaskMock).not.toHaveBeenCalled();
+    expect(mocked.finishCoreRunMock).not.toHaveBeenCalled();
   });
 
   it("starts scheduled task with promptAsync and polls until the assistant reply completes", async () => {
@@ -221,7 +284,12 @@ describe("app/services/scheduled-task-executor-service", () => {
         agent: "build",
         variant: "default",
       }),
+      expect.objectContaining({ signal: expect.any(Object) }),
     );
+    expect(mocked.setAbortTargetMock).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      directory: "D:\\Projects\\Repo",
+    });
     expect(mocked.statusMock).toHaveBeenCalledTimes(1);
     expect(mocked.messagesMock).toHaveBeenCalledTimes(2);
     expect(mocked.cleanupIgnoresMock).toHaveBeenCalledTimes(1);
@@ -248,6 +316,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
     expect(mocked.promptAsyncMock).toHaveBeenCalledWith(
       expect.objectContaining({ agent: "plan" }),
+      expect.objectContaining({ signal: expect.any(Object) }),
     );
   });
 

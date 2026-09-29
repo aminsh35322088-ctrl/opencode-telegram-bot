@@ -1,3 +1,4 @@
+import type { CoreBindingOwner } from "../../core/types.js";
 import type { ModelInfo } from "./model.js";
 
 export type ScheduledTaskStatus = "idle" | "running" | "success" | "error";
@@ -14,6 +15,7 @@ export interface ScheduledTaskBase {
   id: string;
   projectId: string;
   projectWorktree: string;
+  coreBinding?: CoreBindingOwner;
   agent: string;
   model: ScheduledTaskModel;
   scheduleText: string;
@@ -64,6 +66,7 @@ export interface TaskCreationState {
   stage: "awaiting_schedule" | "parsing_schedule" | "awaiting_prompt";
   projectId: string;
   projectWorktree: string;
+  coreBinding: CoreBindingOwner;
   agent: string;
   model: ScheduledTaskModel;
   scheduleText: string | null;
@@ -89,11 +92,16 @@ export function cloneScheduledTaskModel(model: ScheduledTaskModel): ScheduledTas
   return { ...model };
 }
 
+export function cloneCoreBindingOwner(owner: CoreBindingOwner): CoreBindingOwner {
+  return { ...owner };
+}
+
 export function cloneScheduledTask(task: ScheduledTask): ScheduledTask {
   return {
     ...task,
     // Backfill for tasks persisted before the agent field existed (they ran with "build").
     agent: task.agent ?? DEFAULT_TASK_AGENT,
+    coreBinding: task.coreBinding ? cloneCoreBindingOwner(task.coreBinding) : undefined,
     model: cloneScheduledTaskModel(task.model),
   };
 }
