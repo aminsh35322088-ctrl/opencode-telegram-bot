@@ -109,6 +109,24 @@ export class OpencodeAutoRestartService {
     this.managedServerPid = null;
   }
 
+  async restartForConfigChange(reason: string): Promise<boolean> {
+    if (!this.started || !this.localTarget || this.checkInProgress) return false;
+
+    this.checkInProgress = true;
+    try {
+      this.serverWasHealthy = false;
+      this.consecutiveHealthFailures = 0;
+      opencodeReadyLifecycle.notifyUnavailable(`config_change_${reason}`);
+      logger.info(`[OpenCodeAutoRestart] Restarting OpenCode to apply config change: reason=${reason}`);
+      return await this.startServer("config");
+    } catch (error) {
+      logger.error(`[OpenCodeAutoRestart] Failed config-change restart: reason=${reason}`, error);
+      return false;
+    } finally {
+      this.checkInProgress = false;
+    }
+  }
+
   private async checkAndRestart(reason: "startup" | "interval"): Promise<void> {
     if (this.checkInProgress || !this.localTarget) return;
     this.checkInProgress = true;
@@ -160,7 +178,7 @@ export class OpencodeAutoRestartService {
   }
 
   private async stopExistingServerIfNeeded(): Promise<void> {
-    if (!this.localTarget) return;
+    if (!this.localTarget) return false;
 
     const existingPid = await findServerPid(this.localTarget.port);
     if (existingPid === null) return;
@@ -175,13 +193,17 @@ export class OpencodeAutoRestartService {
     logger.info(`[OpenCodeAutoRestart] Existing OpenCode listener stop result: pid=${existingPid}, stopped=${stopped}`);
   }
 
-  private async startServer(reason: "startup" | "interval"): Promise<void> {
+  private async startServer(reason: "startup" | "interval" | "config"): Promise<boolean> {
     if (!this.localTarget) return;
     if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
       logger.warn(`[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`);
-      return;
+      return false;
     }
-    const prefix = reason === "startup" ? "Startup" : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
+    const prefix = reason === "startup"
+      ? "Startup"
+      : reason === "config"
+        ? "Config reload"
+        : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
     logger.info(`[OpenCodeAutoRestart] ${prefix}: preparing local OpenCode server on port=${this.localTarget.port}`);
     await this.stopExistingServerIfNeeded();
     logger.info(`[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`);
@@ -201,12 +223,13 @@ export class OpencodeAutoRestartService {
     if (!ready) {
       if (this.managedServerPid === pid) this.managedServerPid = null;
       logger.warn(`[OpenCodeAutoRestart] OpenCode server was started but did not become ready: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`);
-      return;
+      return false;
     }
     this.serverWasHealthy = true;
     this.managedServerPid = pid;
     logger.info(`[OpenCodeAutoRestart] OpenCode server recovered: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`);
     await opencodeReadyLifecycle.notifyReady(`auto_restart_${reason}`);
+    return true;
   }
 }
 
