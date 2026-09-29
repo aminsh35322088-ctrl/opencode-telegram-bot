@@ -30,16 +30,16 @@ async function deleteReplacementSession(sessionId: string, directory: string): P
  * its history remains available; callers retire only its live runtime/event
  * subscription after this transaction succeeds.
  */
-export async function rotateTelegramTopicSessionForModel(
+export async function rotateTelegramTopicSession(
   binding: TelegramTopicBinding,
-  model: ModelInfo,
+  model?: ModelInfo,
 ): Promise<TopicSessionRotationResult> {
-  if (!model.providerID || !model.modelID) throw new Error("Cannot rotate Topic session without a concrete model");
-
   const previousRuntimeState = await getTopicRuntimeState(binding.chatId, binding.threadId);
   const createOptions = {
     directory: binding.directory,
-    body: { model: { providerID: model.providerID, modelID: model.modelID } },
+    ...(model?.providerID && model.modelID
+      ? { body: { model: { providerID: model.providerID, modelID: model.modelID } } }
+      : {}),
   } as Parameters<typeof opencodeClient.session.create>[0];
   const { data, error } = await opencodeClient.session.create(createOptions);
   const created = data as OpenCodeSessionShape | undefined;
@@ -57,7 +57,7 @@ export async function rotateTelegramTopicSessionForModel(
     bindingMoved = true;
     await updateTopicRuntimeState(binding.chatId, binding.threadId, {
       session: replacement,
-      model,
+      ...(model ? { model } : {}),
       runState: "idle",
     });
   } catch (rotationError) {
@@ -76,7 +76,7 @@ export async function rotateTelegramTopicSessionForModel(
   }
 
   logger.info(
-    `[TopicSessionRotation] Rotated Topic session: chat=${binding.chatId}, thread=${binding.threadId}, old=${binding.sessionId}, new=${replacement.id}, model=${model.providerID}/${model.modelID}`,
+    `[TopicSessionRotation] Rotated Topic session: chat=${binding.chatId}, thread=${binding.threadId}, old=${binding.sessionId}, new=${replacement.id}`,
   );
   return { previousSessionId: binding.sessionId, session: replacement };
 }

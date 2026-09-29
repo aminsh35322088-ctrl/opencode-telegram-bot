@@ -7,7 +7,7 @@ import { promptQueue } from "../managers/prompt-queue-manager.js";
 import { promptAttachment } from "../managers/prompt-attachment-manager.js";
 import type { SessionInfo } from "../types/session.js";
 import { getTopicRuntimeContext } from "./topic-runtime-context.js";
-import { findTelegramTopicBindingBySessionId } from "./telegram-topic-store.js";
+import { findTelegramTopicBindingByThread } from "./telegram-topic-store.js";
 
 export type { SessionInfo };
 
@@ -21,6 +21,7 @@ export function setCurrentSession(sessionInfo: SessionInfo): void {
 
 export function getCurrentSession(): SessionInfo | null {
   const topic = getTopicRuntimeContext();
+  if (topic && (!topic.sessionId || !topic.directory)) return null;
   if (topic?.sessionId && topic.directory) {
     return {
       id: topic.sessionId,
@@ -35,9 +36,10 @@ export function getCurrentSession(): SessionInfo | null {
 /** Resolve the session for the current request without letting a Topic fall back to the global foreground session. */
 export async function getEffectiveCurrentSession(): Promise<SessionInfo | null> {
   const topic = getTopicRuntimeContext();
+  if (topic && !topic.sessionId) return null;
   if (topic?.sessionId) {
-    const binding = await findTelegramTopicBindingBySessionId(topic.sessionId);
-    if (binding) {
+    const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
+    if (binding?.sessionId === topic.sessionId && binding.directory === topic.directory) {
       return {
         id: binding.sessionId,
         title: binding.title ?? "Telegram Topic",

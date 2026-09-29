@@ -181,7 +181,7 @@ class BotTopicWorker implements TopicWorker {
     run: RunIdentity,
     label: string,
     task: (context: CoreOwnedTaskContext) => Promise<T>,
-    options: { abortTarget?: CoreAbortTarget | null } = {},
+    options: { abortTarget?: CoreAbortTarget | null; timeoutMs?: number } = {},
   ): Promise<T> {
     if (!this.#started || this.#stopped) throw new Error("topic worker is not active");
     if (run.bindingId !== this.bindingId || run.workerGeneration !== this.generation) {
@@ -222,6 +222,7 @@ class BotTopicWorker implements TopicWorker {
             signal: AbortSignal.any([queueSignal, this.#stopController.signal]),
             setAbortTarget,
           }),
+        options.timeoutMs,
       );
     } catch (error) {
       this.complete(run);
@@ -520,14 +521,17 @@ export async function beginCoreRunForSession(
 ): Promise<RunIdentity> {
   const core = requireCore();
   const normalized = normalizeDirectory(directory);
-  const binding = core.bindings.registry
+  const matches = core.bindings.registry
     .list()
-    .find(
+    .filter(
       (candidate) =>
         candidate.sessionId === sessionId &&
         candidate.normalizedDirectory === normalized,
     );
-  if (!binding) throw new Error(`No Core Topic binding owns session ${sessionId}`);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one Core Topic binding for session ${sessionId}; found ${matches.length}`);
+  }
+  const binding = matches[0]!;
 
   if (requireInteractiveTopic) {
     const context = getTopicRuntimeContext();
@@ -588,7 +592,7 @@ export async function dispatchCoreOwnedTask<T>(
   run: RunIdentity,
   label: string,
   task: (context: CoreOwnedTaskContext) => Promise<T>,
-  options: { abortTarget?: CoreAbortTarget | null } = {},
+  options: { abortTarget?: CoreAbortTarget | null; timeoutMs?: number } = {},
 ): Promise<T> {
   const core = requireCore();
   if (!core.runs.accepts(run)) {
@@ -622,8 +626,4 @@ export function finishCoreRunForSession(sessionId: string): boolean {
   if (!core || !run) return false;
   runsBySession.delete(sessionId);
   return finishCoreRun(run);
-}
-
-export function getCoreRunForSession(sessionId: string): RunIdentity | null {
-  return runsBySession.get(sessionId) ?? null;
 }

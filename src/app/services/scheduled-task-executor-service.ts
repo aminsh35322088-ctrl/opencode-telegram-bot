@@ -648,7 +648,7 @@ export async function executeScheduledTask(
       run,
       `scheduled-task:${task.id}`,
       (context) => executeScheduledTaskWithinCore(task, context),
-      { abortTarget: null },
+      { abortTarget: null, timeoutMs: getExecutionTimeoutMs() + 30_000 },
     );
   } catch (error) {
     const errorMessage = toErrorMessage(error);

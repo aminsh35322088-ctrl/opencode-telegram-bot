@@ -29,10 +29,15 @@ import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import { beginCoreRunForSession, dispatchCorePrompt, finishCoreRunForSession } from "../../core/native-core-service.js";
+import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
+import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { rotateTelegramTopicSession } from "../../app/services/topic-session-rotation-service.js";
 
-export function clearPromptResponseMode(_sessionId: string): void {}
-/** @deprecated Kept as a no-op for test/plugin compatibility after removing bot-layer stall recovery. */
-export function __resetPromptRecoveryStateForTests(): void {}
+function isMissingSession(error: unknown, sessionId: string): boolean {
+  const detail = error as { name?: string; data?: { message?: string } };
+  return detail?.name === "NotFoundError" &&
+    detail.data?.message === `Session not found: ${sessionId}`;
+}
 
 async function resetMismatchedSessionContext(): Promise<void> {
   detachAttachedSession("session_mismatch_reset");
@@ -80,7 +85,7 @@ async function handlePromptStartFailure(input: {
   await input.bot.api.sendMessage(input.chatId, t("bot.prompt_send_error")).catch(() => {});
 }
 
-export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo): Promise<boolean> {
+export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo, retryMissingSession = true): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
   const currentProject = getCurrentProject();
   if (!currentProject) { await ctx.reply(t("bot.project_not_selected")); return false; }
@@ -160,6 +165,34 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
         if (!error) {
           logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`);
           return;
+        }
+        if (retryMissingSession && isMissingSession(error, currentSession!.id)) {
+          const topic = getTopicRuntimeContext();
+          const binding = topic && await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
+          if (topic && binding?.sessionId === currentSession!.id && binding.directory === currentSession!.directory) {
+            try {
+              stopSessionStallWatchdog(currentSession!.id);
+              foregroundSessionState.markIdle(currentSession!.id);
+              assistantRunState.clearRun(currentSession!.id, "missing_session_recovery");
+              await markAttachedSessionIdle(currentSession!.id);
+              detachAttachedSession("missing_session_recovery");
+              const replacement = await rotateTelegramTopicSession(binding);
+              const retryFiles = promptOptions.parts.filter((part): part is FilePartInput => part.type === "file");
+              const restarted = await runInTopicRuntimeContext(
+                { chatId: topic.chatId, threadId: topic.threadId, sessionId: replacement.session.id, directory: replacement.session.directory },
+                async () => {
+                  setCurrentSession(replacement.session);
+                  return processUserPrompt(ctx, text, deps, retryFiles, modelOverride, false);
+                },
+              );
+              if (restarted) {
+                logger.warn(`[Bot] Recreated missing OpenCode session and retried prompt: old=${binding.sessionId}, new=${replacement.session.id}`);
+                return;
+              }
+            } catch (recoveryError) {
+              logger.error(`[Bot] Failed to recover missing OpenCode session: session=${binding.sessionId}`, recoveryError);
+            }
+          }
         }
         logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext);
         logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000));

@@ -36,10 +36,8 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { createTopicAwareApi, getUnscopedTelegramApi } from "./telegram-topic-runtime.js";
-import { clearPromptResponseMode } from "../handlers/prompt.js";
 import {
   reconcileBusyState,
-  setPromptResponseModeClearerForReconciliation,
   setResponseStreamerForReconciliation,
 } from "../../app/services/busy-reconciliation-service.js";
 import { finalizeAssistantResponse } from "../streaming/finalize-assistant-response.js";
@@ -249,7 +247,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     setResponseStreamerForReconciliation({
       hasActiveStream: (sessionId) => this.hasActiveAssistantResponseStream(sessionId),
     });
-    setPromptResponseModeClearerForReconciliation(clearPromptResponseMode);
 
     this.compactProgressStreamer = new CompactProgressStreamer({
       throttleMs: getSessionStreamThrottleMs,
@@ -797,7 +794,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       void this.enqueueSessionCompletionTask(sessionId, async () => {
         if (!this.botInstance) {
           logger.error("Bot not available for sending message");
-          clearPromptResponseMode(sessionId);
           this.clearAssistantResponseStream(sessionId, messageId, "bot_context_missing");
           this.clearThinkingStream(sessionId, messageId, "bot_context_missing");
           this.toolCallStreamer.clearSession(sessionId, "bot_context_missing");
@@ -810,7 +806,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) {
-          clearPromptResponseMode(sessionId);
           this.clearAssistantResponseStream(sessionId, messageId, "session_mismatch");
           this.clearThinkingStream(sessionId, messageId, "session_mismatch");
           this.toolCallStreamer.clearSession(sessionId, "session_mismatch");
@@ -875,7 +870,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             },
           });
         } catch (err) {
-          clearPromptResponseMode(sessionId);
           this.clearThinkingStream(sessionId, messageId, "assistant_finalize_failed");
           this.compactProgressStreamer.clearSession(sessionId, "assistant_finalize_failed");
           assistantRunState.clearRun(sessionId, "assistant_finalize_failed");
@@ -1360,7 +1354,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       await this.sessionCompletionTasks.get(sessionId)?.catch(() => undefined);
 
       const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
-      clearPromptResponseMode(sessionId);
 
       // Pause intentionally owns the only user-visible completion message.
       // Drop queued tool/footer output and let pauseCurrentChat attach the
@@ -1444,7 +1437,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       // Keep it silent and only release local state.
       if (shouldSuppressUserAbortSessionError(sessionId, normalizedMessage)) {
         logger.debug(`[Bot] Suppressed expected abort error: session=${sessionId}`);
-        clearPromptResponseMode(sessionId);
         this.clearAssistantResponseSession(sessionId, "session_error_abort_suppressed");
         this.toolCallStreamer.clearSession(sessionId, "session_error_abort_suppressed");
         this.compactProgressStreamer.clearSession(sessionId, "session_error_abort_suppressed");
@@ -1460,7 +1452,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       clearPausedSession(sessionId);
       if (!this.botInstance || !this.chatIdInstance) {
-        clearPromptResponseMode(sessionId);
         this.clearAssistantResponseSession(sessionId, "session_error_no_bot_context");
         this.toolCallStreamer.clearSession(sessionId, "session_error_no_bot_context");
         this.compactProgressStreamer.clearSession(sessionId, "session_error_no_bot_context");
@@ -1470,7 +1461,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       if (!currentSession || currentSession.id !== sessionId) {
-        clearPromptResponseMode(sessionId);
         this.clearAssistantResponseSession(sessionId, "session_error_not_current");
         this.toolCallStreamer.clearSession(sessionId, "session_error_not_current");
         this.compactProgressStreamer.clearSession(sessionId, "session_error_not_current");
@@ -1482,7 +1472,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       this.clearAssistantResponseSession(sessionId, "session_error");
       this.compactProgressStreamer.clearSession(sessionId, "session_error");
-      clearPromptResponseMode(sessionId);
       assistantRunState.clearRun(sessionId, "session_error");
       await Promise.all([
         this.toolMessageBatcher.flushSession(sessionId, "session_error"),

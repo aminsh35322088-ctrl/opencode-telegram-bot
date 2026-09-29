@@ -1,3 +1,4 @@
+import path from "node:path";
 import { InlineKeyboard, type Bot, type Context } from "grammy";
 import type { CommandCatalogItem } from "../../app/services/command-catalog-service.js";
 import { config } from "../../config.js";
@@ -29,6 +30,7 @@ import {
 } from "../../app/services/attach-service.js";
 import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { beginCoreRunForSession, captureCurrentCoreBindingOwner, dispatchCoreOwnedTask, finishCoreRunForSession } from "../../core/native-core-service.js";
 import {
   buildCommandsConfirmKeyboard,
   buildCommandsListKeyboard,
@@ -175,6 +177,14 @@ async function ensureSessionForProject(ctx: Context, projectDirectory: string): 
 
 export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, params: ExecuteCommandParams): Promise<void> {
   if (!ctx.chat) return;
+  try {
+    const owner = captureCurrentCoreBindingOwner();
+    if (owner.directory !== path.resolve(params.projectDirectory)) throw new Error("command directory differs from Core binding");
+  } catch (error) {
+    logger.warn("[Commands] Rejected command outside its Core Topic binding", error);
+    await ctx.reply(t("commands.execute_error"));
+    return;
+  }
   const args = params.argumentsText.trim();
   const executingMessage = formatExecutingCommandMessage(params.commandName, args);
   await ctx.reply(executingMessage.text, { entities: executingMessage.entities });
@@ -189,6 +199,14 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
   const currentAgent = await resolveProjectAgent(getStoredAgent());
   const storedModel = getStoredModel();
   const model = storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : undefined;
+  let coreRun;
+  try {
+    coreRun = await beginCoreRunForSession(session.id, session.directory, "session_command");
+  } catch (error) {
+    logger.warn(`[Commands] Core rejected command admission: session=${session.id}`, error);
+    await ctx.reply(t("commands.execute_error"));
+    return;
+  }
   foregroundSessionState.markBusy(session.id, session.directory);
   await markAttachedSessionBusy(session.id);
   assistantRunState.startRun(session.id, {
@@ -196,26 +214,29 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
     configuredAgent: currentAgent,
     configuredProviderID: storedModel.providerID,
     configuredModelID: storedModel.modelID,
-  });
+  }, coreRun.runId);
   summaryAggregator.beginRun(session.id);
   externalUserInputSuppressionManager.register(session.id, args ? `/${params.commandName} ${args}` : `/${params.commandName}`);
 
   safeBackgroundTask({
     taskName: "session.command",
-    task: () => opencodeClient.session.command({
-      sessionID: session.id,
-      directory: session.directory,
-      command: params.commandName,
-      arguments: args,
-      agent: currentAgent,
-      ...(model !== undefined ? { model } : {}),
-      ...(storedModel.variant !== undefined ? { variant: storedModel.variant } : {}),
-    }),
+    task: () => dispatchCoreOwnedTask(coreRun, `command:${params.commandName}`, ({ signal }) =>
+      opencodeClient.session.command({
+        sessionID: session.id,
+        directory: session.directory,
+        command: params.commandName,
+        arguments: args,
+        agent: currentAgent,
+        ...(model !== undefined ? { model } : {}),
+        ...(storedModel.variant !== undefined ? { variant: storedModel.variant } : {}),
+      }, { signal }),
+    ),
     onSuccess: ({ error }) => {
       if (error) {
         foregroundSessionState.markIdle(session.id);
         void markAttachedSessionIdle(session.id);
         assistantRunState.clearRun(session.id, "session_command_api_error");
+        finishCoreRunForSession(session.id);
         logger.error("[Commands] OpenCode API returned an error for session.command", { sessionId: session.id, command: params.commandName, args });
         logger.error("[Commands] session.command error details:", error);
         void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
@@ -227,6 +248,7 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
       foregroundSessionState.markIdle(session.id);
       void markAttachedSessionIdle(session.id);
       assistantRunState.clearRun(session.id, "session_command_background_error");
+      finishCoreRunForSession(session.id);
       logger.error("[Commands] session.command background task failed", { sessionId: session.id, command: params.commandName, args });
       logger.error("[Commands] session.command background failure details:", error);
       void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});

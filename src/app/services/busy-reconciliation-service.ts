@@ -24,18 +24,11 @@ const inFlightDirectories = new Set<string>();
 const lastReconcileAtByDirectory = new Map<string, number>();
 
 let responseStreamerInstance: ResponseStreamerForReconciliation | null = null;
-let clearPromptResponseModeForReconciliation: ((sessionId: string) => void) | null = null;
 
 export function setResponseStreamerForReconciliation(
   streamer: ResponseStreamerForReconciliation,
 ): void {
   responseStreamerInstance = streamer;
-}
-
-export function setPromptResponseModeClearerForReconciliation(
-  clearer: (sessionId: string) => void,
-): void {
-  clearPromptResponseModeForReconciliation = clearer;
 }
 
 function getReconciliationTargets(directory: string): {
@@ -73,7 +66,6 @@ function isWithinForegroundBusyGracePeriod(
 async function clearForegroundBusySession(sessionId: string, reason: string): Promise<void> {
   foregroundSessionState.markIdle(sessionId);
   assistantRunState.clearRun(sessionId, reason);
-  clearPromptResponseModeForReconciliation?.(sessionId);
 }
 
 export async function reconcileBusyStateNow(directory: string, now: number = Date.now()): Promise<void> {
@@ -181,5 +173,4 @@ export function __resetBusyReconciliationForTests(): void {
   inFlightDirectories.clear();
   lastReconcileAtByDirectory.clear();
   responseStreamerInstance = null;
-  clearPromptResponseModeForReconciliation = null;
 }

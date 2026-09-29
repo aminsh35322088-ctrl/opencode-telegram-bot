@@ -5,6 +5,8 @@ import {
   registerScheduledTaskSessionIgnore,
 } from "./scheduled-task-session-ignore-service.js";
 import type { ParsedTaskSchedule } from "../types/scheduled-task.js";
+import type { CoreBindingOwner, CoreOwnedTaskContext } from "../../core/types.js";
+import { beginCoreRunForOwner, dispatchCoreOwnedTask, finishCoreRun } from "../../core/native-core-service.js";
 
 const SCHEDULE_PARSE_SESSION_TITLE = "Scheduled task schedule parser";
 
@@ -157,6 +159,25 @@ function buildSchedulePrompt(scheduleText: string, timezone: string): string {
 export async function parseTaskSchedule(
   scheduleText: string,
   directory: string,
+  owner: CoreBindingOwner,
+): Promise<ParsedTaskSchedule> {
+  const run = await beginCoreRunForOwner(owner, "schedule_parse");
+  try {
+    return await dispatchCoreOwnedTask(
+      run,
+      "schedule-parse",
+      (context) => parseTaskScheduleWithinCore(scheduleText, directory, context),
+      { abortTarget: null, timeoutMs: 120_000 },
+    );
+  } finally {
+    finishCoreRun(run);
+  }
+}
+
+async function parseTaskScheduleWithinCore(
+  scheduleText: string,
+  directory: string,
+  { signal, setAbortTarget }: CoreOwnedTaskContext,
 ): Promise<ParsedTaskSchedule> {
   const trimmedScheduleText = scheduleText.trim();
   if (!trimmedScheduleText) {
@@ -177,16 +198,18 @@ export async function parseTaskSchedule(
     );
     await cleanupScheduledTaskSessionIgnores();
 
+    signal.throwIfAborted();
     const { data: session, error: createError } = await opencodeClient.session.create({
       directory: trimmedDirectory,
       title: SCHEDULE_PARSE_SESSION_TITLE,
-    });
+    }, { signal });
 
     if (createError || !session) {
       throw createError || new Error("Failed to create temporary schedule parser session");
     }
 
     sessionId = session.id;
+    setAbortTarget({ sessionId: session.id, directory: trimmedDirectory });
     await registerScheduledTaskSessionIgnore(session.id);
     logger.debug(`[ScheduledTaskScheduleParser] Created temporary session: sessionId=${session.id}`);
 
@@ -196,7 +219,7 @@ export async function parseTaskSchedule(
       system:
         "You are a schedule parser. Your only job is to convert user schedule text into strict JSON output.",
       parts: [{ type: "text", text: buildSchedulePrompt(trimmedScheduleText, timezone) }],
-    });
+    }, { signal });
 
     if (promptError || !response) {
       throw promptError || new Error("Failed to parse schedule");

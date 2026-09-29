@@ -132,5 +132,3 @@ dedicated tests:
   (`isForegroundBusy()` fallback) — Topics are excluded from it via ALS scoping.
 - Scheduled-task notifications deliver to the chat root by design; the global busy gate only
   defers them until the next completion/idle event.
-- `clearPromptResponseMode()` remains as a no-op seam because several command tests assert on
-  its call sites; removing it is a pure test-plumbing cleanup unrelated to isolation.
