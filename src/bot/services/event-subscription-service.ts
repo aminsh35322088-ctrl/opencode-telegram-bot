@@ -370,6 +370,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   setTelegramContext(bot: Bot<Context> | null, chatId: number | null): void {
     this.botInstance = bot;
     this.chatIdInstance = chatId;
+    agentArtifactDeliveryService.setApi(bot?.api ?? null);
   }
 
   private getChatIdForSession(sessionId: string): number | null {

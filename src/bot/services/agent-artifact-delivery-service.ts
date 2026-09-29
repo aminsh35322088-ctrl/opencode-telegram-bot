@@ -1,8 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { Bot, InputFile } from "grammy";
-import { config } from "../../config.js";
-import { createTelegramBotOptions } from "../telegram-client-options.js";
+import { InputFile, type Api } from "grammy";
 import { logger } from "../../utils/logger.js";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
@@ -112,17 +110,14 @@ function captionFor(filePath: string, size: number): string {
 type DeliveryScope = { route: BindingIdentity; generation: object; sessionGeneration?: object };
 
 class AgentArtifactDeliveryService {
-  private botInstance: Bot | null = null;
+  private api: Api | null = null;
   private readonly pending = new Map<string, { timer: ReturnType<typeof setTimeout>; scope: DeliveryScope }>();
   private readonly lastDelivered = new Map<string, { signature: string; at: number; sessionId: string }>();
   private generation = {};
   private readonly sessionGenerations = new Map<string, object>();
 
-  private get bot(): Bot {
-    if (!this.botInstance) {
-      this.botInstance = new Bot(config.telegram.token, createTelegramBotOptions(config.telegram));
-    }
-    return this.botInstance;
+  setApi(api: Api | null): void {
+    this.api = api;
   }
 
   processEvent(event: Event): void {
@@ -184,6 +179,7 @@ class AgentArtifactDeliveryService {
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
     this.lastDelivered.clear();
+    this.api = null;
   }
 
   private async scheduleAutoDetection(filePath: string, scope: DeliveryScope): Promise<void> {
@@ -232,7 +228,8 @@ class AgentArtifactDeliveryService {
       const now = Date.now();
       if (previous && (previous.signature === signature || now - previous.at < DELIVERY_COOLDOWN_MS)) return;
 
-      await createCoreSessionApi(this.bot.api, scope.route.sessionId).sendDocument(targetChatId, new InputFile(filePath), {
+      if (!this.api) throw new Error("Bot API is unavailable for artifact delivery");
+      await createCoreSessionApi(this.api, scope.route.sessionId).sendDocument(targetChatId, new InputFile(filePath), {
         caption: captionFor(filePath, stat.size),
         disable_notification: true,
       });
