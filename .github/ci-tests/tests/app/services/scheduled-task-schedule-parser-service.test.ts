@@ -9,6 +9,15 @@ const mocked = vi.hoisted(() => ({
   registerIgnoreMock: vi.fn(),
   loggerErrorMock: vi.fn(),
   loggerWarnMock: vi.fn(),
+  beginCoreRunMock: vi.fn(),
+  dispatchCoreOwnedTaskMock: vi.fn(),
+  finishCoreRunMock: vi.fn(),
+}));
+
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  beginCoreRunForOwner: mocked.beginCoreRunMock,
+  dispatchCoreOwnedTask: mocked.dispatchCoreOwnedTaskMock,
+  finishCoreRun: mocked.finishCoreRunMock,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -35,6 +44,16 @@ vi.mock("../../../src/app/services/scheduled-task-session-ignore-service.js", ()
   registerScheduledTaskSessionIgnore: mocked.registerIgnoreMock,
 }));
 
+const owner = {
+  bindingId: "binding-1",
+  botId: "bot-1",
+  chatId: 100,
+  threadId: 20,
+  sessionId: "topic-session",
+  directory: "D:/Projects/Repo",
+  bindingGeneration: 1,
+};
+
 describe("app/services/scheduled-task-schedule-parser-service", () => {
   beforeEach(() => {
     mocked.sessionCreateMock.mockReset();
@@ -44,6 +63,13 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
     mocked.registerIgnoreMock.mockReset();
     mocked.loggerErrorMock.mockReset();
     mocked.loggerWarnMock.mockReset();
+    mocked.beginCoreRunMock.mockReset();
+    mocked.dispatchCoreOwnedTaskMock.mockReset();
+    mocked.finishCoreRunMock.mockReset();
+    mocked.beginCoreRunMock.mockResolvedValue({ bindingId: owner.bindingId });
+    mocked.dispatchCoreOwnedTaskMock.mockImplementation(async (_run, _label, task) =>
+      task({ signal: new AbortController().signal, setAbortTarget: vi.fn() }),
+    );
 
     mocked.sessionCreateMock.mockResolvedValue({
       data: { id: "temp-session", directory: "D:/Projects/Repo" },
@@ -73,7 +99,7 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
       error: null,
     });
 
-    const result = await parseTaskSchedule("every 5 minutes", "D:/Projects/Repo");
+    const result = await parseTaskSchedule("every 5 minutes", "D:/Projects/Repo", owner);
 
     expect(result).toEqual({
       kind: "cron",
@@ -82,13 +108,15 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
       summary: "Every 5 minutes",
       nextRunAt: "2026-03-15T10:05:00.000Z",
     });
+    expect(mocked.beginCoreRunMock).toHaveBeenCalledWith(owner, "schedule_parse");
     expect(mocked.sessionCreateMock).toHaveBeenCalledWith({
       directory: "D:/Projects/Repo",
       title: "Scheduled task schedule parser",
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(mocked.cleanupIgnoresMock).toHaveBeenCalledTimes(1);
     expect(mocked.registerIgnoreMock).toHaveBeenCalledWith("temp-session");
     expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo", sessionID: "temp-session" });
+    expect(mocked.finishCoreRunMock).toHaveBeenCalledTimes(1);
   });
 
   it("parses one-time schedule from fenced JSON", async () => {
@@ -114,7 +142,7 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
       error: null,
     });
 
-    const result = await parseTaskSchedule("tomorrow at 12:00", "D:/Projects/Repo");
+    const result = await parseTaskSchedule("tomorrow at 12:00", "D:/Projects/Repo", owner);
 
     expect(result).toEqual({
       kind: "once",
@@ -134,7 +162,7 @@ describe("app/services/scheduled-task-schedule-parser-service", () => {
       error: null,
     });
 
-    await expect(parseTaskSchedule("every friday", "D:/Projects/Repo")).rejects.toThrow(
+    await expect(parseTaskSchedule("every friday", "D:/Projects/Repo", owner)).rejects.toThrow(
       "invalid JSON",
     );
     expect(mocked.sessionDeleteMock).toHaveBeenCalledWith({ directory: "D:/Projects/Repo", sessionID: "temp-session" });

@@ -33,11 +33,13 @@ describe("bot/streaming/response-streamer", () => {
     vi.useFakeTimers();
 
     let nextMessageId = 1;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 500,
@@ -52,7 +54,7 @@ describe("bot/streaming/response-streamer", () => {
     await vi.advanceTimersByTimeAsync(500);
 
     expect(sendPart).toHaveBeenCalledTimes(1);
-    expect(sendPart).toHaveBeenCalledWith(plainPart("second"), undefined);
+    expect(sendPart).toHaveBeenCalledWith("s1", plainPart("second"), undefined);
     expect(editPart).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
   });
@@ -61,11 +63,13 @@ describe("bot/streaming/response-streamer", () => {
     vi.useFakeTimers();
 
     let nextMessageId = 101;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -87,8 +91,8 @@ describe("bot/streaming/response-streamer", () => {
       expect(sendPart).toHaveBeenCalledTimes(2);
     });
 
-    expect(sendPart).toHaveBeenNthCalledWith(1, plainPart("part-1"), undefined);
-    expect(sendPart).toHaveBeenNthCalledWith(2, plainPart("part-2"), undefined);
+    expect(sendPart).toHaveBeenNthCalledWith(1, "s1", plainPart("part-1"), undefined);
+    expect(sendPart).toHaveBeenNthCalledWith(2, "s1", plainPart("part-2"), undefined);
     expect(editPart).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
   });
@@ -97,11 +101,13 @@ describe("bot/streaming/response-streamer", () => {
     vi.useFakeTimers();
 
     let nextMessageId = 1;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 500,
@@ -119,7 +125,7 @@ describe("bot/streaming/response-streamer", () => {
     expect(result.telegramMessageIds).toEqual([1]);
     expect(sendPart).toHaveBeenCalledTimes(1);
     expect(editPart).toHaveBeenCalledTimes(1);
-    expect(editPart).toHaveBeenCalledWith(1, plainPart("final"), undefined);
+    expect(editPart).toHaveBeenCalledWith("s1", 1, plainPart("final"), undefined);
     expect(deleteText).not.toHaveBeenCalled();
   });
 
@@ -127,11 +133,13 @@ describe("bot/streaming/response-streamer", () => {
     vi.useFakeTimers();
 
     let nextMessageId = 10;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -150,7 +158,7 @@ describe("bot/streaming/response-streamer", () => {
       expect(deleteText).toHaveBeenCalledTimes(1);
     });
 
-    expect(deleteText).toHaveBeenCalledWith(11);
+    expect(deleteText).toHaveBeenCalledWith("s1", 11);
   });
 
   it("retries after Telegram rate limits", async () => {
@@ -159,11 +167,13 @@ describe("bot/streaming/response-streamer", () => {
     const sendPart = vi
       .fn()
       .mockRejectedValueOnce(new Error("429: retry after 1"))
-      .mockImplementationOnce(async (part) => ({
+      .mockImplementationOnce(async (_sessionId, part) => ({
         messageId: 1,
         deliveredSignature: signature(part),
       }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -184,7 +194,7 @@ describe("bot/streaming/response-streamer", () => {
   it("marks a stream as broken after fatal edit error and cleans up partial messages on complete", async () => {
     vi.useFakeTimers();
 
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: 42,
       deliveredSignature: signature(part),
     }));
@@ -219,7 +229,7 @@ describe("bot/streaming/response-streamer", () => {
     expect(result.streamed).toBe(false);
     expect(result.telegramMessageIds).toEqual([]);
     expect(deleteText).toHaveBeenCalledTimes(1);
-    expect(deleteText).toHaveBeenCalledWith(42);
+    expect(deleteText).toHaveBeenCalledWith("s1", 42);
     expect(sendPart).toHaveBeenCalledTimes(1);
   });
 
@@ -229,7 +239,9 @@ describe("bot/streaming/response-streamer", () => {
     const sendPart = vi
       .fn()
       .mockRejectedValue(new Error("403: Forbidden: bot was blocked by the user"));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -265,7 +277,9 @@ describe("bot/streaming/response-streamer", () => {
             resolve({ messageId, deliveredSignature: signature(plainPart("short reply")) });
         }),
     );
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -301,11 +315,13 @@ describe("bot/streaming/response-streamer", () => {
     vi.useFakeTimers();
 
     let nextMessageId = 100;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -334,18 +350,20 @@ describe("bot/streaming/response-streamer", () => {
     expect(completedAfterClear.telegramMessageIds).toEqual([]);
     expect(editPart).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
-    expect(sendPart).toHaveBeenNthCalledWith(2, plainPart("new partial"), undefined);
+    expect(sendPart).toHaveBeenNthCalledWith(2, "s1", plainPart("new partial"), undefined);
   });
 
   it("keeps visible partial messages when clearing all streams", async () => {
     vi.useFakeTimers();
 
     let nextMessageId = 200;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 0,
@@ -376,11 +394,13 @@ describe("bot/streaming/response-streamer", () => {
     vi.useFakeTimers();
 
     let nextMessageId = 1;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: 500,
@@ -420,11 +440,13 @@ describe("bot/streaming/response-streamer", () => {
     it("carries entities through to the transport and re-edits when only the entity changes", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 700,
         deliveredSignature: signature(part),
       }));
-      const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+      const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+        deliveredSignature: signature(part),
+      }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       const streamer = new ResponseStreamer({ throttleMs: 0, sendPart, editPart, deleteText });
 
@@ -433,14 +455,14 @@ describe("bot/streaming/response-streamer", () => {
         expect(sendPart).toHaveBeenCalledTimes(1);
       });
 
-      expect(defined(sendPart.mock.calls[0]?.[0])).toEqual(quotedPart("reasoning", false));
+      expect(defined(sendPart.mock.calls[0]?.[1])).toEqual(quotedPart("reasoning", false));
 
       // The text is identical; only the quote collapses. Without the entity in
       // the signature this would be skipped as unchanged.
       await streamer.complete("s1", "m1", { parts: [quotedPart("reasoning", true)] });
 
       expect(editPart).toHaveBeenCalledTimes(1);
-      expect(editPart).toHaveBeenCalledWith(700, quotedPart("reasoning", true), undefined);
+      expect(editPart).toHaveBeenCalledWith("s1", 700, quotedPart("reasoning", true), undefined);
     });
   });
 
@@ -448,12 +470,14 @@ describe("bot/streaming/response-streamer", () => {
     it("keeps editing as plain text after the transport reported a degradation", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 300,
         deliveredSignature: signature(plainPart(part.fallbackText)),
         degradedToPlain: true,
       }));
-      const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+      const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+        deliveredSignature: signature(part),
+      }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       const streamer = new ResponseStreamer({
         throttleMs: 0,
@@ -471,21 +495,23 @@ describe("bot/streaming/response-streamer", () => {
 
       expect(result.streamed).toBe(true);
       expect(editPart).toHaveBeenCalledTimes(1);
-      expect(editPart).toHaveBeenCalledWith(300, plainPart("hello there"), undefined);
+      expect(editPart).toHaveBeenCalledWith("s1", 300, plainPart("hello there"), undefined);
       expect(deleteText).not.toHaveBeenCalled();
     });
 
     it("retries as plain text instead of breaking the stream on the first native failure", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 400,
         deliveredSignature: signature(part),
       }));
       const editPart = vi
         .fn()
         .mockRejectedValueOnce(new Error("Bad Request: RICH_BLOCK_INVALID"))
-        .mockImplementation(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+        .mockImplementation(async (_sessionId, _messageId, part) => ({
+          deliveredSignature: signature(part),
+        }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       const streamer = new ResponseStreamer({
         throttleMs: 0,
@@ -503,7 +529,7 @@ describe("bot/streaming/response-streamer", () => {
 
       expect(result.streamed).toBe(true);
       expect(editPart).toHaveBeenCalledTimes(2);
-      expect(editPart).toHaveBeenNthCalledWith(2, 400, plainPart("hello there"), undefined);
+      expect(editPart).toHaveBeenNthCalledWith(2, "s1", 400, plainPart("hello there"), undefined);
       expect(deleteText).not.toHaveBeenCalled();
     });
 
@@ -511,14 +537,16 @@ describe("bot/streaming/response-streamer", () => {
       vi.useFakeTimers();
 
       let nextMessageId = 500;
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: nextMessageId++,
         deliveredSignature: signature(part),
       }));
       const editPart = vi
         .fn()
         .mockRejectedValueOnce(new Error("Bad Request: RICH_BLOCK_INVALID"))
-        .mockImplementation(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+        .mockImplementation(async (_sessionId, _messageId, part) => ({
+          deliveredSignature: signature(part),
+        }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       const streamer = new ResponseStreamer({
         throttleMs: 0,
@@ -540,12 +568,12 @@ describe("bot/streaming/response-streamer", () => {
       expect(result.telegramMessageIds).toHaveLength(3);
       expect(sendPart).toHaveBeenCalledTimes(3);
 
-      const plainEdits = editPart.mock.calls.filter(([, part]) => part.source === "plain");
+      const plainEdits = editPart.mock.calls.filter(([, , part]) => part.source === "plain");
       expect(plainEdits.length).toBeGreaterThan(0);
-      for (const [, part] of plainEdits) {
+      for (const [, , part] of plainEdits) {
         expect(part.fallbackText.length).toBeLessThanOrEqual(4096);
       }
-      for (const [part] of sendPart.mock.calls) {
+      for (const [, part] of sendPart.mock.calls) {
         expect(part.fallbackText.length).toBeLessThanOrEqual(4096);
       }
     });
@@ -553,7 +581,7 @@ describe("bot/streaming/response-streamer", () => {
     it("breaks the stream when the plain retry fails as well", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 600,
         deliveredSignature: signature(part),
       }));
@@ -579,20 +607,22 @@ describe("bot/streaming/response-streamer", () => {
       const result = await streamer.complete("s1", "m1", { parts: [richPart("hello there")] });
 
       expect(result.streamed).toBe(false);
-      expect(deleteText).toHaveBeenCalledWith(600);
+      expect(deleteText).toHaveBeenCalledWith("s1", 600);
     });
 
     it("still skips unchanged payloads after switching to plain text", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 700,
         deliveredSignature: signature(part),
       }));
       const editPart = vi
         .fn()
         .mockRejectedValueOnce(new Error("Bad Request: RICH_BLOCK_INVALID"))
-        .mockImplementation(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+        .mockImplementation(async (_sessionId, _messageId, part) => ({
+          deliveredSignature: signature(part),
+        }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       const streamer = new ResponseStreamer({
         throttleMs: 0,
@@ -630,7 +660,7 @@ describe("bot/streaming/response-streamer", () => {
         deliveredSignature: signature(plainPart("partial")),
       }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
-      const completePart = vi.fn(async (part) => ({
+      const completePart = vi.fn(async (_sessionId, part) => ({
         messageId: 100,
         deliveredSignature: signature(part),
       }));
@@ -652,14 +682,14 @@ describe("bot/streaming/response-streamer", () => {
       expect(result.streamed).toBe(true);
       expect(result.telegramMessageIds).toEqual([100]);
       expect(completePart).toHaveBeenCalledTimes(1);
-      expect(completePart).toHaveBeenCalledWith(plainPart("final"), undefined);
+      expect(completePart).toHaveBeenCalledWith("s1", plainPart("final"), undefined);
     });
 
     it("persists multi-part drafts via completePart", async () => {
       vi.useFakeTimers();
 
       let draftId = 10;
-      const sendPart = vi.fn(async (part) => {
+      const sendPart = vi.fn(async (_sessionId, part) => {
         const id = draftId++;
         return { messageId: id, deliveredSignature: signature(part) };
       });
@@ -668,7 +698,7 @@ describe("bot/streaming/response-streamer", () => {
       }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       let realMessageId = 200;
-      const completePart = vi.fn(async (part) => {
+      const completePart = vi.fn(async (_sessionId, part) => {
         const id = realMessageId++;
         return { messageId: id, deliveredSignature: signature(part) };
       });
@@ -692,22 +722,22 @@ describe("bot/streaming/response-streamer", () => {
       expect(result.streamed).toBe(true);
       expect(result.telegramMessageIds).toEqual([200, 201]);
       expect(completePart).toHaveBeenCalledTimes(2);
-      expect(completePart).toHaveBeenNthCalledWith(1, plainPart("part-1-final"), undefined);
-      expect(completePart).toHaveBeenNthCalledWith(2, plainPart("part-2-final"), undefined);
+      expect(completePart).toHaveBeenNthCalledWith(1, "s1", plainPart("part-1-final"), undefined);
+      expect(completePart).toHaveBeenNthCalledWith(2, "s1", plainPart("part-2-final"), undefined);
     });
 
     it("can notify only the first final draft part", async () => {
       vi.useFakeTimers();
 
       let draftId = 10;
-      const sendPart = vi.fn(async (part) => {
+      const sendPart = vi.fn(async (_sessionId, part) => {
         const id = draftId++;
         return { messageId: id, deliveredSignature: signature(part) };
       });
       const editPart = vi.fn(async () => ({ deliveredSignature: "sig" }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
       let realMessageId = 200;
-      const completePart = vi.fn(async (part) => {
+      const completePart = vi.fn(async (_sessionId, part) => {
         const id = realMessageId++;
         return { messageId: id, deliveredSignature: signature(part) };
       });
@@ -738,8 +768,8 @@ describe("bot/streaming/response-streamer", () => {
       );
 
       expect(result.streamed).toBe(true);
-      expect(completePart).toHaveBeenNthCalledWith(1, plainPart("part-1-final"), {});
-      expect(completePart).toHaveBeenNthCalledWith(2, plainPart("part-2-final"), {
+      expect(completePart).toHaveBeenNthCalledWith(1, "s1", plainPart("part-1-final"), {});
+      expect(completePart).toHaveBeenNthCalledWith(2, "s1", plainPart("part-2-final"), {
         disable_notification: true,
       });
     });
@@ -747,13 +777,13 @@ describe("bot/streaming/response-streamer", () => {
     it("keeps final draft parts silent by default", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 1,
         deliveredSignature: signature(part),
       }));
       const editPart = vi.fn(async () => ({ deliveredSignature: "sig" }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
-      const completePart = vi.fn(async (part) => ({
+      const completePart = vi.fn(async (_sessionId, part) => ({
         messageId: 100,
         deliveredSignature: signature(part),
       }));
@@ -779,7 +809,7 @@ describe("bot/streaming/response-streamer", () => {
       });
 
       expect(result.streamed).toBe(true);
-      expect(completePart).toHaveBeenCalledWith(plainPart("final"), {
+      expect(completePart).toHaveBeenCalledWith("s1", plainPart("final"), {
         disable_notification: true,
       });
     });
@@ -818,13 +848,13 @@ describe("bot/streaming/response-streamer", () => {
     it("calls completePart only for parts with text", async () => {
       vi.useFakeTimers();
 
-      const sendPart = vi.fn(async (part) => ({
+      const sendPart = vi.fn(async (_sessionId, part) => ({
         messageId: 1,
         deliveredSignature: signature(part),
       }));
       const editPart = vi.fn(async () => ({ deliveredSignature: "sig" }));
       const deleteText = vi.fn().mockResolvedValue(undefined);
-      const completePart = vi.fn(async (part) => ({
+      const completePart = vi.fn(async (_sessionId, part) => ({
         messageId: 50,
         deliveredSignature: signature(part),
       }));
@@ -853,11 +883,13 @@ describe("bot/streaming/response-streamer", () => {
 
     let throttleMs = 200;
     let nextMessageId = 1;
-    const sendPart = vi.fn(async (part) => ({
+    const sendPart = vi.fn(async (_sessionId, part) => ({
       messageId: nextMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId, part) => ({ deliveredSignature: signature(part) }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const streamer = new ResponseStreamer({
       throttleMs: () => throttleMs,
@@ -877,6 +909,6 @@ describe("bot/streaming/response-streamer", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(editPart).toHaveBeenCalledTimes(1);
-    expect(editPart).toHaveBeenCalledWith(1, plainPart("second"), undefined);
+    expect(editPart).toHaveBeenCalledWith("s1", 1, plainPart("second"), undefined);
   });
 });

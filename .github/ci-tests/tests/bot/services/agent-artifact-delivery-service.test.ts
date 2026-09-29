@@ -1,4 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
+
+const mocked = vi.hoisted(() => ({
+  resolveCoreTopicBinding: vi.fn(),
+  isCurrentCoreSessionRoute: vi.fn(),
+  sendDocument: vi.fn(),
+}));
+
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  resolveCoreTopicBinding: mocked.resolveCoreTopicBinding,
+  isCurrentCoreSessionRoute: mocked.isCurrentCoreSessionRoute,
+}));
+vi.mock("../../../src/bot/services/core-session-api.js", () => ({
+  createCoreSessionApi: (_api: unknown, sessionId: string) => ({
+    sendDocument: (chatId: number, file: unknown, options: Record<string, unknown>) =>
+      mocked.sendDocument(chatId, file, {
+        ...options,
+        message_thread_id: sessionId === "b" ? 22 : 11,
+      }),
+  }),
+}));
 import {
   extractArtifactMarkers,
   isLikelyArtifactFromFileEvent,
@@ -35,31 +56,47 @@ describe("agent artifact delivery", () => {
 });
 
 
-import { Api } from "grammy";
 import { promises as fs } from "node:fs";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { agentArtifactDeliveryService as delivery } from "../../../src/bot/services/agent-artifact-delivery-service.js";
 import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 
-const topicA = { chatId: 100, threadId: 11, sessionId: "a" };
-const topicB = { chatId: 100, threadId: 22, sessionId: "b" };
+const directory = path.resolve("/workspace/topic");
+const topicA = { chatId: 100, threadId: 11, sessionId: "a", directory };
+const topicB = { chatId: 100, threadId: 22, sessionId: "b", directory };
+let currentTopicASessionId = "a";
 const artifact = { type: "message.part.updated", properties: { part: {
   type: "tool", state: { status: "completed", input: {}, output: "__TELEGRAM_ARTIFACT__ /tmp/report.pdf" },
 } } } as unknown as Event;
 
 function enqueue(topic = topicA): void {
+  if (topic.threadId === 11) currentTopicASessionId = topic.sessionId;
   runInTopicRuntimeContext(topic, () => delivery.processEvent(artifact));
 }
 
 describe("artifact destination isolation", () => {
-  let send: ReturnType<typeof vi.spyOn>;
+  const send = mocked.sendDocument;
   beforeEach(() => {
     delivery.clear();
+    currentTopicASessionId = "a";
     vi.useFakeTimers();
     vi.spyOn(fs, "stat").mockResolvedValue({ isFile: () => true, size: 42, mtimeMs: 1 } as never);
-    send = vi.spyOn(Api.prototype, "sendDocument").mockResolvedValue({ message_id: 1 } as never);
+    mocked.resolveCoreTopicBinding.mockReset();
+    mocked.resolveCoreTopicBinding.mockImplementation((chatId: number, threadId: number) => ({
+      bindingId: `${chatId}:${threadId}`,
+      bindingGeneration: threadId === 11 && currentTopicASessionId === "replacement" ? 2 : 1,
+      chatId,
+      threadId,
+      sessionId: threadId === 22 ? "b" : currentTopicASessionId,
+      normalizedDirectory: directory,
+    }));
+    mocked.isCurrentCoreSessionRoute.mockReset();
+    mocked.isCurrentCoreSessionRoute.mockReturnValue(true);
+    send.mockReset();
+    send.mockResolvedValue({ message_id: 1 });
+    delivery.setApi({} as never);
   });
-  afterEach(() => { delivery.clear(); vi.useRealTimers(); });
+  afterEach(() => { delivery.clear(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it("delivers the same path independently to two concurrent Topics", async () => {
     enqueue(topicA); enqueue(topicB);
@@ -75,10 +112,12 @@ describe("artifact destination isolation", () => {
     expect(send).toHaveBeenCalledTimes(3);
   });
 
-  it("captures the main-chat destination before later focus changes", async () => {
-    delivery.setChatId(100); delivery.processEvent(artifact); delivery.setChatId(200);
+  it("captures the Topic destination before a later Topic is processed", async () => {
+    enqueue(topicA);
+    enqueue(topicB);
     await vi.advanceTimersByTimeAsync(1500);
     expect(send.mock.calls[0][0]).toBe(100);
+    expect(send.mock.calls.map(call => call[2].message_thread_id).sort()).toEqual([11, 22]);
   });
 
   it("warns for an unroutable artifact but not for heartbeat traffic", async () => {
@@ -91,9 +130,10 @@ describe("artifact destination isolation", () => {
   });
 
   it("does not assign an initially unroutable artifact to a later chat", async () => {
-    delivery.processEvent(artifact); delivery.setChatId(200);
+    delivery.processEvent(artifact); enqueue(topicB);
     await vi.advanceTimersByTimeAsync(1500);
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2].message_thread_id).toBe(22);
   });
 
   it("lets B send while A's upload is still pending", async () => {

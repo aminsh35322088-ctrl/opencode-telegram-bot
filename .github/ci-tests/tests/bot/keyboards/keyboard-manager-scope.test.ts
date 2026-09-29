@@ -203,12 +203,12 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(options.message_thread_id).toBe(THREAD_ID);
   });
 
-  it("getTopicSendTarget resolves the authoritative Topic thread for a bound session", () => {
+  it("getThreadIdForSession returns the bound Topic thread only for its session", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
-    expect(keyboardManager.getTopicSendTarget(SESSION_ID)).toEqual({ chatId: CHAT_ID, threadId: THREAD_ID });
+    expect(keyboardManager.getThreadIdForSession(SESSION_ID)).toBe(THREAD_ID);
 
     keyboardManager.initialize({} as never, CHAT_ID);
-    expect(keyboardManager.getTopicSendTarget("unknown-session")).toBeUndefined();
+    expect(keyboardManager.getThreadIdForSession("unknown-session")).toBeUndefined();
   });
 
   it("explicit restore re-delivers an unchanged keyboard even during a run", async () => {

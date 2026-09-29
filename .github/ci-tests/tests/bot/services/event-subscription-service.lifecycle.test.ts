@@ -27,6 +27,15 @@ vi.mock("../../../src/opencode/events.js", () => ({
   stopEventListening: mocked.stopEventListening,
 }));
 
+vi.mock("../../../src/core/native-core-service.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../src/core/native-core-service.js")>(),
+  resolveCoreSessionRoute: (sessionId: string) => {
+    if (sessionId !== "session-1") throw new Error(`Unknown session: ${sessionId}`);
+    return { bindingId: "42:7", chatId: 42, threadId: 7, sessionId, normalizedDirectory: "d:/repo", generation: 1 };
+  },
+  isCurrentCoreSessionRoute: () => true,
+}));
+
 /**
  * The service registers its response streamers with the busy reconciliation
  * service on construction. Capturing that registration is the only public way

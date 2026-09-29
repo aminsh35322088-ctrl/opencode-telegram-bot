@@ -18,18 +18,20 @@ function signature(part: TelegramRenderedPart): string {
 describe("bot/streaming/response-streamer persisted-part rollback", () => {
   it("rolls back already persisted final parts when a later part fails", async () => {
     let nextStreamMessageId = 1;
-    const sendPart = vi.fn(async (part: TelegramRenderedPart) => ({
+    const sendPart = vi.fn(async (_sessionId: string, part: TelegramRenderedPart) => ({
       messageId: nextStreamMessageId++,
       deliveredSignature: signature(part),
     }));
-    const editPart = vi.fn(async (_messageId: number, part: TelegramRenderedPart) => ({
-      deliveredSignature: signature(part),
-    }));
+    const editPart = vi.fn(
+      async (_sessionId: string, _messageId: number, part: TelegramRenderedPart) => ({
+        deliveredSignature: signature(part),
+      }),
+    );
     const deleteText = vi.fn().mockResolvedValue(undefined);
     const rollbackFirstPersistedPart = vi.fn().mockResolvedValue(undefined);
     const completePart = vi
       .fn()
-      .mockImplementationOnce(async (part: TelegramRenderedPart) => ({
+      .mockImplementationOnce(async (_sessionId: string, part: TelegramRenderedPart) => ({
         messageId: 900,
         deliveredSignature: signature(part),
         rollback: rollbackFirstPersistedPart,
@@ -57,7 +59,7 @@ describe("bot/streaming/response-streamer persisted-part rollback", () => {
     expect(completePart).toHaveBeenCalledTimes(2);
     expect(rollbackFirstPersistedPart).toHaveBeenCalledTimes(1);
     expect(deleteText).toHaveBeenCalledTimes(2);
-    expect(deleteText).toHaveBeenNthCalledWith(1, 2);
-    expect(deleteText).toHaveBeenNthCalledWith(2, 1);
+    expect(deleteText).toHaveBeenNthCalledWith(1, "session-1", 2);
+    expect(deleteText).toHaveBeenNthCalledWith(2, "session-1", 1);
   });
 });

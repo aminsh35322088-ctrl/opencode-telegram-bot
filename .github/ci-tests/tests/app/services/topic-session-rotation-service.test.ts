@@ -24,7 +24,7 @@ vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
   updateTelegramTopicBinding: mocks.updateTelegramTopicBinding,
 }));
 
-import { rotateTelegramTopicSessionForModel } from "../../../src/app/services/topic-session-rotation-service.js";
+import { rotateTelegramTopicSession } from "../../../src/app/services/topic-session-rotation-service.js";
 
 const binding = {
   chatId: 100,
@@ -68,7 +68,7 @@ describe("Topic session rotation", () => {
   });
 
   it("creates a fresh model-pinned session and moves the Topic binding/runtime together", async () => {
-    const result = await rotateTelegramTopicSessionForModel(binding, newModel);
+    const result = await rotateTelegramTopicSession(binding, newModel);
 
     expect(result.previousSessionId).toBe("ses_old");
     expect(result.session).toEqual({ id: "ses_new", title: "Fresh session", directory: "/workspace/topic" });
@@ -90,7 +90,7 @@ describe("Topic session rotation", () => {
       .mockRejectedValueOnce(new Error("runtime write failed"))
       .mockResolvedValueOnce(oldRuntime);
 
-    await expect(rotateTelegramTopicSessionForModel(binding, newModel)).rejects.toThrow("runtime write failed");
+    await expect(rotateTelegramTopicSession(binding, newModel)).rejects.toThrow("runtime write failed");
 
     expect(mocks.updateTelegramTopicBinding).toHaveBeenNthCalledWith(1, 100, 20, { sessionId: "ses_new" });
     expect(mocks.updateTelegramTopicBinding).toHaveBeenNthCalledWith(2, 100, 20, { sessionId: "ses_old" });

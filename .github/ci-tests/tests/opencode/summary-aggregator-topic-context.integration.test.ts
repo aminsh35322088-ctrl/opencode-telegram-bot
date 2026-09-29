@@ -19,6 +19,20 @@ vi.mock("../../src/app/services/telegram-topic-store.js", () => ({
   findTelegramTopicBindingsByDirectory: mocked.byDirectory,
 }));
 
+vi.mock("../../src/core/native-core-service.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../src/core/native-core-service.js")>(),
+  getNativeCore: () => ({ bindings: { registry: { list: () => [{
+    bindingId: "100:11", chatId: 100, threadId: 11, sessionId: "session-a",
+    normalizedDirectory: "/workspace", bindingGeneration: 1,
+  }] } } }),
+  resolveCoreEventRoute: (sessionId: string | null, directory: string | null) =>
+    sessionId === "session-a" && directory === "/workspace"
+      ? { bindingId: "100:11", chatId: 100, threadId: 11, sessionId: "session-a",
+          normalizedDirectory: "/workspace", bindingGeneration: 1 }
+      : null,
+  isCurrentCoreSessionRoute: () => true,
+}));
+
 vi.mock("../../src/bot/services/agent-artifact-delivery-service.js", () => ({
   agentArtifactDeliveryService: { processEvent: vi.fn().mockResolvedValue(undefined) },
 }));

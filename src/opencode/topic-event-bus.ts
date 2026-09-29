@@ -76,6 +76,12 @@ async function dispatchEventToSubscribers(
   }
   const directory = scopedDirectory ?? eventDirectory;
   const binding = resolveCoreEventRoute(sessionId, directory ?? null);
+  // Once Core owns Topic bindings, a missing route is a stale or ambiguous
+  // event. Subscriber filters alone cannot establish its generation.
+  if (!binding && getNativeCore()) {
+    topicTelemetry("unresolved_core_route_blocked", { sessionId: sessionId ?? undefined, directory: directory ?? undefined }, { type: event.type });
+    return;
+  }
   const directoryBindingCount = directory
     ? getNativeCore()?.bindings.registry.list().filter((candidate) =>
         normalizeDirectory(candidate.normalizedDirectory) === normalizeDirectory(directory)

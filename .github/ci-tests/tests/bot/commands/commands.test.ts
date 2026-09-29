@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import type { Bot, Context } from "grammy";
 import { commandsCommand } from "../../../src/bot/commands/command-catalog-command.js";
 import {
@@ -41,6 +42,10 @@ const mocked = vi.hoisted(() => ({
   safeBackgroundTaskMock: vi.fn(),
   suppressionRegisterMock: vi.fn(),
   attachToSessionMock: vi.fn(),
+  captureCoreOwnerMock: vi.fn(),
+  beginCoreRunMock: vi.fn(),
+  dispatchCoreOwnedTaskMock: vi.fn(),
+  finishCoreRunMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
@@ -137,6 +142,13 @@ vi.mock("../../../src/app/services/attach-service.js", () => ({
   markAttachedSessionIdle: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  captureCurrentCoreBindingOwner: mocked.captureCoreOwnerMock,
+  beginCoreRunForSession: mocked.beginCoreRunMock,
+  dispatchCoreOwnedTask: mocked.dispatchCoreOwnedTaskMock,
+  finishCoreRunForSession: mocked.finishCoreRunMock,
+}));
+
 function createCommandContext(messageId: number): Context {
   return {
     chat: { id: 777 },
@@ -226,6 +238,10 @@ describe("bot/commands/commands", () => {
     mocked.safeBackgroundTaskMock.mockReset();
     mocked.suppressionRegisterMock.mockReset();
     mocked.attachToSessionMock.mockReset();
+    mocked.captureCoreOwnerMock.mockReset().mockReturnValue({ directory: path.resolve("D:\\Projects\\Repo") });
+    mocked.beginCoreRunMock.mockReset().mockResolvedValue({ runId: "run-command" });
+    mocked.dispatchCoreOwnedTaskMock.mockReset().mockImplementation((_run, _label, task) => task({ signal: new AbortController().signal }));
+    mocked.finishCoreRunMock.mockReset();
     mocked.attachToSessionMock.mockResolvedValue({
       busy: false,
       alreadyAttached: false,
@@ -355,7 +371,7 @@ describe("bot/commands/commands", () => {
       agent: "build",
       model: "openai/gpt-5",
       variant: "default",
-    });
+    }, { signal: expect.any(AbortSignal) });
   });
 
   it("executes selected command with arguments from text message", async () => {
@@ -402,7 +418,28 @@ describe("bot/commands/commands", () => {
       agent: "build",
       model: "openai/gpt-5",
       variant: "default",
+    }, { signal: expect.any(AbortSignal) });
+  });
+
+  it("rejects command execution when the Core Topic owner is unavailable", async () => {
+    mocked.captureCoreOwnerMock.mockImplementation(() => { throw new Error("unbound Topic"); });
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "commands",
+        stage: "confirm",
+        messageId: 501,
+        projectDirectory: "D:\\Projects\\Repo",
+        commandName: "poem",
+      },
     });
+
+    const ctx = createCallbackContext("commands:execute", 501);
+    expect(await handleCommandsCallback(ctx, createDeps())).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledWith(t("commands.execute_error"));
+    expect(mocked.beginCoreRunMock).not.toHaveBeenCalled();
+    expect(mocked.sessionCommandMock).not.toHaveBeenCalled();
   });
 
   it("handles stale callback as inactive", async () => {

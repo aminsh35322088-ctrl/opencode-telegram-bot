@@ -11,8 +11,8 @@ const sshKeys = vi.hoisted(() => ({
   privateKey: vi.fn(),
   knownHosts: vi.fn(),
 }));
-const topics = vi.hoisted(() => ({
-  findBySession: vi.fn(),
+const coreRoutes = vi.hoisted(() => ({
+  resolve: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/tailscale-integration-service.js", () => ({
@@ -26,8 +26,8 @@ vi.mock("../../../src/app/services/ssh-key-service.js", () => ({
   getManagedSshKnownHostsPath: sshKeys.knownHosts,
 }));
 
-vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
-  findTelegramTopicBindingBySessionId: topics.findBySession,
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  resolveCoreSessionRoute: coreRoutes.resolve,
 }));
 
 import {
@@ -139,13 +139,11 @@ describe("pooled cross-platform Tailnet SSH service", () => {
       device: nativeDevice(target),
       output: "pong",
     }));
-    topics.findBySession.mockReset().mockResolvedValue({
-      chatId: 777,
-      threadId: 42,
-      sessionId: "session-1",
-      directory: "/data/workspace",
-      createdAt: "2026-09-26T00:00:00.000Z",
-      updatedAt: "2026-09-26T00:00:00.000Z",
+    coreRoutes.resolve.mockReset().mockImplementation((sessionId: string) => {
+      if (sessionId === "session-1" || sessionId === "session-2") {
+        return { chatId: 777, threadId: 42 };
+      }
+      throw new Error("No exact Core Topic binding");
     });
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "tailnet-ssh-"));
   });
@@ -156,8 +154,9 @@ describe("pooled cross-platform Tailnet SSH service", () => {
 
   it("resolves a stable Telegram Topic scope across OpenCode session IDs", async () => {
     expect(await resolveTailnetSshScope("session-1")).toBe("topic:777:42");
-    topics.findBySession.mockResolvedValueOnce(null);
+    expect(await resolveTailnetSshScope("session-2")).toBe("topic:777:42");
     expect(await resolveTailnetSshScope("orphan-session")).toBe("session:orphan-session");
+    expect(coreRoutes.resolve).toHaveBeenCalledWith("orphan-session");
   });
 
   it("opens native Tailscale SSH with the proven socket-aware direct transport", async () => {

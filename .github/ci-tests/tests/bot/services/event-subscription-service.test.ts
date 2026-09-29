@@ -18,6 +18,17 @@ vi.mock("../../../src/opencode/events.js", () => ({
   stopEventListening: mocked.stopEventListening,
 }));
 
+// Telegram output is now fenced by the Core Topic binding. Give this service
+// fixture an active binding so its assertions exercise the scoped API.
+vi.mock("../../../src/core/native-core-service.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../src/core/native-core-service.js")>(),
+  resolveCoreSessionRoute: (sessionId: string) => {
+    if (sessionId !== "session-1") throw new Error(`Unknown session: ${sessionId}`);
+    return { bindingId: "42:7", chatId: 42, threadId: 7, sessionId, normalizedDirectory: "d:/repo", generation: 1 };
+  },
+  isCurrentCoreSessionRoute: () => true,
+}));
+
 type FakeBotApi = {
   sendMessage: ReturnType<typeof vi.fn>;
   sendRichMessage: ReturnType<typeof vi.fn>;
@@ -754,7 +765,7 @@ describe("bot/services/event-subscription-service", () => {
       { timeout: 3000 },
     );
     expect(defined(api.sendMessage.mock.calls[0]?.[1])).toBe("Final answer");
-    expect(defined(api.sendMessage.mock.calls[0])[2]).toEqual({ disable_notification: true });
+    expect(defined(api.sendMessage.mock.calls[0])[2]).toEqual({ disable_notification: true, message_thread_id: 7 });
     expect(defined(api.sendMessage.mock.calls[1]?.[1])).toContain("test-provider/test-model");
     expect(api.sendMessageDraft).not.toHaveBeenCalled();
   });

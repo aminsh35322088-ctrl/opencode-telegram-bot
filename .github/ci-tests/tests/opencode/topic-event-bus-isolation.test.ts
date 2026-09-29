@@ -8,14 +8,31 @@ vi.mock("../../src/opencode/client.js", () => ({
 }));
 
 const bindings = vi.hoisted(() => ({
-  bySession: vi.fn().mockResolvedValue(null),
-  byDirectory: vi.fn().mockResolvedValue([]),
+  bySession: vi.fn(),
+  byDirectory: vi.fn(),
 }));
 
-vi.mock("../../src/app/services/telegram-topic-store.js", () => ({
-  findTelegramTopicBindingBySessionId: bindings.bySession,
-  findTelegramTopicBindingsByDirectory: bindings.byDirectory,
-}));
+vi.mock("../../src/core/native-core-service.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../src/core/native-core-service.js")>();
+  const identity = (binding: { chatId: number; threadId: number; sessionId: string; directory: string }) => ({
+    ...binding,
+    bindingId: `${binding.chatId}:${binding.threadId}`,
+    normalizedDirectory: binding.directory.toLowerCase(),
+    generation: 1,
+  });
+  return {
+    ...original,
+    getNativeCore: () => ({ bindings: { registry: { list: () => (bindings.byDirectory("/workspace") ?? []).map(identity) } } }),
+    isCurrentCoreSessionRoute: () => true,
+    resolveCoreEventRoute: (sessionId: string | null, directory: string | null) => {
+      const exact = sessionId ? bindings.bySession(sessionId) : null;
+      if (exact && (!directory || exact.directory.toLowerCase() === directory.toLowerCase())) return identity(exact);
+      const matches = (bindings.byDirectory(directory) ?? []).filter((candidate: { directory: string }) =>
+        !directory || candidate.directory.toLowerCase() === directory.toLowerCase());
+      return matches.length === 1 ? identity(matches[0]) : null;
+    },
+  };
+});
 
 vi.mock("../../src/bot/services/agent-artifact-delivery-service.js", () => ({
   agentArtifactDeliveryService: { processEvent: vi.fn().mockResolvedValue(undefined) },
@@ -41,8 +58,8 @@ function createStream<T>(events: T[], signal: AbortSignal): AsyncGenerator<T, vo
 describe("topic-event-bus session isolation", () => {
   beforeEach(() => {
     subscribeMock.mockReset();
-    bindings.bySession.mockReset().mockResolvedValue(null);
-    bindings.byDirectory.mockReset().mockResolvedValue([]);
+    bindings.bySession.mockReset().mockReturnValue(null);
+    bindings.byDirectory.mockReset().mockReturnValue([]);
   });
 
   afterEach(() => stopTopicEventBus());
@@ -52,7 +69,7 @@ describe("topic-event-bus session isolation", () => {
     const eventB = { type: "message.updated", properties: { sessionID: "session-b", directory: "/workspace" } } as unknown as Event;
 
     subscribeMock.mockImplementationOnce(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([eventA, eventB], options.signal) }));
-    bindings.bySession.mockImplementation((sessionId: string) => Promise.resolve(
+    bindings.bySession.mockImplementation((sessionId: string) => (
       sessionId === "session-a"
         ? { chatId: 100, threadId: 101, sessionId: "session-a", directory: "/workspace" }
         : sessionId === "session-b"
@@ -84,7 +101,7 @@ describe("topic-event-bus session isolation", () => {
         while (!options.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
       })(),
     }));
-    bindings.bySession.mockImplementation((sessionId: string) => Promise.resolve(sessionId === "session-b" ? { chatId: 100, threadId: 202, sessionId: "session-b", directory: "/workspace" } : null));
+    bindings.bySession.mockImplementation((sessionId: string) => sessionId === "session-b" ? { chatId: 100, threadId: 202, sessionId: "session-b", directory: "/workspace" } : null);
 
     const callbackA = vi.fn();
     const callbackB = vi.fn();
@@ -99,7 +116,7 @@ describe("topic-event-bus session isolation", () => {
 
   it("does not guess a Topic when multiple bindings share a directory and the event has no session id", async () => {
     const event = { type: "workspace.updated", properties: { directory: "/workspace" } } as unknown as Event;
-    bindings.byDirectory.mockResolvedValue([
+    bindings.byDirectory.mockReturnValue([
       { chatId: 100, threadId: 101, sessionId: "session-a", directory: "/workspace" },
       { chatId: 100, threadId: 202, sessionId: "session-b", directory: "/workspace" },
     ]);
@@ -115,6 +132,16 @@ describe("topic-event-bus session isolation", () => {
     expect(callbackB).not.toHaveBeenCalled();
     expect(bindings.byDirectory).toHaveBeenCalledWith("/workspace");
   });
+
+  it("blocks an unresolved session even when a wildcard subscriber exists", async () => {
+    const event = { type: "message.updated", properties: { sessionID: "unknown", directory: "/workspace" } } as unknown as Event;
+    subscribeMock.mockImplementationOnce(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
+    const callback = vi.fn();
+    subscribeToTopicEvents("/workspace", callback);
+    await vi.waitFor(() => expect(subscribeMock).toHaveBeenCalledTimes(1));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(callback).not.toHaveBeenCalled();
+  });
 });
 
 
@@ -122,8 +149,8 @@ describe("overlapping Topic execution", () => {
   afterEach(() => stopTopicEventBus());
 
   it("does not rebind an old session event to the only remaining directory binding", async () => {
-    bindings.bySession.mockResolvedValue(null);
-    bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "new", directory: "/workspace" }]);
+    bindings.bySession.mockReturnValue(null);
+    bindings.byDirectory.mockReturnValue([{ chatId: 100, threadId: 11, sessionId: "new", directory: "/workspace" }]);
     const event = { type: "message.updated", properties: { sessionID: "old" } } as unknown as Event;
     const { logger } = await import("../../src/utils/logger.js");
     subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: (async function* () {
@@ -141,7 +168,7 @@ describe("overlapping Topic execution", () => {
 
   it("keeps B progressing and preserves per-session order while A is suspended", async () => {
     const context = await import("../../src/app/services/topic-runtime-context.js");
-    bindings.bySession.mockImplementation(async (id: string) => ({ chatId: 100, threadId: id === "a" ? 11 : 22, sessionId: id, directory: "/workspace" }));
+    bindings.bySession.mockImplementation((id: string) => ({ chatId: 100, threadId: id === "a" ? 11 : 22, sessionId: id, directory: "/workspace" }));
     const events = ["a", "b", "a", "b"].map((id, index) => ({ type: "message.updated", properties: { sessionID: id, index } } as unknown as Event));
     subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream(events, options.signal) }));
     let release!: () => void;
@@ -168,8 +195,8 @@ describe("overlapping Topic execution", () => {
 
 
 it("preserves unique-directory routing for an unbound child session", async () => {
-  bindings.bySession.mockResolvedValue(null);
-  bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "parent", directory: "/workspace" }]);
+  bindings.bySession.mockReturnValue(null);
+  bindings.byDirectory.mockReturnValue([{ chatId: 100, threadId: 11, sessionId: "parent", directory: "/workspace" }]);
   const event = { type: "message.updated", properties: { sessionID: "child" } } as unknown as Event;
   subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
   const callback = vi.fn();
@@ -180,8 +207,18 @@ it("preserves unique-directory routing for an unbound child session", async () =
 
 describe("subscription retirement lifecycle", () => {
   it("stops every session in one directory and permits explicit reattachment", async () => {
-    bindings.bySession.mockResolvedValue(null);
-    bindings.byDirectory.mockResolvedValue([]);
+    bindings.bySession.mockImplementation((sessionId: string) =>
+      sessionId === "a"
+        ? { chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" }
+        : sessionId === "c"
+          ? { chatId: 100, threadId: 33, sessionId: "c", directory: "/other" }
+          : null,
+    );
+    bindings.byDirectory.mockImplementation((directory: string) =>
+      directory === "/other"
+        ? [{ chatId: 100, threadId: 33, sessionId: "c", directory: "/other" }]
+        : [{ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" }],
+    );
     const event = { type: "session.idle", properties: { sessionID: "a" } } as unknown as Event;
     const otherEvent = { type: "session.idle", properties: { sessionID: "c" } } as unknown as Event;
     subscribeMock.mockImplementation(async (parameters: { directory: string }, options: { signal: AbortSignal }) => ({ stream: createStream([parameters.directory === "/other" ? otherEvent : event], options.signal) }));
@@ -199,29 +236,31 @@ describe("subscription retirement lifecycle", () => {
     } finally { stopTopicEventBus(); }
   });
 
-  it("does not deliver an event whose binding lookup overlaps retirement and reattachment", async () => {
-    let release!: (value: unknown) => void;
-    bindings.bySession.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
-    const event = { type: "session.idle", properties: { sessionID: "a" } } as unknown as Event;
-    subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
-    const oldCallback = vi.fn();
+  it("does not deliver a queued event after retirement and reattachment", async () => {
+    bindings.bySession.mockReturnValue({ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" });
+    const first = { type: "session.status", properties: { sessionID: "a", n: 1 } } as unknown as Event;
+    const queued = { type: "session.idle", properties: { sessionID: "a", n: 2 } } as unknown as Event;
+    subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([first, queued], options.signal) }));
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const oldCallback = vi.fn(async () => { await blocked; });
     const replacement = vi.fn();
     subscribeToTopicEvents("/workspace", oldCallback, "a");
     subscribeToTopicEvents("/workspace", vi.fn(), "b");
     try {
-      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      await vi.waitFor(() => expect(oldCallback).toHaveBeenCalledWith(first));
       stopTopicEventSubscription("/workspace", "a");
       subscribeToTopicEvents("/workspace", replacement, "a");
-      release({ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" });
+      release();
       await new Promise(resolve => setTimeout(resolve, 30));
-      expect(oldCallback).not.toHaveBeenCalled();
+      expect(oldCallback).toHaveBeenCalledTimes(1);
       expect(replacement).not.toHaveBeenCalled();
     } finally { stopTopicEventBus(); }
   });
 
   it("extracts the session id from session lifecycle info before directory fallback", async () => {
-    bindings.bySession.mockResolvedValue(null);
-    bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 22, sessionId: "b", directory: "/workspace" }]);
+    bindings.bySession.mockReturnValue(null);
+    bindings.byDirectory.mockReturnValue([{ chatId: 100, threadId: 22, sessionId: "b", directory: "/workspace" }]);
     const event = { type: "session.deleted", properties: { info: { id: "a", directory: "/workspace" } } } as unknown as Event;
     subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));
     const callback = vi.fn();
@@ -235,9 +274,9 @@ describe("subscription retirement lifecycle", () => {
   });
 
   it("blocks retired-session events for wildcard listeners and revives them after reattachment", async () => {
-    bindings.bySession.mockImplementation((id: string) => Promise.resolve(
-      id === "a" ? { chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" } : null));
-    bindings.byDirectory.mockResolvedValue([{ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" }]);
+    bindings.bySession.mockImplementation((id: string) =>
+      id === "a" ? { chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" } : null);
+    bindings.byDirectory.mockReturnValue([{ chatId: 100, threadId: 11, sessionId: "a", directory: "/workspace" }]);
 
     const event1 = { type: "message.updated", properties: { sessionID: "a", n: 1 } } as unknown as Event;
     const event2 = { type: "message.updated", properties: { sessionID: "a", n: 2 } } as unknown as Event;

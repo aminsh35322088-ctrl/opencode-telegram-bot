@@ -4,7 +4,7 @@ import type { Event } from "@opencode-ai/sdk/v2";
 const { subscribeMock, bindings } = vi.hoisted(() => ({
   subscribeMock: vi.fn(),
   bindings: {
-    byDirectory: vi.fn().mockResolvedValue(null),
+    byDirectory: vi.fn().mockReturnValue(null),
     bySession: vi.fn().mockResolvedValue(null),
     byDirectoryList: vi.fn().mockResolvedValue([]),
   },
@@ -21,6 +21,16 @@ vi.mock("../../src/app/services/telegram-topic-store.js", () => ({
   findTelegramTopicBindingByDirectory: bindings.byDirectory,
   findTelegramTopicBindingBySessionId: bindings.bySession,
   findTelegramTopicBindingsByDirectory: bindings.byDirectoryList,
+}));
+
+vi.mock("../../src/core/native-core-service.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../src/core/native-core-service.js")>(),
+  resolveCoreEventRoute: (sessionId: string | null, directory: string | null) => {
+    const route = bindings.byDirectory(directory);
+    if (!route || (sessionId && route.sessionId !== sessionId)) return null;
+    return { ...route, bindingId: `${route.chatId}:${route.threadId}`, normalizedDirectory: route.directory.toLowerCase(), generation: 1 };
+  },
+  isCurrentCoreSessionRoute: () => true,
 }));
 
 vi.mock("../../src/bot/services/agent-artifact-delivery-service.js", () => ({
@@ -80,7 +90,7 @@ function flushImmediate(): Promise<void> {
 describe("opencode/events", () => {
   beforeEach(() => {
     subscribeMock.mockReset();
-    bindings.byDirectory.mockReset().mockResolvedValue(null);
+    bindings.byDirectory.mockReset().mockReturnValue(null);
     bindings.bySession.mockReset().mockResolvedValue(null);
     bindings.byDirectoryList.mockReset().mockResolvedValue([]);
     __setSseIdleTimeoutForTests(30_000);
@@ -172,7 +182,7 @@ describe("opencode/events", () => {
   });
 
   it("resolves the topic session from the directory binding when no sessionId is given", async () => {
-    bindings.byDirectory.mockResolvedValue({ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" });
+    bindings.byDirectory.mockReturnValue({ chatId: 1, threadId: 2, sessionId: "session-a", directory: "D:/repo" });
     const eventA = { type: "session.idle", properties: { sessionID: "session-a", directory: "D:/repo" } } as unknown as Event;
     const eventB = { type: "session.idle", properties: { sessionID: "session-b", directory: "D:/repo" } } as unknown as Event;
     subscribeMock.mockImplementationOnce(async (_parameters: unknown, params: { signal?: AbortSignal }) => ({

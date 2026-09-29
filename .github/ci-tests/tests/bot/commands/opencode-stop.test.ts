@@ -10,11 +10,9 @@ const mocked = vi.hoisted(() => ({
   loggerInfoMock: vi.fn(),
   loggerErrorMock: vi.fn(),
   clearRuntimeStateMock: vi.fn(),
-  getBusySessionsMock: vi.fn(),
   clearAllForegroundMock: vi.fn(),
   attachGetSnapshotMock: vi.fn(),
   markAttachedSessionIdleMock: vi.fn(),
-  clearPromptResponseModeMock: vi.fn(),
   notifyUnavailableMock: vi.fn(),
   config: {
     opencode: {
@@ -54,7 +52,6 @@ vi.mock("../../../src/utils/logger.js", () => ({
 
 vi.mock("../../../src/app/managers/foreground-session-state-manager.js", () => ({
   foregroundSessionState: {
-    getBusySessions: mocked.getBusySessionsMock,
     clearAll: mocked.clearAllForegroundMock,
   },
 }));
@@ -68,11 +65,6 @@ vi.mock("../../../src/app/managers/attach-manager.js", () => ({
 vi.mock("../../../src/app/services/attach-service.js", () => ({
   markAttachedSessionIdle: mocked.markAttachedSessionIdleMock,
 }));
-
-vi.mock("../../../src/bot/handlers/prompt.js", () => ({
-    clearPromptResponseMode: mocked.clearPromptResponseModeMock,
-    __resetPromptRecoveryStateForTests: vi.fn(),
-  }));
 
 import { opencodeStopCommand } from "../../../src/bot/commands/opencode-stop-command.js";
 import { promptQueue } from "../../../src/app/managers/prompt-queue-manager.js";
@@ -99,11 +91,9 @@ describe("bot/commands/opencode-stop-command", () => {
     mocked.loggerInfoMock.mockReset();
     mocked.loggerErrorMock.mockReset();
     mocked.clearRuntimeStateMock.mockReset();
-    mocked.getBusySessionsMock.mockReset();
     mocked.clearAllForegroundMock.mockReset();
     mocked.attachGetSnapshotMock.mockReset();
     mocked.markAttachedSessionIdleMock.mockReset();
-    mocked.clearPromptResponseModeMock.mockReset();
     mocked.notifyUnavailableMock.mockReset();
     promptQueue.__resetForTests();
     interactionManager.clear("test_setup");
@@ -111,7 +101,6 @@ describe("bot/commands/opencode-stop-command", () => {
     mocked.config.opencode.apiUrl = "http://localhost:4096";
     mocked.resolveLocalOpencodeTargetMock.mockReturnValue({ host: "localhost", port: 4096 });
     mocked.editBotTextMock.mockResolvedValue(undefined);
-    mocked.getBusySessionsMock.mockReturnValue([]);
     mocked.attachGetSnapshotMock.mockReturnValue(null);
     mocked.markAttachedSessionIdleMock.mockResolvedValue(undefined);
   });
@@ -174,14 +163,10 @@ describe("bot/commands/opencode-stop-command", () => {
     );
   });
 
-  it("clears busy sessions and attached state after a successful stop", async () => {
+  it("clears foreground and attached state after a successful stop", async () => {
     const ctx = createContext();
     mocked.findServerPidMock.mockResolvedValue(456);
     mocked.killServerProcessMock.mockResolvedValue(true);
-    mocked.getBusySessionsMock.mockReturnValue([
-      { sessionId: "session-1", directory: "D:/repo", markedAt: 1 },
-      { sessionId: "session-2", directory: "D:/repo", markedAt: 2 },
-    ]);
     mocked.attachGetSnapshotMock.mockReturnValue({
       sessionId: "session-1",
       directory: "D:/repo",
@@ -199,8 +184,8 @@ describe("bot/commands/opencode-stop-command", () => {
     expect(interactionManager.isActive()).toBe(false);
 
     expect(mocked.markAttachedSessionIdleMock).toHaveBeenCalledWith("session-1");
-    expect(mocked.clearPromptResponseModeMock).toHaveBeenCalledWith("session-1");
-    expect(mocked.clearPromptResponseModeMock).toHaveBeenCalledWith("session-2");
+    expect(mocked.clearAllForegroundMock).toHaveBeenCalledWith("opencode_stop");
+    expect(mocked.clearRuntimeStateMock).toHaveBeenCalledWith("opencode_stop");
   });
 
   it("reports stop_error and skips cleanup when process termination fails", async () => {

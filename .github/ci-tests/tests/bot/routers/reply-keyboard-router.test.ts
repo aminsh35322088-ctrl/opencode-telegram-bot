@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 
 const mocks = vi.hoisted(() => ({
   findTelegramTopicBindingByThread: vi.fn(),
+  resolveCoreTopicBinding: vi.fn(),
   getTopicRuntimeContext: vi.fn(),
   getCurrentSession: vi.fn(),
   getStoredModel: vi.fn(),
@@ -29,6 +31,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({ findTelegramTopicBindingByThread: mocks.findTelegramTopicBindingByThread }));
+vi.mock("../../../src/core/native-core-service.js", () => ({ resolveCoreTopicBinding: mocks.resolveCoreTopicBinding }));
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({ getTopicRuntimeContext: mocks.getTopicRuntimeContext }));
 vi.mock("../../../src/app/services/session-service.js", () => ({ getCurrentSession: mocks.getCurrentSession }));
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({ getStoredModel: mocks.getStoredModel }));
@@ -79,6 +82,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findTelegramTopicBindingByThread.mockResolvedValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID, directory: "/proj", createdAt: "", updatedAt: "" });
+    mocks.resolveCoreTopicBinding.mockReturnValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID, normalizedDirectory: path.resolve("/proj") });
     mocks.getTopicRuntimeContext.mockReturnValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID });
     mocks.getCurrentSession.mockReturnValue({ id: SESSION_ID, directory: "/proj" });
     mocks.getStoredModel.mockReturnValue({ providerID: "p", modelID: "m", name: "Global Model" });
@@ -186,6 +190,14 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     const { handler, next } = registerHandler();
     await handler(makeTopicContext("fix the login bug"), next);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dispatch a Topic control when Core points at a different session", async () => {
+    mocks.resolveCoreTopicBinding.mockReturnValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: "stale-session", normalizedDirectory: path.resolve("/proj") });
+    const { handler, next } = registerHandler();
+    await handler(makeTopicContext("🛑 Abort"), next);
+    expect(mocks.abortCurrentOperation).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("consumes main-only buttons inside a topic (wrong scope, never a prompt)", async () => {

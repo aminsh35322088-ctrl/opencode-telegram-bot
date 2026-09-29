@@ -1,17 +1,12 @@
 import { Bot, Context } from "grammy";
+import path from "node:path";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
-import { opencodeClient } from "../../opencode/client.js";
-import { clearSession, getCurrentSession, setCurrentSession } from "../../app/services/session-service.js";
-import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
-import { getCurrentProject } from "../../app/stores/settings-store.js";
+import type { RunIdentity } from "@opencode-telegram/native-runtime";
+import { getEffectiveCurrentSession, setCurrentSession } from "../../app/services/session-service.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
-import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
-import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
-import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
-import { stopEventListening } from "../../opencode/events.js";
 import { interactionManager, clearAllInteractionState } from "../../app/managers/interaction-manager.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { formatErrorDetails } from "../../utils/error-format.js";
@@ -28,7 +23,8 @@ import { startSessionStallWatchdog, stopSessionStallWatchdog } from "../../app/s
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
-import { beginCoreRunForSession, dispatchCorePrompt, finishCoreRunForSession } from "../../core/native-core-service.js";
+import { beginCoreRunForSession, captureCurrentCoreBindingOwner, dispatchCorePrompt, finishCoreRunForSession, isCurrentCoreSessionRoute } from "../../core/native-core-service.js";
+import { createCoreSessionApi } from "../services/core-session-api.js";
 import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { rotateTelegramTopicSession } from "../../app/services/topic-session-rotation-service.js";
@@ -44,19 +40,6 @@ function isMissingSession(error: unknown, sessionId: string): boolean {
     detail.data?.message === `Session not found: ${sessionId}`;
 }
 
-async function resetMismatchedSessionContext(): Promise<void> {
-  detachAttachedSession("session_mismatch_reset");
-  stopEventListening();
-  summaryAggregator.clear();
-  foregroundSessionState.clearAll("session_mismatch_reset");
-  assistantRunState.clearAll("session_mismatch_reset");
-  clearAllInteractionState("session_mismatch_reset");
-  clearSession();
-  keyboardManager.clearContext();
-  if (!pinnedMessageManager.isInitialized()) return;
-  try { await pinnedMessageManager.clear(); } catch (err) { logger.error("[Bot] Failed to clear pinned message during session reset:", err); }
-}
-
 export interface ProcessPromptDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
 
 async function retireAttachmentConfirmation(ctx: Context, messageId: number | undefined): Promise<void> {
@@ -68,9 +51,11 @@ async function handlePromptStartFailure(input: {
   bot: Bot<Context>;
   chatId: number;
   session: { id: string; directory: string };
+  run: RunIdentity;
   error: unknown;
   reason: string;
 }): Promise<void> {
+  if (!isCurrentCoreSessionRoute(input.run)) return;
   const message = input.error instanceof Error ? input.error.message : String(input.error);
   promptQueue.clear(input.reason, input.session.id);
   promptAttachment.clear(input.reason, input.session.id);
@@ -87,35 +72,27 @@ async function handlePromptStartFailure(input: {
   } catch (error) {
     logger.warn(`[Bot] Failed to restore keyboard after prompt start error: session=${input.session.id}`, error);
   }
-  await input.bot.api.sendMessage(input.chatId, t("bot.prompt_send_error")).catch(() => {});
+  if (!isCurrentCoreSessionRoute(input.run)) return;
+  await createCoreSessionApi(input.bot.api, input.session.id)
+    .sendMessage(input.chatId, t("bot.prompt_send_error"))
+    .catch(() => {});
 }
 
 export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo, retryMissingSession = true, retryResourcePressure = true): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
-  const currentProject = getCurrentProject();
-  if (!currentProject) { await ctx.reply(t("bot.project_not_selected")); return false; }
-  let currentSession = getCurrentSession();
-  let createdNewSession = false;
-  if (currentSession && currentSession.directory !== currentProject.worktree) { await resetMismatchedSessionContext(); await ctx.reply(t("bot.session_reset_project_mismatch")); return false; }
-  if (!currentSession) {
-    await ctx.reply(t("bot.creating_session"));
-    const { data: session, error } = await opencodeClient.session.create({ directory: currentProject.worktree });
-    if (error || !session) { await ctx.reply(t("bot.create_session_error")); return false; }
-    logger.info(`[Bot] Created new session: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`);
-    currentSession = { id: session.id, title: session.title, directory: currentProject.worktree };
-    setCurrentSession(currentSession);
-    await ingestSessionInfoForCache(session);
-    createdNewSession = true;
+  let currentSession;
+  try {
+    const owner = captureCurrentCoreBindingOwner();
+    currentSession = await getEffectiveCurrentSession();
+    if (!currentSession || currentSession.id !== owner.sessionId || path.resolve(currentSession.directory) !== owner.directory) {
+      throw new Error("Prompt session does not match its Core Topic binding");
+    }
+  } catch (error) {
+    logger.warn("[Bot] Rejected prompt outside its current Core Topic binding", error);
+    await ctx.reply(t("general.topic_only_prompt"));
+    return false;
   }
   const attachResult = await attachToSession({ bot, chatId: ctx.chat!.id, session: currentSession, ensureEventSubscription });
-  if (createdNewSession) {
-    const currentAgent = await resolveProjectAgent(getStoredAgent());
-    const currentModel = getStoredModel();
-    keyboardManager.updateAgent(currentAgent);
-    const contextInfo = keyboardManager.getContextInfo();
-    const variantName = formatVariantForButton(currentModel.variant || "default");
-    await ctx.reply(t("bot.session_created", { title: currentSession.title }), { reply_markup: createMainKeyboard(currentAgent, currentModel, contextInfo ?? undefined, variantName) });
-  }
   const locallyBusy =
     assistantRunState.hasActiveRun(currentSession.id) ||
     foregroundSessionState.getBusySessions().some((session) => session.sessionId === currentSession!.id);
@@ -168,6 +145,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       taskName: "session.promptAsync",
       task: () => dispatchCorePrompt(coreRun, promptOptions),
       onSuccess: async (result) => {
+        if (!isCurrentCoreSessionRoute(coreRun)) return;
         const error = "error" in result ? result.error : undefined;
         if (!error) {
           logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`);
@@ -203,12 +181,13 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
         }
         logger.error("[Bot] OpenCode API returned an error for session.promptAsync", promptErrorLogContext);
         logger.error("[Bot] session.promptAsync error details:", formatErrorDetails(error, 6000));
-        await handlePromptStartFailure({ bot, chatId: ctx.chat!.id, session: currentSession!, error, reason: "session_prompt_api_error" });
+        await handlePromptStartFailure({ bot, chatId: ctx.chat!.id, session: currentSession!, run: coreRun, error, reason: "session_prompt_api_error" });
       },
       onError: async (error) => {
+        if (!isCurrentCoreSessionRoute(coreRun)) return;
         logger.error("[Bot] session.promptAsync background task failed", promptErrorLogContext);
         logger.error("[Bot] session.promptAsync background failure details:", formatErrorDetails(error, 6000));
-        await handlePromptStartFailure({ bot, chatId: ctx.chat!.id, session: currentSession!, error, reason: "session_prompt_background_error" });
+        await handlePromptStartFailure({ bot, chatId: ctx.chat!.id, session: currentSession!, run: coreRun, error, reason: "session_prompt_background_error" });
       },
     });
 

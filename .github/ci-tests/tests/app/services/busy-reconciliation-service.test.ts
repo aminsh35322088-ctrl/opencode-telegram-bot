@@ -5,7 +5,6 @@ const mocked = vi.hoisted(() => ({
   markAttachedSessionBusyMock: vi.fn(),
   markAttachedSessionIdleMock: vi.fn(),
   clearRunMock: vi.fn(),
-  clearPromptResponseModeMock: vi.fn(),
   flushDeferredDeliveriesMock: vi.fn(),
 }));
 
@@ -40,7 +39,6 @@ import {
   __resetBusyReconciliationForTests,
   reconcileBusyState,
   reconcileBusyStateNow,
-  setPromptResponseModeClearerForReconciliation,
   setResponseStreamerForReconciliation,
 } from "../../../src/app/services/busy-reconciliation-service.js";
 
@@ -65,8 +63,6 @@ describe("busy reconciliation", () => {
     mocked.markAttachedSessionIdleMock.mockReset();
     mocked.markAttachedSessionIdleMock.mockResolvedValue(undefined);
     mocked.clearRunMock.mockReset();
-    mocked.clearPromptResponseModeMock.mockReset();
-    setPromptResponseModeClearerForReconciliation(mocked.clearPromptResponseModeMock);
     mocked.flushDeferredDeliveriesMock.mockReset();
     mocked.flushDeferredDeliveriesMock.mockResolvedValue(undefined);
   });
@@ -83,7 +79,6 @@ describe("busy reconciliation", () => {
     expect(foregroundSessionState.isBusy()).toBe(false);
     expect(mocked.markAttachedSessionIdleMock).toHaveBeenCalledWith("session-1");
     expect(mocked.clearRunMock).toHaveBeenCalledWith("session-1", "status_reconcile_idle");
-    expect(mocked.clearPromptResponseModeMock).toHaveBeenCalledWith("session-1");
     expect(mocked.flushDeferredDeliveriesMock).toHaveBeenCalledTimes(1);
   });
 
@@ -99,7 +94,6 @@ describe("busy reconciliation", () => {
     expect(foregroundSessionState.isBusy()).toBe(true);
     expect(mocked.markAttachedSessionIdleMock).not.toHaveBeenCalled();
     expect(mocked.clearRunMock).not.toHaveBeenCalled();
-    expect(mocked.clearPromptResponseModeMock).not.toHaveBeenCalled();
     expect(mocked.flushDeferredDeliveriesMock).not.toHaveBeenCalled();
   });
 
@@ -257,7 +251,6 @@ describe("busy reconciliation", () => {
     expect(foregroundSessionState.isBusy()).toBe(true);
     expect(mocked.markAttachedSessionIdleMock).not.toHaveBeenCalled();
     expect(mocked.clearRunMock).not.toHaveBeenCalled();
-    expect(mocked.clearPromptResponseModeMock).not.toHaveBeenCalled();
     expect(mocked.flushDeferredDeliveriesMock).not.toHaveBeenCalled();
   });
 
@@ -279,7 +272,6 @@ describe("busy reconciliation", () => {
     expect(foregroundSessionState.isBusy()).toBe(false);
     expect(mocked.markAttachedSessionIdleMock).toHaveBeenCalledWith("session-1");
     expect(mocked.clearRunMock).toHaveBeenCalledWith("session-1", "status_reconcile_idle");
-    expect(mocked.clearPromptResponseModeMock).toHaveBeenCalledWith("session-1");
     expect(mocked.flushDeferredDeliveriesMock).toHaveBeenCalledTimes(1);
   });
 });

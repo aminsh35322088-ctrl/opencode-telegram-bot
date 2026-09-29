@@ -24,6 +24,8 @@ const mocked = vi.hoisted(() => ({
   attachToSessionMock: vi.fn(),
   recoverSessionAfterErrorMock: vi.fn(),
   beginCoreRunMock: vi.fn(),
+  captureOwnerMock: vi.fn(),
+  isCurrentCoreSessionRouteMock: vi.fn(),
   dispatchCorePromptMock: vi.fn(),
   finishCoreRunMock: vi.fn(),
   memoryRecoverMock: vi.fn(),
@@ -36,8 +38,17 @@ vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
 
 vi.mock("../../../src/core/native-core-service.js", () => ({
   beginCoreRunForSession: mocked.beginCoreRunMock,
+  captureCurrentCoreBindingOwner: mocked.captureOwnerMock,
+  isCurrentCoreSessionRoute: mocked.isCurrentCoreSessionRouteMock,
   dispatchCorePrompt: mocked.dispatchCorePromptMock,
   finishCoreRunForSession: mocked.finishCoreRunMock,
+}));
+
+vi.mock("../../../src/bot/services/core-session-api.js", () => ({
+  createCoreSessionApi: (api: { sendMessage: (...args: unknown[]) => unknown }) => ({
+    sendMessage: (chatId: number, text: string) =>
+      api.sendMessage(chatId, text, { message_thread_id: 20 }),
+  }),
 }));
 vi.mock("../../../src/app/services/opencode-memory-recovery-service.js", () => ({
   recoverIdleOpenCodeMemory: mocked.memoryRecoverMock,
@@ -58,6 +69,7 @@ vi.mock("../../../src/opencode/client.js", () => ({
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
   getCurrentSession: vi.fn(() => mocked.currentSession),
+  getEffectiveCurrentSession: vi.fn(async () => mocked.currentSession),
   setCurrentSession: vi.fn(),
   clearSession: vi.fn(),
 }));
@@ -222,6 +234,11 @@ describe("bot/handlers/prompt", () => {
     mocked.attachToSessionMock.mockReset();
     mocked.recoverSessionAfterErrorMock.mockReset();
     mocked.beginCoreRunMock.mockReset();
+    mocked.captureOwnerMock.mockReset().mockReturnValue({
+      sessionId: "session-1",
+      directory: "D:\\Projects\\Repo",
+    });
+    mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
     mocked.dispatchCorePromptMock.mockReset();
     mocked.finishCoreRunMock.mockReset();
     mocked.memoryRecoverMock.mockReset().mockResolvedValue(false);
@@ -287,6 +304,36 @@ describe("bot/handlers/prompt", () => {
     expect(mocked.suppressionRegisterMock).toHaveBeenCalledWith("session-1", "Review README");
   });
 
+  it("rejects an unbound prompt before creating an OpenCode session", async () => {
+    mocked.currentSession = null;
+    mocked.captureOwnerMock.mockImplementationOnce(() => { throw new Error("No Core Topic binding"); });
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "unbound-session", title: "Unexpected" },
+      error: null,
+    });
+    const ctx = createContext();
+
+    const handled = await processUserPrompt(ctx, "Review README", createDeps());
+
+    expect(handled).toBe(false);
+    expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
+    expect(mocked.attachToSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale Topic session before attaching or starting a run", async () => {
+    mocked.currentSession = {
+      id: "old-session",
+      title: "Old Topic",
+      directory: "D:\\Projects\\Repo",
+    };
+
+    const handled = await processUserPrompt(createContext(), "Review README", createDeps());
+
+    expect(handled).toBe(false);
+    expect(mocked.attachToSessionMock).not.toHaveBeenCalled();
+    expect(mocked.beginCoreRunMock).not.toHaveBeenCalled();
+  });
+
   it("starts prompts through promptAsync instead of the streaming prompt endpoint", async () => {
     const handled = await processUserPrompt(createContext(), "Review README", createDeps());
 
@@ -323,6 +370,7 @@ describe("bot/handlers/prompt", () => {
     expect(deps.bot.api.sendMessage).toHaveBeenCalledWith(
       777,
       "Failed to send request to OpenCode.",
+      { message_thread_id: 20 },
     );
     expect(mocked.recoverSessionAfterErrorMock).toHaveBeenCalledWith(
       "session-1",
@@ -352,12 +400,25 @@ describe("bot/handlers/prompt", () => {
     expect(deps.bot.api.sendMessage).toHaveBeenCalledWith(
       777,
       "Failed to send request to OpenCode.",
+      { message_thread_id: 20 },
     );
     expect(mocked.recoverSessionAfterErrorMock).toHaveBeenCalledWith(
       "session-1",
       "D:\\Projects\\Repo",
       "network down",
     );
+  });
+
+  it("drops a late prompt start failure after its Core Topic binding rotates", async () => {
+    const deps = createDeps();
+    const handled = await processUserPrompt(createContext(), "Review README", deps);
+    expect(handled).toBe(true);
+
+    mocked.isCurrentCoreSessionRouteMock.mockReturnValue(false);
+    await getScheduledBackgroundTask().onSuccess?.({ error: new Error("late failure") });
+
+    expect(mocked.recoverSessionAfterErrorMock).not.toHaveBeenCalled();
+    expect(deps.bot.api.sendMessage).not.toHaveBeenCalled();
   });
 
   it("reclaims idle OpenCode memory and retries once when Core admission rejects for memory pressure", async () => {
