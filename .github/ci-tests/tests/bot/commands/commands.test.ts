@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Bot, Context } from "grammy";
 import { commandsCommand } from "../../../src/bot/commands/command-catalog-command.js";
 import {
+  executeCommand,
   handleCommandsCallback,
   type ExecuteCommandDeps,
 } from "../../../src/bot/callbacks/command-catalog-callback-handler.js";
@@ -43,6 +44,7 @@ const mocked = vi.hoisted(() => ({
   suppressionRegisterMock: vi.fn(),
   attachToSessionMock: vi.fn(),
   captureCoreOwnerMock: vi.fn(),
+  isCurrentCoreSessionRouteMock: vi.fn(),
   beginCoreRunMock: vi.fn(),
   dispatchCoreOwnedTaskMock: vi.fn(),
   finishCoreRunMock: vi.fn(),
@@ -54,6 +56,7 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
   getCurrentSession: vi.fn(() => mocked.currentSession),
+  getEffectiveCurrentSession: vi.fn(async () => mocked.currentSession),
   setCurrentSession: vi.fn((session) => {
     mocked.currentSession = session;
     mocked.setCurrentSessionMock(session);
@@ -144,6 +147,7 @@ vi.mock("../../../src/app/services/attach-service.js", () => ({
 
 vi.mock("../../../src/core/native-core-service.js", () => ({
   captureCurrentCoreBindingOwner: mocked.captureCoreOwnerMock,
+  isCurrentCoreSessionRoute: mocked.isCurrentCoreSessionRouteMock,
   beginCoreRunForSession: mocked.beginCoreRunMock,
   dispatchCoreOwnedTask: mocked.dispatchCoreOwnedTaskMock,
   finishCoreRunForSession: mocked.finishCoreRunMock,
@@ -238,7 +242,8 @@ describe("bot/commands/commands", () => {
     mocked.safeBackgroundTaskMock.mockReset();
     mocked.suppressionRegisterMock.mockReset();
     mocked.attachToSessionMock.mockReset();
-    mocked.captureCoreOwnerMock.mockReset().mockReturnValue({ directory: path.resolve("D:\\Projects\\Repo") });
+    mocked.captureCoreOwnerMock.mockReset().mockReturnValue({ sessionId: "session-1", directory: path.resolve("D:\\Projects\\Repo") });
+    mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
     mocked.beginCoreRunMock.mockReset().mockResolvedValue({ runId: "run-command" });
     mocked.dispatchCoreOwnedTaskMock.mockReset().mockImplementation((_run, _label, task) => task({ signal: new AbortController().signal }));
     mocked.finishCoreRunMock.mockReset();
@@ -440,6 +445,38 @@ describe("bot/commands/commands", () => {
     expect(ctx.reply).toHaveBeenCalledWith(t("commands.execute_error"));
     expect(mocked.beginCoreRunMock).not.toHaveBeenCalled();
     expect(mocked.sessionCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects command execution when the persisted Topic session is missing", async () => {
+    mocked.currentSession = null;
+    const ctx = createCallbackContext("commands:execute", 502);
+    await executeCommand(ctx, createDeps(), {
+      projectDirectory: "D:\\Projects\\Repo",
+      commandName: "poem",
+      argumentsText: "",
+    });
+
+    expect(ctx.reply).toHaveBeenCalledWith(t("commands.execute_error"));
+    expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
+    expect(mocked.attachToSessionMock).not.toHaveBeenCalled();
+    expect(mocked.beginCoreRunMock).not.toHaveBeenCalled();
+  });
+
+  it("drops a late command failure after its Core Topic binding rotates", async () => {
+    const ctx = createCallbackContext("commands:execute", 503);
+    await executeCommand(ctx, createDeps(), {
+      projectDirectory: "D:\\Projects\\Repo",
+      commandName: "poem",
+      argumentsText: "",
+    });
+    const [[backgroundTask]] = mocked.safeBackgroundTaskMock.mock.calls;
+    expect(backgroundTask).toBeDefined();
+
+    mocked.isCurrentCoreSessionRouteMock.mockReturnValue(false);
+    backgroundTask.onError(new Error("late failure"));
+
+    expect(mocked.finishCoreRunMock).not.toHaveBeenCalled();
+    expect(ctx.api.sendMessage).not.toHaveBeenCalled();
   });
 
   it("handles stale callback as inactive", async () => {

@@ -4,13 +4,9 @@ import type { CommandCatalogItem } from "../../app/services/command-catalog-serv
 import { config } from "../../config.js";
 import { loadCommandCatalog } from "../../app/services/command-catalog-service.js";
 import {
-  clearSession,
-  getCurrentSession,
+  getEffectiveCurrentSession,
   getCurrentSessionDirectory,
-  setCurrentSession,
 } from "../../app/services/session-service.js";
-import type { SessionInfo } from "../../app/types/session.js";
-import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
 import type { InteractionState } from "../../app/types/interaction.js";
 import { summaryAggregator } from "../../app/managers/summary-aggregation-manager.js";
@@ -24,13 +20,13 @@ import { foregroundSessionState } from "../../app/managers/foreground-session-st
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import {
   attachToSession,
-  detachAttachedSession,
   markAttachedSessionBusy,
   markAttachedSessionIdle,
 } from "../../app/services/attach-service.js";
 import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
 import { opencodeClient } from "../../opencode/client.js";
-import { beginCoreRunForSession, captureCurrentCoreBindingOwner, dispatchCoreOwnedTask, finishCoreRunForSession } from "../../core/native-core-service.js";
+import { beginCoreRunForSession, captureCurrentCoreBindingOwner, dispatchCoreOwnedTask, finishCoreRunForSession, isCurrentCoreSessionRoute } from "../../core/native-core-service.js";
+import { createCoreSessionApi } from "../services/core-session-api.js";
 import {
   buildCommandsConfirmKeyboard,
   buildCommandsListKeyboard,
@@ -150,36 +146,16 @@ async function isSessionBusy(sessionId: string, directory: string): Promise<bool
   }
 }
 
-async function ensureSessionForProject(ctx: Context, projectDirectory: string): Promise<SessionInfo | null> {
-  let currentSession = getCurrentSession();
-  if (currentSession && currentSession.directory !== projectDirectory) {
-    detachAttachedSession("session_mismatch_reset");
-    clearSession();
-    summaryAggregator.clear();
-    foregroundSessionState.clearAll("session_mismatch_reset");
-    assistantRunState.clearAll("session_mismatch_reset");
-    await ctx.reply(t("bot.session_reset_project_mismatch"));
-    currentSession = null;
-  }
-  if (currentSession) return currentSession;
-  await ctx.reply(t("bot.creating_session"));
-  const { data: session, error } = await opencodeClient.session.create({ directory: projectDirectory });
-  if (error || !session) {
-    await ctx.reply(t("bot.create_session_error"));
-    return null;
-  }
-  const sessionInfo: SessionInfo = { id: session.id, title: session.title, directory: projectDirectory };
-  setCurrentSession(sessionInfo);
-  await ingestSessionInfoForCache(session);
-  await ctx.reply(t("bot.session_created", { title: session.title }));
-  return sessionInfo;
-}
-
 export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, params: ExecuteCommandParams): Promise<void> {
   if (!ctx.chat) return;
+  let session;
   try {
     const owner = captureCurrentCoreBindingOwner();
     if (owner.directory !== path.resolve(params.projectDirectory)) throw new Error("command directory differs from Core binding");
+    session = await getEffectiveCurrentSession();
+    if (!session || session.id !== owner.sessionId || path.resolve(session.directory) !== owner.directory) {
+      throw new Error("Command session does not match its Core Topic binding");
+    }
   } catch (error) {
     logger.warn("[Commands] Rejected command outside its Core Topic binding", error);
     await ctx.reply(t("commands.execute_error"));
@@ -188,8 +164,6 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
   const args = params.argumentsText.trim();
   const executingMessage = formatExecutingCommandMessage(params.commandName, args);
   await ctx.reply(executingMessage.text, { entities: executingMessage.entities });
-  const session = await ensureSessionForProject(ctx, params.projectDirectory);
-  if (!session) return;
   await attachToSession({ bot: deps.bot, chatId: ctx.chat.id, session, ensureEventSubscription: deps.ensureEventSubscription });
   if (await isSessionBusy(session.id, session.directory)) {
     await ctx.reply(t("bot.session_busy"));
@@ -232,6 +206,7 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
       }, { signal }),
     ),
     onSuccess: ({ error }) => {
+      if (!isCurrentCoreSessionRoute(coreRun)) return;
       if (error) {
         foregroundSessionState.markIdle(session.id);
         void markAttachedSessionIdle(session.id);
@@ -239,19 +214,20 @@ export async function executeCommand(ctx: Context, deps: ExecuteCommandDeps, par
         finishCoreRunForSession(session.id);
         logger.error("[Commands] OpenCode API returned an error for session.command", { sessionId: session.id, command: params.commandName, args });
         logger.error("[Commands] session.command error details:", error);
-        void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
+        void createCoreSessionApi(ctx.api, session.id).sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
         return;
       }
       logger.info(`[Commands] session.command completed: session=${session.id}, command=/${params.commandName}`);
     },
     onError: (error) => {
+      if (!isCurrentCoreSessionRoute(coreRun)) return;
       foregroundSessionState.markIdle(session.id);
       void markAttachedSessionIdle(session.id);
       assistantRunState.clearRun(session.id, "session_command_background_error");
       finishCoreRunForSession(session.id);
       logger.error("[Commands] session.command background task failed", { sessionId: session.id, command: params.commandName, args });
       logger.error("[Commands] session.command background failure details:", error);
-      void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
+      void createCoreSessionApi(ctx.api, session.id).sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
     },
   });
 }
