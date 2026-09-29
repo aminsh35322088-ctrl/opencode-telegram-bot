@@ -25,7 +25,20 @@ Admission is fail-closed when the predicted footprint would cross a category pre
 
 A global default ceiling of seven admitted child processes applies across normal work categories. `BOT_PROCESS_MAX_ACTIVE` can lower or raise it when a deployment envelope changes. The bounded `cleanup` recovery lane is deliberately exempt from the normal global and memory admission gates so an overloaded service can still terminate stale processes; it remains capped at eight concurrent cleanup commands with a 10-second maximum lifetime.
 
-Container infrastructure that exists before the Node bot starts is treated as baseline rather than lease-admitted work. In production this includes `dumb-init` and the single shared `tailscaled` daemon started by `railway-entrypoint.sh`. The daemon is explicitly bounded with `GOMAXPROCS=1`, `GOMEMLIMIT=160MiB`, one instance only, and the existing 10-second socket-readiness deadline. Bootstrap repository clone/fetch/reconcile commands are serialized before application startup and each network/reconcile phase is bounded by `BOOTSTRAP_GIT_TIMEOUT_SEC` (120 seconds by default). Their memory is still part of `memory.current`, so every later admission pays for it. The watchdog also reports `serviceProcessCount` from `cgroup.procs`, ensuring baseline and nested descendants remain visible in service-level accounting even when they are not direct registry children.
+Container infrastructure that exists before the Node bot starts is treated as baseline rather than lease-admitted work. In production this includes `dumb-init` and the single shared `tailscaled` daemon started by `railway-entrypoint.sh`. The daemon is explicitly bounded with `GOMAXPROCS=1`, `GOMEMLIMIT=160MiB`, one instance only, and the existing 10-second socket-readiness deadline. Bootstrap repository clone/fetch/reconcile commands are serialized before application startup and each network/reconcile phase is bounded by `BOOTSTRAP_GIT_TIMEOUT_SEC` (120 seconds by default). Startup version/toolchain probes are bounded independently by `BOOTSTRAP_PROBE_TIMEOUT_SEC` (5 seconds by default), so a broken CLI cannot stall service boot. Their memory is still part of `memory.current`, so every later admission pays for it. The watchdog also reports `serviceProcessCount` from `cgroup.procs`, ensuring baseline and nested descendants remain visible in service-level accounting even when they are not direct registry children.
+
+## In-process workload budgets
+
+Not every expensive unit is an OS process. Telegram Core treats these as resource-budgeted workloads too:
+
+| Workload | Default rule | Pressure / failure behavior |
+| --- | --- | --- |
+| TopicWorker | Hard cap from `railwayPolicy.maxWorkers`; one worker per admitted binding | At soft RSS pressure, evict the oldest idle worker or reject new work; at hard RSS, emergency shutdown. General/ALL never receives a worker. |
+| Sub-Agent | 4 active children per parent, 6 globally, max 24 active/queued per parent | Rolling admission; each active child has a 20-minute execution deadline; one child failure does not cancel healthy siblings. |
+| Scheduled task | Reuses the same binding/worker admission path | Unbound/stale bindings fail closed; durable execution IDs suppress duplicates. |
+| Telegram API request | Normal calls receive bounded deadlines | Long-poll `getUpdates` is the deliberate exception so polling can remain open without being mistaken for a stuck request. |
+
+These Core workload budgets become production-active with the Telegram Core runtime migration. Until then, the Bot-side cgroup governor still sees their aggregate memory/CPU through the OpenCode process.
 
 ## OpenCode child processes
 

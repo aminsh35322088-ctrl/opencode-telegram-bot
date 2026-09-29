@@ -11,11 +11,20 @@ describe("Railway entrypoint repository bootstrap", () => {
     expect(source).toContain("RAILWAY_GIT_REPO_NAME");
     expect(source).toContain("RAILWAY_GIT_COMMIT_SHA");
     expect(source).toContain('BOOTSTRAP_GIT_TIMEOUT_SEC="${BOOTSTRAP_GIT_TIMEOUT_SEC:-120}"');
+    expect(source).toContain('BOOTSTRAP_PROBE_TIMEOUT_SEC="${BOOTSTRAP_PROBE_TIMEOUT_SEC:-5}"');
     expect(source).toContain("git clone --filter=blob:none --no-tags");
     expect(source).toContain('timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git clone');
     expect(source).toContain("git -C \'$PERSISTENT_REPO_DIR\' fetch --prune origin");
     expect(source).toContain('timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C');
     expect(source).toContain("Persistent repository checkout ready");
+    expect(source).toContain('timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C');
+  });
+
+  it("bounds startup version probes so tool discovery cannot stall the service", () => {
+    expect(source).toContain('timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" su -s /bin/sh node -c \'opencode --version\'');
+    expect(source).toContain('timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" playwright-cli --version');
+    expect(source).toContain('timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" node --version');
+    expect(source).toContain('timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" /usr/bin/gh --version');
   });
 
   it("cleans untracked persistent checkout artifacts before OpenCode uses it", () => {

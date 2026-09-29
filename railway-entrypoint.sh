@@ -170,6 +170,7 @@ su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHtt
 
 PERSISTENT_REPO_DIR="/data/opencode/opencode-telegram-bot"
 BOOTSTRAP_GIT_TIMEOUT_SEC="${BOOTSTRAP_GIT_TIMEOUT_SEC:-120}"
+BOOTSTRAP_PROBE_TIMEOUT_SEC="${BOOTSTRAP_PROBE_TIMEOUT_SEC:-5}"
 if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; then
   REPO_URL="https://github.com/${RAILWAY_GIT_REPO_OWNER}/${RAILWAY_GIT_REPO_NAME}.git"
   REPO_BRANCH="${RAILWAY_GIT_BRANCH:-main}"
@@ -184,14 +185,14 @@ if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; 
   timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
   REPO_REVISION="${RAILWAY_GIT_COMMIT_SHA:-origin/$REPO_BRANCH}"
   timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' clean -ffd && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
-  REPO_HEAD="$(su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
+  REPO_HEAD="$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
   printf '%s\n' "[railway] Persistent repository checkout ready: ${PERSISTENT_REPO_DIR} (${REPO_BRANCH}@${REPO_HEAD})"
 else
   printf '%s\n' "[railway] WARNING: Railway Git metadata is unavailable; persistent repository checkout was not refreshed" >&2
 fi
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
-printf '%s\n' "[railway] OpenCode CLI: $(su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"
+printf '%s\n' "[railway] OpenCode CLI: $(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
@@ -200,8 +201,8 @@ printf '%s\n' "[railway] OpenCode default cwd: ${OPENCODE_TELEGRAM_WORKSPACE}"
 printf '%s\n' "[railway] OpenCode config dir: ${OPENCODE_CONFIG_DIR}"
 printf '%s\n' "[railway] Global tool dir: ${GLOBAL_TOOLS_DIR}"
 printf '%s\n' "[railway] Agent tools: $(find "$GLOBAL_TOOLS_DIR" -maxdepth 1 -name '*.ts' -type f 2>/dev/null | wc -l) custom tools"
-printf '%s\n' "[railway] Playwright CLI: $(playwright-cli --version 2>/dev/null || echo unavailable)"
-printf '%s\n' "[railway] Toolchain: node=$(node --version), python=$(python3 --version 2>/dev/null || echo unavailable), git=$(git --version), gh=$(/usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable)"
+printf '%s\n' "[railway] Playwright CLI: $(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" playwright-cli --version 2>/dev/null || echo unavailable)"
+printf '%s\n' "[railway] Toolchain: node=$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" node --version 2>/dev/null || echo unavailable), python=$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" python3 --version 2>/dev/null || echo unavailable), git=$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" git --version 2>/dev/null || echo unavailable), gh=$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" /usr/bin/gh --version 2>/dev/null | head -1 || echo unavailable)"
 printf '%s\n' "[railway] Runtime dependencies: ${OPENCODE_RUNTIME_NODE_DEPS}"
 printf '%s\n' "[railway] GitHub native integration credentials load dynamically from persistent bot state"
 
