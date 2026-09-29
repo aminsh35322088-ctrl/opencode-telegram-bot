@@ -178,7 +178,7 @@ export class OpencodeAutoRestartService {
   }
 
   private async stopExistingServerIfNeeded(): Promise<void> {
-    if (!this.localTarget) return false;
+    if (!this.localTarget) return;
 
     const existingPid = await findServerPid(this.localTarget.port);
     if (existingPid === null) return;
@@ -194,7 +194,7 @@ export class OpencodeAutoRestartService {
   }
 
   private async startServer(reason: "startup" | "interval" | "config"): Promise<boolean> {
-    if (!this.localTarget) return;
+    if (!this.localTarget) return false;
     if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
       logger.warn(`[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`);
       return false;
