@@ -609,10 +609,11 @@ export async function runCoreSessionTask<T>(
   directory: string,
   operation: string,
   task: (context: CoreOwnedTaskContext) => Promise<T>,
+  options: { timeoutMs?: number } = {},
 ): Promise<T> {
   const run = await beginCoreRunForSession(sessionId, directory, operation);
   try {
-    return await dispatchCoreOwnedTask(run, operation, task);
+    return await dispatchCoreOwnedTask(run, operation, task, options);
   } finally {
     finishCoreRunForSession(sessionId);
   }

@@ -62,6 +62,7 @@ export async function handleCompactConfirm(ctx: Context): Promise<boolean> {
         providerID: storedModel.providerID,
         modelID: storedModel.modelID,
       }, { signal }),
+      { timeoutMs: 120 * 60_000 },
     );
 
     if (error) {
