@@ -1,8 +1,9 @@
 import { logger } from "../../utils/logger.js";
-import { refreshFreeLlmCatalog } from "./free-llm-catalog-service.js";
+import { buildFreeLlmOpenCodeProviders, refreshFreeLlmCatalog } from "./free-llm-catalog-service.js";
 import { syncOpenCodeCustomConfig } from "./custom-provider-service.js";
 import { refreshModelCatalog } from "./model-selection-service.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -36,6 +37,48 @@ async function isSafeToReloadOpenCode(): Promise<boolean> {
   }
 }
 
+export async function verifyFreeLlmRuntimeRegistration(): Promise<boolean> {
+  const expected = await buildFreeLlmOpenCodeProviders();
+  const expectedProviderIds = Object.keys(expected).sort();
+  if (!expectedProviderIds.length) return true;
+
+  const { data, error } = await opencodeClient.config.providers();
+  if (error || !data) {
+    logger.warn("[FreeLLMCatalog] Could not verify runtime provider registration", error);
+    return false;
+  }
+
+  const actual = new Map(
+    data.providers.map((provider) => [provider.id, new Set(Object.keys(provider.models ?? {}))]),
+  );
+  const missingProviders: string[] = [];
+  const missingModels: string[] = [];
+
+  for (const providerId of expectedProviderIds) {
+    const configured = expected[providerId] as { models?: Record<string, unknown> } | undefined;
+    const runtimeModels = actual.get(providerId);
+    if (!runtimeModels) {
+      missingProviders.push(providerId);
+      continue;
+    }
+    for (const modelId of Object.keys(configured?.models ?? {})) {
+      if (!runtimeModels.has(modelId)) missingModels.push(`${providerId}/${modelId}`);
+    }
+  }
+
+  if (missingProviders.length || missingModels.length) {
+    logger.warn(
+      `[FreeLLMCatalog] Runtime registration mismatch: missingProviders=${missingProviders.join(",") || "none"}, missingModels=${missingModels.length}`,
+    );
+    return false;
+  }
+
+  logger.info(
+    `[FreeLLMCatalog] Runtime registration verified: providers=${expectedProviderIds.join(",")}, models=${expectedProviderIds.reduce((count, id) => count + Object.keys((expected[id] as { models?: Record<string, unknown> } | undefined)?.models ?? {}).length, 0)}`,
+  );
+  return true;
+}
+
 async function applyPendingRuntimeReload(): Promise<void> {
   if (!runtimeReloadPending) return;
   if (!(await isOpenCodeReady())) return;
@@ -44,10 +87,20 @@ async function applyPendingRuntimeReload(): Promise<void> {
     return;
   }
 
-  const { error } = await opencodeClient.global.dispose();
-  if (error) throw error;
+  const restarted = await opencodeAutoRestartService.restartForConfigChange("free_llm_catalog");
+  if (!restarted) {
+    logger.warn("[FreeLLMCatalog] Managed config was staged but OpenCode process restart could not be completed");
+    return;
+  }
+
+  const verified = await verifyFreeLlmRuntimeRegistration();
+  if (!verified) {
+    logger.warn("[FreeLLMCatalog] Keeping runtime reload pending because provider registration is incomplete");
+    return;
+  }
+
   runtimeReloadPending = false;
-  logger.info("[FreeLLMCatalog] Reloaded idle OpenCode instances with refreshed public catalog");
+  logger.info("[FreeLLMCatalog] Applied refreshed public catalog to the live OpenCode runtime");
   await refreshModelCatalog();
 }
 
