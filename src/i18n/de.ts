@@ -65,6 +65,10 @@ export const de: I18nDictionary = {
     "⚠️ Die aktive Sitzung passt nicht zum ausgewählten Projekt und wurde daher zurückgesetzt. Nutze /sessions zur Auswahl oder /new, um eine neue Sitzung zu erstellen.",
   "bot.prompt_send_error": "Anfrage konnte nicht an OpenCode gesendet werden.",
   "bot.empty_prompt": "⚠️ Es gibt nichts zu senden: Die Nachricht ist nach der Anhangverarbeitung leer.",
+  "bot.empty_response":
+    "⚠️ Das Modell hat ohne Text geantwortet. Formulieren Sie die Anfrage um oder verwenden Sie /abort und versuchen Sie es erneut.",
+  "bot.session_stalled":
+    "⏸️ Das Modell hat keine Fortschritte mehr gemacht und der Lauf wurde gestoppt. Es wurde keine Antwort erzeugt; bitte versuchen Sie es erneut.",
   "bot.session_error": "🔴 OpenCode meldete einen Fehler: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nDer Provider liefert bei wiederholten Versuchen immer wieder denselben Fehler. Mit /abort abbrechen.",

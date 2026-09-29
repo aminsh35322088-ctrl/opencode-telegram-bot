@@ -65,6 +65,10 @@ export const pt: I18nDictionary = {
     "⚠️ A sessão ativa não corresponde ao projeto selecionado, então ela foi redefinida. Use /sessions para escolher uma ou /new para criar uma nova sessão.",
   "bot.prompt_send_error": "Não foi possível enviar a solicitação ao OpenCode.",
   "bot.empty_prompt": "⚠️ Nada para enviar: a mensagem fica vazia após o processamento do anexo.",
+  "bot.empty_response":
+    "⚠️ O modelo terminou sem produzir texto. Reformule o pedido ou use /abort e tente novamente.",
+  "bot.session_stalled":
+    "⏸️ O modelo parou de progredir e a execução foi interrompida. Nenhuma resposta foi produzida; tente novamente.",
   "bot.session_error": "🔴 O OpenCode retornou um erro: {message}",
   "bot.session_retry":
     "🔁 {message}\n\nO provedor continua retornando o mesmo erro nas novas tentativas. Use /abort para abortar.",

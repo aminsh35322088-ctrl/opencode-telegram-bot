@@ -1,10 +1,13 @@
-﻿import { describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, NextFunction } from "grammy";
 import { defined } from "../../helpers/defined.js";
 
 const mocked = vi.hoisted(() => ({
   flushPendingPrompt: vi.fn(),
   opencodeStopCommand: vi.fn(),
+  taskCommand: vi.fn(),
+  commandsCommand: vi.fn(),
+  skillsCommand: vi.fn(),
 }));
 
 vi.mock("../../../src/bot/handlers/message-merger.js", () => ({
@@ -16,6 +19,18 @@ vi.mock("../../../src/bot/commands/opencode-stop-command.js", () => ({
   opencodeStopCommand: mocked.opencodeStopCommand,
 }));
 
+vi.mock("../../../src/bot/commands/task-command.js", () => ({
+  taskCommand: mocked.taskCommand,
+}));
+
+vi.mock("../../../src/bot/commands/command-catalog-command.js", () => ({
+  commandsCommand: mocked.commandsCommand,
+}));
+
+vi.mock("../../../src/bot/commands/skills-catalog-command.js", () => ({
+  skillsCommand: mocked.skillsCommand,
+}));
+
 import {
   ensureCommandsInitialized,
   registerCommandRouter,
@@ -25,6 +40,31 @@ import { config } from "../../../src/config.js";
 import { runInTopicRuntimeContext } from "../../../src/app/services/topic-runtime-context.js";
 
 describe("bot/routers/command-router", () => {
+  beforeEach(() => {
+    mocked.taskCommand.mockReset();
+    mocked.commandsCommand.mockReset();
+    mocked.skillsCommand.mockReset();
+  });
+
+  it.each([
+    ["task", mocked.taskCommand],
+    ["commands", mocked.commandsCommand],
+    ["skills", mocked.skillsCommand],
+  ] as const)("does not dispatch /%s to its model-backed handler in General", async (command, handler) => {
+    const bot = { command: vi.fn(), use: vi.fn(), hears: vi.fn(), on: vi.fn() };
+    registerCommandRouter(bot as never, { ensureEventSubscription: vi.fn(), clearRuntimeState: vi.fn() });
+    const registration = bot.command.mock.calls.find(([name]) => name === command);
+    const ctx = {
+      chat: { id: 42, type: "supergroup", is_forum: true },
+      message: { message_thread_id: 1, text: `/${command}` },
+      reply: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Context;
+
+    await defined(registration?.[1])(ctx);
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("restores a Topic keyboard on repeated explicit requests", async () => {
     const bot = { command: vi.fn(), use: vi.fn(), hears: vi.fn(), on: vi.fn() };
     registerCommandRouter(bot as never, { ensureEventSubscription: vi.fn(), clearRuntimeState: vi.fn() });

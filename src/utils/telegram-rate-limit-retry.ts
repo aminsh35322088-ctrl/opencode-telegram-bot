@@ -19,6 +19,9 @@ interface TelegramRateLimitRetryOptions {
   maxRetries?: number;
   fallbackDelayMs?: number;
   retryTransientServerErrors?: boolean;
+  maxRetryAfterMs?: number;
+  maxElapsedMs?: number;
+  signal?: AbortSignal;
   onRetry?: (info: RetryAttemptInfo) => void;
 }
 
@@ -120,9 +123,17 @@ function getServerErrorBackoffMs(attempt: number, baseDelayMs: number): number {
   return Math.min(Math.max(1, Math.floor(delayMs)), MAX_SERVER_ERROR_BACKOFF_MS);
 }
 
-function wait(ms: number): Promise<void> {
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    const onAbort = () => finish();
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -159,6 +170,9 @@ export async function withTelegramRateLimitRetry<T>(
   const maxRetries = Math.max(0, Math.floor(options?.maxRetries ?? 3));
   const fallbackDelayMs = options?.fallbackDelayMs ?? 1000;
   const retryTransientServerErrors = options?.retryTransientServerErrors ?? false;
+  const maxRetryAfterMs = options?.maxRetryAfterMs;
+  const maxElapsedMs = options?.maxElapsedMs;
+  const startedAt = Date.now();
 
   let attempt = 0;
   while (true) {
@@ -174,13 +188,24 @@ export async function withTelegramRateLimitRetry<T>(
         throw error;
       }
 
+      const boundedRetryAfterMs = Math.max(
+        1,
+        Math.floor(maxRetryAfterMs === undefined ? retryAfterMs : Math.min(retryAfterMs, maxRetryAfterMs)),
+      );
+      if (
+        maxElapsedMs !== undefined &&
+        Date.now() - startedAt + boundedRetryAfterMs >= maxElapsedMs
+      ) {
+        throw error;
+      }
+
       attempt += 1;
       options?.onRetry?.({
         attempt,
-        retryAfterMs,
+        retryAfterMs: boundedRetryAfterMs,
         error,
       });
-      await wait(retryAfterMs);
+      await wait(boundedRetryAfterMs, options?.signal);
     }
   }
 }

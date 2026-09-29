@@ -27,6 +27,8 @@ vi.mock("../../../src/app/services/telegram-topic-store.js", () => ({
 import { rotateTelegramTopicSessionForModel } from "../../../src/app/services/topic-session-rotation-service.js";
 
 const binding = {
+  bindingId: "100:20",
+  bindingGeneration: 1,
   chatId: 100,
   threadId: 20,
   sessionId: "ses_old",

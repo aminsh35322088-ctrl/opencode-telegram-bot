@@ -54,6 +54,10 @@ export const zh: I18nDictionary = {
     "⚠️ 活动会话与所选项目不匹配，因此已重置。使用 /sessions 选择一个会话，或 /new 创建新会话。",
   "bot.prompt_send_error": "向 OpenCode 发送请求失败。",
   "bot.empty_prompt": "⚠️ 没有可发送的内容：处理附件后消息为空。",
+  "bot.empty_response":
+    "⚠️ 模型结束时未生成任何文本。请换一种方式提问，或使用 /abort 后重试。",
+  "bot.session_stalled":
+    "⏸️ 模型已停止推进，运行已停止。未生成回复，请重试。",
   "bot.session_error": "🔴 OpenCode 返回错误：{message}",
   "bot.session_retry": "🔁 {message}\n\n提供方在重复重试时持续返回同一错误。使用 /abort 可停止。",
   "bot.external_user_input": "外部用户输入",

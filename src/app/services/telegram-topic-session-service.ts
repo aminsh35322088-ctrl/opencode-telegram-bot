@@ -1,7 +1,7 @@
 import type { Api } from "grammy";
 import { logger } from "../../utils/logger.js";
 import type { SessionInfo } from "../types/session.js";
-import { findTelegramTopicBindingBySession, listTelegramTopicBindings, saveTelegramTopicBinding, type TelegramTopicBinding } from "./telegram-topic-store.js";
+import { findTelegramTopicBindingBySession, findTelegramTopicBindingByThread, listTelegramTopicBindings, saveTelegramTopicBinding, type TelegramTopicBinding } from "./telegram-topic-store.js";
 
 const OPEN_SESSION_LOCKS = new Map<string, Promise<TelegramTopicBinding>>();
 const CHAT_TOPIC_CREATION_LOCKS = new Map<number, Promise<void>>();
@@ -32,7 +32,7 @@ async function getNextChatTitle(chatId: number): Promise<string> {
   return getNextManagedChatTitle(await listTelegramTopicBindings(), chatId);
 }
 async function createForumTopic(api: Api, chatId: number, title: string): Promise<number> { const result = await api.raw.createForumTopic({ chat_id: chatId, name: title }); if (!result.message_thread_id) throw new Error("Telegram created a topic without a message_thread_id"); return result.message_thread_id; }
-async function persistNewBinding(chatId: number, session: SessionInfo, threadId: number, title: string): Promise<TelegramTopicBinding> { const now = new Date().toISOString(); const binding: TelegramTopicBinding = { chatId, threadId, sessionId: session.id, directory: session.directory, createdAt: now, updatedAt: now, title }; await saveTelegramTopicBinding(binding); return binding; }
+async function persistNewBinding(chatId: number, session: SessionInfo, threadId: number, title: string): Promise<TelegramTopicBinding> { const now = new Date().toISOString(); await saveTelegramTopicBinding({ chatId, threadId, sessionId: session.id, directory: session.directory, createdAt: now, updatedAt: now, title }); const saved = await findTelegramTopicBindingByThread(chatId, threadId); if (!saved) throw new Error(`Topic binding for chat/thread ${chatId}:${threadId} was not persisted`); return saved; }
 
 async function openSessionInTopicInternal(api: Api, chatId: number, session: SessionInfo): Promise<TelegramTopicBinding> {
   const existing = await findTelegramTopicBindingBySession(chatId, session.id);
