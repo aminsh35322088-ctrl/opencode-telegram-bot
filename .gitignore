@@ -41,11 +41,10 @@ settings.json.tmp
 session-export-*
 .archive/
 
-# Orbit runtime state
-.orbit-state/
-
 # Packaging artifacts
 *.tgz
 
 .boardown/
 manager/
+
+.core/

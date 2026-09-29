@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { getAgentAction } from "../../../src/app/services/agent-action-registry.js";
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../../src/opencode/managed-policy.js";
 
 const REQUIRED = [
   "github-ci.dispatch", "github-ci.jobs", "github-ci.rerun-failed", "github-ci.cancel",
@@ -14,6 +15,7 @@ const REQUIRED = [
   "tailscale.status", "tailscale.devices", "tailscale.ping", "tailscale.ssh-public-key", "ssh.check", "ssh.debug", "ssh.exec", "ssh.upload", "ssh.download",
 ] as const;
 
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../../src/opencode/managed-policy.js";
 describe("expanded model-facing action surface", () => {
   it("keeps the deferred action checklist registered", () => {
     for (const id of REQUIRED) expect(getAgentAction(id), id).not.toBeNull();
@@ -80,15 +82,13 @@ describe("expanded model-facing action surface", () => {
   });
 
   it("keeps SSH Tailnet-only and permission-gated", async () => {
-    const [sshTool, tailscaleTool, opencodeConfigText] = await Promise.all([
+    const [sshTool, tailscaleTool] = await Promise.all([
       fs.readFile(".opencode/tools/ssh.ts", "utf8"),
       fs.readFile(".opencode/tools/tailscale.ts", "utf8"),
-      fs.readFile("opencode.json", "utf8"),
     ]);
-    const opencodeConfig = JSON.parse(opencodeConfigText) as { permission?: Record<string, unknown> };
-    expect(opencodeConfig.permission?.ssh).toBe("allow");
-    expect(opencodeConfig.permission?.["ssh-remote"]).toBe("ask");
-    expect(opencodeConfig.permission?.tailscale).toBe("allow");
+    expect(MANAGED_OPENCODE_PERMISSION_POLICY.ssh).toBe("allow");
+    expect(MANAGED_OPENCODE_PERMISSION_POLICY["ssh-remote"]).toBe("ask");
+    expect(MANAGED_OPENCODE_PERMISSION_POLICY.tailscale).toBe("allow");
     expect(sshTool).toContain("Passwordless SSH to online Tailnet peers");
     expect(sshTool).toContain('permission: "ssh-remote"');
     expect(sshTool).toContain("context.ask");

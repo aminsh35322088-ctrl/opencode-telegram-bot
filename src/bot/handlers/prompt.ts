@@ -5,7 +5,7 @@ import { clearSession, getCurrentSession, setCurrentSession } from "../../app/se
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
 import { getCurrentProject } from "../../app/stores/settings-store.js";
 import { getStoredAgent, resolveProjectAgent } from "../../app/services/agent-selection-service.js";
-import { getStoredModel, resolveCatalogModel } from "../../app/services/model-selection-service.js";
+import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatVariantForButton } from "../../app/services/variant-selection-service.js";
 import { createMainKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
@@ -28,6 +28,7 @@ import { startSessionStallWatchdog, stopSessionStallWatchdog } from "../../app/s
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
 import type { ModelInfo } from "../../app/types/model.js";
+import { beginCoreRunForSession, dispatchCorePrompt, finishCoreRunForSession } from "../../core/native-core-service.js";
 
 export function clearPromptResponseMode(_sessionId: string): void {}
 /** @deprecated Kept as a no-op for test/plugin compatibility after removing bot-layer stall recovery. */
@@ -79,25 +80,6 @@ async function handlePromptStartFailure(input: {
   await input.bot.api.sendMessage(input.chatId, t("bot.prompt_send_error")).catch(() => {});
 }
 
-async function promptAsyncWithModelRecovery(promptOptions: { sessionID: string; directory: string; parts: Array<TextPartInput | FilePartInput>; model?: { providerID: string; modelID: string }; agent?: string; variant?: string }) {
-  const first = await opencodeClient.session.promptAsync(promptOptions);
-  if (!first.error || !promptOptions.model) return first;
-  const detail = String((first.error as { name?: string; message?: string })?.message ?? first.error);
-  const type = String((first.error as { name?: string })?.name ?? "");
-  if (!/model\s+not\s+found|ProviderModelNotFoundError/i.test(`${type} ${detail}`)) return first;
-  logger.warn(`[Bot] Explicit model rejected by OpenCode; refreshing catalog and retrying without a stale model: ${promptOptions.model.providerID}/${promptOptions.model.modelID}`);
-  const refreshed = await resolveCatalogModel(promptOptions.model.providerID, promptOptions.model.modelID, { forceRefresh: true });
-  if (refreshed) {
-    promptOptions.model = { providerID: refreshed.providerID, modelID: refreshed.modelID };
-    const retry = await opencodeClient.session.promptAsync(promptOptions);
-    if (!retry.error) return retry;
-  }
-  const retryWithoutModel = { ...promptOptions };
-  delete retryWithoutModel.model;
-  delete retryWithoutModel.variant;
-  return opencodeClient.session.promptAsync(retryWithoutModel);
-}
-
 export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
   const currentProject = getCurrentProject();
@@ -147,9 +129,19 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     if (storedModel.providerID && storedModel.modelID) { promptOptions.model = { providerID: storedModel.providerID, modelID: storedModel.modelID }; promptOptions.variant = storedModel.variant; }
     const promptErrorLogContext = { sessionId: currentSession.id, telegramChatId: ctx.chat?.id, directory: currentSession.directory, agent: currentAgent || "default", modelProvider: storedModel.providerID || "OpenCode/default", modelId: storedModel.modelID || "default", variant: storedModel.variant || "default", promptLength: text.length, fileCount: parts.filter((p) => p.type === "file").length };
     logger.info(`[Bot] Dispatching prompt: session=${currentSession.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"} agent=${currentAgent || "default"} textLength=${text.length} files=${parts.filter((p) => p.type === "file").length}`);
+    const coreRun = await beginCoreRunForSession(
+      currentSession.id,
+      currentSession.directory,
+      "interactive_prompt",
+      true,
+    );
     foregroundSessionState.markBusy(currentSession.id, currentSession.directory);
     await markAttachedSessionBusy(currentSession.id);
-    assistantRunState.startRun(currentSession.id, { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID });
+    assistantRunState.startRun(
+      currentSession.id,
+      { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID },
+      coreRun.runId,
+    );
     summaryAggregator.beginRun(currentSession.id);
     startSessionStallWatchdog({
       sessionId: currentSession.id,
@@ -162,8 +154,9 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     // Telegram edit must never delay the provider request itself.
     safeBackgroundTask({
       taskName: "session.promptAsync",
-      task: () => promptAsyncWithModelRecovery(promptOptions),
-      onSuccess: async ({ error }) => {
+      task: () => dispatchCorePrompt(coreRun, promptOptions),
+      onSuccess: async (result) => {
+        const error = "error" in result ? result.error : undefined;
         if (!error) {
           logger.info(`[Bot] promptAsync accepted by OpenCode: session=${currentSession!.id} model=${storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default"}`);
           return;
@@ -186,7 +179,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       });
     return true;
   } catch (err) {
-    if (currentSession) { foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
+    if (currentSession) { finishCoreRunForSession(currentSession.id); foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) clearAllInteractionState("message_handler_error");
     await ctx.reply(t("error.generic"));

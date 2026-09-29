@@ -106,10 +106,6 @@ if [ -d /app/.opencode/tools ]; then
   chown -R node:node "$GLOBAL_TOOLS_DIR"
 fi
 
-if [ -f /app/opencode.json ]; then
-  cp /app/opencode.json "$GLOBAL_OPENCODE_DIR/opencode.json"
-  chown node:node "$GLOBAL_OPENCODE_DIR/opencode.json"
-fi
 
 cat > "$INTEGRATION_BIN_DIR/gh" <<'EOF'
 #!/bin/sh

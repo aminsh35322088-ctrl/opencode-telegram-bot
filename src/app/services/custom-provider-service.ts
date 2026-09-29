@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../opencode/managed-policy.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { listStoredExtensions } from "./extension-store.js";
 import {
@@ -833,6 +834,7 @@ export async function buildOpenCodeCustomConfig(): Promise<string> {
 
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
+    permission: MANAGED_OPENCODE_PERMISSION_POLICY,
     provider: providers,
     ...(plugin.length > 0 ? { plugin: [...new Set(plugin)] } : {}),
   }, null, 2);

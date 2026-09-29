@@ -1,8 +1,9 @@
 import type { Api } from "grammy";
+import type { BindingIdentity } from "@opencode-telegram/native-runtime";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession } from "./session-service.js";
 import { detachAttachedSession } from "./attach-service.js";
-import { removeTelegramTopicBinding, listTelegramTopicBindings, type TelegramTopicBinding } from "./telegram-topic-store.js";
+import { removeTelegramTopicBinding, listTelegramTopicBindings, findTelegramTopicBindingByThread, type TelegramTopicBinding } from "./telegram-topic-store.js";
 import { deleteTelegramTopicWorkspace, isTelegramTopicWorkspace } from "./telegram-topic-workspace-service.js";
 import { removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
 import { promptQueue } from "../managers/prompt-queue-manager.js";
@@ -20,6 +21,7 @@ import { clearQueuedPromptContext } from "../../bot/handlers/prompt-queue-dispat
 import { logger } from "../../utils/logger.js";
 import { topicTelemetry } from "../../utils/topic-observability.js";
 import { getTelegramTopicRuntimeDependencies } from "../../bot/services/telegram-topic-runtime.js";
+import { coreBindingId, getNativeCore, registerCoreTopicBinding } from "../../core/native-core-service.js";
 
 function isAlreadyDeletedTopicError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -104,7 +106,7 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(errorMessage(error));
 }
 
-export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopicBinding): Promise<void> {
+async function cleanupTelegramTopicSessionMetadata(api: Api, binding: TelegramTopicBinding): Promise<void> {
   const context = { chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId, directory: binding.directory };
   topicTelemetry("delete_started", context);
   const cleanupErrors: Error[] = [];
@@ -236,4 +238,42 @@ export async function deleteTelegramTopicSession(api: Api, binding: TelegramTopi
 
   topicTelemetry("delete_completed", context);
   logger.info(`[TelegramTopics] Permanently deleted Topic: session=${binding.sessionId}, chat=${binding.chatId}, thread=${binding.threadId}, directory=${binding.directory}`);
+}
+
+
+export async function cleanupTelegramTopicBindingResources(
+  api: Api,
+  identity: BindingIdentity,
+): Promise<void> {
+  const stored = await findTelegramTopicBindingByThread(identity.chatId, identity.threadId);
+  const now = new Date().toISOString();
+  await cleanupTelegramTopicSessionMetadata(api, stored ?? {
+    chatId: identity.chatId,
+    threadId: identity.threadId,
+    sessionId: identity.sessionId,
+    directory: identity.normalizedDirectory,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export async function deleteTelegramTopicSession(
+  api: Api,
+  binding: TelegramTopicBinding,
+): Promise<void> {
+  const core = getNativeCore();
+  if (!core) {
+    await cleanupTelegramTopicSessionMetadata(api, binding);
+    return;
+  }
+  const bindingId = coreBindingId(binding.chatId, binding.threadId);
+  if (!core.bindings.registry.getById(bindingId)) {
+    await registerCoreTopicBinding({
+      chatId: binding.chatId,
+      threadId: binding.threadId,
+      sessionId: binding.sessionId,
+      directory: binding.directory,
+    });
+  }
+  await core.revokeBinding(bindingId);
 }

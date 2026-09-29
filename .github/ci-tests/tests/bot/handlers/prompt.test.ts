@@ -23,10 +23,17 @@ const mocked = vi.hoisted(() => ({
   setBotAndChatIdMock: vi.fn(),
   attachToSessionMock: vi.fn(),
   recoverSessionAfterErrorMock: vi.fn(),
+  beginCoreRunMock: vi.fn(),
+  dispatchCorePromptMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
   recoverSessionAfterError: mocked.recoverSessionAfterErrorMock,
+}));
+
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  beginCoreRunForSession: mocked.beginCoreRunMock,
+  dispatchCorePrompt: mocked.dispatchCorePromptMock,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -205,6 +212,10 @@ describe("bot/handlers/prompt", () => {
     mocked.setBotAndChatIdMock.mockReset();
     mocked.attachToSessionMock.mockReset();
     mocked.recoverSessionAfterErrorMock.mockReset();
+    mocked.beginCoreRunMock.mockReset();
+    mocked.dispatchCorePromptMock.mockReset();
+    mocked.beginCoreRunMock.mockResolvedValue({ runId: "core-run-1" });
+    mocked.dispatchCorePromptMock.mockImplementation((_run, options) => mocked.sessionPromptAsyncMock(options));
     mocked.recoverSessionAfterErrorMock.mockResolvedValue({ abortAttempted: true, abortAccepted: true, removedMessageIds: [], contaminationRemaining: false });
     mocked.attachToSessionMock.mockResolvedValue({
       busy: false,

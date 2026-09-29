@@ -77,17 +77,17 @@ This fork is intentionally Telegram-only. Do **not** create a Railway public dom
 
 The OpenCode API remains bound to `127.0.0.1:4096` and is not exposed to the Internet.
 
-## Automatic OpenCode updates
+## OpenCode Telegram Core release pin
 
-The repository stores the currently deployed stable OpenCode version in `.opencode-version`.
+Production does not update `opencode-ai` independently. The bot pins one immutable OpenCode Telegram Core release in `core-release.lock.json`; that release owns the compatible OpenCode runtime, SDK, and native Core package as one verified unit.
 
-`.github/workflows/opencode-update.yml` checks npm every 6 hours. When a newer `opencode-ai` stable release exists, the workflow updates `.opencode-version` and pushes a commit. Railway's GitHub deployment then rebuilds the image with the new version.
+Railway builds download the locked Core runtime artifact, verify its SHA-256 digest, install the SDK/native packages from the same GitHub Release, and verify all three artifacts report the same Core/upstream identity before compiling the bot.
 
-There is no manual OpenCode upgrade step.
+Upgrades therefore happen only by moving the Core release pin after Core verification. This prevents runtime/SDK/Core drift.
 
 ## Resource strategy
 
-Unlike the original source-build deployment, this image does **not** compile OpenCode from source. It installs the official `opencode-ai` npm release in the runtime image.
+The Railway image consumes the prebuilt headless OpenCode runtime from the pinned Core release rather than compiling OpenCode from source or installing a separate npm CLI release.
 
 This removes the large OpenCode source/UI build from Railway and avoids storing build caches in the runtime volume.
 

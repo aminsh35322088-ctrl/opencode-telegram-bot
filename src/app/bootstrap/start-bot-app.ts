@@ -27,6 +27,7 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
+import { initializeNativeCore, shutdownNativeCore } from "../../core/native-core-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -157,16 +158,16 @@ export async function startBotApp(): Promise<void> {
     return false;
   });
   logger.info(`[Tailscale] ${tailscaleConnected ? "connected" : "not connected"}`);
-  try {
-    process.env.OPENCODE_CONFIG = await syncOpenCodeCustomConfig();
-    const managedPlugins = (await listStoredExtensions())
-      .filter((extension) => extension.resource.kind === "plugin").length;
-    logger.info(
-      `[Extensions] Managed OpenCode config ready: path=${process.env.OPENCODE_CONFIG}, plugins=${managedPlugins}`,
-    );
-  } catch (error) {
-    logger.warn("[CustomProvider] Could not prepare managed OpenCode config; continuing without it", error);
+  const managedConfigPath = await syncOpenCodeCustomConfig();
+  if (!managedConfigPath.trim()) {
+    throw new Error("Managed OpenCode config path is empty; refusing to start without runtime policy");
   }
+  process.env.OPENCODE_CONFIG = managedConfigPath;
+  const managedPlugins = (await listStoredExtensions())
+    .filter((extension) => extension.resource.kind === "plugin").length;
+  logger.info(
+    `[Extensions] Managed OpenCode config ready: path=${managedConfigPath}, plugins=${managedPlugins}`,
+  );
   startModelCatalogRefreshService();
   startFreeLlmCatalogRefreshService();
   registerOpenCodeReadyRefreshHandler();
@@ -202,6 +203,13 @@ export async function startBotApp(): Promise<void> {
   }
 
   const botInfo = await bot.api.getMe();
+  const coreBindings = (await listTelegramTopicBindings()).map((binding) => ({
+    chatId: binding.chatId,
+    threadId: binding.threadId,
+    sessionId: binding.sessionId,
+    directory: binding.directory,
+  }));
+  await initializeNativeCore(bot.api, coreBindings);
   logger.info(
     `[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`,
   );
@@ -234,6 +242,7 @@ export async function startBotApp(): Promise<void> {
     stopModelCatalogRefreshService();
     stopFreeLlmCatalogRefreshService();
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
+    void shutdownNativeCore().catch((error) => logger.warn("[Core] Failed to shut down cleanly", error));
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
     void stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
@@ -287,6 +296,7 @@ export async function startBotApp(): Promise<void> {
       shutdownTimeout = null;
     }
     cleanupBotRuntime("app_shutdown_complete");
+    await shutdownNativeCore().catch((error) => logger.warn("[Core] Failed to shut down cleanly", error));
     opencodeAutoRestartService.stop();
     scheduledTaskRuntime.shutdown();
     await stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));

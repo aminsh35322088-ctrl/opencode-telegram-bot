@@ -42,6 +42,8 @@ const mocked = vi.hoisted(() => ({
   removeTopicRuntimeStateMock: vi.fn(async () => {}),
   watchdogStartMock: vi.fn(),
   watchdogStopMock: vi.fn(),
+  initializeNativeCoreMock: vi.fn(),
+  shutdownNativeCoreMock: vi.fn(),
   config: {
     opencode: {
       apiUrl: "http://localhost:4096",
@@ -59,6 +61,11 @@ vi.mock("../../src/bot/index.js", () => ({
 
 vi.mock("../../src/config.js", () => ({
   config: mocked.config,
+}));
+
+vi.mock("../../src/core/native-core-service.js", () => ({
+  initializeNativeCore: mocked.initializeNativeCoreMock,
+  shutdownNativeCore: mocked.shutdownNativeCoreMock,
 }));
 
 vi.mock("../../src/opencode/auto-restart.js", () => ({
@@ -88,7 +95,12 @@ vi.mock("../../src/app/services/github-integration-service.js", () => ({
 }));
 
 vi.mock("../../src/app/services/custom-provider-service.js", () => ({
-  syncOpenCodeCustomConfig: mocked.syncCustomConfigMock,
+  syncOpenCodeCustomConfig: (...args: unknown[]) => {
+    const implementation = mocked.syncCustomConfigMock.getMockImplementation();
+    return implementation
+      ? mocked.syncCustomConfigMock(...args)
+      : Promise.resolve("/tmp/managed-opencode.json");
+  },
   migrateLegacyCustomProviderCredentials: mocked.migrateProviderCredentialsMock,
 }));
 
@@ -287,6 +299,10 @@ describe("app/start-bot-app", () => {
     mocked.deliverySenderMock.mockReset();
     mocked.watchdogStartMock.mockReset();
     mocked.watchdogStopMock.mockReset();
+    mocked.initializeNativeCoreMock.mockReset();
+    mocked.shutdownNativeCoreMock.mockReset();
+    mocked.initializeNativeCoreMock.mockResolvedValue(undefined);
+    mocked.shutdownNativeCoreMock.mockResolvedValue(undefined);
 
     mocked.createBotMock.mockReturnValue(createBot());
     mocked.autoRestartStartMock.mockResolvedValue(false);
@@ -300,7 +316,7 @@ describe("app/start-bot-app", () => {
     mocked.getLogFilePathMock.mockReturnValue(null);
     mocked.flushLoggerMock.mockResolvedValue(undefined);
     mocked.githubInitializeMock.mockResolvedValue(false);
-    mocked.syncCustomConfigMock.mockResolvedValue("");
+    mocked.syncCustomConfigMock.mockResolvedValue("/tmp/managed-opencode.json");
     mocked.migrateProviderCredentialsMock.mockResolvedValue(0);
     mocked.migrateImageAiCredentialsMock.mockResolvedValue(0);
     mocked.cleanupLegacyConfigMock.mockResolvedValue(undefined);
@@ -327,6 +343,15 @@ describe("app/start-bot-app", () => {
 
     expect(mocked.registerOpenCodeReadyRefreshHandlerMock).toHaveBeenCalledTimes(1);
     expect(mocked.notifyOpencodeReadyIfHealthyMock).toHaveBeenCalledWith("startup");
+  });
+
+  it("fails closed before bot startup when managed OpenCode config is unavailable", async () => {
+    mocked.syncCustomConfigMock.mockRejectedValue(new Error("managed config write failed"));
+
+    await expect(startBotApp()).rejects.toThrow("managed config write failed");
+
+    expect(mocked.createBotMock).not.toHaveBeenCalled();
+    expect(mocked.autoRestartStartMock).not.toHaveBeenCalled();
   });
 
   it("skips startup health notification when auto-restart handled startup", async () => {

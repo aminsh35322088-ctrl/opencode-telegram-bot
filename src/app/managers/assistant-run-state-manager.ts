@@ -1,6 +1,7 @@
 import { resetAllStreamThrottles, resetStreamThrottle } from "../../bot/streaming/stream-throttle.js";
 import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 import { logger } from "../../utils/logger.js";
+import { finishCoreRunForSession } from "../../core/native-core-service.js";
 
 export interface AssistantRunStartInfo {
   startedAt: number;
@@ -29,12 +30,12 @@ class AssistantRunState {
   private readonly runs = new Map<string, AssistantRunInfo>();
   private readonly generations = new Map<string, number>();
 
-  startRun(sessionId: string, info: AssistantRunStartInfo): void {
+  startRun(sessionId: string, info: AssistantRunStartInfo, coreRunId?: string): void {
     if (!sessionId) return;
     resetStreamThrottle(sessionId);
     const generation = (this.generations.get(sessionId) ?? 0) + 1;
     this.generations.set(sessionId, generation);
-    const runId = `${sessionId}:${generation}:${info.startedAt}`;
+    const runId = coreRunId ?? `${sessionId}:${generation}:${info.startedAt}`;
     this.runs.set(sessionId, { sessionId, generation, runId, startedAt: info.startedAt, configuredAgent: info.configuredAgent, configuredProviderID: info.configuredProviderID, configuredModelID: info.configuredModelID, hasCompletedResponse: false });
     logger.debug(`[AssistantRunState] Started run: session=${sessionId}, generation=${generation}, runId=${runId}, agent=${info.configuredAgent || "unknown"}, model=${info.configuredProviderID || "unknown"}/${info.configuredModelID || "unknown"}`);
   }
@@ -76,6 +77,7 @@ class AssistantRunState {
     const run = this.runs.get(sessionId) ?? null;
     if (!run) return null;
     this.runs.delete(sessionId);
+    finishCoreRunForSession(sessionId);
     logger.debug(`[AssistantRunState] Finished run: session=${sessionId}, reason=${reason}`);
     return { ...run };
   }
@@ -83,6 +85,7 @@ class AssistantRunState {
   clearRun(sessionId: string, reason: string): void {
     resetStreamThrottle(sessionId);
     if (!this.runs.delete(sessionId)) return;
+    finishCoreRunForSession(sessionId);
     logger.debug(`[AssistantRunState] Cleared run: session=${sessionId}, reason=${reason}`);
   }
 
@@ -90,6 +93,7 @@ class AssistantRunState {
     resetAllStreamThrottles();
     if (this.runs.size === 0) return;
     logger.debug(`[AssistantRunState] Cleared all runs: count=${this.runs.size}, reason=${reason}`);
+    for (const sessionId of this.runs.keys()) finishCoreRunForSession(sessionId);
     this.runs.clear();
   }
 

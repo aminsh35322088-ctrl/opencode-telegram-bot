@@ -89,6 +89,7 @@ describe("runtime-managed Extensions", () => {
     const configPath = await syncOpenCodeCustomConfig();
     const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
       plugin?: string[];
+      permission?: Record<string, unknown>;
     };
 
     expect(configPath).toBe(
@@ -96,10 +97,9 @@ describe("runtime-managed Extensions", () => {
     );
     expect(config.plugin).toEqual(["example-plugin@1.2.3"]);
 
-    const repositoryConfig = JSON.parse(
-      await fs.readFile(path.resolve("opencode.json"), "utf8"),
-    ) as { plugin?: unknown };
-    expect(repositoryConfig.plugin).toBeUndefined();
+    await expect(fs.readFile(path.resolve("opencode.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("accepts pinned plugins and rejects repo-local or floating plugin sources", () => {

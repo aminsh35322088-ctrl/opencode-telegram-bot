@@ -1,16 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../src/opencode/managed-policy.js";
 import { describe, expect, it } from "vitest";
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../src/opencode/managed-policy.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("validation gateway policy", () => {
   it("blocks direct validation/download paths even when wrapped", async () => {
-    const config = JSON.parse(await readFile(path.join(root, "opencode.json"), "utf8")) as {
-      permission?: { bash?: Record<string, string> };
-    };
-    const bash = config.permission?.bash ?? {};
+    const bash = MANAGED_OPENCODE_PERMISSION_POLICY.bash;
     for (const pattern of [
       "*npx*",
       "*npm ci*",
@@ -36,10 +35,7 @@ describe("validation gateway policy", () => {
   });
 
   it("permits the baked validation toolchain binaries", async () => {
-    const config = JSON.parse(await readFile(path.join(root, "opencode.json"), "utf8")) as {
-      permission?: { bash?: Record<string, string> };
-    };
-    const bash = config.permission?.bash ?? {};
+    const bash = MANAGED_OPENCODE_PERMISSION_POLICY.bash;
     for (const pattern of [
       "*tsc *",
       "*vitest *",

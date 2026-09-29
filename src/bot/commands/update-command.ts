@@ -1,14 +1,32 @@
 import { Context } from "grammy";
-import { getBotUpdateNotice, getOpenCodeVersion, BOT_VERSION, markBotVersionNotified } from "../../app/services/version-info-service.js";
+import {
+  getBotUpdateNotice,
+  BOT_VERSION,
+  markBotVersionNotified,
+} from "../../app/services/version-info-service.js";
+import { getCoreReleaseInfo } from "../../core/release-info.js";
 
-const RELEASE_VERSION_URL = "https://raw.githubusercontent.com/aminsh35322088-ctrl/opencode-telegram-bot/main/.opencode-version";
+interface GitHubReleaseResponse {
+  tag_name?: unknown;
+}
 
-async function readLatestOpenCodeVersion(): Promise<string | null> {
+async function readLatestCoreTag(repository: string): Promise<string | null> {
   try {
-    const response = await fetch(RELEASE_VERSION_URL, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(
+      `https://api.github.com/repos/${repository}/releases/latest`,
+      {
+        headers: {
+          accept: "application/vnd.github+json",
+          "user-agent": "opencode-telegram-bot",
+        },
+        signal: AbortSignal.timeout(5000),
+      },
+    );
     if (!response.ok) return null;
-    const version = (await response.text()).trim();
-    return version || null;
+    const payload = (await response.json()) as GitHubReleaseResponse;
+    return typeof payload.tag_name === "string" && payload.tag_name.trim()
+      ? payload.tag_name.trim()
+      : null;
   } catch {
     return null;
   }
@@ -33,22 +51,40 @@ async function sendBotUpdateNotice(ctx: Context): Promise<void> {
 export async function updateCommand(ctx: Context): Promise<void> {
   await sendBotUpdateNotice(ctx);
 
-  const current = await getOpenCodeVersion();
-  const latest = await readLatestOpenCodeVersion();
-  const botLine = `🤖 Telegram Bot: <b>v${BOT_VERSION}</b>`;
-
-  if (!latest) {
-    await ctx.reply(`🔄 Version Update\n\n${botLine}\n🧠 OpenCode: <b>v${current}</b>\n\n⚠️ Could not check the latest OpenCode version right now. Automatic updates remain enabled.`, { parse_mode: "HTML" });
+  let release;
+  try {
+    release = await getCoreReleaseInfo();
+  } catch {
+    await ctx.reply(
+      `🔄 Version Update\n\n🤖 Telegram Bot: <b>v${BOT_VERSION}</b>\n\n⚠️ The pinned Telegram Core release identity is unavailable.`,
+      { parse_mode: "HTML" },
+    );
     return;
   }
 
-  if (latest === current) {
-    await ctx.reply(`🟢 Everything is up to date\n\n${botLine}\n🧠 OpenCode: <b>v${current}</b>\n\nAutomatic OpenCode updates are enabled.`, { parse_mode: "HTML" });
+  const latestTag = await readLatestCoreTag(release.repository);
+  const botLine = `🤖 Telegram Bot: <b>v${BOT_VERSION}</b>`;
+  const coreLine = `🧩 Telegram Core: <b>${release.telegramCoreVersion}</b>`;
+  const openCodeLine = `🧠 OpenCode: <b>v${release.upstreamVersion}</b>`;
+
+  if (!latestTag) {
+    await ctx.reply(
+      `🔄 Version Update\n\n${botLine}\n${coreLine}\n${openCodeLine}\n\n⚠️ Could not check the latest Telegram Core release right now. The deployed runtime and SDK remain pinned to the verified Core release.`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+
+  if (latestTag === release.tag) {
+    await ctx.reply(
+      `🟢 Everything is up to date\n\n${botLine}\n${coreLine}\n${openCodeLine}\n\nRuntime, SDK, and native Core are pinned to the same verified release.`,
+      { parse_mode: "HTML" },
+    );
     return;
   }
 
   await ctx.reply(
-    `🚀 OpenCode update available\n\n${botLine}\n🧠 Current: <b>v${current}</b>\n🆕 Latest: <b>v${latest}</b>\n\nThe automatic updater will install the latest stable OpenCode version on its next update cycle.`,
+    `🚀 Telegram Core update available\n\n${botLine}\n${coreLine}\n${openCodeLine}\n\nCurrent Core tag: <b>${release.tag}</b>\nLatest Core tag: <b>${latestTag}</b>\n\nUpgrading requires moving the pinned Core release lock and redeploying after verification.`,
     { parse_mode: "HTML" },
   );
 }

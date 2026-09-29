@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getAgentAction } from "../../../src/app/services/agent-action-registry.js";
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../../src/opencode/managed-policy.js";
+import { MANAGED_OPENCODE_PERMISSION_POLICY } from "../../../src/opencode/managed-policy.js";
 
 /**
  * PR #121's Cloudflare Access/direct-identity implementation remains removed.
@@ -45,7 +47,7 @@ const REQUIRED_REMOTE_ACTIONS = [
   "ssh.download",
 ] as const;
 
-const SCAN_ROOTS = ["src", "docs", ".opencode", "railway-entrypoint.sh", "Dockerfile", "opencode.json"] as const;
+const SCAN_ROOTS = ["src", "docs", ".opencode", "railway-entrypoint.sh", "Dockerfile"] as const;
 
 function walkFiles(root: string): string[] {
   if (!existsSync(root)) return [];
@@ -100,11 +102,8 @@ describe("SSH/Cloudflare regression contract", () => {
     expect(source).toContain("automatic master recovery");
   });
   it("keeps the SSH tool permission-gated", () => {
-    const config = JSON.parse(readFileSync(repoPath("opencode.json"), "utf8")) as {
-      permission?: Record<string, unknown>;
-    };
-    expect(config.permission?.ssh).toBe("allow");
-    expect(config.permission?.["ssh-remote"]).toBe("ask");
-    expect(config.permission?.tailscale).toBe("allow");
+    expect(MANAGED_OPENCODE_PERMISSION_POLICY.ssh).toBe("allow");
+    expect(MANAGED_OPENCODE_PERMISSION_POLICY["ssh-remote"]).toBe("ask");
+    expect(MANAGED_OPENCODE_PERMISSION_POLICY.tailscale).toBe("allow");
   });
 });
