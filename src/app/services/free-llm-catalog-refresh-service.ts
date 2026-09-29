@@ -8,6 +8,7 @@ const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let refreshInFlight: Promise<void> | null = null;
+let runtimeReloadPending = false;
 
 async function isOpenCodeReady(): Promise<boolean> {
   try {
@@ -18,25 +19,55 @@ async function isOpenCodeReady(): Promise<boolean> {
   }
 }
 
+async function isSafeToReloadOpenCode(): Promise<boolean> {
+  try {
+    const {
+      getOpenCodeActivityState,
+      isAnyForegroundBusy,
+      reconcileAllForegroundBusyState,
+    } = await import("./run-control-service.js");
+    const { scheduledTaskRuntime } = await import("./scheduled-task-runtime-service.js");
+    await reconcileAllForegroundBusyState();
+    if (isAnyForegroundBusy() || scheduledTaskRuntime.hasRunningTasks()) return false;
+    return await getOpenCodeActivityState() === "idle";
+  } catch (error) {
+    logger.debug("[FreeLLMCatalog] Could not verify idle state for catalog reload", error);
+    return false;
+  }
+}
+
+async function applyPendingRuntimeReload(): Promise<void> {
+  if (!runtimeReloadPending) return;
+  if (!(await isOpenCodeReady())) return;
+  if (!(await isSafeToReloadOpenCode())) {
+    logger.debug("[FreeLLMCatalog] Runtime reload deferred until OpenCode is idle");
+    return;
+  }
+
+  const { error } = await opencodeClient.global.dispose();
+  if (error) throw error;
+  runtimeReloadPending = false;
+  logger.info("[FreeLLMCatalog] Reloaded idle OpenCode instances with refreshed public catalog");
+  await refreshModelCatalog();
+}
+
 export async function refreshAndStageFreeLlmCatalog(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
     const result = await refreshFreeLlmCatalog();
-    if (!result.changed) {
-      logger.debug("[FreeLLMCatalog] Public catalog unchanged; no config rewrite needed");
-      return;
+    if (result.changed) {
+      const configPath = await syncOpenCodeCustomConfig();
+      process.env.OPENCODE_CONFIG = configPath;
+      runtimeReloadPending = true;
+      logger.info(
+        "[FreeLLMCatalog] Public catalog changed; refreshed managed OpenCode config and queued an idle runtime reload",
+      );
+    } else {
+      logger.debug("[FreeLLMCatalog] Public catalog unchanged");
     }
 
-    const configPath = await syncOpenCodeCustomConfig();
-    process.env.OPENCODE_CONFIG = configPath;
-    logger.info(
-      "[FreeLLMCatalog] Public catalog changed; refreshed managed OpenCode config without interrupting the active server",
-    );
-
-    if (await isOpenCodeReady()) {
-      await refreshModelCatalog();
-    }
+    await applyPendingRuntimeReload();
   })()
     .catch((error) => {
       logger.warn(
@@ -71,4 +102,5 @@ export function stopFreeLlmCatalogRefreshService(): void {
 export function __resetFreeLlmCatalogRefreshForTests(): void {
   stopFreeLlmCatalogRefreshService();
   refreshInFlight = null;
+  runtimeReloadPending = false;
 }
