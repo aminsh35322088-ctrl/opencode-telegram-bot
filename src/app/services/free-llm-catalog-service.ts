@@ -265,12 +265,23 @@ export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Pro
 function modelConfig(model: FreeLlmCatalogModel): Record<string, unknown> {
   const input = model.modalities?.input?.length ? model.modalities.input : ["text"];
   const output = model.modalities?.output?.length ? model.modalities.output : ["text"];
+  const limit = {
+    ...(model.context ? { context: model.context } : {}),
+    ...(model.output ? { output: model.output } : {}),
+  };
   return {
     name: model.name,
     attachment: input.some((item) => item !== "text"),
     tool_call: model.toolCall === true,
+    ...(typeof model.reasoning === "boolean" ? { reasoning: model.reasoning } : {}),
+    ...(Object.keys(limit).length ? { limit } : {}),
     modalities: { input, output },
   };
+}
+
+function catalogRuntimeId(provider: FreeLlmCatalogProvider): string {
+  const candidate = provider.runtimeId ?? provider.id;
+  return candidate.startsWith("free-") ? candidate : `free-${candidate}`;
 }
 
 export function buildOpenCodeProvidersFromCatalog(catalog: FreeLlmCatalog): Record<string, unknown> {
@@ -285,7 +296,7 @@ export function buildOpenCodeProvidersFromCatalog(catalog: FreeLlmCatalog): Reco
       provider.models.length === 0
     ) continue;
 
-    const runtimeId = provider.runtimeId ?? provider.id;
+    const runtimeId = catalogRuntimeId(provider);
     const options: Record<string, unknown> = { baseURL: provider.baseURL };
     if (provider.auth.mode !== "none" && provider.auth.value) options.apiKey = provider.auth.value;
     providers[runtimeId] = {
@@ -329,7 +340,7 @@ export async function buildFreeLlmOpenCodeProviders(): Promise<Record<string, un
 export function getFreeLlmCatalogProvider(providerId: string): FreeLlmCatalogProvider | null {
   const catalog = memory?.catalog;
   if (!catalog) return null;
-  return catalog.providers.find((provider) => (provider.runtimeId ?? provider.id) === providerId) ?? null;
+  return catalog.providers.find((provider) => catalogRuntimeId(provider) === providerId) ?? null;
 }
 
 export function __resetFreeLlmCatalogForTests(): void {
