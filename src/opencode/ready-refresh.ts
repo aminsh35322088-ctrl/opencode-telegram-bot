@@ -39,6 +39,13 @@ export async function refreshSessionCacheAfterOpencodeReady(reason: string): Pro
   } catch (error) {
     logger.warn(`[OpenCodeReady] Failed to refresh model catalog: reason=${reason}`, error);
   }
+
+  try {
+    const { verifyFreeLlmRuntimeRegistration } = await import("../app/services/free-llm-catalog-refresh-service.js");
+    await verifyFreeLlmRuntimeRegistration();
+  } catch (error) {
+    logger.warn(`[OpenCodeReady] Failed to verify Free LLM runtime registration: reason=${reason}`, error);
+  }
 }
 
 export async function refreshSessionCacheIfOpencodeReady(reason: string): Promise<boolean> {
