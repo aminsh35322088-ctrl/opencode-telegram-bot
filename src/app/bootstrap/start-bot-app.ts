@@ -23,6 +23,7 @@ import { clearServiceStateFile } from "../../runtime/service/manager.js";
 import { getServiceStateFilePathFromEnv, isServiceChildProcess } from "../../runtime/service/env.js";
 import { flushLogger, getLogFilePath, initializeLogger, logger } from "../../utils/logger.js";
 import { RuntimeObservabilityWatchdog } from "../../utils/runtime-observability.js";
+import { opencodeMemoryRecoveryService } from "../services/opencode-memory-recovery-service.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
@@ -228,7 +229,11 @@ export async function startBotApp(): Promise<void> {
     taskName: "app.opencodeStartup",
     task: async () => {
       const monitorStarted = await opencodeAutoRestartService.start();
-      if (!monitorStarted) await notifyOpencodeReadyIfHealthy("startup");
+      if (!monitorStarted) {
+        await notifyOpencodeReadyIfHealthy("startup");
+        return;
+      }
+      opencodeMemoryRecoveryService.start();
     },
   });
 

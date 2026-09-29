@@ -25,6 +25,9 @@ const mocked = vi.hoisted(() => ({
   recoverSessionAfterErrorMock: vi.fn(),
   beginCoreRunMock: vi.fn(),
   dispatchCorePromptMock: vi.fn(),
+  finishCoreRunMock: vi.fn(),
+  memoryRecoverMock: vi.fn(),
+  resourcePressureErrorMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
@@ -34,6 +37,12 @@ vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
 vi.mock("../../../src/core/native-core-service.js", () => ({
   beginCoreRunForSession: mocked.beginCoreRunMock,
   dispatchCorePrompt: mocked.dispatchCorePromptMock,
+  finishCoreRunForSession: mocked.finishCoreRunMock,
+}));
+vi.mock("../../../src/app/services/opencode-memory-recovery-service.js", () => ({
+  recoverIdleOpenCodeMemory: mocked.memoryRecoverMock,
+  isCoreResourcePressureError: mocked.resourcePressureErrorMock,
+  __resetOpenCodeMemoryRecoveryStateForTests: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -214,6 +223,9 @@ describe("bot/handlers/prompt", () => {
     mocked.recoverSessionAfterErrorMock.mockReset();
     mocked.beginCoreRunMock.mockReset();
     mocked.dispatchCorePromptMock.mockReset();
+    mocked.finishCoreRunMock.mockReset();
+    mocked.memoryRecoverMock.mockReset().mockResolvedValue(false);
+    mocked.resourcePressureErrorMock.mockReset().mockReturnValue(false);
     mocked.beginCoreRunMock.mockResolvedValue({ runId: "core-run-1" });
     mocked.dispatchCorePromptMock.mockImplementation((_run, options) => mocked.sessionPromptAsyncMock(options));
     mocked.recoverSessionAfterErrorMock.mockResolvedValue({ abortAttempted: true, abortAccepted: true, removedMessageIds: [], contaminationRemaining: false });
@@ -346,6 +358,39 @@ describe("bot/handlers/prompt", () => {
       "D:\\Projects\\Repo",
       "network down",
     );
+  });
+
+  it("reclaims idle OpenCode memory and retries once when Core admission rejects for memory pressure", async () => {
+    const ctx = createContext();
+    mocked.resourcePressureErrorMock.mockReturnValue(true);
+    mocked.memoryRecoverMock.mockResolvedValue(true);
+    mocked.beginCoreRunMock
+      .mockRejectedValueOnce(new Error("Railway resource budget rejects new work: REJECT_NEW_WORK"))
+      .mockResolvedValueOnce({ runId: "core-run-2" });
+
+    const handled = await processUserPrompt(ctx, "Review README", createDeps());
+
+    expect(handled).toBe(true);
+    expect(mocked.memoryRecoverMock).toHaveBeenCalledWith("prompt_admission", true);
+    expect(mocked.beginCoreRunMock).toHaveBeenCalledTimes(2);
+    expect(ctx.reply).not.toHaveBeenCalledWith("🔴 Something went wrong.");
+  });
+
+  it("shows a specific pressure message when safe memory reclaim cannot run", async () => {
+    const ctx = createContext();
+    mocked.resourcePressureErrorMock.mockReturnValue(true);
+    mocked.memoryRecoverMock.mockResolvedValue(false);
+    mocked.beginCoreRunMock.mockRejectedValueOnce(
+      new Error("Railway resource budget rejects new work: REJECT_NEW_WORK"),
+    );
+
+    const handled = await processUserPrompt(ctx, "Review README", createDeps());
+
+    expect(handled).toBe(false);
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("Server memory is under pressure"),
+    );
+    expect(ctx.reply).not.toHaveBeenCalledWith("🔴 Something went wrong.");
   });
 
   it("does not register suppression entry for file-only prompts", async () => {

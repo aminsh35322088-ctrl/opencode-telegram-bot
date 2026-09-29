@@ -303,6 +303,21 @@ const workerFactory: WorkerFactory = (binding, generation) => {
 
 let nativeCore: TelegramNativeCore | null = null;
 const runsBySession = new Map<string, RunIdentity>();
+let coreAdmissionTail: Promise<void> = Promise.resolve();
+
+async function withCoreAdmissionLock<T>(task: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const previous = coreAdmissionTail;
+  coreAdmissionTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
 
 function requireCore(): TelegramNativeCore {
   if (!nativeCore) throw new Error("OpenCode Telegram Core is not initialized");
@@ -519,34 +534,36 @@ export async function beginCoreRunForOwner(
   owner: CoreBindingOwner,
   operation: string,
 ): Promise<RunIdentity> {
-  const core = requireCore();
-  const current = core.bindings.registry.getById(owner.bindingId);
-  if (
-    !current ||
-    current.botId !== owner.botId ||
-    current.chatId !== owner.chatId ||
-    current.threadId !== owner.threadId ||
-    current.sessionId !== owner.sessionId ||
-    current.normalizedDirectory !== normalizeDirectory(owner.directory) ||
-    current.bindingGeneration !== owner.bindingGeneration
-  ) {
-    throw new Error(`Stale Core binding owner rejected: ${owner.bindingId}`);
-  }
+  return withCoreAdmissionLock(async () => {
+    const core = requireCore();
+    const current = core.bindings.registry.getById(owner.bindingId);
+    if (
+      !current ||
+      current.botId !== owner.botId ||
+      current.chatId !== owner.chatId ||
+      current.threadId !== owner.threadId ||
+      current.sessionId !== owner.sessionId ||
+      current.normalizedDirectory !== normalizeDirectory(owner.directory) ||
+      current.bindingGeneration !== owner.bindingGeneration
+    ) {
+      throw new Error(`Stale Core binding owner rejected: ${owner.bindingId}`);
+    }
 
-  const allowed = await core.modelAllowed(
-    {
-      kind: "topic",
-      botId: current.botId,
-      chatId: current.chatId,
-      threadId: current.threadId,
-    },
-    operation,
-  );
-  if (!allowed) {
-    throw new Error(`Core admission rejected model operation: ${operation}`);
-  }
+    const allowed = await core.modelAllowed(
+      {
+        kind: "topic",
+        botId: current.botId,
+        chatId: current.chatId,
+        threadId: current.threadId,
+      },
+      operation,
+    );
+    if (!allowed) {
+      throw new Error(`Core admission rejected model operation: ${operation}`);
+    }
 
-  return core.beginRun(current.bindingId);
+    return core.beginRun(current.bindingId);
+  });
 }
 
 export async function beginCoreRunForSession(
@@ -555,44 +572,62 @@ export async function beginCoreRunForSession(
   operation = "prompt",
   requireInteractiveTopic = true,
 ): Promise<RunIdentity> {
-  const core = requireCore();
-  const normalized = normalizeDirectory(directory);
-  const binding = resolveCoreSessionRoute(sessionId, normalized);
+  return withCoreAdmissionLock(async () => {
+    const core = requireCore();
+    const normalized = normalizeDirectory(directory);
+    const binding = resolveCoreSessionRoute(sessionId, normalized);
 
-  if (requireInteractiveTopic) {
-    const context = getTopicRuntimeContext();
-    if (
-      !context ||
-      context.chatId !== binding.chatId ||
-      context.threadId !== binding.threadId ||
-      context.sessionId !== binding.sessionId ||
-      !context.directory ||
-      normalizeDirectory(context.directory) !== binding.normalizedDirectory
-    ) {
-      throw new Error("Interactive model execution is only allowed in the exact bound AI Topic");
+    if (requireInteractiveTopic) {
+      const context = getTopicRuntimeContext();
+      if (
+        !context ||
+        context.chatId !== binding.chatId ||
+        context.threadId !== binding.threadId ||
+        context.sessionId !== binding.sessionId ||
+        !context.directory ||
+        normalizeDirectory(context.directory) !== binding.normalizedDirectory
+      ) {
+        throw new Error("Interactive model execution is only allowed in the exact bound AI Topic");
+      }
     }
-  }
 
-  const allowed = await core.modelAllowed(
-    { kind: "topic", botId: binding.botId, chatId: binding.chatId, threadId: binding.threadId },
-    operation,
-  );
-  if (!allowed) throw new Error(`Core admission rejected model operation: ${operation}`);
+    const allowed = await core.modelAllowed(
+      { kind: "topic", botId: binding.botId, chatId: binding.chatId, threadId: binding.threadId },
+      operation,
+    );
+    if (!allowed) throw new Error(`Core admission rejected model operation: ${operation}`);
 
-  const previous = runsBySession.get(sessionId);
-  if (previous) {
-    if (core.runs.accepts(previous)) {
-      throw new Error(`Core already owns an active run for session ${sessionId}`);
+    const previous = runsBySession.get(sessionId);
+    if (previous) {
+      if (core.runs.accepts(previous)) {
+        throw new Error(`Core already owns an active run for session ${sessionId}`);
+      }
+      runsBySession.delete(sessionId);
     }
-    runsBySession.delete(sessionId);
-  }
-  if (core.runs.current(binding.bindingId)) {
-    throw new Error(`Core binding already has an active run: ${binding.bindingId}`);
-  }
+    if (core.runs.current(binding.bindingId)) {
+      throw new Error(`Core binding already has an active run: ${binding.bindingId}`);
+    }
 
-  const run = await core.beginRun(binding.bindingId);
-  runsBySession.set(sessionId, run);
-  return run;
+    const run = await core.beginRun(binding.bindingId);
+    runsBySession.set(sessionId, run);
+    return run;
+  });
+}
+
+export async function runCoreIdleMaintenance(
+  reason: string,
+  task: () => Promise<boolean>,
+): Promise<boolean> {
+  return withCoreAdmissionLock(async () => {
+    const core = requireCore();
+    const hasActiveRun = core.bindings.registry.list().some(
+      (binding) => core.runs.current(binding.bindingId) != null,
+    );
+    if (hasActiveRun) return false;
+
+    await core.workers.stopAll(`idle_maintenance:${reason}`);
+    return task();
+  });
 }
 
 export async function dispatchCorePrompt(

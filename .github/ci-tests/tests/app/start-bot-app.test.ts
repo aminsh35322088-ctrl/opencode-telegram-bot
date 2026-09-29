@@ -42,6 +42,8 @@ const mocked = vi.hoisted(() => ({
   removeTopicRuntimeStateMock: vi.fn(async () => {}),
   watchdogStartMock: vi.fn(),
   watchdogStopMock: vi.fn(),
+  memoryRecoveryStartMock: vi.fn(),
+  memoryRecoveryStopMock: vi.fn(),
   initializeNativeCoreMock: vi.fn(),
   shutdownNativeCoreMock: vi.fn(),
   config: {
@@ -130,6 +132,16 @@ vi.mock("../../src/utils/runtime-observability.js", () => ({
     start = mocked.watchdogStartMock;
     stop = mocked.watchdogStopMock;
   },
+}));
+
+vi.mock("../../src/app/services/opencode-memory-recovery-service.js", () => ({
+  opencodeMemoryRecoveryService: {
+    start: mocked.memoryRecoveryStartMock,
+    stop: mocked.memoryRecoveryStopMock,
+  },
+  recoverIdleOpenCodeMemory: vi.fn(),
+  isCoreResourcePressureError: vi.fn(() => false),
+  __resetOpenCodeMemoryRecoveryStateForTests: vi.fn(),
 }));
 
 vi.mock("../../src/utils/safe-background-task.js", () => ({
@@ -299,6 +311,8 @@ describe("app/start-bot-app", () => {
     mocked.deliverySenderMock.mockReset();
     mocked.watchdogStartMock.mockReset();
     mocked.watchdogStopMock.mockReset();
+    mocked.memoryRecoveryStartMock.mockReset();
+    mocked.memoryRecoveryStopMock.mockReset();
     mocked.initializeNativeCoreMock.mockReset();
     mocked.shutdownNativeCoreMock.mockReset();
     mocked.initializeNativeCoreMock.mockResolvedValue(undefined);
@@ -361,6 +375,7 @@ describe("app/start-bot-app", () => {
     await flushBackgroundTasks();
 
     expect(mocked.notifyOpencodeReadyIfHealthyMock).not.toHaveBeenCalledWith("startup");
+    expect(mocked.memoryRecoveryStartMock).toHaveBeenCalledTimes(1);
   });
 
   it("starts Telegram polling without waiting for OpenCode startup checks", async () => {

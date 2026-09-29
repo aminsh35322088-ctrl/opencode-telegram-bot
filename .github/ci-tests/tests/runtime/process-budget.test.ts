@@ -11,9 +11,11 @@ const GiB = 1024 * MiB;
 function resources(
   memoryUsedBytes = 512 * MiB,
   memoryLimitBytes: number | null = GiB,
+  memoryTotalBytes = memoryUsedBytes,
 ): () => Promise<ServiceResourceSnapshot> {
   return async () => ({
     memoryUsedBytes,
+    memoryTotalBytes,
     memoryLimitBytes,
     memoryPressure: memoryLimitBytes ? memoryUsedBytes / memoryLimitBytes : null,
     cpuLimitCores: 2,
@@ -45,6 +47,17 @@ describe("ProcessBudgetGovernor", () => {
       kind: "media",
       reason: "memory_pressure",
     } satisfies Partial<ProcessBudgetError>);
+  });
+
+  it("uses reclaim-aware working set rather than raw cached cgroup usage for admission", async () => {
+    const governor = new ProcessBudgetGovernor(
+      7,
+      resources(650 * MiB, GiB, 900 * MiB),
+    );
+
+    const lease = await governor.acquire("media");
+    expect(lease.kind).toBe("media");
+    lease.release();
   });
 
   it("prevents overlapping OpenCode servers when the predicted footprint would exceed the service limit", async () => {

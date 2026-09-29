@@ -21,6 +21,7 @@ type WatchdogSnapshot = {
   healthLatencyMs: number | null;
   eventLoopLagMs: number;
   serviceMemoryMb: number;
+  serviceMemoryTotalMb: number | null;
   serviceMemoryLimitMb: number | null;
   serviceMemoryPressure: number | null;
   activeChildProcesses: number;
@@ -191,6 +192,9 @@ export class RuntimeObservabilityWatchdog {
       healthLatencyMs: health.latencyMs,
       eventLoopLagMs,
       serviceMemoryMb: Math.round(processSnapshot.memoryUsedBytes / 1024 / 1024),
+      serviceMemoryTotalMb: processSnapshot.memoryTotalBytes
+        ? Math.round(processSnapshot.memoryTotalBytes / 1024 / 1024)
+        : null,
       serviceMemoryLimitMb: processSnapshot.memoryLimitBytes ? Math.round(processSnapshot.memoryLimitBytes / 1024 / 1024) : null,
       serviceMemoryPressure: processSnapshot.memoryPressure,
       activeChildProcesses: processSnapshot.activeCount,
@@ -198,13 +202,13 @@ export class RuntimeObservabilityWatchdog {
     this.lastSnapshot = snapshot;
 
     logger.info(
-      `[RuntimeWatchdog] phase=heartbeat reason=${reason} pid=${process.pid} uptimeSec=${Math.round(process.uptime())} rssMb=${Math.round(process.memoryUsage().rss / 1024 / 1024)} heapUsedMb=${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} serviceMemoryMb=${snapshot.serviceMemoryMb} serviceMemoryLimitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"} serviceMemoryPressure=${snapshot.serviceMemoryPressure === null ? "unknown" : (snapshot.serviceMemoryPressure * 100).toFixed(1) + "%"} activeChildProcesses=${snapshot.activeChildProcesses} serviceProcessCount=${processSnapshot.serviceProcessCount ?? "unknown"} childKinds=${JSON.stringify(processSnapshot.activeByKind)} cpuLimit=${processSnapshot.cpuLimitCores?.toFixed(2) ?? "unknown"} cpuLoad1=${os.loadavg()[0]?.toFixed(2) ?? "unknown"} session=${sessionId ?? "none"} sessionState=${sessionResult.status} busyForMs=${sessionBusyForMs} sessionCheckMs=${sessionResult.elapsedMs} health=${health.status} healthLatencyMs=${health.latencyMs ?? "unknown"} eventLoopLagMs=${eventLoopLagMs}`,
+      `[RuntimeWatchdog] phase=heartbeat reason=${reason} pid=${process.pid} uptimeSec=${Math.round(process.uptime())} rssMb=${Math.round(process.memoryUsage().rss / 1024 / 1024)} heapUsedMb=${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} serviceWorkingSetMb=${snapshot.serviceMemoryMb} serviceMemoryTotalMb=${snapshot.serviceMemoryTotalMb ?? "unknown"} serviceMemoryLimitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"} serviceMemoryPressure=${snapshot.serviceMemoryPressure === null ? "unknown" : (snapshot.serviceMemoryPressure * 100).toFixed(1) + "%"} activeChildProcesses=${snapshot.activeChildProcesses} serviceProcessCount=${processSnapshot.serviceProcessCount ?? "unknown"} childKinds=${JSON.stringify(processSnapshot.activeByKind)} cpuLimit=${processSnapshot.cpuLimitCores?.toFixed(2) ?? "unknown"} cpuLoad1=${os.loadavg()[0]?.toFixed(2) ?? "unknown"} session=${sessionId ?? "none"} sessionState=${sessionResult.status} busyForMs=${sessionBusyForMs} sessionCheckMs=${sessionResult.elapsedMs} health=${health.status} healthLatencyMs=${health.latencyMs ?? "unknown"} eventLoopLagMs=${eventLoopLagMs}`,
     );
 
     if (snapshot.serviceMemoryPressure !== null && snapshot.serviceMemoryPressure >= 0.95) {
-      logger.error(`[RuntimeWatchdog] phase=memory_critical pressure=${(snapshot.serviceMemoryPressure * 100).toFixed(1)}% serviceMemoryMb=${snapshot.serviceMemoryMb} limitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"}`);
+      logger.error(`[RuntimeWatchdog] phase=memory_critical pressure=${(snapshot.serviceMemoryPressure * 100).toFixed(1)}% workingSetMb=${snapshot.serviceMemoryMb} totalMb=${snapshot.serviceMemoryTotalMb ?? "unknown"} limitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"}`);
     } else if (snapshot.serviceMemoryPressure !== null && snapshot.serviceMemoryPressure >= 0.88) {
-      logger.warn(`[RuntimeWatchdog] phase=memory_pressure pressure=${(snapshot.serviceMemoryPressure * 100).toFixed(1)}% serviceMemoryMb=${snapshot.serviceMemoryMb} limitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"}`);
+      logger.warn(`[RuntimeWatchdog] phase=memory_pressure pressure=${(snapshot.serviceMemoryPressure * 100).toFixed(1)}% workingSetMb=${snapshot.serviceMemoryMb} totalMb=${snapshot.serviceMemoryTotalMb ?? "unknown"} limitMb=${snapshot.serviceMemoryLimitMb ?? "unknown"}`);
     }
 
     if (eventLoopLagMs >= this.eventLoopCriticalMs) {

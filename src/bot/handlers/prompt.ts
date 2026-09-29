@@ -32,6 +32,11 @@ import { beginCoreRunForSession, dispatchCorePrompt, finishCoreRunForSession } f
 import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { rotateTelegramTopicSession } from "../../app/services/topic-session-rotation-service.js";
+import { __resetOpenCodeMemoryRecoveryStateForTests, isCoreResourcePressureError, recoverIdleOpenCodeMemory } from "../../app/services/opencode-memory-recovery-service.js";
+
+export function __resetPromptRecoveryStateForTests(): void {
+  __resetOpenCodeMemoryRecoveryStateForTests();
+}
 
 function isMissingSession(error: unknown, sessionId: string): boolean {
   const detail = error as { name?: string; data?: { message?: string } };
@@ -85,7 +90,7 @@ async function handlePromptStartFailure(input: {
   await input.bot.api.sendMessage(input.chatId, t("bot.prompt_send_error")).catch(() => {});
 }
 
-export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo, retryMissingSession = true): Promise<boolean> {
+export async function processUserPrompt(ctx: Context, text: string, deps: ProcessPromptDeps, fileParts: FilePartInput[] = [], modelOverride?: ModelInfo, retryMissingSession = true, retryResourcePressure = true): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
   const currentProject = getCurrentProject();
   if (!currentProject) { await ctx.reply(t("bot.project_not_selected")); return false; }
@@ -115,6 +120,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     assistantRunState.hasActiveRun(currentSession.id) ||
     foregroundSessionState.getBusySessions().some((session) => session.sessionId === currentSession!.id);
   if (attachResult.busy || locallyBusy) { await ctx.reply(t("bot.session_busy")); return false; }
+  let resourceRetryFiles = fileParts;
   try {
     const currentAgent = await resolveProjectAgent(getStoredAgent());
     const storedModel = modelOverride ?? getStoredModel();
@@ -124,6 +130,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     const pendingAttachment = promptAttachment.get();
     const attachmentParts = await resolvePendingAttachments(currentSession.directory);
     if (attachmentParts.length) parts.push(...attachmentParts); else if (pendingAttachment) await ctx.reply(t("attachment.invalid"));
+    resourceRetryFiles = parts.filter((part): part is FilePartInput => part.type === "file");
     if (pendingAttachment) { promptAttachment.clear("consumed"); interactionManager.clear("attachment_consumed"); await retireAttachmentConfirmation(ctx, pendingAttachment.confirmationMessageId); }
     if (parts.length === 0 || parts.every((p) => p.type === "file")) if (fileParts.length > 0) parts.unshift({ type: "text", text: fileParts.length === 1 ? "See attached file" : "See attached files" });
     if (parts.length === 0) {
@@ -215,6 +222,29 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
     if (currentSession) { finishCoreRunForSession(currentSession.id); foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) clearAllInteractionState("message_handler_error");
+
+    if (currentSession && retryResourcePressure && isCoreResourcePressureError(err)) {
+      const recovered = await recoverIdleOpenCodeMemory("prompt_admission", true);
+      if (recovered) {
+        logger.warn(
+          `[Bot] Retrying prompt after idle OpenCode memory reclaim: session=${currentSession.id}`,
+        );
+        return processUserPrompt(
+          ctx,
+          text,
+          deps,
+          resourceRetryFiles,
+          modelOverride,
+          retryMissingSession,
+          false,
+        );
+      }
+      await ctx.reply(
+        "🟠 Server memory is under pressure right now. No active run was interrupted; please retry in a moment.",
+      );
+      return false;
+    }
+
     await ctx.reply(t("error.generic"));
     return false;
   }

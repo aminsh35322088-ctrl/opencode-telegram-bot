@@ -1,6 +1,7 @@
 import { exec, execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { RailwayResourceGovernor } from "@opencode-telegram/native-runtime";
 import { logger } from "../utils/logger.js";
 
 const MiB = 1024 * 1024;
@@ -49,7 +50,10 @@ const RULES: Readonly<Record<ProcessBudgetKind, ProcessRule>> = Object.freeze({
 });
 
 export interface ServiceResourceSnapshot {
+  /** Reclaim-aware working set used for admission decisions. */
   readonly memoryUsedBytes: number;
+  /** Raw cgroup memory.current, including reclaimable inactive file cache. */
+  readonly memoryTotalBytes?: number;
   readonly memoryLimitBytes: number | null;
   readonly memoryPressure: number | null;
   readonly cpuLimitCores: number | null;
@@ -90,7 +94,6 @@ interface ActiveLease {
 
 const RESERVATION_WARMUP_MS = 5_000;
 
-const CGROUP_MEMORY_CURRENT = "/sys/fs/cgroup/memory.current";
 const CGROUP_MEMORY_MAX = "/sys/fs/cgroup/memory.max";
 const CGROUP_CPU_MAX = "/sys/fs/cgroup/cpu.max";
 const CGROUP_PROCS = "/sys/fs/cgroup/cgroup.procs";
@@ -116,18 +119,18 @@ async function readCpuLimit(): Promise<number | null> {
 }
 
 async function resourceSnapshot(): Promise<ServiceResourceSnapshot> {
-  const [currentText, maxText, cpuLimitCores] = await Promise.all([
-    readText(CGROUP_MEMORY_CURRENT),
+  const [maxText, cpuLimitCores] = await Promise.all([
     readText(CGROUP_MEMORY_MAX),
     readCpuLimit(),
   ]);
-  const cgroupCurrent = parsePositiveInt(currentText);
   const envLimitMb = Number.parseInt(process.env.BOT_PROCESS_MEMORY_LIMIT_MB ?? "", 10);
   const envLimit = Number.isFinite(envLimitMb) && envLimitMb > 0 ? envLimitMb * MiB : null;
-  const memoryUsedBytes = cgroupCurrent ?? process.memoryUsage().rss;
-  const memoryLimitBytes = parsePositiveInt(maxText) ?? envLimit;
+  const memoryTotalBytes = RailwayResourceGovernor.serviceMemoryBytes();
+  const memoryUsedBytes = RailwayResourceGovernor.serviceWorkingSetBytes(memoryTotalBytes);
+  const memoryLimitBytes = parsePositiveInt(maxText) ?? RailwayResourceGovernor.serviceMemoryLimitBytes() ?? envLimit;
   return {
     memoryUsedBytes,
+    memoryTotalBytes,
     memoryLimitBytes,
     memoryPressure: memoryLimitBytes ? memoryUsedBytes / memoryLimitBytes : null,
     cpuLimitCores,
@@ -207,7 +210,7 @@ export class ProcessBudgetGovernor {
     });
 
     logger.info(
-      `[ProcessBudget] admit kind=${kind} lease=${id} active=${this.#active.size}/${this.maxActive} memoryMb=${formatMb(resources.memoryUsedBytes)} memoryLimitMb=${resources.memoryLimitBytes ? formatMb(resources.memoryLimitBytes) : "unknown"} cpuLimit=${resources.cpuLimitCores?.toFixed(2) ?? "unknown"} timeoutMs=${timeoutMs ?? "owner-bound"}`,
+      `[ProcessBudget] admit kind=${kind} lease=${id} active=${this.#active.size}/${this.maxActive} workingSetMb=${formatMb(resources.memoryUsedBytes)} totalMb=${resources.memoryTotalBytes ? formatMb(resources.memoryTotalBytes) : "unknown"} memoryLimitMb=${resources.memoryLimitBytes ? formatMb(resources.memoryLimitBytes) : "unknown"} cpuLimit=${resources.cpuLimitCores?.toFixed(2) ?? "unknown"} timeoutMs=${timeoutMs ?? "owner-bound"}`,
     );
 
     let released = false;

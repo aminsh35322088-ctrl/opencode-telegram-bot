@@ -110,17 +110,35 @@ export class OpencodeAutoRestartService {
   }
 
   async restartForConfigChange(reason: string): Promise<boolean> {
+    return this.restartManagedServer("config", reason);
+  }
+
+  async restartForMemoryReclaim(reason: string): Promise<boolean> {
+    return this.restartManagedServer("memory", reason);
+  }
+
+  private async restartManagedServer(
+    source: "config" | "memory",
+    reason: string,
+  ): Promise<boolean> {
     if (!this.started || !this.localTarget || this.checkInProgress) return false;
 
     this.checkInProgress = true;
     try {
       this.serverWasHealthy = false;
       this.consecutiveHealthFailures = 0;
-      opencodeReadyLifecycle.notifyUnavailable(`config_change_${reason}`);
-      logger.info(`[OpenCodeAutoRestart] Restarting OpenCode to apply config change: reason=${reason}`);
-      return await this.startServer("config");
+      const lifecycleReason = source === "config"
+        ? `config_change_${reason}`
+        : `memory_reclaim_${reason}`;
+      opencodeReadyLifecycle.notifyUnavailable(lifecycleReason);
+      if (source === "config") {
+        logger.info(`[OpenCodeAutoRestart] Restarting OpenCode to apply config change: reason=${reason}`);
+      } else {
+        logger.warn(`[OpenCodeAutoRestart] Recycling idle OpenCode to reclaim memory: reason=${reason}`);
+      }
+      return await this.startServer(source);
     } catch (error) {
-      logger.error(`[OpenCodeAutoRestart] Failed config-change restart: reason=${reason}`, error);
+      logger.error(`[OpenCodeAutoRestart] Failed ${source} restart: reason=${reason}`, error);
       return false;
     } finally {
       this.checkInProgress = false;
@@ -193,7 +211,7 @@ export class OpencodeAutoRestartService {
     logger.info(`[OpenCodeAutoRestart] Existing OpenCode listener stop result: pid=${existingPid}, stopped=${stopped}`);
   }
 
-  private async startServer(reason: "startup" | "interval" | "config"): Promise<boolean> {
+  private async startServer(reason: "startup" | "interval" | "config" | "memory"): Promise<boolean> {
     if (!this.localTarget) return false;
     if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
       logger.warn(`[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`);
@@ -203,7 +221,9 @@ export class OpencodeAutoRestartService {
       ? "Startup"
       : reason === "config"
         ? "Config reload"
-        : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
+        : reason === "memory"
+          ? "Memory reclaim"
+          : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
     logger.info(`[OpenCodeAutoRestart] ${prefix}: preparing local OpenCode server on port=${this.localTarget.port}`);
     await this.stopExistingServerIfNeeded();
     logger.info(`[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`);

@@ -238,6 +238,30 @@ describe("opencode/auto-restart", () => {
     service.stop();
   });
 
+  it("recycles a healthy local server explicitly for idle memory reclaim", async () => {
+    mocked.config.opencode.autoRestartEnabled = true;
+    mocked.healthMock.mockResolvedValue(healthyResponse());
+    mocked.findServerPidMock.mockResolvedValueOnce(456);
+    const childProcess = createChildProcess(790);
+    mocked.startLocalOpencodeServerMock.mockReturnValue(childProcess);
+    const service = new OpencodeAutoRestartService();
+
+    await service.start();
+    const restarted = await service.restartForMemoryReclaim("railway_pressure");
+
+    expect(restarted).toBe(true);
+    expect(mocked.killServerProcessMock).toHaveBeenCalledWith(456);
+    expect(mocked.startLocalOpencodeServerMock).toHaveBeenCalledTimes(1);
+    expect(mocked.notifyUnavailableMock).toHaveBeenCalledWith("memory_reclaim_railway_pressure");
+    expect(mocked.notifyReadyMock).toHaveBeenLastCalledWith("auto_restart_memory");
+    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("Recycling idle OpenCode to reclaim memory"),
+    );
+    expect(childProcess.unref).toHaveBeenCalledTimes(1);
+
+    service.stop();
+  });
+
   it("does not run overlapping checks", async () => {
     mocked.config.opencode.autoRestartEnabled = true;
     mocked.config.opencode.monitorIntervalSec = 1;

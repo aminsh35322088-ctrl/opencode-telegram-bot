@@ -35,6 +35,7 @@ import {
   dispatchCorePrompt,
   finishCoreRunForSession,
   initializeNativeCore,
+  runCoreIdleMaintenance,
   shutdownNativeCore,
 } from "../../src/core/native-core-service.js";
 import { runInTopicRuntimeContext } from "../../src/app/services/topic-runtime-context.js";
@@ -109,6 +110,28 @@ describe("native Core adapter", () => {
     ).rejects.toThrow(/exact bound AI Topic/i);
 
     expect(mocked.promptAsync).not.toHaveBeenCalled();
+  });
+
+  it("refuses idle maintenance while a Core run is active and allows it after completion", async () => {
+    await initializeNativeCore({} as never, [{
+      chatId: 100,
+      threadId: 42,
+      sessionId: "session-1",
+      directory,
+    }]);
+
+    const run = await runInTopicRuntimeContext(
+      { chatId: 100, threadId: 42, sessionId: "session-1", directory },
+      () => beginCoreRunForSession("session-1", directory, "interactive_prompt", true),
+    );
+
+    const maintenanceTask = vi.fn().mockResolvedValue(true);
+    await expect(runCoreIdleMaintenance("test", maintenanceTask)).resolves.toBe(false);
+    expect(maintenanceTask).not.toHaveBeenCalled();
+
+    expect(finishCoreRunForSession("session-1")).toBe(true);
+    await expect(runCoreIdleMaintenance("test", maintenanceTask)).resolves.toBe(true);
+    expect(maintenanceTask).toHaveBeenCalledTimes(1);
   });
 
   it("keeps General/control-only model admission fail-closed", async () => {
