@@ -28,6 +28,9 @@ jobs:
       - name: Verify pinned Core packages
         run: node scripts/verify-core-install.mjs
 
+      - name: Install CI test runner
+        run: npm install --no-save --package-lock=false vitest@3.2.4
+
       - name: Materialize CI-only tests
         run: |
           rm -rf tests
@@ -44,7 +47,7 @@ jobs:
         run: npm run build
 
       - name: Run test suite
-        run: npx vitest run --config .github/ci-tests/vitest.config.ts
+        run: ./node_modules/.bin/vitest run --config .github/ci-tests/vitest.config.ts
 
       - name: Cleanup CI-only files
         if: always()
