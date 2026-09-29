@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import type { Bot, Context } from "grammy";
 import { processUserPrompt, type ProcessPromptDeps } from "../../../src/bot/handlers/prompt.js";
 import { promptAttachment } from "../../../src/app/managers/prompt-attachment-manager.js";
@@ -236,7 +237,7 @@ describe("bot/handlers/prompt", () => {
     mocked.beginCoreRunMock.mockReset();
     mocked.captureOwnerMock.mockReset().mockReturnValue({
       sessionId: "session-1",
-      directory: "D:\\Projects\\Repo",
+      directory: path.resolve("D:\\Projects\\Repo"),
     });
     mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
     mocked.dispatchCorePromptMock.mockReset();
