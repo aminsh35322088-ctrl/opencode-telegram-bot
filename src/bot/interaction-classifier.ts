@@ -5,6 +5,7 @@ import { getStoredModel } from "../app/services/model-selection-service.js";
 import { formatModelForButton } from "../app/types/model.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { findTelegramTopicBindingByThread } from "../app/services/telegram-topic-store.js";
+import { resolveCoreTopicBinding } from "../core/native-core-service.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   CONTEXT_BUTTON_TEXT_PATTERN,
@@ -93,12 +94,13 @@ export async function resolveReplyKeyboardContext(ctx: Context): Promise<ReplyKe
   }
 
   const runtime = getTopicRuntimeContext();
-  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId) {
+  const core = resolveCoreTopicBinding(chatId, threadId);
+  if (runtime?.chatId === chatId && runtime.threadId === threadId && runtime.sessionId === core?.sessionId) {
     return { scope: "ai-topic", sessionId: runtime.sessionId };
   }
 
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  if (binding) return { scope: "ai-topic", sessionId: binding.sessionId };
+  if (binding && core?.sessionId === binding.sessionId) return { scope: "ai-topic", sessionId: core.sessionId };
 
   return { scope: "main" };
 }

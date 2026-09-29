@@ -8,6 +8,8 @@ import { promptAttachment } from "../managers/prompt-attachment-manager.js";
 import type { SessionInfo } from "../types/session.js";
 import { getTopicRuntimeContext } from "./topic-runtime-context.js";
 import { findTelegramTopicBindingByThread } from "./telegram-topic-store.js";
+import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import path from "node:path";
 
 export type { SessionInfo };
 
@@ -38,6 +40,8 @@ export async function getEffectiveCurrentSession(): Promise<SessionInfo | null> 
   const topic = getTopicRuntimeContext();
   if (topic && !topic.sessionId) return null;
   if (topic?.sessionId) {
+    const core = resolveCoreTopicBinding(topic.chatId, topic.threadId);
+    if (core?.sessionId !== topic.sessionId || core.normalizedDirectory !== path.resolve(topic.directory ?? "")) return null;
     const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
     if (binding?.sessionId === topic.sessionId && binding.directory === topic.directory) {
       return {

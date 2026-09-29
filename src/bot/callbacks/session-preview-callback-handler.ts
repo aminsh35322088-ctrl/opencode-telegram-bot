@@ -15,11 +15,19 @@ import { getStoredAgent } from "../../app/services/agent-selection-service.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { getCompactOutputMode } from "../../app/stores/settings-store.js";
 import { logger } from "../../utils/logger.js";
+import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import { createCoreSessionApi } from "../services/core-session-api.js";
+import path from "node:path";
+
+function isCurrentTopic(binding: { chatId: number; threadId: number; sessionId: string; directory: string }): boolean {
+  const core = resolveCoreTopicBinding(binding.chatId, binding.threadId);
+  return core?.sessionId === binding.sessionId && core.normalizedDirectory === path.resolve(binding.directory);
+}
 
 export interface SessionPreviewDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
 async function refreshTopicHistory(ctx: Context, page = 0): Promise<void> {
   const chatId = ctx.chat?.id; if (chatId === undefined) return;
-  const all = (await listTelegramTopicBindings()).filter((binding) => binding.chatId === chatId).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  const all = (await listTelegramTopicBindings()).filter((binding) => binding.chatId === chatId && isCurrentTopic(binding)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   const pageSize = 8; const start = page * pageSize;
   const sessionPage = { sessions: all.slice(start, start + pageSize).map((binding) => ({ id: binding.sessionId, title: binding.title ?? `Topic ${binding.threadId}`, directory: binding.directory, time: { created: Date.parse(binding.updatedAt) || Date.now() } })), hasNext: start + pageSize < all.length, page };
   const view = buildSessionSelectionMenuView(sessionPage, pageSize); appendInlineMenuCancelButton(view.keyboard, "session"); await ctx.editMessageText(`🗂 Topic History\n\n${view.text.replace(/^🕘\s*/u, "")}`, { reply_markup: view.keyboard });
@@ -36,7 +44,7 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
     if (isBack || data === "session:no") { await ctx.answerCallbackQuery(); await refreshTopicHistory(ctx, 0); return true; }
     if (page !== null) { await ctx.answerCallbackQuery(); await refreshTopicHistory(ctx, page); return true; }
     const sessionId = previewId ?? continueId ?? deleteId ?? deleteConfirmId; if (!sessionId) return true;
-    const binding = await findTelegramTopicBindingBySession(chatId, sessionId); if (!binding) { await ctx.answerCallbackQuery({ text: "Topic no longer exists", show_alert: true }); await refreshTopicHistory(ctx, 0); return true; }
+    const binding = await findTelegramTopicBindingBySession(chatId, sessionId); if (!binding || !isCurrentTopic(binding)) { await ctx.answerCallbackQuery({ text: "Topic no longer exists", show_alert: true }); await refreshTopicHistory(ctx, 0); return true; }
     if (deleteConfirmId) { await deleteTelegramTopicSession(ctx.api, binding); await ctx.answerCallbackQuery({ text: "Topic deleted" }); await refreshTopicHistory(ctx, 0); return true; }
     if (deleteId) { await ctx.answerCallbackQuery(); await ctx.editMessageText(`🗑 Delete Topic?\n\n💬 ${binding.title ?? "Telegram Topic"}\n\nThis permanently closes the Topic and removes its Session, workspace, files and History entry.`, { reply_markup: buildSessionDeleteConfirmationKeyboard(binding.sessionId) }); return true; }
     if (previewId) { const items = await loadSessionPreviewItems(binding.sessionId, binding.directory, 10); await ctx.answerCallbackQuery(); await ctx.editMessageText(formatSessionPreview(binding.title ?? "Telegram Topic", items), { reply_markup: buildSessionPreviewKeyboard(binding.sessionId) }); return true; }
@@ -52,7 +60,7 @@ export async function handleSessionPreviewCallback(ctx: Context, deps: SessionPr
     });
     await ctx.answerCallbackQuery({ text: "Topic ready" });
     await ctx.editMessageText(`✅ Topic ready\n\n💬 ${binding.title ?? "Telegram Topic"}\n\nThe conversation is attached to the original Topic. A message was sent there to bring it to the front.`);
-    await ctx.api.sendMessage(binding.chatId, `▶️ <b>Continue</b>\n\n${binding.title ?? "Telegram Topic"} is ready. Continue your conversation here.`, { parse_mode: "HTML", message_thread_id: binding.threadId });
+    await createCoreSessionApi(ctx.api, binding.sessionId).sendMessage(binding.chatId, `▶️ <b>Continue</b>\n\n${binding.title ?? "Telegram Topic"} is ready. Continue your conversation here.`, { parse_mode: "HTML", message_thread_id: binding.threadId });
     logger.info(`[TopicHistory] Continued Topic: chat=${binding.chatId}, thread=${binding.threadId}, session=${binding.sessionId}`);
     return true;
   } catch (error) { logger.error("[TopicHistory] Error handling Topic History callback:", error); await ctx.answerCallbackQuery({ text: "Could not process Topic History", show_alert: true }).catch(() => {}); return true; }

@@ -1,6 +1,8 @@
 import { Bot, Context } from "grammy";
 import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { getCoreReleaseInfo } from "../core/release-info.js";
+import { resolveCoreTopicBinding } from "../core/native-core-service.js";
 import { config } from "../config.js";
 import { getCurrentProject } from "../app/stores/settings-store.js";
 import { getCurrentSession } from "../app/services/session-service.js";
@@ -53,7 +55,8 @@ async function resolveInboundTelegramTopic(ctx: Context): Promise<TelegramTopicC
     return { topic: null };
   }
   const binding = await findTelegramTopicBindingByThread(chatId, threadId);
-  if (!binding) {
+  const coreBinding = resolveCoreTopicBinding(chatId, threadId);
+  if (!binding || coreBinding?.sessionId !== binding.sessionId || coreBinding.normalizedDirectory !== path.resolve(binding.directory)) {
     logger.debug(`[TelegramTopics] Unbound Topic remains control-only: chat=${chatId} thread=${threadId}`);
     return { topic: { chatId, threadId } };
   }
