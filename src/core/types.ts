@@ -15,12 +15,4 @@ export interface CoreBindingOwner {
   bindingGeneration: number;
 }
 
-export interface CoreAbortTarget {
-  sessionId: string;
-  directory: string;
-}
-
-export interface CoreOwnedTaskContext {
-  signal: AbortSignal;
-  setAbortTarget(target: CoreAbortTarget | null): void;
-}
+export type { OpenCodeAbortTarget as CoreAbortTarget, OpenCodeTaskContext as CoreOwnedTaskContext } from "@opencode-telegram/native-runtime";

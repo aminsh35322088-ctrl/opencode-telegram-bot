@@ -33,6 +33,8 @@ vi.mock("../../src/app/services/model-selection-service.js", () => ({
 import {
   beginCoreRunForSession,
   dispatchCorePrompt,
+  dispatchCoreOwnedTask,
+  getNativeCore,
   finishCoreRunForSession,
   initializeNativeCore,
   runCoreIdleMaintenance,
@@ -150,5 +152,22 @@ describe("native Core adapter", () => {
     ).rejects.toThrow(/admission rejected/i);
 
     expect(mocked.promptAsync).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Core worker unavailable when OpenCode does not confirm abort cleanup", async () => {
+    await initializeNativeCore({} as never, [{ chatId: 100, threadId: 42, sessionId: "session-1", directory }]);
+    const run = await runInTopicRuntimeContext(
+      { chatId: 100, threadId: 42, sessionId: "session-1", directory },
+      () => beginCoreRunForSession("session-1", directory),
+    );
+    mocked.abort.mockResolvedValueOnce({ data: false });
+    await expect(dispatchCoreOwnedTask(run, "failed-operation", async () => {
+      throw new Error("operation failed");
+    })).rejects.toThrow("remote cleanup failed");
+    expect(mocked.abort).toHaveBeenCalledWith(
+      { sessionID: "session-1", directory }, expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(finishCoreRunForSession("session-1")).toBe(true);
+    expect(getNativeCore()!.workers.idleCount()).toBe(0);
   });
 });

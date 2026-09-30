@@ -5,13 +5,10 @@ import {
   RailwayResourceGovernor,
   GrammyRichMessagePort,
   GrammyNativeMarkdownStreamPort,
-  SerialTaskQueue,
+  OpenCodeTopicWorker,
   TelegramNativeCore,
-  sameBinding,
-  sameRun,
   type BindingIdentity,
   type RunIdentity,
-  type TopicWorker,
   type WorkerFactory,
 } from "@opencode-telegram/native-runtime";
 import { config } from "../config.js";
@@ -140,166 +137,22 @@ async function promptAsyncWithModelRecovery(
   return opencodeClient.session.promptAsync(fallback, requestOptions);
 }
 
-class BotTopicWorker implements TopicWorker {
-  readonly bindingId: string;
-  readonly generation: number;
-  readonly #queue: SerialTaskQueue;
-  #binding: BindingIdentity;
-  #activeRun: RunIdentity | null = null;
-  #activeAbortTarget: CoreAbortTarget | null = null;
-  #stopController = new AbortController();
-  #started = false;
-  #stopped = false;
-
-  constructor(binding: BindingIdentity, generation: number) {
-    this.bindingId = binding.bindingId;
-    this.generation = generation;
-    this.#binding = binding;
-    this.#queue = new SerialTaskQueue({
-      defaultTimeoutMs: PROMPT_DISPATCH_TIMEOUT_MS,
-      cancellationGraceMs: QUEUE_CANCELLATION_GRACE_MS,
-      onUncooperativeTask: (error) => {
-        logger.error(
-          `[Core] Topic worker queue poisoned: binding=${this.bindingId}, generation=${this.generation}`,
-          error,
-        );
-      },
-    });
-  }
-
-  get idle(): boolean {
-    return this.#started && !this.#stopped && this.#activeRun === null;
-  }
-
-  async start(binding: BindingIdentity): Promise<void> {
-    if (binding.bindingId !== this.bindingId || !sameBinding(binding, this.#binding)) {
-      throw new Error("worker start binding identity mismatch");
-    }
-    this.#binding = binding;
-    this.#started = true;
-  }
-
-  async executeTask<T>(
-    run: RunIdentity,
-    label: string,
-    task: (context: CoreOwnedTaskContext) => Promise<T>,
-    options: { abortTarget?: CoreAbortTarget | null; timeoutMs?: number } = {},
-  ): Promise<T> {
-    if (!this.#started || this.#stopped) throw new Error("topic worker is not active");
-    if (run.bindingId !== this.bindingId || run.workerGeneration !== this.generation) {
-      throw new Error("run does not belong to this topic worker");
-    }
-    if (!sameBinding(run, this.#binding)) {
-      throw new Error("run binding identity does not match the worker lease");
-    }
-    if (this.#activeRun && !sameRun(this.#activeRun, run)) {
-      throw new Error("topic worker already owns an active run");
-    }
-    this.#activeRun = run;
-    const initialAbortTarget =
-      options.abortTarget === undefined
-        ? { sessionId: run.sessionId, directory: run.normalizedDirectory }
-        : options.abortTarget;
-    this.#activeAbortTarget = initialAbortTarget
-      ? {
-          sessionId: initialAbortTarget.sessionId,
-          directory: normalizeDirectory(initialAbortTarget.directory),
-        }
-      : null;
-
-    const setAbortTarget = (target: CoreAbortTarget | null): void => {
-      if (!this.#activeRun || !sameRun(this.#activeRun, run) || this.#stopped) {
-        throw new Error("cannot mutate abort target for an inactive Core run");
-      }
-      this.#activeAbortTarget = target
-        ? { sessionId: target.sessionId, directory: normalizeDirectory(target.directory) }
-        : null;
-    };
-
-    try {
-      return await this.#queue.enqueue(
-        label,
-        (queueSignal) =>
-          task({
-            signal: AbortSignal.any([queueSignal, this.#stopController.signal]),
-            setAbortTarget,
-          }),
-        options.timeoutMs,
+const workerFactory: WorkerFactory = (binding, generation) =>
+  new OpenCodeTopicWorker(binding, generation, null, {
+    promptTimeoutMs: PROMPT_DISPATCH_TIMEOUT_MS,
+    cancellationGraceMs: QUEUE_CANCELLATION_GRACE_MS,
+    stopTimeoutMs: WORKER_STOP_TIMEOUT_MS,
+    abortSession: async (target, signal) => {
+      const result = await opencodeClient.session.abort(
+        { sessionID: target.sessionId, directory: target.directory },
+        { signal },
       );
-    } catch (error) {
-      this.complete(run);
-      throw error;
-    }
-  }
-
-  async execute(run: RunIdentity, options: CorePromptOptions): Promise<PromptAsyncResult> {
-    if (
-      run.sessionId !== this.#binding.sessionId ||
-      normalizeDirectory(options.directory) !== this.#binding.normalizedDirectory ||
-      options.sessionID !== this.#binding.sessionId
-    ) {
-      throw new Error("prompt identity does not match the bound Topic");
-    }
-    const result = await this.executeTask(
-      run,
-      `prompt:${run.runId}`,
-      ({ signal }) => promptAsyncWithModelRecovery(options, signal),
-    );
-    if ("error" in result && result.error) this.complete(run);
-    return result;
-  }
-
-  complete(run: RunIdentity): void {
-    if (!this.#activeRun || !sameRun(this.#activeRun, run)) return;
-    this.#activeRun = null;
-    this.#activeAbortTarget = null;
-  }
-
-  async stop(reason: string): Promise<void> {
-    if (this.#stopped) return;
-    this.#stopped = true;
-    workersByLease.delete(workerLeaseKey(this.bindingId, this.generation));
-    this.#stopController.abort(new Error(reason));
-    const active = this.#activeRun;
-    const abortTarget = this.#activeAbortTarget;
-    this.#activeRun = null;
-    this.#activeAbortTarget = null;
-    if (!active || !abortTarget) return;
-
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(new Error("worker stop timeout")),
-      WORKER_STOP_TIMEOUT_MS,
-    );
-    try {
-      await opencodeClient.session.abort(
-        { sessionID: abortTarget.sessionId, directory: abortTarget.directory },
-        { signal: controller.signal },
-      );
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        logger.warn(
-          `[Core] Failed to abort active session while stopping worker: binding=${this.bindingId}`,
-          error,
-        );
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-}
-
-const workersByLease = new Map<string, BotTopicWorker>();
-
-function workerLeaseKey(bindingId: string, generation: number): string {
-  return `${bindingId}:${generation}`;
-}
-
-const workerFactory: WorkerFactory = (binding, generation) => {
-  const worker = new BotTopicWorker(binding, generation);
-  workersByLease.set(workerLeaseKey(binding.bindingId, generation), worker);
-  return worker;
-};
+      if (result.error || result.data !== true) throw new Error("OpenCode did not confirm the owned session abort");
+    },
+    onIsolationFailure: (identity, error) => {
+      logger.error(`[Core] Topic worker isolation failed: binding=${identity.bindingId}`, error);
+    },
+  });
 
 let nativeCore: TelegramNativeCore | null = null;
 const runsBySession = new Map<string, RunIdentity>();
@@ -436,7 +289,6 @@ export async function shutdownNativeCore(): Promise<void> {
   nativeCore = null;
   runsBySession.clear();
   if (core) await core.shutdown();
-  workersByLease.clear();
 }
 
 export async function registerCoreTopicBinding(input: CoreTopicBindingInput): Promise<void> {
@@ -621,18 +473,16 @@ export async function dispatchCorePrompt(
   options: CorePromptOptions,
 ): Promise<PromptAsyncResult> {
   const core = requireCore();
-  if (!core.runs.accepts(run)) throw new Error("Core run was fenced before prompt dispatch");
-  const binding = core.bindings.registry.getExact(run);
-  if (!binding) throw new Error("Core binding changed before prompt dispatch");
-  const worker = await core.workers.ensure(binding);
-  if (
-    !(worker instanceof BotTopicWorker) ||
-    worker.generation !== run.workerGeneration ||
-    !core.workers.isCurrent(binding, worker)
-  ) {
-    throw new Error("Core worker changed before prompt dispatch");
+  if (options.sessionID !== run.sessionId || normalizeDirectory(options.directory) !== run.normalizedDirectory) {
+    throw new Error("prompt identity does not match the bound Topic");
   }
-  return worker.execute(run, options);
+  const result = await core.dispatchTask(
+    run,
+    `prompt:${run.runId}`,
+    ({ signal }) => promptAsyncWithModelRecovery(options, signal),
+  );
+  if ("error" in result && result.error) core.finishRun(run);
+  return result;
 }
 
 export async function dispatchCoreOwnedTask<T>(
@@ -641,23 +491,7 @@ export async function dispatchCoreOwnedTask<T>(
   task: (context: CoreOwnedTaskContext) => Promise<T>,
   options: { abortTarget?: CoreAbortTarget | null; timeoutMs?: number } = {},
 ): Promise<T> {
-  const core = requireCore();
-  if (!core.runs.accepts(run)) {
-    throw new Error("Core run was fenced before owned task dispatch");
-  }
-  const binding = core.bindings.registry.getExact(run);
-  if (!binding) throw new Error("Core binding changed before owned task dispatch");
-
-  const worker = await core.workers.ensure(binding);
-  if (
-    !(worker instanceof BotTopicWorker) ||
-    worker.generation !== run.workerGeneration ||
-    !core.workers.isCurrent(binding, worker)
-  ) {
-    throw new Error("Core worker changed before owned task dispatch");
-  }
-
-  return worker.executeTask(run, label, task, options);
+  return requireCore().dispatchTask(run, label, task, options);
 }
 
 export async function runCoreSessionTask<T>(
@@ -678,7 +512,6 @@ export async function runCoreSessionTask<T>(
 export function finishCoreRun(run: RunIdentity): boolean {
   const core = nativeCore;
   if (!core) return false;
-  workersByLease.get(workerLeaseKey(run.bindingId, run.workerGeneration))?.complete(run);
   return core.finishRun(run);
 }
 

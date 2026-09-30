@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Api } from "grammy";
+import { OpenCodeTopicWorker } from "@opencode-telegram/native-runtime";
 import {
   beginCoreRunForSession,
   finishCoreRunForSession,
@@ -15,11 +16,36 @@ import {
   resolveCoreTopicBinding,
   rotateCoreTopicBinding,
   shutdownNativeCore,
+  getNativeCore,
 } from "../src/core/native-core-service.js";
 import { runInTopicRuntimeContext } from "../src/app/services/topic-runtime-context.js";
 import { createCoreSessionApi } from "../src/bot/services/core-session-api.js";
 import { resolveTailnetSshScope } from "../src/app/services/ssh-service.js";
 import { opencodeClient } from "../src/opencode/client.js";
+
+test("Bot delegates its execution boundary to the authoritative Core TopicWorker", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "core-worker-ownership-test-"));
+  const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+  const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+  process.env.OPENCODE_TELEGRAM_HOME = home;
+  process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
+  try {
+    await initializeNativeCore({} as Api, []);
+    const core = getNativeCore()!;
+    const binding = { bindingId: "worker-test", botId: "12345", chatId: 1, threadId: 2,
+      sessionId: "root", normalizedDirectory: home, bindingGeneration: 1 };
+    core.bindings.registry.register(binding);
+    assert.ok(await core.workers.ensure(binding) instanceof OpenCodeTopicWorker,
+      "the Bot must use the authoritative Core TopicWorker");
+  } finally {
+    await shutdownNativeCore();
+    if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+    else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+    if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+    else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("ambiguous session ownership fails closed before starting a Core run", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "core-admission-test-"));
@@ -252,6 +278,12 @@ test("Core-owned session operation runs only in its bound Topic and releases its
   const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
   const previousToken = process.env.TELEGRAM_BOT_TOKEN;
   const previousUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+  const originalAbort = opencodeClient.session.abort;
+  const aborted: Array<{ sessionID: string; directory: string }> = [];
+  opencodeClient.session.abort = (async (params: { sessionID: string; directory: string }) => {
+    aborted.push(params);
+    return { data: true };
+  }) as typeof originalAbort;
   process.env.OPENCODE_TELEGRAM_HOME = home;
   process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
   process.env.TELEGRAM_ALLOWED_USER_ID = "1";
@@ -268,10 +300,12 @@ test("Core-owned session operation runs only in its bound Topic and releases its
       async () => {
         assert.equal(await runCoreSessionTask("owned", "/workspace", "compact", async ({ signal }) => !signal.aborted), true);
         await assert.rejects(runCoreSessionTask("owned", "/workspace", "compact", async () => { throw new Error("failed"); }), /failed/);
+        assert.deepEqual(aborted, [{ sessionID: "owned", directory: path.resolve("/workspace") }]);
         assert.equal(await runCoreSessionTask("owned", "/workspace", "compact", async () => 42), 42);
       },
     );
   } finally {
+    opencodeClient.session.abort = originalAbort;
     await shutdownNativeCore();
     if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
     else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
