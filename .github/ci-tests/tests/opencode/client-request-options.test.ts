@@ -1,8 +1,11 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const mocked = vi.hoisted(() => ({ create: vi.fn(), promptAsync: vi.fn(), model: vi.fn() }));
+const mocked = vi.hoisted(() => ({ create: vi.fn(), promptAsync: vi.fn(), model: vi.fn(), fetches: [] as typeof fetch[] }));
 vi.mock("@opencode-ai/sdk/v2", () => ({
-  createOpencodeClient: () => ({ session: { create: mocked.create, promptAsync: mocked.promptAsync } }),
+  createOpencodeClient: (config: { fetch: typeof fetch }) => {
+    mocked.fetches.push(config.fetch);
+    return { session: { create: mocked.create, promptAsync: mocked.promptAsync } };
+  },
 }));
 vi.mock("../../src/config.js", () => ({ config: { opencode: { apiUrl: "http://localhost", password: "" } } }));
 vi.mock("../../src/app/services/model-selection-service.js", () => ({ fetchCurrentModel: mocked.model }));
@@ -17,6 +20,21 @@ beforeEach(() => {
   mocked.create.mockReset().mockResolvedValue({ data: { id: "child" } });
   mocked.promptAsync.mockReset().mockResolvedValue({ data: undefined });
   mocked.model.mockReset().mockResolvedValue({ providerID: "default-provider", modelID: "default-model" });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+it("preserves the SDK Request cancellation signal through both bounded fetch transports", async () => {
+  const network = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", network);
+  for (const transport of mocked.fetches) {
+    const controller = new AbortController();
+    const request = new Request("http://localhost/session", { method: "POST", signal: controller.signal });
+    await transport(request);
+    const options = network.mock.calls.at(-1)![1] as RequestInit;
+    expect(options.signal?.aborted).toBe(false);
+    controller.abort();
+    expect(options.signal?.aborted).toBe(true);
+  }
 });
 
 it("preserves parent identity, explicit model and cancellation through the real create wrapper", async () => {

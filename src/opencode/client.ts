@@ -39,7 +39,7 @@ const boundedControlFetch: typeof fetch = (input, init) => {
   return fetch(input, {
     ...init,
     signal: AbortSignal.any([
-      init?.signal ?? new AbortController().signal,
+      init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal),
       AbortSignal.timeout(timeoutMs),
     ]),
   });
@@ -58,7 +58,7 @@ const promptDispatchFetch: typeof fetch = (input, init) =>
   fetch(input, {
     ...init,
     signal: AbortSignal.any([
-      init?.signal ?? new AbortController().signal,
+      init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal),
       AbortSignal.timeout(PROMPT_DISPATCH_TIMEOUT_MS),
     ]),
   });
