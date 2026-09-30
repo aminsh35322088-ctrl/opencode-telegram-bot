@@ -1,4 +1,5 @@
 import { config } from "../../config.js";
+import path from "node:path";
 import { t } from "../../i18n/index.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { logger } from "../../utils/logger.js";
@@ -8,7 +9,6 @@ import {
   registerScheduledTaskSessionIgnore,
 } from "./scheduled-task-session-ignore-service.js";
 import type { ScheduledTask, ScheduledTaskExecutionResult } from "../types/scheduled-task.js";
-import { markAbortExpected } from "../managers/abort-suppression-manager.js";
 import {
   beginCoreRunForOwner,
   dispatchCoreOwnedTask,
@@ -332,24 +332,6 @@ async function rejectInteractiveRequest(
   }
 }
 
-async function abortScheduledTaskSession(sessionId: string, directory: string): Promise<void> {
-  markAbortExpected(sessionId);
-  try {
-    const { error } = await opencodeClient.session.abort({ sessionID: sessionId, directory });
-    if (error) {
-      logger.warn(
-        `[ScheduledTaskExecutor] Failed to abort interactive scheduled task session: sessionId=${sessionId}`,
-        error,
-      );
-    }
-  } catch (error) {
-    logger.warn(
-      `[ScheduledTaskExecutor] Failed to abort interactive scheduled task session: sessionId=${sessionId}`,
-      error,
-    );
-  }
-}
-
 async function failIfInteractiveRequest(
   taskId: string,
   sessionId: string,
@@ -375,7 +357,6 @@ async function failIfInteractiveRequest(
   });
 
   await rejectInteractiveRequest(interactiveRequest, directory);
-  await abortScheduledTaskSession(sessionId, directory);
   throw new ScheduledTaskInteractiveRequestError(interactiveRequest.kind);
 }
 
@@ -508,93 +489,79 @@ async function executeScheduledTaskWithinCore(
   task: ScheduledTask,
   context: CoreOwnedTaskContext,
 ): Promise<ScheduledTaskExecutionResult> {
-  const { signal, setAbortTarget } = context;
   const startedAt = new Date().toISOString();
-  let sessionId: string | null = null;
-  let deleteTemporarySession = true;
-
   try {
-    signal.throwIfAborted();
-    await cleanupScheduledTaskSessionIgnores();
+    return await context.withTemporarySession(
+      { title: SCHEDULED_TASK_SESSION_TITLE },
+      async (session) => {
+        const { signal } = session;
+        await cleanupScheduledTaskSessionIgnores();
+        await registerScheduledTaskSessionIgnore(session.sessionId);
+        try {
+          const promptOptions: {
+            sessionID: string;
+            directory: string;
+            parts: Array<{ type: "text"; text: string }>;
+            agent: string;
+            model?: { providerID: string; modelID: string };
+            variant?: string;
+          } = {
+            sessionID: session.sessionId,
+            directory: session.directory,
+            parts: [{ type: "text", text: task.prompt }],
+            agent: task.agent,
+          };
 
-    const { data: session, error: createError } = await opencodeClient.session.create({
-      directory: task.projectWorktree,
-      title: SCHEDULED_TASK_SESSION_TITLE,
-    });
+          if (task.model.providerID && task.model.modelID) {
+            promptOptions.model = {
+              providerID: task.model.providerID,
+              modelID: task.model.modelID,
+            };
+          }
 
-    if (createError || !session) {
-      throw createError || new Error("Failed to create temporary scheduled task session");
-    }
+          if (task.model.variant) {
+            promptOptions.variant = task.model.variant;
+          }
 
-    sessionId = session.id;
-    setAbortTarget({ sessionId: session.id, directory: session.directory });
-    await registerScheduledTaskSessionIgnore(session.id);
+          const { error: promptError } = await opencodeClient.session.promptAsync(promptOptions, {
+            signal,
+          });
 
-    const promptOptions: {
-      sessionID: string;
-      directory: string;
-      parts: Array<{ type: "text"; text: string }>;
-      agent: string;
-      model?: { providerID: string; modelID: string };
-      variant?: string;
-    } = {
-      sessionID: session.id,
-      directory: session.directory,
-      parts: [{ type: "text", text: task.prompt }],
-      agent: task.agent,
-    };
+          if (promptError) {
+            throw promptError || new Error("Scheduled task prompt execution failed");
+          }
 
-    if (task.model.providerID && task.model.modelID) {
-      promptOptions.model = {
-        providerID: task.model.providerID,
-        modelID: task.model.modelID,
-      };
-    }
+          const resultText = await waitForScheduledTaskResult(
+            task.id,
+            session.sessionId,
+            session.directory,
+            signal,
+          );
 
-    if (task.model.variant) {
-      promptOptions.variant = task.model.variant;
-    }
-
-    const { error: promptError } = await opencodeClient.session.promptAsync(
-      promptOptions,
-      { signal },
+          return {
+            taskId: task.id,
+            status: "success",
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            resultText,
+            errorMessage: null,
+          };
+        } catch (error) {
+          if (error instanceof ScheduledTaskEmptyAssistantResponseError) {
+            session.retainForInspection();
+            logger.warn(
+              `[ScheduledTaskExecutor] Keeping temporary session for inspection: id=${task.id}, sessionId=${session.sessionId}`,
+            );
+          }
+          throw error;
+        }
+      },
     );
-
-    if (promptError) {
-      throw promptError || new Error("Scheduled task prompt execution failed");
-    }
-
-    const resultText = await waitForScheduledTaskResult(
-      task.id,
-      session.id,
-      session.directory,
-      signal,
-    );
-
-    return {
-      taskId: task.id,
-      status: "success",
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      resultText,
-      errorMessage: null,
-    };
   } catch (error) {
-    if (signal.aborted && sessionId) {
-      await abortScheduledTaskSession(sessionId, task.projectWorktree);
-    }
     const errorMessage = toErrorMessage(error);
-    if (error instanceof ScheduledTaskEmptyAssistantResponseError && sessionId) {
-      deleteTemporarySession = false;
-      logger.warn(
-        `[ScheduledTaskExecutor] Keeping temporary session for inspection: id=${task.id}, sessionId=${sessionId}`,
-      );
-    }
-
     logger.warn(
       `[ScheduledTaskExecutor] Task execution failed: id=${task.id}, message=${errorMessage}`,
     );
-
     return {
       taskId: task.id,
       status: "error",
@@ -603,29 +570,8 @@ async function executeScheduledTaskWithinCore(
       resultText: null,
       errorMessage,
     };
-  } finally {
-    if (sessionId && deleteTemporarySession) {
-      try {
-        const { data: deleted, error: deleteError } = await opencodeClient.session.delete({
-          sessionID: sessionId,
-          directory: task.projectWorktree,
-        });
-        if (deleteError || deleted !== true) {
-          logger.warn(
-            `[ScheduledTaskExecutor] Failed to delete temporary session: sessionId=${sessionId}`,
-            deleteError ?? new Error("OpenCode did not confirm session deletion"),
-          );
-        }
-      } catch (error) {
-        logger.warn(
-          `[ScheduledTaskExecutor] Failed to delete temporary session: sessionId=${sessionId}`,
-          error,
-        );
-      }
-    }
   }
 }
-
 export async function executeScheduledTask(
   task: ScheduledTask,
 ): Promise<ScheduledTaskExecutionResult> {
@@ -643,6 +589,9 @@ export async function executeScheduledTask(
 
   let run;
   try {
+    if (path.resolve(task.projectWorktree) !== path.resolve(task.coreBinding.directory)) {
+      throw new Error("Scheduled task worktree must match its Core Topic owner");
+    }
     run = await beginCoreRunForOwner(task.coreBinding, "scheduled_task");
     return await dispatchCoreOwnedTask(
       run,

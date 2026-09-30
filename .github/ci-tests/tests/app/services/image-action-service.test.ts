@@ -41,7 +41,7 @@ describe("image-action-service", () => {
     const controller = new AbortController();
     await generateConfiguredImage("draw a lighthouse", controller.signal, "/work/topic");
     expect(resolveCapabilityRoute).toHaveBeenCalledWith("imageGenerate", "/work/topic");
-    expect(runImageForSelection).toHaveBeenCalledWith(selection, "draw a lighthouse", undefined, controller.signal, "/work/topic");
+    expect(runImageForSelection).toHaveBeenCalledWith(selection, "draw a lighthouse", undefined, controller.signal, "/work/topic", undefined);
   });
 
   it("edits with the same Image AI binding when editing is supported", async () => {
@@ -50,7 +50,7 @@ describe("image-action-service", () => {
     const source = { buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), mimeType: "image/png" };
     await editConfiguredImage("make the sky warmer", source, controller.signal, "/work/topic");
     expect(resolveCapabilityRoute).toHaveBeenCalledWith("imageEdit", "/work/topic");
-    expect(runImageForSelection).toHaveBeenCalledWith(selection, "make the sky warmer", source, controller.signal, "/work/topic");
+    expect(runImageForSelection).toHaveBeenCalledWith(selection, "make the sky warmer", source, controller.signal, "/work/topic", undefined);
   });
 
   it("rejects invalid image bytes before invoking the provider", async () => {

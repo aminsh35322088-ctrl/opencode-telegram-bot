@@ -17,6 +17,7 @@ import { getRuntimePaths } from "../runtime/paths.js";
 import { logger } from "../utils/logger.js";
 import { resolveCatalogModel } from "../app/services/model-selection-service.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
+import { createOpenCodeTemporarySessionPort } from "./opencode-session-port.js";
 import type {
   CoreAbortTarget,
   CoreBindingOwner,
@@ -137,18 +138,14 @@ async function promptAsyncWithModelRecovery(
   return opencodeClient.session.promptAsync(fallback, requestOptions);
 }
 
+const temporarySessionPort = createOpenCodeTemporarySessionPort();
 const workerFactory: WorkerFactory = (binding, generation) =>
   new OpenCodeTopicWorker(binding, generation, null, {
     promptTimeoutMs: PROMPT_DISPATCH_TIMEOUT_MS,
     cancellationGraceMs: QUEUE_CANCELLATION_GRACE_MS,
     stopTimeoutMs: WORKER_STOP_TIMEOUT_MS,
-    abortSession: async (target, signal) => {
-      const result = await opencodeClient.session.abort(
-        { sessionID: target.sessionId, directory: target.directory },
-        { signal },
-      );
-      if (result.error || result.data !== true) throw new Error("OpenCode did not confirm the owned session abort");
-    },
+    abortSession: temporarySessionPort.abort,
+    temporarySessionPort,
     onIsolationFailure: (identity, error) => {
       logger.error(`[Core] Topic worker isolation failed: binding=${identity.bindingId}`, error);
     },

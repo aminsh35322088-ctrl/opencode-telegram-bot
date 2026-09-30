@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { logger } from "../../utils/logger.js";
 import { runOpenCodeImageModel } from "./opencode-image-execution-service.js";
+import type { SessionOwner } from "@opencode-telegram/native-runtime";
 import {
   removeExtensionCredentials,
   resolveExtensionCredential,
@@ -413,6 +414,7 @@ export async function runImageForSelection(
   image: ImageBinary | undefined,
   signal: AbortSignal,
   worktree = process.cwd(),
+  owner?: SessionOwner,
 ): Promise<ImageBinary> {
   if (image && detectImageMimeType(image.buffer) !== image.mimeType) {
     throw new Error("Only valid PNG, JPEG and WebP images are supported");
@@ -458,7 +460,7 @@ export async function runImageForSelection(
 
   // Normal AI providers are executed through OpenCode itself. This keeps the
   // image path provider-agnostic (Gemini/OpenRouter/custom gateways/etc.).
-  return runOpenCodeImageModel(selection, prompt, image, signal, worktree);
+  return runOpenCodeImageModel(selection, prompt, image, signal, worktree, owner);
 }
 
 /** Dedicated chats pin one image connection. No fallback or ambiguous POST retry. */

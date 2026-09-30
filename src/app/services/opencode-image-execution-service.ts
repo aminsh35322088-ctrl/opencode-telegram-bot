@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SessionOwner } from "@opencode-telegram/native-runtime";
+import { createOpenCodeTemporarySessionRunner } from "../../core/opencode-session-port.js";
 import { opencodeClient } from "../../opencode/client.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { detectImageMimeType, validateImage } from "./ai-http-service.js";
@@ -59,20 +61,17 @@ export async function runOpenCodeImageModel(
   source: ImageBinary | undefined,
   signal: AbortSignal,
   worktree: string,
+  owner?: SessionOwner,
 ): Promise<ImageBinary> {
   signal.throwIfAborted();
-  const created = await opencodeClient.session.create({
-    directory: worktree,
+  if (!owner || path.resolve(owner.directory) !== path.resolve(worktree)) {
+    throw new Error("Image action requires its parent session and Topic worktree.");
+  }
+  return createOpenCodeTemporarySessionRunner().run(owner, {
     title: "Image AI action",
     model: { providerID: selection.providerID, id: selection.modelID },
-  });
-
-  if (created.error || !created.data?.id) {
-    throw new Error("OpenCode could not create a temporary image session.");
-  }
-
-  const sessionID = created.data.id;
-  try {
+  }, async (session) => {
+    const sessionID = session.sessionId;
     const parts: Array<
       { type: "text"; text: string }
       | { type: "file"; mime: string; filename: string; url: string }
@@ -118,7 +117,5 @@ export async function runOpenCodeImageModel(
     }
 
     return await imageFromUrl(imagePart.url, imagePart.mime, worktree, signal);
-  } finally {
-    await opencodeClient.session.delete({ sessionID, directory: worktree }).catch(() => {});
-  }
+  }, signal);
 }

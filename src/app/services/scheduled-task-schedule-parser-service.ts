@@ -1,4 +1,5 @@
 import { opencodeClient } from "../../opencode/client.js";
+import path from "node:path";
 import { logger } from "../../utils/logger.js";
 import {
   cleanupScheduledTaskSessionIgnores,
@@ -161,6 +162,9 @@ export async function parseTaskSchedule(
   directory: string,
   owner: CoreBindingOwner,
 ): Promise<ParsedTaskSchedule> {
+  if (path.resolve(directory) !== path.resolve(owner.directory)) {
+    throw new Error("Schedule parser directory must match its Core Topic owner");
+  }
   const run = await beginCoreRunForOwner(owner, "schedule_parse");
   try {
     return await dispatchCoreOwnedTask(
@@ -177,7 +181,7 @@ export async function parseTaskSchedule(
 async function parseTaskScheduleWithinCore(
   scheduleText: string,
   directory: string,
-  { signal, setAbortTarget }: CoreOwnedTaskContext,
+  context: CoreOwnedTaskContext,
 ): Promise<ParsedTaskSchedule> {
   const trimmedScheduleText = scheduleText.trim();
   if (!trimmedScheduleText) {
@@ -190,31 +194,18 @@ async function parseTaskScheduleWithinCore(
   }
 
   const timezone = getLocalTimezone();
-  let sessionId: string | null = null;
-
-  try {
+  return context.withTemporarySession({ title: SCHEDULE_PARSE_SESSION_TITLE }, async (session) => {
+    const { signal } = session;
     logger.debug(
       `[ScheduledTaskScheduleParser] Parsing schedule: directory=${trimmedDirectory}, textLength=${trimmedScheduleText.length}`,
     );
     await cleanupScheduledTaskSessionIgnores();
 
-    signal.throwIfAborted();
-    const { data: session, error: createError } = await opencodeClient.session.create({
-      directory: trimmedDirectory,
-      title: SCHEDULE_PARSE_SESSION_TITLE,
-    }, { signal });
-
-    if (createError || !session) {
-      throw createError || new Error("Failed to create temporary schedule parser session");
-    }
-
-    sessionId = session.id;
-    setAbortTarget({ sessionId: session.id, directory: trimmedDirectory });
-    await registerScheduledTaskSessionIgnore(session.id);
-    logger.debug(`[ScheduledTaskScheduleParser] Created temporary session: sessionId=${session.id}`);
+    await registerScheduledTaskSessionIgnore(session.sessionId);
+    logger.debug(`[ScheduledTaskScheduleParser] Created temporary session: sessionId=${session.sessionId}`);
 
     const { data: response, error: promptError } = await opencodeClient.session.prompt({
-      sessionID: session.id,
+      sessionID: session.sessionId,
       directory: session.directory,
       system:
         "You are a schedule parser. Your only job is to convert user schedule text into strict JSON output.",
@@ -227,32 +218,12 @@ async function parseTaskScheduleWithinCore(
 
     const responseText = collectResponseText(response.parts);
     logger.debug(
-      `[ScheduledTaskScheduleParser] Received parser response: sessionId=${session.id}, textLength=${responseText.length}`,
+      `[ScheduledTaskScheduleParser] Received parser response: sessionId=${session.sessionId}, textLength=${responseText.length}`,
     );
     if (!responseText) {
       throw new Error("Schedule parser returned an empty response");
     }
 
     return parseSchedulePayload(responseText);
-  } finally {
-    if (sessionId) {
-      try {
-        const { data: deleted, error: deleteError } = await opencodeClient.session.delete({
-          sessionID: sessionId,
-          directory: trimmedDirectory,
-        });
-        if (deleteError || deleted !== true) {
-          logger.warn(
-            `[ScheduledTaskScheduleParser] Failed to delete temporary session: sessionId=${sessionId}`,
-            deleteError ?? new Error("OpenCode did not confirm session deletion"),
-          );
-        }
-      } catch (error) {
-        logger.warn(
-          `[ScheduledTaskScheduleParser] Failed to delete temporary session: sessionId=${sessionId}`,
-          error,
-        );
-      }
-    }
-  }
+  });
 }

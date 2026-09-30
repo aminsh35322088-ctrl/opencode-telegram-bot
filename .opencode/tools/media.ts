@@ -30,12 +30,13 @@ interface ImageResolutionModule {
   resolvePersistedImageModel(worktree?: string): Promise<unknown>;
 }
 interface ImageActionModule {
-  generateConfiguredImage(prompt: string, signal?: AbortSignal, worktree?: string): Promise<{ buffer: Buffer; mimeType: string }>;
+  generateConfiguredImage(prompt: string, signal?: AbortSignal, worktree?: string, owner?: { sessionId: string; directory: string }): Promise<{ buffer: Buffer; mimeType: string }>;
   editConfiguredImage(
     prompt: string,
     source: { buffer: Buffer; mimeType: string },
     signal?: AbortSignal,
     worktree?: string,
+    owner?: { sessionId: string; directory: string },
   ): Promise<{ buffer: Buffer; mimeType: string }>;
 }
 interface AiHttpModule {
@@ -149,6 +150,8 @@ export default tool({
     const imageService = await load<ImageActionModule>("app/services/image-action-service.js");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 180_000);
+    const signal = AbortSignal.any([controller.signal, context.abort]);
+    const owner = { sessionId: context.sessionID, directory: base };
 
     try {
       let result: { buffer: Buffer; mimeType: string };
@@ -162,14 +165,16 @@ export default tool({
         result = await imageService.editConfiguredImage(
           prompt,
           { buffer, mimeType },
-          controller.signal,
+          signal,
           base,
+          owner,
         );
       } else {
         result = await imageService.generateConfiguredImage(
           prompt,
-          controller.signal,
+          signal,
           base,
+          owner,
         );
       }
 

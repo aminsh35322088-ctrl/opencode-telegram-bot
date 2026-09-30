@@ -1,3 +1,6 @@
+import path from "node:path";
+import type { OpenCodeTaskContext } from "@opencode-telegram/native-runtime";
+import { createOpenCodeTemporarySessionRunner } from "../../../src/core/opencode-session-port.js";
 // Load the subject with this file's hoisted mocks before global singleton reset
 // traverses the runtime dependency graph concurrently.
 import { executeScheduledTask } from "../../../src/app/services/scheduled-task-executor-service.js";
@@ -5,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScheduledOnceTask } from "../../../src/app/types/scheduled-task.js";
 
 const mocked = vi.hoisted(() => ({
+  getMock: vi.fn(),
   createMock: vi.fn(),
   promptAsyncMock: vi.fn(),
   messagesMock: vi.fn(),
@@ -27,6 +31,7 @@ const mocked = vi.hoisted(() => ({
 vi.mock("../../../src/opencode/client.js", () => ({
   opencodeClient: {
     session: {
+      get: mocked.getMock,
       create: mocked.createMock,
       promptAsync: mocked.promptAsyncMock,
       messages: mocked.messagesMock,
@@ -78,14 +83,14 @@ function createTask(partial: Partial<ScheduledOnceTask> = {}): ScheduledOnceTask
     id: "task-1",
     kind: "once",
     projectId: "project-1",
-    projectWorktree: "D:\\Projects\\Repo",
+    projectWorktree: path.resolve("/workspace/scheduled-task"),
     coreBinding: {
       bindingId: "telegram:123456:777:42",
       botId: "123456",
       chatId: 777,
       threadId: 42,
       sessionId: "topic-session",
-      directory: "D:\\Projects\\Repo",
+      directory: path.resolve("/workspace/scheduled-task"),
       bindingGeneration: 1,
     },
     agent: "build",
@@ -160,7 +165,7 @@ function createAssistantMessage(
       providerID: "openai",
       mode: "default",
       agent: "build",
-      path: { cwd: "D:\\Projects\\Repo", root: "D:\\Projects\\Repo" },
+      path: { cwd: path.resolve("/workspace/scheduled-task"), root: path.resolve("/workspace/scheduled-task") },
       cost: 0,
       tokens: {
         input: 0,
@@ -197,7 +202,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       chatId: 777,
       threadId: 42,
       sessionId: "topic-session",
-      normalizedDirectory: "D:\\Projects\\Repo",
+      normalizedDirectory: path.resolve("/workspace/scheduled-task"),
       bindingGeneration: 1,
       runId: "scheduled-run",
       workerGeneration: 1,
@@ -208,11 +213,14 @@ describe("app/services/scheduled-task-executor-service", () => {
         async (
           _run: unknown,
           _label: string,
-          task: (context: { signal: AbortSignal; setAbortTarget: (target: unknown) => void }) => Promise<unknown>,
+          task: (context: OpenCodeTaskContext) => Promise<unknown>,
         ) =>
           task({
             signal: new AbortController().signal,
             setAbortTarget: mocked.setAbortTargetMock,
+            withTemporarySession: (options, operation) => createOpenCodeTemporarySessionRunner().run(
+              { sessionId: "topic-session", directory: path.resolve("/workspace/scheduled-task") }, options, operation, new AbortController().signal,
+            ),
           }),
       );
     mocked.finishCoreRunMock.mockReset().mockReturnValue(true);
@@ -222,7 +230,8 @@ describe("app/services/scheduled-task-executor-service", () => {
     mocked.permissionListMock.mockResolvedValue({ data: [], error: null });
     mocked.permissionReplyMock.mockResolvedValue({ data: true, error: null });
     mocked.abortMock.mockResolvedValue({ data: true, error: null });
-    mocked.deleteMock.mockResolvedValue(undefined);
+    mocked.deleteMock.mockResolvedValue({ data: true, error: null });
+    mocked.getMock.mockReset().mockResolvedValue({ data: { id: "topic-session", directory: path.resolve("/workspace/scheduled-task") } });
     mocked.cleanupIgnoresMock.mockResolvedValue(0);
     mocked.registerIgnoreMock.mockResolvedValue(undefined);
   });
@@ -252,7 +261,7 @@ describe("app/services/scheduled-task-executor-service", () => {
   it("starts scheduled task with promptAsync and polls until the assistant reply completes", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -280,27 +289,24 @@ describe("app/services/scheduled-task-executor-service", () => {
     expect(mocked.promptAsyncMock).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionID: "session-1",
-        directory: "D:\\Projects\\Repo",
+        directory: path.resolve("/workspace/scheduled-task"),
         agent: "build",
         variant: "default",
       }),
       expect.objectContaining({ signal: expect.any(Object) }),
     );
-    expect(mocked.setAbortTargetMock).toHaveBeenCalledWith({
-      sessionId: "session-1",
-      directory: "D:\\Projects\\Repo",
-    });
+    expect(mocked.createMock).toHaveBeenCalledWith(expect.objectContaining({ parentID: "topic-session" }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(mocked.statusMock).toHaveBeenCalledTimes(1);
     expect(mocked.messagesMock).toHaveBeenCalledTimes(2);
     expect(mocked.cleanupIgnoresMock).toHaveBeenCalledTimes(1);
     expect(mocked.registerIgnoreMock).toHaveBeenCalledWith("session-1");
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("passes the task's stored agent to promptAsync", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -323,7 +329,7 @@ describe("app/services/scheduled-task-executor-service", () => {
   it("re-reads messages after idle before returning the assistant result", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -352,7 +358,7 @@ describe("app/services/scheduled-task-executor-service", () => {
   it("returns a helpful timeout message when promptAsync fails with timeout", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({
@@ -366,13 +372,13 @@ describe("app/services/scheduled-task-executor-service", () => {
       errorMessage: expect.stringContaining("https://opencode.ai/docs/config/#models"),
     });
     expect(mocked.messagesMock).not.toHaveBeenCalled();
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("returns a helpful timeout message when assistant result contains a timeout error", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -396,7 +402,7 @@ describe("app/services/scheduled-task-executor-service", () => {
   it("fails when execution stays busy beyond the bot polling deadline", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -418,13 +424,13 @@ describe("app/services/scheduled-task-executor-service", () => {
       resultText: null,
       errorMessage: "Scheduled task exceeded bot execution timeout after 120 minutes.",
     });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("waits through startup before the server registers the session as active", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -462,13 +468,13 @@ describe("app/services/scheduled-task-executor-service", () => {
     expect(mocked.loggerWarnMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Scheduled task finished without a completed assistant response"),
     );
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("treats an empty completed assistant reply as an execution error", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -495,7 +501,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       expect.objectContaining({
         taskId: "task-1",
         sessionId: "session-1",
-        directory: "D:\\Projects\\Repo",
+        directory: path.resolve("/workspace/scheduled-task"),
         readCount: 4,
         assistantMessage: expect.objectContaining({
           completed: true,
@@ -513,7 +519,7 @@ describe("app/services/scheduled-task-executor-service", () => {
   it("re-reads an empty completed assistant reply before accepting late text", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -547,7 +553,7 @@ describe("app/services/scheduled-task-executor-service", () => {
       errorMessage: null,
     });
     expect(mocked.messagesMock).toHaveBeenCalledTimes(4);
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("waits for the final assistant response after completed tool-call turns", async () => {
@@ -558,7 +564,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -595,7 +601,7 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
     expect(mocked.messagesMock).toHaveBeenCalledTimes(5);
     expect(mocked.statusMock).toHaveBeenCalledTimes(4);
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(mocked.loggerWarnMock).not.toHaveBeenCalledWith(
       "[ScheduledTaskExecutor] Empty completed assistant response diagnostics",
       expect.anything(),
@@ -605,7 +611,7 @@ describe("app/services/scheduled-task-executor-service", () => {
   it("ignores technical summary assistant messages when finding the scheduled task result", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -622,13 +628,13 @@ describe("app/services/scheduled-task-executor-service", () => {
       resultText: "Real scheduled result",
       errorMessage: null,
     });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("fails, rejects, aborts, and cleans up when scheduled task asks a question", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -650,20 +656,20 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
     expect(mocked.questionRejectMock).toHaveBeenCalledWith({
       requestID: "question-1",
-      directory: "D:\\Projects\\Repo",
+      directory: path.resolve("/workspace/scheduled-task"),
     });
     expect(mocked.abortMock).toHaveBeenCalledWith({
       sessionID: "session-1",
-      directory: "D:\\Projects\\Repo",
-    });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+      directory: path.resolve("/workspace/scheduled-task"),
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(mocked.messagesMock).not.toHaveBeenCalled();
   });
 
   it("fails, rejects, aborts, and cleans up when scheduled task asks permission", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -688,22 +694,22 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
     expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
       requestID: "permission-1",
-      directory: "D:\\Projects\\Repo",
+      directory: path.resolve("/workspace/scheduled-task"),
       reply: "reject",
       message: "Scheduled task cannot continue because it requires interactive permission.",
     });
     expect(mocked.abortMock).toHaveBeenCalledWith({
       sessionID: "session-1",
-      directory: "D:\\Projects\\Repo",
-    });
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+      directory: path.resolve("/workspace/scheduled-task"),
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(mocked.messagesMock).not.toHaveBeenCalled();
   });
 
   it("ignores pending interactive requests for other sessions", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -742,14 +748,14 @@ describe("app/services/scheduled-task-executor-service", () => {
     });
     expect(mocked.questionRejectMock).not.toHaveBeenCalled();
     expect(mocked.permissionReplyMock).not.toHaveBeenCalled();
-    expect(mocked.abortMock).not.toHaveBeenCalled();
-    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: "D:\\Projects\\Repo", sessionID: "session-1" });
+    expect(mocked.abortMock).toHaveBeenCalledTimes(1);
+    expect(mocked.deleteMock).toHaveBeenCalledWith({ directory: path.resolve("/workspace/scheduled-task"), sessionID: "session-1" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it("keeps the successful result even if temporary session cleanup fails", async () => {
+  it("reports cleanup failure instead of returning successful output", async () => {
 
     mocked.createMock.mockResolvedValueOnce({
-      data: { id: "session-1", directory: "D:\\Projects\\Repo", title: "Scheduled task run" },
+      data: { id: "session-1", parentID: "topic-session", directory: path.resolve("/workspace/scheduled-task"), title: "Scheduled task run" },
       error: null,
     });
     mocked.promptAsyncMock.mockResolvedValueOnce({ data: undefined, error: null });
@@ -760,13 +766,10 @@ describe("app/services/scheduled-task-executor-service", () => {
     mocked.deleteMock.mockRejectedValueOnce(new Error("cleanup failed"));
 
     await expect(executeScheduledTask(createTask())).resolves.toMatchObject({
-      status: "success",
-      resultText: "All good",
-      errorMessage: null,
+      status: "error",
+      resultText: null,
+      errorMessage: expect.stringContaining("cleanup"),
     });
-    expect(mocked.loggerWarnMock).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to delete temporary session"),
-      expect.any(Error),
-    );
+    expect(mocked.loggerWarnMock).toHaveBeenCalled();
   });
 });

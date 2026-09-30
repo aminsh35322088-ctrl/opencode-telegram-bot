@@ -1,4 +1,5 @@
 import { runImageForSelection, type ImageAiCapability } from "./image-ai-provider-service.js";
+import type { SessionOwner } from "@opencode-telegram/native-runtime";
 import { imageCatalogSelection, listImageModelCatalog } from "./image-model-catalog-service.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { validateImage } from "./ai-http-service.js";
@@ -26,17 +27,17 @@ export async function resolveConfiguredImageModel(capability: ImageAiCapability,
   return imageCatalogSelection(model);
 }
 
-export async function generateConfiguredImage(prompt: string, signal: AbortSignal = AbortSignal.timeout(120_000), worktree?: string): Promise<ImageBinary> {
+export async function generateConfiguredImage(prompt: string, signal: AbortSignal = AbortSignal.timeout(120_000), worktree?: string, owner?: SessionOwner): Promise<ImageBinary> {
   const instruction = requirePrompt(prompt);
   const selection = await resolveConfiguredImageModel("generate", worktree);
   signal.throwIfAborted();
-  return runImageForSelection(selection, instruction, undefined, signal, worktree);
+  return runImageForSelection(selection, instruction, undefined, signal, worktree, owner);
 }
 
-export async function editConfiguredImage(prompt: string, source: ImageBinary, signal: AbortSignal = AbortSignal.timeout(120_000), worktree?: string): Promise<ImageBinary> {
+export async function editConfiguredImage(prompt: string, source: ImageBinary, signal: AbortSignal = AbortSignal.timeout(120_000), worktree?: string, owner?: SessionOwner): Promise<ImageBinary> {
   const instruction = requirePrompt(prompt);
   validateImage(source.buffer, source.mimeType);
   const selection = await resolveConfiguredImageModel("edit", worktree);
   signal.throwIfAborted();
-  return runImageForSelection(selection, instruction, source, signal, worktree);
+  return runImageForSelection(selection, instruction, source, signal, worktree, owner);
 }

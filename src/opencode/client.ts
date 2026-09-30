@@ -133,7 +133,8 @@ async function searchMemoriesWithinBudget(options: { query: string; projectDirec
 const originalPromptAsync = promptDispatchClient.session.promptAsync.bind(promptDispatchClient.session);
 const originalSessionCreate = baseClient.session.create.bind(baseClient.session);
 
-async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown> {
+async function instrumentedPromptAsync(options: PromptOptions, requestOptions?: Parameters<SessionApi["promptAsync"]>[1]): Promise<unknown> {
+  requestOptions?.signal?.throwIfAborted();
   const originalParts = Array.isArray(options.parts) ? options.parts : [];
   const userText = extractPromptText(originalParts);
   const model = options.model ? `${options.model.providerID}/${options.model.modelID}` : "default";
@@ -173,11 +174,13 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
   logger.info(`[LLM Prompt] session=${options.sessionID} model=${model} agent=${options.agent ?? "default"} parts=${parts.length} promptChars=${promptChars} memoryInjected=${parts.length > originalParts.length} prepMs=${Date.now() - promptStart}`);
   const dispatchStartedAt = Date.now();
   try {
-    const result = await originalPromptAsync(promptOptions);
+    requestOptions?.signal?.throwIfAborted();
+    const result = await originalPromptAsync(promptOptions, requestOptions);
     logger.info(`[LLM Prompt] session=${options.sessionID} promptAsync returned in ${Date.now() - dispatchStartedAt}ms`);
     observePromptUsage(baseClient as never, { sessionId: options.sessionID, directory: options.directory, model, promptChars });
     return result;
   } catch (error) {
+    requestOptions?.signal?.throwIfAborted();
     const elapsedMs = Date.now() - dispatchStartedAt;
     if (elapsedMs >= PROMPT_DISPATCH_TIMEOUT_MS) {
       try {
@@ -202,22 +205,23 @@ async function instrumentedPromptAsync(options: PromptOptions): Promise<unknown>
   }
 }
 
-async function instrumentedSessionCreate(options: SessionCreateOptions): Promise<unknown> {
+async function instrumentedSessionCreate(options: SessionCreateOptions, requestOptions?: Parameters<SessionApi["create"]>[1]): Promise<unknown> {
+  requestOptions?.signal?.throwIfAborted();
   try {
     const selectedModel = await import("../app/services/model-selection-service.js").then(({ fetchCurrentModel }) => fetchCurrentModel());
     if (selectedModel?.providerID && selectedModel?.modelID && options && typeof options === "object") {
       const createOptions = options as Record<string, unknown>;
-      const existingBody = createOptions.body;
-      const body = existingBody && typeof existingBody === "object" ? existingBody as Record<string, unknown> : {};
-      if (!("model" in body)) {
+      if (!("model" in createOptions)) {
         logger.info(`[OpenCode] Creating session pinned to selected model: ${selectedModel.providerID}/${selectedModel.modelID}`);
-        return originalSessionCreate({ ...createOptions, body: { ...body, model: { providerID: selectedModel.providerID, modelID: selectedModel.modelID } } } as SessionCreateOptions);
+        requestOptions?.signal?.throwIfAborted();
+        return originalSessionCreate({ ...createOptions, model: { providerID: selectedModel.providerID, id: selectedModel.modelID } } as SessionCreateOptions, requestOptions);
       }
     }
   } catch (error) {
     logger.debug("[OpenCode] Could not resolve selected model while creating session; using default session creation", error);
   }
-  return originalSessionCreate(options);
+  requestOptions?.signal?.throwIfAborted();
+  return originalSessionCreate(options, requestOptions);
 }
 
 const instrumentedSession = new Proxy(baseClient.session, {
