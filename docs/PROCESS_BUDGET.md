@@ -38,13 +38,13 @@ Not every expensive unit is an OS process. Telegram Core treats these as resourc
 | Scheduled task | Reuses the same binding/worker admission path | Unbound/stale bindings fail closed; durable execution IDs suppress duplicates. |
 | Telegram API request | Normal calls receive bounded deadlines | Long-poll `getUpdates` is the deliberate exception so polling can remain open without being mistaken for a stuck request. |
 
-These Core workload budgets become production-active with the Telegram Core runtime migration. Until then, the Bot-side cgroup governor still sees their aggregate memory/CPU through the OpenCode process.
+These workloads use the pinned Core native/runtime artifacts. The Bot-side cgroup governor also sees their aggregate memory/CPU through the OpenCode process.
 
 ## OpenCode child processes
 
 When the bot starts OpenCode it sets `OPENCODE_TELEGRAM_PROCESS_BUDGET=1`. When the Telegram Core runtime is mounted into the bot, that flag activates a second governor inside OpenCode for shell commands, local MCP stdio servers, LSPs, PTYs, git/ripgrep utilities, and helper/install processes. The internal default global ceiling is four children and can be tuned with `OPENCODE_TELEGRAM_CHILD_MAX_ACTIVE`.
 
-The current production image still installs the upstream npm OpenCode build, so that build ignores the Telegram Core-only flag. Until the Core runtime migration is completed, nested OpenCode descendants are visible and charged through cgroup `memory.current` and `serviceProcessCount`, but they do not yet receive individual category leases. Do not claim per-child OpenCode enforcement is active in production until the runtime source has been switched to Telegram Core.
+The production image materializes the immutable release in `core-release.lock.json`, verifies its runtime/SDK/native identity, and installs the Core binary. Core's wrapped shell, MCP, LSP, PTY, and utility spawn paths receive individual category leases. Custom workspace tools that call `node:child_process` directly bypass those wrappers and still need migration to an approved Core process API; they must not be counted as individually governed. All descendants remain visible through cgroup `memory.current` and `serviceProcessCount`.
 
 ## Pressure behavior
 
