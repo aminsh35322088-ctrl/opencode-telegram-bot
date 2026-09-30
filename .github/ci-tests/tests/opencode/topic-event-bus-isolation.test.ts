@@ -27,6 +27,7 @@ vi.mock("../../src/core/native-core-service.js", async (importOriginal) => {
     resolveCoreEventRoute: (sessionId: string | null, directory: string | null) => {
       const exact = sessionId ? bindings.bySession(sessionId) : null;
       if (exact && (!directory || exact.directory.toLowerCase() === directory.toLowerCase())) return identity(exact);
+      if (sessionId) return null;
       const matches = (bindings.byDirectory(directory) ?? []).filter((candidate: { directory: string }) =>
         !directory || candidate.directory.toLowerCase() === directory.toLowerCase());
       return matches.length === 1 ? identity(matches[0]) : null;
@@ -194,8 +195,8 @@ describe("overlapping Topic execution", () => {
 });
 
 
-it("preserves unique-directory routing for an unbound child session", async () => {
-  bindings.bySession.mockReturnValue(null);
+it("delivers a child event to the parent route resolved by Core", async () => {
+  bindings.bySession.mockReturnValue({ chatId: 100, threadId: 11, sessionId: "parent", directory: "/workspace" });
   bindings.byDirectory.mockReturnValue([{ chatId: 100, threadId: 11, sessionId: "parent", directory: "/workspace" }]);
   const event = { type: "message.updated", properties: { sessionID: "child" } } as unknown as Event;
   subscribeMock.mockImplementation(async (_parameters: unknown, options: { signal: AbortSignal }) => ({ stream: createStream([event], options.signal) }));

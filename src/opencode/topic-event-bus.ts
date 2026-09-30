@@ -5,7 +5,7 @@ import { isRecord } from "../utils/type-guards.js";
 import { isExpectedOpencodeUnavailableError } from "../utils/opencode-error.js";
 import { agentArtifactDeliveryService } from "../bot/services/agent-artifact-delivery-service.js";
 import { isDeterministicProviderRetryError } from "./provider-error-policy.js";
-import { getNativeCore, isCurrentCoreSessionRoute, resolveCoreEventRoute } from "../core/native-core-service.js";
+import { isCurrentCoreSessionRoute, resolveCoreEventRoute } from "../core/native-core-service.js";
 import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { topicTelemetry } from "../utils/topic-observability.js";
 import { markAbortExpected } from "../app/managers/abort-suppression-manager.js";
@@ -75,41 +75,29 @@ async function dispatchEventToSubscribers(
     return;
   }
   const directory = scopedDirectory ?? eventDirectory;
-  const binding = resolveCoreEventRoute(sessionId, directory ?? null);
-  // Once Core owns Topic bindings, a missing route is a stale or ambiguous
-  // event. Subscriber filters alone cannot establish its generation.
-  if (!binding && getNativeCore()) {
+  const binding = await resolveCoreEventRoute(sessionId, directory ?? null);
+  if (!binding) {
     topicTelemetry("unresolved_core_route_blocked", { sessionId: sessionId ?? undefined, directory: directory ?? undefined }, { type: event.type });
     return;
   }
-  const directoryBindingCount = directory
-    ? getNativeCore()?.bindings.registry.list().filter((candidate) =>
-        normalizeDirectory(candidate.normalizedDirectory) === normalizeDirectory(directory)
-      ).length ?? 0
-    : 0;
-  if (!binding && directoryBindingCount > 1 && !sessionId) {
-    topicTelemetry("ambiguous_directory_route_blocked", { directory: directory ?? undefined }, { type: event.type, bindingCount: directoryBindingCount });
-    return;
-  }
-  const effectiveDirectory = normalizeDirectory(directory ?? binding?.normalizedDirectory ?? "");
+  const effectiveDirectory = normalizeDirectory(directory ?? binding.normalizedDirectory);
   const targets = candidates.filter((subscriber) => {
     if (!isCurrent() || ![...subscribers.values()].includes(subscriber)) return false;
     if (effectiveDirectory && normalizeDirectory(subscriber.directory) !== effectiveDirectory) return false;
-    if (binding) return !subscriber.sessionId || subscriber.sessionId === binding.sessionId;
-    return !subscriber.sessionId || subscriber.sessionId === sessionId;
+    return !subscriber.sessionId || subscriber.sessionId === binding.sessionId;
   });
   topicTelemetry("event_seen", {
-    chatId: binding?.chatId,
-    threadId: binding?.threadId,
-    sessionId: binding?.sessionId ?? sessionId ?? undefined,
-    directory: binding?.normalizedDirectory ?? eventDirectory ?? scopedDirectory ?? undefined,
-  }, { type: event.type, targets: targets.length, directoryBindingCount, routed: targets.length > 0 }, "debug");
+    chatId: binding.chatId,
+    threadId: binding.threadId,
+    sessionId: binding.sessionId,
+    directory: binding.normalizedDirectory,
+  }, { type: event.type, targets: targets.length, routed: targets.length > 0 }, "debug");
   if (targets.length === 0) return;
   const sdkEvent = event as unknown as Event;
   for (const target of targets) {
     const invoke = async () => {
       if (!isCurrent() || ![...subscribers.values()].includes(target)) return;
-      if (binding && !isCurrentCoreSessionRoute(binding)) return;
+      if (!isCurrentCoreSessionRoute(binding)) return;
       try {
         agentArtifactDeliveryService.processEvent(sdkEvent);
         await target.callback(sdkEvent);
@@ -117,16 +105,12 @@ async function dispatchEventToSubscribers(
         logger.error(`[TopicEventBus] Subscriber callback failed: directory=${target.directory} session=${target.sessionId ?? "all"}`, error);
       }
     };
-    if (binding && (!target.sessionId || target.sessionId === binding.sessionId)) {
-      await runInTopicRuntimeContext({
-        chatId: binding.chatId,
-        threadId: binding.threadId,
-        sessionId: binding.sessionId,
-        directory: binding.normalizedDirectory,
-      }, invoke);
-    } else {
-      await invoke();
-    }
+    await runInTopicRuntimeContext({
+      chatId: binding.chatId,
+      threadId: binding.threadId,
+      sessionId: binding.sessionId,
+      directory: binding.normalizedDirectory,
+    }, invoke);
   }
 }
 function dispatchKey(event: EventLike, scopedDirectory?: string): string { const sessionId = getSessionId(event); if (sessionId) return `session:${sessionId}`; return `directory:${normalizeDirectory(scopedDirectory ?? getEventDirectory(event) ?? "")}`; }

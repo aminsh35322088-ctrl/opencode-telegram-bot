@@ -26,7 +26,7 @@ vi.mock("../../src/app/services/telegram-topic-store.js", () => ({
 vi.mock("../../src/core/native-core-service.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../src/core/native-core-service.js")>(),
   resolveCoreEventRoute: (sessionId: string | null, directory: string | null) => {
-    const route = bindings.byDirectory(directory);
+    const route = bindings.byDirectory(directory) ?? (sessionId ? bindings.bySession(sessionId, directory) : null);
     if (!route || (sessionId && route.sessionId !== sessionId)) return null;
     return { ...route, bindingId: `${route.chatId}:${route.threadId}`, normalizedDirectory: route.directory.toLowerCase(), generation: 1 };
   },
@@ -91,7 +91,9 @@ describe("opencode/events", () => {
   beforeEach(() => {
     subscribeMock.mockReset();
     bindings.byDirectory.mockReset().mockReturnValue(null);
-    bindings.bySession.mockReset().mockResolvedValue(null);
+    bindings.bySession.mockReset().mockImplementation((sessionId: string | null, directory: string | null) => ({
+      chatId: 1, threadId: 2, sessionId: sessionId ?? "directory-session", directory: directory ?? "D:/repo",
+    }));
     bindings.byDirectoryList.mockReset().mockResolvedValue([]);
     __setSseIdleTimeoutForTests(30_000);
   });
@@ -272,6 +274,9 @@ describe("opencode/events", () => {
   });
 
   it("retries a hanging SSE connection without blocking another directory", async () => {
+    bindings.byDirectory.mockImplementation((directory: string) => directory === "/b"
+      ? { chatId: 1, threadId: 2, sessionId: "b", directory }
+      : null);
     vi.useFakeTimers();
     __setSseIdleTimeoutForTests(1000);
     subscribeMock

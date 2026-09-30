@@ -120,6 +120,10 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
       directory: currentProject.worktree,
     };
     const binding = await openSessionInTelegramTopic(ctx.api, chatId, sessionInfo);
+    const coreRoute = resolveCoreTopicBinding(binding.chatId, binding.threadId);
+    if (!coreRoute || coreRoute.sessionId !== binding.sessionId || coreRoute.normalizedDirectory !== path.resolve(binding.directory)) {
+      throw new Error("History Topic does not match its Core binding");
+    }
     await runInTopicRuntimeContext(
       {
         chatId,
@@ -143,7 +147,7 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
           session: sessionInfo,
           ensureEventSubscription: runtime.ensureEventSubscription,
         });
-        await sendToTelegramTopic(ctx.api, binding, t("sessions.selected", { title: session.title }));
+        await sendToTelegramTopic(ctx.api, binding, t("sessions.selected", { title: session.title }), coreRoute);
       },
     );
     await ctx.answerCallbackQuery().catch(() => {});
@@ -225,6 +229,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
                 ctx.api,
                 binding,
                 "❌ Could not restore this Topic session. Please reopen it from History.",
+                coreBinding,
               ).catch(() => {});
             }
             return;

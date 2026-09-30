@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import type { Bot, Context } from "grammy";
 import { newCommand } from "../../../src/bot/commands/new-command.js";
 import { foregroundSessionState } from "../../../src/app/managers/foreground-session-state-manager.js";
@@ -18,6 +19,22 @@ const mocked = vi.hoisted(() => ({
   createTopicKeyboardMock: vi.fn(),
   buildModelRoutingSummaryMock: vi.fn(),
   ensureMcpRuntimeForDirectoryMock: vi.fn(),
+  resolveCoreTopicBindingMock: vi.fn(),
+  isCurrentCoreSessionRouteMock: vi.fn(),
+  deleteTelegramTopicSessionMock: vi.fn(),
+}));
+
+vi.mock("../../../src/core/native-core-service.js", () => ({
+  resolveCoreTopicBinding: mocked.resolveCoreTopicBindingMock,
+  isCurrentCoreSessionRoute: mocked.isCurrentCoreSessionRouteMock,
+}));
+
+vi.mock("../../../src/bot/services/core-session-api.js", () => ({
+  createCoreSessionApi: (api: unknown) => api,
+}));
+
+vi.mock("../../../src/app/services/telegram-topic-delete-service.js", () => ({
+  deleteTelegramTopicSession: mocked.deleteTelegramTopicSessionMock,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -209,6 +226,16 @@ describe("bot/commands/new", () => {
       updatedAt: "",
       title: "Chat #01",
     });
+    mocked.resolveCoreTopicBindingMock.mockReset().mockReturnValue({
+      bindingId: "123:42",
+      chatId: 123,
+      threadId: 42,
+      sessionId: "session-2",
+      normalizedDirectory: path.resolve("/repo"),
+      bindingGeneration: 1,
+    });
+    mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
+    mocked.deleteTelegramTopicSessionMock.mockReset().mockResolvedValue(undefined);
     mocked.ingestSessionInfoForCacheMock.mockReset();
     mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
     mocked.createTopicKeyboardMock.mockReset();
@@ -268,6 +295,17 @@ describe("bot/commands/new", () => {
     expect((deps.sendMessageMock.mock.invocationCallOrder[0] ?? Infinity)).toBeLessThan(
       mocked.attachToSessionMock.mock.invocationCallOrder[0] ?? Infinity,
     );
+  });
+
+  it("does not send the first Topic message after its Core binding changes", async () => {
+    mocked.sessionCreateMock.mockResolvedValueOnce({ data: { id: "session-2", title: "Two" } });
+    mocked.isCurrentCoreSessionRouteMock.mockReturnValue(false);
+    const deps = createDeps();
+
+    await newCommand(createContext() as never, deps);
+
+    expect(deps.sendMessageMock).not.toHaveBeenCalled();
+    expect(mocked.deleteTelegramTopicSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("publishes Main navigation before the final Topic message for native Continue", async () => {

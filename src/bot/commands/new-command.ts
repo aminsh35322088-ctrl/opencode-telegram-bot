@@ -1,5 +1,6 @@
 import type { Bot, Context } from "grammy";
 import { CommandContext } from "grammy";
+import path from "node:path";
 import { opencodeClient } from "../../opencode/client.js";
 import type { SessionInfo } from "../../app/types/session.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
@@ -21,6 +22,8 @@ import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-conte
 import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
 import { ensureMcpRuntimeForDirectory } from "../../app/services/mcp-server-service.js";
 import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
+import { isCurrentCoreSessionRoute, resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import { createCoreSessionApi } from "../services/core-session-api.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -49,6 +52,10 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const initialModel = defaults.model ?? getStoredModel();
     const initialCompact = defaults.compactOutputMode;
     binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
+    const coreRoute = resolveCoreTopicBinding(binding.chatId, binding.threadId);
+    if (!coreRoute || coreRoute.sessionId !== session.id || coreRoute.normalizedDirectory !== path.resolve(directory)) {
+      throw new Error("New Topic does not match its Core binding");
+    }
     const chatTitle = binding.title ?? `Chat #${binding.threadId}`;
     sessionInfo.title = chatTitle;
 
@@ -104,7 +111,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         // use its explicit thread association for native Topic navigation, and carrying
         // the ReplyKeyboard on the same durable message makes the initial controls
         // reliable on Android/iOS instead of depending on a deleted control message.
-        await deps.bot.api.sendMessage(
+        if (!isCurrentCoreSessionRoute(coreRoute)) throw new Error("New Topic Core binding changed before first message");
+        await createCoreSessionApi(deps.bot.api, session.id).sendMessage(
           ctx.chat.id,
           `✅ New AI Topic ready.\n\n${routingSummary}`,
           { message_thread_id: binding!.threadId, reply_markup: topicKeyboard },

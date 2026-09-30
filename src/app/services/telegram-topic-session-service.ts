@@ -1,4 +1,8 @@
 import type { Api } from "grammy";
+import type { BindingIdentity } from "@opencode-telegram/native-runtime";
+import { isCurrentCoreSessionRoute } from "../../core/native-core-service.js";
+import { createCoreSessionApi } from "../../bot/services/core-session-api.js";
+import path from "node:path";
 import { logger } from "../../utils/logger.js";
 import type { SessionInfo } from "../types/session.js";
 import { findTelegramTopicBindingBySession, listTelegramTopicBindings, saveTelegramTopicBinding, type TelegramTopicBinding } from "./telegram-topic-store.js";
@@ -65,4 +69,19 @@ export async function openSessionInTelegramTopic(api: Api, chatId: number, sessi
   CHAT_TOPIC_CREATION_LOCKS.set(chatId, chatOperation);
   return operation;
 }
-export async function sendToTelegramTopic(api: Api, binding: TelegramTopicBinding, text: string): Promise<void> { for (const chunk of text.match(/.{1,4096}/su) ?? [text]) await api.sendMessage(binding.chatId, chunk, { message_thread_id: binding.threadId }); }
+export async function sendToTelegramTopic(
+  api: Api,
+  binding: TelegramTopicBinding,
+  text: string,
+  route: BindingIdentity,
+): Promise<void> {
+  if (route.chatId !== binding.chatId || route.threadId !== binding.threadId ||
+    route.sessionId !== binding.sessionId || route.normalizedDirectory !== path.resolve(binding.directory)) {
+    throw new Error("Telegram Topic destination differs from its captured Core binding");
+  }
+  const scopedApi = createCoreSessionApi(api, route.sessionId);
+  for (const chunk of text.match(/.{1,4096}/su) ?? [text]) {
+    if (!isCurrentCoreSessionRoute(route)) throw new Error("Core Topic binding changed before Telegram output");
+    await scopedApi.sendMessage(binding.chatId, chunk);
+  }
+}

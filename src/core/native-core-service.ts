@@ -348,29 +348,8 @@ export function resolveCoreTopicBinding(chatId: number, threadId: number): Bindi
   return nativeCore.bindings.registry.getById(coreBindingId(chatId, threadId));
 }
 
-export function resolveCoreEventRoute(sessionId: string | null, directory: string | null): BindingIdentity | null {
-  if (!nativeCore) return null;
-  const normalized = directory ? normalizeDirectory(directory) : null;
-  const bindings = nativeCore.bindings.registry.list();
-  if (sessionId) {
-    const known = bindings.filter((binding) => binding.sessionId === sessionId);
-    if (known.length > 0 && normalized && known.every((binding) => binding.normalizedDirectory !== normalized)) {
-      return null;
-    }
-    const exact = bindings.filter((binding) =>
-      binding.sessionId === sessionId && (!normalized || binding.normalizedDirectory === normalized)
-    );
-    if (exact.length === 1) return exact[0]!;
-    if (exact.length > 1 || !normalized) return null;
-  }
-  if (!normalized) return null;
-  const matches = bindings.filter((binding) => binding.normalizedDirectory === normalized);
-  if (matches.length !== 1) return null;
-  const binding = matches[0]!;
-  // Unknown session IDs may be child agents. They only inherit the parent
-  // Topic while it owns an active Core run; otherwise old sessions stay out.
-  if (sessionId && !nativeCore.runs.current(binding.bindingId)) return null;
-  return binding;
+export async function resolveCoreEventRoute(sessionId: string | null, directory: string | null): Promise<BindingIdentity | null> {
+  return nativeCore?.events.resolve(sessionId, directory ? normalizeDirectory(directory) : null) ?? null;
 }
 
 async function cleanupCoreBinding(api: Api, identity: BindingIdentity): Promise<void> {
@@ -414,6 +393,13 @@ export async function initializeNativeCore(
       });
     },
     cleanupBinding: (identity) => cleanupCoreBinding(api, identity),
+    resolveSessionParent: async (sessionId, directory, signal) => {
+      const { data, error } = await opencodeClient.session.get({ sessionID: sessionId, directory }, { signal });
+      if (error || !data || data.id !== sessionId || normalizeDirectory(data.directory) !== directory) {
+        throw new Error("OpenCode session ancestry lookup did not match its requested identity");
+      }
+      return data.parentID ?? null;
+    },
     admissionPolicy: ({ route }) =>
       route.kind === "topic" && route.threadId > 1 ? "MODEL_ALLOWED" : "CONTROL_ONLY",
     railwayPolicy,

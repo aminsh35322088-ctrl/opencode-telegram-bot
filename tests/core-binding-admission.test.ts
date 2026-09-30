@@ -19,6 +19,7 @@ import {
 import { runInTopicRuntimeContext } from "../src/app/services/topic-runtime-context.js";
 import { createCoreSessionApi } from "../src/bot/services/core-session-api.js";
 import { resolveTailnetSshScope } from "../src/app/services/ssh-service.js";
+import { opencodeClient } from "../src/opencode/client.js";
 
 test("ambiguous session ownership fails closed before starting a Core run", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "core-admission-test-"));
@@ -152,15 +153,15 @@ test("event routing refuses ambiguous directories and old sessions", async () =>
       { chatId: 1, threadId: 2, sessionId: "first", directory: "/workspace" },
       { chatId: 1, threadId: 3, sessionId: "second", directory: "/workspace" },
     ]);
-    assert.equal(resolveCoreEventRoute("first", "/workspace")?.threadId, 2);
-    assert.equal(resolveCoreEventRoute("second", "/foreign"), null);
-    assert.equal(resolveCoreEventRoute(null, "/workspace"), null);
+    assert.equal((await resolveCoreEventRoute("first", "/workspace"))?.threadId, 2);
+    assert.equal(await resolveCoreEventRoute("second", "/foreign"), null);
+    assert.equal(await resolveCoreEventRoute(null, "/workspace"), null);
     await rotateCoreTopicBinding(
       { chatId: 1, threadId: 2, sessionId: "first", directory: "/workspace" },
       { sessionId: "replacement", directory: "/workspace" },
     );
-    assert.equal(resolveCoreEventRoute("first", "/workspace"), null);
-    assert.equal(resolveCoreEventRoute("replacement", "/workspace")?.threadId, 2);
+    assert.equal(await resolveCoreEventRoute("first", "/workspace"), null);
+    assert.equal((await resolveCoreEventRoute("replacement", "/workspace"))?.threadId, 2);
   } finally {
     await shutdownNativeCore();
     if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
@@ -191,13 +192,50 @@ test("a known session event cannot inherit another Topic's directory while it ru
       async () => {
         await beginCoreRunForSession("second", "/workspace/b");
         try {
-          assert.equal(resolveCoreEventRoute("first", "/workspace/b"), null);
+          assert.equal(await resolveCoreEventRoute("first", "/workspace/b"), null);
         } finally {
           finishCoreRunForSession("second");
         }
       },
     );
   } finally {
+    await shutdownNativeCore();
+    if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
+    else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
+    if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+    else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+    if (previousUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
+    else process.env.TELEGRAM_ALLOWED_USER_ID = previousUser;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the Bot supplies session ancestry to Core without guessing an unknown session route", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "core-ancestry-adapter-test-"));
+  const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
+  const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+  const previousUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+  const originalGet = opencodeClient.session.get;
+  const directory = path.resolve("/workspace/ancestry");
+  process.env.OPENCODE_TELEGRAM_HOME = home;
+  process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
+  process.env.TELEGRAM_ALLOWED_USER_ID = "1";
+  opencodeClient.session.get = (async (params, options) => {
+    assert.equal(params.directory, directory);
+    assert.ok(options?.signal instanceof AbortSignal);
+    return { data: { id: params.sessionID, directory, parentID: params.sessionID === "child" ? "parent" : undefined } };
+  }) as typeof originalGet;
+  try {
+    await initializeNativeCore({} as Api, [{ chatId: 1, threadId: 2, sessionId: "parent", directory }]);
+    await runInTopicRuntimeContext({ chatId: 1, threadId: 2, sessionId: "parent", directory }, async () => {
+      await beginCoreRunForSession("parent", directory);
+      assert.equal((await resolveCoreEventRoute("child", directory))?.sessionId, "parent");
+      assert.equal(await resolveCoreEventRoute("old-root", directory), null);
+      finishCoreRunForSession("parent");
+      assert.equal(await resolveCoreEventRoute("child", directory), null);
+    });
+  } finally {
+    opencodeClient.session.get = originalGet;
     await shutdownNativeCore();
     if (previousHome === undefined) delete process.env.OPENCODE_TELEGRAM_HOME;
     else process.env.OPENCODE_TELEGRAM_HOME = previousHome;

@@ -6,7 +6,6 @@ import {
   setTopicEventBusIdleTimeoutForTests,
 } from "./topic-event-bus.js";
 import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
-import { resolveCoreEventRoute } from "../core/native-core-service.js";
 
 type EventCallback = (event: Event) => void;
 const subscriptions = new Map<string, { directory: string; sessionId?: string; callback: EventCallback; stop: () => void }>();
@@ -16,11 +15,8 @@ function normalizeDirectory(directory: string): string {
 }
 
 export async function subscribeToEvents(directory: string, callback: EventCallback, sessionId?: string): Promise<void> {
-  // Attach/background paths can outlive the AsyncLocalStorage context. Topic
-  // workspaces are persisted with a unique session binding, so recover that
-  // scope instead of silently installing an unscoped subscriber.
   const runtimeSessionId = getTopicRuntimeContext()?.sessionId;
-  const resolvedSessionId = sessionId ?? runtimeSessionId ?? resolveCoreEventRoute(null, directory)?.sessionId;
+  const resolvedSessionId = sessionId ?? runtimeSessionId;
   const key = `${normalizeDirectory(directory)}:${resolvedSessionId ?? "*"}:${String(callback)}`;
   subscriptions.get(key)?.stop();
   const stop = subscribeToTopicEvents(directory, callback, resolvedSessionId);
