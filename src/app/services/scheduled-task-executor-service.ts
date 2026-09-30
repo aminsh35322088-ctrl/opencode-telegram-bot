@@ -1,3 +1,4 @@
+import { DeadlineExceededError } from "@opencode-telegram/native-runtime";
 import { config } from "../../config.js";
 import path from "node:path";
 import { t } from "../../i18n/index.js";
@@ -136,10 +137,6 @@ function toErrorMessage(error: unknown): string {
   return "Unknown scheduled task execution error";
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function findLatestAssistantMessage(
   messages: Array<{
     info: { role: string; summary?: unknown; finish?: string };
@@ -257,10 +254,11 @@ function logEmptyAssistantResponseDiagnostics(
 async function loadPendingInteractiveRequest(
   sessionId: string,
   directory: string,
+  signal: AbortSignal,
 ): Promise<PendingInteractiveRequest | null> {
   const [questionsResult, permissionsResult] = await Promise.all([
-    opencodeClient.question.list({ directory }),
-    opencodeClient.permission.list({ directory }),
+    opencodeClient.question.list({ directory }, { signal }),
+    opencodeClient.permission.list({ directory }, { signal }),
   ]);
 
   if (questionsResult.error) {
@@ -293,13 +291,17 @@ async function loadPendingInteractiveRequest(
 async function rejectInteractiveRequest(
   request: PendingInteractiveRequest,
   directory: string,
+  signal: AbortSignal,
 ): Promise<void> {
   try {
     if (request.kind === "question") {
-      const { error } = await opencodeClient.question.reject({
-        requestID: request.request.id,
-        directory,
-      });
+      const { error } = await opencodeClient.question.reject(
+        {
+          requestID: request.request.id,
+          directory,
+        },
+        { signal },
+      );
 
       if (error) {
         logger.warn(
@@ -311,12 +313,15 @@ async function rejectInteractiveRequest(
       return;
     }
 
-    const { error } = await opencodeClient.permission.reply({
-      requestID: request.request.id,
-      directory,
-      reply: "reject",
-      message: INTERACTIVE_PERMISSION_REJECT_MESSAGE,
-    });
+    const { error } = await opencodeClient.permission.reply(
+      {
+        requestID: request.request.id,
+        directory,
+        reply: "reject",
+        message: INTERACTIVE_PERMISSION_REJECT_MESSAGE,
+      },
+      { signal },
+    );
 
     if (error) {
       logger.warn(
@@ -332,15 +337,14 @@ async function rejectInteractiveRequest(
   }
 }
 
-async function failIfInteractiveRequest(
+async function failForInteractiveRequest(
   taskId: string,
   sessionId: string,
   directory: string,
-): Promise<void> {
-  const interactiveRequest = await loadPendingInteractiveRequest(sessionId, directory);
-  if (!interactiveRequest) {
-    return;
-  }
+  interactiveRequest: PendingInteractiveRequest,
+  signal: AbortSignal,
+): Promise<never> {
+  signal.throwIfAborted();
 
   logger.warn("[ScheduledTaskExecutor] Scheduled task requested interactive action", {
     taskId,
@@ -356,18 +360,22 @@ async function failIfInteractiveRequest(
         }),
   });
 
-  await rejectInteractiveRequest(interactiveRequest, directory);
+  await rejectInteractiveRequest(interactiveRequest, directory, signal);
   throw new ScheduledTaskInteractiveRequestError(interactiveRequest.kind);
 }
 
 async function loadAssistantResult(
   sessionId: string,
   directory: string,
+  signal: AbortSignal,
 ): Promise<ReturnType<typeof extractAssistantResult>> {
-  const { data: messages, error: messagesError } = await opencodeClient.session.messages({
-    sessionID: sessionId,
-    directory,
-  });
+  const { data: messages, error: messagesError } = await opencodeClient.session.messages(
+    {
+      sessionID: sessionId,
+      directory,
+    },
+    { signal },
+  );
 
   if (messagesError || !messages) {
     throw messagesError || new Error("Failed to load scheduled task messages");
@@ -380,109 +388,121 @@ async function waitForScheduledTaskResult(
   taskId: string,
   sessionId: string,
   directory: string,
-  signal: AbortSignal,
+  context: CoreOwnedTaskContext,
 ): Promise<string> {
-  const startedAtMs = Date.now();
   const executionTimeoutMs = getExecutionTimeoutMs();
   let idlePollsWithoutResult = 0;
   let startupPollsWithoutActivity = 0;
   let hasObservedActivity = false;
   let completedEmptyResultReadCount = 0;
 
-  while (true) {
-    signal.throwIfAborted();
-    if (Date.now() - startedAtMs >= executionTimeoutMs) {
-      throw new Error(createExecutionTimeoutMessage());
-    }
+  return context
+    .poll<string | PendingInteractiveRequest>(
+      async (signal) => {
+        const interactiveRequest = await loadPendingInteractiveRequest(sessionId, directory, signal);
+        if (interactiveRequest) return { status: "complete", value: interactiveRequest };
 
-    await failIfInteractiveRequest(taskId, sessionId, directory);
+        const assistantResult = await loadAssistantResult(sessionId, directory, signal);
 
-    const assistantResult = await loadAssistantResult(sessionId, directory);
-
-    if (assistantResult.errorMessage) {
-      throw new Error(assistantResult.errorMessage);
-    }
-
-    if (assistantResult.completed) {
-      if (assistantResult.resultText) {
-        return assistantResult.resultText;
-      }
-
-      completedEmptyResultReadCount += 1;
-      if (completedEmptyResultReadCount > MAX_COMPLETED_EMPTY_RESULT_RECHECKS) {
-        logEmptyAssistantResponseDiagnostics(
-          taskId,
-          sessionId,
-          directory,
-          assistantResult.message,
-          completedEmptyResultReadCount,
-        );
-        throw new ScheduledTaskEmptyAssistantResponseError();
-      }
-
-      await sleep(COMPLETED_EMPTY_RESULT_RECHECK_INTERVAL_MS);
-      continue;
-    }
-
-    completedEmptyResultReadCount = 0;
-
-    const { data: statuses, error: statusError } = await opencodeClient.session.status({
-      directory,
-    });
-    if (statusError || !statuses) {
-      throw statusError || new Error("Failed to load scheduled task status");
-    }
-
-    const sessionStatus = statuses[sessionId];
-    const sessionIsActive = sessionStatus !== undefined && sessionStatus.type !== "idle";
-
-    if (sessionIsActive) {
-      hasObservedActivity = true;
-      idlePollsWithoutResult = 0;
-      startupPollsWithoutActivity = 0;
-    } else {
-      const confirmedAssistantResult = await loadAssistantResult(sessionId, directory);
-
-      if (confirmedAssistantResult.errorMessage) {
-        throw new Error(confirmedAssistantResult.errorMessage);
-      }
-
-      if (confirmedAssistantResult.completed) {
-        if (confirmedAssistantResult.resultText) {
-          return confirmedAssistantResult.resultText;
+        if (assistantResult.errorMessage) {
+          throw new Error(assistantResult.errorMessage);
         }
 
-        completedEmptyResultReadCount += 1;
-        if (completedEmptyResultReadCount > MAX_COMPLETED_EMPTY_RESULT_RECHECKS) {
-          logEmptyAssistantResponseDiagnostics(
-            taskId,
-            sessionId,
+        if (assistantResult.completed) {
+          if (assistantResult.resultText) {
+            return { status: "complete", value: assistantResult.resultText };
+          }
+
+          completedEmptyResultReadCount += 1;
+          if (completedEmptyResultReadCount > MAX_COMPLETED_EMPTY_RESULT_RECHECKS) {
+            logEmptyAssistantResponseDiagnostics(
+              taskId,
+              sessionId,
+              directory,
+              assistantResult.message,
+              completedEmptyResultReadCount,
+            );
+            throw new ScheduledTaskEmptyAssistantResponseError();
+          }
+
+          return { status: "pending", retryAfterMs: COMPLETED_EMPTY_RESULT_RECHECK_INTERVAL_MS };
+        }
+
+        completedEmptyResultReadCount = 0;
+
+        const { data: statuses, error: statusError } = await opencodeClient.session.status(
+          {
             directory,
-            confirmedAssistantResult.message,
-            completedEmptyResultReadCount,
-          );
-          throw new ScheduledTaskEmptyAssistantResponseError();
+          },
+          { signal },
+        );
+        if (statusError || !statuses) {
+          throw statusError || new Error("Failed to load scheduled task status");
         }
 
-        await sleep(COMPLETED_EMPTY_RESULT_RECHECK_INTERVAL_MS);
-        continue;
-      }
+        const sessionStatus = statuses[sessionId];
+        const sessionIsActive = sessionStatus !== undefined && sessionStatus.type !== "idle";
 
-      if (hasObservedActivity) {
-        idlePollsWithoutResult += 1;
-        if (idlePollsWithoutResult >= MAX_IDLE_POLLS_WITHOUT_RESULT) {
-          throw new Error("Scheduled task finished without a completed assistant response");
-        }
-      } else {
-        startupPollsWithoutActivity += 1;
-        if (startupPollsWithoutActivity >= MAX_STARTUP_POLLS_WITHOUT_ACTIVITY) {
-          throw new Error("Scheduled task did not start producing a response in time");
-        }
-      }
-    }
+        if (sessionIsActive) {
+          hasObservedActivity = true;
+          idlePollsWithoutResult = 0;
+          startupPollsWithoutActivity = 0;
+        } else {
+          const confirmedAssistantResult = await loadAssistantResult(sessionId, directory, signal);
 
-    await sleep(EXECUTION_POLL_INTERVAL_MS);
-  }
+          if (confirmedAssistantResult.errorMessage) {
+            throw new Error(confirmedAssistantResult.errorMessage);
+          }
+
+          if (confirmedAssistantResult.completed) {
+            if (confirmedAssistantResult.resultText) {
+              return { status: "complete", value: confirmedAssistantResult.resultText };
+            }
+
+            completedEmptyResultReadCount += 1;
+            if (completedEmptyResultReadCount > MAX_COMPLETED_EMPTY_RESULT_RECHECKS) {
+              logEmptyAssistantResponseDiagnostics(
+                taskId,
+                sessionId,
+                directory,
+                confirmedAssistantResult.message,
+                completedEmptyResultReadCount,
+              );
+              throw new ScheduledTaskEmptyAssistantResponseError();
+            }
+
+            return { status: "pending", retryAfterMs: COMPLETED_EMPTY_RESULT_RECHECK_INTERVAL_MS };
+          }
+
+          if (hasObservedActivity) {
+            idlePollsWithoutResult += 1;
+            if (idlePollsWithoutResult >= MAX_IDLE_POLLS_WITHOUT_RESULT) {
+              throw new Error("Scheduled task finished without a completed assistant response");
+            }
+          } else {
+            startupPollsWithoutActivity += 1;
+            if (startupPollsWithoutActivity >= MAX_STARTUP_POLLS_WITHOUT_ACTIVITY) {
+              throw new Error("Scheduled task did not start producing a response in time");
+            }
+          }
+        }
+
+        return { status: "pending" };
+      },
+      {
+        timeoutMs: executionTimeoutMs,
+        intervalMs: EXECUTION_POLL_INTERVAL_MS,
+        maxAttempts: Math.ceil(executionTimeoutMs / COMPLETED_EMPTY_RESULT_RECHECK_INTERVAL_MS) + 1,
+      },
+    )
+    .then(async (result) => {
+      if (typeof result === "string") return result;
+      return failForInteractiveRequest(taskId, sessionId, directory, result, context.signal);
+    })
+    .catch((error: unknown) => {
+      if (error instanceof DeadlineExceededError) throw new Error(createExecutionTimeoutMessage());
+      throw error;
+    });
 }
 
 async function executeScheduledTaskWithinCore(
@@ -535,7 +555,7 @@ async function executeScheduledTaskWithinCore(
             task.id,
             session.sessionId,
             session.directory,
-            signal,
+            context,
           );
 
           return {

@@ -23,6 +23,10 @@ A production-oriented Telegram client for [OpenCode](https://github.com/anomalyc
 
 ## Architecture
 
+The Bot owns Telegram/application behavior and consumes reusable runtime/session behavior from [OpenCode Telegram Core](https://github.com/aminsh35322088-ctrl/opencode-telegram-core). `core-release.lock.json` pins runtime, SDK and native artifacts together at `v1.18.33-bot.13-pre.7`. Scheduled-task dispatch, temporary sessions and bounded result polling use Core APIs; result interpretation and unattended-interaction policy remain application concerns.
+
+The Core-first migration is still in progress. True pause/resume and custom-tool process governance remain release blockers; this prerelease is not a stable v1 or release candidate.
+
 ```text
                          Telegram
                             │

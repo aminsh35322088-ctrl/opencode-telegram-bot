@@ -5,6 +5,7 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 ## [Unreleased]
 
 ### Added
+- Scheduled-task result waiting consumes Core's run-fenced, bounded poller from `v1.18.33-bot.13-pre.7`; transport reads receive its cancellation signal and hung reads reach deterministic temporary-session cleanup.
 - `github-ci` tool accepts an explicit `repo` argument so it works from any workspace, not only inside a git checkout.
 - Startup orphan reconciliation: every boot deletes topic workspace directories and Topic runtime states that no live binding owns, converging state left behind by interrupted or partial deletes (previously these leaked forever on the persistent volume).
 - `github-ci` OpenCode tool: bounded GitHub Actions companion (`status`/`watch`/`logs`/`verify`) that reads CI run state and failed-test logs through `gh` with hard per-call timeouts, so test validation always returns output and never hangs or goes silent on constrained runtimes. `verify` combines waiting and auto-fetching failure logs in one bounded call.
