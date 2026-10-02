@@ -4,6 +4,9 @@ All notable Telegram-bot changes are documented here. OpenCode has its own indep
 
 ## [Unreleased]
 
+### Core compatibility
+- Align runtime, SDK and native artifacts to verified `v1.18.33-bot.13-pre.8` (`f110bd25419b6bedc40db36e9ae929bc4e52b9ac`), including the Linux output-reader cancellation fix and Telegram-native document renderer. Bot pause/process/provenance adoption and RC validation remain pending.
+
 ### Added
 - Scheduled-task result waiting consumes Core's run-fenced, bounded poller from `v1.18.33-bot.13-pre.7`; transport reads receive its cancellation signal and hung reads reach deterministic temporary-session cleanup.
 - `github-ci` tool accepts an explicit `repo` argument so it works from any workspace, not only inside a git checkout.

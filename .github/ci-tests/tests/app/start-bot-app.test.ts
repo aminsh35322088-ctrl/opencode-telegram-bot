@@ -33,6 +33,9 @@ const mocked = vi.hoisted(() => ({
   cleanupLegacyConfigMock: vi.fn(),
   migrateExtensionDefaultsMock: vi.fn(),
   listStoredExtensionsMock: vi.fn(),
+  freeLlmCatalogRefreshMock: vi.fn(),
+  freeLlmCatalogStartMock: vi.fn(),
+  freeLlmCatalogStopMock: vi.fn(),
   modelCatalogStartMock: vi.fn(),
   modelCatalogStopMock: vi.fn(),
   deliverySenderMock: vi.fn(),
@@ -108,6 +111,15 @@ vi.mock("../../src/app/services/custom-provider-service.js", () => ({
 
 vi.mock("../../src/app/services/image-ai-provider-service.js", () => ({
   migrateLegacyImageAiCredentials: mocked.migrateImageAiCredentialsMock,
+}));
+
+// Startup lifecycle tests must not fetch the remote catalog or start its timer.
+vi.mock("../../src/app/services/free-llm-catalog-service.js", () => ({
+  refreshFreeLlmCatalog: mocked.freeLlmCatalogRefreshMock,
+}));
+vi.mock("../../src/app/services/free-llm-catalog-refresh-service.js", () => ({
+  startFreeLlmCatalogRefreshService: mocked.freeLlmCatalogStartMock,
+  stopFreeLlmCatalogRefreshService: mocked.freeLlmCatalogStopMock,
 }));
 
 vi.mock("../../src/app/services/model-catalog-refresh-service.js", () => ({
@@ -306,6 +318,9 @@ describe("app/start-bot-app", () => {
     mocked.cleanupLegacyConfigMock.mockReset();
     mocked.migrateExtensionDefaultsMock.mockReset();
     mocked.listStoredExtensionsMock.mockReset();
+    mocked.freeLlmCatalogRefreshMock.mockReset().mockResolvedValue({ changed: false });
+    mocked.freeLlmCatalogStartMock.mockReset();
+    mocked.freeLlmCatalogStopMock.mockReset();
     mocked.modelCatalogStartMock.mockReset();
     mocked.modelCatalogStopMock.mockReset();
     mocked.deliverySenderMock.mockReset();
@@ -419,9 +434,14 @@ describe("app/start-bot-app", () => {
   });
 
   it("survives repeated unhandled rejections", async () => {
+    // A pending network request must not enter this lifecycle fixture.
+    const fetch = vi.fn(() => new Promise(() => {}));
+    vi.stubGlobal("fetch", fetch);
     const { releaseStart, appPromise } = await startAppWithPendingBot();
     const handler = expectHandler("unhandledRejection");
 
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocked.freeLlmCatalogRefreshMock).toHaveBeenCalledTimes(1);
     handler(new Error("first"));
     handler(new Error("second"));
     handler(new Error("third"));
