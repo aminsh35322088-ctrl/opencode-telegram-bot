@@ -211,6 +211,15 @@ export async function startBotApp(): Promise<void> {
     directory: binding.directory,
   }));
   await initializeNativeCore(bot.api, coreBindings);
+  if(process.env.CONTROL_DISTRIBUTED_INSPECTION==="1"){
+    // One startup inventory for migration planning: identities only, never conversation,
+    // workspace contents, credentials, or an idle outbound diagnostics loop.
+    for(const binding of coreBindings)logger.info(`[DistributedInventory] topic chat=${binding.chatId} thread=${binding.threadId} session=${binding.sessionId}`);
+    const {nodeBindings}=await import("../../control-plane/node-bindings.js");
+    const {readGlobalSnapshot}=await import("../../control-plane/global-state.js");
+    const snapshot=await readGlobalSnapshot();
+    logger.info(`[DistributedInventory] global revision=${snapshot.revision} hash=${snapshot.hash} topicBindings=${coreBindings.length} nodeBindings=${(await nodeBindings.list()).filter(node=>node.status!=="retired").length}`);
+  }
   logger.info(
     `[TelegramTopics] Bot capabilities: has_topics_enabled=${botInfo.has_topics_enabled ?? false}, allows_users_to_create_topics=${botInfo.allows_users_to_create_topics ?? false}`,
   );

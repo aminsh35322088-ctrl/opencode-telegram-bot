@@ -12,6 +12,23 @@ export function createCoreSessionApi(api: Api, sessionId: string): Api {
   return new Proxy(scoped, {
     get(target, property, receiver) {
       const value: unknown = Reflect.get(target, property, receiver);
+      if(property==="raw"&&value&&typeof value==="object")return new Proxy(value,{
+        get(raw,method,rawReceiver){
+          const operation:unknown=Reflect.get(raw,method,rawReceiver);
+          if(typeof operation!=="function")return operation;
+          return (...args:unknown[])=>{
+            if(!isCurrentCoreSessionRoute(route))throw new Error(`Core Topic binding changed before Telegram output: ${route.bindingId}`);
+            const payload=args[0];
+            if(payload&&typeof payload==="object"){
+              const input=payload as Record<string,unknown>;
+              if(input.chat_id!==undefined&&input.chat_id!==route.chatId)throw new Error("Raw Telegram output chat differs from Core Topic binding");
+              if(input.message_thread_id!==undefined&&input.message_thread_id!==route.threadId)throw new Error("Raw Telegram output thread differs from Core Topic binding");
+              if(typeof method==="string"&&method.startsWith("send")&&input.chat_id===route.chatId)args[0]={...input,message_thread_id:route.threadId};
+            }
+            return Reflect.apply(operation,raw,args);
+          };
+        },
+      });
       if (typeof value !== "function") return value;
       return (...args: unknown[]) => {
         if (!isCurrentCoreSessionRoute(route)) {

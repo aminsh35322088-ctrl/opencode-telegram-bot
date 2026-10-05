@@ -1,5 +1,6 @@
 import { nodeBindings } from "../../control-plane/node-bindings.js";
 import { topicNodeLifecycle } from "../../control-plane/topic-node-lifecycle.js";
+import path from "node:path";
 import type { Api } from "grammy";
 import type { BindingIdentity } from "@opencode-telegram/native-runtime";
 import { opencodeClient } from "../../opencode/client.js";
@@ -270,12 +271,25 @@ export async function deleteTelegramTopicSession(
   binding: TelegramTopicBinding,
 ): Promise<void> {
   const node = await nodeBindings.find(binding.chatId,binding.threadId);
-  if(node) {
-    stopTopicEventSubscription(binding.directory,binding.sessionId);
-    await topicNodeLifecycle.retire(binding.chatId,binding.threadId);
-    finishCoreRunForSession(binding.sessionId);
-  }
+  const historical=(await nodeBindings.list()).some(item=>item.chatId===binding.chatId&&item.threadId===binding.threadId&&item.sessionId===binding.sessionId);
   const core = getNativeCore();
+  if(node||historical) {
+    const bindingId=coreBindingId(binding.chatId,binding.threadId);
+    if(core) {
+      const active=core.bindings.registry.getById(bindingId);
+      const pending=core.bindings.pendingDeletes().find(item=>item.bindingId===bindingId);
+      if(active&&(active.sessionId!==binding.sessionId||active.normalizedDirectory!==path.resolve(binding.directory)))throw new Error("Remote deletion Core owner mismatch");
+      if(active||pending)await core.bindings.beginDelete(bindingId);
+      core.rich.releaseBinding(bindingId);
+      finishCoreRunForSession(binding.sessionId);core.runs.fence(bindingId);
+    }
+    stopTopicEventSubscription(binding.directory,binding.sessionId);
+    if(node)await topicNodeLifecycle.retire(binding.chatId,binding.threadId);
+    if(core)await core.workers.stop(bindingId,"remote_topic_retired");
+    await cleanupTelegramTopicSessionMetadata(api,binding);
+    if(core)await core.bindings.completeDelete(bindingId);
+    return;
+  }
   if (!core) {
     await cleanupTelegramTopicSessionMetadata(api, binding);
     return;

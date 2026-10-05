@@ -55,9 +55,9 @@ async function main(): Promise<void> {
     if(!pools && process.env.CONTROL_PROVISION_WORKERS_ENABLED==="1"){
       void (async()=>{let stage:'inventory'|'create'|'verify'='inventory';try{
         const {resolveWorkerPools}=await import("./worker-pools.js");
-        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId:process.env.CONTROL_WORKSPACE_ID??"",workerProjectId:process.env.CONTROL_WORKER_A_PROJECT_ID??"",workerEnvironmentId:process.env.CONTROL_WORKER_A_ENVIRONMENT_ID??"",region:process.env.CONTROL_WORKER_REGION??"europe-west4-drams3a",onStage:value=>{stage=value;}});
         try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
         process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);}catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
+        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId:process.env.CONTROL_WORKSPACE_ID??"",workerProjectId:process.env.CONTROL_WORKER_A_PROJECT_ID??"",workerEnvironmentId:process.env.CONTROL_WORKER_A_ENVIRONMENT_ID??"",region:process.env.CONTROL_WORKER_REGION??"europe-west4-drams3a",onStage:value=>{stage=value;}});
         controller.configurePools(resolved,process.env.CONTROL_PUBLIC_URL??"");
         for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity}\n`);
       }catch(error){const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);}})();

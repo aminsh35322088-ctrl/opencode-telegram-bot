@@ -14,6 +14,12 @@ export async function dispatchAuthenticatedNodeControl(envelope: NodeEnvelope): 
     if (!payload || typeof payload!=="object" || Array.isArray(payload)) throw new Error("Invalid control payload");
     const data=payload as Record<string,unknown>;
     if (envelope.operation==="credential.get") {
+      if(data.purpose==="mcp.request"){
+        const {leaseMcpCredential}=await import("./mcp-credential-lease.js");
+        const {readAppState}=await import("../app/stores/app-state-store.js");
+        const {loadMcpCredential}=await import("../app/services/mcp-credential-store.js");
+        return leaseMcpCredential(data,{state:readAppState,credential:loadMcpCredential,now:Date.now});
+      }
       if (data.purpose!=="provider.request" || typeof data.capability!=="string" || typeof data.credentialId!=="string" ||
         /railway|telegram/i.test(`${data.capability}:${data.credentialId}`)) throw new Error("Credential capability denied");
       if(data.capability.startsWith("free-provider:") && data.credentialId==="public-auth"){

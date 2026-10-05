@@ -196,18 +196,25 @@ export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { s
 
 const remoteRunStreams = new Map<string,AbortController>();
 /** Active-run stream feeds existing subscribers under authenticated Topic context. No idle reconnect loop. */
-export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void): Promise<()=>void> {
+export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void, mode:"prepare"|"resume"="prepare"): Promise<()=>void> {
   const client = await resolveTopicNodeClient(topic.chatId,topic.threadId);
   if (!client) throw new Error("Remote Topic missing node binding");
   if(remoteRunStreams.has(sessionId)) throw new Error("Remote Topic stream already active");
-  await client.request("run.prepare",{runId});
+  const controller = new AbortController(); remoteRunStreams.set(sessionId,controller);
+  try {
+    if(mode==="prepare")await client.request("run.prepare",{runId});
+    else {
+      const status=await client.request<{continuation?:string;externalRunId?:string}|null>("status");
+      if(status?.continuation!=="live"||status.externalRunId!==runId)throw new Error("Remote run cannot be recovered from signed status");
+    }
+  }catch(error){controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);throw error;}
   const normalized = normalizeDirectory(directory);
   const legacy = directoryListeners.get(normalized);
   legacy?.controller.abort(); directoryListeners.delete(normalized);
-  const controller = new AbortController(); remoteRunStreams.set(sessionId,controller);
+  let acknowledged=false;
   let acknowledge!:()=>void;
   let rejectReady!:(error:unknown)=>void;
-  const ready = new Promise<void>((resolve,reject)=>{acknowledge=resolve;rejectReady=reject;});
+  const ready = new Promise<void>((resolve,reject)=>{acknowledge=()=>{acknowledged=true;resolve();};rejectReady=reject;});
   const timer = setTimeout(()=>{controller.abort();rejectReady(new Error("Remote stream readiness timed out"));},15_000);
   const generation = busGeneration;
   void (async()=>{
@@ -227,8 +234,10 @@ export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sess
         }
       }
     } catch(error) {rejectReady(error); if(!controller.signal.aborted) logger.warn("[TopicEventBus] Remote active stream failed",error);}
-    finally {clearTimeout(timer);controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);onEnd();}
+    finally {if(!acknowledged)rejectReady(new Error("Remote stream ended before readiness"));clearTimeout(timer);controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);onEnd();}
   })();
   await ready; clearTimeout(timer);
   return ()=>controller.abort();
 }
+
+export function hasRemoteTopicRunEvents(sessionId:string):boolean{return remoteRunStreams.has(sessionId);}

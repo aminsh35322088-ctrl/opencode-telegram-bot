@@ -333,8 +333,10 @@ export async function materializeGlobalSnapshot(state: AppState): Promise<Global
         configured: true,
       });
   }
-  for (const id of Object.keys(record(record(state.mcpCredentials).records)))
-    snapshot.credentialReferences.push({ id, kind: "mcp", configured: true });
+  for (const id of Object.keys(record(record(state.mcpCredentials).records))) {
+    const server=record(record(record(state.mcpServers).records)[id]);
+    if(typeof server.name==="string")snapshot.credentialReferences.push({ id, kind: "mcp", capability: `mcp:${server.name}`, configured: true });
+  }
   snapshot.credentialReferences.sort((a, b) => (canonicalJson(a) < canonicalJson(b) ? -1 : 1));
   return snapshot;
 }

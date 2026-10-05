@@ -1,4 +1,5 @@
 import path from "node:path";
+import { nodeBindings } from "../control-plane/node-bindings.js";
 import type { Api } from "grammy";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import {
@@ -144,7 +145,11 @@ const workerFactory: WorkerFactory = (binding, generation) =>
     promptTimeoutMs: PROMPT_DISPATCH_TIMEOUT_MS,
     cancellationGraceMs: QUEUE_CANCELLATION_GRACE_MS,
     stopTimeoutMs: WORKER_STOP_TIMEOUT_MS,
-    abortSession: temporarySessionPort.abort,
+    abortSession: async (target, signal) => {
+      // Confirmed infrastructure retirement already terminated this exact remote session.
+      const retired=(await nodeBindings.list()).some(node=>node.sessionId===target.sessionId&&node.status==="retired");
+      if(!retired)await temporarySessionPort.abort(target,signal);
+    },
     temporarySessionPort,
     onIsolationFailure: (identity, error) => {
       logger.error(`[Core] Topic worker isolation failed: binding=${identity.bindingId}`, error);
@@ -518,4 +523,22 @@ export function finishCoreRunForSession(sessionId: string): boolean {
   if (!core || !run) return false;
   runsBySession.delete(sessionId);
   return finishCoreRun(run);
+}
+
+/** Restore only Control-side stream authority for an authenticated existing Worker run. No AI dispatch. */
+export async function restoreRemoteCoreRun(sessionId:string,directory:string,externalRunId:string):Promise<RunIdentity> {
+  return withCoreAdmissionLock(async()=>{
+    const core=requireCore();
+    const route=resolveCoreSessionRoute(sessionId,normalizeDirectory(directory));
+    const topic=getTopicRuntimeContext();
+    if(!topic||topic.chatId!==route.chatId||topic.threadId!==route.threadId||topic.sessionId!==sessionId||!topic.directory||normalizeDirectory(topic.directory)!==route.normalizedDirectory)throw new Error("Recovered Core run requires exact Topic context");
+    if(!/^[A-Za-z0-9_-]{1,128}$/.test(externalRunId))throw new Error("Invalid recovered run identity");
+    const current=core.runs.current(route.bindingId);
+    if(current){
+      if(current.runId!==externalRunId)throw new Error("Recovered Worker run differs from current Core run");
+      runsBySession.set(sessionId,current);return current;
+    }
+    if(!await core.modelAllowed({kind:"topic",botId:route.botId,chatId:route.chatId,threadId:route.threadId},"remote_recovery"))throw new Error("Recovered run Core admission rejected");
+    const run=await core.beginRun(route.bindingId,externalRunId);runsBySession.set(sessionId,run);return run;
+  });
 }
