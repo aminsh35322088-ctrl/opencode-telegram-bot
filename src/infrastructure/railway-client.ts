@@ -1,5 +1,19 @@
 import { childEnvironment } from "../runtime/child-environment.js";
 
+export class InfrastructureRequestError extends Error {
+  constructor(readonly category: "schema" | "resource_limit" | "rate_limit" | "transport" | "rejected", readonly status: number) {
+    super("Railway infrastructure request failed");
+  }
+}
+
+/** Fixed categories only. Server text is inspected privately and never reflected. */
+function rejectionCategory(errors: unknown[] | undefined): "schema" | "resource_limit" | "rejected" {
+  const messages = (errors ?? []).flatMap(error => typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? [error.message] : []);
+  if (messages.some(message => /Cannot query field|Unknown argument|Unknown type|is not defined by type|must have a selection|Variable .* got invalid value/i.test(message))) return "schema";
+  if (messages.some(message => /resource provision limit|limit exceeded|upgrade to provision/i.test(message))) return "resource_limit";
+  return "rejected";
+}
+
 /** Construct only in the privileged launcher, before importing application modules. */
 export function createInfrastructureClient(
   environment: NodeJS.ProcessEnv,
@@ -29,7 +43,7 @@ export function createInfrastructureClient(
           redirect: "error",
         });
       } catch {
-        throw new Error("Railway infrastructure request failed");
+        throw new InfrastructureRequestError("transport", 0);
       }
       const body = await response.json().catch(() => null) as { data?: T; errors?: unknown[] } | null;
       if(response.status===429){
@@ -40,7 +54,7 @@ export function createInfrastructureClient(
       }
       if (!response.ok || !body?.data || body.errors?.length) {
         // Server and transport details can contain credentials; never reflect them.
-        throw new Error("Railway infrastructure request failed");
+        throw new InfrastructureRequestError(response.status === 429 ? "rate_limit" : rejectionCategory(body?.errors), response.status);
       }
       return body.data;
     },

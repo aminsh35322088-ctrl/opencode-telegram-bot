@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createInfrastructureClient } from "../src/infrastructure/railway-client.js";
+import { createInfrastructureClient, InfrastructureRequestError } from "../src/infrastructure/railway-client.js";
 
 test("infrastructure credential is removed before loading runtime or startup shell", async () => {
   const environment = { RAILWAY_API_TOKEN: "synthetic-account", RAILWAY_TOKEN: "synthetic-project", KEEP: "yes" };
@@ -27,4 +27,12 @@ test("infrastructure rate limiting honors Retry-After without retrying ambiguous
  await assert.rejects(client.request("mutation { serviceCreate }"),/request failed/);
  await assert.rejects(client.request("mutation { serviceCreate }"),/retry deferred/);
  assert.equal(calls,1);client.dispose();
+});
+
+test("safe infrastructure failure categories never reflect server details", async()=>{
+ for(const [message,category] of [["Cannot query field something-sensitive", "schema"],["Free plan resource provision limit exceeded. sensitive", "resource_limit"],["sensitive server detail", "rejected"]] as const){
+  const client=createInfrastructureClient({RAILWAY_API_TOKEN:"synthetic-account"},async()=>new Response(JSON.stringify({errors:[{message}]}),{status:200}));
+  await assert.rejects(client.request("query Example { field }"),error=>error instanceof InfrastructureRequestError && error.category===category && error.status===200 && error.message==="Railway infrastructure request failed" && !JSON.stringify(error).includes("sensitive"));
+  client.dispose();
+ }
 });
