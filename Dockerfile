@@ -34,5 +34,6 @@ COPY --chown=root:root railway-entrypoint.sh ./railway-entrypoint.sh
 COPY --chown=root:root railway-volume-maintenance.sh ./railway-volume-maintenance.sh
 COPY --chown=root:root scripts/opencode-db-maintenance.mjs ./scripts/opencode-db-maintenance.mjs
 RUN chmod +x ./railway-entrypoint.sh ./railway-volume-maintenance.sh
+RUN ln -sfn /data/workspace /app/workspace && ln -sfn /data/workspace /tmp/site && chown -R root:root /app && chmod -R a+rX,go-w /app
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["./railway-volume-maintenance.sh"]
+CMD ["node", "/app/dist/infrastructure/launcher.js"]

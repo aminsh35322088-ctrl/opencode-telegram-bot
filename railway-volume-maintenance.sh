@@ -1,6 +1,11 @@
 #!/bin/sh
 set -u
 
+if [ "$(id -u)" -ne 1000 ]; then
+  printf '%s\n' '[railway-maintenance] Refusing privileged volume maintenance' >&2
+  exit 1
+fi
+
 DATA_ROOT="/data"
 WARN_MB="${OPENCODE_DATA_VOLUME_WARN_MB:-150}"
 CRITICAL_MB="${OPENCODE_DATA_VOLUME_CRITICAL_MB:-100}"
@@ -108,7 +113,7 @@ if [ -n "$after_cache_mb" ] && [ "$after_cache_mb" -lt "$WARN_MB" ] && [ -d "$PE
   # Use normal git-gc semantics rather than --prune=now. This packs reachable
   # loose objects while retaining Git's normal safety window for recent
   # unreachable objects.
-  if timeout 45 su -s /bin/sh node -c "git -C '$PERSISTENT_REPO' gc --quiet"; then
+  if timeout 45 /bin/sh -c "git -C '$PERSISTENT_REPO' gc --quiet"; then
     printf '%s\n' "[railway-maintenance] Persistent Git repository compacted"
   else
     printf '%s\n' "[railway-maintenance] Git compaction skipped/failed; continuing startup"

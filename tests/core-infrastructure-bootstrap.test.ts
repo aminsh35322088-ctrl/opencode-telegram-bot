@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createInfrastructureClient } from "../src/infrastructure/railway-client.js";
+
+test("infrastructure credential is removed before loading runtime or startup shell", async () => {
+  const environment = { RAILWAY_API_TOKEN: "synthetic-account", RAILWAY_TOKEN: "synthetic-project", KEEP: "yes" };
+  const client = createInfrastructureClient(environment);
+  assert.deepEqual(environment, { KEEP: "yes" });
+  assert.deepEqual(Object.keys(client).sort(), ["dispose", "request"]);
+  client.dispose();
+  await assert.rejects(client.request("query { me { id } }"), /unavailable/);
+});
+
+test("GraphQL errors fail even when HTTP status is 200 and are not reflected", async () => {
+  const client = createInfrastructureClient({ RAILWAY_API_TOKEN: "synthetic-account" }, async () =>
+    new Response(JSON.stringify({ errors: [{ message: "sensitive server detail" }] }), { status: 200 }),
+  );
+  await assert.rejects(client.request("query { me { id } }"), (error: unknown) =>
+    error instanceof Error && error.message === "Railway infrastructure request failed",
+  );
+  client.dispose();
+});

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { RailwayResourceGovernor } from "@opencode-telegram/native-runtime";
 import { logger } from "../utils/logger.js";
+import { childEnvironment } from "./child-environment.js";
 
 const MiB = 1024 * 1024;
 const execAsync = promisify(exec);
@@ -283,6 +284,7 @@ export async function budgetedExecFile(
   try {
     const result = await execFileAsync(file, [...args], {
       ...options,
+      env: childEnvironment(options.env ?? process.env),
       timeout: lease.timeoutMs ?? undefined,
       encoding: options.encoding ?? "utf8",
     });
@@ -301,6 +303,7 @@ export async function budgetedExec(
   try {
     const result = await execAsync(command, {
       ...options,
+      env: childEnvironment(options.env ?? process.env),
       timeout: lease.timeoutMs ?? undefined,
       encoding: options.encoding ?? "utf8",
     });
@@ -322,7 +325,7 @@ export async function budgetedSpawn(
   try {
     child = spawn(command, [...args], {
       ...options,
-      env: {
+      env: childEnvironment({
         ...process.env,
         ...(options.env ?? {}),
         BOT_PROCESS_BUDGET_KIND: kind,
@@ -334,7 +337,7 @@ export async function budgetedSpawn(
                 process.env.OPENCODE_TELEGRAM_CHILD_MAX_ACTIVE?.trim() || "4",
             }
           : {}),
-      },
+      }),
     });
   } catch (error) {
     lease.release();

@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if [ "$(id -u)" -ne 1000 ]; then
+  printf '%s\n' '[railway] Refusing privileged application bootstrap' >&2
+  exit 1
+fi
+
 OPENCODE_API_URL="http://127.0.0.1:4096"
 OPENCODE_AUTO_RESTART_ENABLED="true"
 OPENCODE_AUTO_START_IN_CONTAINER="true"
@@ -60,28 +65,15 @@ if [ ! -f /app/AGENTS.md ]; then
   exit 1
 fi
 cp /app/AGENTS.md "$GLOBAL_OPENCODE_DIR/AGENTS.md"
-chown node:node "$GLOBAL_OPENCODE_DIR/AGENTS.md"
 AGENTS_SHA="$(sha256sum "$GLOBAL_OPENCODE_DIR/AGENTS.md" | awk '{print $1}')"
 AGENTS_LINES="$(wc -l < "$GLOBAL_OPENCODE_DIR/AGENTS.md" | tr -d ' ')"
 printf '%s\n' "[railway] Global AGENTS.md loaded: ${GLOBAL_OPENCODE_DIR}/AGENTS.md (${AGENTS_LINES} lines, sha256=${AGENTS_SHA})"
 
-if [ -e /app/workspace ] && [ ! -L /app/workspace ]; then
-  if [ -d /app/workspace ] && [ "$(find /app/workspace -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-    printf '%s\n' "[railway] Migrating image-local workspace contents to persistent volume"
-    cp -a /app/workspace/. /data/workspace/
-  fi
-  rm -rf /app/workspace
+# The immutable image owns these links. Bootstrap must never write /app.
+if [ "$(readlink /app/workspace)" != "/data/workspace" ] || [ "$(readlink /tmp/site)" != "/data/workspace" ]; then
+  printf '%s\n' "[railway] FATAL: immutable workspace links are invalid" >&2
+  exit 1
 fi
-ln -sfn /data/workspace /app/workspace
-
-if [ -e /tmp/site ] && [ ! -L /tmp/site ]; then
-  if [ -d /tmp/site ] && [ "$(find /tmp/site -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-    printf '%s\n' "[railway] Migrating legacy /tmp/site contents to persistent workspace"
-    cp -a /tmp/site/. /data/workspace/
-  fi
-  rm -rf /tmp/site
-fi
-ln -sfn /data/workspace /tmp/site
 
 # Keep a single generated dependency tree in the workspace and point it at the
 # production dependency tree baked into the image. This avoids stale dependencies
@@ -134,7 +126,6 @@ exec /usr/bin/gh "$@"
 EOF
 
 chmod 700 "$INTEGRATION_BIN_DIR/gh"
-chown node:node "$INTEGRATION_BIN_DIR/gh"
 
 cat > /data/run/github-credential-helper.sh <<'EOF'
 #!/bin/sh
@@ -157,12 +148,10 @@ if [ -n "$TOKEN" ]; then
 fi
 EOF
 chmod 700 /data/run/github-credential-helper.sh
-chown node:node /data/run/github-credential-helper.sh
 
-chown -R node:node /data
 
-su -s /bin/sh node -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
-su -s /bin/sh node -c 'git config --global credential.https://github.com/.useHttpPath false'
+/bin/sh -c 'git config --global credential.https://github.com/.helper /data/run/github-credential-helper.sh'
+/bin/sh -c 'git config --global credential.https://github.com/.useHttpPath false'
 
 PERSISTENT_REPO_DIR="/data/opencode/opencode-telegram-bot"
 BOOTSTRAP_GIT_TIMEOUT_SEC="${BOOTSTRAP_GIT_TIMEOUT_SEC:-120}"
@@ -174,21 +163,21 @@ if [ -n "${RAILWAY_GIT_REPO_OWNER:-}" ] && [ -n "${RAILWAY_GIT_REPO_NAME:-}" ]; 
   if [ ! -d "$PERSISTENT_REPO_DIR/.git" ]; then
     rm -rf "$PERSISTENT_REPO_DIR"
     printf '%s\n' "[railway] Creating persistent repository checkout: ${REPO_URL}"
-    timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git clone --filter=blob:none --no-tags '$REPO_URL' '$PERSISTENT_REPO_DIR'"
+    timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" /bin/sh -c "git clone --filter=blob:none --no-tags '$REPO_URL' '$PERSISTENT_REPO_DIR'"
   else
-    su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' remote set-url origin '$REPO_URL'"
+    /bin/sh -c "git -C '$PERSISTENT_REPO_DIR' remote set-url origin '$REPO_URL'"
   fi
-  timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
+  timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" /bin/sh -c "git -C '$PERSISTENT_REPO_DIR' fetch --prune origin '+refs/heads/$REPO_BRANCH:refs/remotes/origin/$REPO_BRANCH'"
   REPO_REVISION="${RAILWAY_GIT_COMMIT_SHA:-origin/$REPO_BRANCH}"
-  timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' clean -ffd && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
-  REPO_HEAD="$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" su -s /bin/sh node -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
+  timeout "${BOOTSTRAP_GIT_TIMEOUT_SEC}s" /bin/sh -c "git -C '$PERSISTENT_REPO_DIR' checkout -B '$REPO_BRANCH' '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' reset --hard '$REPO_REVISION' && git -C '$PERSISTENT_REPO_DIR' clean -ffd && git -C '$PERSISTENT_REPO_DIR' branch --set-upstream-to='origin/$REPO_BRANCH' '$REPO_BRANCH' && git -C '$PERSISTENT_REPO_DIR' worktree prune"
+  REPO_HEAD="$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" /bin/sh -c "git -C '$PERSISTENT_REPO_DIR' rev-parse --short HEAD")"
   printf '%s\n' "[railway] Persistent repository checkout ready: ${PERSISTENT_REPO_DIR} (${REPO_BRANCH}@${REPO_HEAD})"
 else
   printf '%s\n' "[railway] WARNING: Railway Git metadata is unavailable; persistent repository checkout was not refreshed" >&2
 fi
 
 printf '%s\n' "[railway] OpenCode Telegram Bot starting"
-printf '%s\n' "[railway] OpenCode CLI: $(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" su -s /bin/sh node -c 'opencode --version' 2>/dev/null || echo unknown)"
+printf '%s\n' "[railway] OpenCode CLI: $(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SEC}s" /bin/sh -c 'opencode --version' 2>/dev/null || echo unknown)"
 printf '%s\n' "[railway] OpenCode API: ${OPENCODE_API_URL}"
 printf '%s\n' "[railway] Auto-start: ${OPENCODE_AUTO_START_IN_CONTAINER}"
 printf '%s\n' "[railway] Workspace: ${OPEN_BROWSER_ROOTS}"
@@ -202,9 +191,6 @@ printf '%s\n' "[railway] Toolchain: node=$(timeout "${BOOTSTRAP_PROBE_TIMEOUT_SE
 printf '%s\n' "[railway] Runtime dependencies: ${OPENCODE_RUNTIME_NODE_DEPS}"
 printf '%s\n' "[railway] GitHub native integration credentials load dynamically from persistent bot state"
 
-# Version probes above run as root and may create root-owned cache dirs (e.g. opencode --version
-# writes /data/.cache/opencode). The bot runs as node, so restore ownership before startup.
-chown -R node:node /data/.cache /data/.local 2>/dev/null || true
 
 export PATH="$INTEGRATION_BIN_DIR:$PATH"
 
@@ -216,13 +202,12 @@ TAILSCALE_STATE="$TAILSCALE_STATE_DIR/tailscaled.state"
 TAILSCALE_LOG="/data/logs/tailscaled.log"
 
 mkdir -p "$TAILSCALE_STATE_DIR" "$TAILSCALE_SOCKET_DIR"
-chown -R node:node "$TAILSCALE_STATE_DIR" "$TAILSCALE_SOCKET_DIR"
 rm -f "$TAILSCALE_SOCKET"
 
 TAILSCALED_GOMEMLIMIT="${TAILSCALED_GOMEMLIMIT:-160MiB}"
 TAILSCALED_GOMAXPROCS="${TAILSCALED_GOMAXPROCS:-1}"
 printf '%s\n' "[railway] Starting the single shared Tailscale userspace daemon (GOMEMLIMIT=${TAILSCALED_GOMEMLIMIT}, GOMAXPROCS=${TAILSCALED_GOMAXPROCS})"
-su -s /bin/sh node -c "exec env GOMEMLIMIT='$TAILSCALED_GOMEMLIMIT' GOMAXPROCS='$TAILSCALED_GOMAXPROCS' /usr/local/bin/tailscaled --tun=userspace-networking --state='$TAILSCALE_STATE' --socket='$TAILSCALE_SOCKET' >>'$TAILSCALE_LOG' 2>&1" &
+/bin/sh -c "exec env GOMEMLIMIT='$TAILSCALED_GOMEMLIMIT' GOMAXPROCS='$TAILSCALED_GOMAXPROCS' /usr/local/bin/tailscaled --tun=userspace-networking --state='$TAILSCALE_STATE' --socket='$TAILSCALE_SOCKET' >>'$TAILSCALE_LOG' 2>&1" &
 TAILSCALED_PID="$!"
 
 i=0
@@ -245,4 +230,4 @@ printf '%s\n' "[railway] Tailscale daemon ready: socket=$TAILSCALE_SOCKET state=
 printf '%s\n' "[railway] Tailnet login is managed by the bot Integrations UI; all bot/tools share this daemon"
 
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
-exec su -s /bin/sh node -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
+exec /bin/sh -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'

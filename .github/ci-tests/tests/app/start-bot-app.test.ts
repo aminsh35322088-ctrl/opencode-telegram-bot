@@ -96,6 +96,18 @@ vi.mock("../../src/app/services/github-integration-service.js", () => ({
   initializeGithubIntegration: mocked.githubInitializeMock,
 }));
 
+vi.mock("../../src/app/services/free-llm-catalog-service.js", () => ({
+  refreshFreeLlmCatalog: vi.fn(async () => undefined),
+}));
+vi.mock("../../src/app/services/free-llm-catalog-refresh-service.js", () => ({
+  startFreeLlmCatalogRefreshService: vi.fn(),
+  stopFreeLlmCatalogRefreshService: vi.fn(),
+}));
+vi.mock("../../src/app/services/tailscale-integration-service.js", () => ({
+  initializeTailscaleIntegration: vi.fn(async () => false),
+  stopTailscaleIntegration: vi.fn(async () => undefined),
+}));
+
 vi.mock("../../src/app/services/custom-provider-service.js", () => ({
   syncOpenCodeCustomConfig: (...args: unknown[]) => {
     const implementation = mocked.syncCustomConfigMock.getMockImplementation();
