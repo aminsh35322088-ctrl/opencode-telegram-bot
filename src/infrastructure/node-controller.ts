@@ -16,10 +16,15 @@ interface Options {
 interface Seed {nodeId:string;generation:number;chatId:number;threadId:number;secret:string}
 /** Only inherited Bot IPC can invoke these fixed lifecycle operations. No Worker route provisions infrastructure. */
 export class InfrastructureController {
- private readonly provisioner?:NodeProvisioner;
+ private provisioner?:NodeProvisioner;
  private queue:Promise<unknown>=Promise.resolve();
  constructor(private readonly options:Options){
-  if(options.pools && options.controlUrl)this.provisioner=new NodeProvisioner({request:options.request,pools:options.pools,controlUrl:options.controlUrl,journalPath:path.join(options.stateDirectory,'provisioning.json'),lookup:id=>this.lookup(id),ensureIdentity:(binding,create)=>this.ensureIdentity(binding,create),retireIdentity:async(id,generation)=>{
+  if(options.pools && options.controlUrl)this.configurePools(options.pools,options.controlUrl);
+ }
+ configurePools(pools:[WorkerPool,WorkerPool],controlUrl:string):void{
+  if(this.provisioner)throw Error('Worker pools already configured');
+  const options=this.options;
+  this.provisioner=new NodeProvisioner({request:options.request,pools,controlUrl,journalPath:path.join(options.stateDirectory,'provisioning.json'),lookup:id=>this.lookup(id),ensureIdentity:(binding,create)=>this.ensureIdentity(binding,create),retireIdentity:async(id,generation)=>{
    const identity=await options.registry.resolve(id);if(identity){options.registry.install({...identity,binding:{...identity.binding,generation,status:'retired'}});await options.registry.persist(path.join(options.stateDirectory,'nodes.json'));await options.retireNode?.(identity).catch(()=>undefined);}
   },configured:async(binding,node)=>{
    const seed=await this.ensureIdentity(binding,()=>{throw Error('Missing provisioned identity');});

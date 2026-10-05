@@ -52,6 +52,17 @@ async function main(): Promise<void> {
     const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
     const controller=new InfrastructureController({registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,controlUrl:process.env.CONTROL_PUBLIC_URL,retireNode:identity=>retirementTransport.retireFenced(identity)});
     stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
+    if(!pools && process.env.CONTROL_PROVISION_WORKERS_ENABLED==="1"){
+      void (async()=>{try{
+        const {resolveWorkerPools}=await import("./worker-pools.js");
+        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId:process.env.CONTROL_WORKSPACE_ID??"",workerProjectId:process.env.CONTROL_WORKER_A_PROJECT_ID??"",workerEnvironmentId:process.env.CONTROL_WORKER_A_ENVIRONMENT_ID??"",region:process.env.CONTROL_WORKER_REGION??"europe-west4-drams3a"});
+        try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
+        process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);}catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
+        controller.configurePools(resolved,process.env.CONTROL_PUBLIC_URL??"");
+        for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity}\n`);
+      }catch{process.stdout.write("[InfrastructureBoundary] worker_pools_unavailable\n");}})();
+    }
+
     // Read plan metadata once per deployment; this is not a provisioning retry loop.
     const workspaceId=process.env.CONTROL_WORKSPACE_ID;
     if(workspaceId)void infrastructure.request<{workspace:{plan:string;projectCount:number}}>(

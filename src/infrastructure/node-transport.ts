@@ -49,6 +49,9 @@ export class InfrastructureNodeTransport {
   const acknowledgment=response.headers.get("x-node-stream-ready")??"";
   const expected=createHmac("sha256",identity.secret).update(`${signed.body}\nstream-ready`).digest();
   if(!/^[a-f0-9]{64}$/.test(acknowledgment) || !timingSafeEqual(expected,Buffer.from(acknowledgment,"hex")))throw new Error("Unsigned node stream readiness");
+  if(!envelope.sessionId || typeof (envelope.payload as {runId?:unknown})?.runId!=="string")throw new Error("Node stream run scope required");
+  const requestNonce=(JSON.parse(signed.body) as NodeEnvelope).nonce;
+  const verifyFrame=this.protocol.streamVerifier(bound,identity.secret,{nonce:requestNonce,sessionId:envelope.sessionId,runId:(envelope.payload as {runId:string}).runId});
   onReady?.();
   const reader=response.body.getReader();const decoder=new TextDecoder();let buffer="";
   try{
@@ -57,7 +60,7 @@ export class InfrastructureNodeTransport {
     while((index=buffer.indexOf("\n\n"))>=0){const frame=buffer.slice(0,index);buffer=buffer.slice(index+2);const data=frame.split("\n").filter(line=>line.startsWith("data:")).map(line=>line.slice(5).trimStart()).join("\n");if(!data)continue;
      const signedFrame=JSON.parse(data) as {body:string;signature:string};
      if(typeof signedFrame.body!=="string" || typeof signedFrame.signature!=="string")throw new Error("Unsigned node frame");
-     const event=await this.protocol.verify(signedFrame.body,signedFrame.signature,bound,identity.secret);
+     const event=verifyFrame(signedFrame.body,signedFrame.signature);
      const current=await this.registry.resolve(bound.nodeId);
      if(!current || current.binding.generation!==bound.generation || current.binding.status!=="ready" || event.sessionId!==envelope.sessionId || event.operation!=="session.event")throw new Error("Stale node stream");
      yield event;

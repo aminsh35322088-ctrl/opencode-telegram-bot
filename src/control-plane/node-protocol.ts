@@ -15,7 +15,7 @@ export class NodeProtocol {
     const body = JSON.stringify(envelope);
     return {body,signature:createHmac("sha256",secret).update(body,"utf8").digest("hex")};
   }
-  async verify(body: string, signature: string, identity: NodeIdentity, secret: string): Promise<NodeEnvelope> {
+  private authenticate(body: string, signature: string, identity: NodeIdentity, secret: string): NodeEnvelope {
     if (Buffer.byteLength(body)>10*1024*1024 || !/^[a-f0-9]{64}$/.test(signature)) throw new Error("Invalid node signature");
     const expected = createHmac("sha256",secret).update(body,"utf8").digest();
     if (!timingSafeEqual(expected,Buffer.from(signature,"hex"))) throw new Error("Invalid node signature");
@@ -25,6 +25,21 @@ export class NodeProtocol {
     if (!Number.isSafeInteger(envelope.timestamp) || Math.abs(this.now()-envelope.timestamp)>60_000) throw new Error("Invalid node timestamp");
     if (!/^[a-zA-Z0-9_-]{24,128}$/.test(envelope.nonce) || typeof envelope.operation!=="string" || envelope.operation.length>80 ||
       (envelope.sessionId!==undefined && (typeof envelope.sessionId!=="string" || envelope.sessionId.length>256))) throw new Error("Invalid node envelope");
+    return envelope;
+  }
+  /** A live stream is fenced by its signed request nonce and an exact ordered frame counter. */
+  streamVerifier(identity:NodeIdentity,secret:string,scope:{nonce:string;sessionId:string;runId:string}):(body:string,signature:string)=>NodeEnvelope{
+    let sequence=0;
+    return (body,signature)=>{
+      const envelope=this.authenticate(body,signature,identity,secret);
+      const payload=envelope.payload as {streamNonce?:string;sequence?:number;runId?:string};
+      if(envelope.operation!=="session.event"||envelope.sessionId!==scope.sessionId||payload?.streamNonce!==scope.nonce||payload?.runId!==scope.runId)throw new Error("Node stream scope rejected");
+      if(!Number.isSafeInteger(payload.sequence)||payload.sequence!==sequence+1)throw new Error("Node stream sequence replay rejected");
+      sequence=payload.sequence;return envelope;
+    };
+  }
+  async verify(body: string, signature: string, identity: NodeIdentity, secret: string): Promise<NodeEnvelope> {
+    const envelope=this.authenticate(body,signature,identity,secret);
     const admission = this.queue.then(async()=>{
       let entries: Record<string,number> = {};
       try {
