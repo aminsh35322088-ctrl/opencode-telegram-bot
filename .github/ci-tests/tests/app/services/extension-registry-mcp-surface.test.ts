@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -39,10 +40,13 @@ vi.mock("../../../src/app/services/skills-catalog-service.js", () => ({
 import {
   getExtensionInfo,
   listExtensions,
-  removeExtension,
+  removeExtension as rawRemoveExtension,
 } from "../../../src/app/services/extension-registry-service.js";
 import { saveStoredExtension } from "../../../src/app/services/extension-store.js";
 import { registerGeneratedActionPack } from "../../../src/app/services/generated-action-store.js";
+
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const removeExtension = (...args: Parameters<typeof rawRemoveExtension>) => runTrustedTelegramGlobalMutation("extensions.remove", args[1], () => rawRemoveExtension(...args));
 
 describe("Extension registry MCP surface", () => {
   let home = "";

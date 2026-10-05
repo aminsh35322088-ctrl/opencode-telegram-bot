@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,7 +34,7 @@ import { saveStoredExtension } from "../../../src/app/services/extension-store.j
 import {
   listGeneratedActions,
   registerGeneratedActionPack,
-  setGeneratedActionEnabled,
+  setGeneratedActionEnabled as rawSetGeneratedActionEnabled,
 } from "../../../src/app/services/generated-action-store.js";
 import {
   getProviderFreePolicy,
@@ -53,6 +54,9 @@ const extension = {
   updatedAt: "2026-09-27T00:00:00.000Z",
   managed: true,
 };
+
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const setGeneratedActionEnabled = (...args: Parameters<typeof rawSetGeneratedActionEnabled>) => runTrustedTelegramGlobalMutation("generated-actions.toggle", args[0], () => rawSetGeneratedActionEnabled(...args));
 
 describe("retained Extension and Actions persistence", () => {
   let home = "";

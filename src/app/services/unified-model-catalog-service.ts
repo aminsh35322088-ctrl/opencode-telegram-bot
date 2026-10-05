@@ -387,6 +387,13 @@ async function buildSnapshot(): Promise<CatalogSnapshot> {
 }
 
 async function loadSnapshot(force = false): Promise<CatalogSnapshot> {
+  if (process.env.DISTRIBUTED_CONTROL_ENABLED === "1") {
+    const {readGlobalSnapshot}=await import("../../control-plane/global-state.js");
+    const snapshot=await readGlobalSnapshot();
+    const catalog=snapshot.catalog as {entries?:UnifiedModelCatalogEntry[]};
+    cachedSnapshot={entries:catalog.entries??[],runtimePrices:new Map(),fetchedAt:Date.now()};
+    return cachedSnapshot;
+  }
   if (
     !force &&
     cachedSnapshot &&

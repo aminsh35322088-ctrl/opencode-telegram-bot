@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../control-plane/mutations.js";
 import { InlineKeyboard, type Context } from "grammy";
 import { config } from "../../config.js";
 import type { SkillCatalogItem } from "../../app/services/skills-catalog-service.js";
@@ -18,7 +19,10 @@ import {
   startSkillImport,
 } from "../commands/skills-import-flow.js";
 import { skillsCommand } from "../commands/skills-catalog-command.js";
-import { deleteGlobalSkill, isManagedSkillLocation } from "../../app/services/skill-manage-service.js";
+import {
+  deleteGlobalSkill,
+  isManagedSkillLocation,
+} from "../../app/services/skill-manage-service.js";
 import {
   buildSkillsConfirmKeyboard,
   buildSkillsListKeyboard,
@@ -104,21 +108,24 @@ export function parseSkillsMetadata(state: InteractionState | null): SkillsMetad
   const stage = state.metadata.stage;
   const messageId = state.metadata.messageId;
   const projectDirectory = state.metadata.projectDirectory;
-  if (flow !== "skills" || typeof messageId !== "number" || typeof projectDirectory !== "string") return null;
+  if (flow !== "skills" || typeof messageId !== "number" || typeof projectDirectory !== "string")
+    return null;
 
   if (stage === "list") {
     const skills = parseSkillItems(state.metadata.skills);
     if (!skills) return null;
-    const page = typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
-      ? Math.max(0, state.metadata.page)
-      : 0;
+    const page =
+      typeof state.metadata.page === "number" && Number.isInteger(state.metadata.page)
+        ? Math.max(0, state.metadata.page)
+        : 0;
     return { flow, stage, messageId, projectDirectory, skills, page };
   }
 
   if (stage === "confirm") {
     const skillName = state.metadata.skillName;
     if (typeof skillName !== "string" || !skillName.trim()) return null;
-    const skillLocation = typeof state.metadata.skillLocation === "string" ? state.metadata.skillLocation : undefined;
+    const skillLocation =
+      typeof state.metadata.skillLocation === "string" ? state.metadata.skillLocation : undefined;
     return { flow, stage, messageId, projectDirectory, skillName, skillLocation };
   }
   return null;
@@ -134,7 +141,11 @@ function isMessageNotModifiedError(error: unknown): boolean {
   return /message is not modified/i.test(message);
 }
 
-async function editCatalogMessageIgnoringNoop(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
+async function editCatalogMessageIgnoringNoop(
+  ctx: Context,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<void> {
   try {
     await ctx.editMessageText(text, { reply_markup: keyboard });
   } catch (error) {
@@ -251,9 +262,11 @@ export async function handleSkillsCallback(
       }
       clearSkillsInteraction("skills_execute_clicked");
       await ctx.answerCallbackQuery({ text: t("skills.execute_callback") });
-      await ctx.editMessageText(`▶️ /${metadata.skillName}\n\nExecution started.`, {
-        reply_markup: homeOnlyKeyboard(),
-      }).catch(() => {});
+      await ctx
+        .editMessageText(`▶️ /${metadata.skillName}\n\nExecution started.`, {
+          reply_markup: homeOnlyKeyboard(),
+        })
+        .catch(() => {});
       await executeSkill(ctx, deps, {
         projectDirectory: metadata.projectDirectory,
         skillName: metadata.skillName,
@@ -303,7 +316,8 @@ export async function handleSkillsCallback(
       await ctx.editMessageText(t("skills.delete_confirm", { skill: metadata.skillName }), {
         reply_markup: new InlineKeyboard()
           .text(t("skills.button.delete_confirm"), SKILLS_CALLBACK_DELETE_CONFIRM)
-          .text(t("skills.button.delete_cancel"), SKILLS_CALLBACK_DELETE_CANCEL).row()
+          .text(t("skills.button.delete_cancel"), SKILLS_CALLBACK_DELETE_CANCEL)
+          .row()
           .text("🏠 Home", "main:home"),
       });
       return true;
@@ -316,13 +330,19 @@ export async function handleSkillsCallback(
       }
       clearSkillsInteraction("skills_delete_confirmed");
       await ctx.answerCallbackQuery();
-      const deleted = await deleteGlobalSkill(metadata.skillName);
-      await ctx.editMessageText(
-        deleted
-          ? `${t("skills.deleted", { name: metadata.skillName })}\n\n${t("skills.restart_hint")}`
-          : t("skills.delete_failed"),
-        { reply_markup: skillsBackHomeKeyboard() },
-      ).catch(() => {});
+      const deleted = await runTrustedTelegramGlobalMutation(
+        "skills.delete",
+        metadata.skillName,
+        () => deleteGlobalSkill(metadata.skillName),
+      );
+      await ctx
+        .editMessageText(
+          deleted
+            ? `${t("skills.deleted", { name: metadata.skillName })}\n\n${t("skills.restart_hint")}`
+            : t("skills.delete_failed"),
+          { reply_markup: skillsBackHomeKeyboard() },
+        )
+        .catch(() => {});
       return true;
     }
 

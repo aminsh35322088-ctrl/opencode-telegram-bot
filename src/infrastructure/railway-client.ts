@@ -9,6 +9,7 @@ export function createInfrastructureClient(
   dispose(): void;
 } {
   let credential = environment.RAILWAY_API_TOKEN;
+  let retryAt=0;
   const sanitized = childEnvironment(environment);
   for (const name of Object.keys(environment)) {
     if (!(name in sanitized)) delete environment[name];
@@ -17,6 +18,7 @@ export function createInfrastructureClient(
   return {
     async request<T>(document: string, variables = {}): Promise<T> {
       if (!credential) throw new Error("Railway infrastructure credential unavailable");
+      if(Date.now()<retryAt)throw new Error("Railway infrastructure retry deferred");
       let response: Response;
       try {
         response = await transport("https://backboard.railway.com/graphql/v2", {
@@ -30,6 +32,12 @@ export function createInfrastructureClient(
         throw new Error("Railway infrastructure request failed");
       }
       const body = await response.json().catch(() => null) as { data?: T; errors?: unknown[] } | null;
+      if(response.status===429){
+        const header=response.headers.get("retry-after");
+        const seconds=header?Number(header):NaN;
+        const deadline=Number.isFinite(seconds)?Date.now()+Math.max(1000,seconds*1000):header?Date.parse(header):NaN;
+        retryAt=Number.isFinite(deadline)?Math.max(Date.now()+1000,deadline):Date.now()+60_000;
+      }
       if (!response.ok || !body?.data || body.errors?.length) {
         // Server and transport details can contain credentials; never reflect them.
         throw new Error("Railway infrastructure request failed");

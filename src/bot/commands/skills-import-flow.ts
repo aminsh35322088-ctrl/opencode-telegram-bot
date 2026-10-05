@@ -1,8 +1,15 @@
+import { runTrustedTelegramGlobalMutation } from "../../control-plane/mutations.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { writeGlobalSkillRaw } from "../../app/services/skill-manage-service.js";
-import type { ImportedSkill, SkillImportCandidate } from "../../app/services/skill-import-service.js";
-import { fetchSkillFromGitHub, resolveSkillSource } from "../../app/services/skill-import-service.js";
+import type {
+  ImportedSkill,
+  SkillImportCandidate,
+} from "../../app/services/skill-import-service.js";
+import {
+  fetchSkillFromGitHub,
+  resolveSkillSource,
+} from "../../app/services/skill-import-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearSkillWizard } from "./skills-wizard.js";
@@ -23,7 +30,6 @@ interface SkillImportState {
 }
 
 let state: SkillImportState | null = null;
-
 
 function activeState(): SkillImportState | null {
   if (!state) return null;
@@ -58,12 +64,13 @@ async function editImportPanel(
   await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
-
 export async function startSkillImport(ctx: Context): Promise<void> {
   clearSkillWizard();
   const messageId = callbackMessageId(ctx);
   if (messageId === null) {
-    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true }).catch(() => {});
+    await ctx
+      .answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true })
+      .catch(() => {});
     return;
   }
   state = { messageId, expiresAt: Date.now() + IMPORT_TTL_MS };
@@ -84,13 +91,18 @@ async function renderConfirmation(
 ): Promise<void> {
   state = { messageId, pending: skill, candidates, expiresAt: Date.now() + IMPORT_TTL_MS };
   const keyboard = new InlineKeyboard()
-    .text(t("skills.button.import_confirm"), SKILLS_IMPORT_CALLBACK_CONFIRM).row()
+    .text(t("skills.button.import_confirm"), SKILLS_IMPORT_CALLBACK_CONFIRM)
+    .row()
     .text("← Skills", SKILLS_IMPORT_CALLBACK_CANCEL)
     .text("🏠 Home", "main:home");
   await editImportPanel(
     ctx,
     messageId,
-    t("skills.import.confirm", { skill: skill.name, description: skill.description, url: skill.sourceUrl }),
+    t("skills.import.confirm", {
+      skill: skill.name,
+      description: skill.description,
+      url: skill.sourceUrl,
+    }),
     keyboard,
   );
 }
@@ -106,7 +118,12 @@ async function renderCandidateList(
     keyboard.text(`/${candidate.name}`, `${SKILLS_IMPORT_CALLBACK_PICK_PREFIX}${index}`).row();
   });
   keyboard.text("← Skills", SKILLS_IMPORT_CALLBACK_CANCEL).text("🏠 Home", "main:home");
-  await editImportPanel(ctx, messageId, t("skills.import.multiple_found", { count: candidates.length }), keyboard);
+  await editImportPanel(
+    ctx,
+    messageId,
+    t("skills.import.multiple_found", { count: candidates.length }),
+    keyboard,
+  );
 }
 
 export async function handleSkillImportMessage(ctx: Context): Promise<boolean> {
@@ -161,20 +178,31 @@ export async function handleSkillImportCallback(ctx: Context, data: string): Pro
     }
     const skill = current.pending;
     try {
-      await writeGlobalSkillRaw(skill.name, skill.content);
+      await runTrustedTelegramGlobalMutation("skills.add", skill.name, () =>
+        writeGlobalSkillRaw(skill.name, skill.content),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       logger.warn(`[SkillImport] Write failed: skill=${skill.name}, message=${message}`);
-      await ctx.answerCallbackQuery({ text: t("skills.import.fetch_error", { error: message }), show_alert: true });
+      await ctx.answerCallbackQuery({
+        text: t("skills.import.fetch_error", { error: message }),
+        show_alert: true,
+      });
       if (message.includes("already exists")) {
-        await editImportPanel(ctx, current.messageId, t("skills.import.exists", { name: skill.name }));
+        await editImportPanel(
+          ctx,
+          current.messageId,
+          t("skills.import.exists", { name: skill.name }),
+        );
       }
       return true;
     }
 
     await ctx.answerCallbackQuery();
     logger.info(`[SkillImport] Imported global skill: ${skill.name}`);
-    const remaining = (current.candidates ?? []).filter((candidate) => candidate.name !== skill.name);
+    const remaining = (current.candidates ?? []).filter(
+      (candidate) => candidate.name !== skill.name,
+    );
     if (remaining.length > 0) {
       await renderCandidateList(ctx, current.messageId, remaining);
     } else {
@@ -202,7 +230,12 @@ export async function handleSkillImportCallback(ctx: Context, data: string): Pro
       const skill = await fetchSkillFromGitHub(candidate.url);
       await ctx.answerCallbackQuery();
       const others = (current.candidates ?? []).filter((item) => item.name !== candidate.name);
-      await renderConfirmation(ctx, current.messageId, skill, others.length > 0 ? others : undefined);
+      await renderConfirmation(
+        ctx,
+        current.messageId,
+        skill,
+        others.length > 0 ? others : undefined,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       logger.warn(`[SkillImport] Candidate fetch failed: ${message}`);

@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -77,23 +78,31 @@ vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({
 
 import {
   analyzeRemoteMcpEndpoint,
-  completeMcpOAuth,
-  configureSecureMcpAuth,
-  createMcpServerFromInput,
+  completeMcpOAuth as rawCompleteMcpOAuth,
+  configureSecureMcpAuth as rawConfigureSecureMcpAuth,
+  createMcpServerFromInput as rawCreateMcpServerFromInput,
   debugMcpServer,
-  deleteMcpServer,
+  deleteMcpServer as rawDeleteMcpServer,
   getMcpAuthSummary,
   getMcpLoginIdentity,
   loadMcpServers,
   parseMcpCommandLine,
   parseMcpServerItems,
-  resetMcpAuthToAuto,
+  resetMcpAuthToAuto as rawResetMcpAuthToAuto,
   resolveMcpRemoteUrl,
   restoreMcpRuntime,
   restoreSecureMcpConnections,
-  startMcpOAuth,
+  startMcpOAuth as rawStartMcpOAuth,
 } from "../../../src/app/services/mcp-server-service.js";
 import { logger } from "../../../src/utils/logger.js";
+
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const startMcpOAuth = (...args: Parameters<typeof rawStartMcpOAuth>) => runTrustedTelegramGlobalMutation("mcp.auth", args[1], () => rawStartMcpOAuth(...args));
+const completeMcpOAuth = (...args: Parameters<typeof rawCompleteMcpOAuth>) => runTrustedTelegramGlobalMutation("mcp.auth", args[1], () => rawCompleteMcpOAuth(...args));
+const configureSecureMcpAuth = (...args: Parameters<typeof rawConfigureSecureMcpAuth>) => runTrustedTelegramGlobalMutation("mcp.auth", args[0].serverName, () => rawConfigureSecureMcpAuth(...args));
+const resetMcpAuthToAuto = (...args: Parameters<typeof rawResetMcpAuthToAuto>) => runTrustedTelegramGlobalMutation("mcp.auth", args[0].serverName, () => rawResetMcpAuthToAuto(...args));
+const createMcpServerFromInput = (...args: Parameters<typeof rawCreateMcpServerFromInput>) => runTrustedTelegramGlobalMutation("mcp.add", args[0].name, () => rawCreateMcpServerFromInput(...args));
+const deleteMcpServer = (...args: Parameters<typeof rawDeleteMcpServer>) => runTrustedTelegramGlobalMutation("mcp.delete", args[1], () => rawDeleteMcpServer(...args));
 
 describe("app/services/mcp-server-service", () => {
   beforeEach(() => {
@@ -119,6 +128,15 @@ describe("app/services/mcp-server-service", () => {
     mockedManaged.markDeleted.mockReset().mockResolvedValue(undefined);
     mockedManaged.clearDeleted.mockReset().mockResolvedValue(undefined);
     mockedTopics.list.mockReset().mockResolvedValue([]);
+  });
+
+  it("rejects raw MCP mutation and authentication calls before reaching OpenCode", async () => {
+    await expect(rawCreateMcpServerFromInput({projectDirectory: "/repo", name: "unguarded", type: "remote", value: "https://example.com/mcp"})).rejects.toThrow(/requires an approved Question/);
+    await expect(rawStartMcpOAuth("/repo", "unguarded")).rejects.toThrow(/requires an approved Question/);
+    await expect(rawDeleteMcpServer("/repo", "unguarded")).rejects.toThrow(/requires an approved Question/);
+    expect(mocked.add).not.toHaveBeenCalled();
+    expect(mocked.authStart).not.toHaveBeenCalled();
+    expect(mocked.disconnect).not.toHaveBeenCalled();
   });
 
   it("detects OAuth protected-resource metadata advertised by a remote MCP endpoint", async () => {

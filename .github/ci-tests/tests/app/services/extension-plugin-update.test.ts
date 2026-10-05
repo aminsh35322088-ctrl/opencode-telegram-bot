@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -40,13 +41,16 @@ vi.mock("../../../src/app/services/extension-registry-service.js", () => ({
 }));
 
 import {
-  approveExtensionEnsure,
+  approveExtensionEnsure as rawApproveExtensionEnsure,
   requestExtensionEnsure,
 } from "../../../src/app/services/extension-ensure-service.js";
 import {
   getStoredExtension,
   saveStoredExtension,
 } from "../../../src/app/services/extension-store.js";
+
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const approveExtensionEnsure = (...args: Parameters<typeof rawApproveExtensionEnsure>) => runTrustedTelegramGlobalMutation("extensions.ensure", args[0], () => rawApproveExtensionEnsure(...args));
 
 describe("plugin Extension update lifecycle", () => {
   let home = "";
@@ -91,6 +95,8 @@ describe("plugin Extension update lifecycle", () => {
     expect(requested.status).toBe("approval-required");
     expect(requested.requestId).toBeTypeOf("string");
 
+    await expect(rawApproveExtensionEnsure(requested.requestId!)).rejects.toThrow(/requires an approved Question/);
+    expect(mocks.reload).not.toHaveBeenCalled();
     const approved = await approveExtensionEnsure(requested.requestId!);
     expect(approved.status).toBe("ready");
     expect(mocks.reload).toHaveBeenCalledWith(

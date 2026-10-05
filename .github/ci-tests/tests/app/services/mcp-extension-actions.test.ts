@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -118,7 +119,7 @@ describe("MCP Extension record and generated tool actions", () => {
     await syncMcpExtensionActions({ serverName: "railway", projectDirectory: "/work/repo" });
 
     const { setGeneratedActionEnabled } = await import("../../../src/app/services/generated-action-store.js");
-    await setGeneratedActionEnabled("railway.deploy-latest", false);
+    await runTrustedTelegramGlobalMutation("generated-actions.toggle", "railway.deploy-latest", () => setGeneratedActionEnabled("railway.deploy-latest", false));
 
     listTools.mockResolvedValue({ server: "railway", tools: [{ name: "read_log" }] });
     await syncMcpExtensionActions({ serverName: "railway", projectDirectory: "/work/repo" });

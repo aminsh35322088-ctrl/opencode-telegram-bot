@@ -1,3 +1,10 @@
+import { resolveAuthenticatedMutationActor } from "../../control-plane/actor-context.js";
+import {
+  handleApprovedGlobalQuestion,
+  commitPreparedGlobalMutation,
+  bindGlobalMutationQuestion,
+  runTrustedTelegramGlobalMutation,
+} from "../../control-plane/mutations.js";
 import { Context, InlineKeyboard } from "grammy";
 import { questionManager } from "../../app/managers/question-manager.js";
 import { opencodeClient } from "../../opencode/client.js";
@@ -195,6 +202,8 @@ async function presentExtensionResumeResult(
     return true;
   }
 
+  if (result.status === "approval-required") return true;
+
   if (result.status === "failed") {
     await bot.sendMessage(
       chatId,
@@ -221,8 +230,44 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
     `[QuestionHandler] Poll completed: ${answers.length}/${totalQuestions} questions answered`,
   );
 
-  let extensionHandled = false;
-  if (currentSession?.id) {
+  let globalHandled = false;
+  const mutationActor = currentSession?.id
+    ? await resolveAuthenticatedMutationActor(currentSession.id)
+    : null;
+  const requestId = questionManager.getRequestID();
+  if (mutationActor && requestId) {
+    const receipt = await runTrustedTelegramGlobalMutation("question.approve", requestId, () => handleApprovedGlobalQuestion({
+      actor: mutationActor,
+      requestId,
+      questions,
+      answers: questions.map((_, index) => {
+        const selected = questionManager.getSelectedOptions(index);
+        return Array.from(selected).flatMap((optionIndex) => {
+          const option = questions[index]?.options[optionIndex];
+          return option ? [option.label] : [];
+        });
+      }),
+    }));
+    if (receipt) {
+      globalHandled = true;
+      if (receipt.status === "approved") {
+        try {
+          await commitPreparedGlobalMutation(mutationActor, receipt.approvalId, {
+            type: receipt.type,
+            resource: receipt.resource,
+            config: receipt.config,
+          });
+          await bot.sendMessage(chatId, "✅ Global change approved and applied.");
+        } catch (error) {
+          logger.error("[GlobalMutation] Approved change failed", error);
+          await bot.sendMessage(chatId, "⚠️ The approved Global change could not be applied.");
+        }
+      } else await bot.sendMessage(chatId, "Global change rejected. Nothing was changed.");
+    }
+  }
+  let nextApproval: Extract<Awaited<ReturnType<typeof resumePendingExtensionAddFromQuestion>>, {status: "approval-required"}> | undefined;
+  let extensionHandled = globalHandled;
+  if (!globalHandled && currentSession?.id) {
     try {
       const extensionResult = await resumePendingExtensionAddFromQuestion({
         sessionId: currentSession.id,
@@ -232,11 +277,8 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
         })),
         answers: allAnswers,
       });
-      extensionHandled = await presentExtensionResumeResult(
-        bot,
-        chatId,
-        extensionResult,
-      );
+      extensionHandled = await presentExtensionResumeResult(bot, chatId, extensionResult);
+      if (extensionResult.handled && extensionResult.status === "approval-required") nextApproval = extensionResult;
       if (extensionResult.handled) {
         logger.info(
           `[Extensions] Question answer deterministically resumed pending add: session=${currentSession.id}, status=${extensionResult.status}`,
@@ -252,7 +294,7 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
     }
   }
 
-  await sendAllAnswersToAgent(bot, chatId, allAnswers);
+  if (!requestId?.startsWith("global:")) await sendAllAnswersToAgent(bot, chatId, allAnswers);
 
   if (!extensionHandled) {
     if (answers.length === 0) {
@@ -265,6 +307,12 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
 
   clearQuestionInteraction("question_completed");
   questionManager.clear();
+  if (nextApproval && mutationActor) {
+    const localRequestId = `global:${nextApproval.result.approvalId}`;
+    await bindGlobalMutationQuestion(mutationActor, localRequestId, [nextApproval.result.question]);
+    questionManager.startQuestions([nextApproval.result.question], localRequestId);
+    await showCurrentQuestion(bot, chatId);
+  }
   logger.debug("[QuestionHandler] Poll completed and cleared");
 }
 
@@ -355,10 +403,7 @@ function appendTruncationSuffix(segment: QuestionSegment): QuestionSegment {
  * Keeps the card within the Telegram message limit by dropping whole segments
  * from the tail, cutting only the last one that still partially fits.
  */
-function truncateQuestionSegments(
-  segments: QuestionSegment[],
-  limit: number,
-): QuestionSegment[] {
+function truncateQuestionSegments(segments: QuestionSegment[], limit: number): QuestionSegment[] {
   const separatorLength = 2;
   const result: QuestionSegment[] = [];
   let used = 0;

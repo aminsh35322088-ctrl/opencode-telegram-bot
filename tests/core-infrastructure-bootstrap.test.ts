@@ -20,3 +20,11 @@ test("GraphQL errors fail even when HTTP status is 200 and are not reflected", a
   );
   client.dispose();
 });
+
+test("infrastructure rate limiting honors Retry-After without retrying ambiguous mutations",async()=>{
+ let calls=0;
+ const client=createInfrastructureClient({RAILWAY_API_TOKEN:"synthetic-account"},async()=>{calls++;return new Response("{}",{status:429,headers:{"retry-after":"120"}});});
+ await assert.rejects(client.request("mutation { serviceCreate }"),/request failed/);
+ await assert.rejects(client.request("mutation { serviceCreate }"),/retry deferred/);
+ assert.equal(calls,1);client.dispose();
+});

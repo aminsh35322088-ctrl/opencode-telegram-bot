@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../control-plane/mutations.js";
 import { clearProviderPriceViews } from "../menus/provider-price-view.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
@@ -5,11 +6,37 @@ import { renderMcpDetailView } from "../commands/mcp-server-command.js";
 import { commandsCommand } from "../commands/command-catalog-command.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
-import { getFreeModelDetectionEnabled, setFreeModelDetectionEnabled, getCompactOutputMode, getMessageFormatMode, getPromptQueueEnabled, getResponseStreamingMode, getSendDiffFileAttachments, getShowAssistantRunFooter, getShowThinkingContent, getTopicDefaults, getCurrentTopicSettings, setCompactOutputMode, setMessageFormatMode, setPromptQueueEnabled, setResponseStreamingMode, setSendDiffFileAttachments, setShowAssistantRunFooter, setShowThinkingContent, updateTopicDefaults, type MessageFormatMode, type ResponseStreamingMode } from "../../app/stores/settings-store.js";
+import {
+  getFreeModelDetectionEnabled,
+  setFreeModelDetectionEnabled,
+  getCompactOutputMode,
+  getMessageFormatMode,
+  getPromptQueueEnabled,
+  getResponseStreamingMode,
+  getSendDiffFileAttachments,
+  getShowAssistantRunFooter,
+  getShowThinkingContent,
+  getTopicDefaults,
+  getCurrentTopicSettings,
+  setCompactOutputMode,
+  setMessageFormatMode,
+  setPromptQueueEnabled,
+  setResponseStreamingMode,
+  setSendDiffFileAttachments,
+  setShowAssistantRunFooter,
+  setShowThinkingContent,
+  updateTopicDefaults,
+  type MessageFormatMode,
+  type ResponseStreamingMode,
+} from "../../app/stores/settings-store.js";
 import { scheduleModelsDevPriceRefresh } from "../../app/services/models-dev-price-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
-import { appendHomeNavigation, appendInlineMenuCancelButton, ensureActiveInlineMenu } from "../menus/inline-menu.js";
+import {
+  appendHomeNavigation,
+  appendInlineMenuCancelButton,
+  ensureActiveInlineMenu,
+} from "../menus/inline-menu.js";
 import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { handleImageModelSettingsCallback } from "../menus/image-model-menu.js";
 import { handleVoiceModelSettingsCallback } from "../menus/voice-model-menu.js";
@@ -31,7 +58,10 @@ import {
   SETTINGS_MORE_CALLBACK,
 } from "../menus/extension-settings-menu.js";
 import { removeExtension } from "../../app/services/extension-registry-service.js";
-import { setGeneratedActionEnabled, listGeneratedActions } from "../../app/services/generated-action-store.js";
+import {
+  setGeneratedActionEnabled,
+  listGeneratedActions,
+} from "../../app/services/generated-action-store.js";
 import { getCurrentSessionDirectory } from "../../app/services/session-service.js";
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
@@ -103,22 +133,38 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import type { InlineMenuNavigation } from "../menus/inline-menu.js";
 
-function nextResponseStreamingMode(mode: ResponseStreamingMode): ResponseStreamingMode { return mode === "edit" ? "draft" : "edit"; }
-function nextMessageFormatMode(mode: MessageFormatMode): MessageFormatMode { return mode === "markdown" ? "raw" : "markdown"; }
+function nextResponseStreamingMode(mode: ResponseStreamingMode): ResponseStreamingMode {
+  return mode === "edit" ? "draft" : "edit";
+}
+function nextMessageFormatMode(mode: MessageFormatMode): MessageFormatMode {
+  return mode === "markdown" ? "raw" : "markdown";
+}
 function getTopicThreadId(ctx: Context): number | undefined {
   const message = ctx.callbackQuery?.message;
-  const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined;
+  const threadId =
+    message && "message_thread_id" in message
+      ? (message as { message_thread_id?: number }).message_thread_id
+      : undefined;
   return typeof threadId === "number" ? threadId : undefined;
 }
-async function renderSettingsView(ctx: Context, view: { text: string; keyboard: InlineKeyboard }, navigation: InlineMenuNavigation = "back"): Promise<void> {
+async function renderSettingsView(
+  ctx: Context,
+  view: { text: string; keyboard: InlineKeyboard },
+  navigation: InlineMenuNavigation = "back",
+): Promise<void> {
   const threadId = getTopicThreadId(ctx);
   await ctx.editMessageText(view.text, {
     parse_mode: "HTML",
     reply_markup: appendInlineMenuCancelButton(view.keyboard, "settings", threadId, navigation),
   });
 }
-function getCallbackChatId(ctx: Context): number | null { const id = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; return typeof id === "number" ? id : null; }
-function advancedBackKeyboard(): InlineKeyboard { return appendHomeNavigation(new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK)); }
+function getCallbackChatId(ctx: Context): number | null {
+  const id = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+  return typeof id === "number" ? id : null;
+}
+function advancedBackKeyboard(): InlineKeyboard {
+  return appendHomeNavigation(new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK));
+}
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
   const callbackData = ctx.callbackQuery?.data;
@@ -133,23 +179,32 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       return true;
     }
     if (
-      callbackData === SETTINGS_IMAGE_MODEL_CALLBACK
-      || callbackData.startsWith(SETTINGS_IMAGE_MODEL_CALLBACK + ":")
+      callbackData === SETTINGS_IMAGE_MODEL_CALLBACK ||
+      callbackData.startsWith(SETTINGS_IMAGE_MODEL_CALLBACK + ":")
     ) {
       return await handleImageModelSettingsCallback(ctx, callbackData);
     }
     if (
-      callbackData === SETTINGS_VOICE_MODEL_CALLBACK
-      || callbackData.startsWith(SETTINGS_VOICE_MODEL_CALLBACK + ":")
+      callbackData === SETTINGS_VOICE_MODEL_CALLBACK ||
+      callbackData.startsWith(SETTINGS_VOICE_MODEL_CALLBACK + ":")
     ) {
       return await handleVoiceModelSettingsCallback(ctx, callbackData);
     }
 
     if (callbackData.startsWith(SETTINGS_EXTENSION_SELECT_PREFIX)) {
       const projectDirectory = getCurrentSessionDirectory();
-      const id = await resolveExtensionRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_SELECT_PREFIX.length));
+      const id = await resolveExtensionRef(
+        projectDirectory,
+        callbackData.slice(SETTINGS_EXTENSION_SELECT_PREFIX.length),
+      );
       await ctx.answerCallbackQuery().catch(() => {});
-      await renderSettingsView(ctx, id ? await buildExtensionDetailView(projectDirectory, id) : await buildExtensionsSettingsView(projectDirectory), "back");
+      await renderSettingsView(
+        ctx,
+        id
+          ? await buildExtensionDetailView(projectDirectory, id)
+          : await buildExtensionsSettingsView(projectDirectory),
+        "back",
+      );
       return true;
     }
 
@@ -158,10 +213,15 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       // specific server's detail view so the auth buttons are one tap away;
       // routing to mcpsCommand would only re-render the list screen.
       const projectDirectory = getCurrentSessionDirectory();
-      const serverName = await resolveMcpServerRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_MCP_PREFIX.length));
+      const serverName = await resolveMcpServerRef(
+        projectDirectory,
+        callbackData.slice(SETTINGS_EXTENSION_MCP_PREFIX.length),
+      );
       const messageId = ctx.chat?.id ? getMainNavigationMessageId(ctx.chat.id) : undefined;
       if (!serverName || typeof messageId !== "number") {
-        await ctx.answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true }).catch(() => {});
+        await ctx
+          .answerCallbackQuery({ text: t("inline.inactive_callback"), show_alert: true })
+          .catch(() => {});
         return true;
       }
       await ctx.answerCallbackQuery().catch(() => {});
@@ -171,54 +231,118 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
 
     if (callbackData.startsWith(SETTINGS_EXTENSION_REMOVE_PREFIX)) {
       const projectDirectory = getCurrentSessionDirectory();
-      const id = await resolveExtensionRef(projectDirectory, callbackData.slice(SETTINGS_EXTENSION_REMOVE_PREFIX.length));
+      const id = await resolveExtensionRef(
+        projectDirectory,
+        callbackData.slice(SETTINGS_EXTENSION_REMOVE_PREFIX.length),
+      );
       if (!id) {
-        await ctx.answerCallbackQuery({ text: "Extension not found", show_alert: true }).catch(() => {});
+        await ctx
+          .answerCallbackQuery({ text: "Extension not found", show_alert: true })
+          .catch(() => {});
         return true;
       }
-      const result = await removeExtension(projectDirectory, id);
-      await ctx.answerCallbackQuery({ text: result.removed ? "Extension removed" : "Extension was already absent" }).catch(() => {});
+      const result = await runTrustedTelegramGlobalMutation("extensions.remove", id, () =>
+        removeExtension(projectDirectory, id),
+      );
+      await ctx
+        .answerCallbackQuery({
+          text: result.removed ? "Extension removed" : "Extension was already absent",
+        })
+        .catch(() => {});
       await renderSettingsView(ctx, await buildExtensionsSettingsView(projectDirectory), "back");
       return true;
     }
 
     if (callbackData.startsWith(SETTINGS_ACTION_TOGGLE_PREFIX)) {
-      const id = await resolveGeneratedActionRef(callbackData.slice(SETTINGS_ACTION_TOGGLE_PREFIX.length));
+      const id = await resolveGeneratedActionRef(
+        callbackData.slice(SETTINGS_ACTION_TOGGLE_PREFIX.length),
+      );
       if (!id) {
-        await ctx.answerCallbackQuery({ text: "Action not found", show_alert: true }).catch(() => {});
+        await ctx
+          .answerCallbackQuery({ text: "Action not found", show_alert: true })
+          .catch(() => {});
         return true;
       }
       const current = (await listGeneratedActions()).find((item) => item.id === id);
       if (!current) {
-        await ctx.answerCallbackQuery({ text: "Action not found", show_alert: true }).catch(() => {});
+        await ctx
+          .answerCallbackQuery({ text: "Action not found", show_alert: true })
+          .catch(() => {});
         return true;
       }
-      await setGeneratedActionEnabled(id, !current.enabled);
-      await ctx.answerCallbackQuery({ text: current.enabled ? "Action disabled" : "Action enabled" }).catch(() => {});
+      await runTrustedTelegramGlobalMutation("generated-actions.toggle", id, () =>
+        setGeneratedActionEnabled(id, !current.enabled),
+      );
+      await ctx
+        .answerCallbackQuery({ text: current.enabled ? "Action disabled" : "Action enabled" })
+        .catch(() => {});
       await renderSettingsView(ctx, await buildActionsSettingsView(), "back");
       return true;
     }
 
     switch (callbackData) {
       // Topic Settings keeps its per-topic model selector. Global Settings uses the unified Default Models hub.
-      case SETTINGS_TOPIC_MODELS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicModelsSettingsView(), "back"); return true;
-      case SETTINGS_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
-      case SETTINGS_DEFAULT_MODELS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildDefaultModelsSettingsView(), "back"); return true;
-      case SETTINGS_CHAT_MODEL_CALLBACK: await ctx.answerCallbackQuery(); await showModelCenterMenu(ctx); return true;
-      case SETTINGS_AGENT_CALLBACK: await ctx.answerCallbackQuery(); await showAgentSelectionMenu(ctx); return true;
-      case SETTINGS_VARIANT_CALLBACK: await ctx.answerCallbackQuery(); await showVariantSelectionMenu(ctx); return true;
-      case SETTINGS_APPEARANCE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAppearanceSettingsView(), "both"); return true;
-      case SETTINGS_NOTIFICATIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildNotificationsSettingsView(), "both"); return true;
-      case SETTINGS_CONTEXT_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildContextSettingsView(), "both"); return true;
-      case SETTINGS_GITHUB_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, await buildGithubSettingsView(), "back"); return true;
+      case SETTINGS_TOPIC_MODELS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildTopicModelsSettingsView(), "back");
+        return true;
+      case SETTINGS_MODEL_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await showModelCenterMenu(ctx);
+        return true;
+      case SETTINGS_DEFAULT_MODELS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildDefaultModelsSettingsView(), "back");
+        return true;
+      case SETTINGS_CHAT_MODEL_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await showModelCenterMenu(ctx);
+        return true;
+      case SETTINGS_AGENT_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await showAgentSelectionMenu(ctx);
+        return true;
+      case SETTINGS_VARIANT_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await showVariantSelectionMenu(ctx);
+        return true;
+      case SETTINGS_APPEARANCE_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildAppearanceSettingsView(), "both");
+        return true;
+      case SETTINGS_NOTIFICATIONS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildNotificationsSettingsView(), "both");
+        return true;
+      case SETTINGS_CONTEXT_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildContextSettingsView(), "both");
+        return true;
+      case SETTINGS_GITHUB_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, await buildGithubSettingsView(), "back");
+        return true;
       case SETTINGS_EXTENSIONS_CALLBACK: {
         await ctx.answerCallbackQuery();
-        await renderSettingsView(ctx, await buildExtensionsSettingsView(getCurrentSessionDirectory()), "back");
+        await renderSettingsView(
+          ctx,
+          await buildExtensionsSettingsView(getCurrentSessionDirectory()),
+          "back",
+        );
         return true;
       }
-      case SETTINGS_ACTIONS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, await buildActionsSettingsView(), "back"); return true;
-      case SETTINGS_MORE_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMoreSettingsView(), "back"); return true;
-      case SETTINGS_EXPERIMENTAL_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildExperimentalSettingsView(), "back"); return true;
+      case SETTINGS_ACTIONS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, await buildActionsSettingsView(), "back");
+        return true;
+      case SETTINGS_MORE_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildMoreSettingsView(), "back");
+        return true;
+      case SETTINGS_EXPERIMENTAL_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildExperimentalSettingsView(), "back");
+        return true;
       case SETTINGS_FREE_DETECTION_CALLBACK: {
         await ctx.answerCallbackQuery();
         const enabled = !getFreeModelDetectionEnabled();
@@ -228,16 +352,28 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         await renderSettingsView(ctx, buildExperimentalSettingsView(), "back");
         return true;
       }
-      case SETTINGS_ADVANCED_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
-      case SETTINGS_TOPIC_DEFAULTS_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildTopicDefaultsSettingsView(), "back"); return true;
-      case SETTINGS_COMMANDS_CALLBACK: await ctx.answerCallbackQuery(); await commandsCommand(ctx as never); return true;
+      case SETTINGS_ADVANCED_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildAdvancedSettingsView(), "back");
+        return true;
+      case SETTINGS_TOPIC_DEFAULTS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildTopicDefaultsSettingsView(), "back");
+        return true;
+      case SETTINGS_COMMANDS_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await commandsCommand(ctx as never);
+        return true;
       case SETTINGS_MEMORY_CALLBACK: {
         await ctx.answerCallbackQuery();
         const memories = await listMemories();
         await renderSettingsView(ctx, buildMemorySettingsView(memories), "both");
         return true;
       }
-      case SETTINGS_MEMORY_CLEAR_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildMemoryClearConfirmationView(), "back"); return true;
+      case SETTINGS_MEMORY_CLEAR_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildMemoryClearConfirmationView(), "back");
+        return true;
       case SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK: {
         await ctx.answerCallbackQuery({ text: "Memory clear cancelled" });
         await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
@@ -249,31 +385,61 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         await renderSettingsView(ctx, buildMemorySettingsView(await listMemories()), "both");
         return true;
       }
-      case SETTINGS_BACK_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildSettingsMenuView(), "close"); return true;
-      case SETTINGS_RESET_HISTORY_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildResetHistoryConfirmationView(), "back"); return true;
-      case SETTINGS_RESET_HISTORY_CANCEL_CALLBACK: await ctx.answerCallbackQuery({ text: "History reset cancelled" }); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
+      case SETTINGS_BACK_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildSettingsMenuView(), "close");
+        return true;
+      case SETTINGS_RESET_HISTORY_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildResetHistoryConfirmationView(), "back");
+        return true;
+      case SETTINGS_RESET_HISTORY_CANCEL_CALLBACK:
+        await ctx.answerCallbackQuery({ text: "History reset cancelled" });
+        await renderSettingsView(ctx, buildAdvancedSettingsView(), "back");
+        return true;
       case SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK: {
         const chatId = getCallbackChatId(ctx);
-        if (chatId === null) { await ctx.answerCallbackQuery({ text: "Chat context not found", show_alert: true }); return true; }
+        if (chatId === null) {
+          await ctx.answerCallbackQuery({ text: "Chat context not found", show_alert: true });
+          return true;
+        }
         await ctx.answerCallbackQuery({ text: "Resetting history…" });
         const result = await resetHistory(ctx.api, chatId);
         if (result.failed > 0) {
-          await ctx.editMessageText(`⚠️ <b>History reset completed with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nCheck the bot logs before retrying.`, { parse_mode: "HTML", reply_markup: advancedBackKeyboard() });
+          await ctx.editMessageText(
+            `⚠️ <b>History reset completed with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nCheck the bot logs before retrying.`,
+            { parse_mode: "HTML", reply_markup: advancedBackKeyboard() },
+          );
           return true;
         }
         await renderSettingsView(ctx, buildAdvancedSettingsView(), "back");
         return true;
       }
-      case SETTINGS_FACTORY_RESET_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildFactoryResetConfirmationView(), "back"); return true;
-      case SETTINGS_FACTORY_RESET_CANCEL_CALLBACK: await ctx.answerCallbackQuery({ text: "Factory reset cancelled" }); await renderSettingsView(ctx, buildAdvancedSettingsView(), "back"); return true;
-      case SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK: await ctx.answerCallbackQuery(); await renderSettingsView(ctx, buildFactoryResetFinalView(), "back"); return true;
+      case SETTINGS_FACTORY_RESET_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildFactoryResetConfirmationView(), "back");
+        return true;
+      case SETTINGS_FACTORY_RESET_CANCEL_CALLBACK:
+        await ctx.answerCallbackQuery({ text: "Factory reset cancelled" });
+        await renderSettingsView(ctx, buildAdvancedSettingsView(), "back");
+        return true;
+      case SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, buildFactoryResetFinalView(), "back");
+        return true;
       case SETTINGS_FACTORY_RESET_FINAL_CALLBACK: {
         const chatId = getCallbackChatId(ctx);
-        if (chatId === null) { await ctx.answerCallbackQuery({ text: "Chat context not found", show_alert: true }); return true; }
+        if (chatId === null) {
+          await ctx.answerCallbackQuery({ text: "Chat context not found", show_alert: true });
+          return true;
+        }
         await ctx.answerCallbackQuery({ text: "Factory resetting…" });
         const result = await factoryReset(ctx.api, chatId);
         if (result.failed > 0) {
-          await ctx.editMessageText(`⚠️ <b>Factory reset stopped with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nSaved settings were not reset because cleanup was incomplete. Check the bot logs.`, { parse_mode: "HTML", reply_markup: advancedBackKeyboard() });
+          await ctx.editMessageText(
+            `⚠️ <b>Factory reset stopped with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nSaved settings were not reset because cleanup was incomplete. Check the bot logs.`,
+            { parse_mode: "HTML", reply_markup: advancedBackKeyboard() },
+          );
           return true;
         }
         await keyboardManager.sendMainInlineKeyboard(chatId, undefined, true);
@@ -282,25 +448,72 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
     }
 
     switch (callbackData) {
-      case SETTINGS_DEFAULT_COMPACT_CALLBACK: updateTopicDefaults({ compactOutputMode: !getTopicDefaults().compactOutputMode }); break;
-      case SETTINGS_DEFAULT_THINKING_CALLBACK: updateTopicDefaults({ showThinkingContent: !getTopicDefaults().showThinkingContent }); break;
-      case SETTINGS_DEFAULT_STREAMING_CALLBACK: updateTopicDefaults({ responseStreamingMode: nextResponseStreamingMode(getTopicDefaults().responseStreamingMode) }); break;
-      case SETTINGS_DEFAULT_FORMAT_CALLBACK: updateTopicDefaults({ messageFormatMode: nextMessageFormatMode(getTopicDefaults().messageFormatMode) }); break;
-      case SETTINGS_DEFAULT_FOOTER_CALLBACK: updateTopicDefaults({ showAssistantRunFooter: !getTopicDefaults().showAssistantRunFooter }); break;
-      case SETTINGS_DEFAULT_DIFF_CALLBACK: updateTopicDefaults({ sendDiffFileAttachments: !getTopicDefaults().sendDiffFileAttachments }); break;
-      case SETTINGS_DEFAULT_QUEUE_CALLBACK: updateTopicDefaults({ promptQueueEnabled: !getTopicDefaults().promptQueueEnabled }); break;
+      case SETTINGS_DEFAULT_COMPACT_CALLBACK:
+        updateTopicDefaults({ compactOutputMode: !getTopicDefaults().compactOutputMode });
+        break;
+      case SETTINGS_DEFAULT_THINKING_CALLBACK:
+        updateTopicDefaults({ showThinkingContent: !getTopicDefaults().showThinkingContent });
+        break;
+      case SETTINGS_DEFAULT_STREAMING_CALLBACK:
+        updateTopicDefaults({
+          responseStreamingMode: nextResponseStreamingMode(
+            getTopicDefaults().responseStreamingMode,
+          ),
+        });
+        break;
+      case SETTINGS_DEFAULT_FORMAT_CALLBACK:
+        updateTopicDefaults({
+          messageFormatMode: nextMessageFormatMode(getTopicDefaults().messageFormatMode),
+        });
+        break;
+      case SETTINGS_DEFAULT_FOOTER_CALLBACK:
+        updateTopicDefaults({ showAssistantRunFooter: !getTopicDefaults().showAssistantRunFooter });
+        break;
+      case SETTINGS_DEFAULT_DIFF_CALLBACK:
+        updateTopicDefaults({
+          sendDiffFileAttachments: !getTopicDefaults().sendDiffFileAttachments,
+        });
+        break;
+      case SETTINGS_DEFAULT_QUEUE_CALLBACK:
+        updateTopicDefaults({ promptQueueEnabled: !getTopicDefaults().promptQueueEnabled });
+        break;
       default: {
-        let destination: () => { text: string; keyboard: InlineKeyboard } = buildAppearanceSettingsView;
+        let destination: () => { text: string; keyboard: InlineKeyboard } =
+          buildAppearanceSettingsView;
         let refreshTopicKeyboard = false;
         switch (callbackData) {
-          case SETTINGS_COMPACT_OUTPUT_CALLBACK: setCompactOutputMode(!getCompactOutputMode()); refreshTopicKeyboard = true; break;
-          case SETTINGS_THINKING_CONTENT_CALLBACK: setShowThinkingContent(!getShowThinkingContent()); refreshTopicKeyboard = true; break;
-          case SETTINGS_RESPONSE_STREAMING_CALLBACK: setResponseStreamingMode(nextResponseStreamingMode(getResponseStreamingMode())); refreshTopicKeyboard = true; break;
-          case SETTINGS_MESSAGE_FORMAT_CALLBACK: setMessageFormatMode(nextMessageFormatMode(getMessageFormatMode())); refreshTopicKeyboard = true; break;
-          case SETTINGS_DIFF_FILES_CALLBACK: setSendDiffFileAttachments(!getSendDiffFileAttachments()); refreshTopicKeyboard = true; break;
-          case SETTINGS_ASSISTANT_FOOTER_CALLBACK: setShowAssistantRunFooter(!getShowAssistantRunFooter()); refreshTopicKeyboard = true; break;
-          case SETTINGS_PROMPT_QUEUE_CALLBACK: setPromptQueueEnabled(!getPromptQueueEnabled()); destination = buildNotificationsSettingsView; refreshTopicKeyboard = true; break;
-          default: await ctx.answerCallbackQuery({ text: t("callback.processing_error") }); return true;
+          case SETTINGS_COMPACT_OUTPUT_CALLBACK:
+            setCompactOutputMode(!getCompactOutputMode());
+            refreshTopicKeyboard = true;
+            break;
+          case SETTINGS_THINKING_CONTENT_CALLBACK:
+            setShowThinkingContent(!getShowThinkingContent());
+            refreshTopicKeyboard = true;
+            break;
+          case SETTINGS_RESPONSE_STREAMING_CALLBACK:
+            setResponseStreamingMode(nextResponseStreamingMode(getResponseStreamingMode()));
+            refreshTopicKeyboard = true;
+            break;
+          case SETTINGS_MESSAGE_FORMAT_CALLBACK:
+            setMessageFormatMode(nextMessageFormatMode(getMessageFormatMode()));
+            refreshTopicKeyboard = true;
+            break;
+          case SETTINGS_DIFF_FILES_CALLBACK:
+            setSendDiffFileAttachments(!getSendDiffFileAttachments());
+            refreshTopicKeyboard = true;
+            break;
+          case SETTINGS_ASSISTANT_FOOTER_CALLBACK:
+            setShowAssistantRunFooter(!getShowAssistantRunFooter());
+            refreshTopicKeyboard = true;
+            break;
+          case SETTINGS_PROMPT_QUEUE_CALLBACK:
+            setPromptQueueEnabled(!getPromptQueueEnabled());
+            destination = buildNotificationsSettingsView;
+            refreshTopicKeyboard = true;
+            break;
+          default:
+            await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+            return true;
         }
         await ctx.answerCallbackQuery({ text: t("settings.saved") });
         await renderSettingsView(ctx, destination(), "both");

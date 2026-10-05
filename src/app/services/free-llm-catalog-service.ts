@@ -3,13 +3,15 @@ import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
 import { logger } from "../../utils/logger.js";
 
-const RAW_URL = "https://raw.githubusercontent.com/aminsh35322088-ctrl/Free-LLM-Catalog/main/catalog.json";
+const RAW_URL =
+  "https://raw.githubusercontent.com/aminsh35322088-ctrl/Free-LLM-Catalog/main/catalog.json";
 const REQUEST_TIMEOUT_MS = 8_000;
 const MEMORY_TTL_MS = 15 * 60_000;
 const CACHE_FILE = "free-llm-catalog-cache.json";
 
 export type FreeLlmAuthMode = "none" | "public-anonymous-token" | "static-placeholder";
-export type FreeLlmProviderStatus = "verified" | "adapter-required" | "native-contract" | "disabled";
+export type FreeLlmProviderStatus =
+  "verified" | "adapter-required" | "native-contract" | "disabled";
 
 export interface FreeLlmCatalogModel {
   id: string;
@@ -81,8 +83,12 @@ function parseModel(value: unknown): FreeLlmCatalogModel | null {
 
   const modalities = isRecord(value.modalities)
     ? {
-        ...(stringList(value.modalities.input) ? { input: stringList(value.modalities.input) } : {}),
-        ...(stringList(value.modalities.output) ? { output: stringList(value.modalities.output) } : {}),
+        ...(stringList(value.modalities.input)
+          ? { input: stringList(value.modalities.input) }
+          : {}),
+        ...(stringList(value.modalities.output)
+          ? { output: stringList(value.modalities.output) }
+          : {}),
       }
     : undefined;
 
@@ -125,12 +131,16 @@ function parseProvider(value: unknown): FreeLlmCatalogProvider | null {
     !auth ||
     auth.userCredentialRequired !== false ||
     !["none", "public-anonymous-token", "static-placeholder"].includes(String(authMode))
-  ) return null;
+  )
+    return null;
 
   const authValue = typeof auth.value === "string" ? auth.value.trim() : "";
   if (authMode !== "none" && !authValue) return null;
   const models = Array.isArray(value.models)
-    ? value.models.map(parseModel).filter((model): model is FreeLlmCatalogModel => Boolean(model)).slice(0, 512)
+    ? value.models
+        .map(parseModel)
+        .filter((model): model is FreeLlmCatalogModel => Boolean(model))
+        .slice(0, 512)
     : [];
 
   return {
@@ -152,7 +162,12 @@ function parseProvider(value: unknown): FreeLlmCatalogProvider | null {
 }
 
 export function parseFreeLlmCatalog(value: unknown): FreeLlmCatalog {
-  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.generatedAt !== "string" || !Array.isArray(value.providers)) {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.generatedAt !== "string" ||
+    !Array.isArray(value.providers)
+  ) {
     throw new Error("Free LLM catalog has an unsupported or malformed schema.");
   }
   const providers = value.providers
@@ -201,13 +216,14 @@ async function fetchPublicCatalog(): Promise<RemoteCatalogResult> {
   });
 
   if (response.status === 304) {
-    const cached = memory?.catalog ?? await readDiskCache();
-    if (!cached) throw new Error("Catalog returned HTTP 304 but no last-known-good snapshot exists.");
+    const cached = memory?.catalog ?? (await readDiskCache());
+    if (!cached)
+      throw new Error("Catalog returned HTTP 304 but no last-known-good snapshot exists.");
     return { catalog: cached, changed: false };
   }
   if (!response.ok) throw new Error(`Public catalog request failed: HTTP ${response.status}`);
 
-  const catalog = parseFreeLlmCatalog(await response.json() as unknown);
+  const catalog = parseFreeLlmCatalog((await response.json()) as unknown);
   const nextEtag = response.headers.get("etag");
   if (nextEtag) remoteEtag = nextEtag;
   const changed =
@@ -217,7 +233,9 @@ async function fetchPublicCatalog(): Promise<RemoteCatalogResult> {
   return { catalog, changed };
 }
 
-export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Promise<FreeLlmCatalog> {
+export async function loadFreeLlmCatalog(
+  options: { force?: boolean } = {},
+): Promise<FreeLlmCatalog> {
   const force = options.force === true;
   if (!force && memory && Date.now() - memory.fetchedAt < MEMORY_TTL_MS) return memory.catalog;
   if (inFlight) return inFlight;
@@ -228,28 +246,38 @@ export async function loadFreeLlmCatalog(options: { force?: boolean } = {}): Pro
       const catalog = remote.catalog;
       memory = { catalog, fetchedAt: Date.now() };
       const direct = catalog.providers
-        .filter((provider) =>
-          provider.status === "verified" &&
-          provider.integration === "direct-openai" &&
-          provider.enabledByDefault === true
+        .filter(
+          (provider) =>
+            provider.status === "verified" &&
+            provider.integration === "direct-openai" &&
+            provider.enabledByDefault === true,
         )
         .map((provider) => provider.runtimeId ?? provider.id);
       logger.info(
         `[FreeLLMCatalog] Public catalog ${remote.changed ? "updated" : "unchanged"}: generatedAt=${catalog.generatedAt}, providers=${catalog.providers.length}, direct=${direct.join(",") || "none"}`,
       );
       if (remote.changed) {
-        await writeDiskCache(catalog).catch((error) => logger.warn("[FreeLLMCatalog] Could not persist catalog cache", error));
+        await writeDiskCache(catalog).catch((error) =>
+          logger.warn("[FreeLLMCatalog] Could not persist catalog cache", error),
+        );
       }
       return catalog;
     } catch (error) {
-      const cached = memory?.catalog ?? await readDiskCache();
+      const cached = memory?.catalog ?? (await readDiskCache());
       if (cached) {
         memory = { catalog: cached, fetchedAt: Date.now() };
         logger.warn("[FreeLLMCatalog] Remote refresh failed; using last-known-good catalog", error);
         return cached;
       }
-      logger.warn("[FreeLLMCatalog] Catalog unavailable and no last-known-good cache exists", error);
-      const emptyCatalog: FreeLlmCatalog = { schemaVersion: 1, generatedAt: new Date(0).toISOString(), providers: [] };
+      logger.warn(
+        "[FreeLLMCatalog] Catalog unavailable and no last-known-good cache exists",
+        error,
+      );
+      const emptyCatalog: FreeLlmCatalog = {
+        schemaVersion: 1,
+        generatedAt: new Date(0).toISOString(),
+        providers: [],
+      };
       return emptyCatalog;
     }
   })();
@@ -284,7 +312,9 @@ function catalogRuntimeId(provider: FreeLlmCatalogProvider): string {
   return candidate.startsWith("free-") ? candidate : `free-${candidate}`;
 }
 
-export function buildOpenCodeProvidersFromCatalog(catalog: FreeLlmCatalog): Record<string, unknown> {
+export function buildOpenCodeProvidersFromCatalog(
+  catalog: FreeLlmCatalog,
+): Record<string, unknown> {
   const providers: Record<string, unknown> = {};
   for (const provider of catalog.providers) {
     if (
@@ -294,7 +324,8 @@ export function buildOpenCodeProvidersFromCatalog(catalog: FreeLlmCatalog): Reco
       provider.auth.userCredentialRequired !== false ||
       !provider.baseURL ||
       provider.models.length === 0
-    ) continue;
+    )
+      continue;
 
     const runtimeId = catalogRuntimeId(provider);
     const options: Record<string, unknown> = { baseURL: provider.baseURL };
@@ -323,7 +354,10 @@ async function loadCachedFreeLlmCatalog(): Promise<FreeLlmCatalog> {
  * Explicit network refresh. Call this only from lifecycle/background refresh
  * paths; config generation and UI price reads intentionally stay network-free.
  */
-export async function refreshFreeLlmCatalog(): Promise<{ catalog: FreeLlmCatalog; changed: boolean }> {
+export async function refreshFreeLlmCatalog(): Promise<{
+  catalog: FreeLlmCatalog;
+  changed: boolean;
+}> {
   const previous = memory?.catalog;
   const catalog = await loadFreeLlmCatalog({ force: true });
   const changed =
@@ -347,4 +381,27 @@ export function __resetFreeLlmCatalogForTests(): void {
   memory = null;
   inFlight = null;
   remoteEtag = null;
+}
+
+/** Network-free catalog DTO. Authentication material never leaves this service. */
+export async function readPublicGlobalCatalog(): Promise<FreeLlmCatalog> {
+  // Disk is authoritative across lifecycle refresh and app-home changes; no network
+  // or endpoint/credential discovery belongs in a canonical snapshot transaction.
+  const catalog = await readDiskCache();
+  return {
+    schemaVersion: 1,
+    generatedAt: catalog?.generatedAt ?? new Date(0).toISOString(),
+    providers: (catalog?.providers ?? []).map((provider) => ({
+      ...provider,
+      auth: { mode: provider.auth.mode, userCredentialRequired: false },
+    })),
+  };
+}
+
+/** Internal credential lease resolver; never include its result in catalog DTOs. */
+export async function resolvePublicGlobalProviderCredential(providerId:string):Promise<string|null>{
+  const catalog=await readDiskCache();
+  const provider=catalog?.providers.find(item=>item.id===providerId);
+  if(!provider || !provider.enabledByDefault || !["verified","native-contract"].includes(provider.status) || provider.auth.userCredentialRequired!==false)return null;
+  return provider.auth.value??null;
 }

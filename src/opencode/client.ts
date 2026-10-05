@@ -1,4 +1,5 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
+import { getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { config } from "../config.js";
 import { formatMemoriesForPrompt, searchRelevantMemories } from "../app/services/memory-service.js";
 import { observePromptUsage } from "../app/services/prompt-usage-observer.js";
@@ -232,9 +233,31 @@ const instrumentedSession = new Proxy(baseClient.session, {
   },
 });
 
-export const opencodeClient = new Proxy(baseClient, {
+const localInstrumentedClient = new Proxy(baseClient, {
   get(target, property, receiver) {
     if (property === "session") return instrumentedSession;
     return Reflect.get(target, property, receiver);
   },
 });
+
+// Capture Topic context at invocation, not property lookup: SDK namespaces are cached by callers.
+function guardedNamespace<T extends object>(target: T, namespace = ""): T {
+  return new Proxy(target, {
+    get(object, property, receiver) {
+      const value: unknown = Reflect.get(object, property, receiver);
+      const operation = namespace ? `${namespace}.${String(property)}` : String(property);
+      if (typeof value === "function") return async (...arguments_: unknown[]) => {
+        const topic = getTopicRuntimeContext();
+        if (topic) {
+          const { invokeTopicSdk } = await import("../control-plane/topic-sdk-adapter.js");
+          const remote = await invokeTopicSdk(topic,operation,arguments_);
+          if (remote.handled) return remote.result;
+        }
+        return Reflect.apply(value, object, arguments_);
+      };
+      if (value && typeof value === "object") return guardedNamespace(value, operation);
+      return value;
+    },
+  });
+}
+export const opencodeClient = guardedNamespace(localInstrumentedClient);

@@ -1,9 +1,21 @@
-import { randomUUID } from "node:crypto";
+import { resolveAuthenticatedMutationActor } from "../../control-plane/actor-context.js";
+import {
+  requireGlobalMutationExecution,
+  assertGlobalMutationBackend,
+  prepareInspectedSkillGlobalMutation,
+  bindGlobalMutationQuestion,
+  type GlobalMutationActor,
+} from "../../control-plane/mutations.js";
+import { createHash, randomUUID } from "node:crypto";
 import { resolveSkillSource } from "./skill-import-service.js";
 import { writeGlobalSkillRaw } from "./skill-manage-service.js";
 import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
 import { extensionId, listExtensions } from "./extension-registry-service.js";
-import { saveStoredExtension, getStoredExtension, removeStoredExtension } from "./extension-store.js";
+import {
+  saveStoredExtension,
+  getStoredExtension,
+  removeStoredExtension,
+} from "./extension-store.js";
 import { generateExtensionActions } from "./extension-action-generator-service.js";
 import {
   claimSharedEnsureRequest,
@@ -38,14 +50,22 @@ export function validatePluginSpecifier(source: string): string {
   if (/[\u0000-\u0020\u007f]/u.test(value)) {
     throw new Error("Plugin specifier must not contain whitespace or control characters.");
   }
-  if (value.startsWith("file:") || value.startsWith(".") || value.startsWith("/") || value.includes("\\")) {
+  if (
+    value.startsWith("file:") ||
+    value.startsWith(".") ||
+    value.startsWith("/") ||
+    value.includes("\\")
+  ) {
     throw new Error("Managed plugins must not use local/project filesystem paths.");
   }
 
   const markerIndex = value.indexOf(GIT_HTTPS_MARKER);
   if (markerIndex >= 0) {
     const alias = value.slice(0, markerIndex);
-    if (alias && !/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@$/iu.test(alias)) {
+    if (
+      alias &&
+      !/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@$/iu.test(alias)
+    ) {
       throw new Error("Invalid git-backed plugin alias.");
     }
     let url: URL;
@@ -55,17 +75,23 @@ export function validatePluginSpecifier(source: string): string {
       throw new Error("Invalid git-backed plugin URL.");
     }
     if (url.protocol !== "https:" || url.username || url.password || url.search) {
-      throw new Error("Git-backed plugins must use credential-free HTTPS URLs without query parameters.");
+      throw new Error(
+        "Git-backed plugins must use credential-free HTTPS URLs without query parameters.",
+      );
     }
     const ref = url.hash.slice(1).trim();
     if (!ref || !IMMUTABLE_GIT_REF.test(ref)) {
-      throw new Error("Git-backed plugins must pin an immutable semantic-version tag or full commit SHA.");
+      throw new Error(
+        "Git-backed plugins must pin an immutable semantic-version tag or full commit SHA.",
+      );
     }
     return value;
   }
 
   if (!NPM_PLUGIN_SPECIFIER.test(value)) {
-    throw new Error("Plugins must use a version-pinned npm specifier or git+https specifier with an explicit ref.");
+    throw new Error(
+      "Plugins must use a version-pinned npm specifier or git+https specifier with an explicit ref.",
+    );
   }
   const version = value.slice(value.lastIndexOf("@") + 1);
   if (!version || !EXACT_SEMVER.test(version)) {
@@ -83,12 +109,20 @@ function validateSource(kind: "plugin" | "skill", source: string): string {
   if (!value || value.length > 4096) throw new Error("Extension source is required.");
   if (kind === "plugin") return validatePluginSpecifier(value);
   let url: URL;
-  try { url = new URL(value); } catch { throw new Error("Extension source must be an absolute HTTP(S) URL."); }
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Extension source must be an absolute HTTP(S) URL.");
+  }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash) {
-    throw new Error("Extension source must be an HTTP(S) URL without embedded credentials or fragments.");
+    throw new Error(
+      "Extension source must be an HTTP(S) URL without embedded credentials or fragments.",
+    );
   }
   const sensitiveQueryKey = [...url.searchParams.keys()].find((key) =>
-    /(?:^|[_-])(api[_-]?key|token|secret|password|authorization|access[_-]?token|refresh[_-]?token)(?:$|[_-])/iu.test(key)
+    /(?:^|[_-])(api[_-]?key|token|secret|password|authorization|access[_-]?token|refresh[_-]?token)(?:$|[_-])/iu.test(
+      key,
+    ),
   );
   if (sensitiveQueryKey) {
     throw new Error("Extension source URL must not embed credentials in query parameters.");
@@ -96,8 +130,10 @@ function validateSource(kind: "plugin" | "skill", source: string): string {
   return url.toString();
 }
 
-
-function recordFor(request: PluginEnsureRequest, resource: ExtensionRecord["resource"]): ExtensionRecord {
+function recordFor(
+  request: PluginEnsureRequest,
+  resource: ExtensionRecord["resource"],
+): ExtensionRecord {
   const now = new Date().toISOString();
   return {
     id: extensionId(request.kind, request.name),
@@ -121,7 +157,12 @@ export async function requestExtensionEnsure(input: {
   kind: "plugin";
   source: string;
   purpose: string;
-}): Promise<{ status: "ready" | "approval-required"; extensionId: string; requestId?: string; expiresAt?: number }> {
+}): Promise<{
+  status: "ready" | "approval-required";
+  extensionId: string;
+  requestId?: string;
+  expiresAt?: number;
+}> {
   const name = input.name.trim().slice(0, 100);
   const purpose = input.purpose.trim().slice(0, 500);
   if (!name || !purpose) throw new Error("Extension name and purpose are required.");
@@ -131,9 +172,7 @@ export async function requestExtensionEnsure(input: {
   if (existing) {
     const stored = await getStoredExtension(id);
     const isPluginUpdate =
-      input.kind === "plugin" &&
-      stored?.resource.kind === "plugin" &&
-      stored.source !== source;
+      input.kind === "plugin" && stored?.resource.kind === "plugin" && stored.source !== source;
     if (!isPluginUpdate) return { status: "ready", extensionId: id };
   }
 
@@ -152,16 +191,25 @@ export async function requestExtensionEnsure(input: {
     status: "awaiting-approval",
   };
   writeSharedEnsureRequest(request);
-  return { status: "approval-required", extensionId: id, requestId: request.id, expiresAt: request.expiresAt };
+  return {
+    status: "approval-required",
+    extensionId: id,
+    requestId: request.id,
+    expiresAt: request.expiresAt,
+  };
 }
 
-function isLiveApprovalRequest(request: ExtensionEnsureRequest | null): request is ExtensionEnsureRequest {
-  return request !== null
-    && request.status === "awaiting-approval"
-    && request.expiresAt > Date.now();
+function isLiveApprovalRequest(
+  request: ExtensionEnsureRequest | null,
+): request is ExtensionEnsureRequest {
+  return (
+    request !== null && request.status === "awaiting-approval" && request.expiresAt > Date.now()
+  );
 }
 
-function isLivePluginRequest(request: ExtensionEnsureRequest | null): request is PluginEnsureRequest {
+function isLivePluginRequest(
+  request: ExtensionEnsureRequest | null,
+): request is PluginEnsureRequest {
   return isLiveApprovalRequest(request) && request.kind === "plugin" && request.authType === "none";
 }
 
@@ -182,6 +230,7 @@ export function cancelExtensionEnsure(id: string): boolean {
 }
 
 export async function approveExtensionEnsure(id: string): Promise<ExtensionApprovalResult> {
+  assertGlobalMutationBackend("extensions.ensure", id);
   // Claim by rename so a double-tap or a second Topic cannot install twice.
   const request = claimSharedEnsureRequest(id);
   if (!isLivePluginRequest(request)) throw new Error("Extension approval request expired.");
@@ -196,7 +245,9 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
     } catch (error) {
       if (previous) await saveStoredExtension(previous);
       else await removeStoredExtension(extension.id);
-      await reloadManagedOpenCodeConfig("extension_plugin_rollback", { timeoutMs: 30_000 }).catch(() => {});
+      await reloadManagedOpenCodeConfig("extension_plugin_rollback", { timeoutMs: 30_000 }).catch(
+        () => {},
+      );
       throw error;
     }
     removeSharedEnsureRequest(id);
@@ -212,7 +263,6 @@ export async function approveExtensionEnsure(id: string): Promise<ExtensionAppro
     throw error;
   }
 }
-
 
 export interface ExtensionQuestionPreview {
   header: string;
@@ -255,6 +305,10 @@ interface PendingExtensionAddIntent {
   source: string;
   name?: string;
   purpose?: string;
+  inspectedContent?: string;
+  inspectedHash?: string;
+  approvalId?: string;
+  questionRequestId?: string;
   question: { header: string; question: string };
   choices: PendingExtensionAddChoice[];
   createdAt: number;
@@ -284,34 +338,21 @@ function readPendingAdd(sessionId: string): PendingExtensionAddIntent | null {
   return pending;
 }
 
-export async function addSkillExtension(input: {
-  sessionId: string;
-  projectDirectory: string;
-  source: string;
-  confirmed?: boolean;
-}): Promise<ConversationalExtensionAddResult> {
-  const source = validateSource("skill", input.source);
-  const resolved = await resolveSkillSource(source);
-
-  if (resolved.kind === "list") {
-    if (input.confirmed) {
-      throw new Error("A concrete skill source is required before installation.");
-    }
-    const candidates = resolved.candidates.slice(0, 10);
+export function requestSkillCandidateSelection(input: {sessionId: string; projectDirectory: string; source: string; candidates: Array<{name: string; url: string}>}): Extract<ConversationalExtensionAddResult, {status: "question-required"}> {
+    const candidates = input.candidates.slice(0, 10);
     const candidateOptions = candidates.map((candidate) => ({
       label: candidate.name,
       description: candidate.url,
     }));
-    const question = addQuestion(
-      "Choose Skill",
-      "Which skill do you want to add?",
-      [...candidateOptions, { label: "Cancel", description: "Do not install a skill from this source." }],
-    );
+    const question = addQuestion("Choose Skill", "Which skill do you want to add?", [
+      ...candidateOptions,
+      { label: "Cancel", description: "Do not install a skill from this source." },
+    ]);
     writePendingAdd({
       sessionId: input.sessionId,
       projectDirectory: input.projectDirectory,
       kind: "skill",
-      source,
+      source: input.source,
       question: { header: question.header, question: question.question },
       choices: [
         ...candidates.map((candidate) => ({
@@ -325,21 +366,30 @@ export async function addSkillExtension(input: {
     return {
       status: "question-required",
       kind: "skill",
-      preview: { source, candidates },
+      preview: { source: input.source, candidates },
       question,
       questionTool: { tool: "question", arguments: { questions: [question] } },
     };
-  }
+}
+
+export async function addSkillExtension(input: {
+  sessionId: string;
+  projectDirectory: string;
+  source: string;
+  confirmed?: boolean;
+}): Promise<ConversationalExtensionAddResult> {
+  if (input.confirmed)
+    throw new Error("Model confirmation cannot approve a Global Skill mutation.");
+  const source = validateSource("skill", input.source);
+  const resolved = await resolveSkillSource(source);
+
+  if (resolved.kind === "list") return requestSkillCandidateSelection({...input, source, candidates: resolved.candidates});
 
   if (!input.confirmed) {
-    const question = addQuestion(
-      "Add Skill",
-      `Add ${resolved.skill.name} to the bot?`,
-      [
-        { label: "Add", description: resolved.skill.description },
-        { label: "Cancel", description: "Do not install this skill." },
-      ],
-    );
+    const question = addQuestion("Add Skill", `Add ${resolved.skill.name} to the bot?`, [
+      { label: "Add", description: resolved.skill.description },
+      { label: "Cancel", description: "Do not install this skill." },
+    ]);
     writePendingAdd({
       sessionId: input.sessionId,
       projectDirectory: input.projectDirectory,
@@ -347,6 +397,8 @@ export async function addSkillExtension(input: {
       source: resolved.skill.sourceUrl || source,
       name: resolved.skill.name,
       purpose: resolved.skill.description,
+      inspectedContent: resolved.skill.content,
+      inspectedHash: createHash("sha256").update(resolved.skill.content).digest("hex"),
       question: { header: question.header, question: question.question },
       choices: [
         { label: "Add", action: "add" },
@@ -366,19 +418,30 @@ export async function addSkillExtension(input: {
     };
   }
 
-  await writeGlobalSkillRaw(resolved.skill.name, resolved.skill.content);
+  throw new Error("Global Skill installation requires user Question approval.");
+}
+
+export async function installApprovedInspectedSkill(input: {
+  name: string;
+  content: string;
+  purpose: string;
+  source: string;
+  sessionId: string;
+}): Promise<ExtensionApprovalResult> {
+  requireGlobalMutationExecution("skills.add", input.name);
+  await writeGlobalSkillRaw(input.name, input.content);
   const now = new Date().toISOString();
-  const id = extensionId("skill", resolved.skill.name);
+  const id = extensionId("skill", input.name);
   const previous = await getStoredExtension(id);
   const extension: ExtensionRecord = {
     id,
-    name: resolved.skill.name,
+    name: input.name,
     kind: "skill",
-    source: resolved.skill.sourceUrl || source,
-    purpose: resolved.skill.description,
+    source: input.source,
+    purpose: input.purpose,
     authType: "none",
     credentialSchemas: [],
-    resource: { kind: "skill", skillName: resolved.skill.name },
+    resource: { kind: "skill", skillName: input.name },
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
     managed: true,
@@ -395,11 +458,25 @@ function selectedQuestionLabel(value: string): string {
   return (colon >= 0 ? cleaned.slice(0, colon) : cleaned).trim();
 }
 
+export async function adoptPendingSkillQuestion(actor: GlobalMutationActor, requestId: string, questions: Array<{header: string; question: string}>): Promise<void> {
+  const pending = readPendingAdd(actor.sessionId);
+  if (!pending || pending.questionRequestId || !pending.name || !pending.inspectedContent || !pending.inspectedHash || !questions.some(q => q.header === pending.question.header && q.question === pending.question.question)) return;
+  const prepared = await prepareInspectedSkillGlobalMutation(actor, {name: pending.name, content: pending.inspectedContent, contentHash: pending.inspectedHash, source: pending.source, description: pending.purpose ?? "", projectDirectory: pending.projectDirectory}, {...pending.question, options: [{label: "Add", description: pending.purpose ?? ""}, {label: "Cancel", description: "Do not install this Skill."}], multiple: false});
+  writeSharedPendingAdd({...pending, approvalId: prepared.approvalId, questionRequestId: requestId});
+  await bindGlobalMutationQuestion(actor, requestId, questions);
+}
+
 export type ExtensionQuestionResumeResult =
   | { handled: false }
   | { handled: true; status: "cancelled"; intent: PendingExtensionAddIntent }
   | { handled: true; status: "failed"; intent: PendingExtensionAddIntent; error: string }
-  | { handled: true; status: "resumed"; intent: PendingExtensionAddIntent; result: ExtensionApprovalResult };
+  | { handled: true; status: "approval-required"; intent: PendingExtensionAddIntent; result: Awaited<ReturnType<typeof prepareInspectedSkillGlobalMutation>> }
+  | {
+      handled: true;
+      status: "resumed";
+      intent: PendingExtensionAddIntent;
+      result: ExtensionApprovalResult;
+    };
 
 export async function resumePendingExtensionAddFromQuestion(input: {
   sessionId: string;
@@ -409,9 +486,10 @@ export async function resumePendingExtensionAddFromQuestion(input: {
   const pending = readPendingAdd(input.sessionId);
   if (!pending) return { handled: false };
 
-  const questionIndex = input.questions.findIndex((question) =>
-    question.header.trim() === pending.question.header
-    && question.question.trim() === pending.question.question
+  const questionIndex = input.questions.findIndex(
+    (question) =>
+      question.header.trim() === pending.question.header &&
+      question.question.trim() === pending.question.question,
   );
   if (questionIndex < 0) return { handled: false };
 
@@ -437,16 +515,22 @@ export async function resumePendingExtensionAddFromQuestion(input: {
   }
 
   try {
-    const result = await addSkillExtension({
-      sessionId: claimed.sessionId,
-      projectDirectory: claimed.projectDirectory,
-      source: choice.source ?? claimed.source,
-      confirmed: true,
-    });
-    if (result.status === "question-required") {
-      throw new Error("Skill selection did not resolve to a concrete skill.");
+    const actor = await resolveAuthenticatedMutationActor(claimed.sessionId);
+    if (!actor) throw new Error("A trusted Bot Question actor is required.");
+    if (claimed.name && claimed.inspectedContent && claimed.inspectedHash) {
+      throw new Error("This Skill must be approved through its exact bound Question receipt.");
     }
-    return { handled: true, status: "resumed", intent: claimed, result };
+    const resolved = await resolveSkillSource(choice.source ?? claimed.source);
+    if (resolved.kind === "list") throw new Error("Select a concrete Skill source.");
+    const result = await prepareInspectedSkillGlobalMutation(actor, {
+      name: resolved.skill.name,
+      content: resolved.skill.content,
+      contentHash: createHash("sha256").update(resolved.skill.content).digest("hex"),
+      source: resolved.skill.sourceUrl || choice.source || claimed.source,
+      description: resolved.skill.description,
+      projectDirectory: claimed.projectDirectory,
+    });
+    return {handled: true, status: "approval-required", intent: claimed, result};
   } catch (error) {
     return {
       handled: true,
@@ -463,9 +547,9 @@ export function cancelPendingExtensionAddForQuestion(input: {
 }): boolean {
   const pending = readPendingAdd(input.sessionId);
   if (
-    !pending
-    || pending.question.header !== input.question.header.trim()
-    || pending.question.question !== input.question.question.trim()
+    !pending ||
+    pending.question.header !== input.question.header.trim() ||
+    pending.question.question !== input.question.question.trim()
   ) {
     return false;
   }

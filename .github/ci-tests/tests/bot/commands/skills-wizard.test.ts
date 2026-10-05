@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -113,7 +114,7 @@ describe("bot/commands/skills-wizard", () => {
   });
 
   it("edits an existing skill without creating a prompt message", async () => {
-    await writeGlobalSkill({ name: "deploy-check", description: "old desc", body: "# Old" });
+    await runTrustedTelegramGlobalMutation("skills.create", "deploy-check", () => writeGlobalSkill({ name: "deploy-check", description: "old desc", body: "# Old" }));
 
     const start = panelCtx(701);
     await startSkillEdit(start, "deploy-check");

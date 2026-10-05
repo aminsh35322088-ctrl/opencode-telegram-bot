@@ -1,3 +1,4 @@
+import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,8 +34,15 @@ import {
 } from "./mcp-client-service.js";
 
 export type McpServerType = "local" | "remote" | "unknown";
-export interface McpServerItem { name: string; status: McpStatus; type: McpServerType; }
-export interface McpOAuthStartResult { authorizationUrl: string; oauthState: string; }
+export interface McpServerItem {
+  name: string;
+  status: McpStatus;
+  type: McpServerType;
+}
+export interface McpOAuthStartResult {
+  authorizationUrl: string;
+  oauthState: string;
+}
 
 export interface McpEndpointAnalysis {
   url: string;
@@ -89,7 +97,9 @@ export async function analyzeRemoteMcpEndpoint(remoteUrl: string): Promise<McpEn
         url: url.toString(),
         reachable: true,
         status: response.status,
-        authHint: challenge?.toLowerCase().includes("bearer") ? "credential-likely" : "none-or-unknown",
+        authHint: challenge?.toLowerCase().includes("bearer")
+          ? "credential-likely"
+          : "none-or-unknown",
         ...(challenge ? { wwwAuthenticate: challenge.slice(0, 500) } : {}),
         note: "The endpoint requires authentication; OpenCode will probe native OAuth after add.",
       };
@@ -151,14 +161,38 @@ async function refreshDeletedMcpServerNames(): Promise<void> {
   for (const name of names) deletedMcpServerNames.add(name);
 }
 
-function normalizeDirectoryForMcpApi(directory: string): string { return directory.replace(/\\/g, "/"); }
-const MCP_STATUS_NAMES = ["connected", "disabled", "failed", "needs_auth", "needs_client_registration"] as const;
-function isMcpStatusName(value: unknown): value is (typeof MCP_STATUS_NAMES)[number] { return typeof value === "string" && MCP_STATUS_NAMES.some((name) => name === value); }
-function buildMcpStatus(statusValue: (typeof MCP_STATUS_NAMES)[number], errorValue: unknown): McpStatus { if (statusValue === "failed" || statusValue === "needs_client_registration") return { status: statusValue, error: typeof errorValue === "string" ? errorValue : "" }; return { status: statusValue }; }
-type ParsedMcpServerStatus = { kind: "ok"; status: McpStatus } | { kind: "skip" } | { kind: "invalid" };
+function normalizeDirectoryForMcpApi(directory: string): string {
+  return directory.replace(/\\/g, "/");
+}
+const MCP_STATUS_NAMES = [
+  "connected",
+  "disabled",
+  "failed",
+  "needs_auth",
+  "needs_client_registration",
+] as const;
+function isMcpStatusName(value: unknown): value is (typeof MCP_STATUS_NAMES)[number] {
+  return typeof value === "string" && MCP_STATUS_NAMES.some((name) => name === value);
+}
+function buildMcpStatus(
+  statusValue: (typeof MCP_STATUS_NAMES)[number],
+  errorValue: unknown,
+): McpStatus {
+  if (statusValue === "failed" || statusValue === "needs_client_registration")
+    return { status: statusValue, error: typeof errorValue === "string" ? errorValue : "" };
+  return { status: statusValue };
+}
+type ParsedMcpServerStatus =
+  { kind: "ok"; status: McpStatus } | { kind: "skip" } | { kind: "invalid" };
 function parseMcpServerStatus(status: unknown): ParsedMcpServerStatus {
   if (!isRecord(status)) return { kind: "invalid" };
-  if (!isMcpStatusName(status.status)) { if (typeof status.status === "string") { logger.debug(`[McpServer] Unknown MCP status "${status.status}", skipping server`); return { kind: "skip" }; } return { kind: "invalid" }; }
+  if (!isMcpStatusName(status.status)) {
+    if (typeof status.status === "string") {
+      logger.debug(`[McpServer] Unknown MCP status "${status.status}", skipping server`);
+      return { kind: "skip" };
+    }
+    return { kind: "invalid" };
+  }
   return { kind: "ok", status: buildMcpStatus(status.status, status.error) };
 }
 export function parseMcpServerItems(value: unknown): McpServerItem[] | null {
@@ -203,7 +237,9 @@ function configTypeIndex(value: unknown): Map<string, McpServerType> {
   return result;
 }
 
-async function loadConfiguredTypeIndex(projectDirectory: string): Promise<Map<string, McpServerType>> {
+async function loadConfiguredTypeIndex(
+  projectDirectory: string,
+): Promise<Map<string, McpServerType>> {
   const index = new Map<string, McpServerType>();
   try {
     const managed = await listManagedMcpServers(projectDirectory);
@@ -262,8 +298,14 @@ function redactMcpDiagnosticText(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
   return value
     .replace(/Bearer\s+[^\s,;]+/giu, "Bearer [REDACTED]")
-    .replace(/([?&](?:code|access_token|refresh_token|api_?key|key|token|secret)=)[^&\s]+/giu, "$1[REDACTED]")
-    .replace(/("(?:apiKey|api_key|access_token|refresh_token|token|secret|authorization)"\s*:\s*")[^"]+/giu, "$1[REDACTED]")
+    .replace(
+      /([?&](?:code|access_token|refresh_token|api_?key|key|token|secret)=)[^&\s]+/giu,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /("(?:apiKey|api_key|access_token|refresh_token|token|secret|authorization)"\s*:\s*")[^"]+/giu,
+      "$1[REDACTED]",
+    )
     .replace(/((?:api[-_ ]?key|token|secret|authorization)\s*[:=]\s*)[^\s,;]+/giu, "$1[REDACTED]")
     .slice(0, 1000);
 }
@@ -308,7 +350,10 @@ export async function debugMcpServer(
     runtimeError = redactMcpDiagnosticText(error instanceof Error ? error.message : String(error));
   }
 
-  const managedRecords = chooseCanonicalManagedServers(await listManagedMcpServers(), projectDirectory);
+  const managedRecords = chooseCanonicalManagedServers(
+    await listManagedMcpServers(),
+    projectDirectory,
+  );
   const managedByName = new Map(managedRecords.map((record) => [record.name, record]));
   const credentials = await credentialIndexByServerName();
   const typeIndex = await loadConfiguredTypeIndex(projectDirectory);
@@ -326,7 +371,11 @@ export async function debugMcpServer(
     const runtime = runtimeByName.get(name);
     const managed = managedByName.get(name);
     const credential = credentials.get(name);
-    const type = typeIndex.get(name) ?? runtime?.type ?? managed?.config.type ?? (credential ? "remote" : "unknown");
+    const type =
+      typeIndex.get(name) ??
+      runtime?.type ??
+      managed?.config.type ??
+      (credential ? "remote" : "unknown");
     let identity: McpLoginIdentity | null = null;
     let providerHost: string | undefined;
     if (type === "remote") {
@@ -343,7 +392,9 @@ export async function debugMcpServer(
       }
     }
     const runtimeErrorText =
-      runtime && "error" in runtime.status ? redactMcpDiagnosticText(runtime.status.error) : undefined;
+      runtime && "error" in runtime.status
+        ? redactMcpDiagnosticText(runtime.status.error)
+        : undefined;
     debugServers.push({
       name,
       type,
@@ -365,24 +416,38 @@ export async function debugMcpServer(
   const suggestions: string[] = [];
   const target = requestedName ? debugServers[0] : undefined;
   if (!runtimeStatusAvailable) {
-    suggestions.push("OpenCode MCP status is unavailable; verify the local OpenCode runtime before provider-specific debugging.");
+    suggestions.push(
+      "OpenCode MCP status is unavailable; verify the local OpenCode runtime before provider-specific debugging.",
+    );
   }
   if (requestedName && !target?.managed && !target?.runtimePresent) {
-    suggestions.push(`MCP server "${requestedName}" is not present in managed state or the current runtime.`);
+    suggestions.push(
+      `MCP server "${requestedName}" is not present in managed state or the current runtime.`,
+    );
   } else if (target && !target.runtimePresent && target.managed) {
-    suggestions.push(`MCP server "${target.name}" is managed but missing from this Topic runtime; run mcp.debug with repair=true.`);
+    suggestions.push(
+      `MCP server "${target.name}" is managed but missing from this Topic runtime; run mcp.debug with repair=true.`,
+    );
   }
   if (target?.status === "needs_auth") {
-    suggestions.push(`MCP server "${target.name}" requires authentication; complete Sign in from the Telegram MCP Server UI.`);
+    suggestions.push(
+      `MCP server "${target.name}" requires authentication; complete Sign in from the Telegram MCP Server UI.`,
+    );
   }
   if (target?.status === "failed") {
-    suggestions.push(`MCP server "${target.name}" failed at the OpenCode MCP layer; inspect the redacted runtime error and provider availability.`);
+    suggestions.push(
+      `MCP server "${target.name}" failed at the OpenCode MCP layer; inspect the redacted runtime error and provider availability.`,
+    );
   }
   if (target?.status === "connected") {
-    suggestions.push("Transport/runtime status is connected. If provider tools still fail, diagnose the provider/index/account layer rather than re-adding credentials.");
+    suggestions.push(
+      "Transport/runtime status is connected. If provider tools still fail, diagnose the provider/index/account layer rather than re-adding credentials.",
+    );
   }
   if (options.repair && repair && repair.failed > 0) {
-    suggestions.push(`Runtime repair completed with ${repair.failed} failed synchronization target(s).`);
+    suggestions.push(
+      `Runtime repair completed with ${repair.failed} failed synchronization target(s).`,
+    );
   }
 
   return {
@@ -501,7 +566,10 @@ async function credentialIndexByServerName(): Promise<Map<string, McpCredentialR
       if (!index.has(record.serverName)) index.set(record.serverName, record);
     }
   } catch (error) {
-    logger.warn("[McpServer] Secure credentials unavailable while synchronizing MCP runtime:", error);
+    logger.warn(
+      "[McpServer] Secure credentials unavailable while synchronizing MCP runtime:",
+      error,
+    );
   }
   return index;
 }
@@ -571,7 +639,10 @@ async function knownMcpDirectories(extraDirectories: readonly string[] = []): Pr
       add(state.settings.workspaceDirectory ?? state.settings.session?.directory);
     }
   } catch (error) {
-    logger.debug("[McpServer] Topic runtime directories unavailable during MCP synchronization", error);
+    logger.debug(
+      "[McpServer] Topic runtime directories unavailable during MCP synchronization",
+      error,
+    );
   }
   return [...directories.values()];
 }
@@ -631,10 +702,7 @@ async function scrubSecureMcpDefinition(record: McpCredentialRecord): Promise<vo
   }
 }
 
-function assertAcceptedSecureMcpStatus(
-  record: McpCredentialRecord,
-  server: McpServerItem,
-): void {
+function assertAcceptedSecureMcpStatus(record: McpCredentialRecord, server: McpServerItem): void {
   if (record.mode === "oauth-client") {
     if (server.status.status === "connected" || server.status.status === "needs_auth") return;
     if (server.status.status === "needs_client_registration") {
@@ -648,9 +716,8 @@ function assertAcceptedSecureMcpStatus(
   }
 }
 
-export async function configureSecureMcpAuth(
-  record: McpCredentialRecord,
-): Promise<McpServerItem> {
+export async function configureSecureMcpAuth(record: McpCredentialRecord): Promise<McpServerItem> {
+  assertGlobalMutationBackend("mcp.auth", record.serverName);
   const secureConfig = buildSecureMcpConfig(record);
   try {
     const server = await addSecureMcpDefinition(record, secureConfig);
@@ -718,7 +785,7 @@ export async function getMcpAuthSummary(
   serverName: string,
 ): Promise<McpAuthSummary | null> {
   const record =
-    await loadMcpCredential(projectDirectory, serverName) ??
+    (await loadMcpCredential(projectDirectory, serverName)) ??
     (await listMcpCredentials()).find((candidate) => candidate.serverName === serverName) ??
     null;
   if (!record) return null;
@@ -750,7 +817,10 @@ async function readMcpOAuthAccessToken(serverName: string): Promise<string | nul
       if (typeof accessToken === "string" && accessToken.trim()) return accessToken.trim();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.debug("[McpServer] Native OAuth token lookup failed", error instanceof Error ? error.name : "UnknownError");
+        logger.debug(
+          "[McpServer] Native OAuth token lookup failed",
+          error instanceof Error ? error.name : "UnknownError",
+        );
       }
     }
   }
@@ -779,9 +849,7 @@ export async function getMcpDiscoveryHeaders(
   }
 
   const accessToken = await readMcpOAuthAccessToken(serverName);
-  return accessToken
-    ? { Authorization: `Bearer ${assertSafeHeaderValue(accessToken)}` }
-    : {};
+  return accessToken ? { Authorization: `Bearer ${assertSafeHeaderValue(accessToken)}` } : {};
 }
 
 function decodeJwtIdentity(accessToken: string): Omit<McpLoginIdentity, "providerHost"> | null {
@@ -796,9 +864,7 @@ function decodeJwtIdentity(accessToken: string): Omit<McpLoginIdentity, "provide
     };
     const email = stringClaim("email");
     const username =
-      stringClaim("preferred_username") ??
-      stringClaim("username") ??
-      stringClaim("login");
+      stringClaim("preferred_username") ?? stringClaim("username") ?? stringClaim("login");
     const displayName = stringClaim("name");
     const subject = stringClaim("sub");
     const label = email ?? username ?? displayName ?? subject;
@@ -814,7 +880,8 @@ export async function getMcpLoginIdentity(
 ): Promise<McpLoginIdentity | null> {
   let providerHost: string | undefined;
   try {
-    providerHost = new URL(await resolveMcpRemoteUrl(projectDirectory, serverName)).host || undefined;
+    providerHost =
+      new URL(await resolveMcpRemoteUrl(projectDirectory, serverName)).host || undefined;
   } catch {
     // Identity lookup is best-effort and must not break the MCP detail view.
   }
@@ -845,7 +912,7 @@ export async function resolveMcpRemoteUrl(
 ): Promise<string> {
   try {
     const stored =
-      await loadMcpCredential(projectDirectory, serverName) ??
+      (await loadMcpCredential(projectDirectory, serverName)) ??
       (await listMcpCredentials()).find((candidate) => candidate.serverName === serverName) ??
       null;
     if (stored) return assertSecureRemoteUrl(stored.remoteUrl);
@@ -858,7 +925,7 @@ export async function resolveMcpRemoteUrl(
 
   try {
     const managed =
-      await loadManagedMcpServer(projectDirectory, serverName) ??
+      (await loadManagedMcpServer(projectDirectory, serverName)) ??
       (await listManagedMcpServers()).find((candidate) => candidate.name === serverName) ??
       null;
     if (managed?.config.type === "remote") return assertSecureRemoteUrl(managed.config.url);
@@ -900,6 +967,7 @@ export async function resetMcpAuthToAuto(options: {
   serverName: string;
   remoteUrl: string;
 }): Promise<McpServerItem> {
+  assertGlobalMutationBackend("mcp.auth", options.serverName);
   const name = options.serverName.trim();
   if (!name) throw new Error("MCP server name is required.");
   const { data, error } = await opencodeClient.mcp.add({
@@ -941,15 +1009,24 @@ export async function resetMcpAuthToAuto(options: {
   return { ...server, type: "remote" };
 }
 
-export async function startMcpOAuth(projectDirectory: string, serverName: string): Promise<McpOAuthStartResult> {
+export async function startMcpOAuth(
+  projectDirectory: string,
+  serverName: string,
+): Promise<McpOAuthStartResult> {
+  assertGlobalMutationBackend("mcp.auth", serverName);
   const name = serverName.trim();
   if (!name) throw new Error("MCP server name is required.");
   const { data, error } = await opencodeClient.mcp.auth.start({
     name,
     directory: normalizeDirectoryForMcpApi(projectDirectory),
   });
-  if (error || !data) throw error || new Error("OpenCode did not return an MCP OAuth authorization URL.");
-  if (typeof data.authorizationUrl !== "string" || typeof data.oauthState !== "string" || !data.oauthState.trim()) {
+  if (error || !data)
+    throw error || new Error("OpenCode did not return an MCP OAuth authorization URL.");
+  if (
+    typeof data.authorizationUrl !== "string" ||
+    typeof data.oauthState !== "string" ||
+    !data.oauthState.trim()
+  ) {
     throw new Error("OpenCode returned an invalid MCP OAuth response.");
   }
   if (data.authorizationUrl) {
@@ -966,6 +1043,7 @@ export async function completeMcpOAuth(
   serverName: string,
   authorizationCode: string,
 ): Promise<McpServerItem> {
+  assertGlobalMutationBackend("mcp.auth", serverName);
   const name = serverName.trim();
   const code = authorizationCode.trim();
   if (!name) throw new Error("MCP server name is required.");
@@ -1009,9 +1087,7 @@ export function parseMcpCommandLine(value: string): string[] {
     if (char === "\\" && quote !== "'") {
       const escapesNext =
         next !== undefined &&
-        (quote === '"'
-          ? next === '"'
-          : /\s/u.test(next) || next === '"' || next === "'");
+        (quote === '"' ? next === '"' : /\s/u.test(next) || next === '"' || next === "'");
 
       if (escapesNext) {
         token += next;
@@ -1120,12 +1196,11 @@ export async function createMcpServerFromInput(options: {
   type: "local" | "remote";
   value: string;
 }): Promise<McpServerItem> {
+  assertGlobalMutationBackend("mcp.add", options.name);
   const value = options.value.trim();
   if (!value) {
     throw new Error(
-      options.type === "remote"
-        ? "MCP server URL is required."
-        : "MCP local command is required.",
+      options.type === "remote" ? "MCP server URL is required." : "MCP local command is required.",
     );
   }
 
@@ -1214,6 +1289,7 @@ export async function setMcpServerEnabled(
   serverName: string,
   enable: boolean,
 ): Promise<void> {
+  assertGlobalMutationBackend("mcp.enable", serverName);
   const params = {
     name: serverName,
     directory: normalizeDirectoryForMcpApi(projectDirectory),
@@ -1242,7 +1318,10 @@ async function removeMcpCredentialsByName(serverName: string): Promise<number> {
   return removed;
 }
 
-async function detachMcpRuntimeName(serverName: string, directories: readonly string[]): Promise<void> {
+async function detachMcpRuntimeName(
+  serverName: string,
+  directories: readonly string[],
+): Promise<void> {
   for (const projectDirectory of directories) {
     const params = {
       name: serverName,
@@ -1257,6 +1336,7 @@ export async function deleteMcpServer(
   projectDirectory: string,
   serverName: string,
 ): Promise<{ deleted: boolean; name: string }> {
+  assertGlobalMutationBackend("mcp.delete", serverName);
   const name = serverName.trim();
   if (!name) throw new Error("MCP server name is required.");
   const directories = await knownMcpDirectories([projectDirectory]);
@@ -1280,12 +1360,15 @@ export async function renameMcpServer(
   serverName: string,
   newName: string,
 ): Promise<McpServerItem> {
+  assertGlobalMutationBackend("mcp.rename", serverName);
   const sourceName = serverName.trim();
   const targetName = newName.trim();
   if (!sourceName || !targetName) throw new Error("MCP server name is required.");
   if (targetName.length > 128) throw new Error("MCP server name must be 128 characters or fewer.");
   if (sourceName === targetName) {
-    const current = (await loadMcpServers(projectDirectory)).find((server) => server.name === sourceName);
+    const current = (await loadMcpServers(projectDirectory)).find(
+      (server) => server.name === sourceName,
+    );
     if (!current) throw new Error(`MCP server "${sourceName}" was not found.`);
     return current;
   }
@@ -1298,11 +1381,13 @@ export async function renameMcpServer(
     managedRecords.find(
       (record) =>
         record.name === sourceName &&
-        normalizedDirectoryKey(record.projectDirectory) === normalizedDirectoryKey(projectDirectory),
-    ) ??
-    managedRecords.find((record) => record.name === sourceName);
+        normalizedDirectoryKey(record.projectDirectory) ===
+          normalizedDirectoryKey(projectDirectory),
+    ) ?? managedRecords.find((record) => record.name === sourceName);
   if (!source) {
-    throw new Error(`MCP server "${sourceName}" is not managed by the bot and cannot be renamed safely.`);
+    throw new Error(
+      `MCP server "${sourceName}" is not managed by the bot and cannot be renamed safely.`,
+    );
   }
 
   const credentials = await listMcpCredentials();
@@ -1315,7 +1400,8 @@ export async function renameMcpServer(
     name: targetName,
     config: targetConfig,
   });
-  if (error || !data) throw error || new Error(`OpenCode could not create renamed MCP server "${targetName}".`);
+  if (error || !data)
+    throw error || new Error(`OpenCode could not create renamed MCP server "${targetName}".`);
 
   const renamed = await renameManagedMcpServer(sourceName, targetName);
   if (!renamed) throw new Error(`MCP server "${sourceName}" was not found in managed state.`);
@@ -1332,17 +1418,21 @@ export async function renameMcpServer(
   await clearMcpServerDeleted(targetName);
   const directories = await knownMcpDirectories([projectDirectory, source.projectDirectory]);
   await detachMcpRuntimeName(sourceName, directories);
-  const synchronized = await synchronizeMcpRuntimeToKnownDirectories(
-    [projectDirectory, source.projectDirectory],
-  );
+  const synchronized = await synchronizeMcpRuntimeToKnownDirectories([
+    projectDirectory,
+    source.projectDirectory,
+  ]);
   if (synchronized.failed > 0) {
     logger.warn(
       `[McpServer] Renamed MCP "${sourceName}" to "${targetName}" but ${synchronized.failed} runtime target(s) failed to synchronize`,
     );
   }
 
-  const current = (await loadMcpServers(projectDirectory)).find((server) => server.name === targetName);
-  if (!current) throw new Error(`Renamed MCP server "${targetName}" is not visible in the current runtime.`);
+  const current = (await loadMcpServers(projectDirectory)).find(
+    (server) => server.name === targetName,
+  );
+  if (!current)
+    throw new Error(`Renamed MCP server "${targetName}" is not visible in the current runtime.`);
   return current;
 }
 
@@ -1389,7 +1479,10 @@ export async function listMcpServerTools(
   options: { timeoutMs?: number } = {},
 ): Promise<{ server: string; tools: McpToolDescriptor[] }> {
   const { config, headers } = await resolveManagedMcpConfig(projectDirectory, serverName);
-  const tools = await listMcpToolsOverTransport(config, { headers, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) });
+  const tools = await listMcpToolsOverTransport(config, {
+    headers,
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+  });
   return { server: serverName.trim(), tools };
 }
 

@@ -1,14 +1,12 @@
+import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getRuntimePaths } from "../../runtime/paths.js";
+import {getGlobalSkillsDir} from "./global-skill-path.js";
+export {getGlobalSkillsDir} from "./global-skill-path.js";
 
 const SKILL_NAME_PATTERN = /^[a-z0-9](?:-?[a-z0-9]){0,63}$/u;
 const MAX_DESCRIPTION_LENGTH = 1024;
 const MAX_BODY_LENGTH = 8000;
-
-export function getGlobalSkillsDir(): string {
-  return path.join(getRuntimePaths().appHome, ".config", "opencode", "skills");
-}
 
 export function isValidSkillName(name: string): boolean {
   return SKILL_NAME_PATTERN.test(name);
@@ -22,7 +20,10 @@ export function isManagedSkillLocation(location: string | undefined): boolean {
 }
 
 function normalizeFrontmatterValue(value: string): string {
-  return value.replace(/[\r\n]+/gu, " ").replace(/"/gu, "'").trim();
+  return value
+    .replace(/[\r\n]+/gu, " ")
+    .replace(/"/gu, "'")
+    .trim();
 }
 
 function buildSkillMarkdown(name: string, description: string, body: string): string {
@@ -55,6 +56,7 @@ export async function writeGlobalSkill(input: {
   description: string;
   body: string;
 }): Promise<string> {
+  assertGlobalMutationBackend("skills.create", input.name);
   const { description, body } = validateSkillInput(input);
   const skillFile = resolveManagedSkillFile(input.name);
   const existing = await fs.stat(skillFile).catch(() => null);
@@ -70,6 +72,7 @@ export async function updateGlobalSkill(input: {
   description: string;
   body: string;
 }): Promise<string> {
+  assertGlobalMutationBackend("skills.update", input.name);
   const { description, body } = validateSkillInput(input);
   const skillFile = resolveManagedSkillFile(input.name);
   const existing = await fs.stat(skillFile).catch(() => null);
@@ -80,6 +83,7 @@ export async function updateGlobalSkill(input: {
 }
 
 export async function writeGlobalSkillRaw(name: string, content: string): Promise<string> {
+  assertGlobalMutationBackend("skills.add", name);
   if (!isValidSkillName(name)) throw new Error("Invalid skill name");
   if (!content.trim()) throw new Error("Skill content is empty");
   const skillFile = resolveManagedSkillFile(name);
@@ -92,6 +96,7 @@ export async function writeGlobalSkillRaw(name: string, content: string): Promis
 }
 
 export async function deleteGlobalSkill(name: string): Promise<boolean> {
+  assertGlobalMutationBackend("skills.delete", name);
   if (!isValidSkillName(name)) return false;
   const root = path.resolve(getGlobalSkillsDir());
   const skillDir = path.resolve(root, name);

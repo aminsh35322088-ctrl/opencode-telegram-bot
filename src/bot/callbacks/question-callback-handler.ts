@@ -1,3 +1,5 @@
+import { resolveAuthenticatedMutationActor } from "../../control-plane/actor-context.js";
+import { handleApprovedGlobalQuestion, runTrustedTelegramGlobalMutation } from "../../control-plane/mutations.js";
 import type { Context } from "grammy";
 import { questionManager } from "../../app/managers/question-manager.js";
 import {
@@ -128,6 +130,9 @@ async function rejectPendingQuestion(reason: string): Promise<void> {
 
   const currentProject = getCurrentProject();
   const currentSession = getCurrentSession();
+  const actor = currentSession?.id ? await resolveAuthenticatedMutationActor(currentSession.id) : null;
+  if (actor) await runTrustedTelegramGlobalMutation("question.approve", requestID, () => handleApprovedGlobalQuestion({actor, requestId: requestID, questions: questionManager.getQuestions(), answers: []}));
+  if (requestID.startsWith("global:")) return;
   const directory = currentSession?.directory ?? currentProject?.worktree;
   if (!directory) {
     logger.warn(`[QuestionHandler] Cannot reject question ${requestID}: no active directory (${reason})`);

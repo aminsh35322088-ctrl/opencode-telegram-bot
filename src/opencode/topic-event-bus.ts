@@ -6,6 +6,9 @@ import { isExpectedOpencodeUnavailableError } from "../utils/opencode-error.js";
 import { agentArtifactDeliveryService } from "../bot/services/agent-artifact-delivery-service.js";
 import { isDeterministicProviderRetryError } from "./provider-error-policy.js";
 import { isCurrentCoreSessionRoute, resolveCoreEventRoute } from "../core/native-core-service.js";
+import { resolveTopicNodeClient } from "../control-plane/topic-node-client.js";
+import { nodeBindings } from "../control-plane/node-bindings.js";
+import { getTopicRuntimeContext, type TopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { topicTelemetry } from "../utils/topic-observability.js";
 import { markAbortExpected } from "../app/managers/abort-suppression-manager.js";
@@ -184,7 +187,48 @@ async function startDirectoryListener(directory: string, localController: AbortC
 function subscribersForDirectory(normalizedDirectory: string): Subscriber[] { return [...subscribers.values()].filter((subscriber) => normalizeDirectory(subscriber.directory) === normalizedDirectory); }
 function ensureDirectoryListener(directory: string): void { const normalized = normalizeDirectory(directory); if (directoryListeners.has(normalized)) return; const controller = new AbortController(); const listener: DirectoryListener = { directory, controller, promise: Promise.resolve() }; directoryListeners.set(normalized, listener); listener.promise = startDirectoryListener(directory, controller).finally(() => { if (directoryListeners.get(normalized)?.controller === controller) directoryListeners.delete(normalized); }); }
 function stopDirectoryListenerIfUnused(directory: string): void { const normalized = normalizeDirectory(directory); if (subscribersForDirectory(normalized).length > 0) return; const listener = directoryListeners.get(normalized); if (!listener) return; listener.controller.abort(); directoryListeners.delete(normalized); }
-export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string): () => void { if (sessionId) retiredSessions.delete(sessionId); const key = subscriberKey(directory, callback, sessionId); subscribers.set(key, { directory, sessionId, callback }); topicTelemetry("subscription_added", { sessionId, directory }, { subscriberCount: subscribers.size, scoped: sessionId !== undefined }); ensureDirectoryListener(directory); return () => { if (subscribers.delete(key)) { if (sessionId && ![...subscribers.values()].some((subscriber) => subscriber.sessionId === sessionId)) retireSession(sessionId); topicTelemetry("subscription_removed", { sessionId, directory }, { subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); } }; }
-export function stopTopicEventSubscription(directory: string, sessionId?: string): void { const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); if (subscriber.sessionId) retireSession(subscriber.sessionId); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
-export function stopTopicEventBus(): void { const previousSubscriberCount = subscribers.size; busGeneration = {}; sessionGenerations.clear(); for (const listener of directoryListeners.values()) listener.controller.abort(); directoryListeners.clear(); subscribers.clear(); dispatchChains.clear(); abortedRetrySessions.clear(); retiredSessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
+export function subscribeToTopicEvents(directory: string, callback: TopicEventCallback, sessionId?: string): () => void { if (sessionId) retiredSessions.delete(sessionId); const key = subscriberKey(directory, callback, sessionId); subscribers.set(key, { directory, sessionId, callback }); topicTelemetry("subscription_added", { sessionId, directory }, { subscriberCount: subscribers.size, scoped: sessionId !== undefined }); const topic = getTopicRuntimeContext();
+  if (topic) void nodeBindings.find(topic.chatId,topic.threadId).then(binding => { if (!binding && subscribers.has(key)) ensureDirectoryListener(directory); }).catch(error => logger.error("[TopicEventBus] Binding lookup failed",error));
+  else ensureDirectoryListener(directory); return () => { if (subscribers.delete(key)) { if (sessionId && ![...subscribers.values()].some((subscriber) => subscriber.sessionId === sessionId)) retireSession(sessionId); topicTelemetry("subscription_removed", { sessionId, directory }, { subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); } }; }
+export function stopTopicEventSubscription(directory: string, sessionId?: string): void { if(sessionId) remoteRunStreams.get(sessionId)?.abort(); const normalized = normalizeDirectory(directory); let removed = 0; for (const [key, subscriber] of subscribers) { if (normalizeDirectory(subscriber.directory) !== normalized) continue; if (sessionId !== undefined && subscriber.sessionId !== sessionId) continue; subscribers.delete(key); if (subscriber.sessionId) retireSession(subscriber.sessionId); removed++; } if (removed > 0) topicTelemetry("subscription_batch_removed", { sessionId, directory }, { removed, subscriberCount: subscribers.size }); stopDirectoryListenerIfUnused(directory); }
+export function stopTopicEventBus(): void { for(const controller of remoteRunStreams.values()) controller.abort(); remoteRunStreams.clear(); const previousSubscriberCount = subscribers.size; busGeneration = {}; sessionGenerations.clear(); for (const listener of directoryListeners.values()) listener.controller.abort(); directoryListeners.clear(); subscribers.clear(); dispatchChains.clear(); abortedRetrySessions.clear(); retiredSessions.clear(); logger.info(`[SessionTrace] phase=topic_event_bus_stopped`); topicTelemetry("global_stream_stopped", {}, { previousSubscriberCount }); }
 export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { sseIdleTimeoutMs = Math.max(1, timeoutMs); }
+
+const remoteRunStreams = new Map<string,AbortController>();
+/** Active-run stream feeds existing subscribers under authenticated Topic context. No idle reconnect loop. */
+export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void): Promise<()=>void> {
+  const client = await resolveTopicNodeClient(topic.chatId,topic.threadId);
+  if (!client) throw new Error("Remote Topic missing node binding");
+  if(remoteRunStreams.has(sessionId)) throw new Error("Remote Topic stream already active");
+  await client.request("run.prepare",{runId});
+  const normalized = normalizeDirectory(directory);
+  const legacy = directoryListeners.get(normalized);
+  legacy?.controller.abort(); directoryListeners.delete(normalized);
+  const controller = new AbortController(); remoteRunStreams.set(sessionId,controller);
+  let acknowledge!:()=>void;
+  let rejectReady!:(error:unknown)=>void;
+  const ready = new Promise<void>((resolve,reject)=>{acknowledge=resolve;rejectReady=reject;});
+  const timer = setTimeout(()=>{controller.abort();rejectReady(new Error("Remote stream readiness timed out"));},15_000);
+  const generation = busGeneration;
+  void (async()=>{
+    try {
+      for await (const raw of client.events(runId,0,{signal:controller.signal,onReady:acknowledge})) {
+        if(controller.signal.aborted || generation!==busGeneration) break;
+        if(!isEventLike(raw)) throw new Error("Invalid native Topic event");
+        const eventSession=getSessionId(raw);
+        if(eventSession && eventSession!==sessionId) throw new Error("Foreign remote session event");
+        const targets=[...subscribers.values()].filter(subscriber=>normalizeDirectory(subscriber.directory)===normalized && (!subscriber.sessionId || subscriber.sessionId===sessionId));
+        for(const target of targets) {
+          if(controller.signal.aborted || generation!==busGeneration || ![...subscribers.values()].includes(target)) break;
+          await runInTopicRuntimeContext({...topic,sessionId,directory},async()=>{
+            agentArtifactDeliveryService.processEvent(raw as unknown as Event);
+            await target.callback(raw as unknown as Event);
+          });
+        }
+      }
+    } catch(error) {rejectReady(error); if(!controller.signal.aborted) logger.warn("[TopicEventBus] Remote active stream failed",error);}
+    finally {clearTimeout(timer);controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);onEnd();}
+  })();
+  await ready; clearTimeout(timer);
+  return ()=>controller.abort();
+}

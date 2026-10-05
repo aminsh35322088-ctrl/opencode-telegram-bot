@@ -1,5 +1,6 @@
 #!/bin/sh
 set -u
+unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
 
 if [ "$(id -u)" -ne 1000 ]; then
   printf '%s\n' '[railway-maintenance] Refusing privileged volume maintenance' >&2

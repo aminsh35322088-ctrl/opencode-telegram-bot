@@ -1,7 +1,8 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   registerGeneratedActionPack,
-  setGeneratedActionEnabled,
+  setGeneratedActionEnabled as rawSetGeneratedActionEnabled,
 } from "../../../src/app/services/generated-action-store.js";
 import { saveStoredExtension } from "../../../src/app/services/extension-store.js";
 import fs from "node:fs/promises";
@@ -13,6 +14,9 @@ import path from "node:path";
  * names are free-form, so these cases pin the segment-matching behavior that
  * keeps read verbs containing a mutating keyword from being escalated.
  */
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const setGeneratedActionEnabled = (...args: Parameters<typeof rawSetGeneratedActionEnabled>) => runTrustedTelegramGlobalMutation("generated-actions.toggle", args[0], () => rawSetGeneratedActionEnabled(...args));
+
 describe("generated action risk classification", () => {
   let home = "";
 

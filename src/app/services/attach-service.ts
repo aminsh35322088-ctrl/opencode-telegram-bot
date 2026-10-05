@@ -1,3 +1,6 @@
+import { adoptPendingSkillQuestion } from "./extension-ensure-service.js";
+import { resolveAuthenticatedMutationActor } from "../../control-plane/actor-context.js";
+import { bindGlobalMutationQuestion } from "../../control-plane/mutations.js";
 import type { Bot, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { isOpencodeServerHealthy } from "../../opencode/ready-refresh.js";
@@ -63,10 +66,7 @@ export interface RestoreAttachedCurrentSessionDeps {
   forceFullRestore?: boolean;
 }
 
-function getAttachBusyStatus(
-  sessionId: string,
-  statuses: SessionStatusMap | undefined,
-): boolean {
+function getAttachBusyStatus(sessionId: string, statuses: SessionStatusMap | undefined): boolean {
   const type = statuses?.[sessionId]?.type;
   return type === "busy" || type === "retry";
 }
@@ -126,13 +126,19 @@ async function getLastUserTurnModel(
     });
     if (response.error || !response.data) {
       if (!isExpectedOpencodeUnavailableError(response.error)) {
-        logger.debug(`[Attach] Could not inspect session model history: session=${sessionId}`, response.error);
+        logger.debug(
+          `[Attach] Could not inspect session model history: session=${sessionId}`,
+          response.error,
+        );
       }
       return null;
     }
 
     for (const message of [...response.data].reverse()) {
-      const info = message.info as { role?: string; model?: { providerID?: string; modelID?: string } };
+      const info = message.info as {
+        role?: string;
+        model?: { providerID?: string; modelID?: string };
+      };
       if (
         info.role === "user" &&
         typeof info.model?.providerID === "string" &&
@@ -166,8 +172,7 @@ async function currentSessionMatchesSelectedModel(session: SessionInfo): Promise
   }
 
   const matches =
-    lastTurnModel.providerID === selected.providerID &&
-    lastTurnModel.modelID === selected.modelID;
+    lastTurnModel.providerID === selected.providerID && lastTurnModel.modelID === selected.modelID;
 
   if (!matches) {
     logger.warn(
@@ -202,6 +207,11 @@ async function restorePendingQuestion(
     return false;
   }
 
+  const mutationActor = await resolveAuthenticatedMutationActor(sessionId);
+  if (mutationActor) {
+    await adoptPendingSkillQuestion(mutationActor, pendingQuestion.id, pendingQuestion.questions);
+    await bindGlobalMutationQuestion(mutationActor, pendingQuestion.id, pendingQuestion.questions);
+  }
   questionManager.startQuestions(pendingQuestion.questions, pendingQuestion.id);
   await attachPresentation.showCurrentQuestion(bot.api, chatId);
   return true;

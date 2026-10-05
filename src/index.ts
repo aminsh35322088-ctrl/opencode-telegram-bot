@@ -29,6 +29,8 @@ async function main(): Promise<void> {
 
   const { initializeLogger } = await import("./utils/logger.js");
   await initializeLogger();
+  const {installControlApplicationChannel}=await import("./control-plane/application-channel.js");
+  installControlApplicationChannel();
 
   const { startBotApp } = await import("./app/bootstrap/start-bot-app.js");
   await startBotApp();

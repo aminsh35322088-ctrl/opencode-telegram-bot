@@ -1,9 +1,14 @@
 import dotenv from "dotenv";
 import { getRuntimePaths } from "./runtime/paths.js";
 import { normalizeLocale, type Locale } from "./i18n/index.js";
+import {childEnvironment} from "./runtime/child-environment.js";
 
 const runtimePaths = getRuntimePaths();
-dotenv.config({ path: runtimePaths.envFilePath, quiet: true });
+const applicationEnvironment={...process.env};
+dotenv.config({ path: runtimePaths.envFilePath, quiet: true, processEnv:applicationEnvironment });
+const safeEnvironment=childEnvironment(applicationEnvironment);
+for(const name of Object.keys(process.env))if(!(name in safeEnvironment))delete process.env[name];
+Object.assign(process.env,safeEnvironment);
 
 export type MessageFormatMode = "raw" | "markdown";
 export type SttRequestFormat = "multipart" | "json";

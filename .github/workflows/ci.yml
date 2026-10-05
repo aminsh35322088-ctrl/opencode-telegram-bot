@@ -31,8 +31,8 @@ jobs:
       - name: Install CI test runner
         run: npm install --no-save --package-lock=false vitest@3.2.4
 
-      - name: Run Core routing tests
-        run: node --import tsx --test tests/core-*.test.ts
+      - name: Run Core routing and distributed boundary tests
+        run: node --import tsx --test tests/*.test.ts
 
       - name: Materialize CI-only tests
         run: |

@@ -7,7 +7,7 @@ describe("Extension automation boundary", () => {
 
     expect(source).toContain('"skills.add"');
     expect(source).toContain('"extensions.ensure"');
-    expect(source).toContain('extension_kind: tool.schema.enum(["plugin"])');
+    expect(source).toMatch(/extension_kind:\s*tool\.schema\s*\.enum\(\["plugin"\]\)/);
     // MCP is provisioned through dedicated bot-managed actions, never through
     // the Extension approval flow.
     expect(source).toContain('"mcp.add"');
@@ -47,7 +47,7 @@ describe("Extension automation boundary", () => {
     // The registry now surfaces bot-managed MCP alongside Skills and plugins.
     // It reads runtime connection state for MCP but must not pull in
     // integration adapters or model providers, which stay out of model chat.
-    expect(source).toContain('record.kind === "skill" || record.kind === "plugin" || record.kind === "mcp"');
+    expect(source).toMatch(/record\.kind === "skill"\s*\|\|\s*record\.kind === "plugin"\s*\|\|\s*record\.kind === "mcp"/);
     expect(source).toContain("loadSkillsCatalog");
     expect(source).toContain("loadMcpServers");
     expect(source).toContain("deleteMcpServer");

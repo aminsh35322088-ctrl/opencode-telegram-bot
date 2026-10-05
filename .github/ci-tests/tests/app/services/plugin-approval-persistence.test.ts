@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -31,7 +32,7 @@ vi.mock("../../../src/app/services/skills-catalog-service.js", () => ({
 }));
 
 import {
-  approveExtensionEnsure,
+  approveExtensionEnsure as rawApproveExtensionEnsure,
   cancelExtensionEnsure,
   findPendingExtensionEnsure,
   getExtensionEnsureRequest,
@@ -48,6 +49,9 @@ const SPECIFIER = "superpowers@git+https://github.com/obra/superpowers.git#v6.4.
  * exercise the persistence boundary rather than a process-local Map, which is
  * what previously made the approval card impossible to deliver.
  */
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const approveExtensionEnsure = (...args: Parameters<typeof rawApproveExtensionEnsure>) => runTrustedTelegramGlobalMutation("extensions.ensure", args[0], () => rawApproveExtensionEnsure(...args));
+
 describe("plugin approval request persistence across processes", () => {
   let home = "";
 

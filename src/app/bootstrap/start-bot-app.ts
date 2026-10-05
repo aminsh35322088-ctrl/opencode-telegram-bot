@@ -286,7 +286,10 @@ export async function startBotApp(): Promise<void> {
 
   try {
     await bot.start({
-      onStart: (startedBotInfo) => logger.info(`Bot @${startedBotInfo.username} started!`),
+      onStart: (startedBotInfo) => {
+        logger.info(`Bot @${startedBotInfo.username} started!`);
+        if(process.env.CONTROL_APPLICATION_IPC==="1")process.send?.({channel:"control-application-ready"});
+      },
     });
   } finally {
     runtimeObservabilityWatchdog.stop();

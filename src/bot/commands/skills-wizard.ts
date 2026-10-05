@@ -1,6 +1,11 @@
+import { runTrustedTelegramGlobalMutation } from "../../control-plane/mutations.js";
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { isValidSkillName, updateGlobalSkill, writeGlobalSkill } from "../../app/services/skill-manage-service.js";
+import {
+  isValidSkillName,
+  updateGlobalSkill,
+  writeGlobalSkill,
+} from "../../app/services/skill-manage-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { callbackMessageId, deleteInputMessage, editPanelMessage } from "./panel-render.js";
@@ -19,7 +24,6 @@ interface SkillWizardState {
 
 const WIZARD_TTL_MS = 15 * 60_000;
 let wizard: SkillWizardState | null = null;
-
 
 function freshState(
   mode: WizardMode,
@@ -44,15 +48,11 @@ export function clearSkillWizard(): void {
 }
 
 function wizardKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("← Skills", "skills:wizard_cancel")
-    .text("🏠 Home", "main:home");
+  return new InlineKeyboard().text("← Skills", "skills:wizard_cancel").text("🏠 Home", "main:home");
 }
 
 function doneKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("← Skills", "skills:list_back")
-    .text("🏠 Home", "main:home");
+  return new InlineKeyboard().text("← Skills", "skills:list_back").text("🏠 Home", "main:home");
 }
 
 async function editWizardPanel(
@@ -65,11 +65,12 @@ async function editWizardPanel(
   await editPanelMessage(ctx, messageId, text, keyboard);
 }
 
-
 export async function startSkillWizard(ctx: Context): Promise<void> {
   const messageId = callbackMessageId(ctx);
   if (messageId === null) {
-    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true }).catch(() => {});
+    await ctx
+      .answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true })
+      .catch(() => {});
     return;
   }
   wizard = freshState("create", "name", messageId);
@@ -79,7 +80,9 @@ export async function startSkillWizard(ctx: Context): Promise<void> {
 export async function startSkillEdit(ctx: Context, name: string): Promise<void> {
   const messageId = callbackMessageId(ctx);
   if (messageId === null) {
-    await ctx.answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true }).catch(() => {});
+    await ctx
+      .answerCallbackQuery({ text: t("skills.inactive_callback"), show_alert: true })
+      .catch(() => {});
     return;
   }
   wizard = freshState("edit", "description", messageId, { name });
@@ -111,7 +114,8 @@ export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
         name: current.name,
         description: text,
       });
-      const nextPrompt = current.mode === "edit" ? t("skills.edit.ask_body") : t("skills.wizard.ask_body");
+      const nextPrompt =
+        current.mode === "edit" ? t("skills.edit.ask_body") : t("skills.wizard.ask_body");
       await editWizardPanel(ctx, current.messageId, nextPrompt);
       return true;
     }
@@ -125,22 +129,40 @@ export async function handleSkillWizardMessage(ctx: Context): Promise<boolean> {
     }
 
     if (current.mode === "edit") {
-      await updateGlobalSkill({ name, description, body: text });
+      await runTrustedTelegramGlobalMutation("skills.update", name, () =>
+        updateGlobalSkill({ name, description, body: text }),
+      );
     } else {
-      await writeGlobalSkill({ name, description, body: text });
+      await runTrustedTelegramGlobalMutation("skills.create", name, () =>
+        writeGlobalSkill({ name, description, body: text }),
+      );
     }
 
-    const savedMessage = current.mode === "edit"
-      ? t("skills.edit.saved", { name })
-      : t("skills.wizard.saved", { name });
+    const savedMessage =
+      current.mode === "edit"
+        ? t("skills.edit.saved", { name })
+        : t("skills.wizard.saved", { name });
     clearSkillWizard();
-    logger.info(`[SkillWizard] ${current.mode === "edit" ? "Updated" : "Created"} global skill: ${name}`);
-    await editWizardPanel(ctx, current.messageId, `${savedMessage}\n\n${t("skills.restart_hint")}`, doneKeyboard());
+    logger.info(
+      `[SkillWizard] ${current.mode === "edit" ? "Updated" : "Created"} global skill: ${name}`,
+    );
+    await editWizardPanel(
+      ctx,
+      current.messageId,
+      `${savedMessage}\n\n${t("skills.restart_hint")}`,
+      doneKeyboard(),
+    );
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    logger.warn(`[SkillWizard] Step failed: mode=${current.mode}, step=${current.step}, message=${message}`);
-    await editWizardPanel(ctx, current.messageId, t("skills.wizard.write_error", { error: message }));
+    logger.warn(
+      `[SkillWizard] Step failed: mode=${current.mode}, step=${current.step}, message=${message}`,
+    );
+    await editWizardPanel(
+      ctx,
+      current.messageId,
+      t("skills.wizard.write_error", { error: message }),
+    );
     return true;
   }
 }

@@ -1,3 +1,6 @@
+import { adoptPendingSkillQuestion } from "../../app/services/extension-ensure-service.js";
+import { resolveAuthenticatedMutationActor } from "../../control-plane/actor-context.js";
+import { bindGlobalMutationQuestion } from "../../control-plane/mutations.js";
 import { agentArtifactDeliveryService } from "./agent-artifact-delivery-service.js";
 import { promises as fs } from "fs";
 import * as path from "path";
@@ -10,7 +13,10 @@ import {
   type SubagentInfo,
   type ToolInfo,
 } from "../../app/managers/summary-aggregation-manager.js";
-import { formatCompactToolActivity, formatToolInfo } from "../../app/formatters/summary-formatter.js";
+import {
+  formatCompactToolActivity,
+  formatToolInfo,
+} from "../../app/formatters/summary-formatter.js";
 import { renderSubagentCards } from "../../app/formatters/subagent-formatter.js";
 import {
   RUNNING_ICON,
@@ -47,7 +53,12 @@ import type { PermissionRequest } from "../../app/types/permission.js";
 import { restorePendingInteractions } from "../../app/services/pending-interaction-restore-service.js";
 import { deliverThinkingMessage } from "../messages/thinking-message.js";
 import { shouldSuppressUserAbortSessionError } from "../../app/managers/abort-suppression-manager.js";
-import { markToolCallStarted, markToolCallFinished, clearToolActivity, clearAllToolActivity } from "../../app/managers/tool-activity-manager.js";
+import {
+  markToolCallStarted,
+  markToolCallFinished,
+  clearToolActivity,
+  clearAllToolActivity,
+} from "../../app/managers/tool-activity-manager.js";
 import {
   completeDraftPart,
   editRenderedBotPart,
@@ -66,10 +77,7 @@ import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-str
 import { presentPendingExtensionAutomation } from "./extension-automation-ui.js";
 import { RunningToolTracker, type RunningToolTick } from "../streaming/running-tool-tracker.js";
 import { CompactProgressStreamer } from "../streaming/compact-progress-streamer.js";
-import {
-  getSessionStreamThrottleMs,
-  resetStreamThrottle,
-} from "../streaming/stream-throttle.js";
+import { getSessionStreamThrottleMs, resetStreamThrottle } from "../streaming/stream-throttle.js";
 import { attachManager } from "../../app/managers/attach-manager.js";
 import {
   markAttachedSessionBusy,
@@ -81,10 +89,7 @@ import {
   prepareAssistantStreamingPayload,
   renderAssistantFinalPartsSafe,
 } from "../messages/assistant-rendering.js";
-import {
-  prepareThinkingPayload,
-  type ThinkingSection,
-} from "../messages/thinking-rendering.js";
+import { prepareThinkingPayload, type ThinkingSection } from "../messages/thinking-rendering.js";
 import { deliverExternalUserInputNotification } from "../messages/external-user-input-notification.js";
 import { dispatchNextQueuedPrompt } from "../handlers/prompt-queue-dispatch.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
@@ -226,15 +231,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           const keyboard = this.getCurrentReplyKeyboard(sessionId);
           const api = this.sessionScopedApi(sessionId);
 
-          await api.sendDocument(
-            chatId,
-            new InputFile(tempFilePath),
-            {
-              caption: fileData.caption,
-              disable_notification: true,
-              ...(keyboard ? { reply_markup: keyboard } : {}),
-            },
-          );
+          await api.sendDocument(chatId, new InputFile(tempFilePath), {
+            caption: fileData.caption,
+            disable_notification: true,
+            ...(keyboard ? { reply_markup: keyboard } : {}),
+          });
         } finally {
           await fs.unlink(tempFilePath).catch(() => {});
         }
@@ -350,18 +351,20 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        await this.sessionScopedApi(sessionId).deleteMessage(chatId, messageId).catch((error) => {
-          const errorMessage =
-            error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-          if (
-            errorMessage.includes("message to delete not found") ||
-            errorMessage.includes("message identifier is not specified")
-          ) {
-            return;
-          }
+        await this.sessionScopedApi(sessionId)
+          .deleteMessage(chatId, messageId)
+          .catch((error) => {
+            const errorMessage =
+              error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+            if (
+              errorMessage.includes("message to delete not found") ||
+              errorMessage.includes("message identifier is not specified")
+            ) {
+              return;
+            }
 
-          throw error;
-        });
+            throw error;
+          });
       },
       resolveRunGeneration: (sessionId) => assistantRunState.getRunGeneration(sessionId),
     });
@@ -374,8 +377,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   }
 
   private getChatIdForSession(sessionId: string): number | null {
-    try { return resolveCoreSessionRoute(sessionId).chatId; }
-    catch { return null; }
+    try {
+      return resolveCoreSessionRoute(sessionId).chatId;
+    } catch {
+      return null;
+    }
   }
 
   private getKeyboardForSession(sessionId: string) {
@@ -527,99 +533,111 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     }
   }
 
-  private async presentQuestionFlow(questions: Question[], requestID: string, sessionId: string): Promise<void> {
+  private async presentQuestionFlow(
+    questions: Question[],
+    requestID: string,
+    sessionId: string,
+  ): Promise<void> {
+    if (!this.botInstance || !this.chatIdInstance) {
+      logger.error("Bot or chat ID not available for showing questions");
+      return;
+    }
 
-      if (!this.botInstance || !this.chatIdInstance) {
-        logger.error("Bot or chat ID not available for showing questions");
-        return;
+    const currentSession = getCurrentSession();
+    if (!currentSession || currentSession.id !== sessionId) {
+      return;
+    }
+
+    if (isCompactProgressMode()) {
+      this.compactProgressStreamer.updateWaitingForQuestion(sessionId);
+    }
+
+    await Promise.all([
+      this.toolMessageBatcher.flushSession(currentSession.id, "question_asked"),
+      this.toolCallStreamer.flushSession(currentSession.id, "question_asked"),
+    ]);
+
+    if (questionManager.isActive()) {
+      const previousRequestID = questionManager.getRequestID();
+      const previousMessageIds = questionManager.getMessageIds();
+      logger.warn(
+        `[Bot] Replacing active poll with a new one: previousRequestID=${previousRequestID ?? "none"}, newRequestID=${requestID}`,
+      );
+      for (const messageId of previousMessageIds) {
+        await this.sessionScopedApi(sessionId)
+          .deleteMessage(resolveCoreSessionRoute(sessionId).chatId, messageId)
+          .catch(() => {});
       }
-
-      const currentSession = getCurrentSession();
-      if (!currentSession || currentSession.id !== sessionId) {
-        return;
-      }
-
-      if (isCompactProgressMode()) {
-        this.compactProgressStreamer.updateWaitingForQuestion(sessionId);
-      }
-
-      await Promise.all([
-        this.toolMessageBatcher.flushSession(currentSession.id, "question_asked"),
-        this.toolCallStreamer.flushSession(currentSession.id, "question_asked"),
-      ]);
-
-      if (questionManager.isActive()) {
-        const previousRequestID = questionManager.getRequestID();
-        const previousMessageIds = questionManager.getMessageIds();
-        logger.warn(
-          `[Bot] Replacing active poll with a new one: previousRequestID=${previousRequestID ?? "none"}, newRequestID=${requestID}`,
-        );
-        for (const messageId of previousMessageIds) {
-          await this.sessionScopedApi(sessionId).deleteMessage(resolveCoreSessionRoute(sessionId).chatId, messageId).catch(() => {});
-        }
-        const directoryForReject = currentSession.directory;
-        if (previousRequestID && directoryForReject) {
-          try {
-            const response = await opencodeClient.question.reject({
-              requestID: previousRequestID,
-              directory: directoryForReject,
-            });
-            if (response.error) {
-              logger.warn(
-                `[Bot] Failed to reject replaced question ${previousRequestID}:`,
-                response.error,
-              );
-            } else {
-              logger.info(
-                `[Bot] Rejected replaced question: requestID=${previousRequestID}`,
-              );
-            }
-          } catch (error) {
+      const directoryForReject = currentSession.directory;
+      if (previousRequestID && directoryForReject) {
+        try {
+          const response = await opencodeClient.question.reject({
+            requestID: previousRequestID,
+            directory: directoryForReject,
+          });
+          if (response.error) {
             logger.warn(
-              `[Bot] Exception rejecting replaced question ${previousRequestID}:`,
-              error,
+              `[Bot] Failed to reject replaced question ${previousRequestID}:`,
+              response.error,
             );
+          } else {
+            logger.info(`[Bot] Rejected replaced question: requestID=${previousRequestID}`);
           }
+        } catch (error) {
+          logger.warn(`[Bot] Exception rejecting replaced question ${previousRequestID}:`, error);
         }
-
-        clearAllInteractionState("question_replaced_by_new_poll");
       }
 
-      logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
-      questionManager.startQuestions(questions, requestID);
-      await showCurrentQuestion(this.sessionScopedApi(sessionId), resolveCoreSessionRoute(sessionId).chatId);
+      clearAllInteractionState("question_replaced_by_new_poll");
+    }
+
+    logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
+    const mutationActor = await resolveAuthenticatedMutationActor(sessionId);
+    if (mutationActor) {
+      await adoptPendingSkillQuestion(mutationActor, requestID, questions);
+      await bindGlobalMutationQuestion(mutationActor, requestID, questions);
+    }
+    questionManager.startQuestions(questions, requestID);
+    await showCurrentQuestion(
+      this.sessionScopedApi(sessionId),
+      resolveCoreSessionRoute(sessionId).chatId,
+    );
   }
 
   private async presentPermissionFlow(request: PermissionRequest): Promise<void> {
+    interactionEventGate.mark("permission", request.sessionID, request.id);
+    const generation = permissionManager.getGeneration();
 
-      interactionEventGate.mark("permission", request.sessionID, request.id);
-      const generation = permissionManager.getGeneration();
+    if (!this.botInstance || !this.chatIdInstance) {
+      logger.error("Bot or chat ID not available for showing permission request");
+      return;
+    }
 
-      if (!this.botInstance || !this.chatIdInstance) {
-        logger.error("Bot or chat ID not available for showing permission request");
-        return;
-      }
+    const currentSession = getCurrentSession();
+    const isCurrent = currentSession?.id === request.sessionID;
+    const isSubagent = summaryAggregator.isSubagentSession(request.sessionID);
+    if (!currentSession || (!isCurrent && !isSubagent)) {
+      return;
+    }
 
-      const currentSession = getCurrentSession();
-      const isCurrent = currentSession?.id === request.sessionID;
-      const isSubagent = summaryAggregator.isSubagentSession(request.sessionID);
-      if (!currentSession || (!isCurrent && !isSubagent)) {
-        return;
-      }
+    if (isCompactProgressMode()) {
+      this.compactProgressStreamer.updateWaitingForPermission(currentSession.id);
+    }
 
-      if (isCompactProgressMode()) {
-        this.compactProgressStreamer.updateWaitingForPermission(currentSession.id);
-      }
+    await Promise.all([
+      this.toolMessageBatcher.flushSession(request.sessionID, "permission_asked"),
+      this.toolCallStreamer.flushSession(request.sessionID, "permission_asked"),
+    ]);
 
-      await Promise.all([
-        this.toolMessageBatcher.flushSession(request.sessionID, "permission_asked"),
-        this.toolCallStreamer.flushSession(request.sessionID, "permission_asked"),
-      ]);
-
-      logger.info(
-        `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}, subagent=${isSubagent}`,
-      );
-      await showPermissionRequest(this.sessionScopedApi(currentSession.id), resolveCoreSessionRoute(currentSession.id).chatId, request, generation);
+    logger.info(
+      `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}, subagent=${isSubagent}`,
+    );
+    await showPermissionRequest(
+      this.sessionScopedApi(currentSession.id),
+      resolveCoreSessionRoute(currentSession.id).chatId,
+      request,
+      generation,
+    );
   }
 
   private clearToolElapsedState(sessionId: string | null, reason: string): void {
@@ -736,7 +754,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnPartial((sessionId, messageId, messageText) => {
       if (interactionEventGate.isBlocked(sessionId)) {
-        logger.debug(`[Bot] Suppressing assistant partial while interaction is pending: session=${sessionId}`);
+        logger.debug(
+          `[Bot] Suppressing assistant partial while interaction is pending: session=${sessionId}`,
+        );
         return;
       }
 
@@ -766,7 +786,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             this.enqueueAssistantResponse(sessionId, messageId, preparedStreamPayload);
           })
           .catch((error) => {
-            logger.error("[Bot] Failed to finalize compact progress before assistant stream", error);
+            logger.error(
+              "[Bot] Failed to finalize compact progress before assistant stream",
+              error,
+            );
           });
         return;
       }
@@ -850,8 +873,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             prepareStreamingPayload: this.prepareFinalStreamingPayload,
             renderFinalParts: (text) => renderAssistantFinalPartsSafe(text),
             getReplyKeyboard: this.getCurrentReplyKeyboard,
-            notifyFirstFinalPart:
-              assistantResponseMode === "draft" && !getShowAssistantRunFooter(),
+            notifyFirstFinalPart: assistantResponseMode === "draft" && !getShowAssistantRunFooter(),
             sendRenderedPart: async (part, options) => {
               await sendRenderedBotPart({
                 api: botApi,
@@ -920,12 +942,16 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             this.sessionScopedApi(toolInfo.sessionId),
             chatId,
             toolInfo.sessionId,
-          ).catch((error) => logger.warn("[Extensions] Failed to present pending automation UI", error));
+          ).catch((error) =>
+            logger.warn("[Extensions] Failed to present pending automation UI", error),
+          );
         }
       }
 
       if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
-        logger.debug(`[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
+        logger.debug(
+          `[Bot] Suppressing tool activity while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`,
+        );
         return;
       }
 
@@ -1019,7 +1045,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnTool(async (toolInfo) => {
       if (interactionEventGate.isBlocked(toolInfo.sessionId)) {
-        logger.debug(`[Bot] Suppressing completed tool notification while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`);
+        logger.debug(
+          `[Bot] Suppressing completed tool notification while interaction is pending: session=${toolInfo.sessionId}, tool=${toolInfo.tool}`,
+        );
         return;
       }
 
@@ -1094,7 +1122,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnToolFile(async (fileInfo) => {
       if (interactionEventGate.isBlocked(fileInfo.sessionId)) {
-        logger.debug(`[Bot] Suppressing tool file while interaction is pending: session=${fileInfo.sessionId}, tool=${fileInfo.tool}`);
+        logger.debug(
+          `[Bot] Suppressing tool file while interaction is pending: session=${fileInfo.sessionId}, tool=${fileInfo.tool}`,
+        );
         return;
       }
 
@@ -1134,7 +1164,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
     });
 
-    summaryAggregator.setOnQuestion((questions, requestID, sessionId) => this.presentQuestionFlow(questions, requestID, sessionId));
+    summaryAggregator.setOnQuestion((questions, requestID, sessionId) =>
+      this.presentQuestionFlow(questions, requestID, sessionId),
+    );
 
     summaryAggregator.setOnQuestionError(async () => {
       logger.info("[Bot] Question tool failed, clearing active poll and deleting messages");
@@ -1143,9 +1175,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       const messageIds = questionManager.getMessageIds();
       for (const messageId of messageIds) {
         if (sessionId) {
-          await this.sessionScopedApi(sessionId).deleteMessage(resolveCoreSessionRoute(sessionId).chatId, messageId).catch((err) => {
-            logger.error(`[Bot] Failed to delete question message ${messageId}:`, err);
-          });
+          await this.sessionScopedApi(sessionId)
+            .deleteMessage(resolveCoreSessionRoute(sessionId).chatId, messageId)
+            .catch((err) => {
+              logger.error(`[Bot] Failed to delete question message ${messageId}:`, err);
+            });
         }
       }
 
@@ -1184,7 +1218,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnThinking(async (update) => {
       if (interactionEventGate.isBlocked(update.sessionId)) {
-        logger.debug(`[Bot] Suppressing thinking while interaction is pending: session=${update.sessionId}`);
+        logger.debug(
+          `[Bot] Suppressing thinking while interaction is pending: session=${update.sessionId}`,
+        );
         return;
       }
 
@@ -1222,9 +1258,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       if (update.isFirstUpdate) {
         this.clearToolElapsedState(update.sessionId, "thinking_started");
-        void this.toolCallStreamer.breakSession(update.sessionId, "thinking_started").catch((error) => {
-          logger.error("[Bot] Failed to break tool stream before thinking message", error);
-        });
+        void this.toolCallStreamer
+          .breakSession(update.sessionId, "thinking_started")
+          .catch((error) => {
+            logger.error("[Bot] Failed to break tool stream before thinking message", error);
+          });
       }
 
       if (getShowThinkingContent()) {
@@ -1407,7 +1445,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         try {
           await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
         } catch (error) {
-          logger.warn(`[Bot] Failed to restore keyboard after session idle: session=${sessionId}`, error);
+          logger.warn(
+            `[Bot] Failed to restore keyboard after session idle: session=${sessionId}`,
+            error,
+          );
         }
         await scheduledTaskRuntime.flushDeferredDeliveries();
         void dispatchNextQueuedPrompt();
@@ -1438,7 +1479,9 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         foregroundSessionState.markIdle(sessionId);
         const keyboardState = keyboardManager.getState(sessionId);
         if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
-          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: isChatPaused(sessionId) ? "paused" : "idle" });
+          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, {
+            runState: isChatPaused(sessionId) ? "paused" : "idle",
+          });
         }
         await scheduledTaskRuntime.flushDeferredDeliveries();
         return;
@@ -1472,15 +1515,25 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         this.toolCallStreamer.flushSession(sessionId, "session_error"),
       ]);
 
-      const recovery = await recoverSessionAfterError(sessionId, currentSession.directory, normalizedMessage);
-      logger.warn(`[Bot] Session error recovery finished: session=${sessionId} abortAccepted=${recovery.abortAccepted} removedMessages=${recovery.removedMessageIds.length} contaminationRemaining=${recovery.contaminationRemaining}`);
+      const recovery = await recoverSessionAfterError(
+        sessionId,
+        currentSession.directory,
+        normalizedMessage,
+      );
+      logger.warn(
+        `[Bot] Session error recovery finished: session=${sessionId} abortAccepted=${recovery.abortAccepted} removedMessages=${recovery.removedMessageIds.length} contaminationRemaining=${recovery.contaminationRemaining}`,
+      );
 
-      const truncatedMessage = normalizedMessage.length > 3500
-        ? `${normalizedMessage.slice(0, 3497)}...`
-        : normalizedMessage;
+      const truncatedMessage =
+        normalizedMessage.length > 3500
+          ? `${normalizedMessage.slice(0, 3497)}...`
+          : normalizedMessage;
 
       await this.sessionScopedApi(sessionId)
-        .sendMessage(resolveCoreSessionRoute(sessionId).chatId, t("bot.session_error", { message: truncatedMessage }))
+        .sendMessage(
+          resolveCoreSessionRoute(sessionId).chatId,
+          t("bot.session_error", { message: truncatedMessage }),
+        )
         .catch((err) => logger.error("[Bot] Failed to send session.error message:", err));
 
       foregroundSessionState.markIdle(sessionId);
@@ -1492,12 +1545,17 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         questionManager.clearSession(scopeKey);
         permissionManager.clearSession(scopeKey);
         interactionManager.clearSession(scopeKey);
-        updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "idle" });
+        updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, {
+          runState: "idle",
+        });
       }
       try {
         await keyboardManager.sendKeyboardUpdate(this.chatIdInstance, true, sessionId);
       } catch (error) {
-        logger.warn(`[Bot] Failed to restore keyboard after session error: session=${sessionId}`, error);
+        logger.warn(
+          `[Bot] Failed to restore keyboard after session error: session=${sessionId}`,
+          error,
+        );
       }
       await scheduledTaskRuntime.flushDeferredDeliveries();
       // Intentionally do NOT dispatch queued prompts after an error. The chat is stopped
@@ -1620,10 +1678,14 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       : this.assistantEditResponseStreamer;
   }
 
-  private getAssistantResponseStreamMode(sessionId: string, messageId: string): ResponseStreamingMode {
+  private getAssistantResponseStreamMode(
+    sessionId: string,
+    messageId: string,
+  ): ResponseStreamingMode {
     return (
-      this.assistantResponseStreamModes.get(this.getAssistantResponseStreamKey(sessionId, messageId)) ??
-      getResponseStreamingMode()
+      this.assistantResponseStreamModes.get(
+        this.getAssistantResponseStreamKey(sessionId, messageId),
+      ) ?? getResponseStreamingMode()
     );
   }
 
@@ -1759,18 +1821,20 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         }
       },
       deleteText: async (sessionId, messageId) => {
-        await this.sessionScopedApi(sessionId).deleteMessage(resolveCoreSessionRoute(sessionId).chatId, messageId).catch((error) => {
-          const errorMessage =
-            error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-          if (
-            errorMessage.includes("message to delete not found") ||
-            errorMessage.includes("message identifier is not specified")
-          ) {
-            return;
-          }
+        await this.sessionScopedApi(sessionId)
+          .deleteMessage(resolveCoreSessionRoute(sessionId).chatId, messageId)
+          .catch((error) => {
+            const errorMessage =
+              error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+            if (
+              errorMessage.includes("message to delete not found") ||
+              errorMessage.includes("message identifier is not specified")
+            ) {
+              return;
+            }
 
-          throw error;
-        });
+            throw error;
+          });
       },
     });
   }
@@ -1812,7 +1876,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   }
 
   private clearThinkingStream(sessionId: string, messageId: string, reason: string): void {
-    this.thinkingResponseStreamer.clearMessage(sessionId, this.getThinkingStreamId(messageId), reason);
+    this.thinkingResponseStreamer.clearMessage(
+      sessionId,
+      this.getThinkingStreamId(messageId),
+      reason,
+    );
     this.thinkingSections.delete(this.getThinkingPayloadKey(sessionId, messageId));
   }
 
@@ -1852,7 +1920,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     }
   }
 
-  private enqueueSessionCompletionTask(sessionId: string, task: () => Promise<void>): Promise<void> {
+  private enqueueSessionCompletionTask(
+    sessionId: string,
+    task: () => Promise<void>,
+  ): Promise<void> {
     const generation = this.completionGenerations.get(sessionId) ?? {};
     this.completionGenerations.set(sessionId, generation);
     const previousTask = this.sessionCompletionTasks.get(sessionId) ?? Promise.resolve();
@@ -1864,7 +1935,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       .finally(() => {
         if (this.sessionCompletionTasks.get(sessionId) === nextTask) {
           this.sessionCompletionTasks.delete(sessionId);
-          if (this.completionGenerations.get(sessionId) === generation) this.completionGenerations.delete(sessionId);
+          if (this.completionGenerations.get(sessionId) === generation)
+            this.completionGenerations.delete(sessionId);
         }
       });
 

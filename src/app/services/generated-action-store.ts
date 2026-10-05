@@ -1,3 +1,4 @@
+import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { isRecord } from "../../utils/type-guards.js";
 import type { AgentActionRisk } from "./agent-action-registry.js";
@@ -6,7 +7,13 @@ import { getStoredExtension } from "./extension-store.js";
 export type GeneratedActionInvocation =
   | { kind: "mcp-tool"; tool: string; server?: string }
   | { kind: "native-tool"; tool: string; arguments?: Record<string, string> }
-  | { kind: "action-tool"; tool: string; actionArgument: string; actionValue: string; arguments?: Record<string, string> };
+  | {
+      kind: "action-tool";
+      tool: string;
+      actionArgument: string;
+      actionValue: string;
+      arguments?: Record<string, string>;
+    };
 
 export interface GeneratedActionRecord {
   id: string;
@@ -50,12 +57,14 @@ function parseRecord(value: unknown): GeneratedActionRecord | null {
     typeof value.userDisabled !== "boolean" ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string"
-  ) return null;
+  )
+    return null;
   return value as unknown as GeneratedActionRecord;
 }
 
 function parseState(value: unknown): GeneratedActionState {
-  if (!isRecord(value) || value.version !== 1 || !isRecord(value.records)) return { version: 1, records: {} };
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.records))
+    return { version: 1, records: {} };
   const records: Record<string, GeneratedActionRecord> = {};
   for (const [id, candidate] of Object.entries(value.records)) {
     const record = parseRecord(candidate);
@@ -74,9 +83,41 @@ function classifyRisk(id: string, action: string, tool: string): AgentActionRisk
   const segments = new Set(value.split(/[^a-z0-9]+/u).filter(Boolean));
   const has = (...keywords: string[]): boolean => keywords.some((keyword) => segments.has(keyword));
   if (has("delete", "destroy", "remove", "purge", "drop", "terminate")) return "destructive";
-  if (has("exec", "shell", "command", "deploy", "restart", "redeploy", "create", "update", "set", "write", "upload", "trigger", "cancel")) return "mutating";
+  if (
+    has(
+      "exec",
+      "shell",
+      "command",
+      "deploy",
+      "restart",
+      "redeploy",
+      "create",
+      "update",
+      "set",
+      "write",
+      "upload",
+      "trigger",
+      "cancel",
+    )
+  )
+    return "mutating";
   if (has("download", "export", "save")) return "write";
-  if (has("list", "get", "read", "status", "inspect", "describe", "resolve", "query", "search", "view", "show")) return "read";
+  if (
+    has(
+      "list",
+      "get",
+      "read",
+      "status",
+      "inspect",
+      "describe",
+      "resolve",
+      "query",
+      "search",
+      "view",
+      "show",
+    )
+  )
+    return "read";
   return "external";
 }
 
@@ -91,7 +132,13 @@ function normalizeId(value: string): string {
  * producers cannot drift from the prefix the store validates against.
  */
 export function generatedActionNamespace(extensionName: string): string {
-  return extensionName.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ".").replace(/^\.+|\.+$/gu, "") || "extension";
+  return (
+    extensionName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, ".")
+      .replace(/^\.+|\.+$/gu, "") || "extension"
+  );
 }
 
 export async function listGeneratedActions(extensionId?: string): Promise<GeneratedActionRecord[]> {
@@ -101,14 +148,17 @@ export async function listGeneratedActions(extensionId?: string): Promise<Genera
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export async function registerGeneratedActionPack(extensionId: string, actions: Array<{
-  id: string;
-  tool: string;
-  action?: string;
-  category?: string;
-  description: string;
-  invocation?: GeneratedActionInvocation;
-}>): Promise<GeneratedActionRecord[]> {
+export async function registerGeneratedActionPack(
+  extensionId: string,
+  actions: Array<{
+    id: string;
+    tool: string;
+    action?: string;
+    category?: string;
+    description: string;
+    invocation?: GeneratedActionInvocation;
+  }>,
+): Promise<GeneratedActionRecord[]> {
   const extension = await getStoredExtension(extensionId);
   if (!extension) throw new Error("Generated actions require an approved registered Extension.");
   const namespace = generatedActionNamespace(extension.name);
@@ -119,7 +169,8 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
       throw new Error(`Generated action ${id} must use the Extension namespace ${namespace}.*`);
     }
     const tool = candidate.tool.trim();
-    if (!tool || tool.length > 128) throw new Error(`Generated action ${id} has an invalid tool name.`);
+    if (!tool || tool.length > 128)
+      throw new Error(`Generated action ${id} has an invalid tool name.`);
     const action = candidate.action?.trim() || id.split(".").at(-1) || "invoke";
     const description = candidate.description.trim().slice(0, 500);
     if (!description) throw new Error(`Generated action ${id} requires a description.`);
@@ -138,12 +189,16 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
     const current = parseState(state[STORE_KEY]);
     const nextIds = new Set(clean.map((candidate) => candidate.id));
     const records = Object.fromEntries(
-      Object.entries(current.records).filter(([, record]) =>
-        record.extensionId !== extensionId || nextIds.has(record.id)),
+      Object.entries(current.records).filter(
+        ([, record]) => record.extensionId !== extensionId || nextIds.has(record.id),
+      ),
     );
     result = clean.map((candidate) => {
       const previous = records[candidate.id];
-      if (previous && previous.extensionId !== extensionId) throw new Error(`Generated action id already belongs to another extension: ${candidate.id}`);
+      if (previous && previous.extensionId !== extensionId)
+        throw new Error(
+          `Generated action id already belongs to another extension: ${candidate.id}`,
+        );
       const userDisabled = previous?.userDisabled ?? false;
       const record: GeneratedActionRecord = {
         ...candidate,
@@ -163,7 +218,11 @@ export async function registerGeneratedActionPack(extensionId: string, actions: 
   return result;
 }
 
-export async function setGeneratedActionEnabled(id: string, enabled: boolean): Promise<GeneratedActionRecord | null> {
+export async function setGeneratedActionEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<GeneratedActionRecord | null> {
+  assertGlobalMutationBackend("generated-actions.toggle", id);
   let updated: GeneratedActionRecord | null = null;
   await updateAppState((state) => {
     const current = parseState(state[STORE_KEY]);
@@ -179,11 +238,13 @@ export async function removeGeneratedActionsForExtension(extensionId: string): P
   let removed = 0;
   await updateAppState((state) => {
     const current = parseState(state[STORE_KEY]);
-    const records = Object.fromEntries(Object.entries(current.records).filter(([, record]) => {
-      if (record.extensionId !== extensionId) return true;
-      removed += 1;
-      return false;
-    }));
+    const records = Object.fromEntries(
+      Object.entries(current.records).filter(([, record]) => {
+        if (record.extensionId !== extensionId) return true;
+        removed += 1;
+        return false;
+      }),
+    );
     return { [STORE_KEY]: { version: 1, records } };
   });
   return removed;

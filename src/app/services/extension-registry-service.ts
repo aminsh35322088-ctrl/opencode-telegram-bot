@@ -1,3 +1,4 @@
+import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
 import { reloadManagedOpenCodeConfig } from "./opencode-managed-config-service.js";
 import { deleteMcpServer, loadMcpServers } from "./mcp-server-service.js";
 import { deleteGlobalSkill, isManagedSkillLocation } from "./skill-manage-service.js";
@@ -13,12 +14,14 @@ import { removeGeneratedActionsForExtension } from "./generated-action-store.js"
 import type { ExtensionRecord, ExtensionSummary } from "../types/extension.js";
 
 function safePart(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/gu, "-")
-    .replace(/^-+|-+$/gu, "")
-    .slice(0, 80) || "extension";
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 80) || "extension"
+  );
 }
 
 export function extensionId(kind: "skill" | "plugin" | "mcp", name: string): string {
@@ -52,7 +55,7 @@ export async function listExtensions(projectDirectory: string): Promise<Extensio
   const claimedSkills = new Set(
     stored
       .filter((record) => record.resource.kind === "skill")
-      .map((record) => record.resource.kind === "skill" ? record.resource.skillName : ""),
+      .map((record) => (record.resource.kind === "skill" ? record.resource.skillName : "")),
   );
 
   const skills = await loadSkillsCatalog(projectDirectory).catch(() => []);
@@ -97,6 +100,7 @@ export async function removeExtension(
   projectDirectory: string,
   id: string,
 ): Promise<{ removed: boolean; credentialsRemoved: number; actionsRemoved: number }> {
+  assertGlobalMutationBackend("extensions.remove", id);
   const stored = await getStoredExtension(id);
 
   if (stored?.resource.kind === "plugin") {
@@ -105,10 +109,9 @@ export async function removeExtension(
       await reloadManagedOpenCodeConfig("extension_plugin_remove", { timeoutMs: 30_000 });
     } catch (error) {
       await saveStoredExtension(stored);
-      await reloadManagedOpenCodeConfig(
-        "extension_plugin_remove_rollback",
-        { timeoutMs: 30_000 },
-      ).catch(() => {});
+      await reloadManagedOpenCodeConfig("extension_plugin_remove_rollback", {
+        timeoutMs: 30_000,
+      }).catch(() => {});
       throw error;
     }
   } else if (stored?.resource.kind === "skill") {

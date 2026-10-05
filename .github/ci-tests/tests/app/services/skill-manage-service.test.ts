@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -10,13 +11,19 @@ vi.mock("../../../src/runtime/paths.js", () => ({
 }));
 
 import {
-  deleteGlobalSkill,
+  deleteGlobalSkill as rawDeleteGlobalSkill,
   isManagedSkillLocation,
   isValidSkillName,
-  updateGlobalSkill,
-  writeGlobalSkill,
-  writeGlobalSkillRaw,
+  updateGlobalSkill as rawUpdateGlobalSkill,
+  writeGlobalSkill as rawWriteGlobalSkill,
+  writeGlobalSkillRaw as rawWriteGlobalSkillRaw,
 } from "../../../src/app/services/skill-manage-service.js";
+
+// These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
+const writeGlobalSkill = (...args: Parameters<typeof rawWriteGlobalSkill>) => runTrustedTelegramGlobalMutation("skills.create", args[0].name, () => rawWriteGlobalSkill(...args));
+const updateGlobalSkill = (...args: Parameters<typeof rawUpdateGlobalSkill>) => runTrustedTelegramGlobalMutation("skills.update", args[0].name, () => rawUpdateGlobalSkill(...args));
+const writeGlobalSkillRaw = (...args: Parameters<typeof rawWriteGlobalSkillRaw>) => runTrustedTelegramGlobalMutation("skills.add", args[0], () => rawWriteGlobalSkillRaw(...args));
+const deleteGlobalSkill = (...args: Parameters<typeof rawDeleteGlobalSkill>) => runTrustedTelegramGlobalMutation("skills.delete", args[0], () => rawDeleteGlobalSkill(...args));
 
 describe("app/services/skill-manage-service", () => {
   let tmpHome: string;
@@ -28,6 +35,14 @@ describe("app/services/skill-manage-service", () => {
 
   afterEach(async () => {
     await fs.rm(tmpHome, { recursive: true, force: true });
+  });
+
+  it("rejects model-style raw writes without a trusted UI or exact approval scope", async () => {
+    await expect(rawWriteGlobalSkill({name: "unguarded", description: "d", body: "b"})).rejects.toThrow(/requires an approved Question/);
+    await expect(rawWriteGlobalSkillRaw("unguarded", "content")).rejects.toThrow(/requires an approved Question/);
+    await expect(rawUpdateGlobalSkill({name: "unguarded", description: "d", body: "b"})).rejects.toThrow(/requires an approved Question/);
+    await expect(rawDeleteGlobalSkill("unguarded")).rejects.toThrow(/requires an approved Question/);
+    await expect(fs.stat(path.join(tmpHome, ".config/opencode/skills/unguarded/SKILL.md"))).rejects.toThrow();
   });
 
   it("validates skill names", () => {

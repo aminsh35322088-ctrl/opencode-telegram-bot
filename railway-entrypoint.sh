@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+unset NODE_CHANNEL_FD NODE_CHANNEL_SERIALIZATION_MODE
 
 if [ "$(id -u)" -ne 1000 ]; then
   printf '%s\n' '[railway] Refusing privileged application bootstrap' >&2
@@ -230,4 +231,7 @@ printf '%s\n' "[railway] Tailscale daemon ready: socket=$TAILSCALE_SOCKET state=
 printf '%s\n' "[railway] Tailnet login is managed by the bot Integrations UI; all bot/tools share this daemon"
 
 cd "$OPENCODE_TELEGRAM_WORKSPACE"
+if [ "${CONTROL_APPLICATION_IPC:-0}" = "1" ]; then
+  export NODE_CHANNEL_FD=3 NODE_CHANNEL_SERIALIZATION_MODE=json
+fi
 exec /bin/sh -c 'export PATH="/data/run/integration-bin:$PATH"; cd "$OPENCODE_TELEGRAM_WORKSPACE" && exec node /app/dist/index.js'
