@@ -1,3 +1,5 @@
+import { nodeBindings } from "../../control-plane/node-bindings.js";
+import { topicNodeLifecycle } from "../../control-plane/topic-node-lifecycle.js";
 import type { Api } from "grammy";
 import type { BindingIdentity } from "@opencode-telegram/native-runtime";
 import { opencodeClient } from "../../opencode/client.js";
@@ -21,7 +23,7 @@ import { clearQueuedPromptContext } from "../../bot/handlers/prompt-queue-dispat
 import { logger } from "../../utils/logger.js";
 import { topicTelemetry } from "../../utils/topic-observability.js";
 import { getTelegramTopicRuntimeDependencies } from "../../bot/services/telegram-topic-runtime.js";
-import { coreBindingId, getNativeCore, registerCoreTopicBinding } from "../../core/native-core-service.js";
+import { coreBindingId, finishCoreRunForSession, getNativeCore, registerCoreTopicBinding } from "../../core/native-core-service.js";
 
 function isAlreadyDeletedTopicError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -122,7 +124,12 @@ async function cleanupTelegramTopicSessionMetadata(api: Api, binding: TelegramTo
     cleanupErrors.push(new Error(`Refused to delete unmanaged directory: ${binding.directory}`));
   }
 
+  const remoteNode = (await nodeBindings.list()).find(node => node.chatId === binding.chatId && node.threadId === binding.threadId && node.sessionId === binding.sessionId);
   try {
+    if(remoteNode) {
+      if(remoteNode.status!=="retired")await topicNodeLifecycle.retire(binding.chatId,binding.threadId);
+      topicTelemetry("remote_node_retired",context);
+    } else {
     const { data, error } = await opencodeClient.session.delete({ sessionID: binding.sessionId, directory: binding.directory });
     if (error) {
       if (isOpencodeSessionNotFoundError(error)) {
@@ -135,6 +142,7 @@ async function cleanupTelegramTopicSessionMetadata(api: Api, binding: TelegramTo
       throw new Error(`OpenCode did not confirm deletion of session ${binding.sessionId}`);
     } else {
       topicTelemetry("session_deleted", context);
+    }
     }
   } catch (error) {
     if (isOpencodeSessionNotFoundError(error)) {
@@ -261,6 +269,12 @@ export async function deleteTelegramTopicSession(
   api: Api,
   binding: TelegramTopicBinding,
 ): Promise<void> {
+  const node = await nodeBindings.find(binding.chatId,binding.threadId);
+  if(node) {
+    stopTopicEventSubscription(binding.directory,binding.sessionId);
+    await topicNodeLifecycle.retire(binding.chatId,binding.threadId);
+    finishCoreRunForSession(binding.sessionId);
+  }
   const core = getNativeCore();
   if (!core) {
     await cleanupTelegramTopicSessionMetadata(api, binding);

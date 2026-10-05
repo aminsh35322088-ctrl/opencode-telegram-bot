@@ -2,10 +2,20 @@ import {randomUUID,createHmac,timingSafeEqual} from "node:crypto";
 import type {NodeEnvelope,NodeIdentity} from "../control-plane/node-protocol.js";
 import {NodeProtocol} from "../control-plane/node-protocol.js";
 import type {captureNodeRegistry} from "./node-registry.js";
+import type {InfrastructureNodeIdentity} from "./node-registry.js";
 
 const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","pause","resume","stop","retire"]);
 export class InfrastructureNodeTransport {
  constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch){}
+ /** Only the root retirement controller retains the previous identity after fencing. */
+ async retireFenced(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>{
+  const {nodeId,generation,chatId,threadId,sessionId}=identity.binding;
+  const signed=this.protocol.sign({version:1,nodeId,generation,chatId,threadId,sessionId,operation:"retire",payload:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")},identity.secret);
+  const response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(15_000)});
+  if(!response.ok)throw new Error("Fenced node retirement failed");
+  const reply=await this.protocol.verify(await boundedBody(response,10*1024*1024),response.headers.get("x-node-signature")??"",{nodeId,generation,chatId,threadId},identity.secret);
+  if(reply.operation!=="retire" || reply.sessionId!==sessionId || !(reply.payload as {ok?:boolean}).ok)throw new Error("Fenced node retirement denied");
+ }
  private async prepare(envelope:NodeEnvelope){
   const identity=await this.registry.resolve(envelope.nodeId);
   if(!identity || identity.binding.status==="retiring" || identity.binding.status==="retired" || !operations.has(envelope.operation))throw new Error("Node transport denied");

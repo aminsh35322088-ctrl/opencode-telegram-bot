@@ -14,5 +14,12 @@ for (const p of fs.readdirSync('/proc').filter(p => /^\d+$/.test(p))) {
 fs.mkdirSync('/data/run',{recursive:true});
 fs.symlinkSync('/app/dist/infrastructure/launcher.js','/data/run/root-target');
 assert.throws(() => fs.writeFileSync('/data/run/root-target','tamper'));
+if(process.env.CONTROL_INFRASTRUCTURE_ENABLED==='1') {
+ assert.equal(fs.statSync('/data').uid,0);
+ assert.equal(fs.statSync('/data').mode&0o1777,0o1777);
+ assert.throws(()=>fs.readdirSync('/data/.infrastructure'));
+ assert.throws(()=>fs.renameSync('/data/.infrastructure','/data/renamed-infrastructure'));
+ process.send?.({channel:'control-application-ready'});
+}
 console.log('BOUNDARY_PASS uid=1000 credentials_absent protected_code=true protected_parent=true symlink_write_denied=true');
 if(process.env.BOUNDARY_WAIT==='1')setTimeout(()=>{},60000);

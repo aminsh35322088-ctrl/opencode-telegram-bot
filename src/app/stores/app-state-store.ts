@@ -29,6 +29,8 @@ const APP_STATE_BACKUP_FILENAME = "app-state.json.bak";
 const APP_STATE_TEMP_SUFFIX = ".tmp";
 let writeQueue: Promise<void> = Promise.resolve();
 const transaction = new AsyncLocalStorage<{ state: AppState }>();
+/** Internal writers may join the canonical queue without creating a nested transaction. */
+export function isAppStateTransactionActive(): boolean { return Boolean(transaction.getStore()); }
 
 function getStatePath(): string {
   return path.join(getRuntimePaths().appHome, APP_STATE_FILENAME);

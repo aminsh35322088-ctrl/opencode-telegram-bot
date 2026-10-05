@@ -1,0 +1,30 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {captureNodeRegistry} from '../src/infrastructure/node-registry.js';
+import {InfrastructureController} from '../src/infrastructure/node-controller.js';
+const identity=(nodeId:string,status='ready',generation=1)=>({binding:{nodeId,generation,chatId:1,threadId:2,status,sessionId:'session'},endpoint:'https://worker.up.railway.app',secret:'s'.repeat(64)});
+test('retired identities release capacity while old identity stays fenced',()=>{
+ const registry=captureNodeRegistry({});
+ for(let i=0;i<4;i++)registry.install({...identity(String(i),'retired',2),binding:{...identity(String(i),'retired',2).binding,threadId:i+2}});
+ registry.install({...identity('replacement'),binding:{...identity('replacement').binding,threadId:8}});
+ assert.equal(registry.metadata().filter(n=>n.status!=='retired').length,1);
+ assert.throws(()=>registry.install(identity('0','ready',1)),/Stale/);
+});
+test('controller reconcile trusts canonical identity but rejects an invented session',async()=>{
+ const home=await mkdtemp(path.join(tmpdir(),'infrastructure-controller-'));
+ const binding={...identity('owned','provisioning').binding,currentRevision:4,createdAt:'now',updatedAt:'now'};
+ const filename=path.join(home,'bindings.json');await writeFile(filename,JSON.stringify({version:1,bindings:[binding]}));
+ const registry=captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([identity('owned','provisioning')])});
+ const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected API');}});
+ await assert.rejects(controller.request('provision','owned',1),/not configured/);
+ await controller.request('reconcile','owned',1);
+ binding.status='ready';binding.sessionId='invented';await writeFile(filename,JSON.stringify({version:1,bindings:[binding]}));
+ await assert.rejects(controller.request('reconcile','owned',1),/session/);
+ binding.sessionId='session';await writeFile(filename,JSON.stringify({version:1,bindings:[binding]}));
+ const result=await controller.request('reconcile','owned',1);assert.equal(result.nodeId,'owned');assert.equal((await registry.resolve('owned'))?.binding.status,'ready');
+ assert.equal((await readFile(path.join(home,'nodes.json'),'utf8')).includes('s'.repeat(64)),true);
+ assert.equal(JSON.stringify(result).includes('s'.repeat(64)),false);
+});

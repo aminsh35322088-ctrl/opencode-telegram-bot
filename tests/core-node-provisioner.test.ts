@@ -34,7 +34,7 @@ async function fixture() {
       else result={mutation:true};
       return result as T;
     }};
-  const add=(id:string)=>bindings.set(id,{nodeId:id,generation:1,chatId:-100,threadId:bindings.size+1,currentRevision:0,status:'reserved',createdAt:'now',updatedAt:'now'});
+  const add=(id:string)=>bindings.set(id,{nodeId:id,generation:1,chatId:-100,threadId:bindings.size+2,currentRevision:0,status:'reserved',createdAt:'now',updatedAt:'now'});
   return {controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;}};
 }
 test('provision four isolated nodes 3+1, cap fifth and never return/persist secrets',async()=>{
@@ -68,4 +68,9 @@ test('fenced retire validates owned resources and is idempotent',async()=>{
 test('false resource mutation fails before source or secrets installation',async()=>{
   const f=await fixture();f.add('one');f.setRejected();await assert.rejects(f.controller.provision('one',1),/rejected/);
   assert.equal(f.calls.some(c=>c.document.includes('WorkerVariables')||c.document.includes('WorkerSource')),false);
+});
+test('retirement reconciles a service created before an ambiguous API response',async()=>{
+ const f=await fixture();f.add('one');f.setAmbiguous();await assert.rejects(f.controller.provision('one',1));
+ const binding=f.bindings.get('one')!;binding.generation=2;binding.status='retiring';
+ await f.controller.retire('one',2);assert.equal(f.services.length,0);
 });

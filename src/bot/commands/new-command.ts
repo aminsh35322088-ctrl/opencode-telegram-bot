@@ -1,3 +1,4 @@
+import { createRemoteTopicSession, isTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
 import type { Bot, Context } from "grammy";
 import { CommandContext } from "grammy";
 import path from "node:path";
@@ -41,7 +42,8 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
 
   try {
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
-    const { data: session, error } = await opencodeClient.session.create({ directory });
+    const remote = isTopicNodeCreationEnabled() ? await createRemoteTopicSession(deps.bot.api,ctx.chat.id,directory) : null;
+    const { data: session, error } = remote ? {data:remote.session,error:undefined} : await opencodeClient.session.create({ directory });
     if (error || !session) throw error || new Error("No session received from OpenCode");
 
     sessionId = session.id;
@@ -51,7 +53,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const initialAgent = defaults.agent ?? await resolveProjectAgent(getStoredAgent());
     const initialModel = defaults.model ?? getStoredModel();
     const initialCompact = defaults.compactOutputMode;
-    binding = await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
+    binding = remote?.binding ?? await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
     const coreRoute = resolveCoreTopicBinding(binding.chatId, binding.threadId);
     if (!coreRoute || coreRoute.sessionId !== session.id || coreRoute.normalizedDirectory !== path.resolve(directory)) {
       throw new Error("New Topic does not match its Core binding");
@@ -73,7 +75,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       compactOutputMode: initialCompact,
     });
 
-    const mcpSync = await ensureMcpRuntimeForDirectory(directory);
+    const mcpSync = remote ? {failed:0} : await ensureMcpRuntimeForDirectory(directory);
     if (mcpSync.failed > 0) {
       logger.warn(
         `[TelegramTopics] MCP runtime sync incomplete for new Topic: directory=${directory}, failed=${mcpSync.failed}`,

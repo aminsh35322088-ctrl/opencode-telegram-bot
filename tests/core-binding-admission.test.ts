@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import type { Api } from "grammy";
-import { OpenCodeTopicWorker } from "@opencode-telegram/native-runtime";
+import { OpenCodeTopicWorker, RailwayResourceGovernor } from "@opencode-telegram/native-runtime";
 import {
   beginCoreRunForSession,
   finishCoreRunForSession,
@@ -22,6 +22,12 @@ import { runInTopicRuntimeContext } from "../src/app/services/topic-runtime-cont
 import { createCoreSessionApi } from "../src/bot/services/core-session-api.js";
 import { resolveTailnetSshScope } from "../src/app/services/ssh-service.js";
 import { opencodeClient } from "../src/opencode/client.js";
+
+// Routing assertions need a deterministic resource admission fixture. The
+// development host's Docker build cache must not decide whether these runs start.
+mock.method(RailwayResourceGovernor, "currentSnapshot", (workerCount: number, idleWorkerCount: number) => ({
+  rssBytes: 32 * 1024 * 1024, totalBytes: 32 * 1024 * 1024, workerCount, idleWorkerCount,
+}));
 
 test("Bot delegates its execution boundary to the authoritative Core TopicWorker", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "core-worker-ownership-test-"));

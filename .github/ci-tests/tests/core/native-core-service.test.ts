@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RailwayResourceGovernor } from "@opencode-telegram/native-runtime";
 
 const mocked = vi.hoisted(() => ({
   promptAsync: vi.fn(),
@@ -47,6 +48,10 @@ describe("native Core adapter", () => {
   let directory = "";
 
   beforeEach(async () => {
+    // These tests exercise routing/cleanup, not the host's changing Docker cache usage.
+    vi.spyOn(RailwayResourceGovernor, "currentSnapshot").mockImplementation((workerCount, idleWorkerCount) => ({
+      rssBytes: 32 * 1024 * 1024, totalBytes: 32 * 1024 * 1024, workerCount, idleWorkerCount,
+    }));
     await shutdownNativeCore();
     home = await mkdtemp(path.join(os.tmpdir(), "native-core-adapter-"));
     directory = path.join(home, "workspace");

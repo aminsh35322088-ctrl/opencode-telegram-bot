@@ -4,13 +4,15 @@ import {randomUUID} from "node:crypto";
 import {NodeProtocol,type NodeEnvelope} from "../control-plane/node-protocol.js";
 import {handleNodeControl} from "../control-plane/node-control.js";
 import type {captureNodeRegistry} from "./node-registry.js";
+import type {InfrastructureController} from "./node-controller.js";
 import {InfrastructureNodeTransport} from "./node-transport.js";
 
 type Registry=ReturnType<typeof captureNodeRegistry>;
 /** Root-only gateway. Application sees authenticated envelopes, never signing material. */
-export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:NodeProtocol,port:number){
+export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:NodeProtocol,port:number,controller?:InfrastructureController){
   const pending=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void;timer:NodeJS.Timeout}>();
   const outbound=new Map<string,AbortController>();
+  let infrastructureActive=0;
   let applicationReady=false;
   let desiredRevision=0;
   let reconciling=false;
@@ -45,8 +47,16 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
   });
   child.on("message",async message=>{
     if(!message || typeof message!=="object")return;
-    const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean};
+    const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number};
     if(typeof input.requestId!=="string" || input.requestId.length>128)return;
+    if(input.channel==="infrastructure-request"){
+      if(!controller||infrastructureActive>=4||!input.operation||!input.nodeId||!input.generation){child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false});return;}
+      infrastructureActive++;
+      try{const result=await controller.request(input.operation,input.nodeId,input.generation);child.send({channel:"infrastructure-response",requestId:input.requestId,ok:true,result});}
+      catch{child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false});}
+      finally{infrastructureActive--;}
+      return;
+    }
     if(input.channel==="worker-cancel"){outbound.get(input.requestId)?.abort();return;}
     if(input.channel!=="worker-request" || !input.envelope)return;
     if(outbound.has(input.requestId)||outbound.size>=8){child.send({channel:"worker-response",requestId:input.requestId,ok:false});return;}

@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   if (!volume.isDirectory() || volume.isSymbolicLink()) throw new Error("Invalid persistent volume root");
   // Only the mount root needs ownership preparation. Never traverse or execute
   // application-controlled persistent files as the credential-owning identity.
-  const gatewayEnabled=nodes.metadata().length>0 || process.env.DISTRIBUTED_CONTROL_ENABLED==="1";
+  const gatewayEnabled=nodes.metadata().length>0 || process.env.CONTROL_INFRASTRUCTURE_ENABLED==="1" || process.env.DISTRIBUTED_CONTROL_ENABLED==="1";
   if(gatewayEnabled){
     await budgetedExecFile("cleanup","/usr/bin/chown",["--no-dereference","0:0","/data"]);
     await budgetedExecFile("cleanup","/usr/bin/chmod",["1777","/data"]);
@@ -44,7 +44,21 @@ async function main(): Promise<void> {
     const {NodeProtocol}=await import("../control-plane/node-protocol.js");
     const port=Number(process.env.PORT??8080);
     if(!Number.isSafeInteger(port)||port<1||port>65535)throw new Error("Invalid control gateway port");
-    stopGateway=startNodeGateway(child,nodes,new NodeProtocol("/data/.infrastructure/replay.json"),port);
+    const {InfrastructureController}=await import("./node-controller.js");
+    const {InfrastructureNodeTransport}=await import("./node-transport.js");
+    const {getRuntimePaths}=await import("../runtime/paths.js");
+    const pools=process.env.CONTROL_WORKER_POOLS?JSON.parse(process.env.CONTROL_WORKER_POOLS):undefined;
+    const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
+    const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
+    const controller=new InfrastructureController({registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,controlUrl:process.env.CONTROL_PUBLIC_URL,retireNode:identity=>retirementTransport.retireFenced(identity)});
+    stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
+    // Read plan metadata once per deployment; this is not a provisioning retry loop.
+    const workspaceId=process.env.CONTROL_WORKSPACE_ID;
+    if(workspaceId)void infrastructure.request<{workspace:{plan:string;projectCount:number}}>(
+      "query InfrastructureWorkspace($workspaceId:String!){workspace(workspaceId:$workspaceId){plan projectCount}}",{workspaceId},
+    ).then(({workspace})=>{
+      if(/^[A-Z_]+$/.test(workspace.plan)&&Number.isSafeInteger(workspace.projectCount))process.stdout.write(`[InfrastructureBoundary] workspace_plan=${workspace.plan} projects=${workspace.projectCount}\n`);
+    }).catch(()=>{process.stdout.write("[InfrastructureBoundary] workspace_metadata_unavailable\n");});
   }
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => { child.kill(signal); });

@@ -29,8 +29,14 @@ async function main(): Promise<void> {
 
   const { initializeLogger } = await import("./utils/logger.js");
   await initializeLogger();
+  const {recoverInterruptedGlobalMutationApprovals}=await import("./control-plane/mutations.js");
+  await recoverInterruptedGlobalMutationApprovals();
   const {installControlApplicationChannel}=await import("./control-plane/application-channel.js");
   installControlApplicationChannel();
+  if(process.env.CONTROL_APPLICATION_IPC==="1" && process.env.TOPIC_NODE_CREATION_ENABLED==="1"){
+    const {setTopicNodeCreationEnabled}=await import("./control-plane/topic-node-lifecycle.js");
+    setTopicNodeCreationEnabled(true);
+  }
 
   const { startBotApp } = await import("./app/bootstrap/start-bot-app.js");
   await startBotApp();

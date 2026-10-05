@@ -26,7 +26,7 @@ export class NodeBindingStore {
     if (state.version !== 1 || !Array.isArray(state.bindings)) throw new Error("Invalid node binding state");
     const nodes = new Set<string>(); const topics = new Set<string>();
     for (const binding of state.bindings) {
-      if (!["reserved", "provisioning", "ready", "retiring", "retired", "failed"].includes(binding.status) || !Number.isSafeInteger(binding.currentRevision) || binding.currentRevision < 0 || !binding.nodeId || !Number.isSafeInteger(binding.generation) || binding.generation < 1 || !Number.isSafeInteger(binding.chatId) || !Number.isSafeInteger(binding.threadId) || binding.threadId < 1) throw new Error("Invalid node identity");
+      if (!["reserved", "provisioning", "ready", "retiring", "retired", "failed"].includes(binding.status) || !Number.isSafeInteger(binding.currentRevision) || binding.currentRevision < 0 || !binding.nodeId || !Number.isSafeInteger(binding.generation) || binding.generation < 1 || !Number.isSafeInteger(binding.chatId) || !Number.isSafeInteger(binding.threadId) || binding.threadId <= 1) throw new Error("Invalid node identity");
       if (nodes.has(binding.nodeId)) throw new Error("Duplicate node identity");
       nodes.add(binding.nodeId);
       if (binding.status !== "retired") {
@@ -59,7 +59,7 @@ export class NodeBindingStore {
   }
   reserve(chatId: number, threadId: number): Promise<NodeBinding> {
     return this.transaction((state) => {
-      if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(threadId) || threadId < 1) throw new Error("AI node requires a Telegram Topic");
+      if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("AI node requires a Telegram Topic");
       const existing = state.bindings.find((binding) => binding.chatId === chatId && binding.threadId === threadId && binding.status !== "retired");
       if (existing) return existing;
       if (state.bindings.filter((binding) => binding.status !== "retired").length >= MAX_AI_TOPICS) throw new Error("Maximum four AI Topics reached");

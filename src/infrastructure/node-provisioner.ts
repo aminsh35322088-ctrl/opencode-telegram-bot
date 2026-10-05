@@ -24,6 +24,8 @@ export interface NodeProvisionerOptions {
   /** Root-private durable identity store. The returned key must never be sent to the Bot/model process. */
   ensureIdentity(binding: Readonly<NodeBinding>, createSecret: () => string): Promise<string>;
   retireIdentity(nodeId: string, generation: number): Promise<void>;
+  /** Install the root-private transport identity before the Worker can call back during startup. */
+  configured?(binding: Readonly<NodeBinding>, node: Readonly<ProvisionedNode>): Promise<void>;
 }
 const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
 
@@ -61,7 +63,7 @@ export class NodeProvisioner {
   }
   private async binding(nodeId: string, generation: number): Promise<NodeBinding> {
     const binding = await this.options.lookup(nodeId);
-    if (!binding || binding.nodeId !== nodeId || binding.generation !== generation || binding.threadId < 1 || !Number.isSafeInteger(binding.chatId) || binding.status === "retired") throw new Error("Infrastructure node authorization failed");
+    if (!binding || binding.nodeId !== nodeId || binding.generation !== generation || binding.threadId <= 1 || !Number.isSafeInteger(binding.chatId) || binding.status === "retired") throw new Error("Infrastructure node authorization failed");
     return binding;
   }
   private async mutate(document: string, variables: Record<string, unknown>): Promise<void> {
@@ -139,6 +141,7 @@ export class NodeProvisioner {
         record.domainId = domain.id; record.endpoint = `https://${domain.domain}`; await this.save(journal);
       }
       record.phase = "configured"; await this.save(journal);
+      await this.options.configured?.(binding,record);
       // Source is connected only after limits, persistent storage, identity and the narrow domain are configured.
       await this.binding(nodeId,generation);
       await this.mutate(`mutation WorkerSource($id:String!,$input:ServiceConnectInput!){serviceConnect(id:$id,input:$input){id}}`, {id:record.serviceId,input:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main"}});
@@ -161,8 +164,15 @@ export class NodeProvisioner {
       await this.options.retireIdentity(nodeId,generation);
       const pool = this.options.pools.find(candidate => candidate.projectId === record.projectId)!;
       const inventory = await this.inventory(pool);
-      const ownedService = inventory.project.services.edges.find(entry => entry.node.id === record.serviceId)?.node;
+      const serviceName=`topic-node-${nodeId}-g${record.generation}`;
+      const matches=inventory.project.services.edges.filter(entry=>entry.node.name===serviceName);
+      if(matches.length>1)throw new Error("Ambiguous retirement service ownership");
+      const ownedService = record.serviceId ? inventory.project.services.edges.find(entry => entry.node.id === record.serviceId)?.node : matches[0]?.node;
       if (ownedService && ownedService.name !== `topic-node-${nodeId}-g${record.generation}`) throw new Error("Retirement service ownership mismatch");
+      if(ownedService && !record.serviceId){record.serviceId=ownedService.id;await this.save(journal);}
+      const attachedVolumes=inventory.project.volumes.edges.filter(entry=>entry.node.volumeInstances.edges.some(instance=>instance.node.environmentId===pool.environmentId&&instance.node.serviceId===record.serviceId));
+      if(attachedVolumes.length>1)throw new Error("Ambiguous retirement volume ownership");
+      if(!record.volumeId && attachedVolumes[0]){record.volumeId=attachedVolumes[0].node.id;await this.save(journal);}
       if (ownedService) await this.mutate(`mutation RetireService($id:String!,$environmentId:String!){serviceDelete(id:$id,environmentId:$environmentId)}`,{id:record.serviceId,environmentId:pool.environmentId});
       const ownedVolume = inventory.project.volumes.edges.find(entry => entry.node.id === record.volumeId)?.node;
       if (ownedVolume) {

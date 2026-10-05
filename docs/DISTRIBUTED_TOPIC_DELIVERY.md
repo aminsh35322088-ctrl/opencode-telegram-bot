@@ -62,3 +62,13 @@ volume. Do not delete existing production Core resources or Topic state.
 After remote provisioning, fence a failed node generation before replacing it;
 preserve dedicated Topic storage until verified export/restore or product
 deletion completes. Never activate an older snapshot over a newer known hash.
+
+## Follow-up verification (2026-10-05)
+
+Bot `ff3808b5e9c6166e670a18963ca63c7f0700593b` passed CI and Railway deployment `860ee5ef-1be0-4785-8551-cb25964e57b1` is SUCCESS, one running replica, no warnings or failures. Runtime logs show Bot startup, OpenCode ready, and healthy watchdog checks. Core `6597144f48f564a1f1163aa34025c643cedbeb1c` passed CI; its existing prerelease workflow is building pre.10.
+
+Creating `opencode-topic-workers-b` in the current workspace was rejected by Railway with `Free plan resource provision limit exceeded. Please upgrade to provision more resources!`. Inventory still contains exactly the existing two projects. This is observed provisioning behavior, not a project-count assumption. No Worker services or volumes have been provisioned and no existing Topic has been migrated.
+
+The root-only infrastructure IPC controller and gated Topic lifecycle are added in the follow-up change. The rollout gate stays disabled until Worker pools and runtime validation are available. `CONTROL_INFRASTRUCTURE_ENABLED=1` enables the narrow gateway independently of the AI routing gate. `TOPIC_NODE_CREATION_ENABLED=1` enables only new remote Topic creation after pools are configured; existing sessions require an explicit verified migration. Canonical ready bindings reconcile into the root identity store before execution. General/thread 1 never reserves a Worker. Retired remote Topics never fall back to local Core.
+
+Interrupted approval commits reconcile against exact canonical receipts. An interrupted operation without canonical proof fails closed; ambiguous external effects require repair. Skill writes preserve a durable before/expected-byte journal and only restore bytes that exactly match the interrupted approved write.

@@ -1,7 +1,20 @@
 import {randomUUID} from "node:crypto";
+import type {NodeBinding} from "./node-bindings.js";
+import type {ProvisionedNode} from "../infrastructure/node-provisioner.js";
 import type {NodeEnvelope} from "./node-protocol.js";
 import {installSecureNodeTransport} from "./topic-node-client.js";
 
+let callInfrastructure:((channel:string,payload:Record<string,unknown>,timeout:number)=>Promise<unknown>)|undefined;
+export async function requestInfrastructure(operation:"provision"|"retire"|"reconcile",nodeId:string,generation:number):Promise<ProvisionedNode>{
+ if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
+ return await callInfrastructure("infrastructure-request",{operation,nodeId,generation},300_000) as ProvisionedNode;
+}
+export async function requestNodeLifecycle(binding:Readonly<NodeBinding>,operation:"health"|"status"|"sync-global"|"session.create"|"session.get",payload:unknown={}):Promise<{ok:boolean;result:unknown}>{
+ if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
+ if(!["health","status","sync-global","session.create","session.get"].includes(operation))throw new Error("Lifecycle operation denied");
+ const envelope:NodeEnvelope={version:1,nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,sessionId:binding.sessionId,operation,payload,timestamp:Date.now(),nonce:randomUUID()};
+ return await callInfrastructure("worker-request",{envelope},50_000) as {ok:boolean;result:unknown};
+}
 export function installInfrastructureTransport():void{
  if(!process.send)return;
  const waits=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void}>();
@@ -10,7 +23,7 @@ export function installInfrastructureTransport():void{
   if(!message||typeof message!=="object")return;
   const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope};
   if(!response.requestId)return;
-  if(response.channel==="worker-response"){
+  if(response.channel==="worker-response" || response.channel==="infrastructure-response"){
    const wait=waits.get(response.requestId);if(!wait)return;waits.delete(response.requestId);
    if(response.ok)wait.resolve(response.result);else wait.reject(new Error("Node transport failed"));
   }else if(response.channel==="worker-stream-ready"){
@@ -25,6 +38,14 @@ export function installInfrastructureTransport():void{
    stream.wake?.();stream.wake=undefined;
   }
  });
+ callInfrastructure=async(channel,payload,timeout)=>{
+  if(waits.size>=8)throw new Error("Infrastructure request capacity exceeded");
+  const requestId=randomUUID();let timer:NodeJS.Timeout|undefined;
+  try{return await new Promise((resolve,reject)=>{
+   waits.set(requestId,{resolve,reject});timer=setTimeout(()=>{waits.delete(requestId);reject(new Error("Infrastructure request timed out"));},timeout);
+   process.send?.({channel,requestId,...payload},error=>{if(error){waits.delete(requestId);reject(new Error("Infrastructure channel unavailable"));}});
+  });}finally{if(timer)clearTimeout(timer);waits.delete(requestId);}
+ };
  installSecureNodeTransport({
   request:async(_binding,envelope,options)=>{
    if(waits.size>=8)throw new Error("Node request capacity exceeded");

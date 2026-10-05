@@ -8,7 +8,11 @@ const runs = new Map<string,string>();
 export function getRemoteRunId(sessionId: string): string | undefined { return runs.get(sessionId); }
 export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: string, arguments_: unknown[]): Promise<{handled:boolean; result?:unknown}> {
   const binding = await nodeBindings.find(topic.chatId,topic.threadId);
-  if (!binding) return {handled:false};
+  if (!binding) {
+    const historical=(await nodeBindings.list()).some(item=>item.chatId===topic.chatId&&item.threadId===topic.threadId);
+    if(historical)throw new Error("Retired Topic node cannot fall back to local Core");
+    return {handled:false};
+  }
   const client = await resolveTopicNodeClient(topic.chatId,topic.threadId);
   if (!client) throw new Error("Topic node unavailable");
   const options = (arguments_[0] ?? {}) as Options;
