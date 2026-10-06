@@ -84,3 +84,15 @@ test('provision requests await one explicit pool discovery without autonomous re
  await new Promise(resolve=>setImmediate(resolve));assert.equal(finished,false);const failure=new Error('Pool inventory unavailable');reject(failure);await assert.rejects(request,error=>error===failure);
  await assert.rejects(controller.request('provision',binding.nodeId,1),error=>error===failure);
 });
+
+test('Control configuration cleanup waits for four current signed unbound proofs and runs once',async()=>{
+ const {NodeBindingStore}=await import('../src/control-plane/node-bindings.js');
+ const home=await mkdtemp(path.join(tmpdir(),'root-cleanup-'));const filename=path.join(home,'bindings.json');const store=new NodeBindingStore(filename);
+ const registry=captureNodeRegistry({});const nodes=await store.ensurePoolSlots();let cleanups=0;let failFirst=true;
+ for(const node of nodes){await store.update(node.nodeId,1,{status:'available',endpoint:'https://worker.up.railway.app'});registry.install({binding:{nodeId:node.nodeId,generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)});}
+ const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected API');},probeUnbound:async nodeId=>{if(nodeId===nodes[0]!.nodeId&&failFirst)throw Error('probe failed');},onClusterVerified:async()=>{cleanups++;}});
+ await assert.rejects(controller.request('reconcile',nodes[0]!.nodeId,1),/probe failed/);
+ for(const node of nodes.slice(1))await controller.request('reconcile',node.nodeId,1);
+ assert.equal(cleanups,0);failFirst=false;await controller.request('reconcile',nodes[0]!.nodeId,1);assert.equal(cleanups,1);
+ await controller.request('reconcile',nodes[0]!.nodeId,1);assert.equal(cleanups,1);
+});

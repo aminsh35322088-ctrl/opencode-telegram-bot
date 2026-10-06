@@ -13,6 +13,7 @@ interface Options {
  pools?:[WorkerPool,WorkerPool];controlUrl?:string;coreCommit?:string;
  retireNode?(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>;
  probeUnbound?(nodeId:string,generation:number):Promise<unknown>;
+ onClusterVerified?():Promise<void>;
 }
 interface Seed {nodeId:string;generation:number;chatId:number;threadId:number;secret:string}
 /** Only inherited Bot IPC can invoke these fixed lifecycle operations. No Worker route provisions infrastructure. */
@@ -20,6 +21,8 @@ export class InfrastructureController {
  private provisioner?:NodeProvisioner;
  private poolConfiguration?:Promise<void>;
  private queue:Promise<unknown>=Promise.resolve();
+ private verifiedUnbound=new Map<string,number>();
+ private clusterVerified=false;
  constructor(private readonly options:Options){
   if(options.pools && options.controlUrl)this.configurePools(options.pools,options.controlUrl);
  }
@@ -87,11 +90,20 @@ export class InfrastructureController {
    this.options.registry.install({...identity,binding:{...identity.binding,status:binding.status}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
    if(binding.status==='available'&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
     try{await this.options.probeUnbound(nodeId,generation);}catch(error){
+     this.verifiedUnbound.delete(nodeId);
      this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
      await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
      throw error;
     }
     process.stdout.write(`[InfrastructureBoundary] worker_boundary_verified node=${nodeId} generation=${generation} health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n`);
+    this.verifiedUnbound.set(nodeId,generation);
+    if(!this.clusterVerified&&this.verifiedUnbound.size===4&&this.options.onClusterVerified){
+     const current=await Promise.all([...this.verifiedUnbound].map(async([id,verifiedGeneration])=>{
+      const canonical=await this.lookup(id);const registered=await this.options.registry.resolve(id);
+      return canonical?.generation===verifiedGeneration&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&registered.binding.status==='available';
+     }));
+     if(current.every(Boolean)){await this.options.onClusterVerified();this.clusterVerified=true;}
+    }
    }
    return {nodeId,generation,projectId:binding.projectId??'',environmentId:'',endpoint:identity.endpoint,serviceId:binding.serviceId,volumeId:binding.volumeId,phase:'deploying' as const};
   });this.queue=task.catch(()=>undefined);return task;

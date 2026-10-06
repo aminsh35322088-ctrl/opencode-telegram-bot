@@ -9,6 +9,7 @@ import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./con
 // credential never enters the shell, application, or runtime environment.
 const nodes=captureNodeRegistry(process.env);
 const infrastructure = createInfrastructureClient(process.env);
+const existingVariableNames=Object.keys(process.env);
 const runtimeConfig=resolveControlRuntimeConfig(process.env,infrastructure.configured,nodes.metadata().length>0);
 configureApplicationEnvironment(process.env,runtimeConfig);
 
@@ -54,7 +55,14 @@ async function main(): Promise<void> {
     const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
     const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
     const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
-    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation)});
+    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
+      if(!infrastructure.configured)return;
+      try{
+        const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
+        await cleanupDeprecatedControlVariables({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId,names:existingVariableNames});
+        process.stdout.write("[InfrastructureBoundary] control_variables_reconciled contract=secrets-and-user-settings\n");
+      }catch{process.stdout.write("[InfrastructureBoundary] control_variable_cleanup_pending\n");}
+    }});
     stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
     if(runtimeConfig.bootstrapEnabled){
       const poolConfiguration=(async()=>{let stage:'inventory'|'verify'='inventory';try{
