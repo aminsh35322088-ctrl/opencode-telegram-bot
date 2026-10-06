@@ -6,7 +6,7 @@ import type {InfrastructureNodeIdentity} from "./node-registry.js";
 
 const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","pause","resume","stop","retire"]);
 export class InfrastructureNodeTransport {
- constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch){}
+ constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch,private readonly wait:(milliseconds:number)=>Promise<void>=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))){}
  /** Bounded reconciliation evidence only. Never admits execution or exposes signing material. */
  async probeUnboundBoundary(nodeId:string,generation:number):Promise<{health:true;replayRejected:true;foreignTopicRejected:true;staleGenerationRejected:true}>{
   const identity=await this.registry.resolve(nodeId);
@@ -56,9 +56,24 @@ export class InfrastructureNodeTransport {
   return {identity,bound,signed};
  }
  async request(envelope:NodeEnvelope,signal?:AbortSignal):Promise<unknown>{
-  const {identity,bound,signed}=await this.prepare(envelope);
-  const response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:signal??AbortSignal.timeout(45_000)});
-  if(!response.ok)throw new Error("Node request failed");
+  const deadline=signal??AbortSignal.timeout(45_000);
+  const retryable=envelope.operation==="sync-global"&&envelope.chatId===0&&envelope.threadId===0&&envelope.sessionId===undefined;
+  for(let attempt=0;attempt<2;attempt++){
+   deadline.throwIfAborted();
+   const {identity,bound,signed}=await this.prepare(envelope);
+   const response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:deadline});
+   if(!response.ok){
+    let transient=[502,503,504].includes(response.status);
+    if(response.status===409&&retryable){
+     const rejection=await this.protocol.verify(await boundedBody(response,64*1024),response.headers.get("x-node-signature")??"",bound,identity.secret);
+     const payload=rejection.payload as {ok?:boolean;error?:string};
+     transient=rejection.operation===envelope.operation&&rejection.sessionId===undefined&&payload.ok===false&&payload.error==="operation rejected";
+    }else await response.body?.cancel();
+    if(!retryable||attempt!==0||!transient)throw new Error("Node request failed");
+    // Deployment promotion may briefly make the Control callback unroutable.
+    // Snapshot sync is idempotent; only this unbound startup operation retries.
+    await this.wait(2000);continue;
+   }
   const body=await boundedBody(response,10*1024*1024);
   const reply=await this.protocol.verify(body,response.headers.get("x-node-signature")??"",bound,identity.secret);
   if(reply.operation!==envelope.operation || reply.sessionId!==envelope.sessionId)throw new Error("Node response scope mismatch");
@@ -69,6 +84,8 @@ export class InfrastructureNodeTransport {
    }
   }
   return reply.payload;
+  }
+  throw new Error("Node request failed");
  }
  async *stream(envelope:NodeEnvelope,signal?:AbortSignal,onReady?:()=>void):AsyncIterable<NodeEnvelope>{
   if(envelope.operation!=="session.events")throw new Error("Unsupported node stream");
