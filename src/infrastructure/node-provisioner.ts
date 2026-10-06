@@ -27,6 +27,9 @@ export interface NodeProvisionerOptions {
   retireIdentity(nodeId: string, generation: number): Promise<void>;
   /** Bounded active provisioning delay; never used as an idle reconciliation loop. */
   wait?(milliseconds:number):Promise<void>;
+  /** Fixed stage names and resource metadata only; never variables or credentials. */
+  onStage?(stage:string):void;
+  onInventory?(inventory:Inventory):void;
   /** Install the root-private transport identity before the Worker can call back during startup. */
   configured?(binding: Readonly<NodeBinding>, node: Readonly<ProvisionedNode>): Promise<void>;
 }
@@ -70,12 +73,16 @@ export class NodeProvisioner {
     return binding;
   }
   private async mutate(document: string, variables: Record<string, unknown>): Promise<void> {
+    const stage=/^mutation ([A-Za-z]+)\(/.exec(document)?.[1];
+    if(stage)this.options.onStage?.(stage);
     const result = await this.options.request<Record<string, unknown>>(document, variables);
     if (!result || Object.values(result).some(value => value === false || value === null)) throw new Error("Railway resource mutation was rejected");
   }
   private async inventory(pool: WorkerPool): Promise<Inventory> {
+    this.options.onStage?.("WorkerInventory");
     const inventory = await this.options.request<Inventory>(INVENTORY, { projectId: pool.projectId, environmentId: pool.environmentId });
     if (inventory.project.id !== pool.projectId || inventory.environment.id !== pool.environmentId || inventory.environment.projectId !== pool.projectId || inventory.project.services.pageInfo.hasNextPage || inventory.project.volumes.pageInfo.hasNextPage || inventory.environment.serviceInstances.pageInfo.hasNextPage || inventory.project.volumes.edges.some(volume => volume.node.volumeInstances.pageInfo.hasNextPage)) throw new Error("Incomplete infrastructure inventory");
+    this.options.onInventory?.(inventory);
     return inventory;
   }
   provision(nodeId: string, generation: number): Promise<ProvisionedNode> {
@@ -106,6 +113,7 @@ export class NodeProvisioner {
         record.serviceId = candidates[0]?.node.id;
         if (!record.serviceId) {
           // An ambiguous create is never blindly retried: next invocation reconciles the fixed name first.
+          this.options.onStage?.("WorkerServiceCreate");
           const created = await this.options.request<{serviceCreate: {id: string}}>(`mutation WorkerService($input:ServiceCreateInput!){serviceCreate(input:$input){id}}`, {input:{projectId:pool.projectId,environmentId:pool.environmentId,name:serviceName}});
           record.serviceId = created.serviceCreate.id;
         }
@@ -123,7 +131,9 @@ export class NodeProvisioner {
       if (!record.volumeId) {
         record.volumeId = instances[0]?.volumeId;
         if (!record.volumeId) {
-          if (inventory.project.volumes.edges.length >= 3) throw new Error("Trial project volume capacity exhausted");
+          // Bare records and historical instances are not assumed to consume the
+          // active quota. Let Railway classify actual account/resource limits.
+          this.options.onStage?.("WorkerVolumeCreate");
           const volume = await this.options.request<{volumeCreate:{id:string}}>(`mutation WorkerVolume($input:VolumeCreateInput!){volumeCreate(input:$input){id}}`, {input:{projectId:pool.projectId,environmentId:null,serviceId:null,mountPath:"/data"}});
           record.volumeId = volume.volumeCreate.id;
         }

@@ -30,7 +30,10 @@ export class InfrastructureController {
  configurePools(pools:[WorkerPool,WorkerPool],controlUrl:string):void{
   if(this.provisioner)throw Error('Worker pools already configured');
   const options=this.options;
-  this.provisioner=new NodeProvisioner({request:options.request,pools,controlUrl,coreCommit:options.coreCommit,journalPath:path.join(options.stateDirectory,'provisioning.json'),lookup:id=>this.lookup(id),ensureIdentity:(binding,create)=>this.ensureIdentity(binding,create),retireIdentity:async(id,generation)=>{
+  this.provisioner=new NodeProvisioner({request:options.request,pools,controlUrl,coreCommit:options.coreCommit,journalPath:path.join(options.stateDirectory,'provisioning.json'),onStage:stage=>{process.stdout.write(`[InfrastructureBoundary] worker_provision_stage=${stage}\n`);},onInventory:inventory=>{
+   const volumes=inventory.project.volumes.edges.map(entry=>({volumeId:entry.node.id,instances:entry.node.volumeInstances.edges.map(item=>({environmentId:item.node.environmentId,serviceId:item.node.serviceId,sizeMB:item.node.sizeMB,mountPath:item.node.mountPath,pendingDeletion:item.node.isPendingDeletion}))}));
+   process.stdout.write(`[InfrastructureBoundary] worker_volume_inventory project=${inventory.project.id} volumes=${JSON.stringify(volumes)}\n`);
+  },lookup:id=>this.lookup(id),ensureIdentity:(binding,create)=>this.ensureIdentity(binding,create),retireIdentity:async(id,generation)=>{
    // Explicit Delete may terminate an offline/crashed owned container through
    // resource deletion after durable fencing. Reusing its volume for a handoff
    // below instead requires a signed successful Core retirement before rotation.
