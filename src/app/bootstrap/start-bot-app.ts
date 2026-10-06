@@ -52,6 +52,10 @@ async function getBotVersion(): Promise<string> {
  * persistent volume; startup reconcile guarantees every restart converges.
  */
 async function reconcileOrphanedTopicState(): Promise<void> {
+  if (process.env.CONTROL_PROVISION_WORKERS_ENABLED === "1") {
+    logger.info("[TelegramTopics] Distributed migration preserves unbound workspaces and runtime state");
+    return;
+  }
   try {
     const bindings = await listTelegramTopicBindings();
     const referencedDirectories = new Set(bindings.map((binding) => binding.directory));
@@ -212,6 +216,11 @@ export async function startBotApp(): Promise<void> {
   }));
   await initializeNativeCore(bot.api, coreBindings);
   if(process.env.CONTROL_DISTRIBUTED_INSPECTION==="1"){
+    const {opencodeReadyLifecycle}=await import("../../opencode/ready-lifecycle.js");
+    let inspected=false;
+    const inspectOnce=async()=>{if(inspected)return;inspected=true;const {inspectExistingTopicBindings}=await import("../../control-plane/topic-classification.js");await inspectExistingTopicBindings();};
+    if(opencodeReadyLifecycle.isReady())void inspectOnce();
+    else opencodeReadyLifecycle.onReady(inspectOnce);
     // One startup inventory for migration planning: identities only, never conversation,
     // workspace contents, credentials, or an idle outbound diagnostics loop.
     for(const binding of coreBindings)logger.info(`[DistributedInventory] topic chat=${binding.chatId} thread=${binding.threadId} session=${binding.sessionId}`);
