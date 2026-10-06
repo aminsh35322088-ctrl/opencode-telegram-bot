@@ -48,3 +48,5 @@ session-export-*
 manager/
 
 .core/
+.prisma-composer/
+.alchemy/
