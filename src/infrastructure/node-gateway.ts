@@ -82,7 +82,13 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
         const result=await transport.request(input.envelope,abort.signal);
         child.send({channel:"worker-response",requestId:input.requestId,ok:true,result});
       }
-    }catch{child.send({channel:input.stream?"worker-stream-end":"worker-response",requestId:input.requestId,ok:false});}
+    }catch(error){
+      const reasons=new Map([["Node transport denied","transport-denied"],["Unbound Worker operation denied","unbound-operation"],["Node identity denied","identity"],["Node session denied","session"],["Node request failed","http"],["Node response scope mismatch","response-scope"],["Invalid node signature","signature"],["Invalid node identity","response-identity"],["Invalid node timestamp","timestamp"],["Invalid node envelope","envelope"],["Node request replay rejected","replay"],["Replay admission capacity exceeded","replay-capacity"],["Node response too large","response-size"],["Missing node response","response-missing"]]);
+      const reason=error instanceof Error?(reasons.get(error.message)??(error.name==="AbortError"||error.name==="TimeoutError"?"timeout":"verification")):"verification";
+      const operation=typeof input.envelope.operation==="string"&&/^[a-z.-]{1,32}$/.test(input.envelope.operation)?input.envelope.operation:"invalid";
+      process.stdout.write(`[InfrastructureBoundary] worker_rpc_failed operation=${operation} reason=${reason}\n`);
+      child.send({channel:input.stream?"worker-stream-end":"worker-response",requestId:input.requestId,ok:false});
+    }
     finally{if(deadline)clearTimeout(deadline);outbound.delete(input.requestId);}
   });
   const server=createServer(async(request,response)=>{
