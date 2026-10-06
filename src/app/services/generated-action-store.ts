@@ -1,19 +1,14 @@
-import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
+import {
+  assertGlobalMutationBackend,
+  assertGeneratedActionMutationBackend,
+} from "../../control-plane/mutations.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 import { isRecord } from "../../utils/type-guards.js";
 import type { AgentActionRisk } from "./agent-action-registry.js";
 import { getStoredExtension } from "./extension-store.js";
 
-export type GeneratedActionInvocation =
-  | { kind: "mcp-tool"; tool: string; server?: string }
-  | { kind: "native-tool"; tool: string; arguments?: Record<string, string> }
-  | {
-      kind: "action-tool";
-      tool: string;
-      actionArgument: string;
-      actionValue: string;
-      arguments?: Record<string, string>;
-    };
+import { validateGeneratedActionInvocation, type GeneratedActionInvocation } from "./generated-action-invocation.js";
+export { validateGeneratedActionInvocation, type GeneratedActionInvocation } from "./generated-action-invocation.js";
 
 export interface GeneratedActionRecord {
   id: string;
@@ -59,7 +54,14 @@ function parseRecord(value: unknown): GeneratedActionRecord | null {
     typeof value.updatedAt !== "string"
   )
     return null;
-  return value as unknown as GeneratedActionRecord;
+  try {
+    return {
+      ...value,
+      invocation: validateGeneratedActionInvocation(value.invocation),
+    } as unknown as GeneratedActionRecord;
+  } catch {
+    return null;
+  }
 }
 
 function parseState(value: unknown): GeneratedActionState {
@@ -148,6 +150,69 @@ export async function listGeneratedActions(extensionId?: string): Promise<Genera
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+export async function validateGeneratedActionPack(
+  extensionId: string,
+  actions: Array<{
+    id: string;
+    tool: string;
+    action?: string;
+    category?: string;
+    description: string;
+    invocation?: GeneratedActionInvocation;
+  }>,
+) {
+  const extension = await getStoredExtension(extensionId);
+  if (!extension) throw new Error("Generated actions require an approved registered Extension.");
+  const namespace = generatedActionNamespace(extension.name);
+  if (!Array.isArray(actions) || actions.length > 100)
+    throw new Error("Generated action pack is bounded to 100 actions.");
+  const clean = actions.map((candidate) => {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.id !== "string" ||
+      typeof candidate.tool !== "string" ||
+      typeof candidate.description !== "string"
+    )
+      throw new Error("Invalid generated action candidate.");
+    const id = normalizeId(candidate.id);
+    if (!id.startsWith(namespace + ".")) {
+      throw new Error(`Generated action ${id} must use the Extension namespace ${namespace}.*`);
+    }
+    const tool = candidate.tool.trim();
+    if (!tool || tool.length > 128)
+      throw new Error(`Generated action ${id} has an invalid tool name.`);
+    if (
+      (candidate.action !== undefined && typeof candidate.action !== "string") ||
+      (candidate.category !== undefined && typeof candidate.category !== "string")
+    )
+      throw new Error("Invalid action metadata.");
+    const invocation = validateGeneratedActionInvocation(
+      candidate.invocation ?? { kind: "mcp-tool", tool },
+    );
+    if (
+      invocation.kind === "mcp-tool" &&
+      extension.resource.kind === "mcp" &&
+      invocation.server !== extension.resource.serverName
+    )
+      throw new Error("MCP invocation must target the owning Extension server.");
+    const action = candidate.action?.trim() || id.split(".").at(-1) || "invoke";
+    const description = candidate.description.trim().slice(0, 500);
+    if (!description) throw new Error(`Generated action ${id} requires a description.`);
+    return {
+      id,
+      tool,
+      action,
+      category: candidate.category?.trim().slice(0, 80) || "extension",
+      description,
+      invocation,
+    };
+  });
+
+  if (new Set(clean.map((item) => item.id)).size !== clean.length)
+    throw new Error("Duplicate generated action id.");
+  return clean;
+}
+
 export async function registerGeneratedActionPack(
   extensionId: string,
   actions: Array<{
@@ -160,30 +225,9 @@ export async function registerGeneratedActionPack(
   }>,
 ): Promise<GeneratedActionRecord[]> {
   const extension = await getStoredExtension(extensionId);
-  if (!extension) throw new Error("Generated actions require an approved registered Extension.");
-  const namespace = generatedActionNamespace(extension.name);
+  await assertGeneratedActionMutationBackend("register", extensionId, extension);
+  const clean = await validateGeneratedActionPack(extensionId, actions);
   const now = new Date().toISOString();
-  const clean = actions.slice(0, 100).map((candidate) => {
-    const id = normalizeId(candidate.id);
-    if (!id.startsWith(namespace + ".")) {
-      throw new Error(`Generated action ${id} must use the Extension namespace ${namespace}.*`);
-    }
-    const tool = candidate.tool.trim();
-    if (!tool || tool.length > 128)
-      throw new Error(`Generated action ${id} has an invalid tool name.`);
-    const action = candidate.action?.trim() || id.split(".").at(-1) || "invoke";
-    const description = candidate.description.trim().slice(0, 500);
-    if (!description) throw new Error(`Generated action ${id} requires a description.`);
-    return {
-      id,
-      tool,
-      action,
-      category: candidate.category?.trim().slice(0, 80) || "extension",
-      description,
-      invocation: candidate.invocation ?? { kind: "mcp-tool" as const, tool },
-    };
-  });
-
   let result: GeneratedActionRecord[] = [];
   await updateAppState((state) => {
     const current = parseState(state[STORE_KEY]);
@@ -203,7 +247,11 @@ export async function registerGeneratedActionPack(
       const record: GeneratedActionRecord = {
         ...candidate,
         extensionId,
-        risk: classifyRisk(candidate.id, candidate.action, candidate.tool),
+        risk: classifyRisk(
+          candidate.id,
+          candidate.action,
+          `${candidate.tool} ${candidate.invocation.tool} ${candidate.invocation.kind === "action-tool" ? candidate.invocation.actionValue : ""}`,
+        ),
         invocation: candidate.invocation,
         enabled: !userDisabled,
         userDisabled,
@@ -235,6 +283,11 @@ export async function setGeneratedActionEnabled(
 }
 
 export async function removeGeneratedActionsForExtension(extensionId: string): Promise<number> {
+  await assertGeneratedActionMutationBackend(
+    "remove",
+    extensionId,
+    await getStoredExtension(extensionId),
+  );
   let removed = 0;
   await updateAppState((state) => {
     const current = parseState(state[STORE_KEY]);

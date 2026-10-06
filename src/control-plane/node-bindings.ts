@@ -5,12 +5,13 @@ import { getRuntimePaths } from "../runtime/paths.js";
 
 export const MAX_AI_TOPICS = 4;
 export interface NodeBinding {
+  slot?: number; clusterId?: string;
   nodeId: string; chatId: number; threadId: number; generation: number;
   projectId?: string; serviceId?: string; volumeId?: string; endpoint?: string;
-  currentRevision: number; status: "reserved" | "provisioning" | "ready" | "retiring" | "retired" | "failed";
+  currentRevision: number; status: "reserved" | "provisioning" | "ready" | "retiring" | "retired" | "failed" | "pool-reserved" | "pool-provisioning" | "available";
   sessionId?: string; createdAt: string; updatedAt: string;
 }
-interface BindingState { version: 1; bindings: NodeBinding[] }
+interface BindingState { version: 1; clusterId?: string; bindings: NodeBinding[] }
 /** Single writer with persisted reservations. Failed/retiring reservations retain their slot until cleanup succeeds. */
 export class NodeBindingStore {
   private queue: Promise<unknown> = Promise.resolve();
@@ -24,18 +25,20 @@ export class NodeBindingStore {
     }
     const state = JSON.parse(raw) as BindingState;
     if (state.version !== 1 || !Array.isArray(state.bindings)) throw new Error("Invalid node binding state");
-    const nodes = new Set<string>(); const topics = new Set<string>();
+    const nodes = new Set<string>(); const topics = new Set<string>(); const slots=new Set<number>();
     for (const binding of state.bindings) {
-      if (!["reserved", "provisioning", "ready", "retiring", "retired", "failed"].includes(binding.status) || !Number.isSafeInteger(binding.currentRevision) || binding.currentRevision < 0 || !binding.nodeId || !Number.isSafeInteger(binding.generation) || binding.generation < 1 || !Number.isSafeInteger(binding.chatId) || !Number.isSafeInteger(binding.threadId) || binding.threadId <= 1) throw new Error("Invalid node identity");
+      if (!["reserved", "provisioning", "ready", "retiring", "retired", "failed", "pool-reserved", "pool-provisioning", "available"].includes(binding.status) || !Number.isSafeInteger(binding.currentRevision) || binding.currentRevision < 0 || !binding.nodeId || !Number.isSafeInteger(binding.generation) || binding.generation < 1 || !Number.isSafeInteger(binding.chatId) || !Number.isSafeInteger(binding.threadId) || (binding.chatId===0&&(binding.threadId!==0||binding.sessionId!==undefined)) || (binding.threadId <= 1 && !(binding.chatId===0 && binding.threadId===0 && binding.slot && ["pool-reserved","pool-provisioning","available","retiring","retired"].includes(binding.status)))) throw new Error("Invalid node identity");
       if (nodes.has(binding.nodeId)) throw new Error("Duplicate node identity");
       nodes.add(binding.nodeId);
       if (binding.status !== "retired") {
+        if(binding.slot!==undefined){if(!Number.isInteger(binding.slot)||binding.slot<1||binding.slot>4||slots.has(binding.slot)||binding.clusterId!==state.clusterId)throw new Error("Invalid cluster slot ownership");slots.add(binding.slot);}
+        if(binding.chatId===0 && binding.threadId===0)continue;
         const topic = `${binding.chatId}:${binding.threadId}`;
         if (topics.has(topic)) throw new Error("Duplicate active topic binding");
         topics.add(topic);
       }
     }
-    if (topics.size > MAX_AI_TOPICS) throw new Error("Node capacity exceeded in persisted state");
+    if (state.bindings.filter(binding=>binding.status!=="retired").length > MAX_AI_TOPICS) throw new Error("Node capacity exceeded in persisted state");
     return state;
   }
   private transaction<T>(change: (state: BindingState) => T | Promise<T>): Promise<T> {
@@ -55,13 +58,32 @@ export class NodeBindingStore {
   }
   async list(): Promise<NodeBinding[]> { await this.queue; return structuredClone((await this.read()).bindings); }
   async find(chatId: number, threadId: number): Promise<NodeBinding | undefined> {
+    if(threadId<=1)return undefined;
     return (await this.list()).find((binding) => binding.chatId === chatId && binding.threadId === threadId && binding.status !== "retired");
+  }
+  /** Persistent four-slot Cluster Manifest. Available Workers have no Telegram ownership. */
+  ensurePoolSlots():Promise<NodeBinding[]>{
+    return this.transaction(state=>{
+      if(state.bindings.some(binding=>binding.status!=="retired" && !binding.slot))throw new Error("Legacy Node ownership requires explicit reconciliation");
+      state.clusterId??=randomUUID();
+      for(let slot=1;slot<=4;slot++){
+        if(state.bindings.some(binding=>binding.slot===slot && binding.status!=="retired"))continue;
+        const now=new Date().toISOString();
+        state.bindings.push({nodeId:randomUUID(),clusterId:state.clusterId,slot,generation:1,chatId:0,threadId:0,currentRevision:0,status:"pool-reserved",createdAt:now,updatedAt:now});
+      }
+      return state.bindings.filter(binding=>binding.status!=="retired").sort((a,b)=>a.slot!-b.slot!);
+    });
   }
   reserve(chatId: number, threadId: number): Promise<NodeBinding> {
     return this.transaction((state) => {
-      if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("AI node requires a Telegram Topic");
+      if (chatId===0 || !Number.isSafeInteger(chatId) || !Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("AI node requires a Telegram Topic");
       const existing = state.bindings.find((binding) => binding.chatId === chatId && binding.threadId === threadId && binding.status !== "retired");
       if (existing) return existing;
+      if(state.clusterId){
+        const available=state.bindings.find(binding=>binding.status==="available" && binding.chatId===0 && binding.threadId===0);
+        if(!available){if(state.bindings.filter(binding=>binding.status!=="retired" && binding.threadId>1).length>=MAX_AI_TOPICS)throw new Error("Maximum four AI Topics reached");throw new Error("Cluster Workers are not ready");}
+        available.generation++;available.chatId=chatId;available.threadId=threadId;available.status="reserved";available.updatedAt=new Date().toISOString();return available;
+      }
       if (state.bindings.filter((binding) => binding.status !== "retired").length >= MAX_AI_TOPICS) throw new Error("Maximum four AI Topics reached");
       const now = new Date().toISOString();
       const binding: NodeBinding = { nodeId: randomUUID(), chatId, threadId, generation: 1, currentRevision: 0, status: "reserved", createdAt: now, updatedAt: now };
@@ -74,6 +96,9 @@ export class NodeBindingStore {
       if (!binding || binding.generation !== generation || binding.status === "retired") throw new Error("Stale node generation");
       if (patch.currentRevision !== undefined && patch.currentRevision < binding.currentRevision) throw new Error("Global revision cannot regress");
       if (patch.endpoint && (new URL(patch.endpoint).protocol !== "https:" || new URL(patch.endpoint).username || new URL(patch.endpoint).password)) throw new Error("Node transport requires HTTPS");
+      if (patch.status === "available" && (binding.chatId!==0||binding.threadId!==0||!binding.slot||!(patch.endpoint??binding.endpoint)))throw new Error("Available Worker requires unbound slot and endpoint");
+      if(binding.chatId===0&&binding.threadId===0&&patch.sessionId!==undefined)throw new Error("Unbound Worker cannot own a session");
+      if(patch.status==="ready"&&(binding.chatId===0||binding.threadId<=1))throw new Error("Ready Worker requires a bound Telegram Topic");
       if (patch.status === "ready" && !(patch.endpoint ?? binding.endpoint)) throw new Error("Ready node requires endpoint");
       Object.assign(binding, patch, { updatedAt: new Date().toISOString() }); return binding;
     });

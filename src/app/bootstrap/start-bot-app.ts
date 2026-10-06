@@ -241,6 +241,13 @@ export async function startBotApp(): Promise<void> {
     bot,
     createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId),
   );
+  if(process.env.CONTROL_CLUSTER_BOOTSTRAP_ENABLED==="1"){
+    safeBackgroundTask({taskName:"app.workerClusterBootstrap",task:async()=>{
+      const {topicNodeLifecycle}=await import("../../control-plane/topic-node-lifecycle.js");
+      const workers=await topicNodeLifecycle.bootstrapPool();
+      for(const worker of workers)logger.info(`[WorkerCluster] slot=${worker.slot} node=${worker.nodeId} generation=${worker.generation} status=${worker.status} project=${worker.projectId} service=${worker.serviceId} volume=${worker.volumeId} revision=${worker.currentRevision}`);
+    }});
+  }
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog();
   runtimeObservabilityWatchdog.start();
   safeBackgroundTask({

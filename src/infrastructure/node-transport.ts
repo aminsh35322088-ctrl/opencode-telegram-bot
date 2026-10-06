@@ -14,12 +14,13 @@ export class InfrastructureNodeTransport {
   const response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(15_000)});
   if(!response.ok)throw new Error("Fenced node retirement failed");
   const reply=await this.protocol.verify(await boundedBody(response,10*1024*1024),response.headers.get("x-node-signature")??"",{nodeId,generation,chatId,threadId},identity.secret);
-  if(reply.operation!=="retire" || reply.sessionId!==sessionId || !(reply.payload as {ok?:boolean}).ok)throw new Error("Fenced node retirement denied");
+  if(reply.operation!=="retire" || reply.sessionId!==sessionId || (reply.payload as {ok?:boolean;result?:{retired?:boolean}}).ok!==true || (reply.payload as {result?:{retired?:boolean}}).result?.retired!==true)throw new Error("Fenced node retirement denied");
  }
  private async prepare(envelope:NodeEnvelope){
   const identity=await this.registry.resolve(envelope.nodeId);
   if(!identity || identity.binding.status==="retiring" || identity.binding.status==="retired" || !operations.has(envelope.operation))throw new Error("Node transport denied");
   const {nodeId,generation,chatId,threadId}=identity.binding;
+  if(chatId===0 && threadId===0 && !["health","status","sync-global"].includes(envelope.operation))throw new Error("Unbound Worker operation denied");
   const bound:NodeIdentity={nodeId,generation,chatId,threadId};
   if(Object.entries(bound).some(([key,value])=>envelope[key as keyof NodeIdentity]!==value))throw new Error("Node identity denied");
   if(!["health","status","sync-global","session.create","retire"].includes(envelope.operation) && (!identity.binding.sessionId || envelope.sessionId!==identity.binding.sessionId))throw new Error("Node session denied");

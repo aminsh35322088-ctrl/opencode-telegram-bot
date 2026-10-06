@@ -21,11 +21,11 @@ export function installInfrastructureTransport():void{
  const streams=new Map<string,{events:NodeEnvelope[];ended:boolean;error?:Error;wake?:()=>void;onReady?:()=>void}>();
  process.on("message",(message:unknown)=>{
   if(!message||typeof message!=="object")return;
-  const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope};
+  const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope;errorCode?:string;httpStatus?:number};
   if(!response.requestId)return;
   if(response.channel==="worker-response" || response.channel==="infrastructure-response"){
    const wait=waits.get(response.requestId);if(!wait)return;waits.delete(response.requestId);
-   if(response.ok)wait.resolve(response.result);else wait.reject(new Error("Node transport failed"));
+   if(response.ok)wait.resolve(response.result);else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})`:"Node transport failed"));
   }else if(response.channel==="worker-stream-ready"){
    streams.get(response.requestId)?.onReady?.();
   }else if(response.channel==="worker-event" || response.channel==="worker-stream-end"){

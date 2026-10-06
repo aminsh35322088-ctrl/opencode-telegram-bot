@@ -33,7 +33,7 @@ import {
 import { saveStoredExtension } from "../../../src/app/services/extension-store.js";
 import {
   listGeneratedActions,
-  registerGeneratedActionPack,
+  registerGeneratedActionPack as rawRegisterGeneratedActionPack,
   setGeneratedActionEnabled as rawSetGeneratedActionEnabled,
 } from "../../../src/app/services/generated-action-store.js";
 import {
@@ -126,3 +126,6 @@ describe("retained Extension and Actions persistence", () => {
     });
   });
 });
+
+// Fixtures model an explicit approved Telegram UI pack operation.
+const registerGeneratedActionPack = (...args: Parameters<typeof rawRegisterGeneratedActionPack>) => runTrustedTelegramGlobalMutation("generated-actions.register", args[0], () => rawRegisterGeneratedActionPack(...args));

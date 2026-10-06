@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { config } from "../config.js";
 import { isContainerRuntime } from "../runtime/container.js";
 import { logger } from "../utils/logger.js";
@@ -8,8 +9,7 @@ import {
   killServerProcess,
   resolveLocalOpencodeTarget,
   startLocalOpencodeServer,
-  type LocalOpencodeTarget,
-} from "./process.js";
+  type LocalOpencodeTarget } from "./process.js";
 
 const SERVER_READY_TIMEOUT_MS = 15000;
 const SERVER_READY_POLL_INTERVAL_MS = 500;
@@ -78,8 +78,25 @@ export class OpencodeAutoRestartService {
   private consecutiveHealthFailures = 0;
   private managedServerPid: number | null = null;
 
+  private essentialFailed = false;
+  private managedChild: {
+    child: ChildProcess;
+    completion: Promise<boolean>;
+    planned: boolean;
+  } | null = null;
+
+  constructor(private readonly exitEssentialApplication: (code: number) => void = (code) => process.exit(code)) {}
+
+  private failEssential(reason: string): void {
+    if (this.essentialFailed) return;
+    this.essentialFailed = true;
+    logger.error(`[OpenCodeAutoRestart] Essential Core authority lost: ${reason}`);
+    this.stop();
+    this.exitEssentialApplication(75);
+  }
+
   async start(): Promise<boolean> {
-    if (this.started || !config.opencode.autoRestartEnabled) return false;
+    if (this.essentialFailed || this.started || !config.opencode.autoRestartEnabled) return false;
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
       logger.warn(`[OpenCodeAutoRestart] Disabled because OPENCODE_API_URL is not local: ${config.opencode.apiUrl}`);
@@ -90,8 +107,11 @@ export class OpencodeAutoRestartService {
     this.started = true;
     this.localTarget = localTarget;
     this.consecutiveHealthFailures = 0;
-    logger.info(`[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}, healthTimeoutMs=${HEALTH_CHECK_TIMEOUT_MS}, failuresBeforeRestart=${HEALTH_FAILURES_BEFORE_RESTART}`);
+    logger.info(
+      `[OpenCodeAutoRestart] Enabled: host=${localTarget.host}, port=${localTarget.port}, intervalSec=${config.opencode.monitorIntervalSec}, container=${container}, spawnInContainer=${spawnInContainer}, healthTimeoutMs=${HEALTH_CHECK_TIMEOUT_MS}, failuresBeforeRestart=${HEALTH_FAILURES_BEFORE_RESTART}`,
+    );
     await this.checkAndRestart("startup");
+    if (this.essentialFailed) return false;
     this.timer = setInterval(() => void this.checkAndRestart("interval"), config.opencode.monitorIntervalSec * 1000);
     this.timer.unref?.();
     return true;
@@ -117,10 +137,8 @@ export class OpencodeAutoRestartService {
     return this.restartManagedServer("memory", reason);
   }
 
-  private async restartManagedServer(
-    source: "config" | "memory",
-    reason: string,
-  ): Promise<boolean> {
+  private async restartManagedServer(source: "config" | "memory",
+    reason: string): Promise<boolean> {
     if (!this.started || !this.localTarget || this.checkInProgress) return false;
 
     this.checkInProgress = true;
@@ -138,6 +156,7 @@ export class OpencodeAutoRestartService {
       }
       return await this.startServer(source);
     } catch (error) {
+      if (isContainerRuntime()) this.failEssential("planned Core restart failed");
       logger.error(`[OpenCodeAutoRestart] Failed ${source} restart: reason=${reason}`, error);
       return false;
     } finally {
@@ -171,6 +190,7 @@ export class OpencodeAutoRestartService {
       opencodeReadyLifecycle.notifyUnavailable(`auto_restart_${reason}`);
       await this.startServer(reason);
     } catch (error) {
+      if (isContainerRuntime()) this.failEssential("Core recovery failed");
       logger.error("[OpenCodeAutoRestart] Failed to check or restart OpenCode server", error);
     } finally {
       this.checkInProgress = false;
@@ -195,24 +215,42 @@ export class OpencodeAutoRestartService {
     }
   }
 
-  private async stopExistingServerIfNeeded(): Promise<void> {
-    if (!this.localTarget) return;
+  private async stopExistingServerIfNeeded(reason: "startup" | "interval" | "config" | "memory"): Promise<boolean> {
+    if (!this.localTarget) return false;
 
     const existingPid = await findServerPid(this.localTarget.port);
-    if (existingPid === null) return;
+    if (isContainerRuntime()) {
+      const managed = this.managedChild;
+      if (!managed && existingPid === null) return !this.essentialFailed;
+      if (!managed || (existingPid !== null && existingPid !== managed.child.pid) || (reason !== "config" && reason !== "memory") || this.essentialFailed) {
+        this.failEssential("listener retirement has no intentional owned replacement");
+        return false;
+      }
+      managed.planned = true;
+      const stopped = await killServerProcess(managed.child.pid!);
+      const joined = await withTimeout(managed.completion, 10_000);
+      if (!stopped || joined !== true || this.essentialFailed) {
+        this.failEssential("planned Core retirement was not joined exit0");
+        return false;
+      }
+      this.managedChild = null;
+      return true;
+    }
+    if (existingPid === null) return true;
 
     if (existingPid === process.pid) {
       logger.error(`[OpenCodeAutoRestart] Refusing to stop bot process that owns OpenCode port: pid=${existingPid}, port=${this.localTarget.port}`);
-      return;
+      return true;
     }
 
     logger.warn(`[OpenCodeAutoRestart] Existing listener found before recovery: pid=${existingPid}, port=${this.localTarget.port}; stopping it before spawn`);
     const stopped = await killServerProcess(existingPid);
     logger.info(`[OpenCodeAutoRestart] Existing OpenCode listener stop result: pid=${existingPid}, stopped=${stopped}`);
+    return true;
   }
 
   private async startServer(reason: "startup" | "interval" | "config" | "memory"): Promise<boolean> {
-    if (!this.localTarget) return false;
+    if (!this.localTarget || this.essentialFailed) return false;
     if (isContainerRuntime() && !shouldSpawnLocalServerInContainer()) {
       logger.warn(`[OpenCodeAutoRestart] OpenCode server is unavailable; local spawn is disabled in this container. Set OPENCODE_AUTO_START_IN_CONTAINER=true to enable it.`);
       return false;
@@ -225,22 +263,55 @@ export class OpencodeAutoRestartService {
           ? "Memory reclaim"
           : `Recovery after ${HEALTH_FAILURES_BEFORE_RESTART} consecutive failed checks`;
     logger.info(`[OpenCodeAutoRestart] ${prefix}: preparing local OpenCode server on port=${this.localTarget.port}`);
-    await this.stopExistingServerIfNeeded();
+    if (!(await this.stopExistingServerIfNeeded(reason))) return false;
     logger.info(`[OpenCodeAutoRestart] ${prefix}: starting local OpenCode server on port=${this.localTarget.port}`);
-    const childProcess = await startLocalOpencodeServer(this.localTarget);
+    let childProcess: ChildProcess;
+    try {
+      childProcess = await startLocalOpencodeServer(this.localTarget);
+    } catch (error) {
+      if (isContainerRuntime()) this.failEssential("Core spawn failed");
+      throw error;
+    }
     const pid = childProcess.pid ?? null;
     this.managedServerPid = pid;
-    childProcess.once("error", (error) => logger.error(`[OpenCodeAutoRestart] OpenCode server process failed to start: pid=${pid ?? "unknown"}`, error));
-    childProcess.once("exit", (code, signal) => {
+    // Capture completion before readiness or any further await. Terminal fields
+    // also catch completion between the asynchronous spawn return and this code.
+    let joined!: (normal: boolean) => void;
+    const managed = {
+      child: childProcess,
+      planned: false,
+      completion: new Promise<boolean>((resolve) => {
+        joined = resolve;
+      }),
+    };
+    this.managedChild = managed;
+    childProcess.once("error", (error) => {
+      joined(false);
+      logger.error(`[OpenCodeAutoRestart] OpenCode server process failed to start: pid=${pid ?? "unknown"}`, error);
+      if (isContainerRuntime()) this.failEssential("Core spawn error");
+    });
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      joined(code === 0 && signal === null);
+      if (isContainerRuntime() && !(managed.planned && code === 0 && signal === null)) {
+        this.failEssential(`Core exit code=${code} signal=${signal}`);
+      }
       if (this.managedServerPid === pid) this.managedServerPid = null;
       logger.error(`[OpenCodeAutoRestart] OpenCode server exited: pid=${pid ?? "unknown"}, code=${code ?? "null"}, signal=${signal ?? "none"}`);
-      if (this.serverWasHealthy && this.started) {
+      if (!isContainerRuntime() && this.serverWasHealthy && this.started) {
         void this.recoverAfterUnexpectedExit(pid ?? -1);
       }
-    });
+    };
+    childProcess.once("exit", onExit);
+    if (childProcess.exitCode != null || childProcess.signalCode != null) {
+      onExit(childProcess.exitCode, childProcess.signalCode);
+    }
+    if (isContainerRuntime() && pid === null) this.failEssential("Core spawn returned no PID");
+    if (this.essentialFailed) return false;
     childProcess.unref();
     const ready = await waitForOpencodeServerReady(SERVER_READY_TIMEOUT_MS);
+    if (this.essentialFailed) return false;
     if (!ready) {
+      if (isContainerRuntime()) this.failEssential("Core readiness was not confirmed");
       if (this.managedServerPid === pid) this.managedServerPid = null;
       logger.warn(`[OpenCodeAutoRestart] OpenCode server was started but did not become ready: pid=${pid ?? "unknown"}, port=${this.localTarget.port}`);
       return false;

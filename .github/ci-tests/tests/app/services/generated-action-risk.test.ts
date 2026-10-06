@@ -1,7 +1,7 @@
 import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  registerGeneratedActionPack,
+  registerGeneratedActionPack as rawRegisterGeneratedActionPack,
   setGeneratedActionEnabled as rawSetGeneratedActionEnabled,
 } from "../../../src/app/services/generated-action-store.js";
 import { saveStoredExtension } from "../../../src/app/services/extension-store.js";
@@ -78,3 +78,6 @@ describe("generated action risk classification", () => {
     await expect(setGeneratedActionEnabled("probe.list-deployments", false)).resolves.toMatchObject({ risk: "read" });
   });
 });
+
+// Fixtures model an explicit approved Telegram UI pack operation.
+const registerGeneratedActionPack = (...args: Parameters<typeof rawRegisterGeneratedActionPack>) => runTrustedTelegramGlobalMutation("generated-actions.register", args[0], () => rawRegisterGeneratedActionPack(...args));

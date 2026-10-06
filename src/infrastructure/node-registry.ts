@@ -17,14 +17,14 @@ export function captureNodeRegistry(environment:NodeJS.ProcessEnv) {
       const binding=identity?.binding;
       const endpoint=new URL(identity.endpoint);
       if(!binding || !binding.nodeId || !Number.isSafeInteger(binding.generation) || binding.generation<1 ||
-         !Number.isSafeInteger(binding.chatId) || !Number.isSafeInteger(binding.threadId) || binding.threadId<=1 ||
+         !Number.isSafeInteger(binding.chatId) || (binding.chatId===0&&(binding.threadId!==0||binding.sessionId!==undefined)) || !Number.isSafeInteger(binding.threadId) || (binding.threadId<=1 && !(binding.chatId===0 && binding.threadId===0 && ["provisioning","pool-provisioning","available","retiring","retired"].includes(binding.status))) ||
          typeof identity.secret!=="string" || identity.secret.length<64 || !/^[a-zA-Z0-9_-]+$/.test(identity.secret) ||
          endpoint.protocol!=="https:" || !endpoint.hostname.endsWith(".up.railway.app") || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname!=="/") throw new Error("Invalid infrastructure node identity");
       const topic=`${binding.chatId}:${binding.threadId}`;
-      if(identities.has(binding.nodeId) || (binding.status!=="retired" && topics.has(topic))) throw new Error("Duplicate infrastructure node identity");
-      if(binding.status!=="retired")topics.add(topic);identities.set(binding.nodeId,structuredClone(identity));
+      if(identities.has(binding.nodeId) || (binding.status!=="retired" && binding.threadId>1 && topics.has(topic))) throw new Error("Duplicate infrastructure node identity");
+      if(binding.status!=="retired" && binding.threadId>1)topics.add(topic);identities.set(binding.nodeId,structuredClone(identity));
     }
-    if(topics.size>4)throw new Error("Infrastructure node capacity exceeded");
+    if(Array.from(identities.values()).filter(item=>item.binding.status!=="retired").length>4)throw new Error("Infrastructure node capacity exceeded");
   }
   return {
     metadata:()=>Array.from(identities.values(),({binding,endpoint})=>({...binding,endpoint})),
@@ -34,7 +34,7 @@ export function captureNodeRegistry(environment:NodeJS.ProcessEnv) {
       const existing=identities.get(identity.binding.nodeId);
       if(existing && identity.binding.generation<existing.binding.generation)throw new Error("Stale infrastructure identity");
       if(identity.binding.status!=="retired" && (!existing || existing.binding.status==="retired") && Array.from(identities.values()).filter(item=>item.binding.status!=="retired").length>=4)throw new Error("Infrastructure node capacity exceeded");
-      if(identity.binding.status!=="retired" && Array.from(identities.values()).some(item=>item.binding.nodeId!==identity.binding.nodeId && item.binding.chatId===identity.binding.chatId && item.binding.threadId===identity.binding.threadId && item.binding.status!=="retired"))throw new Error("Duplicate infrastructure topic ownership");
+      if(identity.binding.status!=="retired" && identity.binding.threadId>1 && Array.from(identities.values()).some(item=>item.binding.nodeId!==identity.binding.nodeId && item.binding.chatId===identity.binding.chatId && item.binding.threadId===identity.binding.threadId && item.binding.status!=="retired"))throw new Error("Duplicate infrastructure topic ownership");
       identities.set(identity.binding.nodeId,structuredClone(identity));
     },
     load:async(filename:string)=>{

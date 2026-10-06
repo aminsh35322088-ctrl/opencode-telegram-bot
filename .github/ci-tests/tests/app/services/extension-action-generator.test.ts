@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -35,7 +36,7 @@ describe("automatic Skill Action generation", () => {
     };
     await saveStoredExtension(extension);
 
-    await expect(generateExtensionActions(extension)).resolves.toBe(1);
+    await expect(runTrustedTelegramGlobalMutation("skills.add", extension.resource.skillName, () => generateExtensionActions(extension))).resolves.toBe(1);
     await expect(listGeneratedActions(extension.id)).resolves.toEqual([
       expect.objectContaining({
         id: "deploy.check.load",

@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -29,7 +30,7 @@ import {
 } from "../../../src/app/services/extension-store.js";
 import {
   listGeneratedActions,
-  registerGeneratedActionPack,
+  registerGeneratedActionPack as rawRegisterGeneratedActionPack,
 } from "../../../src/app/services/generated-action-store.js";
 
 describe("removed OmniRouter and automatic Extension state cleanup", () => {
@@ -112,6 +113,7 @@ describe("removed OmniRouter and automatic Extension state cleanup", () => {
       id: "graphify.query",
       tool: "graphify_query",
       description: "Query Graphify.",
+      invocation: { kind: "mcp-tool", server: "graphify", tool: "graphify_query" },
     }]);
     await registerGeneratedActionPack("skill:deploy-check", [{
       id: "deploy.check.load",
@@ -158,3 +160,6 @@ describe("removed OmniRouter and automatic Extension state cleanup", () => {
     }
   });
 });
+
+// Fixtures model an explicit approved Telegram UI pack operation.
+const registerGeneratedActionPack = (...args: Parameters<typeof rawRegisterGeneratedActionPack>) => runTrustedTelegramGlobalMutation("generated-actions.register", args[0], () => rawRegisterGeneratedActionPack(...args));

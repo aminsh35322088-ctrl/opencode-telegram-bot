@@ -1,3 +1,4 @@
+import { validateGeneratedActionInvocation } from "../app/services/generated-action-invocation.js";
 import { readPublicGlobalCatalog } from "../app/services/free-llm-catalog-service.js";
 import { projectGlobalModelCatalog } from "../app/services/global-model-catalog-service.js";
 import { createHash } from "node:crypto";
@@ -283,7 +284,14 @@ export async function materializeGlobalSnapshot(state: AppState): Promise<Global
     hash: "",
     configuration,
     skills: await loadSkills(),
-    actions: records(state.generatedActions),
+    actions: records(state.generatedActions).map((item) => {
+      const action = item as Record<string, unknown>;
+      const original = record(record(record(state.generatedActions).records)[String(action.id)]);
+      try {
+        const invocation = validateGeneratedActionInvocation(original.invocation);
+        return {...action, invocation};
+      } catch { return {...action, enabled: false, invocation: undefined}; }
+    }),
     catalog: {
       entries: projectGlobalModelCatalog(runtime, state),
       publicProviders: publicCatalog.providers.map((item) => ({

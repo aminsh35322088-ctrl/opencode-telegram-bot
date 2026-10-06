@@ -8,6 +8,13 @@ import {captureNodeRegistry} from "./node-registry.js";
 // credential never enters the shell, application, or runtime environment.
 const nodes=captureNodeRegistry(process.env);
 const infrastructure = createInfrastructureClient(process.env);
+// Supplying the normal infrastructure credential enables safe cluster bootstrap.
+// Only this boolean and non-secret configuration reach the application.
+if(infrastructure.configured){
+  process.env.CONTROL_INFRASTRUCTURE_ENABLED??="1";
+  process.env.CONTROL_PROVISION_WORKERS_ENABLED??="1";
+  process.env.CONTROL_CLUSTER_BOOTSTRAP_ENABLED??="1";
+}
 
 async function main(): Promise<void> {
   if (process.getuid?.() !== 0) throw new Error("Infrastructure launcher requires a separate privileged identity");
@@ -50,17 +57,21 @@ async function main(): Promise<void> {
     const pools=process.env.CONTROL_WORKER_POOLS?JSON.parse(process.env.CONTROL_WORKER_POOLS):undefined;
     const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
     const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
-    const controller=new InfrastructureController({registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,controlUrl:process.env.CONTROL_PUBLIC_URL,retireNode:identity=>retirementTransport.retireFenced(identity)});
+    const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
+    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,controlUrl:process.env.CONTROL_PUBLIC_URL,retireNode:identity=>retirementTransport.retireFenced(identity)});
     stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
     if(!pools && process.env.CONTROL_PROVISION_WORKERS_ENABLED==="1"){
-      void (async()=>{let stage:'inventory'|'verify'='inventory';try{
+      const poolConfiguration=(async()=>{let stage:'inventory'|'verify'='inventory';try{
         const {resolveWorkerPools}=await import("./worker-pools.js");
+        const {resolveControlUrl}=await import("./control-location.js");
+        const controlUrl=await resolveControlUrl({request:infrastructure.request,projectId:process.env.RAILWAY_PROJECT_ID??process.env.CONTROL_PROJECT_ID??"",environmentId:process.env.RAILWAY_ENVIRONMENT_ID??process.env.CONTROL_ENVIRONMENT_ID??"",serviceId:process.env.RAILWAY_SERVICE_ID??"",publicUrl:process.env.CONTROL_PUBLIC_URL});
         try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
         process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);}catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
-        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId:process.env.CONTROL_WORKSPACE_ID??"",controlProjectId:process.env.RAILWAY_PROJECT_ID??process.env.CONTROL_PROJECT_ID??"",controlEnvironmentId:process.env.RAILWAY_ENVIRONMENT_ID??process.env.CONTROL_ENVIRONMENT_ID??"",workerProjectId:process.env.CONTROL_WORKER_A_PROJECT_ID??"",workerEnvironmentId:process.env.CONTROL_WORKER_A_ENVIRONMENT_ID??"",region:process.env.CONTROL_WORKER_REGION??"europe-west4-drams3a",onStage:value=>{stage=value;}});
-        controller.configurePools(resolved,process.env.CONTROL_PUBLIC_URL??"");
+        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId:process.env.CONTROL_WORKSPACE_ID||undefined,controlProjectId:process.env.RAILWAY_PROJECT_ID??process.env.CONTROL_PROJECT_ID??"",controlEnvironmentId:process.env.RAILWAY_ENVIRONMENT_ID??process.env.CONTROL_ENVIRONMENT_ID??"",workerProjectId:process.env.CONTROL_WORKER_A_PROJECT_ID||undefined,workerEnvironmentId:process.env.CONTROL_WORKER_A_ENVIRONMENT_ID||undefined,region:process.env.CONTROL_WORKER_REGION??"europe-west4-drams3a",onStage:value=>{stage=value;}});
+        controller.configurePools(resolved,controlUrl);
         for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity}\n`);
-      }catch(error){const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);}})();
+      }catch(error){const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);throw error;}})();
+      controller.waitForPoolConfiguration(poolConfiguration);
     }
 
     // Read plan metadata once per deployment; this is not a provisioning retry loop.

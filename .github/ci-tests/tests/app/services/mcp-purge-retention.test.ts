@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,7 +22,7 @@ import { cleanupLegacyUserConfiguration } from "../../../src/app/services/persis
 import { listStoredExtensions, saveStoredExtension } from "../../../src/app/services/extension-store.js";
 import {
   listGeneratedActions,
-  registerGeneratedActionPack,
+  registerGeneratedActionPack as rawRegisterGeneratedActionPack,
 } from "../../../src/app/services/generated-action-store.js";
 
 describe("startup cleanup keeps bot-managed MCP Extensions", () => {
@@ -114,3 +115,6 @@ describe("startup cleanup keeps bot-managed MCP Extensions", () => {
     expect(await listGeneratedActions()).toEqual([]);
   });
 });
+
+// Fixtures model an explicit approved Telegram UI pack operation.
+const registerGeneratedActionPack = (...args: Parameters<typeof rawRegisterGeneratedActionPack>) => runTrustedTelegramGlobalMutation("generated-actions.register", args[0], () => rawRegisterGeneratedActionPack(...args));

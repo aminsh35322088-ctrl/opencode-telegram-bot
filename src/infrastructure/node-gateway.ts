@@ -1,3 +1,4 @@
+import {InfrastructureRequestError} from "./railway-client.js";
 import {createServer} from "node:http";
 import type {ChildProcess} from "node:child_process";
 import {randomUUID} from "node:crypto";
@@ -22,7 +23,7 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
     try{
       let revision:number;
       do{revision=desiredRevision;
-        await Promise.allSettled(registry.metadata().filter(binding=>binding.status==="ready").map(binding=>transport.request({version:1,nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,sessionId:binding.sessionId,operation:"sync-global",payload:{revision},timestamp:Date.now(),nonce:randomUUID()})));
+        await Promise.allSettled(registry.metadata().filter(binding=>["ready","available"].includes(binding.status)).map(binding=>transport.request({version:1,nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,sessionId:binding.sessionId,operation:"sync-global",payload:{revision},timestamp:Date.now(),nonce:randomUUID()})));
       }while(revision<desiredRevision);
     }finally{reconciling=false;}
   }
@@ -53,7 +54,13 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
       if(!controller||infrastructureActive>=4||!input.operation||!input.nodeId||!input.generation){child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false});return;}
       infrastructureActive++;
       try{const result=await controller.request(input.operation,input.nodeId,input.generation);child.send({channel:"infrastructure-response",requestId:input.requestId,ok:true,result});}
-      catch{child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false});}
+      catch(error){
+        const category=error instanceof InfrastructureRequestError?error.category:"verification";
+        const http=error instanceof InfrastructureRequestError?error.status:0;
+        const stage=error instanceof InfrastructureRequestError?error.operation:"verification";
+        process.stdout.write(`[InfrastructureBoundary] worker_operation_failed stage=${stage} category=${category} http=${http}\n`);
+        child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false,errorCode:category,httpStatus:http});
+      }
       finally{infrastructureActive--;}
       return;
     }

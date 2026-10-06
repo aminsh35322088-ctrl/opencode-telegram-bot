@@ -6,7 +6,7 @@ test("infrastructure credential is removed before loading runtime or startup she
   const environment = { RAILWAY_API_TOKEN: "synthetic-account", RAILWAY_TOKEN: "synthetic-project", KEEP: "yes" };
   const client = createInfrastructureClient(environment);
   assert.deepEqual(environment, { KEEP: "yes" });
-  assert.deepEqual(Object.keys(client).sort(), ["dispose", "request"]);
+  assert.deepEqual(Object.keys(client).sort(), ["configured", "dispose", "request"]);
   client.dispose();
   await assert.rejects(client.request("query { me { id } }"), /unavailable/);
 });

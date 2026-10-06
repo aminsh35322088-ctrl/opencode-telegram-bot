@@ -1,4 +1,4 @@
-import { runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
+import { prepareGlobalMutation, bindGlobalMutationQuestion, handleApprovedGlobalQuestion, commitPreparedGlobalMutation, runTrustedTelegramGlobalMutation } from "../../../src/control-plane/mutations.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,9 +21,9 @@ vi.mock("../../../src/config.js", () => ({
 import {
   ensureMcpExtension,
   mcpExtensionId,
-  removeMcpExtension,
-  renameMcpExtension,
-  syncMcpExtensionActions,
+  removeMcpExtension as rawRemoveMcpExtension,
+  renameMcpExtension as rawRenameMcpExtension,
+  syncMcpExtensionActions as rawSyncMcpExtensionActions,
 } from "../../../src/app/services/mcp-extension-service.js";
 import { listGeneratedActions } from "../../../src/app/services/generated-action-store.js";
 import { listStoredExtensions } from "../../../src/app/services/extension-store.js";
@@ -45,6 +45,20 @@ describe("MCP Extension record and generated tool actions", () => {
   afterEach(async () => {
     delete process.env.OPENCODE_TELEGRAM_HOME;
     await fs.rm(home, { recursive: true, force: true });
+  });
+
+  it("requires the exact approved Question before global MCP synchronization", async () => {
+    listTools.mockResolvedValue({server: "approved", tools: [{name: "list_items"}]});
+    await ensureMcpExtension({serverName: "approved", projectDirectory: "/work/repo", source: "https://mcp.example"});
+    const actor = {nodeId: "node", generation: 1, chatId: 1, threadId: 2, sessionId: "session"};
+    const prepared = await prepareGlobalMutation(actor, {type: "mcp.sync", resource: "approved", config: {projectDirectory: "/work/repo"}});
+    await expect(commitPreparedGlobalMutation(actor, prepared.approvalId, prepared.preview)).rejects.toThrow();
+    expect(await listGeneratedActions()).toEqual([]);
+    await bindGlobalMutationQuestion(actor, "sync-question", [prepared.question]);
+    await runTrustedTelegramGlobalMutation("question.approve", "sync-question", () => handleApprovedGlobalQuestion({actor, requestId: "sync-question", questions: [prepared.question], answers: [["Approve"]]}));
+    await expect(commitPreparedGlobalMutation(actor, prepared.approvalId, {...prepared.preview, resource: "foreign"})).rejects.toThrow();
+    await commitPreparedGlobalMutation(actor, prepared.approvalId, prepared.preview);
+    expect((await listGeneratedActions()).map(action => action.id)).toEqual(["approved.list-items"]);
   });
 
   it("mirrors discovered tools into namespaced mcp-tool actions", async () => {
@@ -184,3 +198,8 @@ describe("MCP Extension record and generated tool actions", () => {
     expect(result).toMatchObject({ created: 100, discovered: 130, truncated: true });
   });
 });
+
+// These service fixtures represent approved Telegram UI operations, not model authority.
+const syncMcpExtensionActions = (input: Parameters<typeof rawSyncMcpExtensionActions>[0]) => runTrustedTelegramGlobalMutation("mcp.sync", input.serverName, () => rawSyncMcpExtensionActions(input));
+const removeMcpExtension = (name: string) => runTrustedTelegramGlobalMutation("mcp.delete", name, () => rawRemoveMcpExtension(name));
+const renameMcpExtension = (from: string, to: string) => runTrustedTelegramGlobalMutation("mcp.rename", from, () => rawRenameMcpExtension(from, to));

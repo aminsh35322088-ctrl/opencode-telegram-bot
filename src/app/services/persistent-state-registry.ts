@@ -1,3 +1,4 @@
+import { runTrustedTelegramGlobalMutation } from "../../control-plane/mutations.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../../runtime/paths.js";
@@ -63,6 +64,8 @@ export function getPersistentStatePaths(): string[] {
 
 /** Remove stores superseded by app-state.json. Safe for a fresh installation and idempotent. */
 export async function cleanupLegacyUserConfiguration(): Promise<void> {
+  // Preserve Global ownership and artifacts throughout distributed cutover.
+  if (process.env.CONTROL_PROVISION_WORKERS_ENABLED === "1") return;
   const appHome = getRuntimePaths().appHome;
   const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || "/data";
   const paths = [
@@ -124,7 +127,7 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
     (extension) => extension.kind !== "skill" && extension.kind !== "plugin" && !isManagedMcpExtension(extension),
   );
   for (const extension of obsoleteExtensions) {
-    await removeGeneratedActionsForExtension(extension.id);
+    await runTrustedTelegramGlobalMutation("generated-actions.remove", extension.id, () => removeGeneratedActionsForExtension(extension.id));
     await removeStoredExtension(extension.id);
     const isCoreIntegration =
       extension.kind === "integration"
@@ -157,7 +160,7 @@ export async function cleanupLegacyUserConfiguration(): Promise<void> {
       ),
   );
   for (const extensionId of retiredActionExtensionIds) {
-    await removeGeneratedActionsForExtension(extensionId);
+    await runTrustedTelegramGlobalMutation("generated-actions.remove", extensionId, () => removeGeneratedActionsForExtension(extensionId));
   }
 
   // Free-source and internal OmniRouter secrets lived in Credential Vault under

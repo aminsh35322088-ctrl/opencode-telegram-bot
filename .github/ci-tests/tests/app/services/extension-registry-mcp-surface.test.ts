@@ -43,7 +43,7 @@ import {
   removeExtension as rawRemoveExtension,
 } from "../../../src/app/services/extension-registry-service.js";
 import { saveStoredExtension } from "../../../src/app/services/extension-store.js";
-import { registerGeneratedActionPack } from "../../../src/app/services/generated-action-store.js";
+import { registerGeneratedActionPack as rawRegisterGeneratedActionPack } from "../../../src/app/services/generated-action-store.js";
 
 // These fixtures represent explicit Telegram UI service callers; raw exports remain guarded.
 const removeExtension = (...args: Parameters<typeof rawRemoveExtension>) => runTrustedTelegramGlobalMutation("extensions.remove", args[1], () => rawRemoveExtension(...args));
@@ -112,3 +112,6 @@ describe("Extension registry MCP surface", () => {
     expect(await listExtensions("/work/repo")).toEqual([]);
   });
 });
+
+// Fixtures model an explicit approved Telegram UI pack operation.
+const registerGeneratedActionPack = (...args: Parameters<typeof rawRegisterGeneratedActionPack>) => runTrustedTelegramGlobalMutation("generated-actions.register", args[0], () => rawRegisterGeneratedActionPack(...args));

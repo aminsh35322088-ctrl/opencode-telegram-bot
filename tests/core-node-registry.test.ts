@@ -16,3 +16,16 @@ test("identity capture rejects duplicate ownership and non Railway public endpoi
  assert.throws(()=>captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([identity,{...identity,binding:{...identity.binding,nodeId:"other"}}])}),/Duplicate/);
  assert.throws(()=>captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([{...identity,endpoint:"http://127.0.0.1"}])}),/identity/);
 });
+test('four unbound identities are distinct slots and cannot masquerade as ready Topics',()=>{
+ const registry=captureNodeRegistry({});
+ for(let i=0;i<4;i++)registry.install({binding:{nodeId:String(i),generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)});
+ assert.equal(registry.metadata().length,4);
+ assert.throws(()=>registry.install({binding:{nodeId:'fifth',generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)}),/capacity/);
+ assert.throws(()=>captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([{binding:{nodeId:'fake',generation:1,chatId:0,threadId:0,status:'ready'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)}])}),/identity/);
+});
+
+test('Root identity validation rejects invented zero-chat Topics and accepts fenced unbound cleanup',()=>{
+ const base={binding:{nodeId:'slot',generation:2,chatId:0,threadId:0,status:'retiring'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)};
+ assert.doesNotThrow(()=>captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([base])}));
+ assert.throws(()=>captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([{...base,binding:{...base.binding,threadId:2,status:'ready'}}])}),/identity/);
+});

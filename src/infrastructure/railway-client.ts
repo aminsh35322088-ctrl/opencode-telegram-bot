@@ -1,7 +1,7 @@
 import { childEnvironment } from "../runtime/child-environment.js";
 
 export class InfrastructureRequestError extends Error {
-  constructor(readonly category: "schema" | "resource_limit" | "rate_limit" | "transport" | "rejected", readonly status: number) {
+  constructor(readonly category: "schema" | "resource_limit" | "rate_limit" | "transport" | "rejected", readonly status: number, readonly operation: string = "unknown") {
     super("Railway infrastructure request failed");
   }
 }
@@ -19,6 +19,7 @@ export function createInfrastructureClient(
   environment: NodeJS.ProcessEnv,
   transport: typeof fetch = fetch,
 ): {
+  readonly configured:boolean;
   request<T>(document: string, variables?: Record<string, unknown>): Promise<T>;
   dispose(): void;
 } {
@@ -30,9 +31,12 @@ export function createInfrastructureClient(
   }
   // No getter, serialization, diagnostics, IPC, or environment exports the token.
   return {
+    configured:typeof credential==="string" && credential.length>0,
     async request<T>(document: string, variables = {}): Promise<T> {
       if (!credential) throw new Error("Railway infrastructure credential unavailable");
       if(Date.now()<retryAt)throw new Error("Railway infrastructure retry deferred");
+      const candidate=/^\s*(?:query|mutation)\s+([A-Za-z][A-Za-z0-9]*)\b/.exec(document)?.[1];
+      const operation=candidate && /^(?:Worker|ControlGateway|Infrastructure)[A-Za-z0-9]*$/.test(candidate)?candidate:"unknown";
       let response: Response;
       try {
         response = await transport("https://backboard.railway.com/graphql/v2", {
@@ -43,7 +47,7 @@ export function createInfrastructureClient(
           redirect: "error",
         });
       } catch {
-        throw new InfrastructureRequestError("transport", 0);
+        throw new InfrastructureRequestError("transport", 0, operation);
       }
       const body = await response.json().catch(() => null) as { data?: T; errors?: unknown[] } | null;
       if(response.status===429){
@@ -54,7 +58,7 @@ export function createInfrastructureClient(
       }
       if (!response.ok || !body?.data || body.errors?.length) {
         // Server and transport details can contain credentials; never reflect them.
-        throw new InfrastructureRequestError(response.status === 429 ? "rate_limit" : rejectionCategory(body?.errors), response.status);
+        throw new InfrastructureRequestError(response.status === 429 ? "rate_limit" : rejectionCategory(body?.errors), response.status, operation);
       }
       return body.data;
     },

@@ -189,6 +189,13 @@ export async function prepareGlobalMutation(actor: GlobalMutationActor, input: G
   ) as GlobalMutation;
   if (!mutation.type || !mutation.resource)
     throw new Error("Mutation type and resource are required.");
+  if (["generated-actions.register", "generated-actions.update", "generated-actions.remove"].includes(mutation.type)) {
+    const actions = await import("../app/services/generated-action-store.js");
+    if (Object.keys(mutation.config).some(key => key !== "actions")) throw new Error("Invalid generated action mutation config.");
+    if (mutation.type !== "generated-actions.remove") {
+      mutation.config = {actions: await actions.validateGeneratedActionPack(mutation.resource, mutation.config.actions as Parameters<typeof actions.validateGeneratedActionPack>[1])};
+    } else if (Object.keys(mutation.config).length) throw new Error("Remove action pack requires empty config.");
+  }
   if (mutation.type === "skills.add") {
     const { resolveSkillSource } = await import("../app/services/skill-import-service.js");
     const source = mutation.config.source;
@@ -417,6 +424,15 @@ export async function applyApprovedGlobalMutation(
     if (typeof value !== "string" || !value.trim()) throw new Error(`Mutation requires ${key}.`);
     return value;
   };
+  if (["generated-actions.register", "generated-actions.update", "generated-actions.remove"].includes(pending.type)) {
+    const actions = await import("../app/services/generated-action-store.js");
+    if (pending.type === "generated-actions.remove") return await actions.removeGeneratedActionsForExtension(pending.resource);
+    return await actions.registerGeneratedActionPack(pending.resource, config.actions as Parameters<typeof actions.registerGeneratedActionPack>[1]);
+  }
+  if (pending.type === "mcp.sync") {
+    const mcp = await import("../app/services/mcp-extension-service.js");
+    return await mcp.syncMcpExtensionActions({serverName: pending.resource, projectDirectory: text("projectDirectory")});
+  }
   if (pending.type.startsWith("skills.")) {
     const skills = await import("../app/services/skill-manage-service.js");
     if (pending.type === "skills.delete") return await skills.deleteGlobalSkill(pending.resource);
@@ -524,5 +540,22 @@ export function assertGlobalMutationBackend(type: string, resource: string): voi
   const ui = trustedTelegramUi.getStore();
   if (ui && ((ui.type === type && ui.resource === resource) || (ui.type === "extensions.remove" && ["skills.delete", "mcp.delete"].includes(type))))
     return;
+  throw new Error("Global mutation requires an approved Question or trusted Telegram UI action.");
+}
+
+/** Generated packs may be changed only by their approved operation or owning parent resource. */
+export async function assertGeneratedActionMutationBackend(
+  operation: "register" | "remove", extensionId: string,
+  extension: import("../app/types/extension.js").ExtensionRecord | null,
+): Promise<void> {
+  const scope = execution.getStore() ?? trustedTelegramUi.getStore();
+  if (scope) {
+    const direct = operation === "register" ? ["generated-actions.register", "generated-actions.update"] : ["generated-actions.remove"];
+    if (direct.includes(scope.type) && scope.resource === extensionId) return;
+    if (scope.type === "extensions.remove" && scope.resource === extensionId && operation === "remove") return;
+    if (extension && scope.type === "extensions.ensure" && (scope.resource === extension.name || scope.resource === extensionId) && operation === "register") return;
+    if (extension?.resource.kind === "skill" && scope.resource === extension.resource.skillName && (operation === "register" ? ["skills.add", "skills.create", "skills.update"] : ["skills.delete"]).includes(scope.type)) return;
+    if (extension?.resource.kind === "mcp" && (scope.resource === extension.resource.serverName || scope.type === "mcp.rename" && execution.getStore()?.config.newName === extension.resource.serverName) && (operation === "register" ? ["mcp.add", "mcp.sync", "mcp.rename"] : ["mcp.delete", "mcp.rename"]).includes(scope.type)) return;
+  }
   throw new Error("Global mutation requires an approved Question or trusted Telegram UI action.");
 }

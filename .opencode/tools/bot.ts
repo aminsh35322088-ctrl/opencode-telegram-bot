@@ -637,8 +637,6 @@ export default tool({
         throw new Error(
           "Global mutation requires an authenticated Control Plane actor; no changes were made.",
         );
-      if (action === "mcp.sync")
-        throw new Error("Global Action regeneration requires an approved Control Plane operation.");
       const mutations = await load<{
         prepareGlobalMutation(
           actor: unknown,
