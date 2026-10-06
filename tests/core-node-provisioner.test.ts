@@ -26,6 +26,8 @@ async function fixture() {
         if(ambiguous){ambiguous=false;throw new Error('ambiguous network result');} result={serviceCreate:{id:service.id}};
       } else if(document.includes('mutation WorkerConfig')) {
         assert.equal(input.dockerfilePath,'Dockerfile.worker');
+        assert.deepEqual(input.multiRegionConfig,{eu:{numReplicas:1}},'Worker region must match the dedicated volume using current multiregion contract');
+        assert.equal(input.region,undefined);
         assert.equal(input.builder,undefined,'Dockerfile detection must not pass unsupported DOCKERFILE Builder enum');
         result={serviceInstanceUpdate:true};
       } else if(document.includes('mutation WorkerVolume(')) {
