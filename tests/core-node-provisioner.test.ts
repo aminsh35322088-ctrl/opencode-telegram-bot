@@ -24,6 +24,10 @@ async function fixture() {
       } else if(document.includes('mutation WorkerService')) {
         const service={id:'s'+services.length,name:input.name as string,projectId:input.projectId as string}; services.push(service);
         if(ambiguous){ambiguous=false;throw new Error('ambiguous network result');} result={serviceCreate:{id:service.id}};
+      } else if(document.includes('mutation WorkerConfig')) {
+        assert.equal(input.dockerfilePath,'Dockerfile.worker');
+        assert.equal(input.builder,undefined,'Dockerfile detection must not pass unsupported DOCKERFILE Builder enum');
+        result={serviceInstanceUpdate:true};
       } else if(document.includes('mutation WorkerVolume(')) {
         const volume={id:'v'+volumes.length,projectId:input.projectId as string,serviceId:input.serviceId as string,environmentId:input.environmentId as string};volumes.push(volume);result={volumeCreate:{id:volume.id}};
       } else if(document.includes('mutation WorkerVolumeAttach')) {

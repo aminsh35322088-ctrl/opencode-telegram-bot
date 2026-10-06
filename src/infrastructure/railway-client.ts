@@ -9,7 +9,7 @@ export class InfrastructureRequestError extends Error {
 /** Fixed categories only. Server text is inspected privately and never reflected. */
 function rejectionCategory(errors: unknown[] | undefined): "schema" | "resource_limit" | "rejected" {
   const messages = (errors ?? []).flatMap(error => typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? [error.message] : []);
-  if (messages.some(message => /Cannot query field|Unknown argument|Unknown type|is not defined by type|must have a selection|Variable .* got invalid value/i.test(message))) return "schema";
+  if (messages.some(message => /Cannot query field|Unknown argument|Unknown type|is not defined by type|must have a selection|Variable .* got invalid value|does not exist in .*enum/i.test(message))) return "schema";
   if (messages.some(message => /resource provision limit|limit exceeded|upgrade to provision/i.test(message))) return "resource_limit";
   return "rejected";
 }
