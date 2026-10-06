@@ -39,6 +39,10 @@ export interface McpServerItem {
   status: McpStatus;
   type: McpServerType;
 }
+const distributedControl = ():boolean => process.env.DISTRIBUTED_CONTROL_ENABLED === "1";
+function desiredMcpServer(server:ManagedMcpServer):McpServerItem {
+  return {name:server.name,type:server.config.type,status:server.config.enabled===false?{status:"disabled"}:{status:"failed",error:"Worker runtime validation pending"}};
+}
 export interface McpOAuthStartResult {
   authorizationUrl: string;
   oauthState: string;
@@ -278,6 +282,7 @@ async function loadConfiguredTypeIndex(
 }
 
 export async function loadMcpServers(projectDirectory: string): Promise<McpServerItem[]> {
+  if(distributedControl())return (await listManagedMcpServers()).map(desiredMcpServer);
   await ensureMcpRuntimeForDirectory(projectDirectory);
   const { data, error } = await opencodeClient.mcp.status({
     directory: normalizeDirectoryForMcpApi(projectDirectory),
@@ -578,6 +583,7 @@ export async function ensureMcpRuntimeForDirectory(
   projectDirectory: string,
   options: { force?: boolean } = {},
 ): Promise<{ restored: number; failed: number }> {
+  if(distributedControl())return {restored:0,failed:0};
   await refreshDeletedMcpServerNames();
   const directory = normalizeDirectoryForMcpApi(projectDirectory);
   for (const name of deletedMcpServerNames) {
@@ -718,6 +724,13 @@ function assertAcceptedSecureMcpStatus(record: McpCredentialRecord, server: McpS
 
 export async function configureSecureMcpAuth(record: McpCredentialRecord): Promise<McpServerItem> {
   assertGlobalMutationBackend("mcp.auth", record.serverName);
+  if(distributedControl()){
+    if(record.mode==="oauth-client")throw new Error("MCP OAuth requires a Worker-owned authorization flow.");
+    const existing=(await listManagedMcpServers()).find(server=>server.name===record.serverName);
+    if(!existing||existing.config.type!=="remote"||assertSecureRemoteUrl(existing.config.url)!==assertSecureRemoteUrl(record.remoteUrl))throw new Error("MCP credential endpoint differs from the approved Global server.");
+    await saveMcpCredential({...record,projectDirectory:existing.projectDirectory});
+    return desiredMcpServer(existing);
+  }
   const secureConfig = buildSecureMcpConfig(record);
   try {
     const server = await addSecureMcpDefinition(record, secureConfig);
@@ -747,6 +760,7 @@ export async function configureSecureMcpAuth(record: McpCredentialRecord): Promi
 }
 
 export async function restoreSecureMcpConnections(): Promise<{ restored: number; failed: number }> {
+  if(distributedControl())return {restored:0,failed:0};
   let records: McpCredentialRecord[];
   try {
     records = await listMcpCredentials();
@@ -805,6 +819,7 @@ function oauthAuthFileCandidates(): string[] {
 }
 
 async function readMcpOAuthAccessToken(serverName: string): Promise<string | null> {
+  if(distributedControl())return null;
   const name = serverName.trim();
   if (!name) return null;
   for (const candidate of oauthAuthFileCandidates()) {
@@ -970,6 +985,11 @@ export async function resetMcpAuthToAuto(options: {
   assertGlobalMutationBackend("mcp.auth", options.serverName);
   const name = options.serverName.trim();
   if (!name) throw new Error("MCP server name is required.");
+  if(distributedControl()){
+    const server=(await listManagedMcpServers()).find(candidate=>candidate.name===name);
+    if(!server||server.config.type!=="remote"||assertSecureRemoteUrl(server.config.url)!==assertSecureRemoteUrl(options.remoteUrl))throw new Error("MCP endpoint differs from approved Global server.");
+    await removeMcpCredentialsByName(name);return desiredMcpServer(server);
+  }
   const { data, error } = await opencodeClient.mcp.add({
     directory: normalizeDirectoryForMcpApi(options.projectDirectory),
     name,
@@ -1014,6 +1034,7 @@ export async function startMcpOAuth(
   serverName: string,
 ): Promise<McpOAuthStartResult> {
   assertGlobalMutationBackend("mcp.auth", serverName);
+  if(distributedControl())throw new Error("MCP OAuth requires a Worker-owned authorization flow.");
   const name = serverName.trim();
   if (!name) throw new Error("MCP server name is required.");
   const { data, error } = await opencodeClient.mcp.auth.start({
@@ -1044,6 +1065,7 @@ export async function completeMcpOAuth(
   authorizationCode: string,
 ): Promise<McpServerItem> {
   assertGlobalMutationBackend("mcp.auth", serverName);
+  if(distributedControl())throw new Error("MCP OAuth requires a Worker-owned authorization flow.");
   const name = serverName.trim();
   const code = authorizationCode.trim();
   if (!name) throw new Error("MCP server name is required.");
@@ -1163,6 +1185,12 @@ async function createMcpServer(options: {
   if (!name) throw new Error("MCP server name is required.");
 
   const config = normalizeManagedConfig(options.config);
+  if(distributedControl()){
+    const server={projectDirectory:options.projectDirectory,name,config:options.config};
+    await saveManagedMcpServer(server);
+    deletedMcpServerNames.delete(name);await clearMcpServerDeleted(name);
+    return desiredMcpServer(server);
+  }
   const { data, error } = await opencodeClient.mcp.add({
     directory: normalizeDirectoryForMcpApi(options.projectDirectory),
     name,
@@ -1252,6 +1280,7 @@ export async function restoreMcpRuntime(): Promise<{
   managed: { restored: number; failed: number };
   secure: { restored: number; failed: number };
 }> {
+  if(distributedControl())return {managed:{restored:0,failed:0},secure:{restored:0,failed:0}};
   await refreshDeletedMcpServerNames();
   const managed = await restoreManagedMcpServers();
   const secure = await restoreSecureMcpConnections();
@@ -1290,6 +1319,11 @@ export async function setMcpServerEnabled(
   enable: boolean,
 ): Promise<void> {
   assertGlobalMutationBackend("mcp.enable", serverName);
+  if(distributedControl()){
+    const server=(await listManagedMcpServers()).find(candidate=>candidate.name===serverName);
+    if(!server)throw new Error("Global MCP server was not found.");
+    await saveManagedMcpServer({...server,config:{...server.config,enabled:enable}});return;
+  }
   const params = {
     name: serverName,
     directory: normalizeDirectoryForMcpApi(projectDirectory),
@@ -1322,6 +1356,7 @@ async function detachMcpRuntimeName(
   serverName: string,
   directories: readonly string[],
 ): Promise<void> {
+  if(distributedControl())return;
   for (const projectDirectory of directories) {
     const params = {
       name: serverName,
@@ -1392,6 +1427,14 @@ export async function renameMcpServer(
 
   const credentials = await listMcpCredentials();
   const credential = credentials.find((record) => record.serverName === sourceName);
+  if(distributedControl()){
+    const renamed=await renameManagedMcpServer(sourceName,targetName);
+    if(!renamed)throw new Error("Global MCP server was not found.");
+    for(const record of credentials){if(record.serverName!==sourceName)continue;await saveMcpCredential({...record,serverName:targetName});await removeMcpCredential(record.projectDirectory,sourceName);}
+    deletedMcpServerNames.add(sourceName);deletedMcpServerNames.delete(targetName);
+    await markMcpServerDeleted(sourceName);await clearMcpServerDeleted(targetName);
+    return desiredMcpServer(renamed);
+  }
   const targetConfig = credential
     ? buildSecureMcpConfig({ ...credential, projectDirectory } as McpCredentialRecord)
     : normalizeManagedConfig(source.config);

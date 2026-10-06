@@ -90,6 +90,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 async function openStdioSession(config: Extract<ManagedMcpConfig, { type: "local" }>, timeoutMs: number): Promise<McpSession> {
+  if(process.env.DISTRIBUTED_CONTROL_ENABLED==="1")throw new Error("Local MCP processes belong to the Topic Worker.");
   const [command, ...args] = config.command;
   if (!command) throw new Error("MCP local command is required.");
 
@@ -345,6 +346,7 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   options: McpClientOptions = {},
 ): Promise<McpCallResult> {
+  if(process.env.DISTRIBUTED_CONTROL_ENABLED==="1")throw new Error("MCP tool execution belongs to the Topic Worker.");
   const name = toolName.trim();
   if (!name) throw new Error("MCP tool name is required.");
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
