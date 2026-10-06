@@ -61,6 +61,14 @@ test('unbound Worker becomes available only after exact global snapshot verifica
   assert.equal((await f.bindings.list())[0]!.status,'pool-provisioning');assert.deepEqual(f.reconciled,[]);
 });
 
+test('explicit reconciliation withdraws cached availability on corrupt sync and preserves resource ownership',async()=>{
+ const f=await fixture();const before=await f.lifecycle.bootstrapPool();f.setCorrupt();
+ await assert.rejects(f.lifecycle.bootstrapPool(),/verification/);
+ const after=await f.bindings.list();assert.equal(after[0]!.status,'pool-provisioning');
+ assert.equal(after[0]!.nodeId,before[0]!.nodeId);assert.equal(after[0]!.serviceId,before[0]!.serviceId);assert.equal(after[0]!.volumeId,before[0]!.volumeId);assert.equal(after[0]!.currentRevision,7);
+ assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal(after.slice(1).every(binding=>binding.status==='available'),true);
+});
+
 test('claiming consumes only prepared slots and fifth claim cannot provision extra Workers',async()=>{
   const f=await fixture();await f.bindings.ensurePoolSlots();await assert.rejects(f.bindings.reserve(-100,2),/Cluster Workers are not ready/);
   await f.lifecycle.bootstrapPool();

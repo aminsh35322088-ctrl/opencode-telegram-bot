@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
     const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
     const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
-    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,controlUrl:process.env.CONTROL_PUBLIC_URL,retireNode:identity=>retirementTransport.retireFenced(identity)});
+    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,controlUrl:process.env.CONTROL_PUBLIC_URL,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation)});
     stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
     if(!pools && process.env.CONTROL_PROVISION_WORKERS_ENABLED==="1"){
       const poolConfiguration=(async()=>{let stage:'inventory'|'verify'='inventory';try{

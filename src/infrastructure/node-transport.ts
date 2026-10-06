@@ -7,6 +7,34 @@ import type {InfrastructureNodeIdentity} from "./node-registry.js";
 const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","pause","resume","stop","retire"]);
 export class InfrastructureNodeTransport {
  constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch){}
+ /** Bounded reconciliation evidence only. Never admits execution or exposes signing material. */
+ async probeUnboundBoundary(nodeId:string,generation:number):Promise<{health:true;replayRejected:true;foreignTopicRejected:true;staleGenerationRejected:true}>{
+  const identity=await this.registry.resolve(nodeId);
+  if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==0||identity.binding.threadId!==0||identity.binding.status!=="available")throw new Error("Unbound boundary probe scope denied");
+  const envelope:NodeEnvelope={version:1,nodeId,generation,chatId:0,threadId:0,operation:"health",payload:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")};
+  const send=async(signed:{body:string;signature:string})=>{
+   const current=await this.registry.resolve(nodeId);
+   if(!current||current.binding.generation!==generation||current.binding.status!=="available"||current.binding.chatId!==0||current.binding.threadId!==0)throw new Error("Unbound boundary probe scope changed");
+   return this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(45_000)});
+  };
+  const signed=this.protocol.sign(envelope,identity.secret);
+  const first=await send(signed);
+  if(!first.ok)throw new Error("Worker boundary health failed");
+  const reply=await this.protocol.verify(await boundedBody(first,64*1024),first.headers.get("x-node-signature")??"",{nodeId,generation,chatId:0,threadId:0},identity.secret);
+  const result=reply.payload as {ok?:boolean;result?:{ready?:boolean}};
+  if(reply.operation!=="health"||reply.sessionId!==undefined||result.ok!==true||result.result?.ready!==true)throw new Error("Worker boundary health denied");
+  const rejected=async(request:{body:string;signature:string})=>{
+   const response=await send(request);
+   // A proxy failure/timeout is not evidence of authentication enforcement.
+   const denied=response.status===401||response.status===403;
+   await response.body?.cancel();
+   if(!denied)throw new Error("Worker boundary rejection not proven");
+  };
+  await rejected(signed);
+  await rejected(this.protocol.sign({...envelope,chatId:1,threadId:2,nonce:randomUUID().replaceAll("-","")},identity.secret));
+  await rejected(this.protocol.sign({...envelope,generation:generation+1,nonce:randomUUID().replaceAll("-","")},identity.secret));
+  return {health:true,replayRejected:true,foreignTopicRejected:true,staleGenerationRejected:true};
+ }
  /** Only the root retirement controller retains the previous identity after fencing. */
  async retireFenced(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>{
   const {nodeId,generation,chatId,threadId,sessionId}=identity.binding;

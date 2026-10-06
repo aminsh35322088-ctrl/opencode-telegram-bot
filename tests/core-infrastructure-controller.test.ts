@@ -6,6 +6,20 @@ import path from 'node:path';
 import {captureNodeRegistry} from '../src/infrastructure/node-registry.js';
 import {InfrastructureController} from '../src/infrastructure/node-controller.js';
 const identity=(nodeId:string,status='ready',generation=1)=>({binding:{nodeId,generation,chatId:1,threadId:2,status,sessionId:'session'},endpoint:'https://worker.up.railway.app',secret:'s'.repeat(64)});
+test('failed unbound security proof withdraws Root availability and remains retryable without provisioning',async()=>{
+ const home=await mkdtemp(path.join(tmpdir(),'infrastructure-proof-'));
+ const filename=path.join(home,'bindings.json');
+ const binding={nodeId:'slot',generation:1,chatId:0,threadId:0,status:'available',currentRevision:0,createdAt:'now',updatedAt:'now'};
+ await writeFile(filename,JSON.stringify({version:1,bindings:[binding]}));
+ const registry=captureNodeRegistry({});registry.install({binding,endpoint:'https://worker.up.railway.app',secret:'s'.repeat(64)});
+ let denied=true;let calls=0;
+ const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected provisioning');},probeUnbound:async(nodeId,generation)=>{calls++;assert.equal(nodeId,'slot');assert.equal(generation,1);if(denied)throw Error('proof failed');}});
+ await assert.rejects(controller.request('reconcile','slot',1),/proof failed/);
+ assert.equal((await registry.resolve('slot'))?.binding.status,'provisioning');
+ assert.equal(JSON.parse(await readFile(path.join(home,'nodes.json'),'utf8'))[0].binding.status,'provisioning');
+ denied=false;await controller.request('reconcile','slot',1);
+ assert.equal((await registry.resolve('slot'))?.binding.status,'available');assert.equal(calls,2);
+});
 test('retired identities release capacity while old identity stays fenced',()=>{
  const registry=captureNodeRegistry({});
  for(let i=0;i<4;i++)registry.install({...identity(String(i),'retired',2),binding:{...identity(String(i),'retired',2).binding,threadId:i+2}});

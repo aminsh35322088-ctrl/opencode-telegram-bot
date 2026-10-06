@@ -34,7 +34,7 @@ export class TopicNodeLifecycle {
     const operation=this.preparePool().finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
-  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'):Promise<void> {
+  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'):Promise<void> {
     const deadline=this.dependencies.now()+300_000;
     let delay=1_000;
     while(true) {
@@ -51,7 +51,7 @@ export class TopicNodeLifecycle {
       const applied=await this.rpc<{revision:number;hash:string}>(binding,'sync-global',{revision:desired.revision});
       if(!Number.isSafeInteger(applied.revision)||applied.revision<desired.revision||(applied.revision===desired.revision&&applied.hash!==desired.hash))throw new Error("Node global snapshot verification failed");
       const latest=await this.dependencies.snapshot();
-      if(latest.revision===applied.revision&&latest.hash===applied.hash)return this.dependencies.bindings.update(binding.nodeId,binding.generation,{currentRevision:applied.revision});
+      if(latest.revision===applied.revision&&latest.hash===applied.hash)return binding.currentRevision===applied.revision?binding:this.dependencies.bindings.update(binding.nodeId,binding.generation,{currentRevision:applied.revision});
     }
     throw new Error("Global state changed repeatedly during bootstrap; retry Topic readiness");
   }
@@ -59,7 +59,19 @@ export class TopicNodeLifecycle {
     const slots=await this.dependencies.bindings.ensurePoolSlots();
     for(let binding of slots) {
       // Previously prepared or already claimed slots keep their identity/resources.
-      if(binding.chatId!==0||binding.threadId!==0||binding.status==='available')continue;
+      if(binding.chatId!==0||binding.threadId!==0)continue;
+      if(binding.status==='available'){
+        try{
+          await this.waitReady(binding,'available');
+          binding=await this.syncGlobal(binding);
+          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+        }catch(error){
+          const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
+          if(current?.generation===binding.generation&&current.chatId===0&&current.threadId===0&&current.status==='available')await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
+          throw error;
+        }
+        continue;
+      }
       if(!['pool-reserved','pool-provisioning'].includes(binding.status))throw new Error("Invalid unbound Worker bootstrap state");
       const generation=binding.generation;
       binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});

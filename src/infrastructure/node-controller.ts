@@ -12,6 +12,7 @@ interface Options {
  request<T>(document:string,variables:Record<string,unknown>):Promise<T>;
  pools?:[WorkerPool,WorkerPool];controlUrl?:string;coreCommit?:string;
  retireNode?(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>;
+ probeUnbound?(nodeId:string,generation:number):Promise<unknown>;
 }
 interface Seed {nodeId:string;generation:number;chatId:number;threadId:number;secret:string}
 /** Only inherited Bot IPC can invoke these fixed lifecycle operations. No Worker route provisions infrastructure. */
@@ -84,6 +85,14 @@ export class InfrastructureController {
    const identity=await this.options.registry.resolve(nodeId);if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==binding.chatId||identity.binding.threadId!==binding.threadId)throw Error('Infrastructure identity mismatch');
    if(binding.status==='ready' && (!binding.sessionId||binding.sessionId!==identity.binding.sessionId))throw Error('Infrastructure session mismatch');
    this.options.registry.install({...identity,binding:{...identity.binding,status:binding.status}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+   if(binding.status==='available'&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
+    try{await this.options.probeUnbound(nodeId,generation);}catch(error){
+     this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
+     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+     throw error;
+    }
+    process.stdout.write(`[InfrastructureBoundary] worker_boundary_verified node=${nodeId} generation=${generation} health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n`);
+   }
    return {nodeId,generation,projectId:binding.projectId??'',environmentId:'',endpoint:identity.endpoint,serviceId:binding.serviceId,volumeId:binding.volumeId,phase:'deploying' as const};
   });this.queue=task.catch(()=>undefined);return task;
  }
