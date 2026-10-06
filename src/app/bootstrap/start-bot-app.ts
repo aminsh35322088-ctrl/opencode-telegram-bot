@@ -52,7 +52,7 @@ async function getBotVersion(): Promise<string> {
  * persistent volume; startup reconcile guarantees every restart converges.
  */
 async function reconcileOrphanedTopicState(): Promise<void> {
-  if (process.env.CONTROL_PROVISION_WORKERS_ENABLED === "1") {
+  if (process.env.CONTROL_APPLICATION_IPC === "1") {
     logger.info("[TelegramTopics] Distributed migration preserves unbound workspaces and runtime state");
     return;
   }
@@ -215,7 +215,7 @@ export async function startBotApp(): Promise<void> {
     directory: binding.directory,
   }));
   await initializeNativeCore(bot.api, coreBindings);
-  if(process.env.CONTROL_DISTRIBUTED_INSPECTION==="1"){
+  if(process.env.CONTROL_APPLICATION_IPC==="1"){
     const {opencodeReadyLifecycle}=await import("../../opencode/ready-lifecycle.js");
     let inspected=false;
     const inspectOnce=async()=>{if(inspected)return;inspected=true;const {inspectExistingTopicBindings}=await import("../../control-plane/topic-classification.js");await inspectExistingTopicBindings();};

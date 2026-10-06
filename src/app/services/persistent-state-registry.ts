@@ -65,7 +65,7 @@ export function getPersistentStatePaths(): string[] {
 /** Remove stores superseded by app-state.json. Safe for a fresh installation and idempotent. */
 export async function cleanupLegacyUserConfiguration(): Promise<void> {
   // Preserve Global ownership and artifacts throughout distributed cutover.
-  if (process.env.CONTROL_PROVISION_WORKERS_ENABLED === "1") return;
+  if (process.env.CONTROL_APPLICATION_IPC === "1") return;
   const appHome = getRuntimePaths().appHome;
   const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || "/data";
   const paths = [

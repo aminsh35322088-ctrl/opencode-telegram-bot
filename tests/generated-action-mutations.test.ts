@@ -203,17 +203,17 @@ test("distributed cutover preserves legacy state and default startup still remov
       ]),
     );
     const before = await readAppState();
-    process.env.CONTROL_PROVISION_WORKERS_ENABLED = "1";
+    process.env.CONTROL_APPLICATION_IPC = "1";
     await cleanupLegacyUserConfiguration();
     assert.deepEqual(await readAppState(), before);
-    delete process.env.CONTROL_PROVISION_WORKERS_ENABLED;
+    delete process.env.CONTROL_APPLICATION_IPC;
     await cleanupLegacyUserConfiguration();
     assert.equal((await listGeneratedActions()).length, 0);
     const { getStoredExtension } = await import("../src/app/services/extension-store.js");
     assert.equal(await getStoredExtension(extension.id), null);
   } finally {
     delete process.env.OPENCODE_TELEGRAM_HOME;
-    delete process.env.CONTROL_PROVISION_WORKERS_ENABLED;
+    delete process.env.CONTROL_APPLICATION_IPC;
     await rm(home, { recursive: true, force: true });
   }
 });

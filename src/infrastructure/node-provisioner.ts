@@ -120,10 +120,11 @@ export class NodeProvisioner {
         await this.save(journal);
       }
       await this.mutate(`mutation WorkerLimits($input:ServiceInstanceLimitsUpdateInput!){serviceInstanceLimitsUpdate(input:$input)}`, {input:{environmentId:pool.environmentId,serviceId:record.serviceId,memoryGB:1,vCPUs:2}});
-      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{dockerfilePath:"Dockerfile.worker",numReplicas:1,sleepApplication:true,healthcheckPath:"/health",healthcheckTimeout:300,multiRegionConfig:{[pool.region]:{numReplicas:1}},tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       inventory = await this.inventory(pool);
       const instances = inventory.project.volumes.edges.flatMap(entry => entry.node.volumeInstances.edges.map(instance => instance.node)).filter(instance => instance.environmentId === pool.environmentId && instance.serviceId === record!.serviceId);
       if (instances.length > 1) throw new Error("Worker must have exactly one volume");
+      // Existing attached volumes retain their region; discovery defaults must never move their service.
+      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{dockerfilePath:"Dockerfile.worker",numReplicas:1,sleepApplication:true,healthcheckPath:"/health",healthcheckTimeout:300,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       if(record.volumeId){
         const volume=inventory.project.volumes.edges.find(entry=>entry.node.id===record!.volumeId)?.node;
         if(!volume||volume.volumeInstances.edges.some(entry=>entry.node.serviceId!==null && entry.node.serviceId!==record!.serviceId))throw new Error("Node volume ownership mismatch");

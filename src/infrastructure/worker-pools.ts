@@ -12,7 +12,9 @@ export async function resolveWorkerPools(options:Options):Promise<[WorkerPool,Wo
  if(!options.workerProjectId && candidates.length!==1)throw Error('Existing Worker project requires unambiguous ownership');
  const workerProjectId=options.workerProjectId??candidates[0]!.node.id;
  const workerProject=inventory.workspace.projects.edges.find(entry=>entry.node.id===workerProjectId)?.node;
- const workerEnvironmentId=options.workerEnvironmentId??(workerProject?.environments.edges.length===1?workerProject.environments.edges[0]?.node.id:undefined);
+ const namedEnvironments=workerProject?.environments.edges.filter(entry=>entry.node.name==='validation')??[];
+ if(!options.workerEnvironmentId && namedEnvironments.length>1)throw Error('Ambiguous Worker validation environment');
+ const workerEnvironmentId=options.workerEnvironmentId??(namedEnvironments.length===1?namedEnvironments[0]!.node.id:workerProject?.environments.edges.length===1?workerProject.environments.edges[0]?.node.id:undefined);
  if(!workerEnvironmentId)throw Error('Existing Worker environment requires unambiguous ownership');
  if(!options.controlProjectId||options.controlProjectId===workerProjectId)throw Error('Worker pools require two distinct existing projects');
  options.onStage?.('verify');

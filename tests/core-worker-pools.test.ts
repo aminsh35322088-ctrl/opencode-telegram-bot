@@ -15,3 +15,16 @@ test('root setup refuses foreign projects, wrong environments and incomplete inv
  for(const invalid of [{workerProjectId:'foreign'},{controlEnvironmentId:'wrong'},{workerProjectId:'control'}])await assert.rejects(resolveWorkerPools({...options,...invalid,request}));
  await assert.rejects(resolveWorkerPools({...options,request:async<T>()=>({workspace:{id:'workspace',projects:{edges:[],pageInfo:{hasNextPage:true}}}} as T)}),/Incomplete/);
 });
+test('normal bootstrap discovers workspace and stable Worker environment without custom IDs',async()=>{
+ const calls:string[]=[];
+ const control=project('portable-control','portable-production');
+ const worker={id:'portable-worker',name:'opencode-topic-validation',environments:{pageInfo:{hasNextPage:false},edges:[{node:{id:'unrelated-env',name:'staging'}},{node:{id:'portable-validation',name:'validation'}}]}};
+ const request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  calls.push(document);
+  if(document.startsWith('query WorkerWorkspace')){assert.equal(variables.projectId,'portable-control');return {project:{workspaceId:'discovered-workspace'}} as T;}
+  assert.equal(variables.workspaceId,'discovered-workspace');
+  return {workspace:{id:'discovered-workspace',projects:{pageInfo:{hasNextPage:false},edges:[control,worker].map(node=>({node}))}}} as T;
+ };
+ const pools=await resolveWorkerPools({controlProjectId:'portable-control',controlEnvironmentId:'portable-production',region:'eu',request});
+ assert.equal(pools[1].environmentId,'portable-validation');assert.equal(calls.length,2);
+});
