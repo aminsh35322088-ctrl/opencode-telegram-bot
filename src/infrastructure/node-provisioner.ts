@@ -3,7 +3,7 @@ import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import type { NodeBinding } from "../control-plane/node-bindings.js";
 
-export interface WorkerPool { projectId: string; environmentId: string; capacity: 3 | 1; region: string }
+export interface WorkerPool { projectId: string; environmentId: string; capacity: 2; region: string }
 export interface ProvisionedNode {
   nodeId: string; generation: number; projectId: string; environmentId: string;
   serviceId?: string; volumeId?: string; domainId?: string; endpoint?: string; deploymentId?: string;
@@ -35,7 +35,7 @@ export class NodeProvisioner {
   constructor(private readonly options: NodeProvisionerOptions) {
     const control = new URL(options.controlUrl);
     if (control.protocol !== "https:" || !control.hostname.endsWith(".up.railway.app") || control.username || control.password || control.search || control.hash || control.pathname !== "/") throw new Error("Control URL must be a Railway HTTPS domain");
-    if (options.pools[0].capacity !== 3 || options.pools[1].capacity !== 1 || options.pools[0].projectId === options.pools[1].projectId) throw new Error("Worker pools require independent three-plus-one projects");
+    if (options.pools[0].capacity !== 2 || options.pools[1].capacity !== 2 || options.pools[0].projectId === options.pools[1].projectId) throw new Error("Worker pools require two distinct two-slot projects");
   }
   private async read(): Promise<Journal> {
     try {

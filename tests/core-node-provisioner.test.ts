@@ -14,7 +14,7 @@ async function fixture() {
   const calls: Array<{document:string;variables:Record<string,unknown>}> = [];
   let ambiguous = false; let rejected = false;
   const filename=path.join(await mkdtemp(path.join(tmpdir(),'provisioner-')),'journal.json');
-  const options:NodeProvisionerOptions={journalPath:filename,controlUrl:'https://control.up.railway.app',pools:[{projectId:'a',environmentId:'ea',capacity:3,region:'eu'},{projectId:'b',environmentId:'eb',capacity:1,region:'eu'}],
+  const options:NodeProvisionerOptions={journalPath:filename,controlUrl:'https://control.up.railway.app',pools:[{projectId:'a',environmentId:'ea',capacity:2,region:'eu'},{projectId:'b',environmentId:'eb',capacity:2,region:'eu'}],
     lookup:async id=>bindings.get(id),ensureIdentity:async (_binding,create)=>create(),retireIdentity:async()=>{},
     request:async <T>(document:string,variables:Record<string,unknown>)=>{
       calls.push({document,variables}); const input=variables.input as Record<string,unknown>;
@@ -37,10 +37,10 @@ async function fixture() {
   const add=(id:string)=>bindings.set(id,{nodeId:id,generation:1,chatId:-100,threadId:bindings.size+2,currentRevision:0,status:'reserved',createdAt:'now',updatedAt:'now'});
   return {controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;}};
 }
-test('provision four isolated nodes 3+1, cap fifth and never return/persist secrets',async()=>{
+test('provision four isolated nodes 2+2, cap fifth and never return/persist secrets',async()=>{
   const f=await fixture();for(const id of ['one','two','three','four','five']) f.add(id);
   const nodes=await Promise.all(['one','two','three','four'].map(id=>f.controller.provision(id,1)));
-  assert.deepEqual(nodes.map(n=>n.projectId),['a','a','a','b']);assert.equal(new Set(nodes.map(n=>n.volumeId)).size,4);
+  assert.deepEqual(nodes.map(n=>n.projectId),['a','a','b','b']);assert.equal(new Set(nodes.map(n=>n.volumeId)).size,4);
   await assert.rejects(f.controller.provision('five',1),/Maximum/);
   const contents=await readFile(f.filename,'utf8');assert.equal(contents.includes('NODE_SHARED_SECRET'),false);
   for(const call of f.calls.filter(c=>c.document.includes('WorkerVariables'))) {

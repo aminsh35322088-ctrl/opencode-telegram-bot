@@ -1,18 +1,17 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {resolveWorkerPools} from '../src/infrastructure/worker-pools.js';
-test('root setup reuses validation and reconciles a single independent Worker project',async()=>{
- const projects=[{id:'existing',name:'opencode-topic-validation',environments:{edges:[{node:{id:'validation',name:'validation'}}],pageInfo:{hasNextPage:false}}}];let creates=0;
- const request=async<T>(document:string,variables:Record<string,unknown>)=>{
-  if(document.includes('query WorkerPools'))return {workspace:{id:'workspace',projects:{edges:projects.map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T;
-  creates++;const input=variables.input as {name:string;workspaceId:string;isPublic:boolean};assert.equal(input.workspaceId,'workspace');assert.equal(input.isPublic,false);
-  const node={id:'new',name:input.name,environments:{edges:[{node:{id:'production',name:'production'}}],pageInfo:{hasNextPage:false}}};projects.push(node);return {projectCreate:node} as T;
- };
- const options={request,workspaceId:'workspace',workerProjectId:'existing',workerEnvironmentId:'validation',region:'eu'};
- const pools=await resolveWorkerPools(options);assert.deepEqual(pools.map(p=>[p.projectId,p.environmentId,p.capacity]),[['existing','validation',3],['new','production',1]]);
- assert.deepEqual(await resolveWorkerPools(options),pools);assert.equal(creates,1);
+const project=(id:string,environment:string)=>({id,name:id,environments:{edges:[{node:{id:environment,name:environment}}],pageInfo:{hasNextPage:false}}});
+const options={workspaceId:'workspace',controlProjectId:'control',controlEnvironmentId:'production',workerProjectId:'existing',workerEnvironmentId:'validation',region:'eu'};
+test('root setup verifies existing control and validation pools without project mutations',async()=>{
+ let calls=0;
+ const request=async<T>(document:string)=>{calls++;assert.ok(document.startsWith('query WorkerPools'));return {workspace:{id:'workspace',projects:{edges:[project('control','production'),project('existing','validation')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T;};
+ const pools=await resolveWorkerPools({...options,request});
+ assert.deepEqual(pools.map(p=>[p.projectId,p.environmentId,p.capacity]),[['control','production',2],['existing','validation',2]]);
+ assert.deepEqual(await resolveWorkerPools({...options,request}),pools);assert.equal(calls,2);
 });
-test('root setup refuses foreign validation project and incomplete inventory before mutation',async()=>{
- let calls=0;const request=async<T>()=>{calls++;return {workspace:{id:'workspace',projects:{edges:[],pageInfo:{hasNextPage:false}}}} as T;};
- await assert.rejects(resolveWorkerPools({request,workspaceId:'workspace',workerProjectId:'foreign',workerEnvironmentId:'validation',region:'eu'}),/validation/);assert.equal(calls,1);
+test('root setup refuses foreign projects, wrong environments and incomplete inventory',async()=>{
+ const request=async<T>()=>({workspace:{id:'workspace',projects:{edges:[project('control','production'),project('existing','validation')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T);
+ for(const invalid of [{workerProjectId:'foreign'},{controlEnvironmentId:'wrong'},{workerProjectId:'control'}])await assert.rejects(resolveWorkerPools({...options,...invalid,request}));
+ await assert.rejects(resolveWorkerPools({...options,request:async<T>()=>({workspace:{id:'workspace',projects:{edges:[],pageInfo:{hasNextPage:true}}}} as T)}),/Incomplete/);
 });
