@@ -329,7 +329,9 @@ export class RailwayFleetDriver implements FleetProvisioner {
     } as AllocationJob);
     return {
       services: inventory.project.services.edges
-        .filter((s) => s.node.id === worker.serviceId)
+        .filter(
+          (s) => s.node.id === worker.serviceId || s.node.name === "topic-node-" + worker.workerId,
+        )
         .map((s) => ({ id: s.node.id, deletedAt: s.node.deletedAt })),
       volumes: inventory.project.volumes.edges
         .filter((v) => v.node.id === worker.volumeId)
@@ -381,7 +383,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
         (s) => s.node.id === serviceId || s.node.name === ownedName,
       )
     )
-      throw new Error("cleanup_pending");
+      throw new Error("service_cleanup_pending");
     const volume = inventory.project.volumes.edges.find((v) => v.node.id === worker.volumeId);
     if (
       volume?.node.volumeInstances.edges.some(
@@ -408,7 +410,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
             Number.isFinite(Date.parse(i.deletedAt)),
         )
       )
-        throw new Error("cleanup_pending");
+        throw new Error("volume_cleanup_pending");
       // Railway retains administratively deleted, detached volumes for up to 48 hours.
       // Keep the provider purge receipt; this Worker/volume is never reused.
       this.store.recordVolumeDeletion(
