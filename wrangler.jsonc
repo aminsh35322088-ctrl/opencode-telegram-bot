@@ -26,7 +26,7 @@
     "WORKERS_PER_PROJECT": "5",
     "MAX_RAILWAY_PROJECTS": "2",
     "PROVISION_ON_TOPIC_CREATE": "true",
-    "PROVISIONING_ENABLED": "true",
+    "PROVISIONING_ENABLED": "false",
     "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:6d0d9e617a8bd668f125d3d2a19e5bbad17f3e15baf7af3f9b669ae28759d118",
     "WORKER_CORE_COMMIT": "6a85ab83bc64169b0045b4dc400a55b9f5b2b188",
     "WORKER_CORE_VERSION": "1.18.33-bot.13-pre.20",
