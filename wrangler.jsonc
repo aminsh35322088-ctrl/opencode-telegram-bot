@@ -1,5 +1,6 @@
 {
-  "name": "opencode-telegram-control",
+  "name": "opencode-control-plane",
+  "account_id": "91c5e9520d1aaea0b87f03442c88403f",
   "main": "src/cloudflare/worker.ts",
   "compatibility_date": "2026-10-07",
   "workers_dev": true,
@@ -18,6 +19,13 @@
     ],
   },
   "vars": {
+    "ENVIRONMENT": "production",
+    "CONTROL_PLANE_URL": "https://opencode-control-plane.amin3532.workers.dev",
+    "RAILWAY_WORKSPACE_ID": "df47876f-4c37-4a4d-89c7-407ec111227d",
+    "MAX_WORKERS": "10",
+    "WORKERS_PER_PROJECT": "5",
+    "MAX_RAILWAY_PROJECTS": "2",
+    "PROVISION_ON_TOPIC_CREATE": "true",
     "PROVISIONING_ENABLED": "false",
     "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:5731692665da35e5f5066a4e285ea2499f2885858b7fc448a24f58cd681f55d6",
     "WORKER_CORE_COMMIT": "577ba339311825aed40271c3df49ba3b8f3ec5da",

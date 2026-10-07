@@ -259,3 +259,97 @@ test("durable update alarm rearms until all persisted batches drain", async () =
   await plane.alarm();
   assert.equal([...f.sql.exec("SELECT id FROM updates WHERE state='PENDING'")].length, 0);
 });
+test("backend enforces a separate maximum project count before reserving another shard", () => {
+  const f = fixture();
+  backend(f.store, "limited", 10, 1);
+  f.store.putBackend({ ...f.store.backends()[0]!, maxProjects: 2 } as never);
+  f.store.selectProject(f.store.reserveAllocation("one", -100).jobId);
+  f.store.selectProject(f.store.reserveAllocation("two", -100).jobId);
+  const third = f.store.reserveAllocation("three", -100);
+  assert.throws(() => f.store.selectProject(third.jobId), /project_capacity_exhausted/);
+  assert.equal(f.store.projects().length, 2);
+});
+test("confirmed infrastructure deletion removes binding and releases project reservation", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveAllocation("destroy", -100);
+  f.store.selectProject(job.jobId);
+  f.store.ready(job.workerId, 1, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  const fenced = f.store.fenceTopic(-100, 42);
+  assert.throws(() => f.store.confirmDestroyed(job.workerId, 1), /stale_generation/);
+  f.store.confirmDestroyed(job.workerId, fenced.generation);
+  assert.equal(f.store.topics().length, 0);
+  assert.equal(f.store.projects()[0]!.reservedWorkers, 0);
+  assert.equal(f.store.worker(job.workerId)!.state, "REPLACED");
+});
+
+test("signed callbacks survive restart, deduplicate and reject another run", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveAllocation("callback", -100);
+  f.store.ready(job.workerId, job.generation, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(-100, 42, "run1", "hello");
+  f.store.startNext(-100, 42);
+  const payload = {
+    runId: "run1",
+    streamNonce: "stream",
+    sequence: 1,
+    event: {
+      type: "message.part.updated",
+      properties: { part: { id: "part1", type: "text", text: "سلام" } },
+    },
+  };
+  assert.equal(f.store.recordCallback(-100, 42, payload), true);
+  assert.equal(f.restart().recordCallback(-100, 42, payload), false);
+  assert.throws(
+    () => f.store.recordCallback(-100, 42, { ...payload, runId: "foreign" }),
+    /run_mismatch/,
+  );
+  f.store.recordCallback(-100, 42, {
+    ...payload,
+    sequence: 2,
+    event: { type: "session.idle", properties: {} },
+  });
+  assert.equal(f.restart().completedResponses()[0]?.text, "سلام");
+  assert.equal(f.store.startNext(-100, 42), undefined);
+});
+
+test("different retry identities cannot reserve the same Topic twice", () => {
+  const f = fixture();
+  backend(f.store);
+  const first = f.store.reserveTopicAllocation("first", -100, 42);
+  assert.equal(f.restart().reserveTopicAllocation("different", -100, 42).jobId, first.jobId);
+  assert.equal(f.store.workers().length, 1);
+});
+
+test("only assistant parts are rendered into the terminal Telegram response", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveAllocation("role", -100);
+  f.store.ready(job.workerId, 1, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(-100, 42, "roles", "prompt");
+  f.store.startNext(-100, 42);
+  let sequence = 0;
+  const send = (event: unknown) =>
+    f.store.recordCallback(-100, 42, {
+      runId: "roles",
+      streamNonce: "stream",
+      sequence: ++sequence,
+      event,
+    });
+  send({ type: "message.updated", properties: { info: { id: "u", role: "user" } } });
+  send({
+    type: "message.part.updated",
+    properties: { part: { id: "up", messageID: "u", type: "text", text: "prompt" } },
+  });
+  send({ type: "message.updated", properties: { info: { id: "a", role: "assistant" } } });
+  send({
+    type: "message.part.updated",
+    properties: { part: { id: "ap", messageID: "a", type: "text", text: "answer" } },
+  });
+  send({ type: "session.idle", properties: {} });
+  assert.equal(f.store.completedResponses()[0]?.text, "answer");
+});

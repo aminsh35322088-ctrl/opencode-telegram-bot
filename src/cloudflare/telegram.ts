@@ -40,24 +40,31 @@ export class CloudTelegram {
     }
     return body.result as T;
   }
+  async sendPart(
+    chatId: number,
+    threadId: number | undefined,
+    part: ReturnType<typeof renderTelegramParts>[number],
+  ): Promise<number> {
+    const scope = { chat_id: chatId, ...(threadId ? { message_thread_id: threadId } : {}) };
+    let result: { message_id: number };
+    try {
+      result = await this.call("sendRichMessage", {
+        ...scope,
+        rich_message: {
+          blocks: part.blocks,
+          ...(shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof TelegramDeliveryError) || error.category !== "rejected") throw error;
+      result = await this.call("sendMessage", { ...scope, text: part.fallbackText });
+    }
+    return result.message_id;
+  }
   async send(chatId: number, threadId: number | undefined, text: string): Promise<number[]> {
     const ids: number[] = [];
     for (const part of renderTelegramParts(text)) {
-      const scope = { chat_id: chatId, ...(threadId ? { message_thread_id: threadId } : {}) };
-      let result: { message_id: number };
-      try {
-        result = await this.call("sendRichMessage", {
-          ...scope,
-          rich_message: {
-            blocks: part.blocks,
-            ...(shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
-          },
-        });
-      } catch (error) {
-        if (!(error instanceof TelegramDeliveryError) || error.category !== "rejected") throw error;
-        result = await this.call("sendMessage", { ...scope, text: part.fallbackText });
-      }
-      ids.push(result.message_id);
+      ids.push(await this.sendPart(chatId, threadId, part));
     }
     return ids;
   }

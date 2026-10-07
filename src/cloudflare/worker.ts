@@ -5,7 +5,14 @@ export interface ControlEnvironment {
   CONTROL_PLANE_URL: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   TELEGRAM_BOT_TOKEN: string;
-  TELEGRAM_ALLOWED_USER_IDS: string;
+  TELEGRAM_ALLOWED_USER_IDS?: string;
+  TELEGRAM_ALLOWED_USER_ID?: string;
+  RAILWAY_API_TOKEN: string;
+  RAILWAY_WORKSPACE_ID: string;
+  MAX_WORKERS: string;
+  WORKERS_PER_PROJECT: string;
+  MAX_RAILWAY_PROJECTS: string;
+  PROVISION_ON_TOPIC_CREATE: string;
   ADMIN_TOKEN: string;
   CREDENTIAL_MASTER_KEY: string;
   PROVISIONING_ENABLED?: string;
@@ -19,7 +26,14 @@ export default {
   async fetch(request: Request, env: ControlEnvironment): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health")
-      return Response.json({ ok: true, role: "control-plane", execution: false });
+      return Response.json({
+        ok: true,
+        role: "control-plane",
+        execution: false,
+        railwayCredentialPresent: Boolean(env.RAILWAY_API_TOKEN),
+        telegramCredentialPresent: Boolean(env.TELEGRAM_BOT_TOKEN),
+        provisioningEnabled: env.PROVISIONING_ENABLED === "true",
+      });
     const path = url.pathname;
     if (request.method !== "POST" && !path.startsWith("/admin/"))
       return new Response("Not found", { status: 404 });

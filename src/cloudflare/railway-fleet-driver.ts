@@ -287,15 +287,39 @@ export class RailwayFleetDriver implements FleetProvisioner {
     const worker = this.store.worker(workerId);
     if (!worker || worker.generation !== generation || worker.state !== "DELETING")
       throw new Error("destructive_fence_required");
-    if (worker.serviceId)
+    if (!worker.projectId || !worker.environmentId)
+      throw new Error("cleanup_reconciliation_required");
+    const scope = {
+      projectId: worker.projectId,
+      environmentId: worker.environmentId,
+    } as AllocationJob;
+    let inventory = await this.inventory(scope);
+    const service = inventory.project.services.edges.find((s) => s.node.id === worker.serviceId);
+    if (service) {
+      if (service.node.name !== "topic-node-" + worker.workerId)
+        throw new Error("cleanup_ownership_mismatch");
       await this.mutate("mutation FleetDestroyService($id:String!){serviceDelete(id:$id)}", {
         id: worker.serviceId,
       });
-    if (worker.volumeId)
+    }
+    inventory = await this.inventory(scope);
+    if (inventory.project.services.edges.some((s) => s.node.id === worker.serviceId))
+      throw new Error("cleanup_pending");
+    const volume = inventory.project.volumes.edges.find((v) => v.node.id === worker.volumeId);
+    if (
+      volume?.node.volumeInstances.edges.some(
+        (v) => v.node.serviceId && v.node.serviceId !== worker.serviceId,
+      )
+    )
+      throw new Error("cleanup_ownership_mismatch");
+    if (volume)
       await this.mutate(
         "mutation FleetDestroyVolume($volumeId:String!){volumeDelete(volumeId:$volumeId)}",
         { volumeId: worker.volumeId },
       );
+    inventory = await this.inventory(scope);
+    if (inventory.project.volumes.edges.some((v) => v.node.id === worker.volumeId))
+      throw new Error("cleanup_pending");
   }
 }
 

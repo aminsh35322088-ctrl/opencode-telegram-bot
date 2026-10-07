@@ -228,3 +228,20 @@ test("desired immutable image survives retry and cannot silently change within a
   });
   await assert.rejects(changed.provision(job.jobId), /image_contract_mismatch/);
 });
+
+test("destruction retry reconciles physical absence before releasing capacity", async () => {
+  const f = fixture(),
+    job = f.store.reserveAllocation("destroy", -100);
+  await f.driver.provision(job.jobId);
+  f.store.ready(job.workerId, job.generation, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  const worker = f.store.fenceTopic(-100, 42);
+  f.store.transition(worker.workerId, worker.generation, "DELETING");
+  // Simulate a lost successful delete response: physical service and volume already gone.
+  f.services.splice(0);
+  f.volumes.splice(0);
+  await f.driver.destroy(worker.workerId, worker.generation);
+  f.store.confirmDestroyed(worker.workerId, worker.generation);
+  assert.equal(f.store.worker(worker.workerId)?.state, "REPLACED");
+  assert.equal(f.store.topics().length, 0);
+});

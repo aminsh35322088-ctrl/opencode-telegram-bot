@@ -21,6 +21,7 @@ export interface RailwayBackend {
   desiredMaximumWorkers: number;
   maxWorkersPerProject: number;
   enabled: boolean;
+  maxProjects?: number;
   health?: string;
   quotaStatus?: string;
 }
@@ -45,15 +46,19 @@ export interface FleetWorker {
   volumeId?: string;
   endpoint?: string;
   desiredImage?: string;
+  chatId?: number;
+  threadId?: number;
   credential?: string;
   revision: number;
   image?: string;
   runtimeCommit?: string;
   runtimeVersion?: string;
+  lastHealthAt?: number;
 }
 export interface AllocationJob {
   jobId: string;
   requestId: string;
+  createdAt?: number;
   chatId: number;
   workerId: string;
   backendId: string;
@@ -112,10 +117,15 @@ export class ControlStore {
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 2) throw new Error("unsupported_schema");
-    if (version === 2) return;
+    if (version > 3) throw new Error("unsupported_schema");
+    if (version === 3) return;
+    if (version === 2) {
+      this.migrateEvents();
+      return;
+    }
     if (version === 1) {
       this.migrateLeases();
+      this.migrateEvents();
       return;
     }
     this.transaction(() => {
@@ -156,6 +166,7 @@ export class ControlStore {
       this.sql.exec("INSERT INTO schema_version VALUES(1)");
     });
     this.migrateLeases();
+    this.migrateEvents();
   }
   private migrateLeases(): void {
     this.transaction(() => {
@@ -164,6 +175,145 @@ export class ControlStore {
       );
       this.sql.exec("UPDATE schema_version SET version=2");
     });
+  }
+  private migrateEvents(): void {
+    this.transaction(() => {
+      this.sql.exec(
+        "CREATE TABLE callbacks(run TEXT NOT NULL,stream TEXT NOT NULL,sequence INTEGER NOT NULL,PRIMARY KEY(run,stream,sequence))",
+      );
+      this.sql.exec(
+        "CREATE TABLE response_parts(run TEXT NOT NULL,part TEXT NOT NULL,text TEXT NOT NULL,message TEXT,PRIMARY KEY(run,part))",
+      );
+      this.sql.exec(
+        "CREATE TABLE responses(run TEXT PRIMARY KEY,chat INTEGER NOT NULL,thread INTEGER NOT NULL,state TEXT NOT NULL DEFAULT 'PENDING')",
+      );
+      this.sql.exec(
+        "CREATE TABLE message_roles(run TEXT NOT NULL,message TEXT NOT NULL,role TEXT NOT NULL,PRIMARY KEY(run,message))",
+      );
+      this.sql.exec("UPDATE schema_version SET version=3");
+    });
+  }
+  activeRuns(chatId: number, threadId: number): Run[] {
+    return [
+      ...this.sql.exec<{
+        requestId: string;
+        chatId: number;
+        threadId: number;
+        prompt: string;
+        state: string;
+      }>(
+        "SELECT request AS requestId,chat AS chatId,thread AS threadId,prompt,state FROM runs WHERE chat=? AND thread=? AND state='ACTIVE' ORDER BY seq",
+        chatId,
+        threadId,
+      ),
+    ];
+  }
+  recordCallback(chatId: number, threadId: number, payload: Record<string, unknown>): boolean {
+    const runId = String(payload.runId ?? ""),
+      stream = String(payload.streamNonce ?? ""),
+      sequence = Number(payload.sequence);
+    if (!runId || !stream || !Number.isSafeInteger(sequence) || sequence < 1)
+      throw new Error("invalid_event");
+    return this.transaction(() => {
+      if (
+        [
+          ...this.sql.exec(
+            "SELECT run FROM callbacks WHERE run=? AND stream=? AND sequence=?",
+            runId,
+            stream,
+            sequence,
+          ),
+        ].length
+      )
+        return false;
+      if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === runId))
+        throw new Error("run_mismatch");
+      this.sql.exec("INSERT INTO callbacks VALUES(?,?,?)", runId, stream, sequence);
+      const event = payload.event as {
+        type?: string;
+        properties?: {
+          part?: { id?: string; type?: string; text?: string; messageID?: string };
+          info?: { id?: string; role?: string };
+          status?: { type?: string };
+        };
+      };
+      const info = event?.properties?.info;
+      if (event?.type === "message.updated" && info?.id && info.role)
+        this.sql.exec(
+          "INSERT INTO message_roles VALUES(?,?,?) ON CONFLICT(run,message) DO UPDATE SET role=excluded.role",
+          runId,
+          info.id,
+          info.role,
+        );
+      const part = event?.properties?.part;
+      if (
+        event?.type === "message.part.updated" &&
+        part?.type === "text" &&
+        typeof part.text === "string" &&
+        part.id
+      ) {
+        if (part.text.length > 262144) throw new Error("response_too_large");
+        this.sql.exec(
+          "INSERT INTO response_parts VALUES(?,?,?,?) ON CONFLICT(run,part) DO UPDATE SET text=excluded.text",
+          runId,
+          part.id,
+          part.text,
+          part.messageID ?? null,
+        );
+      }
+      if (
+        event?.type === "session.idle" ||
+        event?.type === "session.error" ||
+        (event?.type === "session.status" && event.properties?.status?.type === "idle")
+      ) {
+        this.sql.exec(
+          "INSERT INTO responses(run,chat,thread) VALUES(?,?,?)",
+          runId,
+          chatId,
+          threadId,
+        );
+        this.finishRun(chatId, threadId, runId);
+      }
+      return true;
+    });
+  }
+  failRun(chatId: number, threadId: number, requestId: string, text: string): void {
+    this.transaction(() => {
+      if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === requestId)) return;
+      this.sql.exec(
+        "INSERT INTO response_parts(run,part,text) VALUES(?,?,?) ON CONFLICT(run,part) DO NOTHING",
+        requestId,
+        "control_error",
+        text,
+      );
+      this.sql.exec(
+        "INSERT INTO responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING",
+        requestId,
+        chatId,
+        threadId,
+      );
+      this.sql.exec("UPDATE runs SET state='FAILED' WHERE request=? AND state='ACTIVE'", requestId);
+    });
+  }
+  completedResponses(): Array<{ run: string; chat: number; thread: number; text: string }> {
+    return [
+      ...this.sql.exec<{ run: string; chat: number; thread: number }>(
+        "SELECT run,chat,thread FROM responses WHERE state='PENDING' ORDER BY rowid LIMIT 20",
+      ),
+    ].map((row) => ({
+      ...row,
+      text: [
+        ...this.sql.exec<{ text: string }>(
+          "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
+          row.run,
+        ),
+      ]
+        .map((p) => p.text)
+        .join("\n\n"),
+    }));
+  }
+  responseDelivered(run: string, state = "DELIVERED"): void {
+    this.sql.exec("UPDATE responses SET state=? WHERE run=?", state, run);
   }
   acquireLease(id: string, owner: string, now: number, lifetime: number): boolean {
     return this.transaction(() => {
@@ -257,10 +407,23 @@ export class ControlStore {
       JSON.stringify(job),
     );
   }
-  reserveAllocation(requestId: string, chatId: number): AllocationJob {
+  reserveTopicAllocation(requestId: string, chatId: number, threadId: number): AllocationJob {
+    return this.reserveAllocation(requestId, chatId, threadId);
+  }
+  reserveAllocation(requestId: string, chatId: number, threadId?: number): AllocationJob {
     return this.transaction(() => {
       if (!requestId || requestId.length > 128 || !Number.isSafeInteger(chatId) || chatId === 0)
         throw new Error("invalid_request");
+      if (threadId !== undefined) {
+        if (!Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("invalid_topic");
+        const owned = this.all<AllocationJob>("jobs").find(
+          (j) =>
+            j.chatId === chatId &&
+            j.threadId === threadId &&
+            !["FAILED", "DELETED"].includes(j.phase),
+        );
+        if (owned) return owned;
+      }
       const previous = [
         ...this.sql.exec<{ data: string }>(
           "SELECT data FROM jobs WHERE request=? AND chat=?",
@@ -276,6 +439,7 @@ export class ControlStore {
       let worker = workers.find(
         (w) =>
           backends.some((b) => b.backendId === w.backendId) &&
+          (w.chatId === undefined || w.chatId === 0) &&
           (w.state === "READY_UNBOUND" ||
             (w.state === "SLEEPING" && !this.topics().some((t) => t.workerId === w.workerId))),
       );
@@ -284,10 +448,8 @@ export class ControlStore {
       } else {
         const selected = backends.find(
           (b) =>
-            workers.filter(
-              (w) =>
-                w.backendId === b.backendId && w.state !== "REPLACED" && w.state !== "DELETING",
-            ).length < b.desiredMaximumWorkers,
+            workers.filter((w) => w.backendId === b.backendId && w.state !== "REPLACED").length <
+            b.desiredMaximumWorkers,
         );
         if (!selected) throw new Error("capacity_exhausted");
         worker = {
@@ -298,9 +460,15 @@ export class ControlStore {
           revision: 0,
         };
       }
+      if (threadId !== undefined) {
+        worker.chatId = chatId;
+        worker.threadId = threadId;
+      }
       this.saveWorker(worker);
       const job: AllocationJob = {
         jobId: crypto.randomUUID(),
+        createdAt: Date.now(),
+        ...(threadId !== undefined ? { threadId } : {}),
         requestId,
         chatId,
         workerId: worker.workerId,
@@ -341,6 +509,11 @@ export class ControlStore {
           p.reservedWorkers < backend.maxWorkersPerProject,
       );
       if (!project) {
+        if (
+          backend.maxProjects !== undefined &&
+          projects.filter((p) => p.backendId === backend.backendId).length >= backend.maxProjects
+        )
+          throw new Error("project_capacity_exhausted");
         const ordinal =
           1 +
           Math.max(
@@ -386,6 +559,12 @@ export class ControlStore {
       Object.assign(job, patch);
       this.saveJob(job);
       const worker = this.worker(job.workerId)!;
+      if (
+        !worker ||
+        worker.generation !== job.generation ||
+        ["FENCING", "DELETING", "REPLACED"].includes(worker.state)
+      )
+        throw new Error("stale_generation");
       for (const key of [
         "projectId",
         "environmentId",
@@ -555,6 +734,40 @@ export class ControlStore {
       worker.state = "READY_UNBOUND";
       this.saveWorker(worker);
     });
+  }
+  confirmDestroyed(workerId: string, generation: number): void {
+    this.transaction(() => {
+      const worker = this.worker(workerId);
+      if (!worker || worker.generation !== generation) throw new Error("stale_generation");
+      if (!["FENCING", "DELETING", "REPLACED"].includes(worker.state))
+        throw new Error("destructive_fence_required");
+      if (worker.state === "REPLACED") return;
+      this.sql.exec("DELETE FROM topics WHERE worker=?", workerId);
+      const project = this.projects().find((p) => p.projectKey === worker.projectKey);
+      if (project) {
+        project.reservedWorkers = Math.max(0, project.reservedWorkers - 1);
+        this.saveProject(project);
+      }
+      worker.state = "REPLACED";
+      worker.credential = undefined;
+      this.saveWorker(worker);
+    });
+  }
+  saveObservation(
+    workerId: string,
+    generation: number,
+    observation: {
+      chatId?: number;
+      threadId?: number;
+      runtimeCommit?: string;
+      runtimeVersion?: string;
+      lastHealthAt?: number;
+    },
+  ): void {
+    const worker = this.worker(workerId);
+    if (!worker || worker.generation !== generation) throw new Error("stale_generation");
+    Object.assign(worker, observation);
+    this.saveWorker(worker);
   }
   admitEvent(
     workerId: string,

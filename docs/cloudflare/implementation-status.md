@@ -1,52 +1,17 @@
-# Cloudflare execution-fleet foundation
+# Cloudflare control-plane deployment status
 
-This is an incremental, disabled foundation, not a production cutover.
-Do not connect the production Telegram webhook or enable provisioning yet.
-No Railway-hosted Control Plane should be created.
+Production target: `opencode-control-plane` at `https://opencode-control-plane.amin3532.workers.dev`. `wrangler.jsonc` is the source-controlled configuration. Deploy with existing credentials and `wrangler deploy --keep-vars`; preserve dashboard secrets and admission configuration. No additional GitHub Actions workflow is required.
 
-Implemented components:
+Cloudflare owns SQLite registry/schema migrations, Topic ownership, provisioning journal, revisioned configuration, bootstrap consumption, encrypted node credentials, signed dispatch and callback admission. Railway provisioning is isolated behind `RailwayFleetDriver`. The default backend reads the Railway credential exclusively from `env.RAILWAY_API_TOKEN`; durable storage contains a binding reference, never the Railway token.
 
-- Cloudflare-only ingress, webhook authentication, durable update admission and alarms.
-- SQLite schema versions 1/2 for backend/project/Worker/Topic inventory, allocation
-  journal, bootstrap receipts, replay admission, FIFO runs, global revisions and leases.
-- Atomic lazy reservations, backend capacity, configurable project sharding,
-  deterministic project/service reconciliation and explicit quota failures.
-- Railway execution driver using immutable image digests, dedicated volumes,
-  serverless configuration and exactly two bootstrap variables.
-- AES-GCM credentials scoped to backend or node/generation, WebCrypto signed transport.
-- Core one-time bootstrap with a private durable node credential cache; old bootstrap
-  remains source-compatible until new execution is verified.
-- Existing Telegram native rich renderer and Persian/RTL support reused in Cloudflare.
+The configured production policy is 10 Workers across at most 2 lazily created projects, 5 Workers per project. There is no pre-provisioned fleet or independent Topic limit. General is not writable. Topic reservations are transactional and idempotent. Topic activation requires signed runtime health/version verification and a Core session. Signed callbacks fence node/generation/Topic/session/run and persist receipts before acknowledgement. Telegram final delivery uses the existing native block/RTL renderer with per-chunk durable delivery receipts.
 
-Provisioning is disabled in wrangler.jsonc. The pinned pre.17 image predates the new
-bootstrap client. Publish a compatible Core image through the existing release
-workflow, verify its digest/build identity, then update the three Worker artifact
-variables together. Enabling provisioning requires an explicit environment setting
-PROVISIONING_ENABLED=true; an immutable image alone does not prove compatibility.
+Deletion fences first. This integration currently destroys the service and volume, verifies their physical absence, and only then releases capacity. Safe production reuse is intentionally unavailable until Core cleanup/rebind is proven. Existing lower-level reuse tests are not a deployed reuse canary. Ambiguous Telegram delivery and lost bootstrap admission stop with explicit reconciliation state; they do not silently duplicate messages or provision another Worker. Bootstrap readiness has a 20-minute deadline.
 
-Required protected Cloudflare bindings:
+## Activation gate
 
-- CREDENTIAL_MASTER_KEY: base64-encoded 32-byte AES-GCM key, Worker Secret.
-- TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, ADMIN_TOKEN: Worker Secrets.
-- CONTROL_PLANE_URL: the deployed HTTPS origin.
-- TELEGRAM_ALLOWED_USER_IDS: explicit comma-separated admission list.
+`PROVISIONING_ENABLED=false` remains intentional. The checked-in pre.17 image digest is the last published artifact and predates the two-variable Cloudflare bootstrap. Do not enable provisioning against it. Core pre.18 adds owned signed event callbacks and durable prompt admission/recovery receipts. First publish its verified release/image through the existing Core prerelease workflow, pin its exact digest/commit/version here, verify the image actually boots, then enable lazy provisioning.
 
-Railway backend registration accepts a token at authenticated POST /admin/backends
-and immediately encrypts it using the master key. Backend tokens never belong in
-Railway service variables. Inventory responses omit encrypted credential fields.
-Queues are opencode-worker-jobs and opencode-worker-jobs-dead. CONTROL binds the
-ControlPlane SQLite Durable Object with migration control-v1.
+Telegram webhook connection, live model execution, Worker reuse, live project rollover, sleeping wake, automated replacement recovery, and Settings/Models/Questions/Actions/Extensions/MCP/Skills/Plugins UI parity are not claimed complete. The source retains the older Node Bot control path until its replacement is tested; no Railway-hosted Bot/Control service is recreated.
 
-Still required before production activation:
-
-- Topic Durable Object integration, Telegram Topic finalization and complete UI/commands.
-- Worker readiness/version observation and secure assignment/cleanup/key handoff.
-- Async signed Worker event delivery, rendering receipts and retry reconciliation.
-- Provider credential proxy, questions/approvals and complete canonical snapshot contract.
-- Lost-bootstrap-response recovery and ambiguous bare-volume reconciliation.
-- Worker wake/recovery, bounded capacity-error UI, backend retry/rollover on real quotas.
-- Production Cloudflare deployment/logs, compatible image release, zero-project
-  Railway provisioning and real model/Telegram end-to-end acceptance.
-
-Store unit tests verify state operations, not actual Worker cleanup or reuse.
-Driver tests simulate Railway receipts; no live project or image observation is claimed.
+Local verification is recorded in the task evidence report. Unit tests and a deployed `/health` endpoint do not constitute Telegram -> Cloudflare -> Railway -> OpenCode -> Telegram acceptance.
