@@ -7,6 +7,42 @@ import type {InfrastructureNodeIdentity} from "./node-registry.js";
 const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","pause","resume","stop","retire"]);
 export class InfrastructureNodeTransport {
  constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch,private readonly wait:(milliseconds:number)=>Promise<void>=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))){}
+ /** Root-only fixed canary for an available, unassigned Worker. Not a model/IPC operation. */
+ async runtimeSelftest(nodeId:string,generation:number,profile:"baseline"|"browser"|"network"):Promise<{profile:"baseline"|"browser"|"network";joined:true;success:true;runId:string}>{
+  if(!["baseline","browser","network"].includes(profile))throw new Error("Invalid runtime selftest profile");
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(new Error("Runtime selftest deadline exceeded")),240_000);
+  let response:Response|undefined;
+  let abort!:()=>void;
+  const expired=new Promise<never>((_resolve,reject)=>{abort=()=>reject(controller.signal.reason);controller.signal.addEventListener("abort",abort,{once:true});});
+  const requireScope=(identity:Readonly<InfrastructureNodeIdentity>|null,original?:Readonly<InfrastructureNodeIdentity>)=>{
+   if(!identity||identity.binding.nodeId!==nodeId||identity.binding.generation!==generation||identity.binding.status!=="available"||identity.binding.chatId!==0||identity.binding.threadId!==0||identity.binding.sessionId!==undefined||(original&&(identity.endpoint!==original.endpoint||identity.secret!==original.secret)))throw new Error("Runtime selftest scope denied");
+   return identity;
+  };
+  try{
+   return await Promise.race([expired,(async()=>{
+    const identity=requireScope(await this.registry.resolve(nodeId));
+    controller.signal.throwIfAborted();
+    const signed=this.protocol.sign({version:1,nodeId,generation,chatId:0,threadId:0,operation:"runtime.selftest",payload:{profile},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")},identity.secret);
+    response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:controller.signal});
+    controller.signal.throwIfAborted();
+    if(!response.ok){await response.body?.cancel();throw new Error("Runtime selftest request failed");}
+    const body=await boundedBody(response,64*1024,controller.signal);
+    controller.signal.throwIfAborted();
+    const reply=await this.protocol.verify(body,response.headers.get("x-node-signature")??"",{nodeId,generation,chatId:0,threadId:0},identity.secret);
+    controller.signal.throwIfAborted();
+    requireScope(await this.registry.resolve(nodeId),identity);
+    controller.signal.throwIfAborted();
+    const payload=reply.payload as {ok?:unknown;result?:{profile?:unknown;joined?:unknown;success?:unknown;runId?:unknown}}|null;
+    const result=payload?.result;
+    if(reply.operation!=="runtime.selftest"||reply.sessionId!==undefined||payload?.ok!==true||!result||result.profile!==profile||result.joined!==true||result.success!==true||typeof result.runId!=="string"||!/^[a-f0-9]{48}$/.test(result.runId))throw new Error("Runtime selftest response proof denied");
+    return {profile,joined:true as const,success:true as const,runId:result.runId};
+   })()]);
+  }finally{
+   clearTimeout(timer);controller.signal.removeEventListener("abort",abort);
+   if(controller.signal.aborted)void response?.body?.cancel().catch(()=>{});
+  }
+ }
  /** Bounded reconciliation evidence only. Never admits execution or exposes signing material. */
  async probeUnboundBoundary(nodeId:string,generation:number):Promise<{health:true;replayRejected:true;foreignTopicRejected:true;staleGenerationRejected:true}>{
   const identity=await this.registry.resolve(nodeId);
@@ -115,8 +151,9 @@ export class InfrastructureNodeTransport {
   }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
  }
 }
-async function boundedBody(response:Response,maximum:number):Promise<string>{
+async function boundedBody(response:Response,maximum:number,signal?:AbortSignal):Promise<string>{
  if(!response.body)throw new Error("Missing node response");const reader=response.body.getReader();const chunks:Uint8Array[]=[];let size=0;
- try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>maximum)throw new Error("Node response too large");chunks.push(value);}return Buffer.concat(chunks).toString("utf8");}
- finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+ const abort=()=>{void reader.cancel(signal?.reason).catch(()=>{});};signal?.addEventListener("abort",abort,{once:true});
+ try{while(true){signal?.throwIfAborted();const {value,done}=await reader.read();signal?.throwIfAborted();if(done)break;size+=value.length;if(size>maximum)throw new Error("Node response too large");chunks.push(value);}return Buffer.concat(chunks).toString("utf8");}
+ finally{signal?.removeEventListener("abort",abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
 }

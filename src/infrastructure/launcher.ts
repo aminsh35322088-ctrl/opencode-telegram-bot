@@ -62,6 +62,13 @@ async function main(): Promise<void> {
         await cleanupDeprecatedControlVariables({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId,names:existingVariableNames});
         process.stdout.write("[InfrastructureBoundary] control_variables_reconciled contract=secrets-and-user-settings\n");
       }catch{process.stdout.write("[InfrastructureBoundary] control_variable_cleanup_pending\n");}
+      // A single unbound slot runs fixed, joined toolchain probes after cluster fencing.
+      // Older images safely reject this operation while the canary upgrade is pending.
+      try{
+        const {verifyWorkerRuntimeCanary}=await import("./worker-runtime-canary.js");
+        // Finite diagnostic work must not hold the lifecycle IPC reply deadline.
+        void verifyWorkerRuntimeCanary({journalPath:"/data/.infrastructure/provisioning.json",selftest:(nodeId,generation,profile)=>retirementTransport.runtimeSelftest(nodeId,generation,profile),log:message=>{process.stdout.write(message);}}).catch(()=>{process.stdout.write("[InfrastructureBoundary] worker_runtime_canary_pending\n");});
+      }catch{process.stdout.write("[InfrastructureBoundary] worker_runtime_canary_pending\n");}
     }});
     stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
     if(runtimeConfig.bootstrapEnabled){
