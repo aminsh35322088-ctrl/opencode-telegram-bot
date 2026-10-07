@@ -4,8 +4,9 @@ export class TelegramDeliveryError extends Error {
   constructor(
     readonly category: "rate_limited" | "rejected" | "ambiguous",
     readonly retryAfter?: number,
+    readonly transportCode?: "timeout" | "redirect" | "invocation" | "network",
   ) {
-    super("telegram_" + category);
+    super("telegram_" + category + (transportCode ? "_" + transportCode : ""));
   }
 }
 /** Reuses the existing native block parser/chunker and RTL presentation. No model runtime. */
@@ -24,8 +25,17 @@ export class CloudTelegram {
         signal: AbortSignal.timeout(15_000),
         redirect: "error",
       });
-    } catch {
-      throw new TelegramDeliveryError("ambiguous");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const code =
+        error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)
+          ? "timeout"
+          : /redirect/i.test(message)
+            ? "redirect"
+            : /illegal invocation|receiver/i.test(message)
+              ? "invocation"
+              : "network";
+      throw new TelegramDeliveryError("ambiguous", undefined, code);
     }
     const body = (await response.json()) as {
       ok?: boolean;

@@ -245,3 +245,18 @@ test("destruction retry reconciles physical absence before releasing capacity", 
   assert.equal(f.store.worker(worker.workerId)?.state, "REPLACED");
   assert.equal(f.store.topics().length, 0);
 });
+
+test("transport diagnostics classify failures without exposing exception credentials", async () => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const secret = "synthetic-secret-in-exception";
+  const api = railwayApi(secret, async () => {
+    throw new TypeError("Invalid header character " + secret);
+  });
+  await assert.rejects(
+    api("query{__typename}", {}),
+    (error) =>
+      error instanceof Error &&
+      error.message === "railway_credential_header_invalid" &&
+      !error.message.includes(secret),
+  );
+});

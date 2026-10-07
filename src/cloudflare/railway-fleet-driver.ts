@@ -334,8 +334,18 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
         signal: AbortSignal.timeout(15_000),
         redirect: "error",
       });
-    } catch {
-      throw new Error("railway_transport_error");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const category = /header|character/i.test(message)
+        ? "railway_credential_header_invalid"
+        : /redirect/i.test(message)
+          ? "railway_redirect_rejected"
+          : /illegal invocation|receiver/i.test(message)
+            ? "railway_transport_invocation_invalid"
+            : error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)
+              ? "railway_transport_timeout"
+              : "railway_transport_error";
+      throw new Error(category);
     }
     const result = (await response.json()) as { data?: T; errors?: Array<{ message?: string }> };
     if (!response.ok || result.errors?.length || !result.data) {
