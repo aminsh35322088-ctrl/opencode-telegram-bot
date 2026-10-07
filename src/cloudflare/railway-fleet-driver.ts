@@ -15,7 +15,7 @@ type RailwayProject = {
 type Connection<T> = { edges: Array<{ node: T }>; pageInfo?: { hasNextPage: boolean } };
 interface Inventory {
   project: {
-    services: Connection<{ id: string; name: string }>;
+    services: Connection<{ id: string; name: string; deletedAt?: string | null }>;
     volumes: Connection<{
       id: string;
       volumeInstances: Connection<{
@@ -36,7 +36,7 @@ interface Inventory {
   };
 }
 const inventoryQuery =
-  "query FleetInventory($projectId:String!,$environmentId:String!){project(id:$projectId){services(first:100){edges{node{id name}} pageInfo{hasNextPage}} volumes(first:100){edges{node{id volumeInstances(first:100){edges{node{serviceId volumeId mountPath sizeMB}} pageInfo{hasNextPage}}}} pageInfo{hasNextPage}}} environment(id:$environmentId){serviceInstances(first:100){edges{node{serviceId source{image} domains{serviceDomains{domain}} latestDeployment{id status}}} pageInfo{hasNextPage}}}}";
+  "query FleetInventory($projectId:String!,$environmentId:String!){project(id:$projectId){services(first:100){edges{node{id name deletedAt}} pageInfo{hasNextPage}} volumes(first:100){edges{node{id volumeInstances(first:100){edges{node{serviceId volumeId mountPath sizeMB}} pageInfo{hasNextPage}}}} pageInfo{hasNextPage}}} environment(id:$environmentId){serviceInstances(first:100){edges{node{serviceId source{image} domains{serviceDomains{domain}} latestDeployment{id status}}} pageInfo{hasNextPage}}}}";
 
 /** Execution-only Railway GraphQL; all operation receipts belong to Cloudflare SQLite. */
 export class RailwayFleetDriver implements FleetProvisioner {
@@ -74,6 +74,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
       value.project.volumes.edges.some((v) => v.node.volumeInstances.pageInfo?.hasNextPage)
     )
       throw new Error("inventory_pagination_required");
+    value.project.services.edges = value.project.services.edges.filter((s) => !s.node.deletedAt);
     return value;
   }
   async provision(jobId: string): Promise<AllocationJob> {

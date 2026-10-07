@@ -343,3 +343,25 @@ test("an ambiguous unattached volume prevents cleanup confirmation", async () =>
     /cleanup_reconciliation_required/,
   );
 });
+
+test("deleted Railway service tombstones do not prevent confirmed cleanup", async () => {
+  const f = fixture(),
+    job = f.store.reserveAllocation("tombstone", -100);
+  await f.driver.provision(job.jobId);
+  Object.assign(f.services[0], { deletedAt: new Date().toISOString() });
+  f.volumes.splice(0);
+  const request = async <T>(q: string, v: Record<string, unknown>): Promise<T> => {
+    if (q.includes("FleetDestroyService")) throw new Error("must_not_delete_tombstone");
+    return f.request<T>(q, v);
+  };
+  const driver = new RailwayFleetDriver(f.store, request, {
+    image: "ghcr.io/example/worker@sha256:" + "a".repeat(64),
+    controlUrl: "https://control.example",
+    bootstrap: async () => "",
+  });
+  const worker = f.store.fenceWorker(job.workerId);
+  f.store.transition(worker.workerId, worker.generation, "DELETING");
+  await driver.destroy(worker.workerId, worker.generation);
+  f.store.confirmDestroyed(worker.workerId, worker.generation);
+  assert.equal(f.store.worker(worker.workerId)?.state, "REPLACED");
+});
