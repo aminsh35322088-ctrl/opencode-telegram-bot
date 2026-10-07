@@ -186,3 +186,10 @@ The remaining four-stream and four-inflight-IPC bounds are simultaneous request
 budgets; they do not limit the number of Topics, Workers or Railway projects.
 The old four-slot tests now use an explicit warm-capacity fixture to retain
 migration/security regression coverage.
+
+New Chat uses a durable request receipt keyed by the Telegram update identity.
+Concurrent duplicate calls share one flight. Restart retries reuse a recorded
+Forum Topic and Worker generation; an unknown Forum-create result requires
+reconciliation instead of creating another Topic. Completed receipts cannot
+resurrect a deleted/reset Worker generation. Explicitly reducing the warm target
+fences and retires unused pending reservations without removing ready Workers.

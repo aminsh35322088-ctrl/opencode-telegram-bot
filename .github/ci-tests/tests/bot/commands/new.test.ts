@@ -5,6 +5,9 @@ import { newCommand } from "../../../src/bot/commands/new-command.js";
 import { foregroundSessionState } from "../../../src/app/managers/foreground-session-state-manager.js";
 
 const mocked = vi.hoisted(() => ({
+  remoteEnabled: vi.fn(),
+  remoteCreate: vi.fn(),
+  deleteWorkspace: vi.fn(),
   sessionCreateMock: vi.fn(),
   getCurrentProjectMock: vi.fn(),
   attachToSessionMock: vi.fn(),
@@ -23,6 +26,8 @@ const mocked = vi.hoisted(() => ({
   isCurrentCoreSessionRouteMock: vi.fn(),
   deleteTelegramTopicSessionMock: vi.fn(),
 }));
+
+vi.mock("../../../src/control-plane/topic-node-lifecycle.js",()=>({isTopicNodeCreationEnabled:mocked.remoteEnabled,createRemoteTopicSession:mocked.remoteCreate}));
 
 vi.mock("../../../src/core/native-core-service.js", () => ({
   resolveCoreTopicBinding: mocked.resolveCoreTopicBindingMock,
@@ -134,7 +139,7 @@ vi.mock("../../../src/app/services/run-control-service.js", () => ({
 
 vi.mock("../../../src/app/services/telegram-topic-workspace-service.js", () => ({
   createTelegramTopicWorkspace: mocked.createTelegramTopicWorkspaceMock,
-  deleteTelegramTopicWorkspace: vi.fn(),
+  deleteTelegramTopicWorkspace: mocked.deleteWorkspace,
 }));
 
 vi.mock("../../../src/app/services/telegram-topic-session-service.js", () => ({
@@ -164,8 +169,10 @@ vi.mock("../../../src/bot/messages/busy-blocked-renderer.js", () => ({
   replyBusyBlocked: mocked.replyBusyBlockedMock,
 }));
 
+let nextUpdateId=1;
 function createContext(): Context {
   return {
+    update: {update_id: nextUpdateId++},
     chat: { id: 123 },
     api: {},
     reply: vi.fn().mockResolvedValue({ message_id: 1 }),
@@ -338,4 +345,26 @@ describe("bot/commands/new", () => {
     expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(2);
     expect(mocked.attachToSessionMock).toHaveBeenCalledTimes(2);
   });
+});
+
+
+describe('remote New Chat retry ownership',()=>{
+ it('acknowledges a completed retry without UI initialization or destructive cleanup',async()=>{
+  mocked.remoteEnabled.mockReturnValue(true);
+  mocked.createTelegramTopicWorkspaceMock.mockResolvedValue('/new-temp');
+  mocked.remoteCreate.mockResolvedValue({reused:true,binding:{chatId:123,threadId:42,sessionId:'live',directory:'/live'}});
+  mocked.attachToSessionMock.mockRejectedValue(new Error('UI failure must not run'));
+  const ctx=createContext();await newCommand(ctx as never,createDeps());
+  expect(mocked.deleteWorkspace).toHaveBeenCalledWith('/new-temp');
+  expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
+  expect(mocked.attachToSessionMock).not.toHaveBeenCalled();
+  expect(mocked.deleteTelegramTopicSessionMock).not.toHaveBeenCalled();
+ });
+ it('coalesces concurrent duplicate Telegram updates before creating workspaces',async()=>{
+  mocked.remoteEnabled.mockReturnValue(true);
+  mocked.createTelegramTopicWorkspaceMock.mockResolvedValue('/new-temp');
+  mocked.remoteCreate.mockResolvedValue({reused:true,binding:{directory:'/live'}});
+  const ctx=createContext();const first=newCommand(ctx as never,createDeps());const second=newCommand(ctx as never,createDeps());
+  expect(first).toBe(second);await first;expect(mocked.createTelegramTopicWorkspaceMock).toHaveBeenCalledTimes(1);
+ });
 });

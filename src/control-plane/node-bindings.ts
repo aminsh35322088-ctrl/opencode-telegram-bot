@@ -10,7 +10,8 @@ export interface NodeBinding {
   currentRevision: number; status: "reserved" | "provisioning" | "ready" | "retiring" | "retired" | "failed" | "pool-reserved" | "pool-provisioning" | "available";
   sessionId?: string; createdAt: string; updatedAt: string;
 }
-interface BindingState { version: 1; clusterId?: string; bindings: NodeBinding[] }
+interface TopicCreation {key:string;chatId:number;directory:string;threadId?:number;cleaning?:boolean;failed?:boolean;nodeId?:string;generation?:number;completed?:boolean}
+interface BindingState { version: 1; clusterId?: string; bindings: NodeBinding[]; creations?:TopicCreation[] }
 /** Single writer with persisted reservations. Failed/retiring reservations retain their slot until cleanup succeeds. */
 export class NodeBindingStore {
   private queue: Promise<unknown> = Promise.resolve();
@@ -24,6 +25,15 @@ export class NodeBindingStore {
     }
     const state = JSON.parse(raw) as BindingState;
     if (state.version !== 1 || !Array.isArray(state.bindings)) throw new Error("Invalid node binding state");
+    if(state.creations!==undefined){
+      if(!Array.isArray(state.creations))throw new Error("Invalid Topic creation receipts");
+      const keys=new Set<string>();
+      for(const o of state.creations){
+        const key=`${o.chatId}:${o.key}`;
+        if(!o||typeof o.key!=="string"||!o.key||o.key.length>128||!Number.isSafeInteger(o.chatId)||o.chatId===0||typeof o.directory!=="string"||!o.directory||keys.has(key)||o.threadId!==undefined&&(!Number.isSafeInteger(o.threadId)||o.threadId<=1)||[o.completed,o.cleaning,o.failed].some(v=>v!==undefined&&typeof v!=="boolean")||o.completed&&(!o.threadId||!o.nodeId||!Number.isSafeInteger(o.generation)||o.generation!<1))throw new Error("Invalid Topic creation receipt");
+        keys.add(key);
+      }
+    }
     const nodes = new Set<string>(); const topics = new Set<string>(); const slots=new Set<number>();
     for (const binding of state.bindings) {
       if (!["reserved", "provisioning", "ready", "retiring", "retired", "failed", "pool-reserved", "pool-provisioning", "available"].includes(binding.status) || !Number.isSafeInteger(binding.currentRevision) || binding.currentRevision < 0 || !binding.nodeId || !Number.isSafeInteger(binding.generation) || binding.generation < 1 || !Number.isSafeInteger(binding.chatId) || !Number.isSafeInteger(binding.threadId) || (binding.chatId===0&&(binding.threadId!==0||binding.sessionId!==undefined)) || (binding.threadId <= 1 && !(binding.chatId===0 && binding.threadId===0 && binding.slot && ["pool-reserved","pool-provisioning","available","retiring","retired"].includes(binding.status)))) throw new Error("Invalid node identity");
@@ -84,6 +94,25 @@ export class NodeBindingStore {
       const now = new Date().toISOString();
       const binding: NodeBinding = { nodeId: randomUUID(), chatId, threadId, generation: 1, currentRevision: 0, status: "reserved", createdAt: now, updatedAt: now };
       state.bindings.push(binding); return binding;
+    });
+  }
+  /** Durable Telegram create receipt: unknown external results are never blindly replayed. */
+  beginCreation(key:string,chatId:number,directory:string):Promise<{fresh:boolean;operation:TopicCreation}>{
+    return this.transaction(state=>{
+      if(!key||key.length>128||!Number.isSafeInteger(chatId)||chatId===0||!directory)throw new Error("Invalid Topic creation identity");
+      state.creations??=[];
+      const existing=state.creations.find(o=>o.key===key&&o.chatId===chatId);
+      if(existing)return {fresh:false,operation:existing};
+      const operation={key,chatId,directory};state.creations.push(operation);return {fresh:true,operation};
+    });
+  }
+  recordCreation(key:string,chatId:number,patch:{threadId?:number;cleaning?:boolean;failed?:boolean;nodeId?:string;generation?:number;completed?:boolean}):Promise<void>{
+    return this.transaction(state=>{
+      const operation=state.creations?.find(o=>o.key===key&&o.chatId===chatId);
+      if(!operation||patch.threadId!==undefined&&(!Number.isSafeInteger(patch.threadId)||patch.threadId<=1||operation.threadId!==undefined&&operation.threadId!==patch.threadId))throw new Error("Topic creation receipt mismatch");
+      if(operation.completed&&(patch.nodeId!==undefined&&patch.nodeId!==operation.nodeId||patch.generation!==undefined&&patch.generation!==operation.generation||patch.completed===false)||operation.cleaning&&patch.cleaning===false||operation.failed&&patch.failed===false)throw new Error("Topic creation receipt already fenced");
+      if(patch.completed&&(!(patch.nodeId??operation.nodeId)||!Number.isSafeInteger(patch.generation??operation.generation)||(patch.generation??operation.generation)!<1||!(patch.threadId??operation.threadId)))throw new Error("Incomplete Topic creation receipt");
+      Object.assign(operation,patch);
     });
   }
   update(nodeId: string, generation: number, patch: Partial<Pick<NodeBinding, "projectId" | "serviceId" | "volumeId" | "endpoint" | "currentRevision" | "status" | "sessionId">>): Promise<NodeBinding> {

@@ -234,3 +234,26 @@ test('legacy image-less free Worker handoff preserves its source and storage wit
   assert.equal(contract.commitSha,'9a188586a660967227a044a3224280e6923e3067');assert.equal(contract.image,undefined);
  }
 });
+
+test('driver inventory and inspection expose owned workers and actual deployment receipts without secrets',async()=>{
+ const f=await fixture();f.add('inspect');const node=await f.controller.provision('inspect',1);
+ assert.deepEqual((await f.controller.listWorkers()).map(n=>n.nodeId),['inspect']);
+ const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId);
+ assert.equal(JSON.stringify(inspected).includes('NODE_SHARED_SECRET'),false);
+ await assert.rejects(f.controller.inspectWorker('inspect',2),/authorization/);
+ const capacities=await f.controller.inspectCapacity();assert.deepEqual(capacities.map(p=>p.available),[1,2]);
+});
+
+
+test('unavailable current project rolls over, while arbitrary API rejection is preserved',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('rollover-unavailable');const request=f.options.request;
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.includes('query WorkerInventory')&&variables.projectId==='a')throw new InfrastructureRequestError('project_unavailable',200,'WorkerInventory');return request<T>(document,variables);
+ };
+ assert.equal((await f.controller.provision('rollover-unavailable',1)).projectId,'b');
+ const g=await fixture();g.add('api-rejected');g.options.request=async()=>{throw new InfrastructureRequestError('rejected',200,'WorkerInventory');};
+ await assert.rejects(g.controller.provision('api-rejected',1),e=>e instanceof InfrastructureRequestError&&e.category==='rejected');
+ const h=await fixture();h.add('all-unavailable');h.options.request=async()=>{throw new InfrastructureRequestError('project_unavailable',200,'WorkerInventory');};
+ await assert.rejects(h.controller.provision('all-unavailable',1),/project_unavailable/);
+});

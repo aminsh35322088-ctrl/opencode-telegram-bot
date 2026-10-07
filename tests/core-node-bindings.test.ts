@@ -81,3 +81,11 @@ test('a verified free Worker is claimed before a lazy reservation is created',as
  const claimed=await store.reserve(-100,2);assert.equal(claimed.nodeId,free!.nodeId);assert.equal(claimed.generation,2);
  const lazy=await store.reserve(-100,3);assert.notEqual(lazy.nodeId,claimed.nodeId);assert.equal((await store.list()).length,2);
 });
+
+test('New Chat operation receipt survives restart and rejects conflicting returned Topic IDs',async()=>{
+ const filename=path.join(await mkdtemp(path.join(tmpdir(),'create-receipt-')),'bindings.json');const store=new NodeBindingStore(filename);
+ const first=await store.beginCreation('update-1',-100,'/original');assert.equal(first.fresh,true);
+ const retry=await new NodeBindingStore(filename).beginCreation('update-1',-100,'/retry');assert.equal(retry.fresh,false);assert.equal(retry.operation.directory,'/original');
+ await store.recordCreation('update-1',-100,{threadId:7});await assert.rejects(store.recordCreation('update-1',-100,{threadId:8}),/mismatch/);
+ assert.equal((await new NodeBindingStore(filename).beginCreation('update-1',-100,'/retry')).operation.threadId,7);
+});

@@ -11,6 +11,8 @@ export interface ProvisionedNode {
 /** Privileged provider boundary; topic/control code never sends GraphQL. */
 export interface WorkerProvisioningDriver {
   listPools(): readonly WorkerPool[];
+  listWorkers():Promise<ProvisionedNode[]>;
+  inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>;
   inspectCapacity(): Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>;
   provision(nodeId:string,generation:number):Promise<ProvisionedNode>;
   retire(nodeId:string,generation:number):Promise<ProvisionedNode>;

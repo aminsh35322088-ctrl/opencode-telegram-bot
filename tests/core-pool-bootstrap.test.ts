@@ -4,7 +4,7 @@ import type {Api} from 'grammy';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {NodeBindingStore} from '../src/control-plane/node-bindings.js';
+import {nodeBindings,NodeBindingStore} from '../src/control-plane/node-bindings.js';
 import {createRemoteTopicSession,TopicNodeLifecycle} from '../src/control-plane/topic-node-lifecycle.js';
 import type {ProvisionedNode} from '../src/infrastructure/node-provisioner.js';
 
@@ -89,4 +89,76 @@ test('New Chat reaches Telegram creation regardless of historical warm pool capa
 test('administrative warm capacity can exceed four without changing default lazy allocation',async()=>{
  const f=await fixture();const slots=await f.lifecycle.bootstrapPool(5);
  assert.equal(slots.length,5);assert.deepEqual(f.provisioned,[1,2,3,4,5]);
+});
+
+test('concurrent duplicate New Chat operation reaches Telegram create only once',async()=>{
+ let creations=0;const failure=new Error('Telegram create failed');
+ const api={raw:{createForumTopic:async()=>{creations++;await new Promise(resolve=>setTimeout(resolve,10));throw failure;}}} as unknown as Api;
+ const key='test-create-'+Date.now();
+ const first=createRemoteTopicSession(api,-100,'/duplicate',key);
+ // The same request identity survives a caller workspace change on retry.
+ const second=createRemoteTopicSession(api,-100,'/duplicate-other',key);
+ await Promise.allSettled([first,second]);
+ assert.equal(creations,1);
+});
+
+test('reducing explicit warm target fences and retires only unused pending reservations',async()=>{
+ const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'trim-warm-')),'bindings.json'));
+ const slots=await bindings.ensurePoolSlots(2);await bindings.update(slots[0]!.nodeId,1,{status:'available',endpoint:'https://worker.up.railway.app'});
+ const retired:string[]=[];const lifecycle=new TopicNodeLifecycle({bindings,now:Date.now,wait:async()=>{},snapshot:async()=>({revision:0,hash:'hash'}),node:async(_binding,operation)=>({ok:true,result:operation==='health'?{ready:true}:{revision:0,hash:'hash'}}),infrastructure:async(operation,nodeId,generation)=>{
+  if(operation==='retire'){const binding=(await bindings.list()).find(b=>b.nodeId===nodeId)!;assert.equal(binding.status,'retiring');assert.equal(generation,2);retired.push(nodeId);}
+  return {nodeId,generation,projectId:'p',environmentId:'e',phase:operation==='retire'?'retired':'deploying'};
+ }});
+ await lifecycle.bootstrapPool(0);assert.deepEqual(retired,[slots[1]!.nodeId]);assert.equal((await bindings.list())[0]!.status,'available');assert.equal((await bindings.list())[1]!.status,'retired');
+});
+
+
+test('completed New Chat retry acknowledges without executing or reserving, including concurrent fencing',async()=>{
+ const {saveTelegramTopicBinding,removeTelegramTopicBinding}=await import('../src/app/services/telegram-topic-store.js');
+ const {topicNodeLifecycle}=await import('../src/control-plane/topic-node-lifecycle.js');
+ const chatId=-Date.now(),threadId=777,key='completed';const directory='/completed-topic';
+ const binding=await nodeBindings.reserve(chatId,threadId);
+ await nodeBindings.beginCreation(key,chatId,directory);await nodeBindings.recordCreation(key,chatId,{threadId,completed:true,nodeId:binding.nodeId,generation:binding.generation});
+ await saveTelegramTopicBinding({chatId,threadId,directory,sessionId:'completed-session',title:'Completed',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+ const original=topicNodeLifecycle.ensureReady;let executions=0;
+ topicNodeLifecycle.ensureReady=async()=>{executions++;throw new Error('replay executed');};
+ try{
+  const result=await createRemoteTopicSession({} as Api,chatId,'/retry-workspace',key);assert.equal(result.reused,true);assert.equal(executions,0);
+  await nodeBindings.fence(binding.nodeId,binding.generation);
+  await assert.rejects(createRemoteTopicSession({} as Api,chatId,'/retry-workspace',key),/reconciliation_required/);
+  assert.equal(executions,0);assert.equal((await nodeBindings.list()).filter(b=>b.chatId===chatId).length,1);
+ }finally{topicNodeLifecycle.ensureReady=original;await removeTelegramTopicBinding(chatId,'completed-session');}
+});
+
+test('interrupted Topic cleanup retry never provisions or recreates a Telegram Topic',async()=>{
+ const {topicNodeLifecycle}=await import('../src/control-plane/topic-node-lifecycle.js');
+ const chatId=-Date.now()-1,key='cleanup',threadId=778;
+ await nodeBindings.beginCreation(key,chatId,'/cleanup');await nodeBindings.recordCreation(key,chatId,{threadId,cleaning:true});
+ const original=topicNodeLifecycle.retire;let retirements=0,deletions=0,creations=0;
+ topicNodeLifecycle.retire=async()=>{retirements++;return false;};
+ const api={raw:{createForumTopic:async()=>{creations++;throw new Error('must not create');}},deleteForumTopic:async()=>{deletions++;throw new Error('lost delete response');}} as unknown as Api;
+ try{
+  await assert.rejects(createRemoteTopicSession(api,chatId,'/retry',key),/lost delete response/);
+  assert.equal((await nodeBindings.beginCreation(key,chatId,'/retry')).operation.cleaning,true);
+  await assert.rejects(createRemoteTopicSession(api,chatId,'/retry',key),/lost delete response/);
+  assert.equal(retirements,2);assert.equal(deletions,2);assert.equal(creations,0);
+ }finally{topicNodeLifecycle.retire=original;}
+});
+
+
+test('lost Telegram delete response reconciles definitive absence and finishes durable cleanup',async()=>{
+ const {topicNodeLifecycle}=await import('../src/control-plane/topic-node-lifecycle.js');
+ const {saveTelegramTopicBinding,listTelegramTopicBindings}=await import('../src/app/services/telegram-topic-store.js');
+ const chatId=-Date.now()-2,key='lost-delete',threadId=779;
+ await nodeBindings.beginCreation(key,chatId,'/cleanup');await nodeBindings.recordCreation(key,chatId,{threadId,cleaning:true});
+ await saveTelegramTopicBinding({chatId,threadId,directory:'/cleanup',sessionId:'lost-delete-session',title:'Cleanup',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+ const original=topicNodeLifecycle.retire;let deletions=0,creations=0;topicNodeLifecycle.retire=async()=>false;
+ const api={raw:{createForumTopic:async()=>{creations++;throw new Error('must not create');}},deleteForumTopic:async()=>{deletions++;throw new Error(deletions===1?'lost response':'TOPIC_NOT_FOUND');}} as unknown as Api;
+ try{
+  await assert.rejects(createRemoteTopicSession(api,chatId,'/retry',key),/lost response/);
+  await assert.rejects(createRemoteTopicSession(api,chatId,'/retry',key),/reconciliation_required/);
+  assert.equal((await nodeBindings.beginCreation(key,chatId,'/retry')).operation.failed,true);
+  assert.equal((await listTelegramTopicBindings()).some(b=>b.chatId===chatId&&b.threadId===threadId),false);
+  assert.equal(deletions,2);assert.equal(creations,0);
+ }finally{topicNodeLifecycle.retire=original;}
 });

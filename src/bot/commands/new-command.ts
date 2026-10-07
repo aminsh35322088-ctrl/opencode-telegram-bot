@@ -32,8 +32,12 @@ export interface NewCommandDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
-export async function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
-  await createNewSession(ctx, deps);
+const newCommandFlights=new Map<string,Promise<void>>();
+export function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
+  const key=`${ctx.chat.id}:${ctx.update.update_id}`;
+  const existing=newCommandFlights.get(key);if(existing)return existing;
+  const operation=createNewSession(ctx,deps).finally(()=>{if(newCommandFlights.get(key)===operation)newCommandFlights.delete(key);});
+  newCommandFlights.set(key,operation);return operation;
 }
 
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
@@ -43,7 +47,14 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
 
   try {
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
-    const remote = isTopicNodeCreationEnabled() ? await createRemoteTopicSession(deps.bot.api,ctx.chat.id,directory) : null;
+    const remote = isTopicNodeCreationEnabled() ? await createRemoteTopicSession(deps.bot.api,ctx.chat.id,directory,`telegram-new:${ctx.update.update_id}`) : null;
+    if(remote?.reused){
+      // This update already owns a completed Topic. Only discard our new temporary
+      // workspace; repeated UI initialization must never roll back its resources.
+      if(remote.binding.directory!==directory)await deleteTelegramTopicWorkspace(directory);
+      return;
+    }
+    if(remote&&remote.binding.directory!==directory){await deleteTelegramTopicWorkspace(directory);directory=remote.binding.directory;}
     const { data: session, error } = remote ? {data:remote.session,error:undefined} : await opencodeClient.session.create({ directory });
     if (error || !session) throw error || new Error("No session received from OpenCode");
 

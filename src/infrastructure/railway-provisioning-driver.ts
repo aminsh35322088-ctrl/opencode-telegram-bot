@@ -43,6 +43,17 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     if(options.workerImage&&!/^[a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64}$/.test(options.workerImage))throw new Error("Worker image must be an immutable digest");
   }
   listPools():readonly WorkerPool[]{return structuredClone(this.options.pools);}
+  listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
+  inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>{
+    return this.singleFlight(async()=>{
+      await this.binding(nodeId,generation);
+      const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId&&n.generation===generation);
+      if(!record)throw new WorkerProvisioningError("reconciliation_required");
+      const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;const inventory=await this.inventory(pool);
+      if(record.serviceId&&!inventory.project.services.edges.some(e=>e.node.id===record.serviceId&&e.node.name===`topic-node-${nodeId}`))throw new WorkerProvisioningError("reconciliation_required");
+      return {...structuredClone(record),deploymentId:inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node.latestDeployment?.id};
+    });
+  }
   async inspectCapacity():Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>{
     const journal=await this.read();
     return Promise.all(this.options.pools.map(async pool=>{
@@ -175,17 +186,18 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       }
       if (record && (record.generation !== generation || record.phase === "retired" || record.phase === "retiring")) throw new Error("Infrastructure generation already fenced");
       if (!record) {
-        let pool:WorkerPool|undefined;
+        let pool:WorkerPool|undefined;let unavailable=0;let evaluated=0;
         for(const candidate of this.options.pools){
           if(excluded.has(candidate.projectId))continue;
+          evaluated++;
           const used=journal.nodes.filter(item=>item.projectId===candidate.projectId&&item.phase!=="retired").length;
           if(candidate.capacity!==undefined&&used>=candidate.capacity)continue;
           try{const current=await this.inventory(candidate);
           const actual=current.project.services.edges.filter(e=>e.node.name.startsWith("topic-node-")).length;
           if(candidate.capacity!==undefined&&actual>=candidate.capacity)continue;
-          pool=candidate;break;}catch(error){if(error instanceof InfrastructureRequestError&&error.category==="rejected")continue;throw error;}
+          pool=candidate;break;}catch(error){if(error instanceof InfrastructureRequestError&&error.category==="project_unavailable"){unavailable++;continue;};throw error;}
         }
-        if (!pool) throw new WorkerProvisioningError("capacity_exhausted");
+        if (!pool) throw new WorkerProvisioningError(evaluated>0&&unavailable===evaluated?"project_unavailable":"capacity_exhausted");
         if(!this.options.workerImage)throw new WorkerProvisioningError("image_unavailable");
         record = { nodeId, generation, slot:binding.slot,clusterId:binding.clusterId,unbound:binding.chatId===0&&binding.threadId===0, projectId: pool.projectId, environmentId: pool.environmentId, phase: "reserved",image:this.options.workerImage,runtimeCommit:this.options.coreCommit??WORKER_CORE_COMMIT,runtimeVersion:this.options.workerVersion??WORKER_CORE_VERSION };
         journal.nodes.push(record); await this.save(journal);
