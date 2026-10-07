@@ -92,7 +92,15 @@ function fixture() {
           },
         },
       };
-    else if (query.includes("FleetServiceCreate")) {
+    else if (query.includes("FleetDestroyService")) {
+      const i = services.findIndex((s) => s.id === variables.id);
+      if (i >= 0) services.splice(i, 1);
+      result = { serviceDelete: true };
+    } else if (query.includes("FleetDestroyVolume")) {
+      const i = volumes.findIndex((v) => v.id === variables.volumeId);
+      if (i >= 0) volumes.splice(i, 1);
+      result = { volumeDelete: true };
+    } else if (query.includes("FleetServiceCreate")) {
       const s = { id: "s" + services.length, name: input.name as string };
       services.push(s);
       result = { serviceCreate: s };
@@ -271,4 +279,65 @@ test("Workers-compatible manual redirects never forward the Railway credential",
   });
   await assert.rejects(api("query{__typename}", {}), /railway_redirect_rejected/);
   assert.equal(count, 1);
+});
+
+test("deployment inspection compares actual Railway source with immutable image contract", async () => {
+  const f = fixture(),
+    job = f.store.reserveAllocation("observed", -100);
+  await f.driver.provision(job.jobId);
+  let actual = "ghcr.io/example/worker@sha256:" + "a".repeat(64);
+  const request = async <T>(q: string, v: Record<string, unknown>): Promise<T> => {
+    const data = await f.request<{
+      environment: { serviceInstances: { edges: Array<{ node: Record<string, unknown> }> } };
+    }>(q, v);
+    for (const edge of data.environment.serviceInstances.edges) {
+      edge.node.source = { image: actual };
+      edge.node.latestDeployment = { id: "deploy1", status: "SUCCESS" };
+    }
+    return data as T;
+  };
+  const driver = new RailwayFleetDriver(f.store, request, {
+    image: actual,
+    controlUrl: "https://control.example",
+    bootstrap: async () => "",
+  });
+  assert.deepEqual(await driver.inspectDeployment(job.jobId), {
+    image: actual,
+    deploymentId: "deploy1",
+    status: "SUCCESS",
+  });
+  actual = "ghcr.io/example/worker@sha256:" + "b".repeat(64);
+  await assert.rejects(driver.inspectDeployment(job.jobId), /worker_image_mismatch/);
+});
+
+test("cleanup discovers a service whose create response was lost", async () => {
+  const f = fixture(),
+    job = f.store.reserveAllocation("lost-service-cleanup", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  const persisted = { ...f.store.worker(job.workerId)!, serviceId: undefined };
+  const serialized = JSON.stringify(persisted);
+  (f.store as unknown as { sql: SqlDatabase }).sql.exec(
+    "UPDATE workers SET data=? WHERE id=?",
+    serialized,
+    job.workerId,
+  );
+  f.store.fenceWorker(worker.workerId);
+  const fenced = f.store.worker(worker.workerId)!;
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+  await f.driver.destroy(fenced.workerId, fenced.generation);
+  assert.equal(f.services.length, 0);
+});
+
+test("an ambiguous unattached volume prevents cleanup confirmation", async () => {
+  const f = fixture(),
+    job = f.store.reserveAllocation("lost-volume-cleanup", -100);
+  f.loseVolume();
+  await assert.rejects(f.driver.provision(job.jobId));
+  const worker = f.store.fenceWorker(job.workerId);
+  f.store.transition(worker.workerId, worker.generation, "DELETING");
+  await assert.rejects(
+    f.driver.destroy(worker.workerId, worker.generation),
+    /cleanup_reconciliation_required/,
+  );
 });

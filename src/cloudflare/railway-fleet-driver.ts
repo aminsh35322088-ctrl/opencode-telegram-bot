@@ -2,6 +2,9 @@ import { ControlStore, type AllocationJob } from "./control-store.js";
 export interface FleetProvisioner {
   provision(jobId: string): Promise<AllocationJob>;
   destroy(workerId: string, generation: number): Promise<void>;
+  inspectDeployment(
+    jobId: string,
+  ): Promise<{ image: string; deploymentId: string; status: string }>;
 }
 type RequestApi = <T>(query: string, variables: Record<string, unknown>) => Promise<T>;
 type RailwayProject = {
@@ -28,11 +31,12 @@ interface Inventory {
       serviceId: string;
       domains: { serviceDomains: Array<{ domain: string }> };
       latestDeployment: { id: string; status?: string } | null;
+      source?: { image?: string };
     }>;
   };
 }
 const inventoryQuery =
-  "query FleetInventory($projectId:String!,$environmentId:String!){project(id:$projectId){services(first:100){edges{node{id name}} pageInfo{hasNextPage}} volumes(first:100){edges{node{id volumeInstances(first:100){edges{node{serviceId volumeId mountPath sizeMB}} pageInfo{hasNextPage}}}} pageInfo{hasNextPage}}} environment(id:$environmentId){serviceInstances(first:100){edges{node{serviceId domains{serviceDomains{domain}} latestDeployment{id status}}} pageInfo{hasNextPage}}}}";
+  "query FleetInventory($projectId:String!,$environmentId:String!){project(id:$projectId){services(first:100){edges{node{id name}} pageInfo{hasNextPage}} volumes(first:100){edges{node{id volumeInstances(first:100){edges{node{serviceId volumeId mountPath sizeMB}} pageInfo{hasNextPage}}}} pageInfo{hasNextPage}}} environment(id:$environmentId){serviceInstances(first:100){edges{node{serviceId source{image} domains{serviceDomains{domain}} latestDeployment{id status}}} pageInfo{hasNextPage}}}}";
 
 /** Execution-only Railway GraphQL; all operation receipts belong to Cloudflare SQLite. */
 export class RailwayFleetDriver implements FleetProvisioner {
@@ -263,17 +267,24 @@ export class RailwayFleetDriver implements FleetProvisioner {
         },
       },
     );
-    this.store.configureJob(jobId, { phase: "DEPLOY_SUBMITTED" });
-    await this.mutate(
+    const beforeDeploy = await this.inventory(job);
+    const previousDeploymentId = beforeDeploy.environment.serviceInstances.edges.find(
+      (s) => s.node.serviceId === job.serviceId,
+    )?.node.latestDeployment?.id;
+    this.store.configureJob(jobId, { phase: "DEPLOY_SUBMITTED", previousDeploymentId });
+    const deploymentReceipt = await this.mutate(
       'mutation FleetDeploy($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy immutable execution Worker")}',
       {
         environmentId: job.environmentId,
         patch: { services: { [job.serviceId!]: { source: { image: this.options.image } } } },
       },
     );
-    return this.store.configureJob(jobId, { phase: "DEPLOYING" });
+    return this.store.configureJob(jobId, {
+      phase: "DEPLOYING",
+      deploymentReceipt: String(deploymentReceipt),
+    });
   }
-  private async mutate(query: string, variables: Record<string, unknown>): Promise<void> {
+  private async mutate(query: string, variables: Record<string, unknown>): Promise<unknown> {
     const result = await this.request<Record<string, unknown>>(query, variables);
     const field = /\{([A-Za-z]+)\(/.exec(query)?.[1];
     const receipt = field ? result?.[field] : undefined;
@@ -282,6 +293,28 @@ export class RailwayFleetDriver implements FleetProvisioner {
         ? typeof receipt === "string" && receipt.trim().length > 0 && receipt.length <= 256
         : receipt === true;
     if (!valid) throw new Error("railway_mutation_rejected");
+    return receipt;
+  }
+  async inspectDeployment(
+    jobId: string,
+  ): Promise<{ image: string; deploymentId: string; status: string }> {
+    const job = this.store.job(jobId);
+    if (!job) throw new Error("unknown_job");
+    const inventory = await this.inventory(job);
+    const instance = inventory.environment.serviceInstances.edges.find(
+      (s) => s.node.serviceId === job.serviceId,
+    )?.node;
+    if (!instance) throw new Error("worker_unavailable");
+    if (instance.source?.image !== job.desiredImage) throw new Error("worker_image_mismatch");
+    if (!instance.latestDeployment?.id || instance.latestDeployment.id === job.previousDeploymentId)
+      throw new Error("provisioning_pending");
+    if (["FAILED", "CRASHED", "REMOVED"].includes(instance.latestDeployment.status ?? ""))
+      throw new Error("worker_deployment_failed");
+    return {
+      image: instance.source!.image!,
+      deploymentId: instance.latestDeployment.id,
+      status: instance.latestDeployment.status ?? "UNKNOWN",
+    };
   }
   async destroy(workerId: string, generation: number): Promise<void> {
     const worker = this.store.worker(workerId);
@@ -294,21 +327,37 @@ export class RailwayFleetDriver implements FleetProvisioner {
       environmentId: worker.environmentId,
     } as AllocationJob;
     let inventory = await this.inventory(scope);
-    const service = inventory.project.services.edges.find((s) => s.node.id === worker.serviceId);
+    const job = this.store.jobs().find((j) => j.workerId === workerId);
+    if (
+      !worker.volumeId &&
+      (job?.phase === "VOLUME_CREATING" || job?.cleanupPhase === "VOLUME_CREATING")
+    )
+      throw new Error("cleanup_reconciliation_required");
+    const ownedName = "topic-node-" + worker.workerId;
+    const matches = inventory.project.services.edges.filter(
+      (s) => s.node.id === worker.serviceId || s.node.name === ownedName,
+    );
+    if (matches.length > 1) throw new Error("cleanup_ownership_mismatch");
+    const service = matches[0];
+    const serviceId = service?.node.id ?? worker.serviceId;
     if (service) {
       if (service.node.name !== "topic-node-" + worker.workerId)
         throw new Error("cleanup_ownership_mismatch");
       await this.mutate("mutation FleetDestroyService($id:String!){serviceDelete(id:$id)}", {
-        id: worker.serviceId,
+        id: serviceId,
       });
     }
     inventory = await this.inventory(scope);
-    if (inventory.project.services.edges.some((s) => s.node.id === worker.serviceId))
+    if (
+      inventory.project.services.edges.some(
+        (s) => s.node.id === serviceId || s.node.name === ownedName,
+      )
+    )
       throw new Error("cleanup_pending");
     const volume = inventory.project.volumes.edges.find((v) => v.node.id === worker.volumeId);
     if (
       volume?.node.volumeInstances.edges.some(
-        (v) => v.node.serviceId && v.node.serviceId !== worker.serviceId,
+        (v) => v.node.serviceId && v.node.serviceId !== serviceId,
       )
     )
       throw new Error("cleanup_ownership_mismatch");

@@ -30,6 +30,7 @@ function fixture() {
     WORKERS_PER_PROJECT: "5",
     MAX_RAILWAY_PROJECTS: "2",
     PROVISION_ON_TOPIC_CREATE: "true",
+    PROVISIONING_ENABLED: "true",
     TELEGRAM_ALLOWED_USER_ID: "7",
     CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
     JOBS: {
@@ -176,4 +177,53 @@ test("uncertain admission reaches owned stop and terminal failure instead of ret
     )[0]?.state,
     "FAILED",
   );
+});
+
+test("admin canary and webhook share idempotent Topic creation", async (t) => {
+  const f = fixture(),
+    original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let creates = 0;
+  globalThis.fetch = async () => {
+    creates++;
+    return Response.json({ ok: true, result: { message_thread_id: 42 } });
+  };
+  const body = { chatId: -100, requestId: "canary_new" };
+  const a = await (await post(f.plane, "/admin/new-topic", body)).json();
+  const b = await (await post(f.plane, "/admin/new-topic", body)).json();
+  assert.equal(creates, 1);
+  assert.equal(a.jobId, b.jobId);
+  assert.equal(a.threadId, 42);
+  assert.equal(f.store.workers().length, 1);
+  assert.equal(f.store.topics().length, 0);
+});
+
+test("text deltas append exactly once and retain assistant ownership", async () => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveAllocation("delta", -100);
+  f.store.ready(job.workerId, 1, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(-100, 42, "delta", "prompt");
+  f.store.startNext(-100, 42);
+  const send = (sequence: number, event: unknown) =>
+    f.store.recordCallback(-100, 42, { runId: "delta", streamNonce: "stream", sequence, event });
+  send(1, {
+    type: "message.updated",
+    properties: { info: { id: "assistant", role: "assistant" } },
+  });
+  send(2, {
+    type: "message.part.updated",
+    properties: { part: { id: "part", type: "text", text: "", messageID: "assistant" } },
+  });
+  const event = {
+    type: "message.part.delta",
+    properties: { partID: "part", messageID: "assistant", field: "text", delta: "Hello" },
+  };
+  assert.equal(send(3, event), true);
+  assert.equal(send(3, event), false);
+  send(4, { type: "session.idle", properties: {} });
+  assert.equal(f.store.completedResponses()[0]?.text, "Hello");
 });

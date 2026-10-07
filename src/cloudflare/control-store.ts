@@ -51,6 +51,7 @@ export interface FleetWorker {
   credential?: string;
   revision: number;
   image?: string;
+  deploymentId?: string;
   runtimeCommit?: string;
   runtimeVersion?: string;
   lastHealthAt?: number;
@@ -73,6 +74,9 @@ export interface AllocationJob {
   desiredImage?: string;
   threadId?: number;
   error?: string;
+  previousDeploymentId?: string;
+  deploymentReceipt?: string;
+  cleanupPhase?: string;
 }
 export interface FleetTopic {
   chatId: number;
@@ -111,14 +115,20 @@ export class ControlStore {
     private readonly transaction: <T>(action: () => T) => T,
   ) {
     this.migrate();
+    this.transaction(() => {
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS run_pins(request TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL,model TEXT NOT NULL,dispatched INTEGER NOT NULL DEFAULT 0)",
+      );
+      this.sql.exec("UPDATE schema_version SET version=4");
+    });
   }
   private migrate(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)");
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 3) throw new Error("unsupported_schema");
-    if (version === 3) return;
+    if (version > 4) throw new Error("unsupported_schema");
+    if (version >= 3) return;
     if (version === 2) {
       this.migrateEvents();
       return;
@@ -235,6 +245,10 @@ export class ControlStore {
           part?: { id?: string; type?: string; text?: string; messageID?: string };
           info?: { id?: string; role?: string };
           status?: { type?: string };
+          partID?: string;
+          messageID?: string;
+          field?: string;
+          delta?: string;
         };
       };
       const info = event?.properties?.info;
@@ -260,6 +274,30 @@ export class ControlStore {
           part.text,
           part.messageID ?? null,
         );
+      }
+      const delta = event?.properties;
+      if (
+        event?.type === "message.part.delta" &&
+        delta?.field === "text" &&
+        typeof delta.delta === "string" &&
+        delta.partID
+      ) {
+        const row = [
+          ...this.sql.exec<{ text: string; message: string }>(
+            "SELECT text,message FROM response_parts WHERE run=? AND part=?",
+            runId,
+            delta.partID,
+          ),
+        ][0];
+        if (row && row.message === delta.messageID) {
+          if (row.text.length + delta.delta.length > 262144) throw new Error("response_too_large");
+          this.sql.exec(
+            "UPDATE response_parts SET text=? WHERE run=? AND part=?",
+            row.text + delta.delta,
+            runId,
+            delta.partID,
+          );
+        }
       }
       if (
         event?.type === "session.idle" ||
@@ -546,6 +584,11 @@ export class ControlStore {
       JSON.stringify(project),
     );
   }
+  jobs(): AllocationJob[] {
+    return [...this.sql.exec<{ data: string }>("SELECT data FROM jobs")].map(
+      (r) => JSON.parse(r.data) as AllocationJob,
+    );
+  }
   configureJob(jobId: string, patch: Partial<AllocationJob>): AllocationJob {
     return this.transaction(() => {
       const job = this.job(jobId);
@@ -721,6 +764,25 @@ export class ControlStore {
       return worker;
     });
   }
+  pendingTopic(chatId: number, threadId: number): boolean {
+    return this.all<AllocationJob>("jobs").some(
+      (j) => j.chatId === chatId && j.threadId === threadId && j.phase !== "BOUND" && !j.error,
+    );
+  }
+  fenceWorker(workerId: string): FleetWorker {
+    return this.transaction(() => {
+      const worker = this.worker(workerId);
+      if (!worker) throw new Error("unknown_worker");
+      if (this.topics().some((t) => t.workerId === workerId))
+        throw new Error("topic_fence_required");
+      if (!["FENCING", "DELETING", "REPLACED"].includes(worker.state)) {
+        worker.generation++;
+        worker.state = "FENCING";
+        this.saveWorker(worker);
+      }
+      return worker;
+    });
+  }
   completeCleanup(workerId: string, generation: number): void {
     this.transaction(() => {
       const worker = this.worker(workerId);
@@ -762,6 +824,8 @@ export class ControlStore {
       runtimeCommit?: string;
       runtimeVersion?: string;
       lastHealthAt?: number;
+      image?: string;
+      deploymentId?: string;
     },
   ): void {
     const worker = this.worker(workerId);
@@ -814,6 +878,28 @@ export class ControlStore {
       );
       return worker;
     });
+  }
+  pinRun(request: string, generation: number, revision: number, model: string): void {
+    this.sql.exec(
+      "INSERT INTO run_pins(request,generation,revision,model) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING",
+      request,
+      generation,
+      revision,
+      model,
+    );
+  }
+  markRunDispatched(request: string): void {
+    this.sql.exec("UPDATE run_pins SET dispatched=1 WHERE request=?", request);
+  }
+  runPin(
+    request: string,
+  ): { generation: number; revision: number; model: string; dispatched: number } | undefined {
+    return [
+      ...this.sql.exec<{ generation: number; revision: number; model: string; dispatched: number }>(
+        "SELECT generation,revision,model,dispatched FROM run_pins WHERE request=?",
+        request,
+      ),
+    ][0];
   }
   enqueue(chatId: number, threadId: number, requestId: string, prompt: string): void {
     if (

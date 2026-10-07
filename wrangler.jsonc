@@ -27,8 +27,8 @@
     "MAX_RAILWAY_PROJECTS": "2",
     "PROVISION_ON_TOPIC_CREATE": "true",
     "PROVISIONING_ENABLED": "false",
-    "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:5731692665da35e5f5066a4e285ea2499f2885858b7fc448a24f58cd681f55d6",
-    "WORKER_CORE_COMMIT": "577ba339311825aed40271c3df49ba3b8f3ec5da",
-    "WORKER_CORE_VERSION": "1.18.33-bot.13-pre.17",
+    "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:1ecc7d655d857b2a3401fc387c7205fb1b84d7bb90c404050e950314b53878e6",
+    "WORKER_CORE_COMMIT": "483a298befac84efe70b1a8f5c38a850de10bff0",
+    "WORKER_CORE_VERSION": "1.18.33-bot.13-pre.18",
   },
 }
