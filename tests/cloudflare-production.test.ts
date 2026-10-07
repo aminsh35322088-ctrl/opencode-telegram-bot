@@ -296,3 +296,55 @@ test("changing global configuration does not unlock an already admitted run", as
   assert.deepEqual(expectedRevisions, [1, 1]);
   assert.equal(f.store.activeRuns(-100, 42).length, 1);
 });
+
+test("authenticated pre-admission revision rejection releases queue only after verified inactivity", async (t) => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("revision-rejected", -100, 42),
+    secret = "n".repeat(64);
+  const credential = await encryptCredential(
+    btoa("k".repeat(32)),
+    "node:" + job.workerId + ":1",
+    secret,
+  );
+  f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+  f.store.ready(job.workerId, 1, credential);
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueueVerified(-100, 42, "revision-rejected", "prompt", 1, 1, "opencode/big-pickle");
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const operations: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("api.telegram.org"))
+      return Response.json({ ok: true, result: { message_id: 1 } });
+    const envelope = JSON.parse(String(init?.body));
+    operations.push(envelope.operation);
+    const rejected = envelope.operation === "run";
+    const signed = await signEnvelope(
+      {
+        ...envelope,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: rejected ? { ok: false, error: "operation rejected" } : { ok: true, result: null },
+      },
+      secret,
+    );
+    return new Response(signed.body, {
+      status: rejected ? 409 : 200,
+      headers: { "x-node-signature": signed.signature },
+    });
+  };
+  await f.plane.alarm();
+  assert.deepEqual(operations, ["run", "status"]);
+  assert.equal(f.store.activeRuns(-100, 42).length, 0);
+  assert.equal(
+    (
+      [...f.sql.exec("SELECT state FROM runs WHERE request='revision-rejected'")] as Array<{
+        state: string;
+      }>
+    )[0]?.state,
+    "FAILED",
+  );
+});
