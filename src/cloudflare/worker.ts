@@ -29,6 +29,7 @@ export default {
       return Response.json({
         ok: true,
         role: "control-plane",
+        protocol: "revision-fenced-v1",
         execution: false,
         railwayCredentialPresent: Boolean(env.RAILWAY_API_TOKEN),
         telegramCredentialPresent: Boolean(env.TELEGRAM_BOT_TOKEN),

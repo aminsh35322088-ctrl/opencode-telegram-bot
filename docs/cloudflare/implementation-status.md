@@ -10,8 +10,14 @@ Deletion fences first. This integration currently destroys the service and volum
 
 ## Activation gate
 
-`PROVISIONING_ENABLED=false` remains intentional. The checked-in pre.17 image digest is the last published artifact and predates the two-variable Cloudflare bootstrap. Do not enable provisioning against it. Core pre.18 adds owned signed event callbacks and durable prompt admission/recovery receipts. First publish its verified release/image through the existing Core prerelease workflow, pin its exact digest/commit/version here, verify the image actually boots, then enable lazy provisioning.
+`PROVISIONING_ENABLED=false` remains intentional. The pinned pre.18 image supports two-variable bootstrap and signed callbacks. Core pre.20 additionally enforces the admitted configuration revision and rejects stale idle callbacks before a new turn starts. Its existing release/image build must finish and its exact immutable identity must be pinned before enabling the live canary. No Railway compute has been provisioned yet.
 
 Telegram webhook connection, live model execution, Worker reuse, live project rollover, sleeping wake, automated replacement recovery, and Settings/Models/Questions/Actions/Extensions/MCP/Skills/Plugins UI parity are not claimed complete. The source retains the older Node Bot control path until its replacement is tested; no Railway-hosted Bot/Control service is recreated.
 
 Local verification is recorded in the task evidence report. Unit tests and a deployed `/health` endpoint do not constitute Telegram -> Cloudflare -> Railway -> OpenCode -> Telegram acceptance.
+
+## Direct connector deployment
+
+After uploading a Worker bundle through the Cloudflare API, explicitly activate the returned version at 100% using the deployments API. Verify both `/health` and authenticated `/admin/runtime`; an uploaded bundle alone is insufficient evidence that the Durable Object serves the new code. Preserve `secret_text` and admission bindings throughout deployment. Never export secret values.
+
+The supplied canary chat `1802392273` is a Telegram private chat. Live Telegram metadata confirms that this bot has private Topics enabled; no group-ID conversion is required. The canonical canary model is `opencode/big-pickle`; execution requires an authenticated Core model-catalog preflight and never invents provider credentials.

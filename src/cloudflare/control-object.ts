@@ -57,6 +57,8 @@ export class ControlPlane {
           hasNextPage: inventory.workspace.projects.pageInfo.hasNextPage,
         });
       }
+      if (path === "/admin/runtime")
+        return Response.json({ schemaVersion: 4, protocol: "revision-fenced-v1" });
       if (path === "/admin/topics") {
         await this.setup();
         const threadId = Number(body.threadId);
@@ -112,9 +114,11 @@ export class ControlPlane {
           throw new Error("provider_credential_binding_missing");
         if (this.store.global()?.revision !== admittedGlobal?.revision)
           throw new Error("configuration_changed");
-        this.store.enqueue(topic.chatId, topic.threadId, String(body.requestId ?? ""), text);
-        this.store.pinRun(
+        this.store.enqueueVerified(
+          topic.chatId,
+          topic.threadId,
           String(body.requestId ?? ""),
+          text,
           topic.generation,
           admittedGlobal!.revision,
           selected,
@@ -539,6 +543,14 @@ export class ControlPlane {
       });
       this.store.ready(worker.workerId, job.generation, worker.credential!);
       this.store.bindTopic(jobId, job.threadId, session.sessionId);
+      // eslint-disable-next-line no-console
+      console.log(
+        JSON.stringify({
+          event: "worker_bound",
+          workerId: job.workerId,
+          generation: job.generation,
+        }),
+      );
     } finally {
       this.store.releaseLease("railway-provisioning", owner);
     }
@@ -649,7 +661,26 @@ export class ControlPlane {
         this.store.releaseLease(lease, owner);
         if (this.store.activeRuns(topic.chatId, topic.threadId).length)
           await this.state.storage.setAlarm(Date.now() + 30_000);
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message === "worker_operation_rejected") {
+          try {
+            const active = await nodeRpc(
+              await this.identity(topic.workerId),
+              "status",
+              {},
+              topic.sessionId,
+            );
+            if (!active)
+              this.store.failRun(
+                topic.chatId,
+                topic.threadId,
+                run.requestId,
+                en["bot.prompt_send_error"],
+              );
+          } catch {
+            // Preserve ownership when execution inactivity cannot be authenticated.
+          }
+        }
         this.store.releaseLease(lease, owner);
         await this.state.storage.setAlarm(Date.now() + 15_000);
       }

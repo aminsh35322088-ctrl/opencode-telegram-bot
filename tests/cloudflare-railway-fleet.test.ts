@@ -306,6 +306,8 @@ test("deployment inspection compares actual Railway source with immutable image 
     deploymentId: "deploy1",
     status: "SUCCESS",
   });
+  f.store.configureJob(job.jobId, { previousDeploymentId: "deploy1" });
+  await assert.rejects(driver.inspectDeployment(job.jobId), /provisioning_pending/);
   actual = "ghcr.io/example/worker@sha256:" + "b".repeat(64);
   await assert.rejects(driver.inspectDeployment(job.jobId), /worker_image_mismatch/);
 });

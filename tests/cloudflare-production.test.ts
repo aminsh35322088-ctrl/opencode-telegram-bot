@@ -227,3 +227,72 @@ test("text deltas append exactly once and retain assistant ownership", async () 
   send(4, { type: "session.idle", properties: {} });
   assert.equal(f.store.completedResponses()[0]?.text, "Hello");
 });
+
+test("cancel-job resumes deletion after a lost cleanup response without refencing", async () => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveAllocation("cancel-retry", -100);
+  f.store.configureJob(job.jobId, { phase: "VOLUME_CREATING" });
+  let attempts = 0;
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => {
+      if (++attempts === 1) throw new Error("cleanup_pending");
+    },
+  });
+  assert.equal((await post(f.plane, "/admin/cancel-job", { jobId: job.jobId })).status, 409);
+  const generation = f.store.worker(job.workerId)!.generation;
+  assert.equal(f.store.job(job.jobId)?.cleanupPhase, "VOLUME_CREATING");
+  assert.equal((await post(f.plane, "/admin/cancel-job", { jobId: job.jobId })).status, 200);
+  assert.equal(f.store.worker(job.workerId)?.generation, generation);
+  assert.equal(f.store.worker(job.workerId)?.state, "REPLACED");
+  assert.equal((await post(f.plane, "/admin/cancel-job", { jobId: job.jobId })).status, 200);
+  assert.equal(attempts, 2);
+});
+
+test("changing global configuration does not unlock an already admitted run", async (t) => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("pin-active", -100, 42),
+    secret = "n".repeat(64);
+  const credential = await encryptCredential(
+    btoa("k".repeat(32)),
+    "node:" + job.workerId + ":1",
+    secret,
+  );
+  f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+  f.store.ready(job.workerId, 1, credential);
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueueVerified(-100, 42, "pin-active", "prompt", 1, 1, "opencode/big-pickle");
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const expectedRevisions: number[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const envelope = JSON.parse(String(init?.body));
+    if (envelope.operation === "run") expectedRevisions.push(envelope.payload.expectedRevision);
+    const result = envelope.operation === "run" ? { accepted: true } : { state: "ACCEPTED" };
+    const signed = await signEnvelope(
+      {
+        ...envelope,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: { ok: true, result },
+      },
+      secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await f.plane.alarm();
+  await post(f.plane, "/admin/global", {
+    configuration: { runtime: { model: "other/model" } },
+    skills: [],
+    actions: [],
+    catalog: {},
+    defaults: {},
+    credentialReferences: [],
+  });
+  await f.plane.alarm();
+  assert.deepEqual(expectedRevisions, [1, 1]);
+  assert.equal(f.store.activeRuns(-100, 42).length, 1);
+});

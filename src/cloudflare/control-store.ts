@@ -879,6 +879,23 @@ export class ControlStore {
       return worker;
     });
   }
+  enqueueVerified(
+    chatId: number,
+    threadId: number,
+    request: string,
+    prompt: string,
+    generation: number,
+    revision: number,
+    model: string,
+  ): void {
+    this.transaction(() => {
+      const topic = this.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
+      if (topic?.generation !== generation) throw new Error("stale_generation");
+      if (this.global()?.revision !== revision) throw new Error("configuration_changed");
+      this.enqueue(chatId, threadId, request, prompt);
+      this.pinRun(request, generation, revision, model);
+    });
+  }
   pinRun(request: string, generation: number, revision: number, model: string): void {
     this.sql.exec(
       "INSERT INTO run_pins(request,generation,revision,model) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING",
@@ -902,6 +919,19 @@ export class ControlStore {
     ][0];
   }
   enqueue(chatId: number, threadId: number, requestId: string, prompt: string): void {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId) || !prompt || prompt.length > 20000)
+      throw new Error("invalid_prompt");
+    const previous = [
+      ...this.sql.exec<{ chat: number; thread: number; prompt: string }>(
+        "SELECT chat,thread,prompt FROM runs WHERE request=?",
+        requestId,
+      ),
+    ][0];
+    if (
+      previous &&
+      (previous.chat !== chatId || previous.thread !== threadId || previous.prompt !== prompt)
+    )
+      throw new Error("request_identity_mismatch");
     if (
       !this.topics().some(
         (t) => t.chatId === chatId && t.threadId === threadId && t.state === "ACTIVE",
