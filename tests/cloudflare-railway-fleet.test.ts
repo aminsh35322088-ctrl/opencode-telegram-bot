@@ -365,3 +365,29 @@ test("deleted Railway service tombstones do not prevent confirmed cleanup", asyn
   f.store.confirmDestroyed(worker.workerId, worker.generation);
   assert.equal(f.store.worker(worker.workerId)?.state, "REPLACED");
 });
+
+test("detached volume provider-retention receipt is tracked without reusing its Worker", async () => {
+  const f = fixture(),
+    job = f.store.reserveAllocation("retained", -100);
+  await f.driver.provision(job.jobId);
+  const pendingUntil = "2026-10-09T23:39:44.915Z";
+  Object.assign(f.volumes[0]!.volumeInstances.edges[0]!.node, {
+    serviceId: null,
+    isPendingDeletion: true,
+    deletedAt: pendingUntil,
+  });
+  f.services.splice(0);
+  const request = async <T>(q: string, v: Record<string, unknown>): Promise<T> =>
+    q.includes("FleetDestroyVolume") ? ({ volumeDelete: true } as T) : f.request<T>(q, v);
+  const driver = new RailwayFleetDriver(f.store, request, {
+    image: "ghcr.io/example/worker@sha256:" + "a".repeat(64),
+    controlUrl: "https://control.example",
+    bootstrap: async () => "",
+  });
+  const worker = f.store.fenceWorker(job.workerId);
+  f.store.transition(worker.workerId, worker.generation, "DELETING");
+  await driver.destroy(worker.workerId, worker.generation);
+  f.store.confirmDestroyed(worker.workerId, worker.generation);
+  assert.equal(f.store.worker(worker.workerId)?.volumeDeletionPendingUntil, pendingUntil);
+  assert.notEqual(f.store.reserveAllocation("next", -100).workerId, worker.workerId);
+});

@@ -395,8 +395,31 @@ export class RailwayFleetDriver implements FleetProvisioner {
         { volumeId: worker.volumeId },
       );
     inventory = await this.inventory(scope);
-    if (inventory.project.volumes.edges.some((v) => v.node.id === worker.volumeId))
-      throw new Error("cleanup_pending");
+    const retained = inventory.project.volumes.edges.find((v) => v.node.id === worker.volumeId);
+    if (retained) {
+      const instances = retained.node.volumeInstances.edges.map((i) => i.node);
+      if (
+        !instances.length ||
+        !instances.every(
+          (i) =>
+            i.serviceId === null &&
+            i.isPendingDeletion === true &&
+            typeof i.deletedAt === "string" &&
+            Number.isFinite(Date.parse(i.deletedAt)),
+        )
+      )
+        throw new Error("cleanup_pending");
+      // Railway retains administratively deleted, detached volumes for up to 48 hours.
+      // Keep the provider purge receipt; this Worker/volume is never reused.
+      this.store.recordVolumeDeletion(
+        workerId,
+        generation,
+        instances
+          .map((i) => i.deletedAt!)
+          .sort()
+          .at(-1)!,
+      );
+    }
   }
 }
 

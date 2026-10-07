@@ -55,6 +55,7 @@ export interface FleetWorker {
   runtimeCommit?: string;
   runtimeVersion?: string;
   lastHealthAt?: number;
+  volumeDeletionPendingUntil?: string;
 }
 export interface AllocationJob {
   jobId: string;
@@ -797,6 +798,18 @@ export class ControlStore {
       this.saveWorker(worker);
     });
   }
+  recordVolumeDeletion(workerId: string, generation: number, pendingUntil: string): void {
+    const worker = this.worker(workerId);
+    if (
+      !worker ||
+      worker.generation !== generation ||
+      worker.state !== "DELETING" ||
+      !Number.isFinite(Date.parse(pendingUntil))
+    )
+      throw new Error("destructive_fence_required");
+    worker.volumeDeletionPendingUntil = pendingUntil;
+    this.saveWorker(worker);
+  }
   confirmDestroyed(workerId: string, generation: number): void {
     this.transaction(() => {
       const worker = this.worker(workerId);
@@ -824,6 +837,7 @@ export class ControlStore {
       runtimeCommit?: string;
       runtimeVersion?: string;
       lastHealthAt?: number;
+      volumeDeletionPendingUntil?: string;
       image?: string;
       deploymentId?: string;
     },
