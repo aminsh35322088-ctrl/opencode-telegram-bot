@@ -23,6 +23,9 @@ interface Inventory {
         volumeId: string;
         mountPath: string;
         sizeMB: number;
+        state?: string;
+        deletedAt?: string | null;
+        isPendingDeletion?: boolean;
       }>;
     }>;
   };
@@ -36,7 +39,7 @@ interface Inventory {
   };
 }
 const inventoryQuery =
-  "query FleetInventory($projectId:String!,$environmentId:String!){project(id:$projectId){services(first:100){edges{node{id name deletedAt}} pageInfo{hasNextPage}} volumes(first:100){edges{node{id volumeInstances(first:100){edges{node{serviceId volumeId mountPath sizeMB}} pageInfo{hasNextPage}}}} pageInfo{hasNextPage}}} environment(id:$environmentId){serviceInstances(first:100){edges{node{serviceId source{image} domains{serviceDomains{domain}} latestDeployment{id status}}} pageInfo{hasNextPage}}}}";
+  "query FleetInventory($projectId:String!,$environmentId:String!){project(id:$projectId){services(first:100){edges{node{id name deletedAt}} pageInfo{hasNextPage}} volumes(first:100){edges{node{id volumeInstances(first:100){edges{node{serviceId volumeId mountPath sizeMB state deletedAt isPendingDeletion}} pageInfo{hasNextPage}}}} pageInfo{hasNextPage}}} environment(id:$environmentId){serviceInstances(first:100){edges{node{serviceId source{image} domains{serviceDomains{domain}} latestDeployment{id status}}} pageInfo{hasNextPage}}}}";
 
 /** Execution-only Railway GraphQL; all operation receipts belong to Cloudflare SQLite. */
 export class RailwayFleetDriver implements FleetProvisioner {
@@ -315,6 +318,30 @@ export class RailwayFleetDriver implements FleetProvisioner {
       image: instance.source!.image!,
       deploymentId: instance.latestDeployment.id,
       status: instance.latestDeployment.status ?? "UNKNOWN",
+    };
+  }
+  async inspectCleanup(workerId: string): Promise<unknown> {
+    const worker = this.store.worker(workerId);
+    if (!worker?.projectId || !worker.environmentId) throw new Error("unknown_worker_scope");
+    const inventory = await this.inventory({
+      projectId: worker.projectId,
+      environmentId: worker.environmentId,
+    } as AllocationJob);
+    return {
+      services: inventory.project.services.edges
+        .filter((s) => s.node.id === worker.serviceId)
+        .map((s) => ({ id: s.node.id, deletedAt: s.node.deletedAt })),
+      volumes: inventory.project.volumes.edges
+        .filter((v) => v.node.id === worker.volumeId)
+        .map((v) => ({
+          id: v.node.id,
+          instances: v.node.volumeInstances.edges.map((i) => ({
+            serviceId: i.node.serviceId,
+            state: i.node.state,
+            deletedAt: i.node.deletedAt,
+            isPendingDeletion: i.node.isPendingDeletion,
+          })),
+        })),
     };
   }
   async destroy(workerId: string, generation: number): Promise<void> {

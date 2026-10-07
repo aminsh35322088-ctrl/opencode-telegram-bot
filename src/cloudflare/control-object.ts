@@ -145,6 +145,8 @@ export class ControlPlane {
           ),
         );
       }
+      if (path === "/admin/cleanup-status")
+        return Response.json(await this.driver().inspectCleanup(String(body.workerId)));
       if (path === "/admin/cancel-job") {
         const job = this.store.job(String(body.jobId));
         if (!job) throw new Error("unknown_job");
