@@ -135,6 +135,20 @@ export function writeAppState(nextState: AppState): Promise<void> {
     await writeAppState(nextState);
   }).then(() => {});
 }
+
+/**
+ * Factory reset must preserve the monotonic Global revision/high-water mark.
+ * Replacing app-state.json through the canonical transaction advances the
+ * revision while clearing user state; deleting the file first would make the
+ * in-memory high-water guard reject every later write in the same process.
+ */
+export async function resetAppStateForFactory(): Promise<void> {
+  await writeAppState({ version: 2 });
+  await Promise.all([
+    fs.rm(getBackupPath(), { force: true }),
+    fs.rm(`${getStatePath()}${APP_STATE_TEMP_SUFFIX}`, { force: true }),
+  ]);
+}
 /** The existing persistence queue is the sole serialization and atomic commit boundary. */
 export function transactAppState(
   apply: () => Promise<void>,

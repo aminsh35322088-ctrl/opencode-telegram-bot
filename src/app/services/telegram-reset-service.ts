@@ -1,4 +1,4 @@
-import { flushAppState } from "../stores/app-state-store.js";
+import { flushAppState, getAppStatePath, resetAppStateForFactory } from "../stores/app-state-store.js";
 import type { Api } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { assistantRunState } from "../managers/assistant-run-state-manager.js";
@@ -182,9 +182,17 @@ export async function resetHistory(api: Api, _chatId: number): Promise<{ deleted
 async function clearFactoryPersistentState(): Promise<void> {
   await flushAppState();
   const fs = await import("fs/promises");
+  const canonicalStatePath = getAppStatePath();
+  const canonicalStateFiles = new Set([
+    canonicalStatePath,
+    `${canonicalStatePath}.bak`,
+    `${canonicalStatePath}.tmp`,
+  ]);
   for (const statePath of getPersistentStatePaths()) {
+    if (canonicalStateFiles.has(statePath)) continue;
     await fs.rm(statePath, { recursive: true, force: true });
   }
+  await resetAppStateForFactory();
   delete process.env.GITHUB_TOKEN;
   delete process.env.GH_TOKEN;
   logger.info("[TelegramReset] Cleared registered Bot persistent state, integrations, and Model Center preferences");

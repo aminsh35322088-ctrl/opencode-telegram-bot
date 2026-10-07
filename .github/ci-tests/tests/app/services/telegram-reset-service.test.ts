@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   clearInteractionsMock: vi.fn(),
   detachMock: vi.fn(),
   flushAppStateMock: vi.fn(async () => {}),
+  resetAppStateForFactoryMock: vi.fn(async () => {}),
+  appStatePathMock: vi.fn(() => "/state/app-state.json"),
   persistentPathsMock: vi.fn(() => [] as string[]),
   resetSettingsMock: vi.fn(),
   flushSettingsMock: vi.fn(async () => {}),
@@ -105,6 +107,8 @@ vi.mock("../../../src/app/services/attach-service.js", () => ({
 }));
 vi.mock("../../../src/app/stores/app-state-store.js", () => ({
   flushAppState: mocks.flushAppStateMock,
+  resetAppStateForFactory: mocks.resetAppStateForFactoryMock,
+  getAppStatePath: mocks.appStatePathMock,
 }));
 vi.mock("../../../src/app/services/persistent-state-registry.js", () => ({
   getPersistentStatePaths: mocks.persistentPathsMock,
