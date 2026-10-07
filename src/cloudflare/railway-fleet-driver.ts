@@ -8,6 +8,7 @@ export interface FleetProvisioner {
 }
 type RequestApi = <T>(query: string, variables: Record<string, unknown>) => Promise<T>;
 type RailwayProject = {
+  deletedAt?: string | null;
   id: string;
   name: string;
   environments: Connection<{ id: string; name: string }>;
@@ -80,6 +81,18 @@ export class RailwayFleetDriver implements FleetProvisioner {
     value.project.services.edges = value.project.services.edges.filter((s) => !s.node.deletedAt);
     return value;
   }
+  async listProjects(
+    workspaceId: string,
+  ): Promise<{ projects: RailwayProject[]; hasNextPage: boolean }> {
+    const result = await this.request<{ workspace: { projects: Connection<RailwayProject> } }>(
+      "query FleetProjects($workspaceId:String!){workspace(workspaceId:$workspaceId){projects{edges{node{id name deletedAt environments{edges{node{id name}}}}} pageInfo{hasNextPage}}}}",
+      { workspaceId },
+    );
+    return {
+      projects: result.workspace.projects.edges.filter((p) => !p.node.deletedAt).map((p) => p.node),
+      hasNextPage: result.workspace.projects.pageInfo?.hasNextPage ?? false,
+    };
+  }
   async provision(jobId: string): Promise<AllocationJob> {
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
@@ -93,18 +106,12 @@ export class RailwayFleetDriver implements FleetProvisioner {
     if (!backend?.enabled) throw new Error("backend_unavailable");
     const project = this.store.selectProject(jobId);
     if (!project.projectId) {
-      const result = await this.request<{ workspace: { projects: Connection<RailwayProject> } }>(
-        "query FleetProjects($workspaceId:String!){workspace(workspaceId:$workspaceId){projects{edges{node{id name environments{edges{node{id name}}}}} pageInfo{hasNextPage}}}}",
-        { workspaceId: backend.workspaceId },
-      );
-      if (result.workspace.projects.pageInfo?.hasNextPage)
-        throw new Error("inventory_pagination_required");
-      const matches = result.workspace.projects.edges.filter(
-        (p) => p.node.name === project.projectKey,
-      );
+      const result = await this.listProjects(backend.workspaceId);
+      if (result.hasNextPage) throw new Error("inventory_pagination_required");
+      const matches = result.projects.filter((p) => p.name === project.projectKey);
       if (matches.length > 1) throw new Error("project_ownership_ambiguous");
       const actual =
-        matches[0]?.node ??
+        matches[0] ??
         (
           await this.request<{ projectCreate: RailwayProject }>(
             "mutation FleetProjectCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name environments{edges{node{id name}}}}}",

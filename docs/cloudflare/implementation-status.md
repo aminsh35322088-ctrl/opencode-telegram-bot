@@ -10,7 +10,7 @@ Deletion fences first. This integration currently destroys the service and volum
 
 ## Activation gate
 
-`PROVISIONING_ENABLED=false` temporarily gates new allocations while the Core pre.21 authenticated API-client transport image is built. The exact pre.20 image digest, Core commit/version, SDK checksums, and materialized release manifest have been verified. Core enforces the admitted configuration revision and rejects stale idle callbacks before a new turn starts. This activation is a canary gate, not evidence of successful production model execution. The registry starts with no owned projects or Workers.
+`PROVISIONING_ENABLED=true` enables the single canary against the verified pre.21 image with explicit authenticated API-client identity. The exact pre.21 image digest, Core commit/version, SDK checksums, and materialized release manifest have been verified. Core pre.21 enforces the admitted configuration revision and rejects stale idle callbacks before a new turn starts. This activation is a canary gate, not evidence of successful production model execution. The registry starts with no owned projects or Workers.
 
 Telegram webhook connection, live model execution, Worker reuse, live project rollover, sleeping wake, automated replacement recovery, and Settings/Models/Questions/Actions/Extensions/MCP/Skills/Plugins UI parity are not claimed complete. The source retains the older Node Bot control path until its replacement is tested; no Railway-hosted Bot/Control service is recreated.
 

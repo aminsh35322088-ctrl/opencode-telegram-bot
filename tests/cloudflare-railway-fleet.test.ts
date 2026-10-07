@@ -391,3 +391,17 @@ test("detached volume provider-retention receipt is tracked without reusing its 
   assert.equal(f.store.worker(worker.workerId)?.volumeDeletionPendingUntil, pendingUntil);
   assert.notEqual(f.store.reserveAllocation("next", -100).workerId, worker.workerId);
 });
+
+test("a deleted project with the deterministic name is not adopted", async () => {
+  const f = fixture();
+  f.projects.push({
+    id: "deleted-project",
+    name: "workers-a-01",
+    environments: { edges: [{ node: { id: "old-environment", name: "production" } }] },
+    deletedAt: "2026-10-07T00:00:00Z",
+  } as never);
+  const job = f.store.reserveAllocation("new-project", -100);
+  const provisioned = await f.driver.provision(job.jobId);
+  assert.notEqual(provisioned.projectId, "deleted-project");
+  assert.equal(f.projects.length, 2);
+});

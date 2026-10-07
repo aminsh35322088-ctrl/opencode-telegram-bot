@@ -40,21 +40,10 @@ export class ControlPlane {
         return Response.json({ ok: true });
       }
       if (path === "/admin/railway-status") {
-        const api = railwayApi(this.env.RAILWAY_API_TOKEN);
-        const inventory = await api<{
-          workspace: {
-            projects: {
-              edges: Array<{ node: { id: string; name: string } }>;
-              pageInfo: { hasNextPage: boolean };
-            };
-          };
-        }>(
-          "query ControlProjects($workspaceId:String!){workspace(workspaceId:$workspaceId){projects{edges{node{id name}} pageInfo{hasNextPage}}}}",
-          { workspaceId: this.env.RAILWAY_WORKSPACE_ID },
-        );
+        const inventory = await this.driver().listProjects(this.env.RAILWAY_WORKSPACE_ID);
         return Response.json({
-          projects: inventory.workspace.projects.edges.map((e) => e.node),
-          hasNextPage: inventory.workspace.projects.pageInfo.hasNextPage,
+          projects: inventory.projects.map((p) => ({ id: p.id, name: p.name })),
+          hasNextPage: inventory.hasNextPage,
         });
       }
       if (path === "/admin/runtime")
