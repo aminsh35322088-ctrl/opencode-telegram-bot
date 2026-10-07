@@ -348,3 +348,16 @@ test("authenticated pre-admission revision rejection releases queue only after v
     "FAILED",
   );
 });
+
+test("control restart resumes a volume attachment job from durable journal", async () => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("attach-restart", -100, 42);
+  f.store.configureJob(job.jobId, { phase: "VOLUME_ATTACHING" });
+  const resumed: string[] = [];
+  (f.plane as unknown as { advance: (id: string) => Promise<void> }).advance = async (id) => {
+    resumed.push(id);
+  };
+  await f.plane.alarm();
+  assert.deepEqual(resumed, [job.jobId]);
+});

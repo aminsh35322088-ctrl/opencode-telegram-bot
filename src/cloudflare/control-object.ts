@@ -210,7 +210,31 @@ export class ControlPlane {
         return Response.json({ job });
       }
       if (path === "/admin/delete-topic") {
-        await this.deleteTopic(Number(body.chatId), Number(body.threadId));
+        const chatId = Number(body.chatId),
+          threadId = Number(body.threadId);
+        if (
+          !Number.isSafeInteger(chatId) ||
+          chatId === 0 ||
+          !Number.isSafeInteger(threadId) ||
+          threadId <= 1
+        )
+          throw new Error("invalid_topic");
+        await this.deleteTopic(chatId, threadId);
+        if (
+          this.store
+            .jobs()
+            .some(
+              (job) =>
+                job.chatId === chatId &&
+                job.threadId === threadId &&
+                this.store.worker(job.workerId)?.state !== "REPLACED",
+            )
+        )
+          throw new Error("pending_worker_cleanup_required");
+        await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call("deleteForumTopic", {
+          chat_id: chatId,
+          message_thread_id: threadId,
+        });
         return Response.json({ ok: true });
       }
       if (path === "/admin/rpc") {
@@ -480,6 +504,7 @@ export class ControlPlane {
       this.store.configureJob(jobId, {
         phase: "RECONCILIATION_REQUIRED",
         error: "worker_bootstrap_timeout",
+        cleanupPhase: job.phase,
       });
       this.store.transition(job.workerId, job.generation, "UNHEALTHY");
       throw new Error("worker_bootstrap_timeout");
@@ -574,8 +599,15 @@ export class ControlPlane {
       .map((r) => JSON.parse(r.data) as AllocationJob)
       .filter(
         (j) =>
-          ["PROVISIONING", "BINDING", "DEPLOYING", "DEPLOY_SUBMITTED"].includes(j.phase) &&
-          j.threadId !== undefined,
+          [
+            "PROVISIONING",
+            "VOLUME_CREATING",
+            "VOLUME_CREATED",
+            "VOLUME_ATTACHING",
+            "BINDING",
+            "DEPLOYING",
+            "DEPLOY_SUBMITTED",
+          ].includes(j.phase) && j.threadId !== undefined,
       );
     for (const job of pending) {
       try {
