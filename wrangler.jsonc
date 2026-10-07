@@ -1,0 +1,26 @@
+{
+  "name": "opencode-telegram-control",
+  "main": "src/cloudflare/worker.ts",
+  "compatibility_date": "2026-10-07",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "durable_objects": { "bindings": [{ "name": "CONTROL", "class_name": "ControlPlane" }] },
+  "migrations": [{ "tag": "control-v1", "new_sqlite_classes": ["ControlPlane"] }],
+  "queues": {
+    "producers": [{ "binding": "JOBS", "queue": "opencode-worker-jobs" }],
+    "consumers": [
+      {
+        "queue": "opencode-worker-jobs",
+        "max_batch_size": 1,
+        "max_retries": 12,
+        "dead_letter_queue": "opencode-worker-jobs-dead",
+      },
+    ],
+  },
+  "vars": {
+    "PROVISIONING_ENABLED": "false",
+    "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:5731692665da35e5f5066a4e285ea2499f2885858b7fc448a24f58cd681f55d6",
+    "WORKER_CORE_COMMIT": "577ba339311825aed40271c3df49ba3b8f3ec5da",
+    "WORKER_CORE_VERSION": "1.18.33-bot.13-pre.17",
+  },
+}

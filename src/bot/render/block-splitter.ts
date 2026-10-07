@@ -1,4 +1,3 @@
-import { logger } from "../../utils/logger.js";
 import { toBlockPlainText } from "./block-plain-text.js";
 import { DEFAULT_MAX_PART_BLOCKS, DEFAULT_MAX_PART_CHARS } from "./limits.js";
 import {
@@ -208,11 +207,6 @@ export function splitOversizeTelegramBlock(
     return [block];
   }
 
-  logger.debug("[TelegramRender] Splitting oversize block", {
-    blockType: block.type,
-    maxChars: limits.maxChars,
-    maxBlocks: limits.maxBlocks,
-  });
 
   return splitByType(block, limits).flatMap((piece) =>
     fitsLimits(piece, limits) ? [piece] : splitToPlainBlocks(piece, limits),

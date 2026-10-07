@@ -1,4 +1,3 @@
-import { logger } from "../../utils/logger.js";
 import {
   DEFAULT_MAX_PART_BLOCKS,
   DEFAULT_MAX_PART_CHARS,
@@ -96,12 +95,6 @@ export function chunkTelegramRenderedBlocks(
     source: "blocks" as const,
   }));
 
-  if (parts.length > 1) {
-    logger.debug("[TelegramRender] Rendered blocks chunked", {
-      blockCount: blocks.length,
-      partCount: parts.length,
-    });
-  }
 
   return parts;
 }

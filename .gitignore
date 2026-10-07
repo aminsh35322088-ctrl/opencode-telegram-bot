@@ -48,3 +48,8 @@ session-export-*
 manager/
 
 .core/
+
+# Cloudflare local runtime and protected development bindings
+.wrangler/
+.dev.vars
+.dev.vars.*
