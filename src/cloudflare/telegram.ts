@@ -18,12 +18,13 @@ export class CloudTelegram {
   async call<T>(method: string, payload: Record<string, unknown>): Promise<T> {
     let response: Response;
     try {
-      response = await this.transport("https://api.telegram.org/bot" + this.token + "/" + method, {
+      const transport = this.transport;
+      response = await transport("https://api.telegram.org/bot" + this.token + "/" + method, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(15_000),
-        redirect: "error",
+        redirect: "manual",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -37,6 +38,8 @@ export class CloudTelegram {
               : "network";
       throw new TelegramDeliveryError("ambiguous", undefined, code);
     }
+    if (response.status >= 300 && response.status < 400)
+      throw new TelegramDeliveryError("ambiguous", undefined, "redirect");
     const body = (await response.json()) as {
       ok?: boolean;
       result?: T;

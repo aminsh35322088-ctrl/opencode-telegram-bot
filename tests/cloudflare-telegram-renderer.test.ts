@@ -25,3 +25,11 @@ test("unsupported rich Telegram API falls back to the same source-preserving tex
   assert.equal(bodies[1]!.text, "hello");
   assert.equal(bodies[1]!.message_thread_id, 42);
 });
+
+test("native fetch transport is invoked without a CloudTelegram receiver", async () => {
+  const client = new CloudTelegram("synthetic", async function (this: unknown, _url, _init) {
+    assert.equal(this, undefined);
+    return Response.json({ ok: true, result: { id: 7 } });
+  });
+  assert.deepEqual(await client.call("getMe", {}), { id: 7 });
+});

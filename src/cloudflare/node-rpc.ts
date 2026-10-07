@@ -43,11 +43,12 @@ export async function nodeRpc<T = unknown>(
       headers: { "Content-Type": "application/json", "x-node-signature": signed.signature },
       body: signed.body,
       signal: AbortSignal.timeout(30_000),
-      redirect: "error",
+      redirect: "manual",
     });
   } catch {
     throw new Error("worker_unavailable");
   }
+  if (response.status >= 300 && response.status < 400) throw new Error("worker_redirect_rejected");
   const reader = response.body?.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;

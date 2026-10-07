@@ -260,3 +260,15 @@ test("transport diagnostics classify failures without exposing exception credent
       !error.message.includes(secret),
   );
 });
+
+test("Workers-compatible manual redirects never forward the Railway credential", async () => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  let count = 0;
+  const api = railwayApi("synthetic", async (_url, init) => {
+    count++;
+    assert.equal(init?.redirect, "manual");
+    return new Response("", { status: 302, headers: { location: "https://other.example" } });
+  });
+  await assert.rejects(api("query{__typename}", {}), /railway_redirect_rejected/);
+  assert.equal(count, 1);
+});

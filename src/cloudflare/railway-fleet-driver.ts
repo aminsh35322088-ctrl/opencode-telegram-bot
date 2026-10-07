@@ -332,7 +332,7 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
         body: JSON.stringify({ query, variables }),
         signal: AbortSignal.timeout(15_000),
-        redirect: "error",
+        redirect: "manual",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
@@ -347,6 +347,8 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
               : "railway_transport_error";
       throw new Error(category);
     }
+    if (response.status >= 300 && response.status < 400)
+      throw new Error("railway_redirect_rejected");
     const result = (await response.json()) as { data?: T; errors?: Array<{ message?: string }> };
     if (!response.ok || result.errors?.length || !result.data) {
       const quota = result.errors?.some((e) =>
