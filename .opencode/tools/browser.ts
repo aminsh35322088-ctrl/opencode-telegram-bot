@@ -1,10 +1,6 @@
-import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { promisify } from "node:util";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const BROWSER_ACTIONS = [
   "open", "goto", "back", "forward", "reload", "snapshot", "screenshot",
   "click", "fill", "type", "press", "hover", "check", "uncheck", "select",
@@ -13,9 +9,6 @@ const BROWSER_ACTIONS = [
 ] as const;
 const ALLOWED_ACTIONS = new Set<string>(BROWSER_ACTIONS);
 
-function sessionArgs(session?: string): string[] {
-  return session?.trim() ? [`-s=${session.trim()}`] : [];
-}
 
 export default tool({
   description:
@@ -30,9 +23,9 @@ export default tool({
   },
   async execute(args, context) {
     if (!ALLOWED_ACTIONS.has(args.action)) throw new Error(`Unsupported browser action: ${args.action}`);
-    const base = context.directory || context.worktree || process.cwd();
-    const command: string[] = [...sessionArgs(args.session)];
-    command.push(args.action);
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core browser capability is required for tool ownership.");
+    const command: string[] = [];
 
     if (["open", "goto", "tab-new"].includes(args.action)) {
       if (!args.url) throw new Error(`${args.action} requires url`);
@@ -50,19 +43,13 @@ export default tool({
       command.push(args.text);
     }
 
-    if ((args.action === "screenshot" || args.action === "pdf") && args.filename) {
-      const output = path.resolve(base, args.filename);
-      await fs.mkdir(path.dirname(output), { recursive: true });
-      command.push(`--filename=${output}`);
-    }
 
     try {
-      const { stdout, stderr } = await execFileAsync("playwright-cli", command, {
-        cwd: base,
-        env: {
-          ...process.env,
-          PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || "/data/.cache/ms-playwright",
-        },
+      const { stdout, stderr } = await processPort.browser({
+        session: args.session?.trim() || undefined,
+        action: args.action,
+        args: command,
+        filename: ["screenshot", "pdf"].includes(args.action) ? args.filename : undefined,
         maxBuffer: 2 * 1024 * 1024,
         timeout: 120_000,
       });

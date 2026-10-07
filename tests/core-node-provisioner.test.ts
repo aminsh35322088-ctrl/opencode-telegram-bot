@@ -1,3 +1,4 @@
+import { WORKER_CORE_COMMIT } from "../src/infrastructure/worker-core-release.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -46,7 +47,7 @@ async function fixture() {
       return result as T;
     }};
   const add=(id:string)=>bindings.set(id,{nodeId:id,generation:1,chatId:-100,threadId:bindings.size+2,currentRevision:0,status:'reserved',createdAt:'now',updatedAt:'now'});
-  return {controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;},setAttachPending:(reads:number)=>{attachPending=reads;},waits};
+  return {options,controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;},setAttachPending:(reads:number)=>{attachPending=reads;},waits};
 }
 test('provision four isolated nodes 2+2, cap fifth and never return/persist secrets',async()=>{
   const f=await fixture();for(const id of ['one','two','three','four','five']) f.add(id);
@@ -57,7 +58,7 @@ test('provision four isolated nodes 2+2, cap fifth and never return/persist secr
   for(const call of f.calls.filter(c=>c.document.includes('WorkerVariables'))) {
     const vars=(call.variables.input as {variables:Record<string,string>}).variables;
     assert.equal(Object.keys(vars).some(name=>name.startsWith('RAILWAY_')),false);
-    assert.equal(vars.NODE_CHAT_ID,'-100');assert.ok(vars.NODE_SHARED_SECRET!.length>=48);
+    assert.deepEqual(Object.keys(vars).sort(),["CONTROL_PLANE_URL","NODE_GENERATION","NODE_ID","NODE_SHARED_SECRET"]);assert.ok(vars.NODE_SHARED_SECRET!.length>=48);
     assert.equal(contents.includes(vars.NODE_SHARED_SECRET!),false);
   }
   const sourceIndex=f.calls.findIndex(c=>c.document.includes('WorkerSource'));
@@ -90,10 +91,52 @@ test('asynchronous volume activation retries inventory without duplicate mutatio
  const f=await fixture();f.add('one');f.setAttachPending(2);await f.controller.provision('one',1);
  assert.deepEqual(f.waits,[1000,2000]);assert.equal(f.calls.filter(c=>c.document.includes('mutation WorkerVolumeAttach')).length,1);
  const source=f.calls.find(c=>c.document.includes('mutation WorkerSource'))!;
- assert.equal((source.variables.patch as {services:Record<string,{source:{commitSha:string}}>}).services.s0!.source.commitSha,'ac683948c3cd3ee697a6f38354e7e1a02e82cc30');
+ assert.equal((source.variables.patch as {services:Record<string,{source:{commitSha:string}}>}).services.s0!.source.commitSha,WORKER_CORE_COMMIT);
 });
 test('unfinished volume activation retains journal and fails before credential distribution',async()=>{
  const f=await fixture();f.add('one');f.setAttachPending(10);await assert.rejects(f.controller.provision('one',1),/activation pending/);
  assert.equal(f.volumes.length,1);assert.equal(f.services.length,1);assert.equal(f.calls.some(c=>c.document.includes('WorkerVariables')||c.document.includes('WorkerSource')),false);
  assert.ok((await readFile(f.filename,'utf8')).includes('v0'));
+});
+
+test('Worker cleanup atomically replaces exact four fields without deployment or seed rotation and retries a lost response',async()=>{
+ const f=await fixture();f.add('one');const binding=f.bindings.get('one')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,clusterId:'cluster',status:'available'});
+ const seed='durable-root-seed-'.repeat(4);f.options.ensureIdentity=async()=>seed;
+ const node=await f.controller.provision('one',1);Object.assign(binding,{projectId:node.projectId,serviceId:node.serviceId,volumeId:node.volumeId});
+ const request=f.options.request;const writes:Record<string,unknown>[]=[];let lose=true;const profiles:string[]=[];let seedReads=0;
+ f.options.ensureIdentity=async (_binding,create)=>{seedReads++;assert.throws(create,/seed missing/);return seed;};
+ f.options.request=async <T>(document:string,variables:Record<string,unknown>)=>{
+  assert.equal(document.includes('variableDelete'),false);
+  if(document.includes('WorkerVariableCleanup')){assert.match(document,/variableCollectionUpsert/);writes.push(variables);if(lose){lose=false;throw new Error('credential-sentinel');}return {variableCollectionUpsert:true} as T;}return request<T>(document,variables);
+ };
+ const selftest=async (_id:string,_generation:number,profile:'baseline'|'browser'|'network')=>{profiles.push(profile);return {profile,joined:true as const,success:true as const,runId:'a'.repeat(48)};};
+ await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,selftest),error=>error instanceof Error&&error.message==='Worker variable cleanup failed');
+ assert.equal(JSON.parse(await readFile(f.filename,'utf8')).nodes[0].workerVariablesContract,undefined);
+ await f.controller.cleanupDeprecatedWorkerVariables('one',1,selftest);
+ assert.equal(writes.length,2);assert.deepEqual(writes[0],writes[1]);assert.equal(seedReads,2);assert.equal(binding.generation,1);
+ const input=writes[0]!.input as {replace:boolean;skipDeploys:boolean;variables:Record<string,string>};assert.equal(input.replace,true);assert.equal(input.skipDeploys,true);
+ assert.deepEqual(input.variables,{NODE_ID:'one',NODE_GENERATION:'1',NODE_SHARED_SECRET:seed,CONTROL_PLANE_URL:'https://control.up.railway.app'});
+ assert.deepEqual(Object.keys(input.variables).sort(),['CONTROL_PLANE_URL','NODE_GENERATION','NODE_ID','NODE_SHARED_SECRET']);
+ await f.controller.cleanupDeprecatedWorkerVariables('one',1,selftest);assert.equal(writes.length,2);assert.equal(seedReads,2);
+ assert.deepEqual(profiles.slice(0,3),['baseline','browser','network']);const journal=await readFile(f.filename,'utf8');assert.equal(journal.includes(seed),false);assert.equal(journal.includes('credential-sentinel'),false);assert.equal(JSON.parse(journal).nodes[0].workerVariablesContract,'identity-v1');
+ binding.generation=2;await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,selftest));assert.equal(writes.length,2);
+});
+test('Worker cleanup refuses missing durable seed and false response; changed post-write identity cannot receive receipt',async()=>{
+ const f=await fixture();f.add('one');const binding=f.bindings.get('one')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,clusterId:'cluster',status:'available'});
+ const node=await f.controller.provision('one',1);Object.assign(binding,{projectId:node.projectId,serviceId:node.serviceId,volumeId:node.volumeId});
+ const good=async (_id:string,_generation:number,profile:'baseline'|'browser'|'network')=>({profile,joined:true as const,success:true as const,runId:'a'.repeat(48)});
+ let writes=0;let changed=false;const request=f.options.request;f.options.request=async <T>(document:string,variables:Record<string,unknown>)=>{if(document.includes('WorkerVariableCleanup')){writes++;if(changed){binding.generation++;return {variableCollectionUpsert:true} as T;}return {variableCollectionUpsert:false} as T;}return request<T>(document,variables);};
+ await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,good),/Worker variable cleanup failed/);assert.equal(writes,0);
+ f.options.ensureIdentity=async()=> 'durable-seed-'.repeat(6);
+ await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,good));assert.equal(writes,1);changed=true;
+ await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,good));assert.equal(writes,2);assert.equal(JSON.parse(await readFile(f.filename,'utf8')).nodes[0].workerVariablesContract,undefined);
+});
+test('Worker cleanup fails closed on profile failure, ownership mismatch and canonical binding change',async()=>{
+ const f=await fixture();f.add('one');const binding=f.bindings.get('one')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,clusterId:'cluster',status:'available'});
+ const node=await f.controller.provision('one',1);Object.assign(binding,{projectId:node.projectId,serviceId:node.serviceId,volumeId:node.volumeId});
+ let deletes=0;const request=f.options.request;f.options.request=async <T>(document:string,variables:Record<string,unknown>)=>{if(document.includes('WorkerVariableCleanup'))deletes++;return request<T>(document,variables);};
+ const good=async (_id:string,_generation:number,profile:'baseline'|'browser'|'network')=>({profile,joined:true as const,success:true as const,runId:'a'.repeat(48)});
+ await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,async()=>{throw new Error('secret-sentinel');}),/Worker variable cleanup failed/);
+ f.volumes[0]!.serviceId='foreign';await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,good));f.volumes[0]!.serviceId=node.serviceId!;
+ await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,async(id,generation,profile)=>{if(profile==='network')binding.sessionId='now-bound';return good(id,generation,profile);}));assert.equal(deletes,0);
 });

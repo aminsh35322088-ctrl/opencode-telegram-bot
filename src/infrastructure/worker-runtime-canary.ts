@@ -6,6 +6,7 @@ export async function verifyWorkerRuntimeCanary(options:{
  journalPath:string;
  selftest(nodeId:string,generation:number,profile:"baseline"|"browser"|"network"):Promise<unknown>;
  log(message:string):void;
+ afterVerified?(nodeId:string,generation:number):Promise<void>;
 }):Promise<void>{
  const stat=await lstat(options.journalPath);
  if(!stat.isFile()||stat.isSymbolicLink()||stat.uid!==process.getuid?.()||(stat.mode&0o077)!==0||stat.size>1024*1024)throw new Error("Invalid runtime canary journal");
@@ -19,4 +20,5 @@ export async function verifyWorkerRuntimeCanary(options:{
   await options.selftest(node.nodeId,node.generation,profile);
   options.log(`[InfrastructureBoundary] worker_runtime_verified node=${node.nodeId} generation=${node.generation} profile=${profile} joined=true\n`);
  }
+ await options.afterVerified?.(node.nodeId,node.generation);
 }

@@ -75,7 +75,7 @@ describe("topic-event-bus session isolation", () => {
         ? { chatId: 100, threadId: 101, sessionId: "session-a", directory: "/workspace" }
         : sessionId === "session-b"
           ? { chatId: 100, threadId: 202, sessionId: "session-b", directory: "/workspace" }
-          : null,
+          : null
     ));
 
     const callbackA = vi.fn();

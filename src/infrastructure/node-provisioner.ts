@@ -1,11 +1,13 @@
+import { WORKER_CORE_COMMIT } from "./worker-core-release.js";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import type { NodeBinding } from "../control-plane/node-bindings.js";
 
 export interface WorkerPool { projectId: string; environmentId: string; capacity: 2; region: string }
 export interface ProvisionedNode {
   slot?:number;clusterId?:string;unbound?:boolean;
+  workerVariablesContract?: "identity-v1";
   nodeId: string; generation: number; projectId: string; environmentId: string;
   serviceId?: string; volumeId?: string; domainId?: string; endpoint?: string; deploymentId?: string;
   phase: "reserved" | "configured" | "deploying" | "retiring" | "retired";
@@ -39,6 +41,7 @@ const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:Strin
 export class NodeProvisioner {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: NodeProvisionerOptions) {
+    if (!/^[a-f0-9]{40}$/.test(options.coreCommit ?? WORKER_CORE_COMMIT)) throw new Error("Worker Core source must be an exact commit");
     const control = new URL(options.controlUrl);
     if (control.protocol !== "https:" || !control.hostname.endsWith(".up.railway.app") || control.username || control.password || control.search || control.hash || control.pathname !== "/") throw new Error("Control URL must be a Railway HTTPS domain");
     if (options.pools[0].capacity !== 2 || options.pools[1].capacity !== 2 || options.pools[0].projectId === options.pools[1].projectId) throw new Error("Worker pools require two distinct two-slot projects");
@@ -71,6 +74,49 @@ export class NodeProvisioner {
     const binding = await this.options.lookup(nodeId);
     if (!binding || binding.nodeId !== nodeId || binding.generation !== generation || (binding.threadId <= 1 && !(binding.chatId===0 && binding.threadId===0 && binding.slot && ["pool-reserved","pool-provisioning","available","retiring"].includes(binding.status))) || !Number.isSafeInteger(binding.chatId) || binding.status === "retired") throw new Error("Infrastructure node authorization failed");
     return binding;
+  }
+  /** Root-owned maintenance only; deliberately absent from application IPC and generic operations. */
+  cleanupDeprecatedWorkerVariables(nodeId: string, generation: number, selftest: (nodeId: string, generation: number, profile: "baseline" | "browser" | "network") => Promise<unknown>): Promise<void> {
+    return this.singleFlight(async () => {
+      try {
+        const stat = await lstat(this.options.journalPath);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0 || stat.size > 1024 * 1024) throw new Error("Invalid journal");
+        const journal = await this.read();
+        const record = journal.nodes.find(node => node.nodeId === nodeId && node.generation === generation);
+        if (!record || !record.unbound || record.slot !== 1 || record.phase !== "deploying" || !record.serviceId || !record.volumeId) throw new Error("Invalid Worker ownership");
+        const pool = this.options.pools.find(item => item.projectId === record.projectId && item.environmentId === record.environmentId)!;
+        const fence = async () => {
+          const binding = await this.binding(nodeId, generation);
+          if (binding.status !== "available" || binding.chatId !== 0 || binding.threadId !== 0 || binding.sessionId !== undefined || binding.slot !== record.slot || binding.clusterId !== record.clusterId || binding.projectId !== record.projectId || binding.serviceId !== record.serviceId || binding.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
+          const inventory = await this.inventory(pool);
+          const services = inventory.project.services.edges.filter(({node}) => node.id === record.serviceId || node.name === `topic-node-${nodeId}`);
+          const volumes = inventory.project.volumes.edges.filter(({node}) => node.id === record.volumeId || node.volumeInstances.edges.some(({node: instance}) => instance.serviceId === record.serviceId));
+          if (services.length !== 1 || services[0]!.node.id !== record.serviceId || services[0]!.node.name !== `topic-node-${nodeId}` || !inventory.environment.serviceInstances.edges.some(({node}) => node.serviceId === record.serviceId) || volumes.length !== 1 || volumes[0]!.node.id !== record.volumeId || volumes[0]!.node.volumeInstances.edges.length !== 1) throw new Error("Worker inventory changed");
+          const volume = volumes[0]!.node.volumeInstances.edges[0]!.node;
+          if (volume.volumeId !== record.volumeId || volume.serviceId !== record.serviceId || volume.environmentId !== record.environmentId || volume.mountPath !== "/data" || volume.sizeMB !== 500 || volume.isPendingDeletion) throw new Error("Worker Volume ownership changed");
+          const current = await this.binding(nodeId, generation);
+          if (current.status !== "available" || current.chatId !== 0 || current.threadId !== 0 || current.sessionId !== undefined || current.slot !== record.slot || current.clusterId !== record.clusterId || current.projectId !== record.projectId || current.serviceId !== record.serviceId || current.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
+        };
+        await fence();
+        for (const profile of ["baseline", "browser", "network"] as const) {
+          const result = await selftest(nodeId, generation, profile) as {profile?:unknown;joined?:unknown;success?:unknown;runId?:unknown};
+          if (!result || result.profile !== profile || result.joined !== true || result.success !== true || typeof result.runId !== "string" || !/^[a-f0-9]{48}$/.test(result.runId)) throw new Error("Worker canary failed");
+          await fence();
+        }
+        if (record.workerVariablesContract !== undefined && record.workerVariablesContract !== "identity-v1") throw new Error("Invalid cleanup receipt");
+        if (record.workerVariablesContract === "identity-v1") return;
+        const binding = await this.binding(nodeId, generation);
+        const secret = await this.options.ensureIdentity(binding, () => { throw new Error("Worker seed missing"); });
+        if (typeof secret !== "string" || secret.length < 48) throw new Error("Worker seed missing");
+        await fence();
+        // A lost response retries this identical atomic write; no per-name deletions or deployment.
+        const result = await this.options.request<{variableCollectionUpsert:boolean}>("mutation WorkerVariableCleanup($input:VariableCollectionUpsertInput!){variableCollectionUpsert(input:$input)}", {input:{projectId:record.projectId,environmentId:record.environmentId,serviceId:record.serviceId,replace:true,skipDeploys:true,variables:{NODE_ID:nodeId,NODE_SHARED_SECRET:secret,NODE_GENERATION:String(generation),CONTROL_PLANE_URL:this.options.controlUrl}}});
+        if (result?.variableCollectionUpsert !== true) throw new Error("Worker variable replacement rejected");
+        await fence();
+        record.workerVariablesContract = "identity-v1";
+        await this.save(journal);
+      } catch { throw new Error("Worker variable cleanup failed"); }
+    });
   }
   private async mutate(document: string, variables: Record<string, unknown>): Promise<void> {
     const stage=/^mutation ([A-Za-z]+)\(/.exec(document)?.[1];
@@ -167,7 +213,7 @@ export class NodeProvisioner {
       await this.binding(nodeId,generation);
       const secret = await this.options.ensureIdentity(binding, () => randomBytes(48).toString("base64url"));
       if (secret.length < 48) throw new Error("Node identity secret insufficient");
-      await this.mutate(`mutation WorkerVariables($input:VariableCollectionUpsertInput!){variableCollectionUpsert(input:$input)}`, {input:{projectId:pool.projectId,environmentId:pool.environmentId,serviceId:record.serviceId,replace:true,skipDeploys:true,variables:{NODE_ID:nodeId,NODE_GENERATION:String(generation),NODE_CHAT_ID:String(binding.chatId),NODE_THREAD_ID:String(binding.threadId),NODE_SHARED_SECRET:secret,CONTROL_PLANE_URL:this.options.controlUrl,PORT:"8080",MANAGED_BY:"opencode-topic-control",...(binding.clusterId?{CLUSTER_ID:binding.clusterId,WORKER_SLOT:String(binding.slot)}:{})}}});
+      await this.mutate(`mutation WorkerVariables($input:VariableCollectionUpsertInput!){variableCollectionUpsert(input:$input)}`, {input:{projectId:pool.projectId,environmentId:pool.environmentId,serviceId:record.serviceId,replace:true,skipDeploys:true,variables:{NODE_ID:nodeId,NODE_GENERATION:String(generation),NODE_SHARED_SECRET:secret,CONTROL_PLANE_URL:this.options.controlUrl}}});
       const serviceInstance = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node;
       const domains = serviceInstance?.domains.serviceDomains ?? [];
       if (domains.length > 1) throw new Error("Ambiguous worker public domains");
@@ -180,7 +226,7 @@ export class NodeProvisioner {
       await this.options.configured?.(binding,record);
       // Source is connected only after limits, persistent storage, identity and the narrow domain are configured.
       await this.binding(nodeId,generation);
-      const coreCommit=this.options.coreCommit??"ac683948c3cd3ee697a6f38354e7e1a02e82cc30";
+      const coreCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
       if(!/^[a-f0-9]{40}$/.test(coreCommit))throw new Error("Worker Core source must be an exact commit");
       await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy exact Worker Core build")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:coreCommit}}}}});
       record.phase = "deploying"; await this.save(journal);

@@ -37,3 +37,16 @@ test("a failed canary stops later profiles and never emits positive proof",async
   assert.deepEqual(calls,["baseline"]);assert.deepEqual(logs,[]);
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test("Root maintenance runs only after every joined profile and propagates failure",async()=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),"runtime-canary-"));
+ try{
+  const filename=path.join(directory,"journal.json");await writeFile(filename,JSON.stringify({version:1,nodes:[slot]}),{mode:0o600});
+  const calls:string[]=[];
+  await assert.rejects(verifyWorkerRuntimeCanary({journalPath:filename,selftest:async(_id,_generation,profile)=>{calls.push(profile);},log:()=>{},afterVerified:async(id,generation)=>{assert.equal(id,"canary");assert.equal(generation,1);calls.push("maintenance");throw Error("Maintenance failed");}}),/Maintenance failed/);
+  assert.deepEqual(calls,["baseline","browser","network","maintenance"]);
+  calls.length=0;
+  await assert.rejects(verifyWorkerRuntimeCanary({journalPath:filename,selftest:async()=>{throw Error("Profile failed");},log:()=>{},afterVerified:async()=>{calls.push("maintenance");}}),/Profile failed/);
+  assert.deepEqual(calls,[]);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});

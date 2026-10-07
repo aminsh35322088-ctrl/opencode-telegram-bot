@@ -1,13 +1,11 @@
-import { execFile } from "node:child_process";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { promises as fs } from "node:fs";
 import os from "node:os";
-import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 
-async function command(bin: string, args: string[]): Promise<string> {
-  try { return (await execFileAsync(bin, args, { timeout: 10000, maxBuffer: 1024 * 1024 })).stdout.trim(); }
+async function command(processPort: ToolProcessPort, bin: string, args: string[]): Promise<string> {
+  try { return (await processPort.execFile(bin, args, { timeout: 10000, maxBuffer: 1024 * 1024 })).stdout.trim(); }
   catch { return "unavailable"; }
 }
 
@@ -16,7 +14,9 @@ export default tool({
   args: {
     action: tool.schema.enum(["summary", "processes", "disk"]).describe("System diagnostics action to execute."),
   },
-  async execute(args) {
+  async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const action = args.action;
     const mem = { totalBytes: os.totalmem(), freeBytes: os.freemem(), usedBytes: os.totalmem() - os.freemem() };
     const result: Record<string, unknown> = {
@@ -29,8 +29,8 @@ export default tool({
       processUptimeSec: process.uptime(),
       memory: mem,
     };
-    if (action === "disk") result.disk = await command("df", ["-h", "/data"]);
-    if (action === "processes") result.processes = await command("ps", ["-eo", "pid,ppid,%cpu,%mem,rss,etime,cmd", "--sort=-%cpu"]);
+    if (action === "disk") result.disk = await command(processPort, "df", ["-h", "/data"]);
+    if (action === "processes") result.processes = await command(processPort, "ps", ["-eo", "pid,ppid,%cpu,%mem,rss,etime,cmd", "--sort=-%cpu"]);
     if (action === "summary") {
       try { result.dataFree = (await fs.statfs("/data")).bavail * (await fs.statfs("/data")).bsize; } catch { /* optional */ }
     }

@@ -56,9 +56,10 @@ test('Root handoff fences old identity and confirms retirement before rotating W
   if(document.includes('WorkerInventory'))return {project:{id:variables.projectId,services:edge([{id:'service',name:'topic-node-'+binding.nodeId}]),volumes:edge([{id:'volume',volumeInstances:edge([{volumeId:'volume',environmentId:variables.environmentId,serviceId:'service',sizeMB:500,mountPath:'/data',isPendingDeletion:false}])}])},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edge([{serviceId:'service',domains:{serviceDomains:[{id:'domain',domain:'worker.up.railway.app'}]},latestDeployment:{id:'deployment'}}])}} as T;
   if(document.includes('WorkerVariables')){
    const env=(variables.input as {variables:Record<string,string>}).variables;
+   assert.deepEqual(Object.keys(env).sort(),['CONTROL_PLANE_URL','NODE_GENERATION','NODE_ID','NODE_SHARED_SECRET']);
    events.push('variables:'+env.NODE_GENERATION);
-   if(env.NODE_GENERATION==='1'){assert.equal(env.NODE_CHAT_ID,'0');assert.equal(env.NODE_THREAD_ID,'0');oldSecret=env.NODE_SHARED_SECRET!;}
-   else{assert.equal(env.NODE_GENERATION,'2');assert.equal(env.NODE_CHAT_ID,'-100');assert.notEqual(env.NODE_SHARED_SECRET,oldSecret);assert.ok(events.indexOf('retired')<events.indexOf('variables:2'));}
+   if(env.NODE_GENERATION==='1'){oldSecret=env.NODE_SHARED_SECRET!;}
+   else{assert.equal(env.NODE_GENERATION,'2');assert.notEqual(env.NODE_SHARED_SECRET,oldSecret);assert.ok(events.indexOf('retired')<events.indexOf('variables:2'));}
   }
   if(document.includes('WorkerSource')){const patch=variables.patch as {services:Record<string,{source:{commitSha:string}}>};assert.equal(patch.services.service!.source.commitSha,WORKER_CORE_COMMIT);}
   return {mutation:true} as T;
@@ -95,4 +96,20 @@ test('Control configuration cleanup waits for four current signed unbound proofs
  for(const node of nodes.slice(1))await controller.request('reconcile',node.nodeId,1);
  assert.equal(cleanups,0);failFirst=false;await controller.request('reconcile',nodes[0]!.nodeId,1);assert.equal(cleanups,1);
  await controller.request('reconcile',nodes[0]!.nodeId,1);assert.equal(cleanups,1);
+});
+
+test('Root-only canary cleanup shares lifecycle queue and fences slot one before and after',async()=>{
+ const home=await mkdtemp(path.join(tmpdir(),'root-cleanup-'));const filename=path.join(home,'bindings.json');
+ const binding={nodeId:'slot-one',generation:1,chatId:0,threadId:0,slot:1,clusterId:'cluster',projectId:'a',serviceId:'service',volumeId:'volume',status:'available',currentRevision:0,createdAt:'now',updatedAt:'now'};
+ const save=()=>writeFile(filename,JSON.stringify({version:1,bindings:[binding]}));await save();
+ const registry=captureNodeRegistry({});registry.install({binding,endpoint:'https://worker.up.railway.app',secret:'s'.repeat(64)});
+ const events:string[]=[];let unblock!:()=>void;let started!:()=>void;const start=new Promise<void>(resolve=>{started=resolve;});const wait=new Promise<void>(resolve=>{unblock=resolve;});
+ const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('no API');},probeUnbound:async()=>{events.push('reconcile');}});
+ const provisioner={cleanupDeprecatedWorkerVariables:async (_id:string,_generation:number,selftest:(id:string,generation:number,profile:'baseline')=>Promise<unknown>)=>{events.push('cleanup-start');started();await wait;await selftest('slot-one',1,'baseline');events.push('cleanup-end');}};
+ (controller as unknown as {provisioner:typeof provisioner}).provisioner=provisioner;
+ const cleanup=controller.cleanupRuntimeCanaryVariables('slot-one',1,async()=>({}));await start;
+ const reconcile=controller.request('reconcile','slot-one',1);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(events,['cleanup-start']);unblock();await cleanup;await reconcile;assert.deepEqual(events,['cleanup-start','cleanup-end','reconcile']);
+ binding.slot=2;await save();await assert.rejects(controller.cleanupRuntimeCanaryVariables('slot-one',1,async()=>({})),/canary cleanup/);assert.equal(events.length,3);
+ binding.slot=1;await save();provisioner.cleanupDeprecatedWorkerVariables=async()=>{binding.generation=2;await save();};await assert.rejects(controller.cleanupRuntimeCanaryVariables('slot-one',1,async()=>({})),/canary cleanup/);
+ await assert.rejects(controller.request('cleanupRuntimeCanaryVariables','slot-one',2),/operation/);
 });

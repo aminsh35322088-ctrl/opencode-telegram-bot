@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import path from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 20000;
 const DIST_ROOT = process.env.AGENT_BOT_DIST_ROOT?.trim() || "/app/dist";
 
@@ -17,9 +15,9 @@ async function loadSupport(): Promise<ToolSupportModule> {
   return import(pathToFileURL(path.join(DIST_ROOT, "app/services/agent-tool-support-service.js")).href) as Promise<ToolSupportModule>;
 }
 
-async function git(args: string[], worktree: string, timeout = 30000): Promise<string> {
+async function git(processPort: ToolProcessPort, args: string[], worktree: string, timeout = 30000): Promise<string> {
   try {
-    const { stdout, stderr } = await execFileAsync("git", args, {
+    const { stdout, stderr } = await processPort.execFile("git", args, {
       cwd: worktree,
       timeout,
       maxBuffer: 8 * 1024 * 1024,
@@ -46,51 +44,53 @@ export default tool({
     message: tool.schema.string().optional().describe("Commit message for the commit action. Preferred over embedding -m in args."),
   },
   async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const support = await loadSupport();
     const extra = support.parseShellLikeArgs(args.args);
     const base = context.directory || context.worktree || process.cwd();
 
     switch (args.action) {
       case "status":
-        return git(["status", "--porcelain=v1", "--branch", ...extra], base);
+        return git(processPort, ["status", "--porcelain=v1", "--branch", ...extra], base);
       case "diff":
-        return git(["diff", ...extra], base);
+        return git(processPort, ["diff", ...extra], base);
       case "log":
-        return git(["log", "--oneline", "-20", ...extra], base);
+        return git(processPort, ["log", "--oneline", "-20", ...extra], base);
       case "commit": {
         const message = args.message?.trim();
-        if (message) return git(["commit", "-m", message, ...extra], base, 60000);
+        if (message) return git(processPort, ["commit", "-m", message, ...extra], base, 60000);
         if (!extra.length) throw new Error("commit requires message or args.");
-        return git(["commit", ...extra], base, 60000);
+        return git(processPort, ["commit", ...extra], base, 60000);
       }
       case "push":
         if (support.containsForcePushFlag(extra)) {
           throw new Error("Refusing to force-push. Force pushes must be requested explicitly outside this tool.");
         }
-        return git(["push", ...extra], base, 120000);
+        return git(processPort, ["push", ...extra], base, 120000);
       case "pull":
-        return git(["pull", ...extra], base, 120000);
+        return git(processPort, ["pull", ...extra], base, 120000);
       case "branch":
-        return git(["branch", ...extra], base);
+        return git(processPort, ["branch", ...extra], base);
       case "checkout":
-        return git(["checkout", ...extra], base, 60000);
+        return git(processPort, ["checkout", ...extra], base, 60000);
       case "stash":
-        return git(["stash", ...extra], base, 60000);
+        return git(processPort, ["stash", ...extra], base, 60000);
       case "merge":
-        return git(["merge", ...extra], base, 120000);
+        return git(processPort, ["merge", ...extra], base, 120000);
       case "rebase":
-        return git(["rebase", ...extra], base, 120000);
+        return git(processPort, ["rebase", ...extra], base, 120000);
       case "blame":
         if (!extra.length) throw new Error('blame requires args, for example "src/file.ts".');
-        return git(["blame", ...extra], base);
+        return git(processPort, ["blame", ...extra], base);
       case "tags":
-        return git(["tag", "-l", ...extra], base);
+        return git(processPort, ["tag", "-l", ...extra], base);
       case "remote":
-        return git(["remote", "-v", ...extra], base);
+        return git(processPort, ["remote", "-v", ...extra], base);
       case "fetch":
-        return git(["fetch", ...extra], base, 120000);
+        return git(processPort, ["fetch", ...extra], base, 120000);
       case "reset":
-        return git(["reset", ...extra], base, 60000);
+        return git(processPort, ["reset", ...extra], base, 60000);
       default:
         throw new Error(`Unknown git action: ${args.action}`);
     }

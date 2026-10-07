@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_TIMEOUT_MS = 15_000;
 
@@ -51,9 +49,9 @@ async function httpCheck(endpoint: string, signal: AbortSignal, timeout: number)
   }
 }
 
-async function command(bin: string, args: string[], cwd: string, signal: AbortSignal, timeout: number): Promise<Record<string, unknown>> {
+async function command(processPort: ToolProcessPort, bin: string, args: readonly string[], cwd: string, signal: AbortSignal, timeout: number): Promise<Record<string, unknown>> {
   try {
-    const result = await execFileAsync(bin, args, { cwd, timeout, maxBuffer: 512 * 1024, signal, killSignal: "SIGTERM" });
+    const result = await processPort.execFile(bin, args, { cwd, timeout, maxBuffer: 512 * 1024, signal });
     return { ok: true, output: result.stdout.trim().slice(0, 2000) };
   } catch (error) {
     const e = error as { code?: string | number; stdout?: string; stderr?: string; message?: string };
@@ -92,6 +90,8 @@ export default tool({
     timeoutMs: tool.schema.number().optional().describe("Per-check timeout in milliseconds, capped at 15000."),
   },
   async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const started = Date.now();
     const action = args.action;
     const base = context.directory || context.worktree || process.cwd();
@@ -140,10 +140,10 @@ export default tool({
 
     if (action === "full") {
       checks.project = await packageCheck(base);
-      checks.disk = await command("df", ["-h", "/data"], base, context.abort, timeout);
+      checks.disk = await command(processPort, "df", ["-h", "/data"], base, context.abort, timeout);
       const tools: Record<string, unknown> = {};
       for (const [name, argsList] of [["node", ["--version"]], ["npm", ["--version"]], ["git", ["--version"]], ["tsc", ["--version"]], ["vitest", ["--version"]], ["eslint", ["--version"]]] as const) {
-        tools[name] = await command(name, argsList, base, context.abort, timeout);
+        tools[name] = await command(processPort, name, argsList, base, context.abort, timeout);
       }
       checks.executables = tools;
     }

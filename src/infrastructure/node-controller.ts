@@ -79,6 +79,21 @@ export class InfrastructureController {
   if(!existing)seeds.push({nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,secret});
   await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);const dir=await open(this.options.stateDirectory,'r');try{await dir.sync();}finally{await dir.close();}return secret;
  }
+ /** Root startup maintenance only; never exposed through request() or inherited application IPC. */
+ cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>):Promise<void>{
+  const task=this.queue.then(async()=>{
+   try{
+    if(this.poolConfiguration)await this.poolConfiguration;
+    if(!this.provisioner||typeof nodeId!=="string"||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error("Worker cleanup unavailable");
+    const before=await this.lookup(nodeId);
+    const available=(binding:NodeBinding|undefined)=>binding?.nodeId===nodeId&&binding.generation===generation&&binding.slot===1&&binding.chatId===0&&binding.threadId===0&&binding.status==="available"&&binding.sessionId===undefined&&!!binding.projectId&&!!binding.serviceId&&!!binding.volumeId;
+    if(!available(before))throw Error("Worker cleanup fence changed");
+    await this.provisioner.cleanupDeprecatedWorkerVariables(nodeId,generation,selftest);
+    const after=await this.lookup(nodeId);
+    if(!available(after)||after!.projectId!==before!.projectId||after!.serviceId!==before!.serviceId||after!.volumeId!==before!.volumeId||after!.clusterId!==before!.clusterId||after!.endpoint!==before!.endpoint)throw Error("Worker cleanup fence changed");
+   }catch{throw Error("Worker runtime canary cleanup failed");}
+  });this.queue=task.catch(()=>undefined);return task;
+ }
  request(operation:string,nodeId:string,generation:number):Promise<ProvisionedNode>{
   const task=this.queue.then(async()=>{
    if(!['provision','retire','reconcile'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');

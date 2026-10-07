@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const GH_BIN = "gh";
 const GH_CALL_TIMEOUT_MS = 45_000;
 const POLL_INTERVAL_MS = 10_000;
@@ -37,9 +35,9 @@ interface FailedLogsResult {
   error?: string;
 }
 
-async function gh(args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhResult> {
+async function gh(processPort: ToolProcessPort, args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhResult> {
   try {
-    const { stdout, stderr } = await execFileAsync(GH_BIN, args, {
+    const { stdout, stderr } = await processPort.execFile(GH_BIN, args, {
       timeout: timeoutMs,
       maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GH_PAGER: "cat", NO_COLOR: "1", GH_NO_UPDATE_NOTIFIER: "1", GH_PROMPT_DISABLED: "1" },
@@ -61,7 +59,7 @@ async function gh(args: string[], timeoutMs = GH_CALL_TIMEOUT_MS): Promise<GhRes
   }
 }
 
-function baseRepoFromEnvOrGit(base: string): string {
+function baseRepoFromEnvOrGit(_base: string): string {
   const fromEnv = (process.env.GITHUB_REPOSITORY || "").trim();
   if (/^[^/]+\/[^/]+$/.test(fromEnv)) return fromEnv;
   const remotes = process.env.GH_REPO || process.env.GITHUB_REPO || "";
@@ -69,11 +67,11 @@ function baseRepoFromEnvOrGit(base: string): string {
   return "";
 }
 
-async function resolveBaseRepo(base: string): Promise<string> {
+async function resolveBaseRepo(processPort: ToolProcessPort, base: string): Promise<string> {
   const direct = baseRepoFromEnvOrGit(base);
   if (direct) return direct;
   try {
-    const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], {
+    const { stdout } = await processPort.execFile("git", ["config", "--get", "remote.origin.url"], {
       cwd: base,
       timeout: 5_000,
       maxBuffer: 1024 * 1024,
@@ -125,8 +123,8 @@ function result(payload: Record<string, unknown>): string {
   return JSON.stringify(payload, null, 2);
 }
 
-async function failedLogs(runId: string, repoArgs: string[] = []): Promise<FailedLogsResult> {
-  const failed = await gh(["run", "view", runId, ...repoArgs, "--log-failed"]);
+async function failedLogs(processPort: ToolProcessPort, runId: string, repoArgs: string[] = []): Promise<FailedLogsResult> {
+  const failed = await gh(processPort, ["run", "view", runId, ...repoArgs, "--log-failed"]);
   const logs = clip(failed.stdout.trim());
   if (!failed.ok) {
     return {
@@ -182,6 +180,8 @@ export default tool({
       ),
   },
   async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const action = String(args.action ?? "").trim().toLowerCase();
     const validActions = ["status", "jobs", "dispatch", "watch", "logs", "verify", "rerun-failed", "cancel"];
     if (!validActions.includes(action)) {
@@ -192,7 +192,7 @@ export default tool({
     const workflowName = (args.workflow ?? "CI").trim() || "CI";
     const branch = args.branch?.trim() || "";
     const commit = args.commit?.trim() || "";
-    const repo = args.repo?.trim() || await resolveBaseRepo(base);
+    const repo = args.repo?.trim() || await resolveBaseRepo(processPort, base);
     const repoArgs = repo ? ["--repo", repo] : [];
     let runId = String(args.runId ?? "").trim();
     let run: RunSummary | null = null;
@@ -200,7 +200,7 @@ export default tool({
     if (action === "dispatch") {
       const ref = args.ref?.trim() || "";
       if (!ref) return result({ ok: false, error: "dispatch requires ref (branch/tag/SHA)." });
-      const dispatched = await gh(["workflow", "run", workflowName, ...repoArgs, "--ref", ref]);
+      const dispatched = await gh(processPort, ["workflow", "run", workflowName, ...repoArgs, "--ref", ref]);
       if (!dispatched.ok) return result({ ok: false, error: `Could not dispatch workflow ${workflowName}: ${clip(dispatched.stderr || dispatched.stdout)}` });
       return result({ ok: true, workflow: workflowName, ref, hint: "Workflow dispatch accepted. Call action=status or action=jobs after GitHub creates the run." });
     }
@@ -220,7 +220,7 @@ export default tool({
       if (branch) listArgs.push("--branch", branch);
       if (commit) listArgs.push("--commit", commit);
 
-      const list = await gh(listArgs);
+      const list = await gh(processPort, listArgs);
       if (!list.ok) {
         const repoHint = repo
           ? "Check gh authentication, the workflow name, and the requested branch/commit filters."
@@ -262,24 +262,24 @@ export default tool({
     }
 
     if (action === "jobs") {
-      const jobsView = await gh(["run", "view", runId, ...repoArgs, "--json", "databaseId,name,status,conclusion,jobs,url"]);
+      const jobsView = await gh(processPort, ["run", "view", runId, ...repoArgs, "--json", "databaseId,name,status,conclusion,jobs,url"]);
       if (!jobsView.ok) return result({ ok: false, runId, error: `Could not inspect jobs for run ${runId}: ${clip(jobsView.stderr || jobsView.stdout)}` });
       try { return result({ ok: true, run: JSON.parse(jobsView.stdout) }); }
       catch { return result({ ok: false, runId, error: "GitHub returned invalid job JSON." }); }
     }
 
     if (action === "rerun-failed") {
-      const rerun = await gh(["run", "rerun", runId, ...repoArgs, "--failed"]);
+      const rerun = await gh(processPort, ["run", "rerun", runId, ...repoArgs, "--failed"]);
       return result(rerun.ok ? { ok: true, runId, rerun: "failed" } : { ok: false, runId, error: clip(rerun.stderr || rerun.stdout) });
     }
 
     if (action === "cancel") {
-      const cancelled = await gh(["run", "cancel", runId, ...repoArgs]);
+      const cancelled = await gh(processPort, ["run", "cancel", runId, ...repoArgs]);
       return result(cancelled.ok ? { ok: true, runId, cancelled: true } : { ok: false, runId, error: clip(cancelled.stderr || cancelled.stdout) });
     }
 
     if (action === "logs") {
-      const failed = await failedLogs(runId, repoArgs);
+      const failed = await failedLogs(processPort, runId, repoArgs);
       return result({
         ok: failed.ok,
         runId,
@@ -293,7 +293,7 @@ export default tool({
 
     if (action === "status") {
       if (!run) {
-        const view = await gh(["run", "view", runId, ...repoArgs, "--json", RUN_JSON_FIELDS]);
+        const view = await gh(processPort, ["run", "view", runId, ...repoArgs, "--json", RUN_JSON_FIELDS]);
         if (!view.ok) {
           return result({
             ok: false,
@@ -319,7 +319,7 @@ export default tool({
 
     for (;;) {
       polls += 1;
-      const view = await gh(["run", "view", runId, ...repoArgs, "--json", RUN_JSON_FIELDS]);
+      const view = await gh(processPort, ["run", "view", runId, ...repoArgs, "--json", RUN_JSON_FIELDS]);
       if (!view.ok) {
         return result({
           ok: false,
@@ -353,7 +353,7 @@ export default tool({
             });
           }
 
-          const failed = await failedLogs(runId, repoArgs);
+          const failed = await failedLogs(processPort, runId, repoArgs);
           return result({
             ok: false,
             run: last,

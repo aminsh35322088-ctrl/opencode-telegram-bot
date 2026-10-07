@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const MAX_SCAN_FILES = 5000;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_OUTPUT_CHARS = 16000;
@@ -22,9 +20,9 @@ function resolveTarget(worktree: string, raw?: string): string {
   return target;
 }
 
-async function npmJson(args: string[], worktree: string): Promise<unknown> {
+async function npmJson(processPort: ToolProcessPort, args: string[], worktree: string): Promise<unknown> {
   try {
-    const { stdout } = await execFileAsync("npm", args, {
+    const { stdout } = await processPort.execFile("npm", args, {
       cwd: worktree,
       timeout: 120000,
       maxBuffer: 8 * 1024 * 1024,
@@ -65,6 +63,8 @@ export default tool({
     path: tool.schema.string().optional().describe("Relative path to inspect for secrets/permissions; defaults to worktree root."),
   },
   async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const worktree = path.resolve(context.directory || context.worktree || process.cwd());
     const target = resolveTarget(worktree, args.path);
 
@@ -95,7 +95,7 @@ export default tool({
     }
 
     if (args.action === "audit") {
-      const audit = await npmJson(["audit", "--json"], worktree) as { metadata?: { vulnerabilities?: Record<string, number> } };
+      const audit = await npmJson(processPort, ["audit", "--json"], worktree) as { metadata?: { vulnerabilities?: Record<string, number> } };
       const vuln = audit.metadata?.vulnerabilities ?? {};
       const summary = ["critical", "high", "moderate", "low", "info"]
         .map((level) => [level, Number(vuln[level] ?? 0)] as const)
@@ -118,7 +118,7 @@ export default tool({
     }
 
     if (args.action === "deps") {
-      const outdated = await npmJson(["outdated", "--json"], worktree) as Record<string, { current?: string; latest?: string; wanted?: string }>;
+      const outdated = await npmJson(processPort, ["outdated", "--json"], worktree) as Record<string, { current?: string; latest?: string; wanted?: string }>;
       const entries = Object.entries(outdated);
       if (!entries.length) return "All npm dependencies are up to date.";
       return `Outdated dependencies (${entries.length}):\n${entries.slice(0, 100).map(([name, info]) => `${name}: ${info.current ?? "?"} -> ${info.latest ?? info.wanted ?? "?"}`).join("\n")}`;

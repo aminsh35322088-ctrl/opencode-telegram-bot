@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 16000;
 const MAX_FILES = 2000;
 const LOG_EXTENSIONS = new Set([".log", ".txt", ".jsonl"]);
@@ -58,6 +56,8 @@ export default tool({
     path: tool.schema.string().optional().describe("Log file or directory. Must stay inside the worktree or /data/logs."),
   },
   async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const worktree = path.resolve(context.directory || context.worktree || process.cwd());
     const lineCount = Math.max(1, Math.min(Math.trunc(args.lines ?? 50), 500));
 
@@ -129,7 +129,7 @@ export default tool({
       }
       for (const command of ["node", "npm"] as const) {
         try {
-          const { stdout } = await execFileAsync(command, ["--version"], { cwd: worktree, timeout: 5000 });
+          const { stdout } = await processPort.execFile(command, ["--version"], { cwd: worktree, signal: context.abort, timeout: 5000 });
           checks.push(`✅ ${command} ${stdout.trim()}`);
         } catch {
           checks.push(`❌ ${command} unavailable`);
@@ -155,7 +155,7 @@ export default tool({
         metrics.push("Disk: unavailable");
       }
       try {
-        const { stdout } = await execFileAsync("ps", ["aux", "--sort=-%mem"], { cwd: worktree, timeout: 5000, maxBuffer: 1024 * 1024 });
+        const { stdout } = await processPort.execFile("ps", ["aux", "--sort=-%mem"], { cwd: worktree, signal: context.abort, timeout: 5000, maxBuffer: 1024 * 1024 });
         metrics.push(`Top processes:\n${stdout.trim().split("\n").slice(0, 6).join("\n")}`);
       } catch {
         metrics.push("Process info: unavailable");

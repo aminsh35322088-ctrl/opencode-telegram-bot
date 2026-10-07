@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
+import type { ToolProcessPort } from "@opencode-telegram/native-runtime";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { tool } from "@opencode-ai/plugin";
 
-const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_CHARS = 30000;
 const DIST_ROOT = process.env.AGENT_BOT_DIST_ROOT?.trim() || "/app/dist";
 
@@ -46,9 +44,9 @@ function scriptInvocation(pm: PackageManager, script: string, extra: string[]): 
   return { cmd: "bun", args: ["run", script, ...(extra.length ? ["--", ...extra] : [])] };
 }
 
-async function run(cmd: string, args: string[], worktree: string, timeout = 180000): Promise<string> {
+async function run(processPort: ToolProcessPort, cmd: string, args: string[], worktree: string, timeout = 180000): Promise<string> {
   try {
-    const { stdout, stderr } = await execFileAsync(cmd, args, {
+    const { stdout, stderr } = await processPort.execFile(cmd, args, {
       cwd: worktree,
       timeout,
       maxBuffer: 16 * 1024 * 1024,
@@ -63,12 +61,12 @@ async function run(cmd: string, args: string[], worktree: string, timeout = 1800
   }
 }
 
-async function runLocalBinary(worktree: string, binary: string, args: string[], timeout = 180000): Promise<string> {
+async function runLocalBinary(processPort: ToolProcessPort, worktree: string, binary: string, args: string[], timeout = 180000): Promise<string> {
   const executable = path.join(worktree, "node_modules", ".bin", process.platform === "win32" ? `${binary}.cmd` : binary);
   if (!await exists(executable)) {
     throw new Error(`No package script and no local ${binary} binary are available. Install project dev dependencies explicitly; this tool will not download packages via npx.`);
   }
-  return run(executable, args, worktree, timeout);
+  return run(processPort, executable, args, worktree, timeout);
 }
 
 export default tool({
@@ -78,6 +76,8 @@ export default tool({
     args: tool.schema.string().optional().describe("Additional arguments; quotes/backslash escapes are supported."),
   },
   async execute(args, context) {
+    const processPort = (context as typeof context & { process?: ToolProcessPort }).process;
+    if (!processPort) throw new Error("Core process capability is required for tool ownership.");
     const worktree = context.directory || context.worktree || process.cwd();
     const support = await loadSupport();
     const pkg = await packageJson(worktree);
@@ -88,41 +88,41 @@ export default tool({
       if (!extra.length) throw new Error('test-file requires a test file path in args.');
       if (pkg.scripts?.test) {
         const invocation = scriptInvocation(pm, "test", extra);
-        return run(invocation.cmd, invocation.args, worktree);
+        return run(processPort, invocation.cmd, invocation.args, worktree);
       }
       const config = path.join(worktree, ".github", "ci-tests", "vitest.config.ts");
       const vitestArgs = ["run", ...(await exists(config) ? ["--config", config] : []), ...extra];
-      return runLocalBinary(worktree, "vitest", vitestArgs);
+      return runLocalBinary(processPort, worktree, "vitest", vitestArgs);
     }
 
     if (args.action === "test") {
       if (pkg.scripts?.test) {
         const invocation = scriptInvocation(pm, "test", extra);
-        return run(invocation.cmd, invocation.args, worktree);
+        return run(processPort, invocation.cmd, invocation.args, worktree);
       }
       const config = path.join(worktree, ".github", "ci-tests", "vitest.config.ts");
       if (!await exists(path.join(worktree, "tests"))) {
         throw new Error("This repository has no test script and CI-only tests are not materialized in this runtime.");
       }
-      return runLocalBinary(worktree, "vitest", ["run", ...(await exists(config) ? ["--config", config] : []), ...extra]);
+      return runLocalBinary(processPort, worktree, "vitest", ["run", ...(await exists(config) ? ["--config", config] : []), ...extra]);
     }
 
     if (args.action === "lint-fix") {
       if (pkg.scripts?.lint) {
         const invocation = scriptInvocation(pm, "lint", ["--fix", ...extra]);
-        return run(invocation.cmd, invocation.args, worktree);
+        return run(processPort, invocation.cmd, invocation.args, worktree);
       }
-      return runLocalBinary(worktree, "eslint", [".", "--fix", ...extra]);
+      return runLocalBinary(processPort, worktree, "eslint", [".", "--fix", ...extra]);
     }
 
     const script = args.action === "typecheck" ? "typecheck" : args.action;
     if (pkg.scripts?.[script]) {
       const invocation = scriptInvocation(pm, script, extra);
-      return run(invocation.cmd, invocation.args, worktree);
+      return run(processPort, invocation.cmd, invocation.args, worktree);
     }
 
-    if (args.action === "lint") return runLocalBinary(worktree, "eslint", [".", ...extra]);
-    if (args.action === "typecheck") return runLocalBinary(worktree, "tsc", ["--noEmit", ...extra]);
+    if (args.action === "lint") return runLocalBinary(processPort, worktree, "eslint", [".", ...extra]);
+    if (args.action === "typecheck") return runLocalBinary(processPort, worktree, "tsc", ["--noEmit", ...extra]);
     if (args.action === "build") throw new Error("No build script is defined in package.json.");
 
     throw new Error(`Unknown test action: ${args.action}`);
