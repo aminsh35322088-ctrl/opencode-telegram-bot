@@ -24,5 +24,5 @@ export async function inspectExistingTopicBindings():Promise<void>{
   if(classification.role==='writable-ai')writable++;
   logger.info(`[DistributedClassification] chat=${binding.chatId} thread=${binding.threadId} role=${classification.role} evidence=${classification.evidence}`);
  }
- logger.info(`[DistributedClassification] writable=${writable} maximum=4 migration=${writable>4?'selection-required':'canary-required'}`);
+ logger.info(`[DistributedClassification] writable=${writable} capacity=backend-policy migration=canary-required`);
 }

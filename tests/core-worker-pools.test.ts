@@ -7,7 +7,7 @@ test('root setup verifies existing control and validation pools without project 
  let calls=0;
  const request=async<T>(document:string)=>{calls++;assert.ok(document.startsWith('query WorkerPools'));return {workspace:{id:'workspace',projects:{edges:[project('control','production'),project('existing','validation')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T;};
  const pools=await resolveWorkerPools({...options,request});
- assert.deepEqual(pools.map(p=>[p.projectId,p.environmentId,p.capacity]),[['control','production',2],['existing','validation',2]]);
+ assert.deepEqual(pools.map(p=>[p.projectId,p.environmentId,p.capacity]),[['control','production',undefined],['existing','validation',undefined]]);
  assert.deepEqual(await resolveWorkerPools({...options,request}),pools);assert.equal(calls,2);
 });
 test('root setup refuses foreign projects, wrong environments and incomplete inventory',async()=>{
@@ -27,4 +27,14 @@ test('normal bootstrap discovers workspace and stable Worker environment without
  };
  const pools=await resolveWorkerPools({controlProjectId:'portable-control',controlEnvironmentId:'portable-production',region:'eu',request});
  assert.equal(pools[1].environmentId,'portable-validation');assert.equal(calls.length,2);
+});
+
+test('configured flat pool supports three projects with independent policy limits',async()=>{
+ const pools=[{projectId:'control',environmentId:'production',region:'eu',capacity:1},{projectId:'existing',environmentId:'validation',region:'eu',capacity:3},{projectId:'third',environmentId:'third-env',region:'us'}];
+ const request=async<T>()=>({workspace:{id:'workspace',projects:{edges:[project('control','production'),project('existing','validation'),project('third','third-env')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T);
+ assert.deepEqual(await resolveWorkerPools({...options,pools,request}),pools);
+});
+test('single eligible project is valid and does not require a validation project',async()=>{
+ const request=async<T>()=>({workspace:{id:'workspace',projects:{edges:[project('control','production')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T);
+ assert.deepEqual((await resolveWorkerPools({workspaceId:'workspace',controlProjectId:'control',controlEnvironmentId:'production',region:'eu',request})).map(p=>p.projectId),['control']);
 });

@@ -1,4 +1,3 @@
-import { WORKER_CORE_COMMIT } from "../src/infrastructure/worker-core-release.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -15,7 +14,7 @@ async function fixture() {
   const calls: Array<{document:string;variables:Record<string,unknown>}> = [];
   let ambiguous = false; let rejected = false; let pendingReads=0; let attachPending=0; const waits:number[]=[];
   const filename=path.join(await mkdtemp(path.join(tmpdir(),'provisioner-')),'journal.json');
-  const options:NodeProvisionerOptions={journalPath:filename,controlUrl:'https://control.up.railway.app',pools:[{projectId:'a',environmentId:'ea',capacity:2,region:'eu'},{projectId:'b',environmentId:'eb',capacity:2,region:'eu'}],
+  const options:NodeProvisionerOptions={journalPath:filename,controlUrl:'https://control.up.railway.app',workerImage:'ghcr.io/example/core@sha256:'+'b'.repeat(64),pools:[{projectId:'a',environmentId:'ea',capacity:2,region:'eu'},{projectId:'b',environmentId:'eb',capacity:2,region:'eu'}],
     wait:async ms=>{waits.push(ms);},lookup:async id=>bindings.get(id),ensureIdentity:async (_binding,create)=>create(),retireIdentity:async()=>{},
     request:async <T>(document:string,variables:Record<string,unknown>)=>{
       calls.push({document,variables}); const input=variables.input as Record<string,unknown>;
@@ -26,7 +25,7 @@ async function fixture() {
         const service={id:'s'+services.length,name:input.name as string,projectId:input.projectId as string}; services.push(service);
         if(ambiguous){ambiguous=false;throw new Error('ambiguous network result');} result={serviceCreate:{id:service.id}};
       } else if(document.includes('mutation WorkerConfig')) {
-        assert.equal(input.dockerfilePath,'Dockerfile.worker');
+        assert.equal(input.dockerfilePath,undefined);
         const attached=volumes.some(v=>v.serviceId===variables.serviceId && v.environmentId===variables.environmentId);
         assert.deepEqual(input.multiRegionConfig,attached?undefined:{eu:{numReplicas:1}},'Existing dedicated Volume region must survive discovery/default changes');
         assert.equal(input.region,undefined);
@@ -41,19 +40,19 @@ async function fixture() {
       } else if(document.includes('mutation WorkerDomain')) {
         const domain={id:'d'+domains.size,domain:'worker'+domains.size+'.up.railway.app'};domains.set(input.serviceId as string,domain);result={serviceDomainCreate:domain};
       } else if(document.includes('mutation WorkerLimits')) result={serviceInstanceLimitsUpdate:!rejected};
-      else if(document.includes('mutation RetireService')) {services.splice(services.findIndex(s=>s.id===variables.id),1);result={serviceDelete:true};}
-      else if(document.includes('mutation RetireVolume')) {volumes.splice(volumes.findIndex(v=>v.id===variables.volumeId),1);result={volumeDelete:true};}
+      else if((document.includes('mutation RetireService')||document.includes('mutation WorkerRolloverService'))) {services.splice(services.findIndex(s=>s.id===variables.id),1);result={serviceDelete:true};}
+      else if((document.includes('mutation RetireVolume')||document.includes('mutation WorkerRolloverVolume'))) {volumes.splice(volumes.findIndex(v=>v.id===variables.volumeId),1);result={volumeDelete:true};}
       else result={mutation:true};
       return result as T;
     }};
   const add=(id:string)=>bindings.set(id,{nodeId:id,generation:1,chatId:-100,threadId:bindings.size+2,currentRevision:0,status:'reserved',createdAt:'now',updatedAt:'now'});
   return {options,controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;},setAttachPending:(reads:number)=>{attachPending=reads;},waits};
 }
-test('provision four isolated nodes 2+2, cap fifth and never return/persist secrets',async()=>{
+test('configured project limits roll over and never return/persist secrets',async()=>{
   const f=await fixture();for(const id of ['one','two','three','four','five']) f.add(id);
   const nodes=await Promise.all(['one','two','three','four'].map(id=>f.controller.provision(id,1)));
   assert.deepEqual(nodes.map(n=>n.projectId),['a','a','b','b']);assert.equal(new Set(nodes.map(n=>n.volumeId)).size,4);
-  await assert.rejects(f.controller.provision('five',1),/Maximum/);
+  await assert.rejects(f.controller.provision('five',1),/CAPACITY EXHAUSTED/);
   const contents=await readFile(f.filename,'utf8');assert.equal(contents.includes('NODE_SHARED_SECRET'),false);
   for(const call of f.calls.filter(c=>c.document.includes('WorkerVariables'))) {
     const vars=(call.variables.input as {variables:Record<string,string>}).variables;
@@ -91,7 +90,7 @@ test('asynchronous volume activation retries inventory without duplicate mutatio
  const f=await fixture();f.add('one');f.setAttachPending(2);await f.controller.provision('one',1);
  assert.deepEqual(f.waits,[1000,2000]);assert.equal(f.calls.filter(c=>c.document.includes('mutation WorkerVolumeAttach')).length,1);
  const source=f.calls.find(c=>c.document.includes('mutation WorkerSource'))!;
- assert.equal((source.variables.patch as {services:Record<string,{source:{commitSha:string}}>}).services.s0!.source.commitSha,WORKER_CORE_COMMIT);
+ assert.equal((source.variables.patch as {services:Record<string,{source:{image:string}}>}).services.s0!.source.image,f.options.workerImage);
 });
 test('unfinished volume activation retains journal and fails before credential distribution',async()=>{
  const f=await fixture();f.add('one');f.setAttachPending(10);await assert.rejects(f.controller.provision('one',1),/activation pending/);
@@ -139,4 +138,99 @@ test('Worker cleanup fails closed on profile failure, ownership mismatch and can
  await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,async()=>{throw new Error('secret-sentinel');}),/Worker variable cleanup failed/);
  f.volumes[0]!.serviceId='foreign';await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,good));f.volumes[0]!.serviceId=node.serviceId!;
  await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,async(id,generation,profile)=>{if(profile==='network')binding.sessionId='now-bound';return good(id,generation,profile);}));assert.equal(deletes,0);
+});
+
+test('dynamic configured project limits permit more than four and roll over deterministically',async()=>{
+ const f=await fixture();f.options.pools[0]!.capacity=3;f.options.pools[1]!.capacity=3;
+ for(let i=0;i<7;i++)f.add('dynamic'+i);
+ const nodes=await Promise.all(Array.from({length:6},(_,i)=>f.controller.provision('dynamic'+i,1)));
+ assert.deepEqual(nodes.map(n=>n.projectId),['a','a','a','b','b','b']);
+ await assert.rejects(f.controller.provision('dynamic6',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+});
+test('immutable image identity is deployed and persisted without repository source or bootstrap expansion',async()=>{
+ const f=await fixture();f.add('image');f.options.workerImage='ghcr.io/example/core@sha256:'+'a'.repeat(64);
+ const node=await f.controller.provision('image',1);
+ assert.equal(node.image,f.options.workerImage);
+ const source=f.calls.find(c=>c.document.includes('WorkerSource'))!;
+ const contract=(source.variables.patch as {services:Record<string,{source:unknown}>}).services.s0!.source;
+ assert.deepEqual(contract,{image:f.options.workerImage});
+ assert.equal(JSON.parse(await readFile(f.filename,'utf8')).nodes[0].image,f.options.workerImage);
+});
+test('concurrent duplicate provisioning and restart create only one owned service and volume',async()=>{
+ const f=await fixture();f.add('duplicate');
+ const results=await Promise.all(Array.from({length:6},()=>f.controller.provision('duplicate',1)));
+ assert.equal(new Set(results.map(n=>n.serviceId)).size,1);assert.equal(f.services.length,1);assert.equal(f.volumes.length,1);
+ await new NodeProvisioner(f.options).provision('duplicate',1);assert.equal(f.services.length,1);assert.equal(f.volumes.length,1);
+ await assert.rejects(f.controller.provision('duplicate',2),/authorization/);
+});
+
+test('Railway quota at service creation rolls over while API transport failure remains retryable',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('quota');const request=f.options.request;
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.includes('mutation WorkerService')&&(variables.input as {projectId:string}).projectId==='a')throw new InfrastructureRequestError('resource_limit',200,'WorkerService');
+  return request<T>(document,variables);
+ };
+ assert.equal((await f.controller.provision('quota',1)).projectId,'b');assert.equal(f.services.length,1);
+ const g=await fixture();g.add('api');g.options.request=async()=>{throw new InfrastructureRequestError('transport',0,'WorkerInventory');};
+ await assert.rejects(g.controller.provision('api',1),error=>error instanceof InfrastructureRequestError&&error.category==='transport');assert.equal(g.services.length,0);
+});
+test('quota after partial provisioning cleans owned resources before project rollover',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('partial');const request=f.options.request;
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.includes('mutation WorkerVolume(')&&(variables.input as {projectId:string}).projectId==='a')throw new InfrastructureRequestError('resource_limit',200,'WorkerVolume');
+  return request<T>(document,variables);
+ };
+ assert.equal((await f.controller.provision('partial',1)).projectId,'b');assert.equal(f.services.length,1);assert.equal(f.volumes.length,1);
+ assert.equal(f.services[0]!.projectId,'b');
+});
+
+test('lost volume create response retains ambiguity and never creates a second volume after restart',async()=>{
+ const f=await fixture();f.add('volume-timeout');const request=f.options.request;let lose=true;
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  const result=await request<T>(document,variables);
+  if(lose&&document.includes('mutation WorkerVolume(')){lose=false;throw new Error('lost volume result');}return result;
+ };
+ await assert.rejects(f.controller.provision('volume-timeout',1),/lost volume/);
+ await assert.rejects(new NodeProvisioner(f.options).provision('volume-timeout',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='reconciliation_required');
+ assert.equal(f.volumes.length,1);
+});
+test('configured eligible projects are all tried before a total Railway quota failure',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('full');const request=f.options.request;const projects:string[]=[];
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.includes('mutation WorkerService')){projects.push((variables.input as {projectId:string}).projectId);throw new InfrastructureRequestError('resource_limit',200,'WorkerService');}return request<T>(document,variables);
+ };
+ await assert.rejects(f.controller.provision('full',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+ assert.deepEqual(projects,['a','b']);assert.equal(f.services.length,0);
+});
+
+test('quota during reconciliation of an existing Worker never destroys its runtime or volume',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('existing');const original=await f.controller.provision('existing',1);const request=f.options.request;
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{if(document.includes('mutation WorkerLimits'))throw new InfrastructureRequestError('resource_limit',200,'WorkerLimits');return request<T>(document,variables);};
+ await assert.rejects(f.controller.provision('existing',1));
+ assert.equal(f.services[0]?.id,original.serviceId);assert.equal(f.volumes[0]?.id,original.volumeId);
+});
+test('capacity rejection before provisioning can retire the empty reservation without orphan infrastructure',async()=>{
+ const f=await fixture();f.add('empty');f.options.pools.forEach(p=>{p.capacity=0;});
+ await assert.rejects(f.controller.provision('empty',1),/CAPACITY EXHAUSTED/);
+ Object.assign(f.bindings.get('empty')!,{generation:2,status:'retiring'});
+ assert.equal((await f.controller.retire('empty',2)).phase,'retired');assert.equal(f.services.length,0);assert.equal(f.volumes.length,0);
+});
+
+test('legacy image-less free Worker handoff preserves its source and storage with and without an image policy',async()=>{
+ const {writeFile}=await import('node:fs/promises');
+ for(const configured of [true,false]){
+  const f=await fixture();f.add('legacy');const binding=f.bindings.get('legacy')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,status:'available'});
+  const original=await f.controller.provision('legacy',1);
+  const journal=JSON.parse(await readFile(f.filename,'utf8'));delete journal.nodes[0].image;delete journal.nodes[0].runtimeCommit;delete journal.nodes[0].runtimeVersion;await writeFile(f.filename,JSON.stringify(journal));
+  if(!configured)f.options.workerImage=undefined;
+  Object.assign(binding,{chatId:-100,threadId:2,generation:2,status:'provisioning'});
+  const claimed=await f.controller.provision('legacy',2);assert.equal(claimed.volumeId,original.volumeId);assert.equal(claimed.serviceId,original.serviceId);assert.equal(claimed.image,undefined);
+  const source=f.calls.filter(c=>c.document.includes('WorkerSource')).at(-1)!;
+  const contract=(source.variables.patch as {services:Record<string,{source:{commitSha?:string;image?:string}}>}).services.s0!.source;
+  assert.equal(contract.commitSha,'9a188586a660967227a044a3224280e6923e3067');assert.equal(contract.image,undefined);
+ }
 });

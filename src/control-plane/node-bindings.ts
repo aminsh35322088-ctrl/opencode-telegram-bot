@@ -3,7 +3,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getRuntimePaths } from "../runtime/paths.js";
 
-export const MAX_AI_TOPICS = 4;
 export interface NodeBinding {
   slot?: number; clusterId?: string;
   nodeId: string; chatId: number; threadId: number; generation: number;
@@ -31,14 +30,13 @@ export class NodeBindingStore {
       if (nodes.has(binding.nodeId)) throw new Error("Duplicate node identity");
       nodes.add(binding.nodeId);
       if (binding.status !== "retired") {
-        if(binding.slot!==undefined){if(!Number.isInteger(binding.slot)||binding.slot<1||binding.slot>4||slots.has(binding.slot)||binding.clusterId!==state.clusterId)throw new Error("Invalid cluster slot ownership");slots.add(binding.slot);}
+        if(binding.slot!==undefined){if(!Number.isInteger(binding.slot)||binding.slot<1||slots.has(binding.slot)||binding.clusterId!==state.clusterId)throw new Error("Invalid cluster slot ownership");slots.add(binding.slot);}
         if(binding.chatId===0 && binding.threadId===0)continue;
         const topic = `${binding.chatId}:${binding.threadId}`;
         if (topics.has(topic)) throw new Error("Duplicate active topic binding");
         topics.add(topic);
       }
     }
-    if (state.bindings.filter(binding=>binding.status!=="retired").length > MAX_AI_TOPICS) throw new Error("Node capacity exceeded in persisted state");
     return state;
   }
   private transaction<T>(change: (state: BindingState) => T | Promise<T>): Promise<T> {
@@ -61,12 +59,12 @@ export class NodeBindingStore {
     if(threadId<=1)return undefined;
     return (await this.list()).find((binding) => binding.chatId === chatId && binding.threadId === threadId && binding.status !== "retired");
   }
-  /** Persistent four-slot Cluster Manifest. Available Workers have no Telegram ownership. */
-  ensurePoolSlots():Promise<NodeBinding[]>{
+  /** Reconcile persisted Workers; optional explicit warm capacity, never a fixed topology. */
+  ensurePoolSlots(warmCapacity=0):Promise<NodeBinding[]>{
+    if(!Number.isSafeInteger(warmCapacity)||warmCapacity<0||warmCapacity>1000)throw new Error("Invalid warm Worker policy");
     return this.transaction(state=>{
-      if(state.bindings.some(binding=>binding.status!=="retired" && !binding.slot))throw new Error("Legacy Node ownership requires explicit reconciliation");
       state.clusterId??=randomUUID();
-      for(let slot=1;slot<=4;slot++){
+      for(let slot=1;slot<=warmCapacity;slot++){
         if(state.bindings.some(binding=>binding.slot===slot && binding.status!=="retired"))continue;
         const now=new Date().toISOString();
         state.bindings.push({nodeId:randomUUID(),clusterId:state.clusterId,slot,generation:1,chatId:0,threadId:0,currentRevision:0,status:"pool-reserved",createdAt:now,updatedAt:now});
@@ -81,10 +79,8 @@ export class NodeBindingStore {
       if (existing) return existing;
       if(state.clusterId){
         const available=state.bindings.find(binding=>binding.status==="available" && binding.chatId===0 && binding.threadId===0);
-        if(!available){if(state.bindings.filter(binding=>binding.status!=="retired" && binding.threadId>1).length>=MAX_AI_TOPICS)throw new Error("Maximum four AI Topics reached");throw new Error("Cluster Workers are not ready");}
-        available.generation++;available.chatId=chatId;available.threadId=threadId;available.status="reserved";available.updatedAt=new Date().toISOString();return available;
+        if(available){available.generation++;available.chatId=chatId;available.threadId=threadId;available.status="reserved";available.updatedAt=new Date().toISOString();return available;}
       }
-      if (state.bindings.filter((binding) => binding.status !== "retired").length >= MAX_AI_TOPICS) throw new Error("Maximum four AI Topics reached");
       const now = new Date().toISOString();
       const binding: NodeBinding = { nodeId: randomUUID(), chatId, threadId, generation: 1, currentRevision: 0, status: "reserved", createdAt: now, updatedAt: now };
       state.bindings.push(binding); return binding;

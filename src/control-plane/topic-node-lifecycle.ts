@@ -1,8 +1,9 @@
+import {logger} from "../utils/logger.js";
 import type { Api } from "grammy";
 import type { Session } from "@opencode-ai/sdk/v2";
 import { nodeBindings, NodeBindingStore, type NodeBinding } from "./node-bindings.js";
 import { readGlobalSnapshot } from "./global-state.js";
-import type { ProvisionedNode } from "../infrastructure/node-provisioner.js";
+import {WorkerProvisioningError,type ProvisionedNode} from "../infrastructure/worker-provisioning-driver.js";
 import { requestInfrastructure, requestNodeLifecycle } from "./application-transport.js";
 import { saveTelegramTopicBinding, listTelegramTopicBindings, type TelegramTopicBinding } from "../app/services/telegram-topic-store.js";
 import { getNextManagedChatTitle } from "../app/services/telegram-topic-session-service.js";
@@ -28,17 +29,23 @@ export class TopicNodeLifecycle {
     if(response?.ok!==true)throw new Error("Node lifecycle request failed");
     return response.result as T;
   }
-  /** Prepare all four persistent unbound slots before Telegram ownership is admitted. */
-  bootstrapPool():Promise<NodeBinding[]> {
+  /** Reconcile existing unbound Workers; New Chat allocates additional capacity lazily. */
+  bootstrapPool(warmCapacity=0):Promise<NodeBinding[]> {
     if(this.poolFlight)return this.poolFlight;
-    const operation=this.preparePool().finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
+    const operation=this.preparePool(warmCapacity).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
-  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'):Promise<void> {
+  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available',expected?:ProvisionedNode):Promise<void> {
     const deadline=this.dependencies.now()+300_000;
     let delay=1_000;
     while(true) {
-      try {if((await this.rpc<{ready:boolean}>(binding,'health')).ready)break;} catch { /* deployment/wake may still be underway */ }
+      let health:{ready:boolean;runtime?:{telegramCoreCommit:string;telegramCoreVersion:string}}|undefined;
+      try {health=await this.rpc(binding,'health');} catch { /* deployment/wake may still be underway */ }
+      if(health?.ready){
+        if(expected?.image&&(health.runtime?.telegramCoreCommit!==expected.runtimeCommit||health.runtime?.telegramCoreVersion!==expected.runtimeVersion))throw new WorkerProvisioningError("image_mismatch");
+        if(expected?.image)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected.image} actualCommit=${health.runtime!.telegramCoreCommit} actualVersion=${health.runtime!.telegramCoreVersion}`);
+        break;
+      }
       if(this.dependencies.now()>=deadline)throw new Error("Topic node readiness timed out");
       await this.dependencies.wait(Math.min(delay,Math.max(0,deadline-this.dependencies.now())));delay=Math.min(delay*2,10_000);
       const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
@@ -55,8 +62,8 @@ export class TopicNodeLifecycle {
     }
     throw new Error("Global state changed repeatedly during bootstrap; retry Topic readiness");
   }
-  private async preparePool():Promise<NodeBinding[]> {
-    const slots=await this.dependencies.bindings.ensurePoolSlots();
+  private async preparePool(warmCapacity:number):Promise<NodeBinding[]> {
+    const slots=await this.dependencies.bindings.ensurePoolSlots(warmCapacity);
     for(let binding of slots) {
       // Previously prepared or already claimed slots keep their identity/resources.
       if(binding.chatId!==0||binding.threadId!==0)continue;
@@ -79,7 +86,7 @@ export class TopicNodeLifecycle {
         const provisioned=await this.dependencies.infrastructure('provision',binding.nodeId,generation);
         if(provisioned.nodeId!==binding.nodeId||provisioned.generation!==generation||!provisioned.endpoint||!provisioned.serviceId||!provisioned.volumeId)throw new Error("Incomplete provisioned node identity");
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:provisioned.projectId,serviceId:provisioned.serviceId,volumeId:provisioned.volumeId,endpoint:provisioned.endpoint});
-        await this.waitReady(binding,'pool-provisioning');
+        await this.waitReady(binding,'pool-provisioning',provisioned);
         binding=await this.syncGlobal(binding);
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'available'});
         await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
@@ -106,7 +113,7 @@ export class TopicNodeLifecycle {
         const provisioned=await this.dependencies.infrastructure('provision',binding.nodeId,generation);
         if(provisioned.nodeId!==binding.nodeId||provisioned.generation!==generation||!provisioned.endpoint||!provisioned.serviceId||!provisioned.volumeId)throw new Error("Incomplete provisioned node identity");
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:provisioned.projectId,serviceId:provisioned.serviceId,volumeId:provisioned.volumeId,endpoint:provisioned.endpoint});
-        await this.waitReady(binding,'provisioning');
+        await this.waitReady(binding,'provisioning',provisioned);
       }
       binding=await this.syncGlobal(binding);
       const created=await this.rpc<{sessionId:string}>(binding,'session.create');
@@ -138,9 +145,6 @@ const chatCreations=new Map<number,Promise<unknown>>();
 export function createRemoteTopicSession(api:Api,chatId:number,directory:string):Promise<{binding:TelegramTopicBinding;session:Session}> {
   const previous=chatCreations.get(chatId)??Promise.resolve();
   const operation=previous.catch(()=>undefined).then(async()=>{
-    const nodes=(await nodeBindings.list()).filter(binding=>binding.status!=='retired');
-    if(nodes.filter(binding=>binding.threadId>1).length>=4)throw new Error("Maximum four AI Topics reached");
-    if(nodes.some(binding=>binding.slot)&&!nodes.some(binding=>binding.status==='available'&&binding.chatId===0&&binding.threadId===0))throw new Error("Cluster Workers are not ready");
     const title=getNextManagedChatTitle(await listTelegramTopicBindings(),chatId);
     const topic=await api.raw.createForumTopic({chat_id:chatId,name:title});
     if(!topic.message_thread_id)throw new Error("Telegram Topic identity missing");

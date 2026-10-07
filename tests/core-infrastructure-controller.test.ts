@@ -47,11 +47,11 @@ test('Root handoff fences old identity and confirms retirement before rotating W
  const {NodeBindingStore}=await import('../src/control-plane/node-bindings.js');
  const {WORKER_CORE_COMMIT}=await import('../src/infrastructure/worker-core-release.js');
  const home=await mkdtemp(path.join(tmpdir(),'root-handoff-'));const filename=path.join(home,'bindings.json');
- const store=new NodeBindingStore(filename);let binding=(await store.ensurePoolSlots())[0]!;
+ const store=new NodeBindingStore(filename);let binding=(await store.ensurePoolSlots(4))[0]!;
  binding=await store.update(binding.nodeId,1,{status:'pool-provisioning'});
  const registry=captureNodeRegistry({});const events:string[]=[];let retirementFails=true;let oldSecret='';
  const edge=<T>(nodes:T[])=>({edges:nodes.map(node=>({node})),pageInfo:{hasNextPage:false}});
- const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,coreCommit:WORKER_CORE_COMMIT,controlUrl:'https://control.up.railway.app',pools:[{projectId:'a',environmentId:'ea',capacity:2,region:'eu'},{projectId:'b',environmentId:'eb',capacity:2,region:'eu'}],
+ const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,coreCommit:WORKER_CORE_COMMIT,workerImage:'ghcr.io/example/core@sha256:'+'b'.repeat(64),controlUrl:'https://control.up.railway.app',pools:[{projectId:'a',environmentId:'ea',capacity:2,region:'eu'},{projectId:'b',environmentId:'eb',capacity:2,region:'eu'}],
  request:async <T>(document:string,variables:Record<string,unknown>)=>{
   if(document.includes('WorkerInventory'))return {project:{id:variables.projectId,services:edge([{id:'service',name:'topic-node-'+binding.nodeId}]),volumes:edge([{id:'volume',volumeInstances:edge([{volumeId:'volume',environmentId:variables.environmentId,serviceId:'service',sizeMB:500,mountPath:'/data',isPendingDeletion:false}])}])},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edge([{serviceId:'service',domains:{serviceDomains:[{id:'domain',domain:'worker.up.railway.app'}]},latestDeployment:{id:'deployment'}}])}} as T;
   if(document.includes('WorkerVariables')){
@@ -61,7 +61,7 @@ test('Root handoff fences old identity and confirms retirement before rotating W
    if(env.NODE_GENERATION==='1'){oldSecret=env.NODE_SHARED_SECRET!;}
    else{assert.equal(env.NODE_GENERATION,'2');assert.notEqual(env.NODE_SHARED_SECRET,oldSecret);assert.ok(events.indexOf('retired')<events.indexOf('variables:2'));}
   }
-  if(document.includes('WorkerSource')){const patch=variables.patch as {services:Record<string,{source:{commitSha:string}}>};assert.equal(patch.services.service!.source.commitSha,WORKER_CORE_COMMIT);}
+  if(document.includes('WorkerSource')){const patch=variables.patch as {services:Record<string,{source:{image:string}}>};assert.match(patch.services.service!.source.image,/@sha256:/);}
   return {mutation:true} as T;
  },retireNode:async identity=>{
   events.push('retire');assert.equal(identity.binding.generation,1);assert.equal(identity.binding.chatId,0);assert.equal(identity.binding.threadId,0);assert.equal(identity.secret,oldSecret);
@@ -78,7 +78,7 @@ test('Root handoff fences old identity and confirms retirement before rotating W
 
 test('provision requests await one explicit pool discovery without autonomous retries',async()=>{
  const {NodeBindingStore}=await import('../src/control-plane/node-bindings.js');
- const home=await mkdtemp(path.join(tmpdir(),'root-pools-'));const filename=path.join(home,'bindings.json');const store=new NodeBindingStore(filename);const binding=(await store.ensurePoolSlots())[0]!;
+ const home=await mkdtemp(path.join(tmpdir(),'root-pools-'));const filename=path.join(home,'bindings.json');const store=new NodeBindingStore(filename);const binding=(await store.ensurePoolSlots(4))[0]!;
  const controller=new InfrastructureController({registry:captureNodeRegistry({}),stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected API');}});
  let reject!:(error:Error)=>void;const discovery=new Promise<void>((_resolve,fail)=>{reject=fail;});controller.waitForPoolConfiguration(discovery);
  let finished=false;const request=controller.request('provision',binding.nodeId,1).finally(()=>{finished=true;});
@@ -89,7 +89,7 @@ test('provision requests await one explicit pool discovery without autonomous re
 test('Control configuration cleanup waits for four current signed unbound proofs and runs once',async()=>{
  const {NodeBindingStore}=await import('../src/control-plane/node-bindings.js');
  const home=await mkdtemp(path.join(tmpdir(),'root-cleanup-'));const filename=path.join(home,'bindings.json');const store=new NodeBindingStore(filename);
- const registry=captureNodeRegistry({});const nodes=await store.ensurePoolSlots();let cleanups=0;let failFirst=true;
+ const registry=captureNodeRegistry({});const nodes=await store.ensurePoolSlots(4);let cleanups=0;let failFirst=true;
  for(const node of nodes){await store.update(node.nodeId,1,{status:'available',endpoint:'https://worker.up.railway.app'});registry.install({binding:{nodeId:node.nodeId,generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)});}
  const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected API');},probeUnbound:async nodeId=>{if(nodeId===nodes[0]!.nodeId&&failFirst)throw Error('probe failed');},onClusterVerified:async()=>{cleanups++;}});
  await assert.rejects(controller.request('reconcile',nodes[0]!.nodeId,1),/probe failed/);

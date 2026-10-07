@@ -169,6 +169,7 @@ export const zh: I18nDictionary = {
 
   "new.created": "✅ 新会话已创建：{title}",
   "general.topic_only_prompt": "🚫 这是论坛的常规话题 — AI 提示词只能在 AI 话题中使用。\n\n💬 按 New Chat 新建编程话题，或从 History 打开现有话题。\n\n仅当机器人明确要求输入时，这里才会接受文本。",
+  "new.capacity_exhausted": "🔴 没有可用的 Worker。容量已耗尽。",
   "new.create_error": "🔴 OpenCode 服务器不可用，或创建会话时发生错误。",
 
   "stop.no_active_session": "🛑 代理尚未启动\n\n使用 /new 创建会话，或通过 /sessions 选择一个。",

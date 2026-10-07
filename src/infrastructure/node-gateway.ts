@@ -1,3 +1,4 @@
+import {WorkerProvisioningError} from "./worker-provisioning-driver.js";
 import {InfrastructureRequestError} from "./railway-client.js";
 import {createServer} from "node:http";
 import type {ChildProcess} from "node:child_process";
@@ -51,11 +52,12 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
     const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number};
     if(typeof input.requestId!=="string" || input.requestId.length>128)return;
     if(input.channel==="infrastructure-request"){
+      // Bound in-flight IPC work; this is not a Worker fleet capacity limit.
       if(!controller||infrastructureActive>=4||!input.operation||!input.nodeId||!input.generation){child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false});return;}
       infrastructureActive++;
       try{const result=await controller.request(input.operation,input.nodeId,input.generation);child.send({channel:"infrastructure-response",requestId:input.requestId,ok:true,result});}
       catch(error){
-        const category=error instanceof InfrastructureRequestError?error.category:"verification";
+        const category=error instanceof InfrastructureRequestError||error instanceof WorkerProvisioningError?error.category:"verification";
         const http=error instanceof InfrastructureRequestError?error.status:0;
         const stage=error instanceof InfrastructureRequestError?error.operation:"verification";
         const reasons=new Map([["Trial project volume capacity exhausted","project-volume-capacity"],["Worker must have exactly one volume","multiple-worker-volumes"],["Node volume ownership mismatch","volume-ownership"],["Worker volume is not verified dedicated 500MB storage","volume-size-or-mount"],["Worker volume activation pending; retry reconciliation","volume-activation-pending"],["Railway resource mutation was rejected","mutation-returned-false"]]);

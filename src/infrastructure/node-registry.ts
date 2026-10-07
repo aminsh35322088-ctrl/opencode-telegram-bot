@@ -24,7 +24,6 @@ export function captureNodeRegistry(environment:NodeJS.ProcessEnv) {
       if(identities.has(binding.nodeId) || (binding.status!=="retired" && binding.threadId>1 && topics.has(topic))) throw new Error("Duplicate infrastructure node identity");
       if(binding.status!=="retired" && binding.threadId>1)topics.add(topic);identities.set(binding.nodeId,structuredClone(identity));
     }
-    if(Array.from(identities.values()).filter(item=>item.binding.status!=="retired").length>4)throw new Error("Infrastructure node capacity exceeded");
   }
   return {
     metadata:()=>Array.from(identities.values(),({binding,endpoint})=>({...binding,endpoint})),
@@ -33,7 +32,6 @@ export function captureNodeRegistry(environment:NodeJS.ProcessEnv) {
       const checked=captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([identity])});checked.dispose();
       const existing=identities.get(identity.binding.nodeId);
       if(existing && identity.binding.generation<existing.binding.generation)throw new Error("Stale infrastructure identity");
-      if(identity.binding.status!=="retired" && (!existing || existing.binding.status==="retired") && Array.from(identities.values()).filter(item=>item.binding.status!=="retired").length>=4)throw new Error("Infrastructure node capacity exceeded");
       if(identity.binding.status!=="retired" && identity.binding.threadId>1 && Array.from(identities.values()).some(item=>item.binding.nodeId!==identity.binding.nodeId && item.binding.chatId===identity.binding.chatId && item.binding.threadId===identity.binding.threadId && item.binding.status!=="retired"))throw new Error("Duplicate infrastructure topic ownership");
       identities.set(identity.binding.nodeId,structuredClone(identity));
     },

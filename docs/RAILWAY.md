@@ -145,3 +145,44 @@ The stall watchdog aborts busy sessions that show no progress for a fixed
 window, but active tool calls registered through the SSE stream pause that
 countdown, so silent long-running tools (test runners, CI waits) no longer
 trigger aborts.
+
+### Dynamic Worker provisioning migration
+
+Worker allocation now uses a privileged `WorkerProvisioningDriver`; the Railway
+implementation owns GraphQL, its durable resource journal, volume attachment,
+minimal identity bootstrap and retirement. `NodeProvisioner` remains an import
+alias for compatibility. Topic/control code does not choose Railway resources.
+
+`WORKER_POOL_POLICY` may configure an ordered JSON array of existing eligible
+`{projectId, environmentId, region, capacity?}` pools. Omitted capacity delegates
+actual resource admission to Railway; configured capacity is a per-project policy
+limit. The default discovers the Control project and existing `opencode-topic-*`
+projects in the same workspace. New projects are never created automatically.
+No slot number selects a project, and there is no four-Worker maximum.
+
+`WORKER_RUNTIME_IMAGE` must be a public immutable image reference ending in
+`@sha256:<64 lowercase hex characters>`. New allocations cannot source-build or
+fall back to local/shared execution. Without a configured verified image they
+fail with `image_unavailable`. The existing Core prerelease workflow publishes
+the governed Worker image; the pinned Core commit/version is verified through
+signed Worker health before snapshot activation and session creation.
+
+Previously deployed image-less Workers retain their source and volume on a
+fenced identity handoff until an explicit image canary migrates them. New Worker
+allocations always use an image. Existing persisted slot IDs are legacy identity
+metadata, not capacity or placement policy. Startup reconciles persisted Workers
+and does not manufacture four warm reservations. An explicit `WORKER_WARM_CAPACITY`
+can reserve a small administrative validation/warm pool; its default is zero.
+
+Capacity exhaustion is `capacity_exhausted` (`NO WORKER AVAILABLE / CAPACITY
+EXHAUSTED`). Definitive Railway resource-limit rejections roll over only unused
+provisioning resources; deployed/handoff Workers are never deleted for placement.
+Transport ambiguity is reconciled by deterministic service identity. If a bare
+volume-create response is lost, `reconciliation_required` prevents another volume
+create and prevents claiming retirement until ownership is recovered. Known
+service/volume partial provisioning resumes from the journal on retry/restart.
+
+The remaining four-stream and four-inflight-IPC bounds are simultaneous request
+budgets; they do not limit the number of Topics, Workers or Railway projects.
+The old four-slot tests now use an explicit warm-capacity fixture to retain
+migration/security regression coverage.

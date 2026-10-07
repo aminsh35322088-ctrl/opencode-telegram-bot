@@ -181,6 +181,7 @@ export const ar: I18nDictionary = {
 
   "new.created": "✅ تم إنشاء جلسة جديدة: {title}",
   "general.topic_only_prompt": "🚫 هذا هو الموضوع العام للمجموعة — موجهات الذكاء الاصطناعي مسموح بها فقط داخل مواضيع AI.\n\n💬 اضغط New Chat لبدء موضوع برمجي جديد، أو افتح موضوعًا موجودًا من History.\n\nيُقبل النص هنا فقط عندما يطلب منك البوت الإدخال صراحةً.",
+  "new.capacity_exhausted": "🔴 لا يتوفر عامل تنفيذ. تم استنفاد السعة.",
   "new.create_error": "🔴 خادم OpenCode غير متاح أو حدث خطأ أثناء إنشاء الجلسة.",
 
   "stop.no_active_session":

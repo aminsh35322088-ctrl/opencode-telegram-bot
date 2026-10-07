@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import {test,mock} from 'node:test';
+import {test} from 'node:test';
 import type {Api} from 'grammy';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {nodeBindings,NodeBindingStore} from '../src/control-plane/node-bindings.js';
+import {NodeBindingStore} from '../src/control-plane/node-bindings.js';
 import {createRemoteTopicSession,TopicNodeLifecycle} from '../src/control-plane/topic-node-lifecycle.js';
 import type {ProvisionedNode} from '../src/infrastructure/node-provisioner.js';
 
@@ -13,6 +13,7 @@ async function fixture() {
   let time=0;let failSlot:number|undefined;let timeout=false;let corrupt=false;
   const provisioned:number[]=[];const reconciled:number[]=[];const operations:string[]=[];
   const failure=new Error('Root provisioning detail');
+  await bindings.ensurePoolSlots(4);
   const lifecycle=new TopicNodeLifecycle({bindings,now:()=>time,wait:async delay=>{time+=delay;},snapshot:async()=>({revision:7,hash:'hash7'}),
     infrastructure:async(operation,nodeId,generation)=>{
       const binding=(await bindings.list()).find(item=>item.nodeId===nodeId)!;
@@ -69,26 +70,23 @@ test('explicit reconciliation withdraws cached availability on corrupt sync and 
  assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal(after.slice(1).every(binding=>binding.status==='available'),true);
 });
 
-test('claiming consumes only prepared slots and fifth claim cannot provision extra Workers',async()=>{
-  const f=await fixture();await f.bindings.ensurePoolSlots();await assert.rejects(f.bindings.reserve(-100,2),/Cluster Workers are not ready/);
+test('claiming reuses prepared Workers then reserves lazy capacity',async()=>{
+  const f=await fixture();await f.bindings.ensurePoolSlots(4);
   await f.lifecycle.bootstrapPool();
   const claimed=[];for(let thread=2;thread<6;thread++)claimed.push(await f.bindings.reserve(-100,thread));
-  assert.ok(claimed.every(item=>item.generation===2&&item.status==='reserved'));await assert.rejects(f.bindings.reserve(-100,6),/Maximum four/);
-  await f.lifecycle.bootstrapPool();assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal((await f.bindings.list()).length,4);
+  assert.ok(claimed.every(item=>item.generation===2&&item.status==='reserved'));assert.equal((await f.bindings.reserve(-100,6)).generation,1);
+  await f.lifecycle.bootstrapPool();assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal((await f.bindings.list()).length,5);
 });
 
 
-test('Telegram Topic creation checks prepared capacity before any external create',async()=>{
-  const f=await fixture();let slots=await f.bindings.ensurePoolSlots();let creations=0;
-  const reachedCreate=new Error('Telegram creation reached');
-  const api={raw:{createForumTopic:async()=>{creations++;throw reachedCreate;}}} as unknown as Api;
-  const list=mock.method(nodeBindings,'list',async()=>slots);
-  try {
-    await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),/Cluster Workers are not ready/);assert.equal(creations,0);
-    slots=await f.lifecycle.bootstrapPool();
-    await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),error=>error===reachedCreate);assert.equal(creations,1);
-    for(let thread=2;thread<6;thread++)await f.bindings.reserve(-100,thread);
-    slots=await f.bindings.list();
-    await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),/Maximum four/);assert.equal(creations,1);
-  }finally{list.mock.restore();}
+test('New Chat reaches Telegram creation regardless of historical warm pool capacity',async()=>{
+ let creations=0;const reachedCreate=new Error('Telegram creation reached');
+ const api={raw:{createForumTopic:async()=>{creations++;throw reachedCreate;}}} as unknown as Api;
+ await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),error=>error===reachedCreate);
+ assert.equal(creations,1);
+});
+
+test('administrative warm capacity can exceed four without changing default lazy allocation',async()=>{
+ const f=await fixture();const slots=await f.lifecycle.bootstrapPool(5);
+ assert.equal(slots.length,5);assert.deepEqual(f.provisioned,[1,2,3,4,5]);
 });

@@ -244,7 +244,7 @@ export async function startBotApp(): Promise<void> {
   if(process.env.CONTROL_CLUSTER_BOOTSTRAP_ENABLED==="1"){
     safeBackgroundTask({taskName:"app.workerClusterBootstrap",task:async()=>{
       const {topicNodeLifecycle}=await import("../../control-plane/topic-node-lifecycle.js");
-      const workers=await topicNodeLifecycle.bootstrapPool();
+      const workers=await topicNodeLifecycle.bootstrapPool(Number(process.env.WORKER_WARM_CAPACITY??0));
       for(const worker of workers)logger.info(`[WorkerCluster] slot=${worker.slot} node=${worker.nodeId} generation=${worker.generation} status=${worker.status} project=${worker.projectId} service=${worker.serviceId} volume=${worker.volumeId} revision=${worker.currentRevision}`);
     }});
   }

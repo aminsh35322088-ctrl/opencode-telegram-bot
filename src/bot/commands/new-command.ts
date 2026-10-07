@@ -1,3 +1,4 @@
+import {WorkerProvisioningError} from "../../infrastructure/worker-provisioning-driver.js";
 import { createRemoteTopicSession, isTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
 import type { Bot, Context } from "grammy";
 import { CommandContext } from "grammy";
@@ -159,6 +160,6 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
       }
     }
 
-    await ctx.reply(t("new.create_error"));
+    await ctx.reply(t(error instanceof WorkerProvisioningError && error.category === "capacity_exhausted" ? "new.capacity_exhausted" : "new.create_error"));
   }
 }

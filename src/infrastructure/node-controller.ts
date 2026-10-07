@@ -2,7 +2,8 @@ import {randomUUID} from 'node:crypto';
 import {lstat,mkdir,open,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import type {NodeBinding} from '../control-plane/node-bindings.js';
-import {NodeProvisioner,type ProvisionedNode,type WorkerPool} from './node-provisioner.js';
+import {RailwayProvisioningDriver} from './railway-provisioning-driver.js';
+import type {WorkerProvisioningDriver,ProvisionedNode,WorkerPool} from './worker-provisioning-driver.js';
 import type {captureNodeRegistry} from './node-registry.js';
 import type {InfrastructureNodeIdentity} from './node-registry.js';
 
@@ -10,7 +11,7 @@ interface Options {
  registry:ReturnType<typeof captureNodeRegistry>;
  stateDirectory:string;bindingFilename:string;
  request<T>(document:string,variables:Record<string,unknown>):Promise<T>;
- pools?:[WorkerPool,WorkerPool];controlUrl?:string;coreCommit?:string;
+ pools?:WorkerPool[];controlUrl?:string;coreCommit?:string;workerImage?:string;
  retireNode?(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>;
  probeUnbound?(nodeId:string,generation:number):Promise<unknown>;
  onClusterVerified?():Promise<void>;
@@ -18,7 +19,7 @@ interface Options {
 interface Seed {nodeId:string;generation:number;chatId:number;threadId:number;secret:string}
 /** Only inherited Bot IPC can invoke these fixed lifecycle operations. No Worker route provisions infrastructure. */
 export class InfrastructureController {
- private provisioner?:NodeProvisioner;
+ private provisioner?:WorkerProvisioningDriver;
  private poolConfiguration?:Promise<void>;
  private queue:Promise<unknown>=Promise.resolve();
  private verifiedUnbound=new Map<string,number>();
@@ -31,10 +32,10 @@ export class InfrastructureController {
   if(this.poolConfiguration||this.provisioner)throw Error('Worker pool configuration already started');
   this.poolConfiguration=operation;void operation.catch(()=>undefined);
  }
- configurePools(pools:[WorkerPool,WorkerPool],controlUrl:string):void{
+ configurePools(pools:WorkerPool[],controlUrl:string):void{
   if(this.provisioner)throw Error('Worker pools already configured');
   const options=this.options;
-  this.provisioner=new NodeProvisioner({request:options.request,pools,controlUrl,coreCommit:options.coreCommit,journalPath:path.join(options.stateDirectory,'provisioning.json'),onStage:stage=>{process.stdout.write(`[InfrastructureBoundary] worker_provision_stage=${stage}\n`);},onInventory:inventory=>{
+  this.provisioner=new RailwayProvisioningDriver({request:options.request,pools,controlUrl,coreCommit:options.coreCommit,workerImage:options.workerImage,journalPath:path.join(options.stateDirectory,'provisioning.json'),onStage:stage=>{process.stdout.write(`[InfrastructureBoundary] worker_provision_stage=${stage}\n`);},onInventory:inventory=>{
    const volumes=inventory.project.volumes.edges.map(entry=>({volumeId:entry.node.id,instances:entry.node.volumeInstances.edges.map(item=>({environmentId:item.node.environmentId,serviceId:item.node.serviceId,sizeMB:item.node.sizeMB,mountPath:item.node.mountPath,pendingDeletion:item.node.isPendingDeletion}))}));
    process.stdout.write(`[InfrastructureBoundary] worker_volume_inventory project=${inventory.project.id} volumes=${JSON.stringify(volumes)}\n`);
   },lookup:id=>this.lookup(id),ensureIdentity:(binding,create)=>this.ensureIdentity(binding,create),retireIdentity:async(id,generation)=>{
@@ -54,7 +55,7 @@ export class InfrastructureController {
   try{const stat=await lstat(this.options.bindingFilename);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>1024*1024)throw Error('Invalid canonical bindings');
    const state=JSON.parse(await readFile(this.options.bindingFilename,'utf8')) as {version:number;bindings:NodeBinding[]};
    if(state.version!==1||!Array.isArray(state.bindings)||state.bindings.length>1000)throw Error('Invalid canonical bindings');
-   const active=state.bindings.filter(b=>b.status!=='retired');if(active.length>4 || new Set(active.filter(b=>b.threadId>1).map(b=>`${b.chatId}:${b.threadId}`)).size!==active.filter(b=>b.threadId>1).length)throw Error('Invalid canonical capacity');
+   const active=state.bindings.filter(b=>b.status!=='retired');if(new Set(active.filter(b=>b.threadId>1).map(b=>`${b.chatId}:${b.threadId}`)).size!==active.filter(b=>b.threadId>1).length)throw Error('Invalid canonical capacity');
    const matches=state.bindings.filter(b=>b.nodeId===id);if(matches.length>1)throw Error('Invalid canonical identity');return matches[0];
   }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;}
  }
@@ -112,7 +113,7 @@ export class InfrastructureController {
     }
     process.stdout.write(`[InfrastructureBoundary] worker_boundary_verified node=${nodeId} generation=${generation} health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n`);
     this.verifiedUnbound.set(nodeId,generation);
-    if(!this.clusterVerified&&this.verifiedUnbound.size===4&&this.options.onClusterVerified){
+    if(!this.clusterVerified&&this.verifiedUnbound.size>0&&this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired').every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)&&this.options.onClusterVerified){
      const current=await Promise.all([...this.verifiedUnbound].map(async([id,verifiedGeneration])=>{
       const canonical=await this.lookup(id);const registered=await this.options.registry.resolve(id);
       return canonical?.generation===verifiedGeneration&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&registered.binding.status==='available';

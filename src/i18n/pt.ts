@@ -190,6 +190,7 @@ export const pt: I18nDictionary = {
 
   "new.created": "✅ Nova sessão criada: {title}",
   "general.topic_only_prompt": "🚫 Este é o Tópico Geral do fórum — prompts de IA só são permitidos dentro dos Tópicos de IA.\n\n💬 Pressione New Chat para iniciar um novo tópico de código, ou abra um tópico existente pelo History.\n\nO texto só é aceito aqui quando o bot solicita entrada explicitamente.",
+  "new.capacity_exhausted": "🔴 Nenhum Worker disponível. Capacidade esgotada.",
   "new.create_error":
     "🔴 O OpenCode Server está indisponível ou ocorreu um erro ao criar a sessão.",
 

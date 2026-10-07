@@ -1,3 +1,4 @@
+import {WorkerProvisioningError} from "../infrastructure/worker-provisioning-driver.js";
 import {randomUUID} from "node:crypto";
 import type {NodeBinding} from "./node-bindings.js";
 import type {ProvisionedNode} from "../infrastructure/node-provisioner.js";
@@ -25,7 +26,7 @@ export function installInfrastructureTransport():void{
   if(!response.requestId)return;
   if(response.channel==="worker-response" || response.channel==="infrastructure-response"){
    const wait=waits.get(response.requestId);if(!wait)return;waits.delete(response.requestId);
-   if(response.ok)wait.resolve(response.result);else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})`:"Node transport failed"));
+   if(response.ok)wait.resolve(response.result);else if(response.channel==="infrastructure-response"&&["capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required","image_mismatch"].includes(response.errorCode??""))wait.reject(new WorkerProvisioningError(response.errorCode as ConstructorParameters<typeof WorkerProvisioningError>[0]));else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification","capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})`:"Node transport failed"));
   }else if(response.channel==="worker-stream-ready"){
    streams.get(response.requestId)?.onReady?.();
   }else if(response.channel==="worker-event" || response.channel==="worker-stream-end"){
@@ -58,6 +59,7 @@ export function installInfrastructureTransport():void{
    });}finally{if(timer)clearTimeout(timer);options?.signal?.removeEventListener("abort",abort);waits.delete(requestId);}
   },
   stream:async function*(_binding,envelope,options){
+   // Per-process concurrent stream budget; independent of fleet/topic capacity.
    if(streams.size>=4)throw new Error("Node stream capacity exceeded");
    const requestId=randomUUID();const state:{events:NodeEnvelope[];ended:boolean;error?:Error;wake?:()=>void;onReady?:()=>void}={events:[],ended:false,onReady:options?.onReady};
    streams.set(requestId,state);

@@ -20,7 +20,7 @@ test('four unbound identities are distinct slots and cannot masquerade as ready 
  const registry=captureNodeRegistry({});
  for(let i=0;i<4;i++)registry.install({binding:{nodeId:String(i),generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)});
  assert.equal(registry.metadata().length,4);
- assert.throws(()=>registry.install({binding:{nodeId:'fifth',generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)}),/capacity/);
+ registry.install({binding:{nodeId:'fifth',generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)});assert.equal(registry.metadata().length,5);
  assert.throws(()=>captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([{binding:{nodeId:'fake',generation:1,chatId:0,threadId:0,status:'ready'},endpoint:'https://worker.up.railway.app',secret:'a'.repeat(64)}])}),/identity/);
 });
 

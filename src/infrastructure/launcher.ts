@@ -1,3 +1,4 @@
+import {WORKER_RUNTIME_IMAGE} from "./worker-core-release.js";
 import { createInfrastructureClient, InfrastructureRequestError } from "./railway-client.js";
 import { lstat } from "node:fs/promises";
 import { constants } from "node:os";
@@ -10,6 +11,9 @@ import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./con
 const nodes=captureNodeRegistry(process.env);
 const infrastructure = createInfrastructureClient(process.env);
 const existingVariableNames=Object.keys(process.env);
+const workerImage=process.env.WORKER_RUNTIME_IMAGE??WORKER_RUNTIME_IMAGE;
+const poolPolicy=process.env.WORKER_POOL_POLICY?JSON.parse(process.env.WORKER_POOL_POLICY):undefined;
+delete process.env.WORKER_RUNTIME_IMAGE;delete process.env.WORKER_POOL_POLICY;
 const runtimeConfig=resolveControlRuntimeConfig(process.env,infrastructure.configured,nodes.metadata().length>0);
 configureApplicationEnvironment(process.env,runtimeConfig);
 
@@ -55,7 +59,7 @@ async function main(): Promise<void> {
     const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
     const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
     const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
-    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
+    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,workerImage,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
       if(!infrastructure.configured)return;
       try{
         const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
@@ -81,9 +85,9 @@ async function main(): Promise<void> {
         const controlUrl=await resolveControlUrl({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId});
         try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
         process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);}catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
-        const resolved=await resolveWorkerPools({request:infrastructure.request,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,onStage:value=>{stage=value;}});
+        const resolved=await resolveWorkerPools({request:infrastructure.request,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,pools:poolPolicy,onStage:value=>{stage=value;}});
         controller.configurePools(resolved,controlUrl);
-        for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity}\n`);
+        for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
       }catch(error){const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);throw error;}})();
       controller.waitForPoolConfiguration(poolConfiguration);
     }
