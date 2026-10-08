@@ -4,6 +4,8 @@ The persistent Telegram application now runs in the existing Cloudflare ControlP
 
 ## Implemented routes
 
+- **Legacy Telegram UI parity restoration:** the pre-Cloudflare `src/bot/**` presentation is canonical again for the pinned Main panel, same-message Back/Home/Close navigation, Main/Topic Settings, the full Model Center (Favorites/Recent/Search/Providers/pagination), reply keyboards, and Session/Context/Files views. Cloudflare owns durable state/callback fencing/transport while these legacy builders own labels, hierarchy and layout.
+
 - Existing public Telegram command catalog, General inline/reply navigation, History, New Chat and Topic keyboard restoration.
 - Topic Settings, model/agent/variant catalog choices, image/audio model selectors, exact model inspection, scoped output preferences, queue admission, session/messages/context inspection, rename, automatic run keyboards, abort/stop/pause/resume and confirmed deletion.
 - Session todos, changed-file summaries, direct-child sub-agent messages and bounded relative workspace file browsing/reading/downloads through signed Core RPC.
@@ -22,12 +24,22 @@ These are explicit incomplete features, not substitutes for execution:
 
 - GitHub and Tailscale connection screens describe their required scoped Core integration. Legacy container-global token injection/tailscaled/SSH cannot run in Cloudflare and is not reintroduced.
 - Photo/document/audio attachments now cross as bounded inline file parts (256 KiB each), without Telegram credential URLs. Dedicated image generation and voice transcription workflows still need Core capability wiring and compatible provider/model configuration.
-- Signed-event text/tool/thinking previews now use bounded Telegram edits and survive control restarts. Compact and thought visibility preferences apply to previews. Completed text uses the existing native Telegram block renderer and Persian/RTL support; raw output, run footer and changed-file document preferences are active. Native draft mode and richer tool-specific cards still need parity work.
+- Signed-event text/tool/thinking previews use bounded Telegram edits and survive control restarts. Compact and thought visibility preferences apply to previews. Completed text uses the native Telegram block renderer and Persian/RTL support; raw output, run footer and changed-file document preferences are active. Native Telegram draft streaming is restored with fenced fallback to edit mode, and governed tool cards use the known-tool icon/timing allowlist. Exact stylistic parity for every historical tool-specific card can still be refined without changing the canonical navigation model.
 - Broader natural-language/cron schedule interpretation still needs governed Core integration. The guided flow supports only the explicitly listed interval/one-time formats; it does not guess ambiguous schedules.
-- Context compaction must become a governed explicit Core model operation before exposing an active compaction control.
+- Governed async per-Topic context compaction exists in Core `v1.18.33-bot.13-pre.25`. The Bot source already capability-gates the control, but the production Bot/Worker lock remains on `pre.24`, so compaction correctly stays hidden until an explicit runtime adoption/qualification of `pre.25`.
 - Cleanup currently destroys a dedicated service and volume; safe sleeping Worker reuse is not yet proven.
 
 Do not claim complete legacy UI parity or full migration based on this document. Record actual deployment, regression and runtime verification separately.
+
+## Legacy UI parity validation, 2026-10-08
+
+- Source migration commits: `b1b891bc` adapter boundary, `b9a49628` pinned Main/navigation, `17101340` legacy Model Center, `9151c2fc` legacy Settings/Topic controls, `45908c0c` Session/Context/Files, `f1da6353` duplicate-presentation cleanup.
+- Current repository HEAD during final verification: `0eef2e012293aab7ce1a60220248ec7784adb03f`; commits after `f1da6353` are CI/dependency maintenance and do not change the Worker UI source.
+- Exact repository gate on the final dependency set: 379/379 distributed boundary tests; lint, typecheck and build pass; 2,288/2,288 Vitest assertions across 280 files pass. `npm audit` reports 0 moderate, 0 high and 0 critical findings (4 low upstream findings remain).
+- GitHub `CI` and manually dispatched `Full Test Suite` both completed successfully on the final HEAD.
+- Cloudflare Version 40 (`ee7b3712-f04c-495e-ae22-fa4db52fe4ca`) is deployed at 100%. Its script etag exactly matches the already-tested parity Version 39, all five existing bindings were inherited under strict resolution, and `/health` returns HTTP 200 with `execution:false`.
+- Railway project `workers-railway-01` reports two retained Topic Workers, both healthy and sleeping with no pending work. Runtime logs contain successful headless starts and accepted governed canary runs; no new deployment failure was observed during this UI rollout.
+- Automated source/runtime validation proves the canonical UI path is deployed. Final pixel/interaction acceptance still requires the real Telegram client to invoke `/start` and visually compare the resulting panel/navigation with the historical UI; do not infer that human visual acceptance from unit tests alone.
 
 ## Live validation, 2026-10-08
 
