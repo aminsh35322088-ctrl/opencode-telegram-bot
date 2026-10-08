@@ -881,3 +881,42 @@ test("authenticated UI smoke test can open and cancel task setup without executi
   );
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
 });
+
+test("cancelled configuration wizard cannot commit its old confirmation", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  const revision = f.store.global()!.revision;
+  await f.update("/skills");
+  const add = f.sent
+    .flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+    .find((b: any) => b.text === "＋ Add / Edit");
+  assert.ok(add);
+  await f.callback(add.callback_data);
+  await f.update("project-check");
+  await f.update("Use before changing project files.");
+  await f.update("Inspect the project before changing files.");
+  const confirm = f.sent
+    .flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+    .find((b: any) => b.text === "✅ Save configuration");
+  assert.ok(confirm);
+  await f.update("/cancel");
+  await f.callback(confirm.callback_data);
+  assert.equal(f.store.global()!.revision, revision);
+  assert.deepEqual(f.store.global()!.data.skills, []);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("authenticated read-only UI checks render guided Skills and MCP menus without execution", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  for (const command of ["skills", "mcps"]) {
+    const result = await f.post("/admin/ui", { chatId: -100, command });
+    assert.equal(result.status, 200);
+  }
+  const labels = f.sent
+    .flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+    .map((b: any) => b.text);
+  assert.ok(labels.includes("＋ Remote MCP"));
+  assert.ok(labels.includes("Advanced JSON"));
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});

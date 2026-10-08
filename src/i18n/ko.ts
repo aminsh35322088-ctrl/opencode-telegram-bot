@@ -367,6 +367,10 @@ export const ko: I18nDictionary = {
     "⚠️ 새 이름을 기다리는 동안에는 이 명령어를 사용할 수 없습니다.",
   "rename.button.cancel": "❌ 취소",
 
+  "config.wizard.name": "Send a name using letters, digits, dots, hyphens or underscores (maximum 128 characters), or /cancel.",
+  "config.wizard.command": "Send the custom command prompt template, or /cancel. Never include credentials.",
+  "config.wizard.confirm": "✅ <b>Review configuration: {name}</b>\n\n{preview}\n\nSaving updates the global configuration for all Topics.",
+  "config.wizard.save": "✅ Save configuration",
   "task.prompt.schedule_simple":
     "⏰ When should the task run?\n\nExamples:\n• every 5 minutes\n• every 2 hours\n• in 10 minutes\n• 2026-10-09T10:00:00Z (UTC)\n\nMinimum interval: 1 minute. Use /cancel to cancel.",
   "task.prompt.json":

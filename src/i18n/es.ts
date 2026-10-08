@@ -374,6 +374,10 @@ export const es: I18nDictionary = {
     "⚠️ Este comando no está disponible mientras el cambio de nombre espera un nuevo nombre.",
   "rename.button.cancel": "❌ Cancelar",
 
+  "config.wizard.name": "Send a name using letters, digits, dots, hyphens or underscores (maximum 128 characters), or /cancel.",
+  "config.wizard.command": "Send the custom command prompt template, or /cancel. Never include credentials.",
+  "config.wizard.confirm": "✅ <b>Review configuration: {name}</b>\n\n{preview}\n\nSaving updates the global configuration for all Topics.",
+  "config.wizard.save": "✅ Save configuration",
   "task.prompt.schedule_simple":
     "⏰ When should the task run?\n\nExamples:\n• every 5 minutes\n• every 2 hours\n• in 10 minutes\n• 2026-10-09T10:00:00Z (UTC)\n\nMinimum interval: 1 minute. Use /cancel to cancel.",
   "task.prompt.json":

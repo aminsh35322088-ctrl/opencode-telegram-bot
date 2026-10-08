@@ -1,6 +1,7 @@
 import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { buildSkillMarkdown, normalizeFrontmatterValue } from "./skill-markdown.js";
 import {getGlobalSkillsDir} from "./global-skill-path.js";
 export {getGlobalSkillsDir} from "./global-skill-path.js";
 
@@ -17,17 +18,6 @@ export function isManagedSkillLocation(location: string | undefined): boolean {
   const root = path.resolve(getGlobalSkillsDir());
   const resolved = path.resolve(location);
   return resolved !== root && resolved.startsWith(`${root}${path.sep}`);
-}
-
-function normalizeFrontmatterValue(value: string): string {
-  return value
-    .replace(/[\r\n]+/gu, " ")
-    .replace(/"/gu, "'")
-    .trim();
-}
-
-function buildSkillMarkdown(name: string, description: string, body: string): string {
-  return `---\nname: ${name}\ndescription: "${description}"\n---\n\n${body}\n`;
 }
 
 function validateSkillInput(input: { name: string; description: string; body: string }): {

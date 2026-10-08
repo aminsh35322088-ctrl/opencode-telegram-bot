@@ -1,6 +1,8 @@
 import type { ControlStore, SqlDatabase } from "./control-store.js";
 import type { CloudTelegram } from "./telegram.js";
 import { validateGeneratedActionInvocation } from "../app/services/generated-action-invocation.js";
+import { t } from "../i18n/index.js";
+import { buildSkillMarkdown, normalizeFrontmatterValue } from "../app/services/skill-markdown.js";
 
 export interface ConfigButton {
   text: string;
@@ -11,6 +13,8 @@ export interface ConfigContext {
   store: ControlStore;
   sql: SqlDatabase;
   telegram: CloudTelegram;
+  draftKey?: string;
+  markCommitted?(): void;
   commit(data: Record<string, unknown>, expectedRevision: number): Promise<void>;
   button(label: string, action: string, value?: string): ConfigButton;
   prompt(kind: string, text: string): Promise<void>;
@@ -134,6 +138,16 @@ const sections = [
   "commands",
 ] as const;
 type Section = (typeof sections)[number];
+interface ConfigDraft {
+  id: string;
+  section: "skills" | "commands" | "mcps";
+  stage: "name" | "description" | "content" | "confirm" | "saved";
+  expires: number;
+  name?: string;
+  description?: string;
+  candidate?: Record<string, unknown>;
+  revision?: number;
+}
 const labels: Record<Section, string> = {
   providers: "🔌 Providers",
   extensions: "🧩 Extensions",
@@ -180,6 +194,38 @@ export function outputSettingLabel(field: OutputField, value: unknown): string {
 
 export class CloudConfigUi {
   constructor(private readonly ctx: ConfigContext) {}
+  private writeDraft(draft: ConfigDraft): void {
+    if (!this.ctx.draftKey) throw new Error("configuration_scope_missing");
+    this.ctx.sql.exec(
+      "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      this.ctx.draftKey,
+      JSON.stringify(draft),
+    );
+  }
+  private draft(): ConfigDraft {
+    if (!this.ctx.draftKey) throw new Error("configuration_scope_missing");
+    const row = [
+      ...this.ctx.sql.exec<{ data: string }>(
+        "SELECT data FROM ui_state WHERE key=?",
+        this.ctx.draftKey,
+      ),
+    ][0];
+    if (!row) throw new Error("configuration_draft_expired");
+    const draft = JSON.parse(row.data) as ConfigDraft;
+    if (draft.expires <= Date.now()) throw new Error("configuration_draft_expired");
+    return draft;
+  }
+  private contentPrompt(section: ConfigDraft["section"]): string {
+    return t(
+      section === "skills"
+        ? "skills.wizard.ask_body"
+        : section === "mcps"
+          ? "mcps.add.remote_prompt"
+          : "config.wizard.command",
+      undefined,
+      "en",
+    );
+  }
   private snapshot() {
     const s = this.ctx.store.global();
     if (!s) throw new Error("snapshot_unavailable");
@@ -227,11 +273,13 @@ export class CloudConfigUi {
   }
   private async mutate(
     change: (data: Record<string, unknown>) => void | Promise<void>,
+    committed?: () => void,
   ): Promise<void> {
     const s = this.snapshot(),
       data = structuredClone(s.data);
     await change(data);
     await this.ctx.commit(data, s.revision);
+    committed?.();
     await this.ctx.notice("✅ Configuration saved.");
   }
   private async render(section: Section): Promise<void> {
@@ -248,7 +296,15 @@ export class CloudConfigUi {
         ),
       ]);
     }
-    rows.push([b("＋ Add / Edit", "config_add_" + section)], [b("← Settings", "settings")]);
+    rows.push([
+      b(
+        section === "mcps" && this.ctx.draftKey ? "＋ Remote MCP" : "＋ Add / Edit",
+        "config_add_" + section,
+      ),
+    ]);
+    if (this.ctx.draftKey && ["skills", "commands", "mcps"].includes(section))
+      rows.push([b("Advanced JSON", "config_json_" + section)]);
+    rows.push([b("← Settings", "settings")]);
     await this.ctx.menu(
       "<b>" +
         labels[section] +
@@ -480,12 +536,153 @@ export class CloudConfigUi {
     return Number(v);
   }
   async handle(action: string, value?: string): Promise<boolean> {
+    if (action.startsWith("config_wizard_")) {
+      const draft = this.draft();
+      if (action === "config_wizard_name") {
+        if (draft.stage !== "name") throw new Error("configuration_draft_stage_mismatch");
+        let name: string;
+        try {
+          name = id(value?.trim());
+          if (draft.section === "skills" && !/^[a-z0-9](?:-?[a-z0-9]){0,63}$/.test(name))
+            throw new Error("invalid_skill_name");
+        } catch {
+          await this.ctx.prompt("config_wizard_name", t("config.wizard.name", undefined, "en"));
+          return true;
+        }
+        this.writeDraft({
+          ...draft,
+          name,
+          stage: draft.section === "skills" ? "description" : "content",
+        });
+        this.ctx.markCommitted?.();
+        await this.ctx.prompt(
+          draft.section === "skills" ? "config_wizard_description" : "config_wizard_content",
+          draft.section === "skills"
+            ? t("skills.wizard.ask_description", undefined, "en")
+            : this.contentPrompt(draft.section),
+        );
+        return true;
+      }
+      if (action === "config_wizard_description") {
+        if (draft.section !== "skills" || draft.stage !== "description")
+          throw new Error("configuration_draft_stage_mismatch");
+        let description: string;
+        try {
+          description = normalizeFrontmatterValue(text(value, 1024));
+        } catch {
+          await this.ctx.prompt(
+            "config_wizard_description",
+            t("skills.wizard.ask_description", undefined, "en"),
+          );
+          return true;
+        }
+        this.writeDraft({ ...draft, description, stage: "content" });
+        this.ctx.markCommitted?.();
+        await this.ctx.prompt("config_wizard_content", this.contentPrompt(draft.section));
+        return true;
+      }
+      if (action === "config_wizard_content") {
+        if (draft.stage !== "content") throw new Error("configuration_draft_stage_mismatch");
+        let candidate: Record<string, unknown>;
+        try {
+          const input =
+            draft.section === "skills"
+              ? {
+                  name: draft.name,
+                  content: buildSkillMarkdown(draft.name!, draft.description!, text(value, 130000)),
+                }
+              : draft.section === "commands"
+                ? { id: draft.name, template: value }
+                : { id: draft.name, type: "remote", url: value };
+          candidate = await this.candidate(
+            draft.section,
+            JSON.stringify(input),
+            this.snapshot().data,
+          );
+        } catch {
+          await this.ctx.prompt("config_wizard_content", this.contentPrompt(draft.section));
+          return true;
+        }
+        this.writeDraft({
+          ...draft,
+          candidate,
+          stage: "confirm",
+          revision: this.snapshot().revision,
+        });
+        this.ctx.markCommitted?.();
+        const preview = String(candidate.content ?? candidate.template ?? candidate.url);
+        await this.ctx.menu(
+          t(
+            "config.wizard.confirm",
+            {
+              name: esc(draft.name),
+              preview: esc(preview.slice(0, 500)) + (preview.length > 500 ? "…" : ""),
+            },
+            "en",
+          ),
+          [
+            [
+              this.ctx.button(
+                t("config.wizard.save", undefined, "en"),
+                "config_wizard_confirm",
+                draft.id,
+              ),
+            ],
+            [this.ctx.button(t("inline.button.cancel", undefined, "en"), "cancel")],
+          ],
+        );
+        return true;
+      }
+      if (action !== "config_wizard_confirm") return false;
+      if (value !== draft.id) throw new Error("configuration_draft_mismatch");
+      if (draft.stage === "saved") return true;
+      if (draft.stage !== "confirm" || !draft.candidate)
+        throw new Error("configuration_draft_stage_mismatch");
+      if (this.snapshot().revision !== draft.revision)
+        throw new Error("configuration_revision_changed");
+      await this.mutate(
+        (data) => {
+          const entries = this.entries(draft.section, data);
+          this.setEntries(draft.section, data, [
+            ...entries.filter((e) => e.id !== draft.candidate!.id),
+            draft.candidate!,
+          ]);
+        },
+        () => {
+          this.writeDraft({ ...draft, stage: "saved" });
+          this.ctx.markCommitted?.();
+        },
+      );
+      return true;
+    }
     if (sections.includes(action as Section)) {
       await this.render(action as Section);
       return true;
     }
     for (const section of sections) {
+      if (action === "config_json_" + section) {
+        if (this.ctx.draftKey)
+          this.ctx.sql.exec("DELETE FROM ui_state WHERE key=?", this.ctx.draftKey);
+        await this.ctx.prompt(
+          "config_save_" + section,
+          "Send " +
+            section +
+            " configuration as JSON, or /cancel. Never send credentials; use a configured protected credentialRef.",
+        );
+        return true;
+      }
       if (action === "config_add_" + section) {
+        if (this.ctx.draftKey && ["skills", "commands", "mcps"].includes(section)) {
+          this.writeDraft({
+            id: crypto.randomUUID(),
+            section: section as ConfigDraft["section"],
+            stage: "name",
+            expires: Date.now() + 300000,
+          });
+          this.ctx.markCommitted?.();
+          await this.ctx.prompt("config_wizard_name", t("config.wizard.name", undefined, "en"));
+          return true;
+        }
         await this.ctx.prompt(
           "config_save_" + section,
           "Send " +
@@ -500,7 +697,14 @@ export class CloudConfigUi {
         const b = this.ctx.button.bind(this.ctx);
         await this.ctx.menu("<b>" + esc(e.name ?? e.id) + "</b>", [
           [b("Toggle Enabled", "config_toggle_" + section, value)],
-          [b("Edit", "config_add_" + section)],
+          [
+            b(
+              "Edit",
+              section === "mcps" && e.type === "local"
+                ? "config_json_mcps"
+                : "config_add_" + section,
+            ),
+          ],
           [b("Remove", "config_remove_" + section, value)],
           [b("← Back", section)],
         ]);

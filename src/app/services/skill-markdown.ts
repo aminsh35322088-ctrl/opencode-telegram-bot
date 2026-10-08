@@ -4,6 +4,14 @@ export interface ParsedSkillMarkdown {
   body: string;
 }
 
+export function normalizeFrontmatterValue(value: string): string {
+  return value.replace(/[\r\n]+/gu, " ").replace(/"/gu, "'").trim();
+}
+
+export function buildSkillMarkdown(name: string, description: string, body: string): string {
+  return `---\nname: ${name}\ndescription: "${normalizeFrontmatterValue(description)}"\n---\n\n${body}\n`;
+}
+
 const MAX_DERIVED_DESCRIPTION_LENGTH = 200;
 
 function unquote(value: string): string {

@@ -110,6 +110,8 @@ export class ControlPlane {
             "context",
             "ls",
             "providers",
+            "skills",
+            "mcps",
             "more",
             "commands",
             "tasklist",

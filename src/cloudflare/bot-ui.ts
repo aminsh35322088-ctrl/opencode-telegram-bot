@@ -680,6 +680,10 @@ export class CloudBotUi {
         "DELETE FROM ui_state WHERE key=?",
         taskDraftKey(actor, chat, thread, topic?.generation ?? 0),
       );
+      this.deps.sql.exec(
+        "DELETE FROM ui_state WHERE key=?",
+        `config-draft:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`,
+      );
       this.set("action_done:" + updateId, true);
       await this.notice(chat, thread || undefined, t("common.cancelled", undefined, "en"));
       return true;
@@ -1040,6 +1044,10 @@ export class CloudBotUi {
           ? "config_forget"
           : action.action;
     const configUi = new CloudConfigUi({
+      draftKey: `config-draft:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`,
+      markCommitted: () => {
+        if (updateId) this.set("action_done:" + updateId, true);
+      },
       sql: this.deps.sql,
       store: this.deps.store,
       telegram: this.deps.telegram,

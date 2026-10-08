@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { ControlStore, type SqlDatabase } from "../src/cloudflare/control-store.js";
-import { CloudConfigUi } from "../src/cloudflare/config-ui.js";
+import { CloudConfigUi, type ConfigContext } from "../src/cloudflare/config-ui.js";
 function fixture() {
   const db = new DatabaseSync(":memory:");
   const sql: SqlDatabase = { exec: (q, ...v) => db.prepare(q).all(...v) as never };
@@ -32,7 +32,8 @@ function fixture() {
   const messages: string[] = [];
   const prompts: string[] = [];
   let revision: number | undefined;
-  const ui = new CloudConfigUi({
+  const context: ConfigContext = {
+    draftKey: "config-draft:test",
     store,
     sql,
     telegram: {} as never,
@@ -50,9 +51,12 @@ function fixture() {
     prompt: async (kind) => {
       prompts.push(kind);
     },
-  });
+  };
+  const ui = new CloudConfigUi(context);
   return {
     ui,
+    context,
+    sql,
     store,
     messages,
     prompts,
@@ -340,4 +344,103 @@ test("global streaming default toggles supported edit/off modes", async () => {
     (f.store.global()!.data.defaults as any).topicDefaults.responseStreamingMode,
     "edit",
   );
+});
+
+test("guided skill entry commits only after scoped confirmation and survives restart", async () => {
+  const f = fixture();
+  await f.ui.handle("config_add_skills");
+  assert.equal(f.prompts.at(-1), "config_wizard_name");
+  await f.ui.handle("config_wizard_name", "project-check");
+  assert.equal(f.prompts.at(-1), "config_wizard_description");
+  await f.ui.handle("config_wizard_description", "Use before changing a project.");
+  assert.equal(f.prompts.at(-1), "config_wizard_content");
+  await f.ui.handle("config_wizard_content", "# Project check\nInspect before changing files.");
+  assert.deepEqual(f.store.global()!.data.skills, []);
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='config-draft:test'")][0]
+      .data,
+  );
+  const restarted = new CloudConfigUi(f.context);
+  await restarted.handle("config_wizard_confirm", draft.id);
+  await restarted.handle("config_wizard_confirm", draft.id);
+  assert.equal(f.store.global()!.revision, 2);
+  assert.equal((f.store.global()!.data.skills as any[])[0].name, "project-check");
+  assert.match(
+    (f.store.global()!.data.skills as any[])[0].content,
+    /^---\nname: project-check\ndescription: "Use before changing a project\."\n---/,
+  );
+});
+
+test("guided remote MCP entry rejects credential URLs and retains correction step", async () => {
+  const f = fixture();
+  await f.ui.handle("config_add_mcps");
+  await f.ui.handle("config_wizard_name", "docs");
+  await f.ui.handle("config_wizard_content", "https://user:secret@example.com/mcp");
+  assert.equal(f.store.global()!.revision, 1);
+  assert.equal(f.prompts.at(-1), "config_wizard_content");
+  assert.ok(!f.messages.join("").includes("user:secret"));
+  await f.ui.handle("config_wizard_content", "https://example.com/mcp");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='config-draft:test'")][0]
+      .data,
+  );
+  await f.ui.handle("config_wizard_confirm", draft.id);
+  assert.equal(
+    (f.store.global()!.data.configuration as any).runtime.mcp.docs.url,
+    "https://example.com/mcp",
+  );
+});
+
+test("advanced MCP JSON entry remains available for governed local runtime configuration", async () => {
+  const f = fixture();
+  assert.equal(await f.ui.handle("config_json_mcps"), true);
+  assert.equal(f.prompts.at(-1), "config_save_mcps");
+});
+
+test("configuration wizard rejects stale preview after canonical revision changes", async () => {
+  const f = fixture();
+  await f.ui.handle("config_add_commands");
+  await f.ui.handle("config_wizard_name", "inspect");
+  await f.ui.handle("config_wizard_content", "Inspect the project before changing files.");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='config-draft:test'")][0]
+      .data,
+  );
+  await f.ui.handle("config_remember", "Preserve deployment safety.");
+  await assert.rejects(
+    f.ui.handle("config_wizard_confirm", draft.id),
+    /configuration_revision_changed/,
+  );
+  assert.equal((f.store.global()!.data.configuration as any).runtime.command, undefined);
+});
+
+test("rate-limited configuration confirmation cannot repeat canonical mutation", async () => {
+  const f = fixture();
+  await f.ui.handle("config_add_commands");
+  await f.ui.handle("config_wizard_name", "inspect");
+  await f.ui.handle("config_wizard_content", "Inspect project status.");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='config-draft:test'")][0]
+      .data,
+  );
+  const ui = new CloudConfigUi({
+    ...f.context,
+    notice: async () => {
+      throw new Error("telegram_429");
+    },
+  });
+  await assert.rejects(ui.handle("config_wizard_confirm", draft.id), /telegram_429/);
+  assert.equal(f.store.global()!.revision, 2);
+  assert.equal(await ui.handle("config_wizard_confirm", draft.id), true);
+  assert.equal(f.store.global()!.revision, 2);
+});
+
+test("empty guided skill body reopens input instead of losing the form", async () => {
+  const f = fixture();
+  await f.ui.handle("config_add_skills");
+  await f.ui.handle("config_wizard_name", "project-check");
+  await f.ui.handle("config_wizard_description", "Inspect before editing.");
+  await f.ui.handle("config_wizard_content", "");
+  assert.equal(f.prompts.at(-1), "config_wizard_content");
+  assert.equal(f.store.global()!.revision, 1);
 });
