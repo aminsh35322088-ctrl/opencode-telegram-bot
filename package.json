@@ -78,6 +78,6 @@
     "prettier": "^3.9.6",
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",
-    "wrangler": "4.148.0"
+    "wrangler": "4.149.0"
   }
 }
