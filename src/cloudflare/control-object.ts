@@ -20,6 +20,8 @@ import {
 import { applyGlobalConfigMutation } from "./config-ui.js";
 import { WorkerImageUpgrade, isWorkerImageUpgrading } from "./worker-image-upgrade.js";
 import { CloudBotUi, type TelegramUpdate } from "./bot-ui.js";
+import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
+import packageJson from "../../package.json" with { type: "json" };
 
 import { CONTROL_DEFAULTS } from "./control-config.js";
 import { resolveControlSecrets, equalSecret } from "./control-secrets.js";
@@ -861,11 +863,61 @@ export class ControlPlane {
     }
   }
   private ui(): CloudBotUi {
+    const rpc = async <T>(
+      topic: import("./control-store.js").FleetTopic,
+      operation: string,
+      payload: unknown = {},
+    ): Promise<T> => {
+      if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+        throw new Error("worker_upgrade_pending");
+      if (this.store.worker(topic.workerId)?.runtimeVersion) {
+        const health = await nodeRpc<{ ready: boolean }>(
+          await this.identity(topic.workerId),
+          "health",
+          {},
+          topic.sessionId,
+        );
+        if (!health.ready) throw new Error("worker_unavailable");
+      }
+      const result = await nodeRpc<T>(
+        await this.identity(topic.workerId),
+        operation,
+        payload,
+        topic.sessionId,
+      );
+      if (
+        !this.store
+          .topics()
+          .some(
+            (t) =>
+              t.chatId === topic.chatId &&
+              t.threadId === topic.threadId &&
+              t.generation === topic.generation &&
+              t.state === "ACTIVE",
+          )
+      )
+        throw new Error("stale_generation");
+      return result;
+    };
+    const global = async (data: Record<string, unknown>, expectedRevision: number): Promise<void> => {
+      const snapshot = { ...data, version: 1, revision: expectedRevision + 1 };
+      const hash = await sha256(canonical(snapshot));
+      this.store.setGlobal(snapshot, hash, expectedRevision);
+    };
+    const legacyUi = new LegacyUiAdapter({
+      sql: this.state.storage.sql,
+      store: this.store,
+      botVersion: packageJson.version,
+      coreVersion: this.env.WORKER_CORE_VERSION,
+      rpc,
+      commitGlobal: global,
+    });
     return new CloudBotUi({
       sql: this.state.storage.sql,
       store: this.store,
       telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
       coreVersion: this.env.WORKER_CORE_VERSION,
+      legacyUi,
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
       questionDecision: (topic, request, questions, answers) =>
@@ -873,47 +925,8 @@ export class ControlPlane {
       newTopic: (chat, request) => this.newTopic(chat, request),
       deleteTopic: (chat, thread) => this.deleteTopic(chat, thread),
       cancelAllocation: (jobId) => this.cancelAllocation(jobId),
-      rpc: async <T>(
-        topic: import("./control-store.js").FleetTopic,
-        operation: string,
-        payload: unknown = {},
-      ) => {
-        if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
-          throw new Error("worker_upgrade_pending");
-        if (this.store.worker(topic.workerId)?.runtimeVersion) {
-          const health = await nodeRpc<{ ready: boolean }>(
-            await this.identity(topic.workerId),
-            "health",
-            {},
-            topic.sessionId,
-          );
-          if (!health.ready) throw new Error("worker_unavailable");
-        }
-        const result = await nodeRpc<T>(
-          await this.identity(topic.workerId),
-          operation,
-          payload,
-          topic.sessionId,
-        );
-        if (
-          !this.store
-            .topics()
-            .some(
-              (t) =>
-                t.chatId === topic.chatId &&
-                t.threadId === topic.threadId &&
-                t.generation === topic.generation &&
-                t.state === "ACTIVE",
-            )
-        )
-          throw new Error("stale_generation");
-        return result;
-      },
-      global: async (data, expectedRevision) => {
-        const snapshot = { ...data, version: 1, revision: expectedRevision + 1 };
-        const hash = await sha256(canonical(snapshot));
-        this.store.setGlobal(snapshot, hash, expectedRevision);
-      },
+      rpc,
+      global,
     });
   }
   private async signed(

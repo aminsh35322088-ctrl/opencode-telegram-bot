@@ -22,6 +22,7 @@ import {
   outputSettingLabel,
 } from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
+import type { LegacyUiAdapter } from "./legacy-ui-adapter.js";
 
 export interface TelegramUpdate {
   update_id?: number;
@@ -73,6 +74,7 @@ interface UiDependencies {
   store: ControlStore;
   telegram: CloudTelegram;
   coreVersion: string;
+  legacyUi: LegacyUiAdapter;
   compact?: (topic: FleetTopic, requestId: string) => Promise<void>;
   newTopic: (chat: number, request: string) => Promise<AllocationJob>;
   deleteTopic: (chat: number, thread: number) => Promise<void>;
