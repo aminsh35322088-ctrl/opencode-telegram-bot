@@ -120,7 +120,14 @@ export class ControlStore {
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS run_pins(request TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL,model TEXT NOT NULL,dispatched INTEGER NOT NULL DEFAULT 0)",
       );
-      this.sql.exec("UPDATE schema_version SET version=4");
+      this.sql.exec("CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY,data TEXT NOT NULL)");
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS ui_callbacks(id TEXT PRIMARY KEY,actor INTEGER NOT NULL,chat INTEGER NOT NULL,thread INTEGER NOT NULL,generation INTEGER NOT NULL,expires INTEGER NOT NULL,data TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'READY')",
+      );
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS ui_delivery(id TEXT PRIMARY KEY,state TEXT NOT NULL,message INTEGER)",
+      );
+      this.sql.exec("UPDATE schema_version SET version=5");
     });
   }
   private migrate(): void {
@@ -128,7 +135,7 @@ export class ControlStore {
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 4) throw new Error("unsupported_schema");
+    if (version > 5) throw new Error("unsupported_schema");
     if (version >= 3) return;
     if (version === 2) {
       this.migrateEvents();
@@ -837,6 +844,7 @@ export class ControlStore {
       runtimeCommit?: string;
       runtimeVersion?: string;
       lastHealthAt?: number;
+      revision?: number;
       volumeDeletionPendingUntil?: string;
       image?: string;
       deploymentId?: string;
@@ -1002,6 +1010,7 @@ export class ControlStore {
     data: Record<string, unknown>,
     hash: string,
     expectedRevision?: number,
+    approval?: { id: string; data: Record<string, unknown> },
   ): { revision: number; hash: string; data: Record<string, unknown> } {
     return this.transaction(() => {
       if (!hash || !data || typeof data !== "object") throw new Error("invalid_snapshot");
@@ -1015,6 +1024,20 @@ export class ControlStore {
         hash,
         JSON.stringify(data),
       );
+      if (approval) {
+        const current = [
+          ...this.sql.exec<{ state: string }>(
+            "SELECT state FROM approvals WHERE id=?",
+            approval.id,
+          ),
+        ][0];
+        if (current?.state !== "APPROVED") throw new Error("approval_required");
+        this.sql.exec(
+          "UPDATE approvals SET state='COMMITTED',data=? WHERE id=?",
+          JSON.stringify(approval.data),
+          approval.id,
+        );
+      }
       return { revision, hash, data };
     });
   }

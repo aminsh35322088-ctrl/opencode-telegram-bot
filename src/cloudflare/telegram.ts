@@ -44,9 +44,16 @@ export class CloudTelegram {
       ok?: boolean;
       result?: T;
       error_code?: number;
+      description?: string;
       parameters?: { retry_after?: number };
     };
     if (!body.ok) {
+      if (
+        method === "deleteForumTopic" &&
+        body.error_code === 400 &&
+        /TOPIC_NOT_FOUND|message thread not found/i.test(body.description ?? "")
+      )
+        return true as T;
       if (body.error_code === 429)
         throw new TelegramDeliveryError("rate_limited", body.parameters?.retry_after);
       throw new TelegramDeliveryError(response.status >= 500 ? "ambiguous" : "rejected");

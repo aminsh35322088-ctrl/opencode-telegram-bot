@@ -8,6 +8,16 @@ import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 import { renderTelegramParts } from "../bot/render/pipeline.js";
 import { en } from "../i18n/en.js";
 import { canonical, signEnvelope, verifyEnvelope } from "./protocol.js";
+import { CloudTaskUi } from "./task-ui.js";
+import {
+  CloudCredentialVault,
+  protectTelegramCredentialUpdate,
+  readCredentialInput,
+  type ProtectedTelegramUpdate,
+} from "./credential-vault.js";
+import { applyGlobalConfigMutation } from "./config-ui.js";
+import { WorkerImageUpgrade, isWorkerImageUpgrading } from "./worker-image-upgrade.js";
+import { CloudBotUi, type TelegramUpdate } from "./bot-ui.js";
 
 export class ControlPlane {
   private readonly store: ControlStore;
@@ -46,8 +56,57 @@ export class ControlPlane {
           hasNextPage: inventory.hasNextPage,
         });
       }
+      if (path === "/admin/upgrade-worker") {
+        const upgrade = new WorkerImageUpgrade({
+          store: this.store,
+          sql: this.state.storage.sql,
+          transaction: (fn) => this.state.storage.transactionSync(fn),
+          request: railwayApi(this.env.RAILWAY_API_TOKEN),
+          assertAdmin: () => {
+            /* Public Worker already authenticates this privileged route. */
+          },
+          rpc: async (id, operation, session) =>
+            nodeRpc(await this.identity(id), operation, {}, session),
+        });
+        const result = await upgrade.advance(String(body.workerId ?? ""), Number(body.generation), {
+          image: this.env.WORKER_IMAGE,
+          commit: this.env.WORKER_CORE_COMMIT,
+          version: this.env.WORKER_CORE_VERSION,
+        });
+        return Response.json({
+          ok: true,
+          phase: result.phase,
+          deploymentId: result.deploymentId,
+          workerId: result.workerId,
+        });
+      }
+      if (path === "/admin/ui") {
+        const chat = Number(body.chatId),
+          thread = Number(body.threadId ?? 0);
+        if (!Number.isSafeInteger(chat) || !chat || !Number.isSafeInteger(thread) || thread < 0)
+          throw new Error("invalid_topic");
+        const actor = Number(
+          (this.env.TELEGRAM_ALLOWED_USER_ID ?? this.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(
+            ",",
+          )[0],
+        );
+        if (!Number.isSafeInteger(actor) || !actor) throw new Error("authorization_not_configured");
+        await this.ui().handle(
+          {
+            update_id: Date.now(),
+            message: {
+              chat: { id: chat },
+              from: { id: actor },
+              ...(thread > 1 ? { message_thread_id: thread } : {}),
+              text: "/start",
+            },
+          },
+          Date.now(),
+        );
+        return Response.json({ ok: true, scope: thread > 1 ? "topic" : "general" });
+      }
       if (path === "/admin/runtime")
-        return Response.json({ schemaVersion: 4, protocol: "revision-fenced-v1" });
+        return Response.json({ schemaVersion: 5, protocol: "revision-fenced-v1" });
       if (path === "/admin/topics") {
         await this.setup();
         const threadId = Number(body.threadId);
@@ -232,13 +291,29 @@ export class ControlPlane {
           );
         if (!topic) throw new Error("topic_not_writable");
         const operation = String(body.operation);
-        if (!["session.get", "session.messages", "status", "health"].includes(operation))
+        if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+          throw new Error("worker_upgrade_pending");
+        if (
+          ![
+            "session.get",
+            "session.messages",
+            "status",
+            "health",
+            "models.list",
+            "agents.list",
+            "commands.list",
+            "session.todos",
+            "session.diff",
+            "session.children",
+            "file.list",
+          ].includes(operation)
+        )
           throw new Error("operation_not_allowed");
         return Response.json({
           result: await nodeRpc(
             await this.identity(topic.workerId),
             operation,
-            {},
+            operation === "file.list" ? { path: "." } : {},
             operation === "health" ? undefined : topic.sessionId,
           ),
         });
@@ -254,10 +329,26 @@ export class ControlPlane {
       if (path === "/telegram/webhook") {
         if (!Number.isSafeInteger(body.update_id))
           return Response.json({ error: "invalid_update" }, { status: 400 });
+        const update = { ...body } as unknown as ProtectedTelegramUpdate;
+        delete update.credentialInput;
+        const actor = update.message?.from?.id ?? update.callback_query?.from.id;
+        const allowed = (
+          this.env.TELEGRAM_ALLOWED_USER_IDS ??
+          this.env.TELEGRAM_ALLOWED_USER_ID ??
+          ""
+        )
+          .split(",")
+          .map((v) => Number(v.trim()));
+        if (!actor || !allowed.includes(actor)) return Response.json({ ok: true });
+        const protectedUpdate = await protectTelegramCredentialUpdate(
+          update,
+          this.state.storage.sql,
+          this.env.CREDENTIAL_MASTER_KEY,
+        );
         this.state.storage.sql.exec(
           "INSERT INTO updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
           Number(body.update_id),
-          JSON.stringify(body),
+          JSON.stringify(protectedUpdate),
         );
         await this.state.storage.setAlarm(Date.now() + 1);
         return Response.json({ ok: true });
@@ -329,6 +420,188 @@ export class ControlPlane {
           if (!global) throw new Error("snapshot_unavailable");
           return this.signed(envelope, secret, { ...global.data, hash: global.hash });
         }
+        if (envelope.operation === "credential.get") {
+          if (
+            !topic ||
+            topic.state !== "ACTIVE" ||
+            envelope.sessionId !== topic.sessionId ||
+            !this.store.activeRuns(topic.chatId, topic.threadId).length
+          )
+            throw new Error("credential_scope_rejected");
+          const input = envelope.payload as {
+            capability?: string;
+            credentialId?: string;
+            purpose?: string;
+          };
+          if (
+            input.purpose !== "provider.request" ||
+            !input.capability?.startsWith("model-provider:") ||
+            !input.credentialId
+          )
+            throw new Error("credential_scope_rejected");
+          const id = input.capability.slice("model-provider:".length);
+          const data = this.store.global()?.data;
+          const runtime = (
+            data?.configuration as {
+              runtime?: {
+                provider?: Record<string, { options?: { apiKey?: string } }>;
+                disabled_providers?: string[];
+              };
+            }
+          )?.runtime;
+          const references = data?.credentialReferences;
+          if (
+            !Array.isArray(references) ||
+            !references.some(
+              (r: { capability?: string; credentialId?: string; configured?: boolean }) =>
+                r.capability === input.capability &&
+                r.credentialId === input.credentialId &&
+                r.configured === true,
+            ) ||
+            runtime?.disabled_providers?.includes(id) ||
+            runtime?.provider?.[id]?.options?.apiKey !==
+              "bot-credential-proxy:" + input.capability + ":" + input.credentialId
+          )
+            throw new Error("credential_scope_rejected");
+          const lease = await new CloudCredentialVault(
+            this.state.storage.sql,
+            this.env.CREDENTIAL_MASTER_KEY,
+          ).readLease(input.capability, input.credentialId);
+          if (this.store.worker(worker.workerId)?.generation !== envelope.generation)
+            throw new Error("stale_generation");
+          return this.signed(envelope, secret, lease);
+        }
+        if (envelope.operation === "mutation.prepare" || envelope.operation === "mutation.commit") {
+          if (!topic || topic.state !== "ACTIVE" || envelope.sessionId !== topic.sessionId)
+            throw new Error("topic_not_writable");
+          const payload = envelope.payload as {
+            mutation: { type: string; resource: string; config: Record<string, unknown> };
+            approvalId?: string;
+          };
+          const mutation = payload.mutation;
+          if (
+            !mutation ||
+            typeof mutation.type !== "string" ||
+            typeof mutation.resource !== "string" ||
+            !mutation.config ||
+            typeof mutation.config !== "object"
+          )
+            throw new Error("invalid_mutation");
+          const configHash = await sha256(canonical(mutation));
+          const global = this.store.global();
+          if (!global) throw new Error("snapshot_unavailable");
+          if (envelope.operation === "mutation.prepare") {
+            // Validate before asking; immutable candidate is committed only after exact user approval.
+            await applyGlobalConfigMutation(
+              global.data,
+              mutation.type,
+              mutation.resource,
+              mutation.config,
+            );
+            if (this.store.global()?.revision !== global.revision)
+              throw new Error("configuration_changed");
+            if (this.store.worker(worker.workerId)?.generation !== envelope.generation)
+              throw new Error("stale_generation");
+            const previous = [
+              ...this.state.storage.sql.exec<{ id: string; data: string }>(
+                "SELECT id,data FROM approvals WHERE worker=? AND generation=? AND json_extract(data,'$.sessionId')=? AND json_extract(data,'$.configHash')=? AND json_extract(data,'$.revision')=? AND state IN ('PENDING','APPROVED')",
+                worker.workerId,
+                envelope.generation,
+                topic.sessionId,
+                configHash,
+                global.revision,
+              ),
+            ][0];
+            if (previous) return this.signed(envelope, secret, JSON.parse(previous.data));
+            const approvalId = crypto.randomUUID();
+            const prepared = {
+              status: "question-required",
+              approvalId,
+              configHash,
+              revision: global.revision,
+              workerId: worker.workerId,
+              generation: envelope.generation,
+              sessionId: topic.sessionId,
+              expiresAt: Date.now() + 15 * 60_000,
+              preview: mutation,
+              question: {
+                header: "Global Change",
+                question:
+                  "Approve " +
+                  mutation.type +
+                  " for " +
+                  mutation.resource +
+                  "? Approval: " +
+                  approvalId,
+                options: [
+                  { label: "Approve", description: "Apply this exact Global change." },
+                  { label: "Reject", description: "Leave Global unchanged." },
+                ],
+                multiple: false,
+              },
+            };
+            this.state.storage.sql.exec(
+              "INSERT INTO approvals VALUES(?,?,?,?,'PENDING')",
+              approvalId,
+              worker.workerId,
+              envelope.generation,
+              JSON.stringify(prepared),
+            );
+            return this.signed(envelope, secret, {
+              ...prepared,
+              questionTool: { tool: "question", arguments: { questions: [prepared.question] } },
+            });
+          }
+          const approval = [
+            ...this.state.storage.sql.exec<{ data: string; state: string }>(
+              "SELECT data,state FROM approvals WHERE id=? AND worker=? AND generation=?",
+              String(payload.approvalId ?? ""),
+              worker.workerId,
+              envelope.generation,
+            ),
+          ][0];
+          const prepared = approval
+            ? (JSON.parse(approval.data) as {
+                sessionId: string;
+                configHash: string;
+                revision: number;
+                expiresAt: number;
+                receipt?: unknown;
+              })
+            : undefined;
+          if (
+            !prepared ||
+            prepared.sessionId !== topic.sessionId ||
+            prepared.configHash !== configHash
+          )
+            throw new Error("approval_mismatch");
+          if (approval!.state === "COMMITTED")
+            return this.signed(envelope, secret, prepared.receipt);
+          if (approval!.state !== "APPROVED" || prepared.expiresAt < Date.now())
+            throw new Error("approval_required");
+          if (global.revision !== prepared.revision) throw new Error("configuration_changed");
+          const next = await applyGlobalConfigMutation(
+            global.data,
+            mutation.type,
+            mutation.resource,
+            mutation.config,
+          );
+          const snapshot = { ...next, version: 1, revision: global.revision + 1 };
+          const hash = await sha256(canonical(snapshot));
+          if (this.store.worker(worker.workerId)?.generation !== envelope.generation)
+            throw new Error("stale_generation");
+          const receipt = {
+            status: "committed",
+            approvalId: payload.approvalId,
+            revision: snapshot.revision,
+            hash,
+          };
+          this.store.setGlobal(snapshot, hash, global.revision, {
+            id: String(payload.approvalId),
+            data: { ...prepared, receipt },
+          });
+          return this.signed(envelope, secret, receipt);
+        }
         if (envelope.operation === "session.event") {
           if (!topic || topic.state !== "ACTIVE") throw new Error("topic_not_writable");
           this.store.recordCallback(
@@ -354,6 +627,158 @@ export class ControlPlane {
       return Response.json({ error: category }, { status: 409 });
     }
   }
+  private questionDecision(
+    topic: import("./control-store.js").FleetTopic,
+    requestId: string,
+    questions: unknown[],
+    answers: string[][],
+  ): void {
+    const rows = [
+      ...this.state.storage.sql.exec<{ id: string; data: string }>(
+        "SELECT id,data FROM approvals WHERE worker=? AND generation=? AND state='PENDING'",
+        topic.workerId,
+        topic.generation,
+      ),
+    ];
+    for (const row of rows) {
+      const prepared = JSON.parse(row.data) as {
+        sessionId: string;
+        expiresAt: number;
+        question: { header: string; question: string };
+      };
+      if (prepared.sessionId !== topic.sessionId || prepared.expiresAt < Date.now()) continue;
+      const index = questions.findIndex((q) => {
+        const question = q as { header?: string; question?: string };
+        return (
+          question.header === prepared.question.header &&
+          question.question === prepared.question.question
+        );
+      });
+      if (index < 0) continue;
+      const approved = answers[index]?.length === 1 && answers[index]?.[0] === "Approve";
+      this.state.storage.sql.exec(
+        "UPDATE approvals SET state=?,data=? WHERE id=? AND state='PENDING'",
+        approved ? "APPROVED" : "REJECTED",
+        JSON.stringify({ ...prepared, questionRequestId: requestId }),
+        row.id,
+      );
+    }
+  }
+  private async saveCredential(
+    update: ProtectedTelegramUpdate,
+    providerId: string,
+    generation: number,
+  ): Promise<void> {
+    const chat = update.message!.chat.id,
+      actor = update.message!.from!.id,
+      thread = update.message!.message_thread_id ?? 0;
+    const value = await readCredentialInput(update, this.env.CREDENTIAL_MASTER_KEY, {
+      actor,
+      chat,
+      thread,
+      generation,
+      providerId,
+    });
+    const global = this.store.global();
+    if (!global) throw new Error("snapshot_unavailable");
+    const snapshot = structuredClone(global.data);
+    const configuration = snapshot.configuration as {
+      runtime: { provider?: Record<string, { options?: Record<string, unknown> }> };
+    };
+    const provider = configuration.runtime.provider?.[providerId];
+    if (!provider) throw new Error("provider_not_configured");
+    const before = [
+      ...this.state.storage.sql.exec<{ data: string }>(
+        "SELECT data FROM ui_state WHERE key=?",
+        "credential:" + providerId,
+      ),
+    ][0];
+    const metadata = await new CloudCredentialVault(
+      this.state.storage.sql,
+      this.env.CREDENTIAL_MASTER_KEY,
+    ).saveProvider(providerId, value);
+    const references = Array.isArray(snapshot.credentialReferences)
+      ? (snapshot.credentialReferences as Array<{ id?: string }>)
+      : [];
+    snapshot.credentialReferences = [...references.filter((r) => r.id !== metadata.id), metadata];
+    provider.options = {
+      ...provider.options,
+      apiKey: "bot-credential-proxy:" + metadata.capability + ":" + metadata.credentialId,
+    };
+    const next = { ...snapshot, version: 1, revision: global.revision + 1 };
+    const hash = await sha256(canonical(next));
+    try {
+      this.store.setGlobal(next, hash, global.revision);
+    } catch (error) {
+      const current = [
+        ...this.state.storage.sql.exec<{ data: string }>(
+          "SELECT data FROM ui_state WHERE key=?",
+          "credential:" + providerId,
+        ),
+      ][0];
+      if (current && JSON.parse(current.data).credentialId === metadata.credentialId) {
+        if (before)
+          this.state.storage.sql.exec(
+            "UPDATE ui_state SET data=? WHERE key=?",
+            before.data,
+            "credential:" + providerId,
+          );
+        else
+          this.state.storage.sql.exec(
+            "DELETE FROM ui_state WHERE key=?",
+            "credential:" + providerId,
+          );
+      }
+      throw error;
+    }
+  }
+  private ui(): CloudBotUi {
+    return new CloudBotUi({
+      sql: this.state.storage.sql,
+      store: this.store,
+      telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+      coreVersion: this.env.WORKER_CORE_VERSION,
+      saveCredential: (update, provider, generation) =>
+        this.saveCredential(update, provider, generation),
+      questionDecision: (topic, request, questions, answers) =>
+        this.questionDecision(topic, request, questions, answers),
+      newTopic: (chat, request) => this.newTopic(chat, request),
+      deleteTopic: (chat, thread) => this.deleteTopic(chat, thread),
+      cancelAllocation: (jobId) => this.cancelAllocation(jobId),
+      rpc: async <T>(
+        topic: import("./control-store.js").FleetTopic,
+        operation: string,
+        payload: unknown = {},
+      ) => {
+        if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+          throw new Error("worker_upgrade_pending");
+        const result = await nodeRpc<T>(
+          await this.identity(topic.workerId),
+          operation,
+          payload,
+          topic.sessionId,
+        );
+        if (
+          !this.store
+            .topics()
+            .some(
+              (t) =>
+                t.chatId === topic.chatId &&
+                t.threadId === topic.threadId &&
+                t.generation === topic.generation &&
+                t.state === "ACTIVE",
+            )
+        )
+          throw new Error("stale_generation");
+        return result;
+      },
+      global: async (data, expectedRevision) => {
+        const snapshot = { ...data, version: 1, revision: expectedRevision + 1 };
+        const hash = await sha256(canonical(snapshot));
+        this.store.setGlobal(snapshot, hash, expectedRevision);
+      },
+    });
+  }
   private async signed(
     envelope: Parameters<typeof signEnvelope>[0],
     secret: string,
@@ -378,14 +803,34 @@ export class ControlPlane {
       .topics()
       .find((t) => t.chatId === chatId && t.threadId === threadId && t.state === "ACTIVE");
     if (!topic || topic.generation !== generation) throw new Error("stale_generation");
+    if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+      throw new Error("worker_upgrade_pending");
     if (!text || text.length > 20000) throw new Error("invalid_prompt");
     const admittedGlobal = this.store.global();
-    const selected = String(
-      (admittedGlobal?.data.configuration as { runtime?: { model?: string } })?.runtime?.model ??
-        "",
-    );
+    const selected =
+      this.ui().options(topic).model ||
+      String(
+        (admittedGlobal?.data.configuration as { runtime?: { model?: string } })?.runtime?.model ??
+          "",
+      );
     const split = selected.indexOf("/");
     if (split < 1) throw new Error("model_not_configured");
+    const worker = this.store.worker(topic.workerId);
+    if (worker?.runtimeVersion && worker.revision < (admittedGlobal?.revision ?? 0)) {
+      const sync = await nodeRpc<{ revision: number; hash: string; deferred?: boolean }>(
+        await this.identity(topic.workerId),
+        "sync-global",
+        {},
+        topic.sessionId,
+      );
+      if (
+        sync.deferred ||
+        sync.revision !== admittedGlobal!.revision ||
+        sync.hash !== admittedGlobal!.hash
+      )
+        throw new Error("configuration_pending");
+      this.store.saveObservation(topic.workerId, topic.generation, { revision: sync.revision });
+    }
     const inspection = await nodeRpc<{ available: boolean; connected: boolean }>(
       await this.identity(topic.workerId),
       "model.inspect",
@@ -394,13 +839,30 @@ export class ControlPlane {
     );
     if (!inspection.connected) throw new Error("provider_credential_binding_missing");
     if (!inspection.available) throw new Error("model_unavailable");
+    if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+      throw new Error("worker_upgrade_pending");
     if (this.store.global()?.revision !== admittedGlobal?.revision)
       throw new Error("configuration_changed");
+    if (
+      this.ui().options(topic).promptQueueEnabled === false &&
+      this.store.activeRuns(chatId, threadId).length
+    )
+      throw new Error("prompt_queue_disabled");
+    const memories =
+      (admittedGlobal?.data.defaults as { memory?: Array<{ content?: string }> })?.memory ?? [];
+    const context = memories
+      .slice(0, 32)
+      .map((m) => m.content ?? "")
+      .join("\n")
+      .slice(0, 12000);
+    const prompt = context
+      ? "Persistent memories supplied by the user:\n" + context + "\n\nUser message:\n" + text
+      : text;
     this.store.enqueueVerified(
       topic.chatId,
       topic.threadId,
       requestId,
-      text,
+      prompt,
       topic.generation,
       admittedGlobal!.revision,
       selected,
@@ -479,6 +941,11 @@ export class ControlPlane {
     };
   }
   private async newTopic(chatId: number, requestId: string): Promise<AllocationJob> {
+    if (
+      [...this.state.storage.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + chatId)]
+        .length
+    )
+      throw new Error("control_reset_pending");
     if (this.env.PROVISION_ON_TOPIC_CREATE !== "true" || this.env.PROVISIONING_ENABLED !== "true")
       throw new Error("provisioning_disabled");
     await this.setup();
@@ -522,7 +989,22 @@ export class ControlPlane {
     if (this.env.PROVISIONING_ENABLED !== "true") throw new Error("provisioning_disabled");
     const job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
-    if (job.phase === "BOUND") return;
+    if (
+      [
+        ...this.state.storage.sql.exec(
+          "SELECT key FROM ui_state WHERE key=?",
+          "reset:" + job.chatId,
+        ),
+      ].length
+    )
+      throw new Error("control_reset_pending");
+    if (job.phase === "BOUND") {
+      const topic = this.store
+        .topics()
+        .find((t) => t.workerId === job.workerId && t.state === "ACTIVE");
+      if (topic) await this.ui().ready(topic);
+      return;
+    }
     if (job.error) throw new Error(job.error);
     if (job.createdAt && Date.now() - job.createdAt > 20 * 60_000) {
       this.store.configureJob(jobId, {
@@ -538,6 +1020,15 @@ export class ControlPlane {
     if (!this.store.acquireLease("railway-provisioning", owner, Date.now(), 180_000))
       throw new Error("provisioning_pending");
     const guard = () => {
+      if (
+        [
+          ...this.state.storage.sql.exec(
+            "SELECT key FROM ui_state WHERE key=?",
+            "reset:" + job.chatId,
+          ),
+        ].length
+      )
+        throw new Error("control_reset_pending");
       this.store.renewLease("railway-provisioning", owner, Date.now(), 180_000);
       const current = this.store.worker(job.workerId);
       if (
@@ -591,7 +1082,8 @@ export class ControlPlane {
         lastHealthAt: Date.now(),
       });
       this.store.ready(worker.workerId, job.generation, worker.credential!);
-      this.store.bindTopic(jobId, job.threadId, session.sessionId);
+      const bound = this.store.bindTopic(jobId, job.threadId, session.sessionId);
+      await this.ui().ready(bound);
       // eslint-disable-next-line no-console
       console.log(
         JSON.stringify({
@@ -603,6 +1095,27 @@ export class ControlPlane {
     } finally {
       this.store.releaseLease("railway-provisioning", owner);
     }
+  }
+  private async cancelAllocation(jobId: string): Promise<void> {
+    const job = this.store.job(jobId);
+    if (!job) throw new Error("unknown_job");
+    const topic = this.store.topics().find((t) => t.workerId === job.workerId);
+    if (topic) {
+      await this.deleteTopic(topic.chatId, topic.threadId);
+      return;
+    }
+    const current = this.store.worker(job.workerId)!;
+    if (current.state === "REPLACED") return;
+    this.store.configureJob(job.jobId, {
+      phase: "FAILED",
+      error: "provisioning_cancelled",
+      cleanupPhase: job.cleanupPhase ?? job.phase,
+    });
+    const worker = this.store.fenceWorker(job.workerId);
+    if (worker.state !== "DELETING")
+      this.store.transition(worker.workerId, worker.generation, "DELETING");
+    await this.driver().destroy(worker.workerId, worker.generation);
+    this.store.confirmDestroyed(worker.workerId, worker.generation);
   }
   private async deleteTopic(chatId: number, threadId: number): Promise<void> {
     const topic = this.store.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
@@ -642,6 +1155,7 @@ export class ControlPlane {
     }
 
     for (const topic of this.store.topics().filter((t) => t.state === "ACTIVE")) {
+      if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId)) continue;
       const run =
         this.store.activeRuns(topic.chatId, topic.threadId)[0] ??
         this.store.startNext(topic.chatId, topic.threadId);
@@ -672,6 +1186,10 @@ export class ControlPlane {
             runId: run.requestId,
             text: run.prompt,
             events: true,
+            ...(this.ui().options(topic).agent ? { agent: this.ui().options(topic).agent } : {}),
+            ...(this.ui().options(topic).variant
+              ? { variant: this.ui().options(topic).variant }
+              : {}),
             ...(pin
               ? {
                   expectedRevision: pin.revision,
@@ -691,6 +1209,12 @@ export class ControlPlane {
           { runId: run.requestId },
           topic.sessionId,
         );
+        const actor = Number(
+          (this.env.TELEGRAM_ALLOWED_USER_IDS ?? this.env.TELEGRAM_ALLOWED_USER_ID ?? "").split(
+            ",",
+          )[0],
+        );
+        if (actor && status.state === "ACCEPTED") await this.ui().interactions(topic, actor);
         if (!reply.accepted && !["INCOMPLETE", "SUBMITTED"].includes(status.state))
           throw new Error("execution_not_accepted");
         if (["INCOMPLETE", "SUBMITTED"].includes(status.state)) {
@@ -742,7 +1266,37 @@ export class ControlPlane {
       }
     }
     for (const response of this.store.completedResponses()) {
-      const parts = renderTelegramParts(response.text),
+      const topic = this.store
+        .topics()
+        .find(
+          (t) =>
+            t.chatId === response.chat && t.threadId === response.thread && t.state === "ACTIVE",
+        );
+      const pin = this.store.runPin(response.run);
+      if (!topic || (pin && pin.generation !== topic.generation)) {
+        this.store.responseDelivered(response.run, "FENCED");
+        continue;
+      }
+      const preferences = this.ui().options(topic);
+      const text =
+        response.text +
+        (preferences.showAssistantRunFooter
+          ? "\n\n— " +
+            (pin?.model ?? "OpenCode") +
+            " · Core " +
+            this.store.worker(topic.workerId)?.runtimeVersion
+          : "");
+      const parts =
+          preferences.messageFormatMode === "raw"
+            ? Array.from(text)
+                .reduce<string[]>((chunks, char) => {
+                  if (!chunks.length || chunks[chunks.length - 1]!.length + char.length > 3900)
+                    chunks.push("");
+                  chunks[chunks.length - 1] += char;
+                  return chunks;
+                }, [])
+                .map((fallbackText) => ({ fallbackText, blocks: [], source: "plain" as const }))
+            : renderTelegramParts(text),
         telegram = new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN);
       let complete = true;
       for (let index = 0; index < parts.length; index++) {
@@ -765,7 +1319,13 @@ export class ControlPlane {
           JSON.stringify({ run: response.run, index }),
         );
         try {
-          await telegram.sendPart(response.chat, response.thread, parts[index]!);
+          if (preferences.messageFormatMode === "raw") {
+            await telegram.call("sendMessage", {
+              chat_id: response.chat,
+              message_thread_id: response.thread,
+              text: parts[index]!.fallbackText,
+            });
+          } else await telegram.sendPart(response.chat, response.thread, parts[index]!);
           this.state.storage.sql.exec("UPDATE outbox SET state='DELIVERED' WHERE id=?", id);
         } catch (error) {
           const state =
@@ -784,26 +1344,32 @@ export class ControlPlane {
         await this.state.storage.setAlarm(Date.now() + 1);
       }
     }
+    const taskUi = new CloudTaskUi({
+      sql: this.state.storage.sql,
+      store: this.store,
+      actorId: 0,
+      chatId: 0,
+      threadId: 0,
+      generation: 0,
+      button: () => {
+        throw new Error("alarm_has_no_ui");
+      },
+      prompt: async () => {},
+      notice: async () => {},
+      menu: async () => {},
+    });
+    const nextTask = await taskUi.tick((topic, request, text) =>
+      this.enqueuePrompt(topic.chatId, topic.threadId, topic.generation, request, text),
+    );
+    if (nextTask !== undefined)
+      await this.state.storage.setAlarm(Math.min(nextTask, Date.now() + 60_000));
     const rows = [
       ...this.state.storage.sql.exec<{ id: number; data: string }>(
         "SELECT id,data FROM updates WHERE state='PENDING' ORDER BY id LIMIT 20",
       ),
     ];
     for (const row of rows) {
-      const update = JSON.parse(row.data) as {
-        message?: {
-          text?: string;
-          message_thread_id?: number;
-          chat: { id: number };
-          from?: { id: number };
-        };
-        callback_query?: {
-          data?: string;
-          id?: string;
-          from: { id: number };
-          message?: { chat: { id: number } };
-        };
-      };
+      const update = JSON.parse(row.data) as TelegramUpdate;
       const actor = update.message?.from?.id ?? update.callback_query?.from.id;
       const allowed = (
         this.env.TELEGRAM_ALLOWED_USER_IDS ??
@@ -817,27 +1383,10 @@ export class ControlPlane {
         continue;
       }
       const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
-      const action = update.message?.text ?? update.callback_query?.data;
       const telegram = new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN);
       try {
-        if (update.callback_query?.id)
-          await telegram.call("answerCallbackQuery", {
-            callback_query_id: update.callback_query.id,
-          });
-        if (chatId && (action === "/new" || action === "new_chat" || action === "main:new")) {
-          const job = await this.newTopic(chatId, "telegram_" + row.id);
-          await telegram.send(chatId, job.threadId, en["bot.creating_session"]);
-        } else if (chatId && action === "/start") {
-          await telegram.call("sendMessage", {
-            chat_id: chatId,
-            text: "OpenCode",
-            reply_markup: { inline_keyboard: [[{ text: "New Chat", callback_data: "main:new" }]] },
-          });
-        } else if (chatId && action === "/delete" && update.message?.message_thread_id) {
-          const threadId = update.message.message_thread_id;
-          await this.deleteTopic(chatId, threadId);
-          await telegram.call("deleteForumTopic", { chat_id: chatId, message_thread_id: threadId });
-        } else if (chatId && update.message?.text && update.message.message_thread_id) {
+        const handled = await this.ui().handle(update, row.id);
+        if (!handled && chatId && update.message?.text && update.message.message_thread_id) {
           const threadId = update.message.message_thread_id;
           if (
             !this.store
@@ -865,7 +1414,19 @@ export class ControlPlane {
         this.state.storage.sql.exec("UPDATE updates SET state='DISPATCHED' WHERE id=?", row.id);
       } catch (error) {
         // Ambiguous Topic creation must not be retried into a second Telegram Topic.
-        if (error instanceof TelegramDeliveryError && error.category === "rate_limited") {
+        if (
+          (error instanceof TelegramDeliveryError && error.category === "rate_limited") ||
+          (error instanceof Error &&
+            [
+              "volume_cleanup_pending",
+              "cleanup_pending",
+              "pending_worker_cleanup_required",
+              "worker_upgrade_pending",
+              "configuration_pending",
+              "configuration_changed",
+              "worker_unavailable",
+            ].includes(error.message))
+        ) {
           await this.state.storage.setAlarm(Date.now() + 30_000);
           continue;
         }
@@ -874,11 +1435,23 @@ export class ControlPlane {
           try {
             await telegram.send(
               chatId,
-              undefined,
+              update.message?.message_thread_id ??
+                update.callback_query?.message?.message_thread_id,
               error instanceof Error &&
                 ["capacity_exhausted", "project_capacity_exhausted"].includes(error.message)
                 ? en["new.capacity_exhausted"]
-                : en["new.create_error"],
+                : error instanceof Error && error.message === "execution_active"
+                  ? "Stop the current run before changing this setting."
+                  : error instanceof Error && error.message === "interaction_expired"
+                    ? "This question or permission request has expired."
+                    : error instanceof Error && error.message === "model_unavailable"
+                      ? "This model is unavailable. Select a connected provider/model."
+                      : error instanceof Error &&
+                          error.message === "provider_credential_binding_missing"
+                        ? "Connect this provider in Settings → Providers before using the model."
+                        : error instanceof Error && error.message === "stale_generation"
+                          ? "This Topic or menu has expired. Open the current menu again."
+                          : "The operation could not be completed. Reopen its menu and try again.",
             );
           } catch {
             /* Persisted failure is available to authenticated reconciliation. */

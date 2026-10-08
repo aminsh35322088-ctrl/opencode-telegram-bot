@@ -1,0 +1,611 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { ControlPlane } from "../src/cloudflare/control-object.js";
+import { ControlStore } from "../src/cloudflare/control-store.js";
+import { encryptCredential } from "../src/cloudflare/credentials.js";
+import { signEnvelope } from "../src/cloudflare/protocol.js";
+
+function fixture(t: { after: (f: () => void) => void }) {
+  const db = new DatabaseSync(":memory:");
+  const sql = {
+    exec: (q: string, ...args: unknown[]) => db.prepare(q).all(...(args as never[])) as never,
+  };
+  const tx = <T>(f: () => T) => {
+    db.exec("BEGIN");
+    try {
+      const v = f();
+      db.exec("COMMIT");
+      return v;
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  };
+  const env = {
+    TELEGRAM_BOT_TOKEN: "synthetic",
+    TELEGRAM_ALLOWED_USER_ID: "7",
+    RAILWAY_API_TOKEN: "synthetic",
+    RAILWAY_WORKSPACE_ID: "workspace",
+    MAX_WORKERS: "10",
+    WORKERS_PER_PROJECT: "5",
+    MAX_RAILWAY_PROJECTS: "2",
+    PROVISION_ON_TOPIC_CREATE: "true",
+    PROVISIONING_ENABLED: "true",
+    CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
+    WORKER_CORE_VERSION: "test",
+    JOBS: { send: async () => {} },
+  };
+  const state = { storage: { sql, transactionSync: tx, setAlarm: async () => {} } };
+  const plane = new ControlPlane(state as never, env as never);
+  const store = new ControlStore(sql, tx);
+  const sent: Array<{ method: string; payload: Record<string, any> }> = [];
+  const rpc: Array<{ operation: string; payload: any }> = [];
+  const secret = "n".repeat(64);
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const payload = JSON.parse(String(init?.body));
+    if (String(input).includes("api.telegram.org")) {
+      const method = String(input).split("/").at(-1)!;
+      sent.push({ method, payload });
+      return Response.json({
+        ok: true,
+        result:
+          method === "createForumTopic" ? { message_thread_id: 84 } : { message_id: sent.length },
+      });
+    }
+    rpc.push(payload);
+    const result =
+      payload.operation === "model.inspect"
+        ? { connected: true, available: true }
+        : payload.operation === "session.messages"
+          ? []
+          : null;
+    const signed = await signEnvelope(
+      {
+        ...payload,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: { ok: true, result },
+      },
+      secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  t.after(() => {
+    globalThis.fetch = original;
+    db.close();
+  });
+  const post = (path: string, body: unknown = {}) =>
+    plane.fetch(
+      new Request("https://internal" + path, { method: "POST", body: JSON.stringify(body) }),
+    );
+  let seq = 1000;
+  const update = async (text: string, threadId?: number, actor = 7) => {
+    await post("/telegram/webhook", {
+      update_id: ++seq,
+      message: {
+        message_id: seq,
+        chat: { id: -100 },
+        from: { id: actor },
+        ...(threadId ? { message_thread_id: threadId } : {}),
+        text,
+      },
+    });
+    await plane.alarm();
+  };
+  const callback = async (data: string, threadId?: number, actor = 7) => {
+    await post("/telegram/webhook", {
+      update_id: ++seq,
+      callback_query: {
+        id: String(seq),
+        from: { id: actor },
+        data,
+        message: {
+          message_id: 90,
+          chat: { id: -100 },
+          ...(threadId ? { message_thread_id: threadId } : {}),
+        },
+      },
+    });
+    await plane.alarm();
+  };
+  const bound = async () => {
+    await post("/admin/setup");
+    await post("/admin/global", {
+      configuration: { runtime: { model: "opencode/big-pickle" } },
+      skills: [],
+      actions: [],
+      catalog: {},
+      defaults: {},
+      credentialReferences: [],
+    });
+    const job = store.reserveTopicAllocation("ui", -100, 42);
+    store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+    const credential = await encryptCredential(
+      env.CREDENTIAL_MASTER_KEY,
+      "node:" + job.workerId + ":1",
+      secret,
+    );
+    store.ready(job.workerId, 1, credential);
+    store.bindTopic(job.jobId, 42, "session");
+    return job;
+  };
+  return { plane, store, sql, sent, rpc, update, callback, bound, post, state, env };
+}
+
+test("Start restores main navigation and publishes the existing Telegram command catalog without allocating", async (t) => {
+  const f = fixture(t);
+  await f.update("/start");
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /main:history/);
+  assert.match(output, /main:settings/);
+  assert.ok(
+    f.sent.some(
+      (x) =>
+        x.method === "setMyCommands" &&
+        x.payload.commands.some((c: any) => c.command === "settings"),
+    ),
+  );
+  assert.equal(f.store.workers().length, 0);
+});
+
+test("keyboard restores dedicated Topic controls and never sends the command to OpenCode", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/keyboard", 42);
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /Delete Chat/);
+  assert.match(output, /Topic Settings/);
+  assert.match(output, /Compact/);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("unknown slash commands and stale reply keyboard controls cannot become model prompts", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  for (const text of ["/unknown", "⚙️ Main Settings", "🕘 History"]) await f.update(text, 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+  assert.ok(f.sent.length >= 3);
+});
+
+test("settings preserves separate global and Topic navigation", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/settings");
+  let output = JSON.stringify(f.sent);
+  assert.match(output, /Extensions/);
+  assert.match(output, /Actions/);
+  assert.match(output, /GitHub/);
+  f.sent.length = 0;
+  await f.update("⚙️ Topic Settings", 42);
+  output = JSON.stringify(f.sent);
+  assert.match(output, /Context/);
+  assert.match(output, /Agent/);
+  assert.match(output, /Variant/);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("delete requires a generation-scoped confirmation and rejects it after fencing", async (t) => {
+  const f = fixture(t);
+  const job = await f.bound();
+  await f.update("🗑️ Delete Chat", 42);
+  assert.equal(f.store.worker(job.workerId)?.generation, 1);
+  const buttons = f.sent.flatMap((x) => x.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const confirm = buttons.find(
+    (b: any) => /Delete/.test(b.text) && String(b.callback_data).startsWith("ui:"),
+  );
+  assert.ok(confirm, "confirmation button expected");
+  f.store.fenceTopic(-100, 42);
+  f.sent.length = 0;
+  await f.callback(confirm.callback_data, 42);
+  assert.equal(
+    f.sent.some((x) => x.method === "deleteForumTopic"),
+    false,
+  );
+  assert.equal(
+    f.rpc.some((x) => x.operation === "retire"),
+    false,
+  );
+});
+
+test("callback from another actor or Topic cannot execute a bound confirmation", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/delete_topic", 42);
+  const buttons = f.sent.flatMap((x) => x.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const confirm = buttons.find((b: any) => String(b.callback_data).startsWith("ui:"));
+  assert.ok(confirm);
+  await f.callback(confirm.callback_data, 43);
+  await f.callback(confirm.callback_data, 42, 9);
+  assert.equal(f.rpc.length, 0);
+  assert.equal(f.store.topics()[0]?.state, "ACTIVE");
+});
+
+test("compact is durable Topic presentation state and does not duplicate global enable state", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("📦 Compact: OFF", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+  const revision = f.store.global()!.revision;
+  f.sent.length = 0;
+  const restarted = new ControlPlane(f.state as never, f.env as never);
+  await f.post("/telegram/webhook", {
+    update_id: 2000,
+    message: { chat: { id: -100 }, from: { id: 7 }, message_thread_id: 42, text: "/keyboard" },
+  });
+  await restarted.alarm();
+  assert.match(JSON.stringify(f.sent), /Compact: ON/);
+  assert.equal(f.store.global()!.revision, revision);
+});
+
+test("plain text in General explains the Topic requirement without execution or allocation", async (t) => {
+  const f = fixture(t);
+  await f.update("چطوری");
+  assert.ok(f.sent.length);
+  assert.equal(f.store.workers().length, 0);
+  assert.equal(f.rpc.length, 0);
+});
+
+test("cancel clears the durable input form", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/rename", 42);
+  await f.update("/cancel", 42);
+  await f.update("normal prompt", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 1);
+  assert.equal(
+    f.sent.some((x) => x.method === "editForumTopic"),
+    false,
+  );
+});
+
+test("rename answer remains a control after an acknowledgement rate limit", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/rename", 42);
+  const before = globalThis.fetch;
+  let failed = false;
+  globalThis.fetch = async (input, init) => {
+    const payload = JSON.parse(String(init?.body));
+    if (
+      !failed &&
+      String(input).endsWith("/sendRichMessage") &&
+      JSON.stringify(payload).includes("renamed")
+    ) {
+      failed = true;
+      return Response.json(
+        { ok: false, error_code: 429, parameters: { retry_after: 1 } },
+        { status: 429 },
+      );
+    }
+    return before(input, init);
+  };
+  await f.update("renamed title", 42);
+  await f.plane.alarm();
+  assert.equal(failed, true);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+  assert.equal(f.sent.filter((x) => x.method === "editForumTopic").length, 1);
+});
+
+test("Stop replay cannot abort the next queued run", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.store.enqueue(-100, 42, "run_a", "a");
+  f.store.startNext(-100, 42);
+  const before = globalThis.fetch;
+  let failed = false;
+  globalThis.fetch = async (input, init) => {
+    const payload = JSON.parse(String(init?.body));
+    if (String(input).includes("canary.up.railway.app")) {
+      const result =
+        payload.operation === "run"
+          ? { accepted: true }
+          : payload.operation === "callback.status"
+            ? { state: "ACCEPTED" }
+            : null;
+      const signed = await signEnvelope(
+        {
+          ...payload,
+          nonce: crypto.randomUUID(),
+          timestamp: Date.now(),
+          payload: { ok: true, result },
+        },
+        "n".repeat(64),
+      );
+      f.rpc.push(payload);
+      return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+    }
+    if (!failed && String(input).endsWith("/sendMessage") && payload.reply_markup?.keyboard) {
+      failed = true;
+      return Response.json(
+        { ok: false, error_code: 429, parameters: { retry_after: 1 } },
+        { status: 429 },
+      );
+    }
+    return before(input, init);
+  };
+  await f.update("/abort", 42);
+  f.store.enqueue(-100, 42, "run_b", "b");
+  f.store.startNext(-100, 42);
+  await f.plane.alarm();
+  assert.equal(failed, true);
+  assert.deepEqual(
+    f.rpc.filter((x) => x.operation === "stop").map((x) => x.payload.runId),
+    ["run_a"],
+  );
+  assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "run_b");
+});
+
+test("readiness keyboard retries Telegram 429 without duplicating a delivered notice", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  const before = globalThis.fetch;
+  let failed = false;
+  globalThis.fetch = async (input, init) => {
+    if (!failed && String(input).endsWith("/sendMessage")) {
+      failed = true;
+      return Response.json(
+        { ok: false, error_code: 429, parameters: { retry_after: 1 } },
+        { status: 429 },
+      );
+    }
+    return before(input, init);
+  };
+  const ui = (f.plane as unknown as { ui: () => { ready: (topic: any) => Promise<void> } }).ui();
+  await assert.rejects(ui.ready(f.store.topics()[0]));
+  await ui.ready(f.store.topics()[0]);
+  await ui.ready(f.store.topics()[0]);
+  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
+});
+
+test("questions render in their Topic and their answers never become prompts", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.store.enqueue(-100, 42, "run_q", "ask");
+  f.store.startNext(-100, 42);
+  const ui = (
+    f.plane as unknown as {
+      ui: () => { interactions: (topic: any, actor: number) => Promise<void> };
+    }
+  ).ui();
+  assert.equal(typeof ui.interactions, "function");
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (!String(input).includes("canary.up.railway.app")) return before(input, init);
+    const envelope = JSON.parse(String(init?.body));
+    const result =
+      envelope.operation === "question.list"
+        ? [
+            {
+              id: "q_owned",
+              sessionID: "session",
+              questions: [
+                {
+                  header: "Choose",
+                  question: "Which option?",
+                  options: [
+                    { label: "Yes", description: "Proceed" },
+                    { label: "No", description: "Cancel" },
+                  ],
+                },
+              ],
+            },
+          ]
+        : envelope.operation === "run"
+          ? { accepted: true }
+          : envelope.operation === "callback.status"
+            ? { state: "ACCEPTED" }
+            : null;
+    f.rpc.push(envelope);
+    const signed = await signEnvelope(
+      {
+        ...envelope,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: { ok: true, result },
+      },
+      "n".repeat(64),
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  const updatedUi = (f.plane as any).ui();
+  await updatedUi.interactions(f.store.topics()[0], 7);
+  assert.match(JSON.stringify(f.sent), /Which option/);
+  const button = f.sent
+    .flatMap((x) => x.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+    .find((b: any) => b.text === "Yes");
+  assert.ok(button);
+  await f.callback(button.callback_data, 42);
+  const reply = f.rpc.find((x) => x.operation === "question.reply");
+  assert.deepEqual(reply?.payload.answers, [["Yes"]]);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 1);
+});
+
+test("signed global mutations require exact trusted approval and preserve canonical revision", async (t) => {
+  const f = fixture(t);
+  const job = await f.bound();
+  const mutation = {
+    type: "skills.create",
+    resource: "safe",
+    config: { description: "Safe", body: "Do safe work" },
+  };
+  const call = async (operation: string, payload: unknown) => {
+    const signed = await signEnvelope(
+      {
+        version: 1,
+        nodeId: job.workerId,
+        generation: 1,
+        chatId: -100,
+        threadId: 42,
+        sessionId: "session",
+        operation,
+        payload,
+        timestamp: Date.now(),
+        nonce: crypto.randomUUID(),
+      },
+      "n".repeat(64),
+    );
+    return f.plane.fetch(
+      new Request("https://internal/node-control", {
+        method: "POST",
+        headers: { "x-node-signature": signed.signature },
+        body: signed.body,
+      }),
+    );
+  };
+  const preparedResponse = await call("mutation.prepare", { mutation });
+  assert.equal(preparedResponse.status, 200);
+  const prepared = (await preparedResponse.json()).payload;
+  const revision = f.store.global()!.revision;
+  assert.equal(
+    (await call("mutation.commit", { mutation, approvalId: prepared.approvalId })).status,
+    409,
+  );
+  assert.equal(f.store.global()!.revision, revision);
+  const uiDecision = f.plane as unknown as {
+    questionDecision: (
+      topic: any,
+      request: string,
+      questions: unknown[],
+      answers: string[][],
+    ) => void;
+  };
+  assert.equal(typeof uiDecision.questionDecision, "function");
+  uiDecision.questionDecision(f.store.topics()[0], "q_exact", [prepared.question], [["Approve"]]);
+  assert.equal(
+    (await call("mutation.commit", { mutation, approvalId: prepared.approvalId })).status,
+    200,
+  );
+  assert.equal(f.store.global()!.revision, revision + 1);
+  assert.equal(
+    (await call("mutation.commit", { mutation, approvalId: prepared.approvalId })).status,
+    200,
+  );
+  assert.equal(f.store.global()!.revision, revision + 1);
+  const changed = { ...mutation, resource: "other" };
+  assert.equal(
+    (await call("mutation.commit", { mutation: changed, approvalId: prepared.approvalId })).status,
+    409,
+  );
+});
+
+test("double taps on New Chat reuse the pending allocation instead of creating a second Worker", async (t) => {
+  const f = fixture(t);
+  await f.update("/new");
+  await f.update("/new");
+  assert.equal(f.store.workers().length, 1);
+  assert.equal(f.sent.filter((x) => x.method === "createForumTopic").length, 1);
+});
+
+test("a Topic fenced before final Telegram delivery cannot publish its old response", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.store.enqueue(-100, 42, "late", "prompt");
+  f.store.startNext(-100, 42);
+  f.store.recordCallback(-100, 42, {
+    runId: "late",
+    streamNonce: "stream",
+    sequence: 1,
+    event: {
+      type: "message.part.updated",
+      properties: { part: { id: "text", type: "text", text: "old response" } },
+    },
+  });
+  f.store.recordCallback(-100, 42, {
+    runId: "late",
+    streamNonce: "stream",
+    sequence: 2,
+    event: { type: "session.idle" },
+  });
+  f.store.fenceTopic(-100, 42);
+  await f.plane.alarm();
+  assert.equal(f.sent.length, 0);
+});
+
+test("session dashboard exposes owned todo/diff/subagent/file navigation", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/session", 42);
+  const text = JSON.stringify(f.sent);
+  for (const label of ["Tasks", "Changes", "Sub-agents", "Files"])
+    assert.match(text, new RegExp(label));
+  for (const command of ["/todos", "/diff", "/children", "/ls", "/open README.md"])
+    await f.update(command, 42);
+  for (const operation of [
+    "session.todos",
+    "session.diff",
+    "session.children",
+    "file.list",
+    "file.read",
+  ])
+    assert.ok(
+      f.rpc.some((r) => r.operation === operation),
+      operation,
+    );
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("model and agent selectors use Core catalogs without creating model runs", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/model", 42);
+  await f.update("/agent", 42);
+  await f.update("/variant", 42);
+  assert.ok(f.rpc.some((r) => r.operation === "models.list"));
+  assert.ok(f.rpc.some((r) => r.operation === "agents.list"));
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("internal destructive slash commands cannot bypass confirmation", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  for (const [command, thread] of [
+    ["/delete_confirm", 42],
+    ["/factory_reset_final", undefined],
+    ["/reset_history_confirm", undefined],
+  ] as const)
+    await f.update(command, thread);
+  assert.equal(f.store.topics()[0]?.state, "ACTIVE");
+  assert.equal(
+    f.sent.some((x) => x.method === "deleteForumTopic"),
+    false,
+  );
+});
+
+test("raw output and footer preferences are applied to completed Topic responses", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  const topic = f.store.topics()[0]!;
+  f.sql.exec(
+    "INSERT INTO ui_state VALUES(?,?)",
+    "topic:-100:42:" + topic.generation,
+    JSON.stringify({ messageFormatMode: "raw", showAssistantRunFooter: true }),
+  );
+  f.store.enqueueVerified(
+    -100,
+    42,
+    "render_pref",
+    "question",
+    1,
+    f.store.global()!.revision,
+    "opencode/big-pickle",
+  );
+  f.store.startNext(-100, 42);
+  f.store.failRun(-100, 42, "render_pref", "**سلام**");
+  await f.plane.alarm();
+  const messages = f.sent.filter((x) => x.method === "sendMessage").map((x) => x.payload.text);
+  assert.ok(messages.some((text) => text.includes("**سلام**")));
+  assert.ok(messages.some((text) => text.includes("opencode/big-pickle")));
+  assert.equal(
+    f.sent.some((x) => x.method === "sendRichMessage"),
+    false,
+  );
+});
+
+test("Telegram Topic deletion is idempotent after an acknowledged deletion is lost", async () => {
+  const { CloudTelegram } = await import("../src/cloudflare/telegram.js");
+  const telegram = new CloudTelegram("synthetic", async () => Response.json({ok:false,error_code:400,description:"Bad Request: TOPIC_NOT_FOUND"},{status:400}));
+  await telegram.call("deleteForumTopic",{chat_id:-100,message_thread_id:42});
+  await assert.rejects(telegram.call("editForumTopic",{chat_id:-100,message_thread_id:42,name:"name"}));
+});
