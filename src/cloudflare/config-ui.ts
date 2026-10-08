@@ -199,7 +199,7 @@ export class CloudConfigUi {
     this.ctx.sql.exec(
       "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
       this.ctx.draftKey,
-      JSON.stringify(draft),
+      JSON.stringify({ ...draft, expires: Date.now() + 300000 }),
     );
   }
   private draft(): ConfigDraft {

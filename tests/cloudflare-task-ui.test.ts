@@ -445,3 +445,18 @@ test("another actor or a replaced draft cannot confirm task setup", async () => 
   await assert.rejects(f.ui.handle("config_task_confirm", draft.id), /task_draft_mismatch/);
   assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
 });
+
+test("each accepted task-wizard step renews its input deadline", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  f.setClock(f.now() + 240000);
+  await f.ui.handle("config_task_schedule", "every 1 hour");
+  f.setClock(f.now() + 120000);
+  await f.ui.handle("config_task_body", "Check project");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  assert.equal(draft.stage, "confirm");
+  assert.equal(draft.expires, f.now() + 300000);
+});

@@ -444,3 +444,24 @@ test("empty guided skill body reopens input instead of losing the form", async (
   assert.equal(f.prompts.at(-1), "config_wizard_content");
   assert.equal(f.store.global()!.revision, 1);
 });
+
+test("each accepted configuration step renews the deadline for its next input", async (t) => {
+  const f = fixture();
+  const original = Date.now;
+  let clock = original();
+  Date.now = () => clock;
+  t.after(() => {
+    Date.now = original;
+  });
+  await f.ui.handle("config_add_commands");
+  clock += 240000;
+  await f.ui.handle("config_wizard_name", "inspect");
+  clock += 120000;
+  await f.ui.handle("config_wizard_content", "Inspect project state.");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='config-draft:test'")][0]
+      .data,
+  );
+  assert.equal(draft.stage, "confirm");
+  assert.equal(draft.expires, clock + 300000);
+});

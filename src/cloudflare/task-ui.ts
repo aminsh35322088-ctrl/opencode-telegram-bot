@@ -103,7 +103,7 @@ export class CloudTaskUi {
     this.context.sql.exec(
       "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
       this.draftKey(),
-      JSON.stringify(draft),
+      JSON.stringify({ ...draft, expires: this.now() + 300000 }),
     );
   }
   private schedule(value: string): TaskDraft["schedule"] {
