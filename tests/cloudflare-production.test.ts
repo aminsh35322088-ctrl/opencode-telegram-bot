@@ -412,3 +412,70 @@ test("run status reports scoped execution and delivery receipts without prompt o
     409,
   );
 });
+
+test("Telegram prompts require the same verified model and revision admission as canary prompts", async (t) => {
+  for (const connected of [false, true]) {
+    const f = fixture();
+    await post(f.plane, "/admin/setup");
+    await post(f.plane, "/admin/global", {
+      configuration: { runtime: { model: "opencode/big-pickle" } },
+      skills: [],
+      actions: [],
+      catalog: {},
+      defaults: {},
+      credentialReferences: [],
+    });
+    const job = f.store.reserveTopicAllocation("webhook-admission", -100, 42),
+      secret = "n".repeat(64);
+    const credential = await encryptCredential(
+      btoa("k".repeat(32)),
+      "node:" + job.workerId + ":1",
+      secret,
+    );
+    f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+    f.store.ready(job.workerId, 1, credential);
+    f.store.bindTopic(job.jobId, 42, "session");
+    const original = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = original;
+    });
+    const operations: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      if (String(input).includes("api.telegram.org"))
+        return Response.json({ ok: true, result: { message_id: 1 } });
+      const envelope = JSON.parse(String(init?.body));
+      operations.push(envelope.operation);
+      const result = { available: true, connected };
+      const signed = await signEnvelope(
+        {
+          ...envelope,
+          nonce: crypto.randomUUID(),
+          timestamp: Date.now(),
+          payload: { ok: true, result },
+        },
+        secret,
+      );
+      return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+    };
+    const update = {
+      update_id: 901,
+      message: { chat: { id: -100 }, from: { id: 7 }, message_thread_id: 42, text: "prompt" },
+    };
+    await post(f.plane, "/telegram/webhook", update);
+    await post(f.plane, "/telegram/webhook", update);
+    await f.plane.alarm();
+    assert.deepEqual(operations, ["model.inspect"]);
+    assert.equal([...f.sql.exec("SELECT request FROM runs")].length, connected ? 1 : 0);
+    if (connected)
+      assert.deepEqual(
+        { ...f.store.runPin("telegram_901") },
+        {
+          generation: 1,
+          revision: 2,
+          model: "opencode/big-pickle",
+          dispatched: 0,
+        },
+      );
+    globalThis.fetch = original;
+  }
+});

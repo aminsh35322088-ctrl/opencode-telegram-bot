@@ -74,45 +74,13 @@ export class ControlPlane {
         });
       }
       if (path === "/admin/run") {
-        const topic = this.store
-          .topics()
-          .find(
-            (t) =>
-              t.chatId === Number(body.chatId) &&
-              t.threadId === Number(body.threadId) &&
-              t.state === "ACTIVE",
-          );
-        if (!topic || topic.generation !== Number(body.generation))
-          throw new Error("stale_generation");
-        const text = String(body.text ?? "");
-        if (!text || text.length > 20000) throw new Error("invalid_prompt");
-        const admittedGlobal = this.store.global();
-        const selected = String(
-          (admittedGlobal?.data.configuration as { runtime?: { model?: string } })?.runtime
-            ?.model ?? "",
-        );
-        const split = selected.indexOf("/");
-        if (split < 1) throw new Error("model_not_configured");
-        const inspection = await nodeRpc<{ available: boolean; connected: boolean }>(
-          await this.identity(topic.workerId),
-          "model.inspect",
-          { providerID: selected.slice(0, split), modelID: selected.slice(split + 1) },
-          topic.sessionId,
-        );
-        if (!inspection.connected) throw new Error("provider_credential_binding_missing");
-        if (!inspection.available) throw new Error("model_unavailable");
-        if (this.store.global()?.revision !== admittedGlobal?.revision)
-          throw new Error("configuration_changed");
-        this.store.enqueueVerified(
-          topic.chatId,
-          topic.threadId,
+        await this.enqueuePrompt(
+          Number(body.chatId),
+          Number(body.threadId),
+          Number(body.generation),
           String(body.requestId ?? ""),
-          text,
-          topic.generation,
-          admittedGlobal!.revision,
-          selected,
+          String(body.text ?? ""),
         );
-        await this.state.storage.setAlarm(Date.now() + 1);
         return Response.json({ queued: true });
       }
       if (path === "/admin/run-status") {
@@ -398,6 +366,46 @@ export class ControlPlane {
     return new Response(signed.body, {
       headers: { "Content-Type": "application/json", "x-node-signature": signed.signature },
     });
+  }
+  private async enqueuePrompt(
+    chatId: number,
+    threadId: number,
+    generation: number,
+    requestId: string,
+    text: string,
+  ): Promise<void> {
+    const topic = this.store
+      .topics()
+      .find((t) => t.chatId === chatId && t.threadId === threadId && t.state === "ACTIVE");
+    if (!topic || topic.generation !== generation) throw new Error("stale_generation");
+    if (!text || text.length > 20000) throw new Error("invalid_prompt");
+    const admittedGlobal = this.store.global();
+    const selected = String(
+      (admittedGlobal?.data.configuration as { runtime?: { model?: string } })?.runtime?.model ??
+        "",
+    );
+    const split = selected.indexOf("/");
+    if (split < 1) throw new Error("model_not_configured");
+    const inspection = await nodeRpc<{ available: boolean; connected: boolean }>(
+      await this.identity(topic.workerId),
+      "model.inspect",
+      { providerID: selected.slice(0, split), modelID: selected.slice(split + 1) },
+      topic.sessionId,
+    );
+    if (!inspection.connected) throw new Error("provider_credential_binding_missing");
+    if (!inspection.available) throw new Error("model_unavailable");
+    if (this.store.global()?.revision !== admittedGlobal?.revision)
+      throw new Error("configuration_changed");
+    this.store.enqueueVerified(
+      topic.chatId,
+      topic.threadId,
+      requestId,
+      text,
+      topic.generation,
+      admittedGlobal!.revision,
+      selected,
+    );
+    await this.state.storage.setAlarm(Date.now() + 1);
   }
   private async setup(): Promise<void> {
     if (!this.env.RAILWAY_API_TOKEN || !this.env.RAILWAY_WORKSPACE_ID)
@@ -842,13 +850,17 @@ export class ControlPlane {
             await this.state.storage.setAlarm(Date.now() + 15_000);
             continue;
           }
-          this.store.enqueue(
+          const topic = this.store
+            .topics()
+            .find((t) => t.chatId === chatId && t.threadId === threadId && t.state === "ACTIVE");
+          if (!topic) throw new Error("topic_not_writable");
+          await this.enqueuePrompt(
             chatId,
-            update.message.message_thread_id,
+            threadId,
+            topic.generation,
             "telegram_" + row.id,
             update.message.text,
           );
-          await this.state.storage.setAlarm(Date.now() + 1);
         }
         this.state.storage.sql.exec("UPDATE updates SET state='DISPATCHED' WHERE id=?", row.id);
       } catch (error) {

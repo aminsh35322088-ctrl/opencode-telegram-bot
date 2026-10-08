@@ -26,9 +26,9 @@
     "WORKERS_PER_PROJECT": "5",
     "MAX_RAILWAY_PROJECTS": "2",
     "PROVISION_ON_TOPIC_CREATE": "true",
-    "PROVISIONING_ENABLED": "false",
-    "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:f21ce0b6b260fb10ebc0a7e3a3ade2faf409d34e342e1f0ba3333249e427d918",
-    "WORKER_CORE_COMMIT": "75f4cd890e8168b9137b4bdc7330c9cbde3bca40",
-    "WORKER_CORE_VERSION": "1.18.33-bot.13-pre.22",
+    "PROVISIONING_ENABLED": "true",
+    "WORKER_IMAGE": "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:6e95928535983352519cd52dee868d5d01e0f042f3a99e4fa48361b5ae228616",
+    "WORKER_CORE_COMMIT": "c2b958b5dfed7976a447b1554814fd41ab38e5a6",
+    "WORKER_CORE_VERSION": "1.18.33-bot.13-pre.23",
   },
 }
