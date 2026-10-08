@@ -73,6 +73,7 @@ interface UiDependencies {
   store: ControlStore;
   telegram: CloudTelegram;
   coreVersion: string;
+  compact?: (topic: FleetTopic, requestId: string) => Promise<void>;
   newTopic: (chat: number, request: string) => Promise<AllocationJob>;
   deleteTopic: (chat: number, thread: number) => Promise<void>;
   cancelAllocation?: (jobId: string) => Promise<void>;
@@ -107,10 +108,31 @@ const record = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+function supportsContextCompaction(version: string | undefined): boolean {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)-bot\.(\d+)(?:-pre\.(\d+))?$/.exec(version ?? "");
+  if (!match) return false;
+  const parts = match
+    .slice(1)
+    .map((value, index) => (index === 4 && value === undefined ? Infinity : Number(value)));
+  const minimum = [1, 18, 33, 13, 25];
+  for (let index = 0; index < minimum.length; index++) {
+    if (parts[index]! > minimum[index]!) return true;
+    if (parts[index]! < minimum[index]!) return false;
+  }
+  return true;
+}
+
 /** Telegram-only application adapter. State lives in the existing canonical SQLite DO.
  * Runtime behavior is delegated to Core; General never calls execution RPC. */
 export class CloudBotUi {
   constructor(private readonly deps: UiDependencies) {}
+  private canCompactContext(topic: FleetTopic): boolean {
+    return (
+      !!this.deps.compact &&
+      supportsContextCompaction(this.deps.coreVersion) &&
+      supportsContextCompaction(this.deps.store.worker(topic.workerId)?.runtimeVersion)
+    );
+  }
   private get<T>(key: string): T | undefined {
     const row = [
       ...this.deps.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
@@ -479,6 +501,7 @@ export class CloudBotUi {
         const match = /^\/([a-z_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/.exec(text);
         action = { action: match?.[1] ?? "unknown", value: match?.[2] };
         if (
+          action.action === "context_compact" ||
           action.action.endsWith("_confirm") ||
           action.action.endsWith("_final") ||
           action.action.startsWith("config_") ||
@@ -571,6 +594,7 @@ export class CloudBotUi {
       "session",
       "messages",
       "context",
+      "context_compact",
       "compact",
       "agent",
       "variant",
@@ -711,6 +735,17 @@ export class CloudBotUi {
       this.set("action_done:" + updateId, true);
       return true;
     }
+    if (name === "context_compact") {
+      if (!this.canCompactContext(topic!)) {
+        await this.notice(chat, thread, t("context.error"));
+        return true;
+      }
+      await this.deps.compact!(topic!, "telegram-compact:" + updateId);
+      this.assertTopic(topic!);
+      this.set("action_done:" + updateId, true);
+      await this.notice(chat, thread, t("context.progress"));
+      return true;
+    }
     if (name === "compact") {
       this.setOptions(topic!, {
         compact: !(this.options(topic!).compact ?? this.options(topic!).compactOutputMode),
@@ -820,6 +855,20 @@ export class CloudBotUi {
               ? "Messages: " + result.length
               : "Title: " + escape(record(result).title)),
           [
+            ...(name === "context" && this.canCompactContext(topic)
+              ? [
+                  [
+                    this.button(
+                      actor,
+                      chat,
+                      thread,
+                      topic,
+                      t("context.button.confirm"),
+                      "context_compact",
+                    ),
+                  ],
+                ]
+              : []),
             [this.button(actor, chat, thread, topic, "🕘 Messages", "messages")],
             [
               this.button(actor, chat, thread, topic, "☑ Tasks", "todos"),
