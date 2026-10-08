@@ -330,3 +330,14 @@ test("custom commands reject unknown fields wrong types and embedded credentials
     await assert.rejects(f.ui.handle("config_save_commands", JSON.stringify(bad)));
   assert.equal(f.store.global()?.revision, 1);
 });
+
+test("global streaming default toggles supported edit/off modes", async () => {
+  const f = fixture();
+  await f.ui.handle("config_default", "responseStreamingMode");
+  assert.equal((f.store.global()!.data.defaults as any).topicDefaults.responseStreamingMode, "off");
+  await f.ui.handle("config_default", "responseStreamingMode");
+  assert.equal(
+    (f.store.global()!.data.defaults as any).topicDefaults.responseStreamingMode,
+    "edit",
+  );
+});

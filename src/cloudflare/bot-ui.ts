@@ -15,7 +15,12 @@ import {
 } from "../bot/message-patterns.js";
 import { CloudTaskUi } from "./task-ui.js";
 import type { ProtectedTelegramUpdate } from "./credential-vault.js";
-import { CloudConfigUi, resetGlobalConfiguration } from "./config-ui.js";
+import {
+  CloudConfigUi,
+  resetGlobalConfiguration,
+  OUTPUT_DEFAULTS,
+  outputSettingLabel,
+} from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
 
 export interface TelegramUpdate {
@@ -120,12 +125,16 @@ export class CloudBotUi {
     );
   }
   options(topic: FleetTopic): UiOptions {
-    return {
-      ...(record(this.deps.store.global()?.data.defaults) as UiOptions),
+    const defaults = record(this.deps.store.global()?.data.defaults);
+    const options: UiOptions = {
+      ...OUTPUT_DEFAULTS,
+      ...(defaults as UiOptions),
+      ...(record(defaults.topicDefaults) as UiOptions),
       ...this.get<UiOptions>(
         "topic:" + topic.chatId + ":" + topic.threadId + ":" + topic.generation,
       ),
     };
+    return { ...options, compact: options.compact ?? options.compactOutputMode };
   }
   private setOptions(topic: FleetTopic, patch: UiOptions): void {
     this.assertTopic(topic);
@@ -1130,7 +1139,7 @@ export class CloudBotUi {
         "💬 <b>Response & Output</b>",
         fields
           .map((field) => [
-            b(field + " · " + String(options[field] ?? false), "config_topic_setting", field),
+            b(outputSettingLabel(field, options[field]), "config_topic_setting", field),
           ])
           .concat([[b("← Topic Settings", "settings")]]),
       );

@@ -143,7 +143,7 @@ const labels: Record<Section, string> = {
   plugins: "🧩 Plugins",
   commands: "🧩 Custom Commands",
 };
-const defaultFields: Record<string, boolean | string> = {
+export const OUTPUT_DEFAULTS = {
   compactOutputMode: false,
   showThinkingContent: true,
   showAssistantRunFooter: true,
@@ -151,7 +151,32 @@ const defaultFields: Record<string, boolean | string> = {
   promptQueueEnabled: true,
   responseStreamingMode: "edit",
   messageFormatMode: "markdown",
+} satisfies Record<string, boolean | string>;
+type OutputField = keyof typeof OUTPUT_DEFAULTS;
+const outputLabels: Record<OutputField, string> = {
+  compactOutputMode: "📦 Compact output",
+  showThinkingContent: "💭 Thinking",
+  showAssistantRunFooter: "📊 Run footer",
+  sendDiffFileAttachments: "📎 File changes",
+  promptQueueEnabled: "📥 Prompt queue",
+  responseStreamingMode: "💬 Streaming",
+  messageFormatMode: "📝 Message format",
 };
+export function outputSettingLabel(field: OutputField, value: unknown): string {
+  const display =
+    field === "responseStreamingMode"
+      ? value === "off"
+        ? "OFF"
+        : "ON"
+      : field === "messageFormatMode"
+        ? value === "raw"
+          ? "Raw text"
+          : "Formatted"
+        : value
+          ? "ON"
+          : "OFF";
+  return outputLabels[field] + " · " + display;
+}
 
 export class CloudConfigUi {
   constructor(private readonly ctx: ConfigContext) {}
@@ -573,28 +598,28 @@ export class CloudConfigUi {
       const b = this.ctx.button.bind(this.ctx),
         d = obj(obj(this.snapshot().data.defaults).topicDefaults);
       await this.ctx.menu("🧩 <b>Topic Defaults</b>", [
-        ...Object.entries(defaultFields).map(([key, fallback]) => [
-          b(key + ": " + String(d[key] ?? fallback), "config_default", key),
+        ...Object.entries(OUTPUT_DEFAULTS).map(([key, fallback]) => [
+          b(outputSettingLabel(key as OutputField, d[key] ?? fallback), "config_default", key),
         ]),
         [b("← Settings", "settings")],
       ]);
       return true;
     }
     if (action === "config_default") {
-      if (!value || !Object.hasOwn(defaultFields, value)) throw new Error("invalid_default");
+      if (!value || !Object.hasOwn(OUTPUT_DEFAULTS, value)) throw new Error("invalid_default");
       await this.mutate((data) => {
         const defaults = obj(data.defaults),
           d = obj(defaults.topicDefaults);
         data.defaults = defaults;
         defaults.topicDefaults = d;
-        const previous = d[value] ?? defaultFields[value];
+        const previous = d[value] ?? OUTPUT_DEFAULTS[value as OutputField];
         d[value] =
           typeof previous === "boolean"
             ? !previous
             : value === "responseStreamingMode"
-              ? previous === "edit"
-                ? "draft"
-                : "edit"
+              ? previous === "off"
+                ? "edit"
+                : "off"
               : previous === "markdown"
                 ? "raw"
                 : "markdown";

@@ -704,7 +704,7 @@ test("streaming toggle persists an actual transport mode rather than a boolean",
   await f.bound();
   await f.update("/appearance", 42);
   const buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
-  const button = buttons.find((b: any) => String(b.text).includes("responseStreamingMode"));
+  const button = buttons.find((b: any) => String(b.text).includes("Streaming"));
   assert.ok(button);
   await f.callback(button.callback_data, 42);
   const row = [
@@ -782,4 +782,53 @@ test("a sleeping Worker keeps a prompt pending until signed readiness succeeds",
   ready = true;
   await f.plane.alarm();
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 1);
+});
+
+test("output menu shows effective queue default and first toggle disables queue", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/appearance", 42);
+  const button = f.sent
+    .flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+    .find((b: any) => b.text === "📥 Prompt queue · ON");
+  assert.ok(button);
+  await f.callback(button.callback_data, 42);
+  const row = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+  ][0];
+  assert.equal(JSON.parse(row.data).promptQueueEnabled, false);
+  assert.equal(
+    f.rpc.some((r) => r.operation === "execute"),
+    false,
+  );
+});
+
+test("canonical Topic defaults apply without being copied into Topic overrides", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.post("/admin/global", {
+    configuration: { runtime: { model: "opencode/big-pickle" } },
+    skills: [],
+    actions: [],
+    catalog: {},
+    credentialReferences: [],
+    defaults: {
+      topicDefaults: {
+        compactOutputMode: true,
+        promptQueueEnabled: false,
+        responseStreamingMode: "off",
+      },
+    },
+  });
+  await f.update("/appearance", 42);
+  const buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  assert.ok(buttons.some((b: any) => b.text === "📦 Compact output · ON"));
+  assert.ok(buttons.some((b: any) => b.text === "📥 Prompt queue · OFF"));
+  const streaming = buttons.find((b: any) => b.text === "💬 Streaming · OFF");
+  assert.ok(streaming);
+  await f.callback(streaming.callback_data, 42);
+  const row = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+  ][0];
+  assert.deepEqual(JSON.parse(row.data), { responseStreamingMode: "edit" });
 });

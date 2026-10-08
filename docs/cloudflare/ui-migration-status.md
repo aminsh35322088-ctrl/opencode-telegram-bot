@@ -42,3 +42,11 @@ Do not claim complete legacy UI parity or full migration based on this document.
 - Railway API and Telegram credentials remain protected Cloudflare secret bindings. Telegram allowed identity binding was also converted to protected secret without returning its value.
 
 This validates the implemented UI slice. It does not prove complete legacy integration parity, safe free-Worker reuse, recovery replacement, six-Topic rollover or full cutover.
+
+### Fresh provisioning and cleanup canary
+
+- Job `dbd85fb2-2fef-42eb-ba13-95504075e941` lazily provisioned Worker `ffcbb858-ed24-47eb-8db5-28f845950aff` and activated Telegram Topic `762995`. Allocation to observed signed readiness took approximately 95 seconds.
+- Railway deployment `616c5e9a-f306-413f-8a37-663fc2d4c57c` passed startup health after expected bootstrap retries. Attached volume and actual signed Core version/commit/image agreed with the pinned `.24` runtime.
+- Real run `ui_fresh_worker_canary_20261008` completed governed bash/Python execution and Telegram delivery. Its preview message `29320` was finalized; signed Worker status was inactive afterward.
+- Canary deletion fenced generation 1, removed the Telegram Topic and Railway service, and marked the registry Worker REPLACED at generation 2. Volume `900ceff5-6b94-4c1b-aaac-1416f29a050b` is detached and pending Railway's delayed deletion, rather than available for another Topic. Both existing user execution services remain intact; Railway reports two services, zero issues and zero recent failures.
+- Followup UI review corrected ignored canonical Topic defaults, initial queue-toggle behavior, unsupported draft-mode selection and raw internal preference labels. Failure responses no longer request workspace diffs. Regression assertions on exact stop/status behavior remain unchanged.

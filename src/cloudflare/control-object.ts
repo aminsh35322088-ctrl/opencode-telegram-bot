@@ -1479,7 +1479,14 @@ export class ControlPlane {
           break;
         }
       }
-      if (complete && preferences.sendDiffFileAttachments) {
+      const runCompleted =
+        [
+          ...this.state.storage.sql.exec<{ state: string }>(
+            "SELECT state FROM runs WHERE request=?",
+            response.run,
+          ),
+        ][0]?.state === "COMPLETED";
+      if (complete && runCompleted && preferences.sendDiffFileAttachments) {
         const id = response.run + ":diff";
         const receipt = [
           ...this.state.storage.sql.exec<{ state: string }>(
