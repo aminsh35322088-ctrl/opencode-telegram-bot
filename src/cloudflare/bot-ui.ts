@@ -18,7 +18,6 @@ import {
   CloudConfigUi,
   resetGlobalConfiguration,
   OUTPUT_DEFAULTS,
-  outputSettingLabel,
 } from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
@@ -42,6 +41,57 @@ import {
   buildModelCenterSearchResults,
   resolveModelCenterAction,
 } from "../bot/menus/model-center-menu.js";
+import {
+  SETTINGS_ACTIONS_CALLBACK,
+  SETTINGS_EXTENSIONS_CALLBACK,
+  SETTINGS_GITHUB_CALLBACK,
+  SETTINGS_MORE_CALLBACK,
+} from "../bot/menus/extension-settings-menu.js";
+import {
+  SETTINGS_ADVANCED_CALLBACK,
+  SETTINGS_AGENT_CALLBACK,
+  SETTINGS_APPEARANCE_CALLBACK,
+  SETTINGS_ASSISTANT_FOOTER_CALLBACK,
+  SETTINGS_BACK_CALLBACK,
+  SETTINGS_CLOSE_CALLBACK,
+  SETTINGS_COMMANDS_CALLBACK,
+  SETTINGS_COMPACT_OUTPUT_CALLBACK,
+  SETTINGS_CONTEXT_CALLBACK,
+  SETTINGS_DEFAULT_COMPACT_CALLBACK,
+  SETTINGS_DEFAULT_DIFF_CALLBACK,
+  SETTINGS_DEFAULT_FOOTER_CALLBACK,
+  SETTINGS_DEFAULT_FORMAT_CALLBACK,
+  SETTINGS_DEFAULT_MODELS_CALLBACK,
+  SETTINGS_DEFAULT_QUEUE_CALLBACK,
+  SETTINGS_DEFAULT_STREAMING_CALLBACK,
+  SETTINGS_DEFAULT_THINKING_CALLBACK,
+  SETTINGS_DIFF_FILES_CALLBACK,
+  SETTINGS_EXPERIMENTAL_CALLBACK,
+  SETTINGS_FACTORY_RESET_CALLBACK,
+  SETTINGS_FREE_DETECTION_CALLBACK,
+  SETTINGS_IMAGE_MODEL_CALLBACK,
+  SETTINGS_MEMORY_CALLBACK,
+  SETTINGS_MESSAGE_FORMAT_CALLBACK,
+  SETTINGS_MODEL_CALLBACK,
+  SETTINGS_NOTIFICATIONS_CALLBACK,
+  SETTINGS_PROMPT_QUEUE_CALLBACK,
+  SETTINGS_RESET_HISTORY_CALLBACK,
+  SETTINGS_RESPONSE_STREAMING_CALLBACK,
+  SETTINGS_THINKING_CONTENT_CALLBACK,
+  SETTINGS_TOPIC_DEFAULTS_CALLBACK,
+  SETTINGS_TOPIC_MODELS_CALLBACK,
+  SETTINGS_VARIANT_CALLBACK,
+  SETTINGS_VOICE_MODEL_CALLBACK,
+  buildCanonicalAdvancedSettingsView,
+  buildCanonicalAppearanceSettingsView,
+  buildCanonicalExperimentalSettingsView,
+  buildCanonicalMoreSettingsView,
+  buildCanonicalPromptQueueSettingsView,
+  buildCanonicalSettingsMenuView,
+  buildCanonicalTopicDefaultsSettingsView,
+  buildCanonicalTopicModelsSettingsView,
+  type CanonicalTopicSettingsState,
+} from "../bot/menus/settings-menu.js";
 
 export interface TelegramUpdate {
   update_id?: number;
@@ -395,6 +445,80 @@ export class CloudBotUi {
       }),
     ).filter((row) => row.length > 0);
   }
+  private topicSettingsState(topic: FleetTopic): CanonicalTopicSettingsState {
+    const options = this.options(topic);
+    return {
+      model: this.model(topic) || "Inherited default",
+      agent: options.agent ?? "Inherited default",
+      variant: options.variant ?? "Default",
+      imageModel: options.imageModel,
+      voiceModel: options.voiceModel,
+      compactOutputMode: options.compact ?? options.compactOutputMode ?? false,
+      showThinkingContent: options.showThinkingContent ?? true,
+      responseStreamingMode: options.responseStreamingMode === "draft" ? "draft" : "edit",
+      messageFormatMode: options.messageFormatMode === "raw" ? "raw" : "markdown",
+      showAssistantRunFooter: options.showAssistantRunFooter ?? true,
+      sendDiffFileAttachments: options.sendDiffFileAttachments ?? true,
+      promptQueueEnabled: options.promptQueueEnabled ?? true,
+    };
+  }
+  private settingsButtonRows(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic | undefined,
+    keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> },
+  ): Button[][] {
+    const b = (text: string, action: string, value?: string) =>
+      this.button(actor, chat, thread, topic, text, action, value);
+    const exact = new Map<string, [string, string?]>([
+      [SETTINGS_DEFAULT_MODELS_CALLBACK, ["models"]],
+      [SETTINGS_TOPIC_MODELS_CALLBACK, ["topic_models"]],
+      [SETTINGS_MODEL_CALLBACK, ["models"]],
+      [SETTINGS_IMAGE_MODEL_CALLBACK, ["model_image"]],
+      [SETTINGS_VOICE_MODEL_CALLBACK, ["model_voice"]],
+      [SETTINGS_AGENT_CALLBACK, ["agent"]],
+      [SETTINGS_VARIANT_CALLBACK, ["variant"]],
+      [SETTINGS_APPEARANCE_CALLBACK, ["appearance"]],
+      [SETTINGS_NOTIFICATIONS_CALLBACK, ["queue"]],
+      [SETTINGS_CONTEXT_CALLBACK, ["context"]],
+      [SETTINGS_CLOSE_CALLBACK, ["close"]],
+      [SETTINGS_GITHUB_CALLBACK, ["github"]],
+      ["integration:tailscale", ["tailscale"]],
+      [SETTINGS_EXTENSIONS_CALLBACK, ["extensions"]],
+      [SETTINGS_ACTIONS_CALLBACK, ["actions"]],
+      [SETTINGS_MORE_CALLBACK, ["more"]],
+      [SETTINGS_ADVANCED_CALLBACK, ["advanced"]],
+      [SETTINGS_TOPIC_DEFAULTS_CALLBACK, ["topic_defaults"]],
+      [SETTINGS_EXPERIMENTAL_CALLBACK, ["experimental"]],
+      [SETTINGS_COMMANDS_CALLBACK, ["commands"]],
+      [SETTINGS_MEMORY_CALLBACK, ["memory"]],
+      [SETTINGS_RESET_HISTORY_CALLBACK, ["reset_history"]],
+      [SETTINGS_FACTORY_RESET_CALLBACK, ["factory_reset"]],
+      [SETTINGS_BACK_CALLBACK, ["settings"]],
+      [SETTINGS_COMPACT_OUTPUT_CALLBACK, ["config_topic_setting", "compactOutputMode"]],
+      [SETTINGS_THINKING_CONTENT_CALLBACK, ["config_topic_setting", "showThinkingContent"]],
+      [SETTINGS_RESPONSE_STREAMING_CALLBACK, ["config_topic_setting", "responseStreamingMode"]],
+      [SETTINGS_MESSAGE_FORMAT_CALLBACK, ["config_topic_setting", "messageFormatMode"]],
+      [SETTINGS_ASSISTANT_FOOTER_CALLBACK, ["config_topic_setting", "showAssistantRunFooter"]],
+      [SETTINGS_DIFF_FILES_CALLBACK, ["config_topic_setting", "sendDiffFileAttachments"]],
+      [SETTINGS_PROMPT_QUEUE_CALLBACK, ["config_topic_setting", "promptQueueEnabled"]],
+      [SETTINGS_DEFAULT_COMPACT_CALLBACK, ["config_default", "compactOutputMode"]],
+      [SETTINGS_DEFAULT_THINKING_CALLBACK, ["config_default", "showThinkingContent"]],
+      [SETTINGS_DEFAULT_STREAMING_CALLBACK, ["config_default", "responseStreamingMode"]],
+      [SETTINGS_DEFAULT_FORMAT_CALLBACK, ["config_default", "messageFormatMode"]],
+      [SETTINGS_DEFAULT_FOOTER_CALLBACK, ["config_default", "showAssistantRunFooter"]],
+      [SETTINGS_DEFAULT_DIFF_CALLBACK, ["config_default", "sendDiffFileAttachments"]],
+      [SETTINGS_DEFAULT_QUEUE_CALLBACK, ["config_default", "promptQueueEnabled"]],
+      [SETTINGS_FREE_DETECTION_CALLBACK, ["config_free_detection"]],
+    ]);
+    return keyboard.inline_keyboard.map((row) =>
+      row.flatMap((button) => {
+        const mapped = exact.get(button.callback_data ?? "");
+        return mapped ? [b(button.text, mapped[0], mapped[1])] : [];
+      }),
+    ).filter((row) => row.length > 0);
+  }
   private async renderModelRoot(
     actor: number,
     chat: number,
@@ -422,28 +546,13 @@ export class CloudBotUi {
     thread: number,
     topic?: FleetTopic,
   ): Promise<void> {
-    const b = (label: string, action: string, value?: string) =>
-      this.button(actor, chat, thread, topic, label, action, value);
-    if (topic) {
-      await this.menu(chat, thread, "🧵 <b>Topic Settings</b>\n\n" + escape(this.model(topic)), [
-        [b("🧠 Models", "models")],
-        [b("🧑‍💻 Agent", "agent")],
-        [b("🎛 Variant", "variant")],
-        [b("💬 Response & Output", "appearance")],
-        [b("📥 Prompt Queue", "queue")],
-        [b("🧠 Context Health", "context")],
-        [b("🧭 Session", "session")],
-        [b("✖ Close", "close")],
-      ]);
-    } else
-      await this.menu(chat, undefined, "⚙️ <b>Settings</b>", [
-        [b("🧠 Model Center", "models")],
-        [b("🔌 Providers", "providers")],
-        [b("🐙 GitHub", "github"), b("🌐 Tailscale", "tailscale")],
-        [b("🧩 Extensions", "extensions")],
-        [b("⚡ Actions", "actions")],
-        [b("⋯ More", "more")],
-      ]);
+    const view = buildCanonicalSettingsMenuView(topic ? this.topicSettingsState(topic) : undefined);
+    await this.menu(
+      chat,
+      topic ? thread : undefined,
+      view.text,
+      this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+    );
   }
   private async history(actor: number, chat: number): Promise<void> {
     const topics = this.deps.store
@@ -1271,10 +1380,12 @@ export class CloudBotUi {
         "promptQueueEnabled",
         "responseStreamingMode",
       ] as const;
+      let changedField: (typeof fields)[number] | undefined;
       if (name === "config_topic_setting") {
         if (!fields.includes(action.value as (typeof fields)[number]))
           throw new Error("invalid_setting");
         const field = action.value as (typeof fields)[number];
+        changedField = field;
         const current = this.options(topic)[field];
         this.setOptions(topic, {
           [field]:
@@ -1290,16 +1401,16 @@ export class CloudBotUi {
         });
         if (updateId) this.set("action_done:" + updateId, true);
       }
-      const options = this.options(topic);
+      const state = this.topicSettingsState(topic);
+      const view =
+        name === "queue" || changedField === "promptQueueEnabled"
+          ? buildCanonicalPromptQueueSettingsView(state.promptQueueEnabled)
+          : buildCanonicalAppearanceSettingsView(state);
       await this.menu(
         chat,
         thread,
-        "💬 <b>Response & Output</b>",
-        fields
-          .map((field) => [
-            b(outputSettingLabel(field, options[field]), "config_topic_setting", field),
-          ])
-          .concat([[b("← Topic Settings", "settings")]]),
+        view.text,
+        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
       );
       return true;
     }
@@ -1315,6 +1426,93 @@ export class CloudBotUi {
         [b("Remove", "config_remove_providers", action.value)],
         [b("← Providers", "providers")],
       ]);
+      return true;
+    }
+    if (name === "topic_models") {
+      if (!topic) throw new Error("topic_not_writable");
+      const view = buildCanonicalTopicModelsSettingsView(this.topicSettingsState(topic));
+      await this.menu(
+        chat,
+        thread,
+        view.text,
+        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (name === "more" || name === "advanced") {
+      const view = name === "more" ? buildCanonicalMoreSettingsView() : buildCanonicalAdvancedSettingsView();
+      await this.menu(
+        chat,
+        thread || undefined,
+        view.text,
+        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (name === "topic_defaults" || name === "config_default") {
+      if (!global) throw new Error("snapshot_unavailable");
+      if (name === "config_default") {
+        const field = action.value ?? "";
+        if (!Object.hasOwn(OUTPUT_DEFAULTS, field)) throw new Error("invalid_default");
+        const data = structuredClone(global.data);
+        const defaults = record(data.defaults);
+        const topicDefaults = record(defaults.topicDefaults);
+        data.defaults = defaults;
+        defaults.topicDefaults = topicDefaults;
+        const previous = topicDefaults[field] ?? OUTPUT_DEFAULTS[field as keyof typeof OUTPUT_DEFAULTS];
+        topicDefaults[field] =
+          typeof previous === "boolean"
+            ? !previous
+            : field === "responseStreamingMode"
+              ? previous === "off"
+                ? "edit"
+                : "off"
+              : previous === "raw"
+                ? "markdown"
+                : "raw";
+        await this.deps.global(data, global.revision);
+        if (updateId) this.set("action_done:" + updateId, true);
+      }
+      const fresh = this.deps.store.global();
+      const values = record(record(fresh?.data.defaults).topicDefaults);
+      const view = buildCanonicalTopicDefaultsSettingsView({
+        compactOutputMode: Boolean(values.compactOutputMode ?? OUTPUT_DEFAULTS.compactOutputMode),
+        showThinkingContent: Boolean(values.showThinkingContent ?? OUTPUT_DEFAULTS.showThinkingContent),
+        responseStreamingMode: values.responseStreamingMode === "draft" ? "draft" : "edit",
+        messageFormatMode: values.messageFormatMode === "raw" ? "raw" : "markdown",
+        showAssistantRunFooter: Boolean(values.showAssistantRunFooter ?? OUTPUT_DEFAULTS.showAssistantRunFooter),
+        sendDiffFileAttachments: Boolean(values.sendDiffFileAttachments ?? OUTPUT_DEFAULTS.sendDiffFileAttachments),
+        promptQueueEnabled: Boolean(values.promptQueueEnabled ?? OUTPUT_DEFAULTS.promptQueueEnabled),
+      });
+      await this.menu(
+        chat,
+        thread || undefined,
+        view.text,
+        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (name === "experimental" || name === "config_free_detection") {
+      if (!global) throw new Error("snapshot_unavailable");
+      if (name === "config_free_detection") {
+        const data = structuredClone(global.data);
+        const configuration = record(data.configuration);
+        const settings = record(configuration.settings);
+        data.configuration = configuration;
+        configuration.settings = settings;
+        settings.experimentalFreeModelDetection = settings.experimentalFreeModelDetection !== true;
+        await this.deps.global(data, global.revision);
+        if (updateId) this.set("action_done:" + updateId, true);
+      }
+      const fresh = this.deps.store.global();
+      const enabled = record(record(fresh?.data.configuration).settings).experimentalFreeModelDetection === true;
+      const view = buildCanonicalExperimentalSettingsView(enabled);
+      await this.menu(
+        chat,
+        thread || undefined,
+        view.text,
+        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
       return true;
     }
     if (await configUi.handle(name, action.value)) return true;
@@ -1570,42 +1768,6 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         "This Topic owns a dedicated managed Core runtime and workspace. Use /session to inspect it, /abort to stop work, or Delete Chat to retire it. Runtime creation and cleanup are controlled by Cloudflare.",
-      );
-      return true;
-    }
-    if (name === "more" || name === "advanced") {
-      await this.menu(chat, thread || undefined, "🧰 <b>More Settings</b>", [
-        [b("🧩 Topic Defaults", "topic_defaults")],
-        [b("🧠 Skills", "skills")],
-        [b("🔗 MCP", "mcps")],
-        [b("🧩 Plugins", "plugins")],
-        [b("💾 Persistent Memory", "memory")],
-        [b("🧩 Custom Commands", "commands")],
-        [b("📅 Scheduled Tasks", "tasklist")],
-        [b("🧪 Experimental", "experimental")],
-        [b("🧹 Clear Conversation History", "reset_history")],
-        [b("☢️ Factory Reset", "factory_reset")],
-        [b("← Settings", "settings")],
-      ]);
-      return true;
-    }
-    if (
-      name === "appearance" ||
-      name === "queue" ||
-      name === "topic_defaults" ||
-      name === "experimental"
-    ) {
-      await this.menu(
-        chat,
-        thread || undefined,
-        "💬 <b>Response & Output</b>\n\n" +
-          (topic ? "Topic presentation settings." : "Defaults for new AI Topics."),
-        [
-          ...(topic
-            ? [[b("📦 Compact: " + (this.options(topic).compact ? "ON" : "OFF"), "compact")]]
-            : []),
-          [b("← Settings", "settings")],
-        ],
       );
       return true;
     }

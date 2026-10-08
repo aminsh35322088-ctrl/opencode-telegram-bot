@@ -434,3 +434,199 @@ export function buildExperimentalSettingsView(): { text: string; keyboard: Inlin
       .text("← Back", SETTINGS_BACK_CALLBACK),
   };
 }
+
+/**
+ * Durable/control-plane friendly view builders. They intentionally live beside
+ * the original Settings implementation so the legacy Telegram copy, hierarchy
+ * and callback namespace remain the canonical UI contract while state can come
+ * from Cloudflare instead of process-local stores.
+ */
+export interface CanonicalTopicSettingsState {
+  model: string;
+  agent: string;
+  variant: string;
+  imageModel?: string;
+  voiceModel?: string;
+  compactOutputMode: boolean;
+  showThinkingContent: boolean;
+  responseStreamingMode: ResponseStreamingMode;
+  messageFormatMode: MessageFormatMode;
+  showAssistantRunFooter: boolean;
+  sendDiffFileAttachments: boolean;
+  promptQueueEnabled: boolean;
+}
+
+export interface CanonicalTopicDefaultsState {
+  compactOutputMode: boolean;
+  showThinkingContent: boolean;
+  responseStreamingMode: ResponseStreamingMode;
+  messageFormatMode: MessageFormatMode;
+  showAssistantRunFooter: boolean;
+  sendDiffFileAttachments: boolean;
+  promptQueueEnabled: boolean;
+}
+
+export function buildCanonicalSettingsMenuView(
+  topic?: CanonicalTopicSettingsState,
+): { text: string; keyboard: InlineKeyboard } {
+  if (!topic) {
+    return {
+      text: [
+        "⚙️ <b>Settings</b>",
+        "",
+        "🧠 Model Center",
+        "🐙 GitHub · 🌐 Tailscale",
+        "🧩 Extensions",
+        "⚡ Actions",
+      ].join("\n"),
+      keyboard: new InlineKeyboard()
+        .text("🧠 Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
+        .text("🐙 GitHub", SETTINGS_GITHUB_CALLBACK)
+        .text("🌐 Tailscale", "integration:tailscale").row()
+        .text("🧩 Extensions", SETTINGS_EXTENSIONS_CALLBACK).row()
+        .text("⚡ Actions", SETTINGS_ACTIONS_CALLBACK).row()
+        .text("⋯ More", SETTINGS_MORE_CALLBACK),
+    };
+  }
+  const imageModel = topic.imageModel ?? "Main Default";
+  const voiceModel = topic.voiceModel ?? "Auto · Primary native → Main Default";
+  return {
+    text: [
+      "🧵 <b>Topic Settings</b>",
+      "",
+      `<code>${escapeHtml(topic.model)}</code>`,
+      "",
+      "🧠 <b>Model Center</b> · Capability-aware routing",
+      "💬 <b>Primary / Chat & Coding</b> · " + topic.model,
+      "🎨 <b>Image AI</b> · " + imageModel,
+      "🎙️ <b>Voice → Text</b> · " + voiceModel,
+      `🧑‍💻 <b>Agent</b> · ${topic.agent}`,
+      `🎛 <b>Variant</b> · ${topic.variant}`,
+      "",
+      "💬 <b>Response & Output</b>",
+      `📥 <b>Prompt Queue</b> · ${statusPill(topic.promptQueueEnabled)}`,
+      "🧠 <b>Context Health</b>",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("🧠 Models", SETTINGS_TOPIC_MODELS_CALLBACK).row()
+      .text(`🧑‍💻 Agent · ${topic.agent}`, SETTINGS_AGENT_CALLBACK).row()
+      .text(`🎛 Variant · ${topic.variant}`, SETTINGS_VARIANT_CALLBACK).row()
+      .text("💬 Response & Output", SETTINGS_APPEARANCE_CALLBACK).row()
+      .text(`📥 Prompt Queue · ${formatBooleanSettingValue(topic.promptQueueEnabled)}`, SETTINGS_NOTIFICATIONS_CALLBACK).row()
+      .text("🧠 Context Health", SETTINGS_CONTEXT_CALLBACK).row()
+      .text("✖ Close", SETTINGS_CLOSE_CALLBACK),
+  };
+}
+
+export function buildCanonicalTopicModelsSettingsView(
+  topic: Pick<CanonicalTopicSettingsState, "model" | "imageModel" | "voiceModel">,
+): { text: string; keyboard: InlineKeyboard } {
+  const image = topic.imageModel ?? "Not configured · Main Default";
+  const voice = topic.voiceModel ?? "Auto · Primary native → Main Default";
+  return {
+    text: [
+      "🧠 <b>Model Center</b>", "",
+      "💬 <b>Primary / Chat & Coding</b> · " + topic.model,
+      "🎨 <b>Image AI</b> · " + image,
+      "🎙️ <b>Voice → Text</b> · " + voice, "",
+      "Primary handles every capability it supports. Topic overrides take priority; missing capabilities use configured Main Default helpers.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("💬 Primary / Chat & Coding", SETTINGS_MODEL_CALLBACK).row()
+      .text("🎨 Image AI", SETTINGS_IMAGE_MODEL_CALLBACK).row()
+      .text("🎙️ Voice → Text", SETTINGS_VOICE_MODEL_CALLBACK).row()
+      .text("← Topic Settings", SETTINGS_BACK_CALLBACK),
+  };
+}
+
+export function buildCanonicalAppearanceSettingsView(
+  state: Pick<CanonicalTopicSettingsState,
+    "compactOutputMode" | "showThinkingContent" | "responseStreamingMode" |
+    "messageFormatMode" | "showAssistantRunFooter" | "sendDiffFileAttachments">,
+): { text: string; keyboard: InlineKeyboard } {
+  const keyboard = new InlineKeyboard()
+    .text(settingButton("📦 Compact output", formatBooleanSettingValue(state.compactOutputMode)), SETTINGS_COMPACT_OUTPUT_CALLBACK).row()
+    .text(settingButton("🧠 Thinking details", formatBooleanSettingValue(state.showThinkingContent)), SETTINGS_THINKING_CONTENT_CALLBACK).row()
+    .text(`✍️ Reply streaming · ${formatResponseStreamingModeValue(state.responseStreamingMode)}`, SETTINGS_RESPONSE_STREAMING_CALLBACK).row()
+    .text(`📝 Message format · ${formatMessageFormatModeValue(state.messageFormatMode)}`, SETTINGS_MESSAGE_FORMAT_CALLBACK).row()
+    .text(settingButton("📊 Run footer", formatBooleanSettingValue(state.showAssistantRunFooter)), SETTINGS_ASSISTANT_FOOTER_CALLBACK).row()
+    .text(settingButton("📎 Diff files", formatBooleanSettingValue(state.sendDiffFileAttachments)), SETTINGS_DIFF_FILES_CALLBACK)
+    .row().text("← Back", SETTINGS_BACK_CALLBACK);
+  return {
+    text: [
+      "💬 <b>Response & Output</b>", "",
+      "Control how this Topic receives and displays model responses.", "",
+      `📦 <b>Compact output</b> · ${statusPill(state.compactOutputMode)} — keeps responses less verbose when supported.`,
+      `🧠 <b>Thinking details</b> · ${statusPill(state.showThinkingContent)} — show reasoning/thinking content when exposed by the provider.`,
+      `✍️ <b>Reply streaming</b> · ${formatResponseStreamingModeValue(state.responseStreamingMode)} — edit one live message or use a draft-style stream.`,
+      `📝 <b>Message format</b> · ${formatMessageFormatModeValue(state.messageFormatMode)} — Markdown formatting or raw text.`,
+      `📊 <b>Run footer</b> · ${statusPill(state.showAssistantRunFooter)} — append run completion/usage information.`,
+      `📎 <b>Diff files</b> · ${statusPill(state.sendDiffFileAttachments)} — send generated diff content as file attachments when available.`,
+    ].join("\n"),
+    keyboard,
+  };
+}
+
+export function buildCanonicalPromptQueueSettingsView(enabled: boolean): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: [
+      "📥 <b>Prompt Queue</b>", "",
+      "Choose whether new prompts should wait instead of colliding with an active run.", "",
+      `Current state: ${statusPill(enabled)}`, "",
+      "🟢 ON · new prompts are held in order until the current run is free.",
+      "⚪ OFF · new prompts follow the normal busy/run handling path.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text(settingButton("📥 Prompt queue", formatBooleanSettingValue(enabled)), SETTINGS_PROMPT_QUEUE_CALLBACK)
+      .row().text("← Back", SETTINGS_BACK_CALLBACK),
+  };
+}
+
+export function buildCanonicalMoreSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  return buildMoreSettingsView();
+}
+
+export function buildCanonicalAdvancedSettingsView(): { text: string; keyboard: InlineKeyboard } {
+  return buildAdvancedSettingsView();
+}
+
+export function buildCanonicalTopicDefaultsSettingsView(
+  defaults: CanonicalTopicDefaultsState,
+): { text: string; keyboard: InlineKeyboard } {
+  const keyboard = new InlineKeyboard()
+    .text(settingButton("📦 Compact", formatBooleanSettingValue(defaults.compactOutputMode)), SETTINGS_DEFAULT_COMPACT_CALLBACK).row()
+    .text(settingButton("🧠 Thinking", formatBooleanSettingValue(defaults.showThinkingContent)), SETTINGS_DEFAULT_THINKING_CALLBACK).row()
+    .text(`✍️ Streaming · ${formatResponseStreamingModeValue(defaults.responseStreamingMode)}`, SETTINGS_DEFAULT_STREAMING_CALLBACK).row()
+    .text(`📝 Format · ${formatMessageFormatModeValue(defaults.messageFormatMode)}`, SETTINGS_DEFAULT_FORMAT_CALLBACK).row()
+    .text(settingButton("📊 Run footer", formatBooleanSettingValue(defaults.showAssistantRunFooter)), SETTINGS_DEFAULT_FOOTER_CALLBACK).row()
+    .text(settingButton("📎 Diff files", formatBooleanSettingValue(defaults.sendDiffFileAttachments)), SETTINGS_DEFAULT_DIFF_CALLBACK).row()
+    .text(settingButton("📥 Prompt queue", formatBooleanSettingValue(defaults.promptQueueEnabled)), SETTINGS_DEFAULT_QUEUE_CALLBACK)
+    .row().text("← Back", SETTINGS_BACK_CALLBACK);
+  return {
+    text: [
+      "🧩 <b>Topic Defaults</b>", "",
+      "These values are copied only when a new Topic is created. Existing Topics keep their own settings.", "",
+      `📦 Compact output · ${formatBooleanSettingValue(defaults.compactOutputMode)} — reduce verbose response formatting.`,
+      `🧠 Thinking details · ${formatBooleanSettingValue(defaults.showThinkingContent)} — include model reasoning/details when available.`,
+      `✍️ Streaming · ${formatResponseStreamingModeValue(defaults.responseStreamingMode)} — choose live-edit or live-draft delivery.`,
+      `📝 Message format · ${formatMessageFormatModeValue(defaults.messageFormatMode)} — choose Markdown or raw text.`,
+      `📊 Run footer · ${formatBooleanSettingValue(defaults.showAssistantRunFooter)} — show completion/usage footer information.`,
+      `📎 Diff files · ${formatBooleanSettingValue(defaults.sendDiffFileAttachments)} — attach generated diffs as files when applicable.`,
+      `📥 Prompt queue · ${formatBooleanSettingValue(defaults.promptQueueEnabled)} — queue new prompts while a run is busy.`,
+    ].join("\n"),
+    keyboard,
+  };
+}
+
+export function buildCanonicalExperimentalSettingsView(enabled: boolean): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: [
+      "🧪 <b>Experimental</b>", "",
+      "🎨 <b>Free Model Detection</b> adds experimental pricing hints to model lists. It never filters, selects, or reroutes a model.", "",
+      "Classification can change as provider metadata changes.",
+    ].join("\n"),
+    keyboard: new InlineKeyboard()
+      .text("Free Model Detection: " + formatBooleanSettingValue(enabled), SETTINGS_FREE_DETECTION_CALLBACK).row()
+      .text("← Back", SETTINGS_BACK_CALLBACK),
+  };
+}
