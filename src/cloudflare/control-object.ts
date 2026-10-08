@@ -126,9 +126,21 @@ export class ControlPlane {
           )[0],
         );
         if (!Number.isSafeInteger(actor) || !actor) throw new Error("authorization_not_configured");
+        const sequence = [
+          ...this.state.storage.sql.exec<{ data: string }>(
+            "SELECT data FROM ui_state WHERE key='admin_ui_sequence'",
+          ),
+        ][0];
+        const updateId = sequence ? Number(sequence.data) - 1 : -1;
+        if (!Number.isSafeInteger(updateId) || updateId >= 0)
+          throw new Error("invalid_ui_sequence");
+        this.state.storage.sql.exec(
+          "INSERT INTO ui_state VALUES('admin_ui_sequence',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+          String(updateId),
+        );
         await this.ui().handle(
           {
-            update_id: Date.now(),
+            update_id: updateId,
             message: {
               chat: { id: chat },
               from: { id: actor },
@@ -136,7 +148,7 @@ export class ControlPlane {
               text: "/" + command,
             },
           },
-          Date.now(),
+          updateId,
         );
         // eslint-disable-next-line no-console
         console.log(

@@ -909,8 +909,20 @@ test("cancelled configuration wizard cannot commit its old confirmation", async 
 test("authenticated read-only UI checks render guided Skills and MCP menus without execution", async (t) => {
   const f = fixture(t);
   await f.bound();
+  const now = Date.now;
+  const fixedTime = now();
+  Date.now = () => fixedTime;
+  t.after(() => {
+    Date.now = now;
+  });
   for (const command of ["skills", "mcps"]) {
-    const result = await f.post("/admin/ui", { chatId: -100, command });
+    const plane = command === "mcps" ? new ControlPlane(f.state as never, f.env as never) : f.plane;
+    const result = await plane.fetch(
+      new Request("https://internal/admin/ui", {
+        method: "POST",
+        body: JSON.stringify({ chatId: -100, command }),
+      }),
+    );
     assert.equal(result.status, 200);
   }
   const labels = f.sent
