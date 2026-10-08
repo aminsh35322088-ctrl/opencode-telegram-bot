@@ -32,21 +32,26 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.14
+          node-version: 22.14.0
           cache: npm
 
       - name: Install project dependencies
         run: npm ci
 
+      - name: Verify pinned Core packages
+        run: node scripts/verify-core-install.mjs
+
       - name: Install CI test runner
         run: npm install --no-save --package-lock=false vitest@3.2.4
+
+      - name: Run Core routing and distributed boundary tests
+        run: node --import tsx --test tests/*.test.ts
 
       - name: Materialize CI-only test suite
         run: |
           rm -rf ./tests
-          cp -a .github/ci-tests/tests/. ./tests/
-          cp .github/ci-tests/tsconfig.test.json ./tsconfig.test.json
-          cp .github/ci-tests/vitest.config.ts ./vitest.config.ts
+          mkdir -p ./tests
+          cp -R .github/ci-tests/tests/. ./tests/
 
       - name: Lint
         run: |
@@ -54,17 +59,15 @@ jobs:
           ./node_modules/.bin/eslint tests --max-warnings=0
 
       - name: Typecheck
-        run: |
-          ./node_modules/.bin/tsc --noEmit
-          ./node_modules/.bin/tsc -p tsconfig.test.json --noEmit
+        run: npm run typecheck
 
       - name: Build
-        run: ./node_modules/.bin/tsc
+        run: npm run build
 
       - name: Test
-        run: ./node_modules/.bin/vitest run
+        run: ./node_modules/.bin/vitest run --config .github/ci-tests/vitest.config.ts
 
       - name: Cleanup
         if: always()
         run: |
-          rm -rf tests tsconfig.test.json vitest.config.ts coverage node_modules/vitest node_modules/@vitest
+          rm -rf tests coverage node_modules/vitest node_modules/@vitest
