@@ -549,6 +549,21 @@ test("session dashboard exposes owned todo/diff/subagent/file navigation", async
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
 });
 
+test("Model Center uses the canonical legacy root instead of the simplified Cloudflare replacement", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/model", 42);
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /🤖 <b>MODEL CENTER<\/b>/);
+  assert.match(output, /🟢 <b>CURRENT MODEL<\/b>/);
+  assert.match(output, /⭐ Favorites/);
+  assert.match(output, /🕘 Recent models/);
+  assert.match(output, /🔎 Search models/);
+  assert.match(output, /🧩 Browse providers/);
+  assert.doesNotMatch(output, /Primary \/ Chat & Coding/);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
 test("model and agent selectors use Core catalogs without creating model runs", async (t) => {
   const f = fixture(t);
   await f.bound();

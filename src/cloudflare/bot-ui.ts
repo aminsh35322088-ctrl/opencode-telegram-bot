@@ -23,6 +23,25 @@ import {
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
 import { LegacyMainUi } from "./legacy-main-ui.js";
+import { LegacyModelAdapter, type LegacyModelScope } from "./legacy-model-adapter.js";
+import {
+  MODEL_CENTER_FAVORITES,
+  MODEL_CENTER_PROVIDER_PREFIX,
+  MODEL_CENTER_PROVIDERS,
+  MODEL_CENTER_RECENT,
+  MODEL_CENTER_ROOT,
+  MODEL_CENTER_SEARCH,
+  MODEL_CENTER_SEARCH_AGAIN,
+  MODEL_CENTER_SELECT_PREFIX,
+  MODEL_CENTER_FAVORITE_PREFIX,
+  MODEL_CENTER_SETTINGS_BACK,
+  buildModelCenterList,
+  buildModelCenterProvider,
+  buildModelCenterProviders,
+  buildModelCenterRoot,
+  buildModelCenterSearchResults,
+  resolveModelCenterAction,
+} from "../bot/menus/model-center-menu.js";
 
 export interface TelegramUpdate {
   update_id?: number;
@@ -308,8 +327,8 @@ export class CloudBotUi {
       throw error;
     }
   }
-  private legacyMain(): LegacyMainUi {
-    const adapter =
+  private legacyAdapter(): LegacyUiAdapter {
+    return (
       this.deps.legacyUi ??
       new LegacyUiAdapter({
         sql: this.deps.sql,
@@ -318,8 +337,75 @@ export class CloudBotUi {
         coreVersion: this.deps.coreVersion,
         rpc: this.deps.rpc,
         commitGlobal: (data, expectedRevision) => this.deps.global(data, expectedRevision),
-      });
-    return new LegacyMainUi(adapter, this.deps.telegram);
+      })
+    );
+  }
+  private legacyMain(): LegacyMainUi {
+    return new LegacyMainUi(this.legacyAdapter(), this.deps.telegram);
+  }
+  private legacyModels(): LegacyModelAdapter {
+    return new LegacyModelAdapter(this.legacyAdapter());
+  }
+  private modelScope(topic?: FleetTopic): LegacyModelScope {
+    return topic ? { kind: "topic", topic } : { kind: "global" };
+  }
+  private modelButtonRows(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic | undefined,
+    keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> },
+  ): Button[][] {
+    const b = (text: string, action: string, value?: string) =>
+      this.button(actor, chat, thread, topic, text, action, value);
+    return keyboard.inline_keyboard.map((row) =>
+      row.flatMap((button) => {
+        const data = button.callback_data ?? "";
+        if (data === MODEL_CENTER_ROOT) return [b(button.text, "models")];
+        if (data === MODEL_CENTER_FAVORITES) return [b(button.text, "model_favorites")];
+        if (data === MODEL_CENTER_RECENT) return [b(button.text, "model_recent")];
+        if (data === MODEL_CENTER_PROVIDERS) return [b(button.text, "model_providers")];
+        if (data === MODEL_CENTER_SEARCH || data === MODEL_CENTER_SEARCH_AGAIN)
+          return [b(button.text, "model_search")];
+        if (data === MODEL_CENTER_SETTINGS_BACK) return [b(button.text, "settings")];
+        if (data === "main:home") return [b(button.text, "home")];
+        if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
+          const tail = data.slice(MODEL_CENTER_PROVIDER_PREFIX.length);
+          const split = tail.lastIndexOf(":");
+          if (split < 1) return [];
+          return [
+            b(
+              button.text,
+              "model_provider",
+              JSON.stringify({ providerID: decodeURIComponent(tail.slice(0, split)), page: Number(tail.slice(split + 1)) }),
+            ),
+          ];
+        }
+        if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
+          const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
+          return model ? [b(button.text, "model_save", `${model.providerID}/${model.modelID}`)] : [];
+        }
+        if (data.startsWith(MODEL_CENTER_FAVORITE_PREFIX)) {
+          const model = resolveModelCenterAction(data.slice(MODEL_CENTER_FAVORITE_PREFIX.length));
+          return model
+            ? [b(button.text, "model_favorite_toggle", `${model.providerID}/${model.modelID}`)]
+            : [];
+        }
+        return [];
+      }),
+    ).filter((row) => row.length > 0);
+  }
+  private async renderModelRoot(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic?: FleetTopic,
+  ): Promise<void> {
+    const models = this.legacyModels();
+    const scope = this.modelScope(topic);
+    const current = await models.current(topic);
+    const view = await buildModelCenterRoot(current, models.source(scope));
+    await this.menu(chat, thread || undefined, view.text, this.modelButtonRows(actor, chat, thread, topic, view.keyboard));
   }
   private async home(chat: number, actor: number, replace: boolean): Promise<void> {
     if (replace)
@@ -1541,42 +1627,99 @@ export class CloudBotUi {
       return true;
     }
     if (name === "models" || name === "model") {
-      let providers: unknown[] = [];
-      if (topic) {
-        const result = await this.deps.rpc(topic, "models.list");
-        providers = Array.isArray(record(result).providers)
-          ? (record(result).providers as unknown[])
-          : [];
-        this.set("models:catalog", { providers });
-      } else providers = this.get<{ providers: unknown[] }>("models:catalog")?.providers ?? [];
-      const modelRows: Button[][] = [];
-      for (const item of providers) {
-        const provider = record(item);
-        for (const [id, model] of Object.entries(record(provider.models))) {
-          if (modelRows.length >= 40) break;
-          modelRows.push([
-            b(
-              String(provider.id) + "/" + String(record(model).name ?? id),
-              "model_save",
-              String(provider.id) + "/" + id,
-            ),
-          ]);
-        }
-      }
+      const models = this.legacyModels();
+      const scope = this.modelScope(topic);
+      if (topic) await models.providers(scope);
+      await this.renderModelRoot(actor, chat, thread, topic);
+      return true;
+    }
+    if (name === "model_favorites" || name === "model_recent") {
+      const models = this.legacyModels();
+      const scope = this.modelScope(topic);
+      const current = await models.current(topic);
+      const view = await buildModelCenterList(
+        name === "model_favorites" ? "favorites" : "recent",
+        current,
+        models.source(scope),
+      );
       await this.menu(
         chat,
         thread || undefined,
-        "🧠 <b>Model Center</b>\n\nPrimary: " +
-          escape(this.model(topic)) +
-          "\nSet an exact provider/model. No hidden model fallback.",
-        [
-          [b("💬 Primary / Chat & Coding", "model_edit")],
-          [b("🖼 Image Model", "model_image"), b("🎙 Voice Model", "model_voice")],
-          ...modelRows,
-          [b("🔌 Providers", "providers")],
-          [b("← Settings", "settings")],
-        ],
+        view.text,
+        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
       );
+      return true;
+    }
+    if (name === "model_providers") {
+      const models = this.legacyModels();
+      const scope = this.modelScope(topic);
+      const view = await buildModelCenterProviders(models.source(scope));
+      await this.menu(
+        chat,
+        thread || undefined,
+        view.text,
+        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (name === "model_provider") {
+      const input = JSON.parse(action.value ?? "{}") as { providerID?: string; page?: number };
+      if (!input.providerID || !Number.isSafeInteger(input.page ?? -1)) throw new Error("invalid_model_provider");
+      const models = this.legacyModels();
+      const scope = this.modelScope(topic);
+      const provider = (await models.providers(scope)).find((item) => item.id === input.providerID);
+      if (!provider) throw new Error("model_provider_unavailable");
+      const current = await models.current(topic);
+      const view = await buildModelCenterProvider(
+        provider,
+        input.page!,
+        current,
+        undefined,
+        models.source(scope),
+      );
+      await this.menu(
+        chat,
+        thread || undefined,
+        view.text,
+        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (name === "model_search") {
+      this.set("form:" + actor + ":" + chat + ":" + thread, {
+        kind: "model_search",
+        generation: topic?.generation ?? 0,
+        expires: Date.now() + 300000,
+      });
+      await this.notice(chat, thread || undefined, "🔎 Send a model name, ID, or provider to search, or /cancel.");
+      return true;
+    }
+    if (name === "model_search_save") {
+      const query = (action.value ?? "").trim();
+      if (!query || query.length > 128) throw new Error("invalid_model_search");
+      const models = this.legacyModels();
+      const scope = this.modelScope(topic);
+      const current = await models.current(topic);
+      const view = await buildModelCenterSearchResults(query, current, models.source(scope));
+      await this.menu(
+        chat,
+        thread || undefined,
+        view.text,
+        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (name === "model_favorite_toggle") {
+      const selected = action.value?.trim() ?? "";
+      const split = selected.indexOf("/");
+      if (split < 1) throw new Error("invalid_model");
+      const models = this.legacyModels();
+      await models.toggleFavorite(this.modelScope(topic), {
+        providerID: selected.slice(0, split),
+        modelID: selected.slice(split + 1),
+      });
+      if (updateId) this.set("action_done:" + updateId, true);
+      await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }
     if (name === "agent" || name === "variant") {
@@ -1656,33 +1799,17 @@ export class CloudBotUi {
     }
     if (name === "model_save") {
       const selected = action.value?.trim() ?? "";
-      if (!/^[^/\s]{1,128}\/.{1,128}$/.test(selected)) throw new Error("invalid_model");
-      if (!topic) {
-        if (!global) throw new Error("snapshot_unavailable");
-        const configuration = record(global.data.configuration);
-        await this.deps.global(
-          {
-            ...global.data,
-            configuration: {
-              ...configuration,
-              runtime: { ...record(configuration.runtime), model: selected },
-            },
-          },
-          global.revision,
-        );
-      } else {
-        if (this.deps.store.activeRuns(chat, thread).length) throw new Error("execution_active");
-        const split = selected.indexOf("/");
-        const inspection = await this.deps.rpc<{ connected: boolean; available: boolean }>(
-          topic,
-          "model.inspect",
-          { providerID: selected.slice(0, split), modelID: selected.slice(split + 1) },
-        );
-        if (!inspection.connected || !inspection.available) throw new Error("model_unavailable");
-        this.setOptions(topic, { model: selected });
-      }
+      const split = selected.indexOf("/");
+      if (split < 1 || split === selected.length - 1) throw new Error("invalid_model");
+      if (topic && this.deps.store.activeRuns(chat, thread).length)
+        throw new Error("execution_active");
+      const models = this.legacyModels();
+      await models.select(this.modelScope(topic), {
+        providerID: selected.slice(0, split),
+        modelID: selected.slice(split + 1),
+      });
       if (updateId) this.set("action_done:" + updateId, true);
-      await this.notice(chat, thread || undefined, "✅ Model saved: " + selected);
+      await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }
     if (name === "agent_save" || name === "variant_save") {

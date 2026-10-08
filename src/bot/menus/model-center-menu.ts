@@ -25,15 +25,38 @@ export const MODEL_CENTER_PROVIDER_PREFIX = "mc:provider:";
 export const MODEL_CENTER_SELECT_PREFIX = "mc:select:";
 export const MODEL_CENTER_FAVORITE_PREFIX = "mc:favorite:";
 
-async function filterAvailable(models: FavoriteModel[]): Promise<FavoriteModel[]> {
+export interface ModelCenterDataSource {
+  favorites(): Promise<FavoriteModel[]>;
+  recent(): Promise<FavoriteModel[]>;
+  providers(): Promise<ProviderInfo[]>;
+  models(providerID: string): Promise<FavoriteModel[]>;
+  capabilityIcons?(providerID: string, modelID: string): Promise<string>;
+  priceView?(
+    providerID: string,
+    models: FavoriteModel[],
+    viewID?: string,
+  ): Promise<Awaited<ReturnType<typeof getProviderPriceView>>>;
+}
+
+const defaultModelCenterSource: ModelCenterDataSource = {
+  favorites: readFavorites,
+  recent: readRecent,
+  providers: getProviders,
+  models: getProviderModels,
+  capabilityIcons: async (providerID, modelID) =>
+    formatCapabilitiesIcons(await getModelCapabilities(providerID, modelID)),
+  priceView: getProviderPriceView,
+};
+
+async function filterAvailable(models: FavoriteModel[], source: ModelCenterDataSource): Promise<FavoriteModel[]> {
   const available = new Set<string>();
   for (const providerID of new Set(models.map(m => m.providerID))) {
-    for (const model of await getProviderModels(providerID)) available.add(modelKey(model));
+    for (const model of await source.models(providerID)) available.add(modelKey(model));
   }
   return models.filter(model => available.has(modelKey(model)));
 }
-async function getFavoriteModels() { return filterAvailable(await readFavorites()); }
-async function getRecentModels() { return filterAvailable(await readRecent()); }
+async function getFavoriteModels(source: ModelCenterDataSource = defaultModelCenterSource) { return filterAvailable(await source.favorites(), source); }
+async function getRecentModels(source: ModelCenterDataSource = defaultModelCenterSource) { return filterAvailable(await source.recent(), source); }
 
 const MODELS_PER_PAGE = 8;
 const MAX_ACTION_MODELS = 4096;
@@ -95,8 +118,9 @@ async function appendModelRows(
   current?: ModelInfo,
   favoriteTarget?: ModelCenterFavoriteTarget,
   prices?: Map<string, ModelPrice>,
+  source: ModelCenterDataSource = defaultModelCenterSource,
 ): Promise<void> {
-  const favorites = await getFavoriteModels();
+  const favorites = await getFavoriteModels(source);
   const favoriteKeys = new Set(favorites.map(modelKey));
 
   for (const model of models) {
@@ -124,8 +148,8 @@ function isTopicContext(ctx: Context): boolean {
   return typeof threadId === "number" && threadId > 1;
 }
 
-export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const [favorites, recent] = await Promise.all([getFavoriteModels(), getRecentModels()]);
+export async function buildModelCenterRoot(current?: ModelInfo, source: ModelCenterDataSource = defaultModelCenterSource): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const [favorites, recent] = await Promise.all([getFavoriteModels(source), getRecentModels(source)]);
   const keyboard = new InlineKeyboard();
   keyboard.text(`⭐ Favorites · ${favorites.length}`, MODEL_CENTER_FAVORITES).text(`🕘 Recent models · ${recent.length}`, MODEL_CENTER_RECENT).row();
   keyboard.text("🔎 Search models", MODEL_CENTER_SEARCH).row();
@@ -134,8 +158,7 @@ export async function buildModelCenterRoot(current?: ModelInfo): Promise<{ text:
 
   let currentBlock: string;
   if (current?.providerID && current.modelID) {
-    const capabilities = await getModelCapabilities(current.providerID, current.modelID);
-    const icons = formatCapabilitiesIcons(capabilities);
+    const icons = source.capabilityIcons ? await source.capabilityIcons(current.providerID, current.modelID) : "";
     const iconsLine = icons ? `\n${icons}` : "";
     currentBlock = `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>${iconsLine}`;
   } else {
@@ -170,10 +193,10 @@ export async function showModelCenterMenu(ctx: Context): Promise<void> {
   });
 }
 
-export async function buildModelCenterList(kind: "favorites" | "recent", current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const models = kind === "favorites" ? await getFavoriteModels() : await getRecentModels();
+export async function buildModelCenterList(kind: "favorites" | "recent", current?: ModelInfo, source: ModelCenterDataSource = defaultModelCenterSource): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const models = kind === "favorites" ? await getFavoriteModels(source) : await getRecentModels(source);
   const keyboard = new InlineKeyboard();
-  await appendModelRows(keyboard, models, current, { kind: "list", list: kind });
+  await appendModelRows(keyboard, models, current, { kind: "list", list: kind }, undefined, source);
   keyboard.text("← Model Center", MODEL_CENTER_ROOT);
   const title = kind === "favorites" ? "⭐ <b>FAVORITE MODELS</b>" : "🕘 <b>RECENT MODELS</b>";
   return {
@@ -184,8 +207,8 @@ export async function buildModelCenterList(kind: "favorites" | "recent", current
   };
 }
 
-export async function buildModelCenterProviders(): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const providers = await getProviders();
+export async function buildModelCenterProviders(source: ModelCenterDataSource = defaultModelCenterSource): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const providers = await source.providers();
   const keyboard = new InlineKeyboard();
   providers.forEach((provider) => {
     keyboard.text(`🧩 ${provider.name} · ${provider.modelCount} models`, `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:0`).row();
@@ -199,15 +222,15 @@ export async function buildModelCenterProviders(): Promise<{ text: string; keybo
   };
 }
 
-export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo, viewID?: string): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
-  const catalogModels = await getProviderModels(provider.id);
-  const view = await getProviderPriceView(provider.id, catalogModels, viewID);
+export async function buildModelCenterProvider(provider: ProviderInfo, page: number, current?: ModelInfo, viewID?: string, source: ModelCenterDataSource = defaultModelCenterSource): Promise<{ text: string; keyboard: InlineKeyboard; page: number }> {
+  const catalogModels = await source.models(provider.id);
+  const view = source.priceView ? await source.priceView(provider.id, catalogModels, viewID) : undefined;
   const models = view?.models ?? catalogModels;
   const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
   const normalizedPage = Math.min(Math.max(0, page), totalPages - 1);
   const pageModels = models.slice(normalizedPage * MODELS_PER_PAGE, (normalizedPage + 1) * MODELS_PER_PAGE);
   const keyboard = new InlineKeyboard();
-  await appendModelRows(keyboard, pageModels, current, { kind: "provider", providerID: provider.id, page: normalizedPage, viewID: view?.id }, view?.prices);
+  await appendModelRows(keyboard, pageModels, current, { kind: "provider", providerID: provider.id, page: normalizedPage, viewID: view?.id }, view?.prices, source);
   appendPagination(keyboard, normalizedPage, totalPages, (target) => view ? MODEL_CENTER_PRICE_PAGE_PREFIX + view.id + ":" + target : `${MODEL_CENTER_PROVIDER_PREFIX}${encodeURIComponent(provider.id)}:${target}`);
   if (view) keyboard.text("ⓘ Colors", MODEL_CENTER_PRICE_LEGEND).row();
   keyboard.text("← Providers", MODEL_CENTER_PROVIDERS).row();
@@ -243,11 +266,11 @@ export function matchesModelCenterSearch(
   );
 }
 
-async function searchModelCenterCatalog(query: string): Promise<FavoriteModel[]> {
-  const providers = await getProviders();
+async function searchModelCenterCatalog(query: string, source: ModelCenterDataSource): Promise<FavoriteModel[]> {
+  const providers = await source.providers();
   const results = new Map<string, FavoriteModel>();
   for (const provider of providers) {
-    const models = await getProviderModels(provider.id);
+    const models = await source.models(provider.id);
     for (const model of models) {
       if (!matchesModelCenterSearch(model, provider.name, query)) continue;
       results.set(modelKey(model), model);
@@ -257,10 +280,10 @@ async function searchModelCenterCatalog(query: string): Promise<FavoriteModel[]>
   return [...results.values()];
 }
 
-export async function buildModelCenterSearchResults(query: string, current?: ModelInfo): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const models = await searchModelCenterCatalog(query);
+export async function buildModelCenterSearchResults(query: string, current?: ModelInfo, source: ModelCenterDataSource = defaultModelCenterSource): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const models = await searchModelCenterCatalog(query, source);
   const keyboard = new InlineKeyboard();
-  await appendModelRows(keyboard, models, current, { kind: "search", query });
+  await appendModelRows(keyboard, models, current, { kind: "search", query }, undefined, source);
   keyboard.text("🔎 Search again", MODEL_CENTER_SEARCH_AGAIN).text("← Back", MODEL_CENTER_ROOT).row();
   keyboard.text("🏠 Home", "main:home");
   return {
