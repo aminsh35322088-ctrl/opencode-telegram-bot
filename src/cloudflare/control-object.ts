@@ -821,6 +821,15 @@ export class ControlPlane {
       ) => {
         if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
           throw new Error("worker_upgrade_pending");
+        if (this.store.worker(topic.workerId)?.runtimeVersion) {
+          const health = await nodeRpc<{ ready: boolean }>(
+            await this.identity(topic.workerId),
+            "health",
+            {},
+            topic.sessionId,
+          );
+          if (!health.ready) throw new Error("worker_unavailable");
+        }
         const result = await nodeRpc<T>(
           await this.identity(topic.workerId),
           operation,
@@ -888,6 +897,15 @@ export class ControlPlane {
     const split = selected.indexOf("/");
     if (split < 1) throw new Error("model_not_configured");
     const worker = this.store.worker(topic.workerId);
+    if (worker?.runtimeVersion) {
+      const health = await nodeRpc<{ ready: boolean }>(
+        await this.identity(topic.workerId),
+        "health",
+        {},
+        topic.sessionId,
+      );
+      if (!health.ready) throw new Error("worker_unavailable");
+    }
     if (worker?.runtimeVersion && worker.revision < (admittedGlobal?.revision ?? 0)) {
       const sync = await nodeRpc<{ revision: number; hash: string; deferred?: boolean }>(
         await this.identity(topic.workerId),

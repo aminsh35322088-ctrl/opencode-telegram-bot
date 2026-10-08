@@ -727,3 +727,59 @@ test("active Topic keyboard exposes Pause and Abort, and idle keyboard removes t
   const keyboards = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
   assert.equal(JSON.stringify(keyboards).includes("Pause"), false);
 });
+
+test("Topic preferences store only overrides and never duplicate canonical global defaults", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.post("/admin/global", {
+    configuration: { runtime: { model: "opencode/big-pickle" } },
+    skills: [],
+    actions: [],
+    catalog: {},
+    defaults: { memory: [{ content: "global memory" }], showThinkingContent: true },
+    credentialReferences: [],
+  });
+  await f.update("/compact", 42);
+  const row = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+  ][0];
+  const value = JSON.parse(row.data);
+  assert.equal("memory" in value, false);
+  assert.equal("showThinkingContent" in value, false);
+  assert.equal(value.compact, true);
+});
+
+test("a sleeping Worker keeps a prompt pending until signed readiness succeeds", async (t) => {
+  const f = fixture(t);
+  const job = await f.bound();
+  f.store.saveObservation(job.workerId, 1, {
+    runtimeVersion: "1.18.33-bot.13-pre.24",
+    revision: f.store.global()!.revision,
+  });
+  let ready = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("api.telegram.org")) return original(input, init);
+    const request = JSON.parse(String(init?.body));
+    if (request.operation !== "health") return original(input, init);
+    const signed = await signEnvelope(
+      {
+        ...request,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: { ok: true, result: { ready } },
+      },
+      "n".repeat(64),
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await f.update("wake prompt", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+  assert.equal(
+    f.rpc.some((r) => r.operation === "model.inspect"),
+    false,
+  );
+  ready = true;
+  await f.plane.alarm();
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 1);
+});

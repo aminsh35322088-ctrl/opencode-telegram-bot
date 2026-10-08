@@ -132,7 +132,9 @@ export class CloudBotUi {
     if (patch.compact !== undefined) patch.compactOutputMode = patch.compact;
     else if (patch.compactOutputMode !== undefined) patch.compact = patch.compactOutputMode;
     this.set("topic:" + topic.chatId + ":" + topic.threadId + ":" + topic.generation, {
-      ...this.options(topic),
+      ...this.get<UiOptions>(
+        "topic:" + topic.chatId + ":" + topic.threadId + ":" + topic.generation,
+      ),
       ...patch,
     });
   }

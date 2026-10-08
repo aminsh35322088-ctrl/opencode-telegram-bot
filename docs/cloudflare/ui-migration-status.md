@@ -27,3 +27,18 @@ These are explicit incomplete features, not substitutes for execution:
 - Cleanup currently destroys a dedicated service and volume; safe sleeping Worker reuse is not yet proven.
 
 Do not claim complete legacy UI parity or full migration based on this document. Record actual deployment, regression and runtime verification separately.
+
+## Live validation, 2026-10-08
+
+- Bot UI/source commits: `3010f6f1`, `a41fca16`, `634faf4b`; subsequent readiness/override fix is recorded in Git history.
+- Core commit `56106d84f1c5b8c050241141d938fe1f185dc94f`, release `1.18.33-bot.13-pre.24`.
+- Running image verified against Railway source: `ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:6faae202026012b61db18073044fed2e441a277875d72ecc23bdfd484b7511c6`.
+- In-place Worker deployments: `a5ab7a18-60f6-45f4-83d5-f694fa0d6f2f` and `1155a8e8-046e-4ed1-9465-95321774eedc`. Service, volume, Topic generation and session identities retained. No new Railway resources created by these upgrades.
+- Cloudflare health confirms execution=false and credential presence without values. General/Topic start, Settings, Session, Models, Agent and Files menus acknowledged by Telegram.
+- Real model/tool canary `ui_pre24_canary_20261008`: signed Worker request accepted, governed bash/Python output marker verified from owned session history, matching assistant text verified, response DELIVERED; signed execution status null afterward.
+- Real feedback canary `ui_feedback_canary_20261008`: COMPLETED, response/outbox DELIVERED; preview message 29313 retained and finalized, bash tool completed, 113 visible characters. No files modified by either canary.
+- Latest verification: lint/typecheck/build passed; 308 repository tests passed; wider existing regression suite 2,288 tests / 280 files passed. Core release verification: 205 Python, 299 Bun, 385 compiled headless checks passed (two skips); existing Core CI/release jobs green.
+- Second review fixed sleeping readiness admission, nonduplicated global defaults, streaming mode type, expired/caption credentials, active-form media routing, uncertain preview delivery, internal confirmation bypass and rate-limit mutation replay.
+- Railway API and Telegram credentials remain protected Cloudflare secret bindings. Telegram allowed identity binding was also converted to protected secret without returning its value.
+
+This validates the implemented UI slice. It does not prove complete legacy integration parity, safe free-Worker reuse, recovery replacement, six-Topic rollover or full cutover.
