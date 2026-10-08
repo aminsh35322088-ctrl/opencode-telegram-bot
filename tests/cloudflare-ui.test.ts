@@ -832,3 +832,52 @@ test("canonical Topic defaults apply without being copied into Topic overrides",
   ][0];
   assert.deepEqual(JSON.parse(row.data), { responseStreamingMode: "edit" });
 });
+
+test("cancelling guided task setup invalidates its old confirmation", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/task", 42);
+  await f.update("every 5 minutes", 42);
+  await f.update("Check project", 42);
+  const buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const confirm = buttons.find((b: any) => b.text === "✅ Save scheduled task");
+  assert.ok(confirm);
+  await f.update("/cancel", 42);
+  await f.callback(confirm.callback_data, 42);
+  assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("expired task-form answer cannot become an ordinary model prompt", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/task", 42);
+  const key = "form:7:-100:42";
+  const row = [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key)][0];
+  f.sql.exec(
+    "UPDATE ui_state SET data=? WHERE key=?",
+    JSON.stringify({ ...JSON.parse(row.data), expires: 0 }),
+    key,
+  );
+  await f.update("every 5 minutes", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+  assert.match(JSON.stringify(f.sent), /expired/i);
+});
+
+test("authenticated UI smoke test can open and cancel task setup without execution", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  const start = await f.post("/admin/ui", { chatId: -100, threadId: 42, command: "task" });
+  assert.equal(start.status, 200);
+  assert.equal(
+    [...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")].length,
+    1,
+  );
+  const cancel = await f.post("/admin/ui", { chatId: -100, threadId: 42, command: "cancel" });
+  assert.equal(cancel.status, 200);
+  assert.equal(
+    [...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")].length,
+    0,
+  );
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});

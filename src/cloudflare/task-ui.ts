@@ -1,4 +1,5 @@
 import type { ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
+import { t } from "../i18n/index.js";
 
 export interface TaskButton {
   text: string;
@@ -37,6 +38,19 @@ export interface CloudScheduledTask {
   lastOccurrence?: number;
 }
 const RETRY_MS = 60_000;
+interface TaskDraft {
+  id: string;
+  stage: "schedule" | "body" | "confirm" | "saved";
+  expires: number;
+  schedule?: { at?: string; every?: number; due?: string };
+  prompt?: string;
+}
+export const taskDraftKey = (
+  actor: number,
+  chat: number,
+  thread: number,
+  generation: number,
+): string => `task-draft:${actor}:${chat}:${thread}:${generation}`;
 const validId = (value: unknown): string => {
   if (
     typeof value !== "string" ||
@@ -68,6 +82,45 @@ export class CloudTaskUi {
   constructor(private readonly context: TaskContext) {}
   private now(): number {
     return this.context.now?.() ?? Date.now();
+  }
+  private draftKey(): string {
+    const c = this.context;
+    return taskDraftKey(c.actorId, c.chatId, c.threadId, c.generation);
+  }
+  private draft(): TaskDraft {
+    const row = [
+      ...this.context.sql.exec<{ data: string }>(
+        "SELECT data FROM ui_state WHERE key=?",
+        this.draftKey(),
+      ),
+    ][0];
+    if (!row) throw new Error("task_draft_expired");
+    const draft = JSON.parse(row.data) as TaskDraft;
+    if (draft.expires <= this.now()) throw new Error("task_draft_expired");
+    return draft;
+  }
+  private writeDraft(draft: TaskDraft): void {
+    this.context.sql.exec(
+      "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      this.draftKey(),
+      JSON.stringify(draft),
+    );
+  }
+  private schedule(value: string): TaskDraft["schedule"] {
+    const match = /^(every|in)\s+(\d+)\s+(minute|hour|day)s?$/i.exec(value.trim());
+    if (match) {
+      const duration =
+        Number(match[2]) *
+        ({ minute: 60000, hour: 3600000, day: 86400000 }[match[3]!.toLowerCase()] ?? 0);
+      if (!Number.isSafeInteger(duration) || duration < RETRY_MS || duration > 366 * 86400000)
+        throw new Error("invalid_task_interval");
+      return match[1]!.toLowerCase() === "every"
+        ? { every: duration }
+        : { at: new Date(this.now() + duration).toISOString() };
+    }
+    const time = utc(value.trim());
+    if (time <= this.now()) throw new Error("invalid_task_utc_time");
+    return { at: new Date(time).toISOString() };
   }
   private tasks(): CloudScheduledTask[] {
     return [
@@ -126,6 +179,10 @@ export class CloudTaskUi {
         "config_task_save",
         "config_task_toggle",
         "config_task_delete",
+        "config_task_schedule",
+        "config_task_body",
+        "config_task_confirm",
+        "config_task_json",
       ].includes(action)
     )
       return false;
@@ -138,11 +195,78 @@ export class CloudTaskUi {
     if (!Number.isSafeInteger(this.context.actorId) || this.context.actorId <= 0)
       throw new Error("invalid_task_actor");
     if (action === "task") {
+      this.writeDraft({ id: crypto.randomUUID(), stage: "schedule", expires: this.now() + 300000 });
+      this.context.markCommitted?.();
       await this.context.prompt(
-        "config_task_save",
-        'Send task JSON: {"prompt":"Check project","at":"2026-10-09T10:00:00Z"} or {"prompt":"Check project","every":3600000}. Times use UTC; intervals use milliseconds (minimum 60000).',
+        "config_task_schedule",
+        t("task.prompt.schedule_simple", undefined, "en"),
       );
       return true;
+    }
+    if (action === "config_task_json") {
+      await this.context.prompt("config_task_save", t("task.prompt.json", undefined, "en"));
+      return true;
+    }
+    let confirmedDraft: TaskDraft | undefined;
+    if (["config_task_schedule", "config_task_body", "config_task_confirm"].includes(action)) {
+      const draft = this.draft();
+      if (action === "config_task_schedule") {
+        if (draft.stage !== "schedule") throw new Error("task_draft_stage_mismatch");
+        let schedule: TaskDraft["schedule"];
+        try {
+          schedule = this.schedule(value ?? "");
+        } catch {
+          await this.context.prompt(
+            "config_task_schedule",
+            t("task.prompt.schedule_simple", undefined, "en"),
+          );
+          return true;
+        }
+        this.writeDraft({ ...draft, schedule, stage: "body" });
+        this.context.markCommitted?.();
+        await this.context.prompt("config_task_body", t("task.prompt.body", undefined, "en"));
+        return true;
+      }
+      if (action === "config_task_body") {
+        if (draft.stage !== "body") throw new Error("task_draft_stage_mismatch");
+        if (!value?.trim() || value.length > 20000 || value.includes("\0")) {
+          await this.context.prompt("config_task_body", t("task.prompt_empty", undefined, "en"));
+          return true;
+        }
+        const next = { ...draft, stage: "confirm" as const, prompt: value.trim() };
+        this.writeDraft(next);
+        this.context.markCommitted?.();
+        const schedule = draft.schedule!;
+        await this.context.menu(
+          t(
+            "task.wizard.confirm",
+            {
+              prompt: esc(next.prompt.slice(0, 500)) + (next.prompt.length > 500 ? "…" : ""),
+              schedule: esc(schedule.at ?? `every ${schedule.every! / 60000} minutes`),
+            },
+            "en",
+          ),
+          [
+            [
+              this.context.button(
+                t("task.wizard.save", undefined, "en"),
+                "config_task_confirm",
+                draft.id,
+              ),
+            ],
+            [this.context.button(t("task.button.cancel", undefined, "en"), "cancel")],
+          ],
+        );
+        return true;
+      }
+      if (draft.id !== value) throw new Error("task_draft_mismatch");
+      if (draft.stage === "saved") return true;
+      if (draft.stage !== "confirm") throw new Error("task_draft_stage_mismatch");
+      if (draft.schedule?.at && utc(draft.schedule.at) <= this.now())
+        throw new Error("invalid_task_utc_time");
+      confirmedDraft = draft;
+      action = "config_task_save";
+      value = JSON.stringify({ id: draft.id, prompt: draft.prompt, ...draft.schedule });
     }
     if (action === "config_task_save") {
       if (!value || value.length > 22000) throw new Error("invalid_task_input");
@@ -199,6 +323,7 @@ export class CloudTaskUi {
           ? { lastRequest: existing.lastRequest, lastOccurrence: existing.lastOccurrence }
           : {}),
       });
+      if (confirmedDraft) this.writeDraft({ ...confirmedDraft, stage: "saved" });
       this.context.markCommitted?.();
       await this.context.notice("Scheduled task saved.");
     } else {
@@ -237,7 +362,11 @@ export class CloudTaskUi {
         this.context.button("Delete", "config_task_delete", task.id),
       ],
     ]);
-    if (this.topic()) rows.push([this.context.button("Create scheduled task", "task")]);
+    if (this.topic())
+      rows.push(
+        [this.context.button("Create scheduled task", "task")],
+        [this.context.button("Advanced JSON", "config_task_json")],
+      );
     await this.context.menu(
       tasks.length
         ? tasks

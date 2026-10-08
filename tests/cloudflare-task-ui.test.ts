@@ -161,7 +161,7 @@ test("strict task input rejects secrets, invalid ids, owner override and invalid
 test("task menu opens the authorized durable form", async () => {
   const f = fixture();
   assert.equal(await f.ui.handle("task"), true);
-  assert.deepEqual(f.prompts, ["config_task_save"]);
+  assert.deepEqual(f.prompts, ["config_task_schedule"]);
   assert.equal(await f.ui.handle("unrelated"), false);
 });
 test("worker generation change fences tasks even if topic row remains", async () => {
@@ -305,4 +305,143 @@ test("invalid task mutation never marks a receipt", async () => {
   );
   await assert.rejects(ui.handle("config_task_delete", "missing"));
   assert.equal(count, 0);
+});
+
+test("guided task creation survives restart and requires explicit confirmation", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  assert.equal(f.prompts.at(-1), "config_task_schedule");
+  await f.ui.handle("config_task_schedule", "every 5 minutes");
+  assert.equal(f.prompts.at(-1), "config_task_body");
+  const restarted = new CloudTaskUi(f.context);
+  await restarted.handle("config_task_body", "بررسی وضعیت پروژه");
+  assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  await restarted.handle("config_task_confirm", draft.id);
+  await restarted.handle("config_task_confirm", draft.id);
+  const tasks = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task:%'"),
+  ];
+  assert.equal(tasks.length, 1);
+  const task = JSON.parse(tasks[0].data);
+  assert.equal(task.prompt, "بررسی وضعیت پروژه");
+  assert.equal(task.every, 300000);
+  assert.equal(task.due, f.now() + 300000);
+  assert.equal(task.version, 1);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("invalid guided schedule keeps form active without creating a task", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  await f.ui.handle("config_task_schedule", "every banana");
+  assert.equal(f.prompts.at(-1), "config_task_schedule");
+  assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
+  await f.ui.handle("config_task_schedule", "in 10 minutes");
+  await f.ui.handle("config_task_body", "Check once");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  await f.ui.handle("config_task_confirm", draft.id);
+  const task = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task:%'")][0].data,
+  );
+  assert.equal(task.every, undefined);
+  assert.equal(task.due, f.now() + 600000);
+});
+
+test("expired drafts reject confirmation without allocating execution", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  await f.ui.handle("config_task_schedule", "2026-10-09T10:00:00Z");
+  await f.ui.handle("config_task_body", "Check once");
+  const row = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'"),
+  ][0];
+  assert.ok(row);
+  const draft = JSON.parse(row.data);
+  f.setClock(f.now() + 300001);
+  await assert.rejects(f.ui.handle("config_task_confirm", draft.id), /task_draft_expired/);
+  assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
+});
+
+test("task wizard records accepted step before rate-limited Telegram acknowledgement", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  let committed = false;
+  const context = {
+    ...f.context,
+    markCommitted: () => {
+      committed = true;
+    },
+    prompt: async () => {
+      throw new Error("telegram_429");
+    },
+  };
+  await assert.rejects(
+    new CloudTaskUi(context).handle("config_task_schedule", "every 5 minutes"),
+    /telegram_429/,
+  );
+  assert.equal(committed, true);
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  assert.equal(draft.stage, "body");
+});
+
+test("long task text is preserved while confirmation preview remains bounded HTML", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  await f.ui.handle("config_task_schedule", "every 1 hour");
+  const prompt = "<&".repeat(9000);
+  await f.ui.handle("config_task_body", prompt);
+  const preview = f.messages.at(-1)!;
+  assert.ok(preview.length < 4000);
+  assert.match(preview, /&lt;&amp;/);
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  await f.ui.handle("config_task_confirm", draft.id);
+  const task = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task:%'")][0].data,
+  );
+  assert.equal(task.prompt, prompt);
+});
+
+test("one-time guided task cannot activate after its scheduled time has passed", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  await f.ui.handle("config_task_schedule", "2026-10-08T10:01:00Z");
+  await f.ui.handle("config_task_body", "Check once");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  f.setClock(f.now() + 120000);
+  await assert.rejects(f.ui.handle("config_task_confirm", draft.id), /invalid_task_utc_time/);
+  assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
+});
+
+test("another actor or a replaced draft cannot confirm task setup", async () => {
+  const f = fixture();
+  await f.ui.handle("task");
+  await f.ui.handle("config_task_schedule", "every 1 day");
+  await f.ui.handle("config_task_body", "Check daily");
+  const draft = JSON.parse(
+    [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'task-draft:%'")][0]
+      .data,
+  );
+  await assert.rejects(
+    new CloudTaskUi({ ...f.context, actorId: 8 }).handle("config_task_confirm", draft.id),
+    /task_draft_expired/,
+  );
+  await f.ui.handle("task");
+  await assert.rejects(f.ui.handle("config_task_confirm", draft.id), /task_draft_mismatch/);
+  assert.equal([...f.sql.exec("SELECT data FROM ui_state WHERE key LIKE 'task:%'")].length, 0);
 });

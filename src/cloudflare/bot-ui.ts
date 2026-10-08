@@ -13,7 +13,7 @@ import {
   VARIANT_BUTTON_TEXT_PATTERN,
   QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
 } from "../bot/message-patterns.js";
-import { CloudTaskUi } from "./task-ui.js";
+import { CloudTaskUi, taskDraftKey } from "./task-ui.js";
 import type { ProtectedTelegramUpdate } from "./credential-vault.js";
 import {
   CloudConfigUi,
@@ -676,6 +676,11 @@ export class CloudBotUi {
     }
     if (name === "close" || name === "cancel") {
       this.set("form:" + actor + ":" + chat + ":" + thread, {});
+      this.deps.sql.exec(
+        "DELETE FROM ui_state WHERE key=?",
+        taskDraftKey(actor, chat, thread, topic?.generation ?? 0),
+      );
+      this.set("action_done:" + updateId, true);
       await this.notice(chat, thread || undefined, t("common.cancelled", undefined, "en"));
       return true;
     }

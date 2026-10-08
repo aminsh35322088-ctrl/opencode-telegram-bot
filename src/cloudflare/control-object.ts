@@ -113,6 +113,8 @@ export class ControlPlane {
             "more",
             "commands",
             "tasklist",
+            "task",
+            "cancel",
           ].includes(command)
         )
           throw new Error("operation_not_allowed");

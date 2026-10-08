@@ -10,7 +10,7 @@ The persistent Telegram application now runs in the existing Cloudflare ControlP
 - Canonical revisioned provider, skill, MCP, plugin, extension, generated Action, custom command and persistent-memory configuration; Topic defaults and experimental settings.
 - Provider API credential entry encrypted before durable update persistence; signed, narrowly scoped provider proxy leases. No provisioning credentials are available to Core/model processes.
 - Questions, multiple/custom answers and permissions bound to actor/chat/thread/generation/run. Exact question receipts authorize global mutation prepare/commit.
-- Durable UTC scheduled tasks feeding the existing ordered Topic queue, with explicit save/toggle/delete receipts.
+- Guided scheduled-task creation (schedule → task text → confirmation), durable scoped drafts, explicit save/toggle/delete receipts and UTC schedules feeding the existing ordered Topic queue. Common `every N minutes/hours/days`, `in N minutes/hours/days` and exact UTC timestamps need no JSON; Advanced JSON remains available.
 - Two-stage Factory Reset retains monotonic canonical revision, gates new allocation, cancels pending jobs and cleans bound Topics before clearing credentials/configuration.
 - Durable resolved action receipts prevent retries becoming prompts or repeating mutation. Known Telegram rate limits retry; ambiguous delivery is reconciled without blind resend.
 - Immutable in-place Worker image upgrade preserves service/volume/session ownership; dispatch is gated until actual Railway source/deployment and signed runtime identity agree.
@@ -22,7 +22,7 @@ These are explicit incomplete features, not substitutes for execution:
 - GitHub and Tailscale connection screens describe their required scoped Core integration. Legacy container-global token injection/tailscaled/SSH cannot run in Cloudflare and is not reintroduced.
 - Photo/document/audio attachments now cross as bounded inline file parts (256 KiB each), without Telegram credential URLs. Dedicated image generation and voice transcription workflows still need Core capability wiring and compatible provider/model configuration.
 - Signed-event text/tool/thinking previews now use bounded Telegram edits and survive control restarts. Compact and thought visibility preferences apply to previews. Completed text uses the existing native Telegram block renderer and Persian/RTL support; raw output, run footer and changed-file document preferences are active. Native draft mode and richer tool-specific cards still need parity work.
-- Natural-language task scheduling is currently replaced by validated UTC JSON schedules.
+- Broader natural-language/cron schedule interpretation still needs governed Core integration. The guided flow supports only the explicitly listed interval/one-time formats; it does not guess ambiguous schedules.
 - Context compaction must become a governed explicit Core model operation before exposing an active compaction control.
 - Cleanup currently destroys a dedicated service and volume; safe sleeping Worker reuse is not yet proven.
 

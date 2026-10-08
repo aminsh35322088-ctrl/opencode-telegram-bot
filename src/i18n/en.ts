@@ -358,6 +358,13 @@ export const en = {
     "⚠️ This command is not available while rename is waiting for a new name.",
   "rename.button.cancel": "❌ Cancel",
 
+  "task.prompt.schedule_simple":
+    "⏰ When should the task run?\n\nExamples:\n• every 5 minutes\n• every 2 hours\n• in 10 minutes\n• 2026-10-09T10:00:00Z (UTC)\n\nMinimum interval: 1 minute. Use /cancel to cancel.",
+  "task.prompt.json":
+    'Send task JSON: {"prompt":"Check project","every":3600000} or {"prompt":"Check project","at":"2026-10-09T10:00:00Z"}. Use /cancel to cancel.',
+  "task.wizard.confirm":
+    "⏰ <b>Confirm scheduled task</b>\n\n{prompt}\n\nSchedule: {schedule}\nTimezone: UTC\n\nThe task will only be activated after you save it.",
+  "task.wizard.save": "✅ Save scheduled task",
   "task.prompt.schedule":
     "⏰ Send the task schedule in natural language.\n\nExamples:\n- every 5 minutes\n- every day at 17:00\n- tomorrow at 12:00",
   "task.schedule_empty": "⚠️ Schedule cannot be empty.",
