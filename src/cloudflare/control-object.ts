@@ -21,19 +21,62 @@ import { applyGlobalConfigMutation } from "./config-ui.js";
 import { WorkerImageUpgrade, isWorkerImageUpgrading } from "./worker-image-upgrade.js";
 import { CloudBotUi, type TelegramUpdate } from "./bot-ui.js";
 
+import { CONTROL_DEFAULTS } from "./control-config.js";
+import { resolveControlSecrets, equalSecret } from "./control-secrets.js";
+
 export class ControlPlane {
   private readonly store: ControlStore;
+  private readonly env: ControlEnvironment;
+  private secretsReady?: Promise<void>;
   constructor(
     private readonly state: DurableObjectState,
-    private readonly env: ControlEnvironment,
+    env: ControlEnvironment,
   ) {
+    this.env = { ...CONTROL_DEFAULTS, ...env };
     this.store = new ControlStore(state.storage.sql, (action) =>
       state.storage.transactionSync(action),
     );
   }
+  private async initializeSecrets(): Promise<void> {
+    // Legacy test/installation paths lacking root bindings remain backward compatible.
+    if (!this.env.TELEGRAM_BOT_TOKEN || !this.env.RAILWAY_API_TOKEN) return;
+    this.secretsReady ??= resolveControlSecrets(this.state.storage.sql, this.env)
+      .then((value) => {
+        Object.assign(this.env, value);
+      })
+      .catch((error: unknown) => {
+        this.secretsReady = undefined;
+        throw error;
+      });
+    await this.secretsReady;
+  }
   async fetch(request: Request): Promise<Response> {
     try {
+      await this.initializeSecrets();
       const path = new URL(request.url).pathname;
+      if (path === "/control/auth") {
+        const input = await request.text();
+        if (input.length > 1024) return new Response("Unauthorized", { status: 401 });
+        const value = JSON.parse(input) as { kind?: string; supplied?: string };
+        const expected =
+          value.kind === "webhook"
+            ? this.env.TELEGRAM_WEBHOOK_SECRET
+            : value.kind === "admin"
+              ? "Bearer " + this.env.ADMIN_TOKEN
+              : "";
+        return Response.json({
+          authorized:
+            typeof value.supplied === "string" &&
+            !!expected &&
+            (await equalSecret(value.supplied, expected)),
+        });
+      }
+      if (path === "/admin/control-secrets")
+        return Response.json({
+          ready: true,
+          automaticallyManaged: true,
+          userSecrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID", "RAILWAY_API_TOKEN"],
+        });
       if (path === "/admin/inventory")
         return Response.json({
           backends: this.store
@@ -161,7 +204,7 @@ export class ControlPlane {
         return Response.json({ ok: true, scope: thread > 1 ? "topic" : "general" });
       }
       if (path === "/admin/runtime")
-        return Response.json({ schemaVersion: 5, protocol: "revision-fenced-v1" });
+        return Response.json({ schemaVersion: 6, protocol: "revision-fenced-v1" });
       if (path === "/admin/topics") {
         await this.setup();
         const threadId = Number(body.threadId);
@@ -1244,6 +1287,7 @@ export class ControlPlane {
     this.store.confirmDestroyed(worker.workerId, worker.generation);
   }
   async alarm(): Promise<void> {
+    await this.initializeSecrets();
     const pending = [...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM jobs")]
       .map((r) => JSON.parse(r.data) as AllocationJob)
       .filter(

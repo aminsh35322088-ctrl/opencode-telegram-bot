@@ -1,4 +1,6 @@
 import type { DurableObjectNamespace, Queue, MessageBatch } from "@cloudflare/workers-types";
+import { CONTROL_DEFAULTS } from "./control-config.js";
+import { equalSecret } from "./control-secrets.js";
 export interface ControlEnvironment {
   CONTROL: DurableObjectNamespace;
   JOBS: Queue<{ jobId: string }>;
@@ -24,6 +26,7 @@ export { ControlPlane } from "./control-object.js";
 /** Public ingress authenticates before any privileged Durable Object operation. */
 export default {
   async fetch(request: Request, env: ControlEnvironment): Promise<Response> {
+    env = { ...CONTROL_DEFAULTS, ...env };
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health")
       return Response.json({
@@ -38,15 +41,34 @@ export default {
     const path = url.pathname;
     if (request.method !== "POST" && !path.startsWith("/admin/"))
       return new Response("Not found", { status: 404 });
-    if (path === "/telegram/webhook") {
-      if (
-        !env.TELEGRAM_WEBHOOK_SECRET ||
-        request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.TELEGRAM_WEBHOOK_SECRET
-      )
-        return new Response("Unauthorized", { status: 401 });
-    } else if (path.startsWith("/admin/")) {
-      if (!env.ADMIN_TOKEN || request.headers.get("Authorization") !== "Bearer " + env.ADMIN_TOKEN)
-        return new Response("Unauthorized", { status: 401 });
+    if (path === "/telegram/webhook" || path.startsWith("/admin/")) {
+      const kind = path === "/telegram/webhook" ? "webhook" : "admin";
+      const supplied =
+        request.headers.get(
+          kind === "webhook" ? "X-Telegram-Bot-Api-Secret-Token" : "Authorization",
+        ) ?? "";
+      if (!supplied || supplied.length > 512) return new Response("Unauthorized", { status: 401 });
+      const legacy = kind === "webhook" ? env.TELEGRAM_WEBHOOK_SECRET : env.ADMIN_TOKEN;
+      let authorized = false;
+      if (legacy)
+        authorized = await equalSecret(supplied, kind === "admin" ? "Bearer " + legacy : legacy);
+      else {
+        try {
+          const response = await env.CONTROL.getByName("canonical").fetch(
+            "https://control.internal/control/auth",
+            {
+              method: "POST",
+              body: JSON.stringify({ kind, supplied }),
+            },
+          );
+          authorized =
+            response.ok &&
+            ((await response.json()) as { authorized?: boolean }).authorized === true;
+        } catch {
+          return Response.json({ error: "control_auth_unavailable" }, { status: 503 });
+        }
+      }
+      if (!authorized) return new Response("Unauthorized", { status: 401 });
     } else if (!["/nodes/bootstrap", "/node-control", "/nodes/events"].includes(path))
       return new Response("Not found", { status: 404 });
     const length = Number(request.headers.get("Content-Length") ?? 0);

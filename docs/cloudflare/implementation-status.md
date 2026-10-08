@@ -1,6 +1,6 @@
 # Cloudflare control-plane deployment status
 
-Production target: `opencode-control-plane` at `https://opencode-control-plane.amin3532.workers.dev`. `wrangler.jsonc` is the source-controlled configuration. Deploy with existing credentials and `wrangler deploy --keep-vars`; preserve dashboard secrets and admission configuration. No additional GitHub Actions workflow is required.
+Production target: `opencode-control-plane` at `https://opencode-control-plane.amin3532.workers.dev`. `wrangler.jsonc` defines native bindings; `src/cloudflare/control-config.ts` holds non-secret production defaults. Deploy with the three existing user secrets preserved. Do not retain obsolete plain-text dashboard variables with `--keep-vars`. No additional GitHub Actions workflow is required.
 
 Cloudflare owns SQLite registry/schema migrations, Topic ownership, provisioning journal, revisioned configuration, bootstrap consumption, encrypted node credentials, signed dispatch and callback admission. Railway provisioning is isolated behind `RailwayFleetDriver`. The default backend reads the Railway credential exclusively from `env.RAILWAY_API_TOKEN`; durable storage contains a binding reference, never the Railway token.
 
@@ -40,3 +40,11 @@ The protected `/admin/run-status` endpoint exposes scoped run and delivery recei
 - Final tests: 223 Bot Node tests (including 60 Cloudflare tests), 280 Vitest files/2,288 tests, 179 Core Python tests; build/typecheck/lint and existing Core/Bot CI passed. Important Cloudflare/Core tests were rerun after the successful canary and review.
 
 Safe reuse and wake latency were not measured; deletion uses destruction until sanitized rebind is proven. Live sixth-Worker/project rollover was not provisioned for this one-Worker canary; unit tests cover rollover and configurable capacity. Full Telegram UI parity and automatic replacement recovery remain migration work. No Railway Bot/Control service or production local Core execution is running. Legacy Node source is retained until those replacements are tested. Cloudflare deployment is verified; the fork's upstream-guarded npm Publish job is intentionally skipped and no npm package publication is claimed.
+
+## Three-secret production configuration
+
+Users configure only `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, and `RAILWAY_API_TOKEN`. No token value belongs in source. Capacity (10 workers, 5 per project, 2 projects), workspace, Control Plane URL, provisioning policy and immutable Core/image identity are compiled defaults. Durable backend policy remains configurable; these defaults do not eagerly provision workers. Legacy environment overrides remain supported during migration.
+
+The Control Plane automatically generates its private vault master, webhook secret and administrative identity. Schema 6 stores them only as AES-GCM envelopes, independently wrapped with domain-separated HKDF keys derived inside the privileged Control Plane from the Telegram and Railway secrets. They never enter execution worker environments. Existing installations preserve all three internal identities before their old bindings are removed, so existing provider/node ciphertext and webhook authentication remain valid. The internal auth route is inaccessible through public ingress.
+
+Rotate **one token at a time**, invoke the Control Plane and verify health/authentication before rotating the other. Two simultaneous token replacements lose both wrapping roots and deliberately fail closed; do not factory-reset encrypted identity to bypass this failure. Back up durable control state securely. Factory Reset does not delete the internal-key table. No automatic administrative token is returned to Telegram or public health responses.

@@ -127,7 +127,10 @@ export class ControlStore {
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS ui_delivery(id TEXT PRIMARY KEY,state TEXT NOT NULL,message INTEGER)",
       );
-      this.sql.exec("UPDATE schema_version SET version=5");
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS control_secrets(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL)",
+      );
+      this.sql.exec("UPDATE schema_version SET version=6");
     });
   }
   private migrate(): void {
@@ -135,7 +138,7 @@ export class ControlStore {
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 5) throw new Error("unsupported_schema");
+    if (version > 6) throw new Error("unsupported_schema");
     if (version >= 3) return;
     if (version === 2) {
       this.migrateEvents();
