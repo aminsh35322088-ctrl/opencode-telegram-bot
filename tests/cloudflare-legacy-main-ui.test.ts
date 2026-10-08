@@ -106,3 +106,10 @@ test("failed replacement pin keeps the last known-good canonical panel", async (
   assert.equal(f.adapter.getUiState<{ messageId: number }>("legacy:main:-100")?.messageId, 100);
   assert.ok(f.calls.some((call) => call.method === "deleteMessage" && call.payload.message_id === 101));
 });
+
+test("Home deep link targets the durable pinned Main panel in a supergroup", async () => {
+  const f = fixture();
+  const chatId = -1001234567890;
+  await f.ui.replaceCanonicalMainPanel(chatId, 7);
+  assert.equal(f.ui.mainPanelLink(chatId), "https://t.me/c/1234567890/100");
+});

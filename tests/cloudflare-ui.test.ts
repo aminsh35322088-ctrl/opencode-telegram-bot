@@ -1051,3 +1051,156 @@ test("authenticated read-only UI checks render guided Skills and MCP menus witho
   assert.ok(labels.includes("Advanced JSON"));
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
 });
+
+test("General menus never overwrite the pinned canonical Home panel", async (t) => {
+  const f = fixture(t);
+  await f.update("/start");
+  const main = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='legacy:main:-100'"),
+  ][0];
+  assert.ok(main);
+  const mainMessageId = JSON.parse(main.data).messageId as number;
+  f.sent.length = 0;
+  await f.update("/settings");
+  assert.equal(
+    f.sent.some(
+      (entry) => entry.method === "editMessageText" && entry.payload.message_id === mainMessageId,
+    ),
+    false,
+  );
+  const after = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='legacy:main:-100'"),
+  ][0];
+  assert.equal(JSON.parse(after.data).messageId, mainMessageId);
+});
+
+test("Settings descendants use explicit Back parents and Home", async (t) => {
+  const f = fixture(t);
+  await f.update("/settings");
+  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const more = buttons.find((button: any) => button.text === "⋯ More");
+  assert.ok(more);
+  f.sent.length = 0;
+  await f.callback(more.callback_data);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  assert.deepEqual(
+    buttons.filter((button: any) => ["← Back", "🏠 Home"].includes(button.text)).map((button: any) => button.text),
+    ["← Back", "🏠 Home"],
+  );
+  const advanced = buttons.find((button: any) => button.text === "🧰 Advanced");
+  assert.ok(advanced);
+  f.sent.length = 0;
+  await f.callback(advanced.callback_data);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const back = buttons.find((button: any) => button.text === "← Back");
+  assert.ok(back);
+  f.sent.length = 0;
+  await f.callback(back.callback_data);
+  assert.match(JSON.stringify(f.sent), /Topic Defaults|Experimental|Advanced/);
+});
+
+test("Topic Settings child returns to Topic Settings and exposes Home", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("⚙️ Topic Settings", 42);
+  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const appearance = buttons.find((button: any) => button.text === "💬 Response & Output");
+  assert.ok(appearance);
+  f.sent.length = 0;
+  await f.callback(appearance.callback_data, 42);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const navigation = buttons.filter((button: any) => ["← Back", "🏠 Home"].includes(button.text));
+  assert.deepEqual(navigation.map((button: any) => button.text), ["← Back", "🏠 Home"]);
+  f.sent.length = 0;
+  await f.callback(navigation[0].callback_data, 42);
+  assert.match(JSON.stringify(f.sent), /🧵 <b>Topic Settings<\/b>/);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("Session and Model Center children return to their exact parents", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+
+  await f.update("/session", 42);
+  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const messages = buttons.find((button: any) => button.text === "🕘 Messages");
+  assert.ok(messages);
+  f.sent.length = 0;
+  await f.callback(messages.callback_data, 42);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  let back = buttons.find((button: any) => button.text === "← Back");
+  assert.ok(back);
+  assert.ok(buttons.some((button: any) => button.text === "🏠 Home"));
+  f.sent.length = 0;
+  await f.callback(back.callback_data, 42);
+  assert.match(JSON.stringify(f.sent), /🧭 OpenCode Session/);
+
+  f.sent.length = 0;
+  await f.update("/model", 42);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const favorites = buttons.find((button: any) => String(button.text).startsWith("⭐ Favorites"));
+  assert.ok(favorites);
+  f.sent.length = 0;
+  await f.callback(favorites.callback_data, 42);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  back = buttons.find((button: any) => button.text === "← Back");
+  assert.ok(back);
+  assert.ok(buttons.some((button: any) => button.text === "🏠 Home"));
+  f.sent.length = 0;
+  await f.callback(back.callback_data, 42);
+  assert.match(JSON.stringify(f.sent), /MODEL CENTER/);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("wizard confirmation Cancel restores its origin after text form state is consumed", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/skills");
+  const add = f.sent
+    .flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+    .find((button: any) => button.text === "＋ Add / Edit");
+  assert.ok(add);
+  await f.callback(add.callback_data);
+  await f.update("project-check");
+  await f.update("Use before changing project files.");
+  await f.update("Inspect the project before changing files.");
+  f.sent.length = 0;
+  await f.update("/cancel");
+  assert.match(JSON.stringify(f.sent), /🧠 Skills/);
+  assert.doesNotMatch(JSON.stringify(f.sent), /Cancelled/);
+});
+
+test("task confirmation Cancel restores the task list after prompt form state is consumed", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/task", 42);
+  await f.update("every 5 minutes", 42);
+  await f.update("Check project", 42);
+  f.sent.length = 0;
+  await f.update("/cancel", 42);
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /No scheduled tasks in this topic|Create scheduled task/);
+  assert.doesNotMatch(output, /Cancelled/);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("File browser subdirectories have explicit parent Back plus Home", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.rpcResults.set("file.list", [{ type: "directory", name: "src", path: "src" }]);
+  await f.update("/ls", 42);
+  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const src = buttons.find((button: any) => String(button.text).includes("src"));
+  assert.ok(src);
+  f.sent.length = 0;
+  await f.callback(src.callback_data, 42);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const back = buttons.find((button: any) => button.text === "← Back");
+  assert.ok(back);
+  assert.ok(buttons.some((button: any) => button.text === "🏠 Home"));
+  f.sent.length = 0;
+  await f.callback(back.callback_data, 42);
+  const lists = f.rpc.filter((entry) => entry.operation === "file.list");
+  assert.equal(lists.at(-1)?.payload.path, ".");
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});

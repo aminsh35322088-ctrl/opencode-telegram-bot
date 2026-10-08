@@ -39,8 +39,6 @@ import {
   buildSessionTodosView,
 } from "../bot/menus/session-dashboard-menu.js";
 import {
-  MESSAGES_CALLBACK_BACK,
-  MESSAGES_CALLBACK_CANCEL,
   buildMessageReadOnlyDetailKeyboard,
   buildMessagesListKeyboard,
   formatMessageDetailText,
@@ -196,13 +194,22 @@ interface UiDependencies {
     answers: string[][],
   ) => void;
 }
-type Button = { text: string; callback_data: string };
+type CallbackButton = { text: string; callback_data: string };
+type Button = CallbackButton | { text: string; url: string };
+interface NavigationTarget { action: string; value?: string }
+interface NavigationSpec { back?: NavigationTarget; home?: boolean; strip?: string[] }
 const normalized = (text: string) =>
   text
     .normalize("NFKC")
     .replace(/[\u200B-\u200D\uFEFF\uFE0F]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+const parentWorkspacePath = (value: string): string => {
+  const normalizedPath = value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+  if (!normalizedPath || normalizedPath === ".") return ".";
+  const separator = normalizedPath.lastIndexOf("/");
+  return separator < 0 ? "." : normalizedPath.slice(0, separator) || ".";
+};
 const escape = (value: unknown) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -302,7 +309,7 @@ export class CloudBotUi {
     text: string,
     action: string,
     value?: string,
-  ): Button {
+  ): CallbackButton {
     const id = crypto.randomUUID().replace(/-/g, "");
     this.deps.sql.exec(
       "INSERT INTO ui_callbacks(id,actor,chat,thread,generation,expires,data) VALUES(?,?,?,?,?,?,?)",
@@ -316,17 +323,51 @@ export class CloudBotUi {
     );
     return { text, callback_data: "ui:" + id };
   }
+  private withNavigation(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic | undefined,
+    rows: Button[][],
+    spec: NavigationSpec,
+  ): Button[][] {
+    const strip = new Set(spec.strip ?? []);
+    const next = rows
+      .map((row) =>
+        row.filter((button) => {
+          if (!strip.has(button.text)) return true;
+          if ("callback_data" in button && button.callback_data.startsWith("ui:"))
+            this.deps.sql.exec("DELETE FROM ui_callbacks WHERE id=?", button.callback_data.slice(3));
+          return false;
+        }),
+      )
+      .filter((row) => row.length > 0);
+    const navigation: Button[] = [];
+    if (spec.back)
+      navigation.push(
+        this.button(actor, chat, thread, topic, "← Back", spec.back.action, spec.back.value),
+      );
+    if (spec.home) {
+      const link = this.legacyMain().mainPanelLink(chat);
+      navigation.push(
+        link
+          ? { text: "🏠 Home", url: link }
+          : this.button(actor, chat, thread, topic, "🏠 Home", "home"),
+      );
+    }
+    if (navigation.length) next.push(navigation);
+    return next;
+  }
+
   private async menu(
     chat: number,
     thread: number | undefined,
     text: string,
     rows: Button[][],
   ): Promise<void> {
-    await this.legacyMain().editCanonicalPanel(chat, thread, {
-      text,
-      rows,
-      parseMode: "HTML",
-    });
+    const panel = { text, rows, parseMode: "HTML" as const };
+    if (thread === undefined) await this.legacyMain().editCanonicalMenuPanel(chat, panel);
+    else await this.legacyMain().editCanonicalPanel(chat, thread, panel);
   }
   private async notice(chat: number, thread: number | undefined, text: string): Promise<void> {
     await this.deps.telegram.send(chat, thread, text);
@@ -468,11 +509,7 @@ export class CloudBotUi {
         [SESSION_DASHBOARD_FILES, ["ls", "."]],
         [SESSION_DASHBOARD_RENAME, ["rename"]],
         [SESSION_DASHBOARD_SETTINGS, ["settings"]],
-        ["session:back", ["session"]],
-        [MESSAGES_CALLBACK_BACK, ["messages"]],
-        [MESSAGES_CALLBACK_CANCEL, ["session"]],
         ["compact:confirm", ["context_compact"]],
-        ["settings:back", ["settings"]],
       ]);
       const exact = fixed.get(data);
       if (exact) return exact;
@@ -502,7 +539,52 @@ export class CloudBotUi {
       text: messages.length ? formatMessagesSelectText(page) : "🕘 No user messages yet.",
       keyboard: buildMessagesListKeyboard(messages, page, pageSize),
     };
-    await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+    const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+    await this.menu(
+      chat,
+      thread,
+      view.text,
+      this.withNavigation(actor, chat, thread, topic, rows, {
+        back: { action: "session" },
+        home: true,
+      }),
+    );
+  }
+
+  private async renderSessionDashboard(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic,
+  ): Promise<void> {
+    const session = this.legacySession();
+    const info = record(await session.session(topic));
+    const [todos, diffs, children] = await Promise.all([
+      this.optionalCapability(() => session.todos<unknown[]>(topic)),
+      this.optionalCapability(() => session.diff<unknown[]>(topic)),
+      this.optionalCapability(() => session.children<unknown[]>(topic)),
+    ]);
+    this.assertTopic(topic);
+    const view = buildSessionDashboardView({
+      sessionId: topic.sessionId,
+      title: typeof info.title === "string" ? info.title : this.options(topic).title,
+      model: this.model(topic),
+      busy: this.deps.store.activeRuns(chat, thread).length > 0,
+      todos: Array.isArray(todos) ? todos.map((item) => record(item)) : todos,
+      diffs: Array.isArray(diffs) ? diffs.map((item) => record(item)) : diffs,
+      children: Array.isArray(children) ? children.map((item) => record(item)) : children,
+    });
+    const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+    await this.menu(
+      chat,
+      thread,
+      view.text,
+      this.withNavigation(actor, chat, thread, topic, rows, {
+        back: { action: "topic_settings" },
+        home: true,
+        strip: ["← Topic Settings", "🏠 Home"],
+      }),
+    );
   }
   private async optionalCapability<T>(request: () => Promise<T>): Promise<T | null> {
     try {
@@ -646,7 +728,17 @@ export class CloudBotUi {
     const scope = this.modelScope(topic);
     const current = await models.current(topic);
     const view = await buildModelCenterRoot(current, models.source(scope));
-    await this.menu(chat, thread || undefined, view.text, this.modelButtonRows(actor, chat, thread, topic, view.keyboard));
+    const rows = this.modelButtonRows(actor, chat, thread, topic, view.keyboard);
+    await this.menu(
+      chat,
+      thread || undefined,
+      view.text,
+      this.withNavigation(actor, chat, thread, topic, rows, {
+        back: { action: topic ? "topic_settings" : "settings" },
+        home: true,
+        strip: ["← Back", "🏠 Home"],
+      }),
+    );
   }
   private async home(chat: number, actor: number, replace: boolean): Promise<void> {
     if (replace)
@@ -664,11 +756,15 @@ export class CloudBotUi {
     topic?: FleetTopic,
   ): Promise<void> {
     const view = buildCanonicalSettingsMenuView(topic ? this.topicSettingsState(topic) : undefined);
+    const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
     await this.menu(
       chat,
       topic ? thread : undefined,
       view.text,
-      this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+      this.withNavigation(actor, chat, thread, topic, rows, {
+        home: true,
+        strip: ["✖ Close"],
+      }),
     );
   }
   private async history(actor: number, chat: number): Promise<void> {
@@ -686,10 +782,7 @@ export class CloudBotUi {
         String(topic.threadId),
       ),
     ]);
-    rows.push(
-      [{ text: MAIN_BUTTONS.newChat, callback_data: "main:new" }],
-      [{ text: "← Home", callback_data: "main:home" }],
-    );
+    rows.push([{ text: MAIN_BUTTONS.newChat, callback_data: "main:new" }]);
     await this.menu(
       chat,
       undefined,
@@ -697,7 +790,7 @@ export class CloudBotUi {
         (topics.length
           ? "Choose a Topic to continue its dedicated session."
           : "No active AI Topics."),
-      rows,
+      this.withNavigation(actor, chat, 0, undefined, rows, { home: true }),
     );
   }
   private async confirm(
@@ -707,17 +800,20 @@ export class CloudBotUi {
     topic: FleetTopic | undefined,
     action: string,
     title: string,
+    back: NavigationTarget,
   ): Promise<void> {
     await this.menu(
       chat,
       thread || undefined,
-      "⚠️ <b>" +
-        escape(title) +
-        "</b>\n\nThis deletes Topic runtime state and files. This cannot be undone.",
-      [
-        [this.button(actor, chat, thread, topic, "🗑️ " + title, action)],
-        [this.button(actor, chat, thread, topic, "Cancel", "close")],
-      ],
+      "⚠️ <b>" + escape(title) + "</b>\n\nThis action is destructive and cannot be undone.",
+      this.withNavigation(
+        actor,
+        chat,
+        thread,
+        topic,
+        [[this.button(actor, chat, thread, topic, "🗑️ " + title, action)]],
+        { back, home: true },
+      ),
     );
   }
   async handle(update: TelegramUpdate, updateId: number): Promise<boolean> {
@@ -835,7 +931,13 @@ export class CloudBotUi {
     }
     if (!action) {
       const formKey = "form:" + actor + ":" + chat + ":" + thread;
-      const form = this.get<{ kind: string; generation: number; expires: number }>(formKey);
+      const form = this.get<{
+        kind: string;
+        generation: number;
+        expires: number;
+        returnAction?: string;
+        returnValue?: string;
+      }>(formKey);
       if (form?.kind && form.expires <= Date.now()) {
         this.set(formKey, {});
         await this.notice(chat, thread || undefined, "This input form has expired. Open it again.");
@@ -895,7 +997,6 @@ export class CloudBotUi {
     const mainOnly = [
       "new",
       "history",
-      "home",
       "open_topic",
       "reset_history",
       "reset_history_confirm",
@@ -992,9 +1093,13 @@ export class CloudBotUi {
       await this.notice(chat, thread || undefined, "✅ Provider credential stored securely.");
       return true;
     }
-    if (name === "start" || name === "home") {
+    if (name === "start") {
       if (topic) await this.keyboard(chat, topic, "OpenCode Core " + this.deps.coreVersion);
-      else await this.home(chat, actor, name === "start");
+      else await this.home(chat, actor, true);
+      return true;
+    }
+    if (name === "home") {
+      await this.home(chat, actor, false);
       return true;
     }
     if (name === "keyboard") {
@@ -1023,16 +1128,71 @@ export class CloudBotUi {
       return true;
     }
     if (name === "close" || name === "cancel") {
-      this.set("form:" + actor + ":" + chat + ":" + thread, {});
-      this.deps.sql.exec(
-        "DELETE FROM ui_state WHERE key=?",
-        taskDraftKey(actor, chat, thread, topic?.generation ?? 0),
-      );
-      this.deps.sql.exec(
-        "DELETE FROM ui_state WHERE key=?",
-        `config-draft:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`,
-      );
+      const formKey = "form:" + actor + ":" + chat + ":" + thread;
+      const taskKey = taskDraftKey(actor, chat, thread, topic?.generation ?? 0);
+      const configKey = `config-draft:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`;
+      const activeForm = this.get<{ returnAction?: string; returnValue?: string }>(formKey);
+      const taskDraft = this.get<Record<string, unknown>>(taskKey);
+      const configDraft = this.get<Record<string, unknown>>(configKey);
+      let returnAction = activeForm?.returnAction;
+      const returnValue = activeForm?.returnValue;
+      if (!returnAction && configDraft) {
+        const section = String(configDraft.section ?? "");
+        if (["skills", "commands", "mcps"].includes(section)) returnAction = section;
+      }
+      if (!returnAction && taskDraft && Object.keys(taskDraft).length) returnAction = "tasklist";
+      this.set(formKey, {});
+      this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", taskKey);
+      this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", configKey);
       this.set("action_done:" + updateId, true);
+      if (returnAction) {
+        if (returnAction === "settings")
+          await this.settings(actor, chat, thread, topic);
+        else if (returnAction === "topic_settings")
+          await this.settings(actor, chat, thread, topic);
+        else if (returnAction === "session") {
+          if (!topic) throw new Error("topic_not_writable");
+          await this.renderSessionDashboard(actor, chat, thread, topic);
+        } else if (returnAction === "question_return") {
+          if (!topic || !returnValue) throw new Error("topic_not_writable");
+          const key =
+            "question:" + topic.workerId + ":" + topic.generation + ":" + returnValue;
+          const pending = this.get<{
+            runId: string;
+            questions: unknown[];
+            answers: string[][];
+            state: string;
+          }>(key);
+          if (
+            !pending ||
+            pending.state !== "PENDING" ||
+            !this.deps.store.activeRuns(chat, thread).some((r) => r.requestId === pending.runId)
+          )
+            throw new Error("interaction_expired");
+          this.deps.sql.exec(
+            "DELETE FROM ui_state WHERE key=?",
+            "custom_question:" + actor + ":" + chat + ":" + thread,
+          );
+          await this.questionMenu(
+            topic,
+            actor,
+            returnValue,
+            pending.questions,
+            pending.answers,
+          );
+        } else {
+          const rendered = await this.handleAction(
+            actor,
+            chat,
+            thread,
+            topic,
+            { action: returnAction, value: returnValue },
+            undefined,
+          );
+          if (!rendered) throw new Error("invalid_navigation_target");
+        }
+        return true;
+      }
       await this.notice(chat, thread || undefined, t("common.cancelled", undefined, "en"));
       return true;
     }
@@ -1047,7 +1207,7 @@ export class CloudBotUi {
       return true;
     }
     if (["delete", "delete_topic"].includes(name)) {
-      await this.confirm(actor, chat, thread, topic, "delete_confirm", "Delete Chat");
+      await this.confirm(actor, chat, thread, topic, "delete_confirm", "Delete Chat", { action: "topic_settings" });
       return true;
     }
     if (name === "delete_confirm") {
@@ -1112,8 +1272,11 @@ export class CloudBotUi {
         kind: "rename",
         generation: topic!.generation,
         expires: Date.now() + 300000,
+        returnAction: "session",
       });
-      await this.notice(chat, thread, "Send the new Topic name, or /cancel.");
+      await this.menu(chat, thread, "Send the new Topic name, or /cancel.", [
+        [this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")],
+      ]);
       return true;
     }
     if (name === "rename_save") {
@@ -1143,40 +1306,23 @@ export class CloudBotUi {
       return true;
     }
     if (topic && (name === "status" || name === "session")) {
-      const session = this.legacySession();
-      const info = record(await session.session(topic));
-      const [todos, diffs, children] = await Promise.all([
-        this.optionalCapability(() => session.todos<unknown[]>(topic)),
-        this.optionalCapability(() => session.diff<unknown[]>(topic)),
-        this.optionalCapability(() => session.children<unknown[]>(topic)),
-      ]);
-      this.assertTopic(topic);
-      const view = buildSessionDashboardView({
-        sessionId: topic.sessionId,
-        title: typeof info.title === "string" ? info.title : this.options(topic).title,
-        model: this.model(topic),
-        busy: this.deps.store.activeRuns(chat, thread).length > 0,
-        todos: Array.isArray(todos) ? todos.map((item) => record(item)) : todos,
-        diffs: Array.isArray(diffs) ? diffs.map((item) => record(item)) : diffs,
-        children: Array.isArray(children) ? children.map((item) => record(item)) : children,
-      });
-      await this.menu(
-        chat,
-        thread,
-        view.text,
-        this.sessionRows(actor, chat, thread, topic, view.keyboard),
-      );
+      await this.renderSessionDashboard(actor, chat, thread, topic);
       return true;
     }
     if (topic && name === "context") {
       const info = record(await this.legacySession().session(topic));
       const title = String(info.title ?? this.options(topic).title ?? topic.sessionId);
       const view = buildCanonicalContextControlView(title, this.canCompactContext(topic));
+      const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread,
         view.text,
-        this.sessionRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "topic_settings" },
+          home: true,
+          strip: ["← Back", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1197,11 +1343,16 @@ export class CloudBotUi {
       const message = messages[index];
       if (!message) throw new Error("interaction_expired");
       const keyboard = buildMessageReadOnlyDetailKeyboard();
+      const rows = this.sessionRows(actor, chat, thread, topic, keyboard);
       await this.menu(
         chat,
         thread,
         escape(formatMessageDetailText(message)),
-        this.sessionRows(actor, chat, thread, topic, keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "messages" },
+          home: true,
+          strip: ["← Back", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1413,8 +1564,40 @@ export class CloudBotUi {
         : action.action === "forget"
           ? "config_forget"
           : action.action;
+    const configDraftKey = `config-draft:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`;
+    const configNavigation = (): NavigationSpec | undefined => {
+      if (name.startsWith("config_wizard_")) return undefined;
+      if (name === "memory" || name.startsWith("config_memory_"))
+        return { back: { action: "advanced" }, home: true, strip: ["← Settings", "← Back", "🏠 Home"] };
+      const direct = /^(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
+      const item = /^config_(?:item|toggle|remove|add)_(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
+      const section = direct ?? item;
+      if (!section) return undefined;
+      const parent = section === "commands"
+        ? "advanced"
+        : ["skills", "mcps", "plugins"].includes(section)
+          ? "extensions"
+          : "settings";
+      if (name.startsWith("config_item_"))
+        return { back: { action: section }, home: true, strip: ["← Settings", "← Back", "← " + section, "🏠 Home"] };
+      return { back: { action: parent }, home: true, strip: ["← Settings", "← Back", "🏠 Home"] };
+    };
+    const configWizardOrigin = (): NavigationTarget | undefined => {
+      const row = [
+        ...this.deps.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", configDraftKey),
+      ][0];
+      if (row) {
+        const section = String(record(JSON.parse(row.data)).section ?? "");
+        if (["skills", "commands", "mcps"].includes(section)) return { action: section };
+      }
+      const jsonSection = /^config_json_(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
+      if (jsonSection) return { action: jsonSection };
+      if (["config_memory_add", "config_memory_forget", "config_remember", "config_forget"].includes(name))
+        return { action: "memory" };
+      return undefined;
+    };
     const configUi = new CloudConfigUi({
-      draftKey: `config-draft:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`,
+      draftKey: configDraftKey,
       markCommitted: () => {
         if (updateId) this.set("action_done:" + updateId, true);
       },
@@ -1427,23 +1610,47 @@ export class CloudBotUi {
       },
       button: b,
       notice: (text) => this.notice(chat, thread || undefined, text),
-      menu: (text, rows) => this.menu(chat, thread || undefined, text, rows),
+      menu: (text, rows) => {
+        const navigation = configNavigation();
+        return this.menu(
+          chat,
+          thread || undefined,
+          text,
+          navigation
+            ? this.withNavigation(actor, chat, thread, topic, rows, navigation)
+            : rows,
+        );
+      },
       prompt: async (kind, text) => {
+        const origin = configWizardOrigin();
         this.set("form:" + actor + ":" + chat + ":" + thread, {
           kind,
           generation: topic?.generation ?? 0,
           expires: Date.now() + 300000,
+          ...(origin ? { returnAction: origin.action, returnValue: origin.value } : {}),
         });
-        await this.notice(chat, thread || undefined, text);
+        await this.menu(chat, thread || undefined, text, [
+          [this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")],
+        ]);
       },
     });
     const prompt = async (kind: string, text: string) => {
+      const origin: NavigationTarget | undefined = kind.startsWith("config_task_")
+        ? { action: "tasklist" }
+        : kind === "open"
+          ? { action: "ls", value: "." }
+          : kind === "config_image_model" || kind === "config_voice_model"
+            ? { action: topic ? "topic_models" : "models" }
+            : undefined;
       this.set("form:" + actor + ":" + chat + ":" + thread, {
         kind,
         generation: topic?.generation ?? 0,
         expires: Date.now() + 300000,
+        ...(origin ? { returnAction: origin.action, returnValue: origin.value } : {}),
       });
-      await this.notice(chat, thread || undefined, text);
+      await this.menu(chat, thread || undefined, text, [
+        [this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")],
+      ]);
     };
     const tasks = new CloudTaskUi({
       sql: this.deps.sql,
@@ -1458,7 +1665,18 @@ export class CloudBotUi {
       button: b,
       prompt,
       notice: (text) => this.notice(chat, thread || undefined, text),
-      menu: (text, rows) => this.menu(chat, thread || undefined, text, rows),
+      menu: (text, rows) =>
+        this.menu(
+          chat,
+          thread || undefined,
+          text,
+          name === "tasklist"
+            ? this.withNavigation(actor, chat, thread, topic, rows, {
+                ...(topic ? { back: { action: "session" } } : {}),
+                home: true,
+              })
+            : rows,
+        ),
     });
     if (await tasks.handle(name, action.value)) {
       if (updateId && name.startsWith("config_task_")) this.set("action_done:" + updateId, true);
@@ -1478,11 +1696,14 @@ export class CloudBotUi {
         providerId,
         generation: topic?.generation ?? 0,
         expires: Date.now() + 300000,
+        returnAction: "config_item_providers",
+        returnValue: providerId,
       });
-      await this.notice(
+      await this.menu(
         chat,
         thread || undefined,
         "Send the provider API key. It will be encrypted before durable storage and never sent to a model. Use /cancel to cancel.",
+        [[this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")]],
       );
       return true;
     }
@@ -1522,11 +1743,16 @@ export class CloudBotUi {
         name === "queue" || changedField === "promptQueueEnabled"
           ? buildCanonicalPromptQueueSettingsView(state.promptQueueEnabled)
           : buildCanonicalAppearanceSettingsView(state);
+      const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread,
         view.text,
-        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "topic_settings" },
+          home: true,
+          strip: ["← Back", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1535,33 +1761,51 @@ export class CloudBotUi {
         providers = record(runtime.provider);
       if (!action.value || !Object.hasOwn(providers, action.value))
         throw new Error("provider_not_configured");
-      await this.menu(chat, thread || undefined, "🔌 <b>" + escape(action.value) + "</b>", [
+      const rows: Button[][] = [
         [b("🔐 Connect / Replace credential", "config_credential_provider", action.value)],
         [b("Toggle Enabled", "config_toggle_providers", action.value)],
         [b("Edit", "config_add_providers")],
         [b("Remove", "config_remove_providers", action.value)],
-        [b("← Providers", "providers")],
-      ]);
+      ];
+      await this.menu(
+        chat,
+        thread || undefined,
+        "🔌 <b>" + escape(action.value) + "</b>",
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "providers" },
+          home: true,
+        }),
+      );
       return true;
     }
     if (name === "topic_models") {
       if (!topic) throw new Error("topic_not_writable");
       const view = buildCanonicalTopicModelsSettingsView(this.topicSettingsState(topic));
+      const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread,
         view.text,
-        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "topic_settings" },
+          home: true,
+          strip: ["← Topic Settings", "🏠 Home"],
+        }),
       );
       return true;
     }
     if (name === "more" || name === "advanced") {
       const view = name === "more" ? buildCanonicalMoreSettingsView() : buildCanonicalAdvancedSettingsView();
+      const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: name === "more" ? "settings" : "more" },
+          home: true,
+          strip: ["← Settings", "← Back", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1600,11 +1844,16 @@ export class CloudBotUi {
         sendDiffFileAttachments: Boolean(values.sendDiffFileAttachments ?? OUTPUT_DEFAULTS.sendDiffFileAttachments),
         promptQueueEnabled: Boolean(values.promptQueueEnabled ?? OUTPUT_DEFAULTS.promptQueueEnabled),
       });
+      const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "more" },
+          home: true,
+          strip: ["← Back", "← Settings", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1623,11 +1872,16 @@ export class CloudBotUi {
       const fresh = this.deps.store.global();
       const enabled = record(record(fresh?.data.configuration).settings).experimentalFreeModelDetection === true;
       const view = buildCanonicalExperimentalSettingsView(enabled);
+      const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.settingsButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "more" },
+          home: true,
+          strip: ["← Back", "← Settings", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1697,9 +1951,13 @@ export class CloudBotUi {
           expires: Date.now() + 300000,
           id,
           index,
+          returnAction: "question_return",
+          returnValue: id,
         });
         this.set("custom_question:" + actor + ":" + chat + ":" + thread, { id, index });
-        await this.notice(chat, thread, "Send your answer, or /cancel.");
+        await this.menu(chat, thread, "Send your answer, or /cancel.", [
+          [this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")],
+        ]);
         return true;
       }
       this.set(key, { ...pending, answers });
@@ -1773,7 +2031,17 @@ export class CloudBotUi {
           })),
           path,
         );
-        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+        const navigation = path === "."
+          ? this.withNavigation(actor, chat, thread, topic, rows, {
+              back: { action: "session" },
+              home: true,
+            })
+          : this.withNavigation(actor, chat, thread, topic, rows, {
+              back: { action: "ls", value: parentWorkspacePath(path) },
+              home: true,
+            });
+        await this.menu(chat, thread, view.text, navigation);
         return true;
       }
       if (name === "open") {
@@ -1785,25 +2053,58 @@ export class CloudBotUi {
             ? file.content.length
             : undefined;
         const view = buildRemoteLsFileView(path, size, true);
-        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+        await this.menu(
+          chat,
+          thread,
+          view.text,
+          this.withNavigation(actor, chat, thread, topic, rows, { home: true }),
+        );
         return true;
       }
       if (name === "todos") {
         const result = await this.optionalCapability(() => session.todos<unknown[]>(topic));
         const view = buildSessionTodosView(Array.isArray(result) ? result.map((item) => record(item)) : result);
-        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+        await this.menu(
+          chat,
+          thread,
+          view.text,
+          this.withNavigation(actor, chat, thread, topic, rows, {
+            back: { action: "session" },
+            home: true,
+          }),
+        );
         return true;
       }
       if (name === "diff") {
         const result = await this.optionalCapability(() => session.diff<unknown[]>(topic));
         const view = buildSessionDiffView(Array.isArray(result) ? result.map((item) => record(item)) : result);
-        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+        await this.menu(
+          chat,
+          thread,
+          view.text,
+          this.withNavigation(actor, chat, thread, topic, rows, {
+            back: { action: "session" },
+            home: true,
+          }),
+        );
         return true;
       }
       if (name === "children") {
         const result = await this.optionalCapability(() => session.children<unknown[]>(topic));
         const view = buildSessionChildrenView(Array.isArray(result) ? result.map((item) => record(item)) : result);
-        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
+        await this.menu(
+          chat,
+          thread,
+          view.text,
+          this.withNavigation(actor, chat, thread, topic, rows, {
+            back: { action: "session" },
+            home: true,
+          }),
+        );
         return true;
       }
       const entries = await session.childMessages<unknown[]>(topic, action.value ?? "");
@@ -1824,7 +2125,10 @@ export class CloudBotUi {
         chat,
         thread,
         "🤖 <b>Sub-agent messages</b>\n\n" + escape(text || "No child messages yet."),
-        [[this.button(actor, chat, thread, topic, "← Sub-agents", "children")]],
+        this.withNavigation(actor, chat, thread, topic, [], {
+          back: { action: "children" },
+          home: true,
+        }),
       );
       return true;
     }
@@ -1849,7 +2153,10 @@ export class CloudBotUi {
           (name === "github"
             ? "Repository access belongs to the dedicated Core Worker. A scoped GitHub credential and governed Git transport must be configured before connecting."
             : "VPN, SSH and tailscaled run only on execution Workers. A scoped Tailscale credential and governed runtime connection are required."),
-        [[b("← Settings", "settings")]],
+        this.withNavigation(actor, chat, thread, topic, [], {
+          back: { action: "settings" },
+          home: true,
+        }),
       );
       return true;
     }
@@ -1869,11 +2176,16 @@ export class CloudBotUi {
         current,
         models.source(scope),
       );
+      const rows = this.modelButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "models" },
+          home: true,
+          strip: ["← Model Center", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1881,11 +2193,16 @@ export class CloudBotUi {
       const models = this.legacyModels();
       const scope = this.modelScope(topic);
       const view = await buildModelCenterProviders(models.source(scope));
+      const rows = this.modelButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "models" },
+          home: true,
+          strip: ["← Model Center", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1904,11 +2221,16 @@ export class CloudBotUi {
         undefined,
         models.source(scope),
       );
+      const rows = this.modelButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "model_providers" },
+          home: true,
+          strip: ["← Providers", "← Model Center", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1917,8 +2239,14 @@ export class CloudBotUi {
         kind: "model_search",
         generation: topic?.generation ?? 0,
         expires: Date.now() + 300000,
+        returnAction: "models",
       });
-      await this.notice(chat, thread || undefined, "🔎 Send a model name, ID, or provider to search, or /cancel.");
+      await this.menu(
+        chat,
+        thread || undefined,
+        "🔎 Send a model name, ID, or provider to search, or /cancel.",
+        [[this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")]],
+      );
       return true;
     }
     if (name === "model_search_save") {
@@ -1928,11 +2256,16 @@ export class CloudBotUi {
       const scope = this.modelScope(topic);
       const current = await models.current(topic);
       const view = await buildModelCenterSearchResults(query, current, models.source(scope));
+      const rows = this.modelButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
         thread || undefined,
         view.text,
-        this.modelButtonRows(actor, chat, thread, topic, view.keyboard),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "models" },
+          home: true,
+          strip: ["← Back", "← Model Center", "🏠 Home"],
+        }),
       );
       return true;
     }
@@ -1968,15 +2301,18 @@ export class CloudBotUi {
         if (Array.isArray(model.variants)) names = model.variants.map(String);
       }
       this.set("catalog:" + topic.workerId + ":" + topic.generation + ":" + name, names);
+      const rows: Button[][] = names
+        .slice(0, 40)
+        .map((value) => [b(value, name + "_save", value)]);
       await this.menu(
         chat,
         thread,
         (name === "agent" ? "🤖 <b>Agent</b>" : "🎛 <b>Variant</b>") +
           (names.length ? "" : "\nNo choices advertised by this runtime/model."),
-        names
-          .slice(0, 40)
-          .map((value) => [b(value, name + "_save", value)])
-          .concat([[b("← Topic Settings", "settings")]]),
+        this.withNavigation(actor, chat, thread, topic, rows, {
+          back: { action: "topic_settings" },
+          home: true,
+        }),
       );
       return true;
     }
@@ -2010,17 +2346,20 @@ export class CloudBotUi {
       return true;
     }
     if (name === "model_edit" || name === "agent" || name === "variant") {
+      const returnAction = name === "model_edit" ? "models" : "topic_settings";
       this.set("form:" + actor + ":" + chat + ":" + thread, {
         kind: name === "model_edit" ? "model" : name,
         generation: topic?.generation ?? 0,
         expires: Date.now() + 300000,
+        returnAction,
       });
-      await this.notice(
+      await this.menu(
         chat,
         thread || undefined,
         name === "model_edit"
           ? "Send the exact provider/model ID, or /cancel."
           : "Send the " + name + " name, or /cancel.",
+        [[this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")]],
       );
       return true;
     }
@@ -2054,7 +2393,7 @@ export class CloudBotUi {
       return true;
     }
     if (name === "factory_reset_confirm") {
-      await this.confirm(actor, chat, thread, topic, "factory_reset_final", "Final Factory Reset");
+      await this.confirm(actor, chat, thread, topic, "factory_reset_final", "Final Factory Reset", { action: "factory_reset" });
       return true;
     }
     if (name === "reset_history_confirm" || name === "factory_reset_final") {
@@ -2116,6 +2455,7 @@ export class CloudBotUi {
         topic,
         name + "_confirm",
         name === "reset_history" ? "Clear Conversation History" : "Factory Reset",
+        { action: "advanced" },
       );
       return true;
     }

@@ -2,7 +2,7 @@ import { createMainInlineKeyboard } from "../bot/keyboards/main-reply-keyboard.j
 import type { CloudTelegram } from "./telegram.js";
 import type { LegacyMainStatus, LegacyUiAdapter } from "./legacy-ui-adapter.js";
 
-export type LegacyButton = { text: string; callback_data: string };
+export type LegacyButton = { text: string; callback_data?: string; url?: string };
 export interface LegacyPanel {
   text: string;
   rows: LegacyButton[][];
@@ -92,10 +92,59 @@ export class LegacyMainUi {
         .call("deleteMessage", { chat_id: chatId, message_id: previous.messageId })
         .catch(() => undefined);
     }
+    const menu = this.adapter.getUiState<PanelState>(this.menuKey(chatId));
+    if (menu && menu.messageId !== sent.message_id)
+      await this.telegram
+        .call("deleteMessage", { chat_id: chatId, message_id: menu.messageId })
+        .catch(() => undefined);
+    this.adapter.deleteUiState(this.menuKey(chatId));
   }
 
   async showHome(chatId: number): Promise<void> {
     await this.editCanonicalPanel(chatId, undefined, await this.homePanel());
+  }
+
+  /** Return an exact Telegram deep link to the durable pinned Main panel when the chat is a supergroup. */
+  mainPanelLink(chatId: number): string | undefined {
+    const state = this.adapter.getUiState<PanelState>(this.mainKey(chatId));
+    if (!state?.messageId) return undefined;
+    const id = String(chatId);
+    if (!id.startsWith("-100") || id.length <= 4) return undefined;
+    return `https://t.me/c/${id.slice(4)}/${state.messageId}`;
+  }
+
+  /** General navigation lives on a separate durable panel so the pinned Home message stays immutable. */
+  async editCanonicalMenuPanel(chatId: number, panel: LegacyPanel): Promise<void> {
+    const key = this.menuKey(chatId);
+    const current = this.adapter.getUiState<PanelState>(key);
+    const fingerprint = this.fingerprint(panel);
+    if (current?.fingerprint === fingerprint) return;
+    if (current) {
+      try {
+        await this.telegram.call("editMessageText", {
+          chat_id: chatId,
+          message_id: current.messageId,
+          text: panel.text.slice(0, 4000),
+          parse_mode: panel.parseMode ?? "HTML",
+          reply_markup: { inline_keyboard: panel.rows },
+        });
+        this.adapter.setUiState(key, { ...current, fingerprint });
+        return;
+      } catch {
+        // Missing/retired menu panel: create one replacement without touching the pinned Home panel.
+      }
+    }
+    const sent = await this.telegram.call<{ message_id: number }>("sendMessage", {
+      chat_id: chatId,
+      text: panel.text.slice(0, 4000),
+      parse_mode: panel.parseMode ?? "HTML",
+      reply_markup: { inline_keyboard: panel.rows },
+    });
+    this.adapter.setUiState(key, { messageId: sent.message_id, fingerprint });
+    if (current && current.messageId !== sent.message_id)
+      await this.telegram
+        .call("deleteMessage", { chat_id: chatId, message_id: current.messageId })
+        .catch(() => undefined);
   }
 
   async editCanonicalPanel(
@@ -174,6 +223,10 @@ export class LegacyMainUi {
 
   private mainKey(chatId: number): string {
     return `legacy:main:${chatId}`;
+  }
+
+  private menuKey(chatId: number): string {
+    return `legacy:menu:${chatId}`;
   }
 
   private panelKey(chatId: number, threadId: number | undefined): string {
