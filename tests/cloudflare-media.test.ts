@@ -53,3 +53,16 @@ test("generated workspace documents use Telegram multipart upload without token 
   assert.equal(await file.text(), "patch data");
   assert.equal(file.name, "changes.diff");
 });
+
+test("workspace binary downloads preserve bytes in the Telegram document", async () => {
+  let form: FormData | undefined;
+  const telegram = new CloudTelegram("synthetic", async (_, init) => {
+    form = init?.body as FormData;
+    return Response.json({ ok: true, result: { message_id: 9 } });
+  });
+  await telegram.document(1, 42, "image.bin", new Uint8Array([0, 1, 255]));
+  assert.deepEqual(
+    Array.from(new Uint8Array(await (form?.get("document") as File).arrayBuffer())),
+    [0, 1, 255],
+  );
+});

@@ -4,6 +4,7 @@
   "main": "src/cloudflare/worker.ts",
   "compatibility_date": "2026-10-07",
   "workers_dev": true,
+  "keep_vars": true,
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } },
   "durable_objects": { "bindings": [{ "name": "CONTROL", "class_name": "ControlPlane" }] },
   "migrations": [{ "tag": "control-v1", "new_sqlite_classes": ["ControlPlane"] }],

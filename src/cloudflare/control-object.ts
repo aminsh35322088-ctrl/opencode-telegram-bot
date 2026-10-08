@@ -134,6 +134,14 @@ export class ControlPlane {
           },
           Date.now(),
         );
+        // eslint-disable-next-line no-console
+        console.log(
+          JSON.stringify({
+            event: "telegram_ui_rendered",
+            command,
+            scope: thread > 1 ? "topic" : "general",
+          }),
+        );
         return Response.json({ ok: true, scope: thread > 1 ? "topic" : "general" });
       }
       if (path === "/admin/runtime")
@@ -196,7 +204,29 @@ export class ControlPlane {
             requestId,
           ),
         ];
-        return Response.json({ run, response: response ?? null, delivery });
+        const previewRow = [
+          ...this.state.storage.sql.exec<{ data: string }>(
+            "SELECT data FROM ui_state WHERE key=?",
+            "run-ui:" + requestId,
+          ),
+        ][0];
+        const preview = previewRow ? JSON.parse(previewRow.data) : undefined;
+        return Response.json({
+          run,
+          response: response ?? null,
+          delivery,
+          preview: preview
+            ? {
+                state: preview.delivery,
+                messageId: preview.message,
+                tools: Object.values(preview.tools ?? {}).map((t: unknown) => {
+                  const v = t as { name: string; status: string };
+                  return { name: v.name, status: v.status };
+                }),
+                visibleCharacters: (preview.last ?? "").length,
+              }
+            : null,
+        });
       }
       if (path === "/admin/model-inspect") {
         const topic = this.store
@@ -838,6 +868,7 @@ export class ControlPlane {
     requestId: string,
     text: string,
     parts?: CloudPromptPart[],
+    mediaModel?: string,
   ): Promise<void> {
     const topic = this.store
       .topics()
@@ -848,6 +879,7 @@ export class ControlPlane {
     if (!text || text.length > 20000) throw new Error("invalid_prompt");
     const admittedGlobal = this.store.global();
     const selected =
+      mediaModel ||
       this.ui().options(topic).model ||
       String(
         (admittedGlobal?.data.configuration as { runtime?: { model?: string } })?.runtime?.model ??
@@ -1292,7 +1324,10 @@ export class ControlPlane {
             ",",
           )[0],
         );
-        if (actor && status.state === "ACCEPTED") await this.ui().interactions(topic, actor);
+        if (actor && status.state === "ACCEPTED") {
+          await this.ui().runKeyboard(topic, run.requestId, true);
+          await this.ui().interactions(topic, actor);
+        }
         if (!reply.accepted && !["INCOMPLETE", "SUBMITTED"].includes(status.state))
           throw new Error("execution_not_accepted");
         if (["INCOMPLETE", "SUBMITTED"].includes(status.state)) {
@@ -1480,6 +1515,16 @@ export class ControlPlane {
       }
       if (complete) {
         this.store.responseDelivered(response.run);
+        await this.ui().runKeyboard(topic, response.run, false);
+        // eslint-disable-next-line no-console
+        console.log(
+          JSON.stringify({
+            event: "run_response_delivered",
+            workerId: topic.workerId,
+            generation: topic.generation,
+            runId: response.run,
+          }),
+        );
         await this.state.storage.setAlarm(Date.now() + 1);
       }
     }
@@ -1564,6 +1609,11 @@ export class ControlPlane {
               update.message.audio
               ? await telegramMediaParts(telegram, update.message)
               : undefined,
+            update.message.photo
+              ? this.ui().options(topic).imageModel
+              : update.message.voice || update.message.audio
+                ? this.ui().options(topic).voiceModel
+                : undefined,
           );
         }
         this.state.storage.sql.exec("UPDATE updates SET state='DISPATCHED' WHERE id=?", row.id);

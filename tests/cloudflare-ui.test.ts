@@ -646,3 +646,84 @@ test("Topic attachments are durably admitted and only inline file data reaches C
   assert.match(JSON.stringify(request.payload.parts), /data:text\/plain;base64,YWJj/);
   assert.equal(JSON.stringify(request).includes("synthetic"), false);
 });
+
+test("attachments cannot bypass an active UI input form into model execution", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/rename", 42);
+  await f.post("/telegram/webhook", {
+    update_id: 3100,
+    message: {
+      message_id: 3100,
+      chat: { id: -100 },
+      from: { id: 7 },
+      message_thread_id: 42,
+      document: { file_id: "id", file_size: 1 },
+    },
+  });
+  await f.plane.alarm();
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("media model defaults are pinned for attachments without changing chat model or sharing execution", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.post("/admin/global", {
+    configuration: { runtime: { model: "opencode/big-pickle" } },
+    skills: [],
+    actions: [],
+    catalog: {},
+    defaults: { voiceModel: "example/audio" },
+    credentialReferences: [],
+  });
+  const outbound = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith("/getFile"))
+      return Response.json({ ok: true, result: { file_path: "voice/a.ogg", file_size: 3 } });
+    if (String(input).includes("/file/bot")) return new Response("ogg");
+    return outbound(input, init);
+  };
+  await f.post("/telegram/webhook", {
+    update_id: 3300,
+    message: {
+      message_id: 3300,
+      chat: { id: -100 },
+      from: { id: 7 },
+      message_thread_id: 42,
+      voice: { file_id: "voice-id", file_size: 3, mime_type: "audio/ogg" },
+    },
+  });
+  await f.plane.alarm();
+  assert.equal(f.store.runPin("telegram_3300")?.model, "example/audio");
+  assert.equal((f.store.global()!.data.configuration as any).runtime.model, "opencode/big-pickle");
+  assert.equal(f.store.workers().length, 1);
+});
+
+test("streaming toggle persists an actual transport mode rather than a boolean", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/appearance", 42);
+  const buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const button = buttons.find((b: any) => String(b.text).includes("responseStreamingMode"));
+  assert.ok(button);
+  await f.callback(button.callback_data, 42);
+  const row = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+  ][0];
+  assert.equal(JSON.parse(row.data).responseStreamingMode, "off");
+});
+
+test("active Topic keyboard exposes Pause and Abort, and idle keyboard removes them", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.store.enqueue(-100, 42, "keyboard_run", "prompt");
+  f.store.startNext(-100, 42);
+  await f.update("/keyboard", 42);
+  assert.match(JSON.stringify(f.sent), /Pause/);
+  assert.match(JSON.stringify(f.sent), /Abort/);
+  f.store.failRun(-100, 42, "keyboard_run", "stopped");
+  f.sent.length = 0;
+  await f.update("/keyboard", 42);
+  const keyboards = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  assert.equal(JSON.stringify(keyboards).includes("Pause"), false);
+});

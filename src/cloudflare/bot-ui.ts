@@ -221,6 +221,32 @@ export class CloudBotUi {
       reply_markup: keyboard,
     });
   }
+  async runKeyboard(topic: FleetTopic, runId: string, running: boolean): Promise<void> {
+    this.assertTopic(topic);
+    if (!running && !this.deps.store.activeRuns(topic.chatId, topic.threadId).length)
+      this.setOptions(topic, { paused: false });
+    const id = "keyboard:" + runId + ":" + (running ? "active" : "idle");
+    const receipt = [
+      ...this.deps.sql.exec<{ state: string }>("SELECT state FROM ui_delivery WHERE id=?", id),
+    ][0];
+    if (receipt && receipt.state !== "PENDING") return;
+    this.deps.sql.exec(
+      "INSERT INTO ui_delivery VALUES(?,'SENDING',NULL) ON CONFLICT(id) DO UPDATE SET state='SENDING'",
+      id,
+    );
+    try {
+      await this.keyboard(topic.chatId, topic, running ? "▶ OpenCode is running…" : "✅ Ready");
+      this.deps.sql.exec("UPDATE ui_delivery SET state='DELIVERED' WHERE id=?", id);
+    } catch (error) {
+      this.deps.sql.exec(
+        "UPDATE ui_delivery SET state=? WHERE id=?",
+        error instanceof TelegramDeliveryError && error.category === "rate_limited"
+          ? "PENDING"
+          : "RECONCILIATION_REQUIRED",
+        id,
+      );
+    }
+  }
   async ready(topic: FleetTopic): Promise<void> {
     const id = "ready:" + topic.workerId + ":" + topic.generation;
     const previous = [
@@ -451,21 +477,27 @@ export class CloudBotUi {
           action = { action: "unknown" };
       }
     }
-    if (
-      !action &&
-      thread &&
-      (update.message?.photo ||
-        update.message?.document ||
-        update.message?.voice ||
-        update.message?.audio)
-    )
-      return false;
     if (!action) {
       const formKey = "form:" + actor + ":" + chat + ":" + thread;
       const form = this.get<{ kind: string; generation: number; expires: number }>(formKey);
       if (form?.kind && form.expires <= Date.now()) {
         this.set(formKey, {});
         await this.notice(chat, thread || undefined, "This input form has expired. Open it again.");
+        return true;
+      }
+      const hasMedia = !!(
+        update.message?.photo ||
+        update.message?.document ||
+        update.message?.voice ||
+        update.message?.audio
+      );
+      if (hasMedia && !form?.kind && thread) return false;
+      if (hasMedia && form?.kind) {
+        await this.notice(
+          chat,
+          thread || undefined,
+          "This form needs a text answer. Send text, or /cancel.",
+        );
         return true;
       }
       if (form && form.expires > Date.now()) {
@@ -543,6 +575,7 @@ export class CloudBotUi {
       "diff",
       "children",
       "child_messages",
+      "file_download",
     ];
     if (
       (mainOnly.includes(name) && thread) ||
@@ -680,6 +713,7 @@ export class CloudBotUi {
         const status = await this.deps.rpc(topic!, "status");
         if (status) throw new Error("execution_cleanup_pending");
         this.deps.store.failRun(chat, thread, run.requestId, "🛑 Execution stopped.");
+        this.setOptions(topic!, { paused: false });
       } else this.setOptions(topic!, { paused: name === "pause" });
       this.set("action_done:" + updateId, true);
       await this.keyboard(chat, topic);
@@ -1075,7 +1109,15 @@ export class CloudBotUi {
         const current = this.options(topic)[field];
         this.setOptions(topic, {
           [field]:
-            field === "messageFormatMode" ? (current === "raw" ? "markdown" : "raw") : !current,
+            field === "responseStreamingMode"
+              ? current === "off"
+                ? "edit"
+                : "off"
+              : field === "messageFormatMode"
+                ? current === "raw"
+                  ? "markdown"
+                  : "raw"
+                : !current,
         });
         if (updateId) this.set("action_done:" + updateId, true);
       }
@@ -1222,6 +1264,23 @@ export class CloudBotUi {
       await this.questionMenu(topic, actor, custom.id, pending.questions, pending.answers);
       return true;
     }
+    if (name === "file_download") {
+      if (!topic || !action.value) throw new Error("topic_not_writable");
+      const file = record(await this.deps.rpc(topic, "file.read", { path: action.value }));
+      this.assertTopic(topic);
+      const content =
+        file.encoding === "base64"
+          ? Uint8Array.from(atob(String(file.content)), (c) => c.charCodeAt(0))
+          : String(file.content ?? "");
+      const filename =
+        action.value
+          .split("/")
+          .at(-1)!
+          .replace(/[^A-Za-z0-9_.-]/g, "_")
+          .slice(0, 128) || "file";
+      await this.deps.telegram.document(chat, thread, filename, content);
+      return true;
+    }
     if (["todos", "diff", "children", "child_messages", "ls", "open"].includes(name)) {
       if (!topic) throw new Error("topic_not_writable");
       const operation = {
@@ -1290,6 +1349,10 @@ export class CloudBotUi {
         if (file.encoding === "base64")
           await this.notice(chat, thread, "Binary file. Text preview is unavailable.");
         else await this.notice(chat, thread, String(file.content ?? "Empty file.").slice(0, 24000));
+        await this.menu(chat, thread, "📄 <b>Workspace file</b>", [
+          [b("⬇ Download", "file_download", action.value)],
+          [b("← Files", "ls")],
+        ]);
       } else if (name === "child_messages") {
         const entries = Array.isArray(result) ? result : [];
         for (const item of entries.slice(-10)) {
@@ -1425,6 +1488,7 @@ export class CloudBotUi {
           "\nSet an exact provider/model. No hidden model fallback.",
         [
           [b("💬 Primary / Chat & Coding", "model_edit")],
+          [b("🖼 Image Model", "model_image"), b("🎙 Voice Model", "model_voice")],
           ...modelRows,
           [b("🔌 Providers", "providers")],
           [b("← Settings", "settings")],
@@ -1460,6 +1524,35 @@ export class CloudBotUi {
           .slice(0, 40)
           .map((value) => [b(value, name + "_save", value)])
           .concat([[b("← Topic Settings", "settings")]]),
+      );
+      return true;
+    }
+    if (name === "model_image" || name === "model_voice") {
+      await prompt(
+        name === "model_image" ? "config_image_model" : "config_voice_model",
+        "Send the exact provider/model for " +
+          (name === "model_image" ? "image attachments" : "audio attachments") +
+          ", or /cancel. The provider must support this media type.",
+      );
+      return true;
+    }
+    if (name === "config_image_model" || name === "config_voice_model") {
+      const selected = action.value?.trim() ?? "";
+      if (!/^[^/\s]{1,128}\/.{1,128}$/.test(selected)) throw new Error("invalid_model");
+      const field = name === "config_image_model" ? "imageModel" : "voiceModel";
+      if (topic) this.setOptions(topic, { [field]: selected });
+      else {
+        if (!global) throw new Error("snapshot_unavailable");
+        await this.deps.global(
+          { ...global.data, defaults: { ...record(global.data.defaults), [field]: selected } },
+          global.revision,
+        );
+      }
+      if (updateId) this.set("action_done:" + updateId, true);
+      await this.notice(
+        chat,
+        thread || undefined,
+        "✅ Media model saved. Capability and credentials are checked before execution.",
       );
       return true;
     }

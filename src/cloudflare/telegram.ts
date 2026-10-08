@@ -64,14 +64,20 @@ export class CloudTelegram {
     chatId: number,
     threadId: number,
     filename: string,
-    content: string,
+    content: string | Uint8Array,
   ): Promise<number> {
     if (content.length > 262144 || !/^[A-Za-z0-9_.-]{1,128}$/.test(filename))
       throw new Error("invalid_document");
     const form = new FormData();
     form.set("chat_id", String(chatId));
     form.set("message_thread_id", String(threadId));
-    form.set("document", new Blob([content], { type: "text/plain" }), filename);
+    form.set(
+      "document",
+      new Blob([typeof content === "string" ? content : new Uint8Array(content).buffer], {
+        type: typeof content === "string" ? "text/plain" : "application/octet-stream",
+      }),
+      filename,
+    );
     const transport = this.transport;
     let response: Response;
     try {

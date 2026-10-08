@@ -108,7 +108,13 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
     globalThis.fetch = original;
   });
   let calls = 0;
-  globalThis.fetch = async () => {
+  let keyboardCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    const payload = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/sendMessage") && payload.reply_markup?.keyboard) {
+      keyboardCalls++;
+      return Response.json({ ok: true, result: { message_id: 100 } });
+    }
     calls++;
     return calls === 2
       ? Response.json(
@@ -121,6 +127,7 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
   assert.equal(calls, 2);
   await f.plane.alarm();
   assert.equal(calls, 3);
+  assert.equal(keyboardCalls, 1);
   assert.equal(f.store.completedResponses().length, 0);
 });
 

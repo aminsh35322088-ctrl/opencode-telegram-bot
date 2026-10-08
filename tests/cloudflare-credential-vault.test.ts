@@ -245,3 +245,15 @@ test("General thread one uses the zero-thread credential form scope", async () =
     secret,
   );
 });
+
+test("credential captions are protected before durable update persistence", async () => {
+  const f = fixture();
+  form(f);
+  const original = update();
+  delete original.message!.text;
+  original.message!.caption = secret;
+  original.message!.document = { file_id: "file" };
+  const result = await protectTelegramCredentialUpdate(original, f.sql, master);
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.equal(await readCredentialInput(result, master, context), secret);
+});

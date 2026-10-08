@@ -151,7 +151,7 @@ export async function protectTelegramCredentialUpdate(
   master: string,
 ): Promise<ProtectedTelegramUpdate> {
   const current = scope(update);
-  const text = update.message?.text;
+  const text = update.message?.text ?? update.message?.caption;
   if (!current || typeof text !== "string" || /^\s*\//.test(text)) return update;
   try {
     const form = get<{ kind: string; providerId: string; generation: number; expires: number }>(
@@ -179,7 +179,13 @@ export async function protectTelegramCredentialUpdate(
     );
     return {
       ...update,
-      message: { ...update.message!, text: "[credential input protected]" },
+      message: {
+        ...update.message!,
+        text: "[credential input protected]",
+        ...(update.message?.caption !== undefined
+          ? { caption: "[credential input protected]" }
+          : {}),
+      },
       credentialInput: input,
     };
   } catch {

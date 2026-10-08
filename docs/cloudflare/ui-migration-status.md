@@ -5,8 +5,8 @@ The persistent Telegram application now runs in the existing Cloudflare ControlP
 ## Implemented routes
 
 - Existing public Telegram command catalog, General inline/reply navigation, History, New Chat and Topic keyboard restoration.
-- Topic Settings, model/agent/variant catalog choices, exact model inspection, scoped output preferences, queue admission, session/messages/context inspection, rename, abort/stop/pause/resume and confirmed deletion.
-- Session todos, changed-file summaries, direct-child sub-agent messages and bounded relative workspace file browsing/reading through signed Core RPC.
+- Topic Settings, model/agent/variant catalog choices, image/audio model selectors, exact model inspection, scoped output preferences, queue admission, session/messages/context inspection, rename, automatic run keyboards, abort/stop/pause/resume and confirmed deletion.
+- Session todos, changed-file summaries, direct-child sub-agent messages and bounded relative workspace file browsing/reading/downloads through signed Core RPC.
 - Canonical revisioned provider, skill, MCP, plugin, extension, generated Action, custom command and persistent-memory configuration; Topic defaults and experimental settings.
 - Provider API credential entry encrypted before durable update persistence; signed, narrowly scoped provider proxy leases. No provisioning credentials are available to Core/model processes.
 - Questions, multiple/custom answers and permissions bound to actor/chat/thread/generation/run. Exact question receipts authorize global mutation prepare/commit.
