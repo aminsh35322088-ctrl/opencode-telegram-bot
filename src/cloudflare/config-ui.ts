@@ -798,17 +798,6 @@ export class CloudConfigUi {
       });
       return true;
     }
-    if (action === "topic_defaults" || action === "appearance" || action === "queue") {
-      const b = this.ctx.button.bind(this.ctx),
-        d = obj(obj(this.snapshot().data.defaults).topicDefaults);
-      await this.ctx.menu("🧩 <b>Topic Defaults</b>", [
-        ...Object.entries(OUTPUT_DEFAULTS).map(([key, fallback]) => [
-          b(outputSettingLabel(key as OutputField, d[key] ?? fallback), "config_default", key),
-        ]),
-        [b("← Settings", "settings")],
-      ]);
-      return true;
-    }
     if (action === "config_default") {
       if (!value || !Object.hasOwn(OUTPUT_DEFAULTS, value)) throw new Error("invalid_default");
       await this.mutate((data) => {
@@ -833,23 +822,6 @@ export class CloudConfigUi {
         c.settings = s;
         s.topicDefaults = d;
       });
-      return true;
-    }
-    if (action === "experimental") {
-      const b = this.ctx.button.bind(this.ctx);
-      await this.ctx.menu("🧪 <b>Experimental</b>", [
-        [
-          b(
-            "Free Model Detection: " +
-              (obj(obj(this.snapshot().data.configuration).settings)
-                .experimentalFreeModelDetection === true
-                ? "ON"
-                : "OFF"),
-            "config_free_detection",
-          ),
-        ],
-        [b("← Settings", "settings")],
-      ]);
       return true;
     }
     if (action === "config_free_detection") {
