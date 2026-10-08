@@ -99,8 +99,8 @@ export class ControlPlane {
           { providerID: selected.slice(0, split), modelID: selected.slice(split + 1) },
           topic.sessionId,
         );
-        if (!inspection.available || !inspection.connected)
-          throw new Error("provider_credential_binding_missing");
+        if (!inspection.connected) throw new Error("provider_credential_binding_missing");
+        if (!inspection.available) throw new Error("model_unavailable");
         if (this.store.global()?.revision !== admittedGlobal?.revision)
           throw new Error("configuration_changed");
         this.store.enqueueVerified(
@@ -114,6 +114,31 @@ export class ControlPlane {
         );
         await this.state.storage.setAlarm(Date.now() + 1);
         return Response.json({ queued: true });
+      }
+      if (path === "/admin/run-status") {
+        const requestId = String(body.requestId ?? "");
+        const run = [
+          ...this.state.storage.sql.exec<{ request: string; state: string }>(
+            "SELECT request,state FROM runs WHERE request=? AND chat=? AND thread=?",
+            requestId,
+            Number(body.chatId),
+            Number(body.threadId),
+          ),
+        ][0];
+        if (!run) throw new Error("unknown_run");
+        const response = [
+          ...this.state.storage.sql.exec<{ state: string }>(
+            "SELECT state FROM responses WHERE run=?",
+            requestId,
+          ),
+        ][0];
+        const delivery = [
+          ...this.state.storage.sql.exec<{ id: string; state: string }>(
+            "SELECT id,state FROM outbox WHERE json_extract(data,'$.run')=? ORDER BY id LIMIT 100",
+            requestId,
+          ),
+        ];
+        return Response.json({ run, response: response ?? null, delivery });
       }
       if (path === "/admin/model-inspect") {
         const topic = this.store
@@ -148,7 +173,7 @@ export class ControlPlane {
             this.store.configureJob(job.jobId, {
               phase: "FAILED",
               error: "provisioning_cancelled",
-              cleanupPhase: job.phase,
+              cleanupPhase: job.cleanupPhase ?? job.phase,
             });
           const worker = this.store.fenceWorker(job.workerId);
           if (worker.state !== "DELETING")

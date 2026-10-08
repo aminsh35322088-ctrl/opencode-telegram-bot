@@ -249,6 +249,25 @@ test("cancel-job resumes deletion after a lost cleanup response without refencin
   assert.equal(attempts, 2);
 });
 
+test("cancelling a timed-out job preserves an ambiguous volume creation receipt", async () => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveAllocation("cancel-timeout", -100);
+  f.store.configureJob(job.jobId, {
+    phase: "FAILED",
+    error: "provisioning_deadline_exceeded",
+    cleanupPhase: "VOLUME_CREATING",
+  });
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => {
+      throw new Error("volume_creation_reconciliation_required");
+    },
+  });
+  assert.equal((await post(f.plane, "/admin/cancel-job", { jobId: job.jobId })).status, 409);
+  assert.equal(f.store.job(job.jobId)?.cleanupPhase, "VOLUME_CREATING");
+  assert.equal(f.store.worker(job.workerId)?.state, "DELETING");
+});
+
 test("changing global configuration does not unlock an already admitted run", async (t) => {
   const f = fixture();
   await post(f.plane, "/admin/setup");
@@ -360,4 +379,36 @@ test("control restart resumes a volume attachment job from durable journal", asy
   };
   await f.plane.alarm();
   assert.deepEqual(resumed, [job.jobId]);
+});
+
+test("run status reports scoped execution and delivery receipts without prompt or secrets", async () => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveAllocation("observe", -100);
+  f.store.ready(job.workerId, 1, "synthetic-node-secret");
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(-100, 42, "observe", "synthetic-private-prompt");
+  f.store.startNext(-100, 42);
+  f.sql.exec(
+    "INSERT INTO outbox VALUES(?,?,?)",
+    "observe:0",
+    JSON.stringify({ run: "observe", index: 0 }),
+    "DELIVERED",
+  );
+  const response = await post(f.plane, "/admin/run-status", {
+    chatId: -100,
+    threadId: 42,
+    requestId: "observe",
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.run.state, "ACTIVE");
+  assert.deepEqual(data.delivery, [{ id: "observe:0", state: "DELIVERED" }]);
+  assert.equal(JSON.stringify(data).includes("synthetic-private-prompt"), false);
+  assert.equal(JSON.stringify(data).includes("synthetic-node-secret"), false);
+  assert.equal(
+    (await post(f.plane, "/admin/run-status", { chatId: -100, threadId: 43, requestId: "observe" }))
+      .status,
+    409,
+  );
 });

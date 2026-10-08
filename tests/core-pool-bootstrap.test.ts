@@ -35,7 +35,8 @@ async function fixture() {
   return {bindings,lifecycle,provisioned,reconciled,operations,failure,setFail:(slot?:number)=>{failSlot=slot;},setTimeout:()=>{timeout=true;},setCorrupt:()=>{corrupt=true;},now:()=>time};
 }
 
-test('bootstrap creates exactly four unbound ready Workers and repeated/concurrent calls preserve identity',async()=>{
+// Four is an explicit legacy warm-pool fixture, not a production capacity limit.
+test('bootstrap prepares the configured unbound Workers and preserves identity on retries',async()=>{
   const f=await fixture();const first=f.lifecycle.bootstrapPool();assert.equal(first,f.lifecycle.bootstrapPool());
   const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,2,3,4]);
   assert.equal(slots.length,4);assert.ok(slots.every(item=>item.status==='available'&&item.chatId===0&&item.threadId===0&&item.generation===1&&item.currentRevision===7&&!item.sessionId));
