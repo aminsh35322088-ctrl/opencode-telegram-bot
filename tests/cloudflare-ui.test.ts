@@ -605,7 +605,44 @@ test("raw output and footer preferences are applied to completed Topic responses
 
 test("Telegram Topic deletion is idempotent after an acknowledged deletion is lost", async () => {
   const { CloudTelegram } = await import("../src/cloudflare/telegram.js");
-  const telegram = new CloudTelegram("synthetic", async () => Response.json({ok:false,error_code:400,description:"Bad Request: TOPIC_NOT_FOUND"},{status:400}));
-  await telegram.call("deleteForumTopic",{chat_id:-100,message_thread_id:42});
-  await assert.rejects(telegram.call("editForumTopic",{chat_id:-100,message_thread_id:42,name:"name"}));
+  const telegram = new CloudTelegram("synthetic", async () =>
+    Response.json(
+      { ok: false, error_code: 400, description: "Bad Request: TOPIC_NOT_FOUND" },
+      { status: 400 },
+    ),
+  );
+  await telegram.call("deleteForumTopic", { chat_id: -100, message_thread_id: 42 });
+  await assert.rejects(
+    telegram.call("editForumTopic", { chat_id: -100, message_thread_id: 42, name: "name" }),
+  );
+});
+
+test("Topic attachments are durably admitted and only inline file data reaches Core", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  const outbound = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/getFile"))
+      return Response.json({ ok: true, result: { file_path: "docs/a.txt", file_size: 3 } });
+    if (url.includes("/file/bot")) return new Response("abc");
+    return outbound(input, init);
+  };
+  await f.post("/telegram/webhook", {
+    update_id: 3000,
+    message: {
+      message_id: 3000,
+      chat: { id: -100 },
+      from: { id: 7 },
+      message_thread_id: 42,
+      document: { file_id: "file-id", file_name: "a.txt", file_size: 3, mime_type: "text/plain" },
+      caption: "Read this",
+    },
+  });
+  await f.plane.alarm();
+  await f.plane.alarm();
+  const request = f.rpc.find((r) => r.operation === "run");
+  assert.ok(request);
+  assert.match(JSON.stringify(request.payload.parts), /data:text\/plain;base64,YWJj/);
+  assert.equal(JSON.stringify(request).includes("synthetic"), false);
 });

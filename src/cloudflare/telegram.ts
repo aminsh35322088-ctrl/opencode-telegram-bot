@@ -60,6 +60,92 @@ export class CloudTelegram {
     }
     return body.result as T;
   }
+  async document(
+    chatId: number,
+    threadId: number,
+    filename: string,
+    content: string,
+  ): Promise<number> {
+    if (content.length > 262144 || !/^[A-Za-z0-9_.-]{1,128}$/.test(filename))
+      throw new Error("invalid_document");
+    const form = new FormData();
+    form.set("chat_id", String(chatId));
+    form.set("message_thread_id", String(threadId));
+    form.set("document", new Blob([content], { type: "text/plain" }), filename);
+    const transport = this.transport;
+    let response: Response;
+    try {
+      response = await transport("https://api.telegram.org/bot" + this.token + "/sendDocument", {
+        method: "POST",
+        body: form,
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new TelegramDeliveryError("ambiguous");
+    }
+    const result = (await response.json()) as {
+      ok?: boolean;
+      error_code?: number;
+      parameters?: { retry_after?: number };
+      result?: { message_id: number };
+    };
+    if (!result.ok)
+      throw new TelegramDeliveryError(
+        result.error_code === 429
+          ? "rate_limited"
+          : response.status >= 500
+            ? "ambiguous"
+            : "rejected",
+        result.parameters?.retry_after,
+      );
+    return result.result!.message_id;
+  }
+  async download(fileId: string, maximum: number): Promise<Uint8Array> {
+    const file = await this.call<{ file_path?: string; file_size?: number }>("getFile", {
+      file_id: fileId,
+    });
+    if (
+      typeof file.file_path !== "string" ||
+      !/^[A-Za-z0-9_./-]{1,512}$/.test(file.file_path) ||
+      file.file_path.startsWith("/") ||
+      file.file_path.split("/").some((p) => p === ".." || p === ".")
+    )
+      throw new Error("invalid_telegram_file");
+    if ((file.file_size ?? 0) > maximum) throw new Error("media_too_large");
+    const transport = this.transport;
+    const response = await transport(
+      "https://api.telegram.org/file/bot" + this.token + "/" + file.file_path,
+      { redirect: "error", signal: AbortSignal.timeout(15_000) },
+    );
+    if (!response.ok || !response.body) throw new Error("media_download_failed");
+    if (Number(response.headers.get("content-length") ?? 0) > maximum)
+      throw new Error("media_too_large");
+    const reader = response.body.getReader(),
+      chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        size += next.value.length;
+        if (size > maximum) {
+          await reader.cancel();
+          throw new Error("media_too_large");
+        }
+        chunks.push(next.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
   async sendPart(
     chatId: number,
     threadId: number | undefined,

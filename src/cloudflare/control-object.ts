@@ -5,9 +5,11 @@ import { decryptCredential, encryptCredential, randomSecret, sha256 } from "./cr
 import { RailwayFleetDriver, railwayApi } from "./railway-fleet-driver.js";
 import { nodeRpc, type RpcIdentity } from "./node-rpc.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
+import { telegramMediaParts, type CloudPromptPart } from "./media.js";
 import { renderTelegramParts } from "../bot/render/pipeline.js";
 import { en } from "../i18n/en.js";
 import { canonical, signEnvelope, verifyEnvelope } from "./protocol.js";
+import { CloudRunUi } from "./run-ui.js";
 import { CloudTaskUi } from "./task-ui.js";
 import {
   CloudCredentialVault,
@@ -73,6 +75,16 @@ export class ControlPlane {
           commit: this.env.WORKER_CORE_COMMIT,
           version: this.env.WORKER_CORE_VERSION,
         });
+        // eslint-disable-next-line no-console
+        console.log(
+          JSON.stringify({
+            event: "worker_image_upgrade",
+            workerId: result.workerId,
+            generation: result.generation,
+            phase: result.phase,
+            runtimeVersion: result.target.version,
+          }),
+        );
         return Response.json({
           ok: true,
           phase: result.phase,
@@ -85,6 +97,25 @@ export class ControlPlane {
           thread = Number(body.threadId ?? 0);
         if (!Number.isSafeInteger(chat) || !chat || !Number.isSafeInteger(thread) || thread < 0)
           throw new Error("invalid_topic");
+        const command = String(body.command ?? "start");
+        if (
+          ![
+            "start",
+            "settings",
+            "topic_settings",
+            "model",
+            "agent",
+            "variant",
+            "session",
+            "context",
+            "ls",
+            "providers",
+            "more",
+            "commands",
+            "tasklist",
+          ].includes(command)
+        )
+          throw new Error("operation_not_allowed");
         const actor = Number(
           (this.env.TELEGRAM_ALLOWED_USER_ID ?? this.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(
             ",",
@@ -98,7 +129,7 @@ export class ControlPlane {
               chat: { id: chat },
               from: { id: actor },
               ...(thread > 1 ? { message_thread_id: thread } : {}),
-              text: "/start",
+              text: "/" + command,
             },
           },
           Date.now(),
@@ -604,11 +635,19 @@ export class ControlPlane {
         }
         if (envelope.operation === "session.event") {
           if (!topic || topic.state !== "ACTIVE") throw new Error("topic_not_writable");
-          this.store.recordCallback(
+          const admitted = this.store.recordCallback(
             topic.chatId,
             topic.threadId,
             envelope.payload as Record<string, unknown>,
           );
+          if (admitted)
+            new CloudRunUi(
+              this.state.storage.sql,
+              new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+            ).capture(
+              String((envelope.payload as Record<string, unknown>).runId),
+              (envelope.payload as Record<string, unknown>).event,
+            );
           await this.state.storage.setAlarm(Date.now() + 1);
           return this.signed(envelope, secret, { accepted: true });
         }
@@ -798,6 +837,7 @@ export class ControlPlane {
     generation: number,
     requestId: string,
     text: string,
+    parts?: CloudPromptPart[],
   ): Promise<void> {
     const topic = this.store
       .topics()
@@ -867,6 +907,12 @@ export class ControlPlane {
       admittedGlobal!.revision,
       selected,
     );
+    if (parts)
+      this.state.storage.sql.exec(
+        "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+        "media:" + requestId,
+        JSON.stringify(parts),
+      );
     await this.state.storage.setAlarm(Date.now() + 1);
   }
   private async setup(): Promise<void> {
@@ -1160,6 +1206,22 @@ export class ControlPlane {
         this.store.activeRuns(topic.chatId, topic.threadId)[0] ??
         this.store.startNext(topic.chatId, topic.threadId);
       if (!run || this.store.worker(topic.workerId)?.state === "UNHEALTHY") continue;
+      try {
+        const text = [
+          ...this.state.storage.sql.exec<{ text: string }>(
+            "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
+            run.requestId,
+          ),
+        ]
+          .map((p) => p.text)
+          .join("\n");
+        await new CloudRunUi(
+          this.state.storage.sql,
+          new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+        ).progress(topic, run.requestId, text, this.ui().options(topic));
+      } catch {
+        /* Execution continues; durable delivery receipt prevents duplicate sends. */
+      }
       const owner = crypto.randomUUID(),
         lease = "dispatch:" + run.requestId;
       if (!this.store.acquireLease(lease, owner, Date.now(), 60_000)) continue;
@@ -1185,6 +1247,22 @@ export class ControlPlane {
           {
             runId: run.requestId,
             text: run.prompt,
+            ...(() => {
+              const row = [
+                ...this.state.storage.sql.exec<{ data: string }>(
+                  "SELECT data FROM ui_state WHERE key=?",
+                  "media:" + run.requestId,
+                ),
+              ][0];
+              return row
+                ? {
+                    parts: [
+                      { type: "text", text: run.prompt },
+                      ...JSON.parse(row.data).filter((p: CloudPromptPart) => p.type === "file"),
+                    ],
+                  }
+                : {};
+            })(),
             events: true,
             ...(this.ui().options(topic).agent ? { agent: this.ui().options(topic).agent } : {}),
             ...(this.ui().options(topic).variant
@@ -1319,7 +1397,16 @@ export class ControlPlane {
           JSON.stringify({ run: response.run, index }),
         );
         try {
-          if (preferences.messageFormatMode === "raw") {
+          if (
+            index === 0 &&
+            (await new CloudRunUi(this.state.storage.sql, telegram).finish(
+              topic,
+              response.run,
+              parts[index]!.fallbackText,
+            ))
+          ) {
+            // Finalize the already visible preview rather than duplicating the reply.
+          } else if (preferences.messageFormatMode === "raw") {
             await telegram.call("sendMessage", {
               chat_id: response.chat,
               message_thread_id: response.thread,
@@ -1337,6 +1424,58 @@ export class ControlPlane {
           else this.store.responseDelivered(response.run, state);
           complete = false;
           break;
+        }
+      }
+      if (complete && preferences.sendDiffFileAttachments) {
+        const id = response.run + ":diff";
+        const receipt = [
+          ...this.state.storage.sql.exec<{ state: string }>(
+            "SELECT state FROM outbox WHERE id=?",
+            id,
+          ),
+        ][0];
+        if (!receipt || receipt.state === "PENDING") {
+          try {
+            const files = await this.ui().rpcDiff(topic);
+            const patch = Array.isArray(files)
+              ? files
+                  .slice(0, 32)
+                  .map((file) => {
+                    const value = file as { patch?: string };
+                    return typeof value.patch === "string" ? value.patch : "";
+                  })
+                  .join("\n")
+                  .slice(0, 262144)
+              : "";
+            if (patch) {
+              this.state.storage.sql.exec(
+                "INSERT INTO outbox VALUES(?,?,'SENDING') ON CONFLICT(id) DO UPDATE SET state='SENDING'",
+                id,
+                JSON.stringify({ run: response.run, artifact: "diff" }),
+              );
+              await telegram.document(topic.chatId, topic.threadId, "changes.diff", patch);
+            }
+            this.state.storage.sql.exec(
+              "INSERT INTO outbox VALUES(?,?,'DELIVERED') ON CONFLICT(id) DO UPDATE SET state='DELIVERED'",
+              id,
+              JSON.stringify({ run: response.run, artifact: "diff" }),
+            );
+          } catch (error) {
+            if (error instanceof TelegramDeliveryError) {
+              const state =
+                error.category === "rate_limited" ? "PENDING" : "RECONCILIATION_REQUIRED";
+              this.state.storage.sql.exec(
+                "INSERT INTO outbox VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state",
+                id,
+                JSON.stringify({ run: response.run, artifact: "diff" }),
+                state,
+              );
+              if (state === "PENDING") {
+                complete = false;
+                await this.state.storage.setAlarm(Date.now() + 30000);
+              }
+            }
+          }
         }
       }
       if (complete) {
@@ -1386,7 +1525,17 @@ export class ControlPlane {
       const telegram = new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN);
       try {
         const handled = await this.ui().handle(update, row.id);
-        if (!handled && chatId && update.message?.text && update.message.message_thread_id) {
+        if (
+          !handled &&
+          chatId &&
+          update.message &&
+          (update.message.text ||
+            update.message.photo ||
+            update.message.document ||
+            update.message.voice ||
+            update.message.audio) &&
+          update.message.message_thread_id
+        ) {
           const threadId = update.message.message_thread_id;
           if (
             !this.store
@@ -1408,7 +1557,13 @@ export class ControlPlane {
             threadId,
             topic.generation,
             "telegram_" + row.id,
-            update.message.text,
+            update.message.text ?? update.message.caption ?? "Please inspect the attached file.",
+            update.message.photo ||
+              update.message.document ||
+              update.message.voice ||
+              update.message.audio
+              ? await telegramMediaParts(telegram, update.message)
+              : undefined,
           );
         }
         this.state.storage.sql.exec("UPDATE updates SET state='DISPATCHED' WHERE id=?", row.id);
@@ -1451,7 +1606,9 @@ export class ControlPlane {
                         ? "Connect this provider in Settings → Providers before using the model."
                         : error instanceof Error && error.message === "stale_generation"
                           ? "This Topic or menu has expired. Open the current menu again."
-                          : "The operation could not be completed. Reopen its menu and try again.",
+                          : error instanceof Error && error.message === "media_too_large"
+                            ? "This attachment is too large for the current transport (256 KiB). Send a smaller file."
+                            : "The operation could not be completed. Reopen its menu and try again.",
             );
           } catch {
             /* Persisted failure is available to authenticated reconciliation. */

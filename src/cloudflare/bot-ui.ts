@@ -129,6 +129,8 @@ export class CloudBotUi {
   }
   private setOptions(topic: FleetTopic, patch: UiOptions): void {
     this.assertTopic(topic);
+    if (patch.compact !== undefined) patch.compactOutputMode = patch.compact;
+    else if (patch.compactOutputMode !== undefined) patch.compact = patch.compactOutputMode;
     this.set("topic:" + topic.chatId + ":" + topic.threadId + ":" + topic.generation, {
       ...this.options(topic),
       ...patch,
@@ -192,6 +194,9 @@ export class CloudBotUi {
   }
   private async notice(chat: number, thread: number | undefined, text: string): Promise<void> {
     await this.deps.telegram.send(chat, thread, text);
+  }
+  async rpcDiff(topic: FleetTopic): Promise<unknown> {
+    return this.deps.rpc(topic, "session.diff");
   }
   async keyboard(chat: number, topic?: FleetTopic, text = "OpenCode"): Promise<void> {
     const selected = this.model(topic),
@@ -446,6 +451,15 @@ export class CloudBotUi {
           action = { action: "unknown" };
       }
     }
+    if (
+      !action &&
+      thread &&
+      (update.message?.photo ||
+        update.message?.document ||
+        update.message?.voice ||
+        update.message?.audio)
+    )
+      return false;
     if (!action) {
       const formKey = "form:" + actor + ":" + chat + ":" + thread;
       const form = this.get<{ kind: string; generation: number; expires: number }>(formKey);
@@ -1052,6 +1066,7 @@ export class CloudBotUi {
         "showAssistantRunFooter",
         "sendDiffFileAttachments",
         "promptQueueEnabled",
+        "responseStreamingMode",
       ] as const;
       if (name === "config_topic_setting") {
         if (!fields.includes(action.value as (typeof fields)[number]))
@@ -1302,7 +1317,7 @@ export class CloudBotUi {
                 .map((item) => {
                   const v = record(item);
                   return (
-                    String(v.file ?? "") +
+                    String(v.path ?? v.file ?? "") +
                     " · +" +
                     String(v.additions ?? 0) +
                     " / -" +

@@ -20,8 +20,8 @@ The persistent Telegram application now runs in the existing Cloudflare ControlP
 These are explicit incomplete features, not substitutes for execution:
 
 - GitHub and Tailscale connection screens describe their required scoped Core integration. Legacy container-global token injection/tailscaled/SSH cannot run in Cloudflare and is not reintroduced.
-- Media/voice ingestion, image generation and audio transcription need Worker-side capability wiring.
-- Progressive text/tool/thinking rendering and diff document attachments still need the signed event rendering integration. Completed text uses the existing native Telegram block renderer and Persian/RTL support; raw output and run footer preferences are active.
+- Photo/document/audio attachments now cross as bounded inline file parts (256 KiB each), without Telegram credential URLs. Dedicated image generation and voice transcription workflows still need Core capability wiring and compatible provider/model configuration.
+- Signed-event text/tool/thinking previews now use bounded Telegram edits and survive control restarts. Compact and thought visibility preferences apply to previews. Completed text uses the existing native Telegram block renderer and Persian/RTL support; raw output, run footer and changed-file document preferences are active. Native draft mode and richer tool-specific cards still need parity work.
 - Natural-language task scheduling is currently replaced by validated UTC JSON schedules.
 - Context compaction must become a governed explicit Core model operation before exposing an active compaction control.
 - Cleanup currently destroys a dedicated service and volume; safe sleeping Worker reuse is not yet proven.
