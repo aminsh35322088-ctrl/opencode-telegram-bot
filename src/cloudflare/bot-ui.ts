@@ -1,5 +1,4 @@
 import {
-  createMainInlineKeyboard,
   createMainKeyboard,
   createTopicKeyboard,
   MAIN_BUTTONS,
@@ -22,7 +21,8 @@ import {
   outputSettingLabel,
 } from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
-import type { LegacyUiAdapter } from "./legacy-ui-adapter.js";
+import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
+import { LegacyMainUi } from "./legacy-main-ui.js";
 
 export interface TelegramUpdate {
   update_id?: number;
@@ -74,7 +74,7 @@ interface UiDependencies {
   store: ControlStore;
   telegram: CloudTelegram;
   coreVersion: string;
-  legacyUi: LegacyUiAdapter;
+  legacyUi?: LegacyUiAdapter;
   compact?: (topic: FleetTopic, requestId: string) => Promise<void>;
   newTopic: (chat: number, request: string) => Promise<AllocationJob>;
   deleteTopic: (chat: number, thread: number) => Promise<void>;
@@ -219,12 +219,10 @@ export class CloudBotUi {
     text: string,
     rows: Button[][],
   ): Promise<void> {
-    await this.deps.telegram.call("sendMessage", {
-      chat_id: chat,
-      ...(thread ? { message_thread_id: thread } : {}),
-      text: text.slice(0, 4000),
-      parse_mode: "HTML",
-      reply_markup: { inline_keyboard: rows },
+    await this.legacyMain().editCanonicalPanel(chat, thread, {
+      text,
+      rows,
+      parseMode: "HTML",
     });
   }
   private async notice(chat: number, thread: number | undefined, text: string): Promise<void> {
@@ -310,17 +308,27 @@ export class CloudBotUi {
       throw error;
     }
   }
-  private async home(chat: number): Promise<void> {
-    await this.deps.telegram.call("setMyCommands", {
-      commands: BOT_COMMANDS,
-      scope: { type: "chat", chat_id: chat },
-    });
-    await this.deps.telegram.call("sendMessage", {
-      chat_id: chat,
-      text: "OpenCode\nCore " + this.deps.coreVersion,
-      reply_markup: createMainInlineKeyboard({ providerID: "", modelID: "" }),
-    });
-    await this.keyboard(chat);
+  private legacyMain(): LegacyMainUi {
+    const adapter =
+      this.deps.legacyUi ??
+      new LegacyUiAdapter({
+        sql: this.deps.sql,
+        store: this.deps.store,
+        botVersion: "unknown",
+        coreVersion: this.deps.coreVersion,
+        rpc: this.deps.rpc,
+        commitGlobal: (data, expectedRevision) => this.deps.global(data, expectedRevision),
+      });
+    return new LegacyMainUi(adapter, this.deps.telegram);
+  }
+  private async home(chat: number, actor: number, replace: boolean): Promise<void> {
+    if (replace)
+      await this.deps.telegram.call("setMyCommands", {
+        commands: BOT_COMMANDS,
+        scope: { type: "chat", chat_id: chat },
+      });
+    if (replace) await this.legacyMain().replaceCanonicalMainPanel(chat, actor);
+    else await this.legacyMain().showHome(chat);
   }
   private async settings(
     actor: number,
@@ -672,7 +680,7 @@ export class CloudBotUi {
     }
     if (name === "start" || name === "home") {
       if (topic) await this.keyboard(chat, topic, "OpenCode Core " + this.deps.coreVersion);
-      else await this.home(chat);
+      else await this.home(chat, actor, name === "start");
       return true;
     }
     if (name === "keyboard") {

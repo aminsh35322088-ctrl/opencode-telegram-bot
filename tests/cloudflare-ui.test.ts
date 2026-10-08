@@ -138,8 +138,11 @@ test("Start restores main navigation and publishes the existing Telegram command
   const f = fixture(t);
   await f.update("/start");
   const output = JSON.stringify(f.sent);
+  assert.match(output, /⚡ <b>OpenCode Telegram<\/b>/);
   assert.match(output, /main:history/);
   assert.match(output, /main:settings/);
+  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
+  assert.ok(f.sent.some((x) => x.method === "pinChatMessage"));
   assert.ok(
     f.sent.some(
       (x) =>
