@@ -23,6 +23,40 @@ import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./con
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
 import { LegacyMainUi } from "./legacy-main-ui.js";
 import { LegacyModelAdapter, type LegacyModelScope } from "./legacy-model-adapter.js";
+import { LegacySessionAdapter } from "./legacy-session-adapter.js";
+import {
+  SESSION_DASHBOARD_CHILD_PREFIX,
+  SESSION_DASHBOARD_CHILDREN,
+  SESSION_DASHBOARD_DIFF,
+  SESSION_DASHBOARD_FILES,
+  SESSION_DASHBOARD_MESSAGES,
+  SESSION_DASHBOARD_RENAME,
+  SESSION_DASHBOARD_SETTINGS,
+  SESSION_DASHBOARD_TODOS,
+  buildSessionChildrenView,
+  buildSessionDashboardView,
+  buildSessionDiffView,
+  buildSessionTodosView,
+} from "../bot/menus/session-dashboard-menu.js";
+import {
+  MESSAGES_CALLBACK_BACK,
+  MESSAGES_CALLBACK_CANCEL,
+  buildMessageReadOnlyDetailKeyboard,
+  buildMessagesListKeyboard,
+  formatMessageDetailText,
+  formatMessagesSelectText,
+  parseMessagePageCallback,
+  parseMessageSelectCallback,
+} from "../bot/menus/message-history-menu.js";
+import {
+  LS_CALLBACK_BACK_PREFIX,
+  LS_CALLBACK_DOWNLOAD_PREFIX,
+  LS_CALLBACK_FILE_PREFIX,
+  LS_CALLBACK_NAV_PREFIX,
+  buildRemoteLsBrowseView,
+  buildRemoteLsFileView,
+} from "../bot/menus/file-browser-menu.js";
+import { buildCanonicalContextControlView } from "../bot/menus/context-control-menu.js";
 import {
   MODEL_CENTER_FAVORITES,
   MODEL_CENTER_PROVIDER_PREFIX,
@@ -395,6 +429,89 @@ export class CloudBotUi {
   }
   private legacyModels(): LegacyModelAdapter {
     return new LegacyModelAdapter(this.legacyAdapter());
+  }
+  private legacySession(): LegacySessionAdapter {
+    return new LegacySessionAdapter(this.legacyAdapter());
+  }
+  private canonicalRows(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic | undefined,
+    keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> },
+    resolve: (data: string) => [string, string?] | undefined,
+  ): Button[][] {
+    return keyboard.inline_keyboard
+      .map((row) =>
+        row.flatMap((button) => {
+          const mapped = resolve(button.callback_data ?? "");
+          return mapped
+            ? [this.button(actor, chat, thread, topic, button.text, mapped[0], mapped[1])]
+            : [];
+        }),
+      )
+      .filter((row) => row.length > 0);
+  }
+  private sessionRows(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic,
+    keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> },
+  ): Button[][] {
+    return this.canonicalRows(actor, chat, thread, topic, keyboard, (data) => {
+      const fixed = new Map<string, [string, string?]>([
+        [SESSION_DASHBOARD_MESSAGES, ["messages"]],
+        [SESSION_DASHBOARD_TODOS, ["todos"]],
+        [SESSION_DASHBOARD_DIFF, ["diff"]],
+        [SESSION_DASHBOARD_CHILDREN, ["children"]],
+        [SESSION_DASHBOARD_FILES, ["ls", "."]],
+        [SESSION_DASHBOARD_RENAME, ["rename"]],
+        [SESSION_DASHBOARD_SETTINGS, ["settings"]],
+        ["session:back", ["session"]],
+        [MESSAGES_CALLBACK_BACK, ["messages"]],
+        [MESSAGES_CALLBACK_CANCEL, ["session"]],
+        ["compact:confirm", ["context_compact"]],
+        ["settings:back", ["settings"]],
+      ]);
+      const exact = fixed.get(data);
+      if (exact) return exact;
+      const messageIndex = parseMessageSelectCallback(data);
+      if (messageIndex !== null) return ["message_select", String(messageIndex)];
+      const page = parseMessagePageCallback(data);
+      if (page !== null) return ["messages_page", String(page)];
+      if (data.startsWith(SESSION_DASHBOARD_CHILD_PREFIX))
+        return ["child_messages", data.slice(SESSION_DASHBOARD_CHILD_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_NAV_PREFIX)) return ["ls", data.slice(LS_CALLBACK_NAV_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_FILE_PREFIX)) return ["open", data.slice(LS_CALLBACK_FILE_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_DOWNLOAD_PREFIX)) return ["file_download", data.slice(LS_CALLBACK_DOWNLOAD_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_BACK_PREFIX)) return ["ls", data.slice(LS_CALLBACK_BACK_PREFIX.length) || "."];
+      return undefined;
+    });
+  }
+  private async renderMessages(
+    actor: number,
+    chat: number,
+    thread: number,
+    topic: FleetTopic,
+    page = 0,
+  ): Promise<void> {
+    const messages = await this.legacySession().userMessages(topic);
+    const pageSize = 8;
+    const view = {
+      text: messages.length ? formatMessagesSelectText(page) : "🕘 No user messages yet.",
+      keyboard: buildMessagesListKeyboard(messages, page, pageSize),
+    };
+    await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+  }
+  private async optionalCapability<T>(request: () => Promise<T>): Promise<T | null> {
+    try {
+      return await request();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("stale_generation") || message.includes("topic_not_writable")) throw error;
+      return null;
+    }
   }
   private modelScope(topic?: FleetTopic): LegacyModelScope {
     return topic ? { kind: "topic", topic } : { kind: "global" };
@@ -798,6 +915,8 @@ export class CloudBotUi {
       "stop",
       "session",
       "messages",
+      "messages_page",
+      "message_select",
       "context",
       "context_compact",
       "compact",
@@ -1012,81 +1131,78 @@ export class CloudBotUi {
       await this.notice(chat, thread, "✅ Topic renamed.");
       return true;
     }
-    if (name === "status" || name === "session" || name === "context" || name === "messages") {
-      if (!topic) {
-        await this.notice(
-          chat,
-          undefined,
-          "Cloudflare Control Plane is healthy.\nAI Topics: " +
-            this.deps.store.topics().filter((t) => t.chatId === chat && t.state === "ACTIVE")
-              .length +
-            "\nCore " +
-            this.deps.coreVersion,
-        );
-        return true;
-      }
-      const result = await this.deps.rpc(
-        topic,
-        name === "messages" || name === "context" ? "session.messages" : "session.get",
+    if (name === "status" && !topic) {
+      await this.notice(
+        chat,
+        undefined,
+        "Cloudflare Control Plane is healthy.\nAI Topics: " +
+          this.deps.store.topics().filter((t) => t.chatId === chat && t.state === "ACTIVE").length +
+          "\nCore " +
+          this.deps.coreVersion,
       );
+      return true;
+    }
+    if (topic && (name === "status" || name === "session")) {
+      const session = this.legacySession();
+      const info = record(await session.session(topic));
+      const [todos, diffs, children] = await Promise.all([
+        this.optionalCapability(() => session.todos<unknown[]>(topic)),
+        this.optionalCapability(() => session.diff<unknown[]>(topic)),
+        this.optionalCapability(() => session.children<unknown[]>(topic)),
+      ]);
       this.assertTopic(topic);
-      if (name === "messages" && Array.isArray(result)) {
-        for (const item of result.slice(-10)) {
-          const parts = record(item).parts;
-          const content = Array.isArray(parts)
-            ? parts
-                .filter((p) => record(p).type === "text")
-                .map((p) => String(record(p).text ?? ""))
-                .join("\n")
-            : "";
-          if (content)
-            await this.notice(
-              chat,
-              thread,
-              String(record(record(item).info).role ?? "") + "\n" + content.slice(0, 12000),
-            );
-        }
-        if (!result.length) await this.notice(chat, thread, "No messages yet.");
-      } else
-        await this.menu(
-          chat,
-          thread,
-          (name === "context" ? "📊 <b>Context Health</b>\n" : "🧭 <b>Session</b>\n") +
-            escape(topic.sessionId) +
-            "\nModel: " +
-            escape(this.model(topic)) +
-            "\n" +
-            (Array.isArray(result)
-              ? "Messages: " + result.length
-              : "Title: " + escape(record(result).title)),
-          [
-            ...(name === "context" && this.canCompactContext(topic)
-              ? [
-                  [
-                    this.button(
-                      actor,
-                      chat,
-                      thread,
-                      topic,
-                      t("context.button.confirm"),
-                      "context_compact",
-                    ),
-                  ],
-                ]
-              : []),
-            [this.button(actor, chat, thread, topic, "🕘 Messages", "messages")],
-            [
-              this.button(actor, chat, thread, topic, "☑ Tasks", "todos"),
-              this.button(actor, chat, thread, topic, "📝 Changes", "diff"),
-            ],
-            [
-              this.button(actor, chat, thread, topic, "🤖 Sub-agents", "children"),
-              this.button(actor, chat, thread, topic, "📁 Files", "ls"),
-            ],
-            [this.button(actor, chat, thread, topic, "🏷 Rename", "rename")],
-            [this.button(actor, chat, thread, topic, "← Topic Settings", "settings")],
-          ],
-        );
+      const view = buildSessionDashboardView({
+        sessionId: topic.sessionId,
+        title: typeof info.title === "string" ? info.title : this.options(topic).title,
+        model: this.model(topic),
+        busy: this.deps.store.activeRuns(chat, thread).length > 0,
+        todos: Array.isArray(todos) ? todos.map((item) => record(item)) : todos,
+        diffs: Array.isArray(diffs) ? diffs.map((item) => record(item)) : diffs,
+        children: Array.isArray(children) ? children.map((item) => record(item)) : children,
+      });
+      await this.menu(
+        chat,
+        thread,
+        view.text,
+        this.sessionRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (topic && name === "context") {
+      const info = record(await this.legacySession().session(topic));
+      const title = String(info.title ?? this.options(topic).title ?? topic.sessionId);
+      const view = buildCanonicalContextControlView(title, this.canCompactContext(topic));
+      await this.menu(
+        chat,
+        thread,
+        view.text,
+        this.sessionRows(actor, chat, thread, topic, view.keyboard),
+      );
+      return true;
+    }
+    if (topic && name === "messages") {
+      await this.renderMessages(actor, chat, thread, topic, 0);
+      return true;
+    }
+    if (topic && name === "messages_page") {
+      const page = Number(action.value);
+      if (!Number.isInteger(page) || page < 0) throw new Error("invalid_messages_page");
+      await this.renderMessages(actor, chat, thread, topic, page);
+      return true;
+    }
+    if (topic && name === "message_select") {
+      const index = Number(action.value);
+      if (!Number.isInteger(index) || index < 0) throw new Error("invalid_message_index");
+      const messages = await this.legacySession().userMessages(topic);
+      const message = messages[index];
+      if (!message) throw new Error("interaction_expired");
+      const keyboard = buildMessageReadOnlyDetailKeyboard();
+      await this.menu(
+        chat,
+        thread,
+        escape(formatMessageDetailText(message)),
+        this.sessionRows(actor, chat, thread, topic, keyboard),
+      );
       return true;
     }
     if (["help", "update", "all"].includes(name)) {
@@ -1633,134 +1749,83 @@ export class CloudBotUi {
     }
     if (name === "file_download") {
       if (!topic || !action.value) throw new Error("topic_not_writable");
-      const file = record(await this.deps.rpc(topic, "file.read", { path: action.value }));
-      this.assertTopic(topic);
-      const content =
-        file.encoding === "base64"
-          ? Uint8Array.from(atob(String(file.content)), (c) => c.charCodeAt(0))
-          : String(file.content ?? "");
-      const filename =
-        action.value
-          .split("/")
-          .at(-1)!
-          .replace(/[^A-Za-z0-9_.-]/g, "_")
-          .slice(0, 128) || "file";
-      await this.deps.telegram.document(chat, thread, filename, content);
+      const file = await this.legacySession().download(topic, action.value);
+      await this.deps.telegram.document(chat, thread, file.filename, file.content);
       return true;
     }
     if (["todos", "diff", "children", "child_messages", "ls", "open"].includes(name)) {
       if (!topic) throw new Error("topic_not_writable");
-      const operation = {
-        todos: "session.todos",
-        diff: "session.diff",
-        children: "session.children",
-        child_messages: "session.child-messages",
-        ls: "file.list",
-        open: "file.read",
-      }[name]!;
+      const session = this.legacySession();
       if (name === "open" && !action.value) {
         await prompt("open", "Send a relative workspace file path, or /cancel.");
         return true;
       }
-      const payload =
-        name === "ls" || name === "open"
-          ? { path: action.value?.trim() || "." }
-          : name === "child_messages"
-            ? { childId: action.value }
-            : undefined;
-      const result = await this.deps.rpc(topic, operation, payload);
-      this.assertTopic(topic);
       if (name === "ls") {
-        const entries = Array.isArray(result) ? result : [];
-        await this.menu(
-          chat,
-          thread,
-          "📁 <b>Workspace files</b>",
-          entries
-            .slice(0, 60)
-            .map((item) => {
-              const entry = record(item),
-                path = String(entry.path ?? entry.name ?? "");
-              return [
-                b(
-                  (entry.type === "directory" ? "📁 " : "📄 ") + path.slice(0, 55),
-                  entry.type === "directory" ? "ls" : "open",
-                  path,
-                ),
-              ];
-            })
-            .concat([[b("← Session", "session")]]),
+        const path = action.value?.trim() || ".";
+        const result = await session.list<unknown>(topic, path);
+        const entries = Array.isArray(result) ? result.map((item) => record(item)) : [];
+        const view = buildRemoteLsBrowseView(
+          entries.map((entry) => ({
+            type: entry.type === "directory" ? "directory" : "file",
+            name: typeof entry.name === "string" ? entry.name : undefined,
+            path: typeof entry.path === "string" ? entry.path : undefined,
+            size: typeof entry.size === "number" ? entry.size : undefined,
+          })),
+          path,
         );
-      } else if (name === "children") {
-        const children = Array.isArray(result) ? result : [];
-        await this.menu(
-          chat,
-          thread,
-          "🤖 <b>Sub-agents</b>\n" +
-            (children.length
-              ? "Choose a child session to inspect its messages."
-              : "No sub-agent sessions."),
-          children
-            .slice(0, 30)
-            .map((item) => [
-              b(
-                String(record(item).title ?? record(item).id).slice(0, 60),
-                "child_messages",
-                String(record(item).id),
-              ),
-            ])
-            .concat([[b("← Session", "session")]]),
-        );
-      } else if (name === "open") {
-        const file = record(result);
-        if (file.encoding === "base64")
-          await this.notice(chat, thread, "Binary file. Text preview is unavailable.");
-        else await this.notice(chat, thread, String(file.content ?? "Empty file.").slice(0, 24000));
-        await this.menu(chat, thread, "📄 <b>Workspace file</b>", [
-          [b("⬇ Download", "file_download", action.value)],
-          [b("← Files", "ls")],
-        ]);
-      } else if (name === "child_messages") {
-        const entries = Array.isArray(result) ? result : [];
-        for (const item of entries.slice(-10)) {
+        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        return true;
+      }
+      if (name === "open") {
+        const path = action.value!.trim();
+        const file = record(await session.read(topic, path));
+        const size = typeof file.size === "number"
+          ? file.size
+          : typeof file.content === "string"
+            ? file.content.length
+            : undefined;
+        const view = buildRemoteLsFileView(path, size, true);
+        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        return true;
+      }
+      if (name === "todos") {
+        const result = await this.optionalCapability(() => session.todos<unknown[]>(topic));
+        const view = buildSessionTodosView(Array.isArray(result) ? result.map((item) => record(item)) : result);
+        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        return true;
+      }
+      if (name === "diff") {
+        const result = await this.optionalCapability(() => session.diff<unknown[]>(topic));
+        const view = buildSessionDiffView(Array.isArray(result) ? result.map((item) => record(item)) : result);
+        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        return true;
+      }
+      if (name === "children") {
+        const result = await this.optionalCapability(() => session.children<unknown[]>(topic));
+        const view = buildSessionChildrenView(Array.isArray(result) ? result.map((item) => record(item)) : result);
+        await this.menu(chat, thread, view.text, this.sessionRows(actor, chat, thread, topic, view.keyboard));
+        return true;
+      }
+      const entries = await session.childMessages<unknown[]>(topic, action.value ?? "");
+      const text = (Array.isArray(entries) ? entries : [])
+        .slice(-10)
+        .map((item) => {
           const parts = record(item).parts;
-          const text = Array.isArray(parts)
+          return Array.isArray(parts)
             ? parts
-                .filter((p) => record(p).type === "text")
-                .map((p) => String(record(p).text ?? ""))
+                .filter((part) => record(part).type === "text")
+                .map((part) => String(record(part).text ?? ""))
                 .join("\n")
             : "";
-          if (text) await this.notice(chat, thread, text.slice(0, 12000));
-        }
-        if (!entries.length) await this.notice(chat, thread, "No child messages yet.");
-      } else {
-        const items = Array.isArray(result) ? result : [];
-        const text =
-          name === "todos"
-            ? items
-                .map((item) => {
-                  const v = record(item);
-                  return String(v.status ?? "pending") + " · " + String(v.content ?? "");
-                })
-                .join("\n")
-            : items
-                .map((item) => {
-                  const v = record(item);
-                  return (
-                    String(v.path ?? v.file ?? "") +
-                    " · +" +
-                    String(v.additions ?? 0) +
-                    " / -" +
-                    String(v.deletions ?? 0)
-                  );
-                })
-                .join("\n");
-        await this.notice(
-          chat,
-          thread,
-          text || (name === "todos" ? "No pending tasks." : "No workspace changes."),
-        );
-      }
+        })
+        .filter(Boolean)
+        .join("\n\n");
+      await this.menu(
+        chat,
+        thread,
+        "🤖 <b>Sub-agent messages</b>\n\n" + escape(text || "No child messages yet."),
+        [[this.button(actor, chat, thread, topic, "← Sub-agents", "children")]],
+      );
       return true;
     }
     if (["worktree", "detach", "opencode_start", "opencode_stop"].includes(name)) {

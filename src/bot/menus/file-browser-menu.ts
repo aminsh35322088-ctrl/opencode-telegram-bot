@@ -425,3 +425,61 @@ export async function renderLsFileDetailsView(filePath: string, page: number) {
     keyboard: buildLsFileDetailsKeyboard(fileDetails.fullPath, page, canAttachFile(fileDetails)),
   };
 }
+
+/**
+ * Remote-runtime versions of the legacy file browser. They preserve the same
+ * Telegram presentation contract while accepting already-scoped Core RPC data
+ * instead of touching the local filesystem.
+ */
+export interface RemoteFileEntry {
+  type: "directory" | "file";
+  name?: string;
+  path?: string;
+  size?: number;
+}
+
+function remoteEntryPath(entry: RemoteFileEntry): string {
+  return String(entry.path ?? entry.name ?? "").replace(/^\.\//, "");
+}
+
+export function buildRemoteLsBrowseView(
+  entries: RemoteFileEntry[],
+  currentPath = ".",
+): { text: string; keyboard: InlineKeyboard } {
+  const keyboard = new InlineKeyboard();
+  for (const entry of entries.slice(0, 60)) {
+    const target = remoteEntryPath(entry);
+    if (!target) continue;
+    keyboard
+      .text(
+        truncateLabel(`${entry.type === "directory" ? "📁" : "📄"} ${entry.name ?? target.split("/").at(-1) ?? target}`),
+        `${entry.type === "directory" ? LS_CALLBACK_NAV_PREFIX : LS_CALLBACK_FILE_PREFIX}${target}`,
+      )
+      .row();
+  }
+  keyboard.text("← Session", "session:back");
+  const display = currentPath === "." ? "." : currentPath;
+  return {
+    text: `📁 ${t("ls.header")}\n<code>${escapeHtml(display)}</code>\n${t("ls.total", { count: entries.length })}`,
+    keyboard,
+  };
+}
+
+export function buildRemoteLsFileView(
+  filePath: string,
+  size?: number,
+  downloadable = true,
+): { text: string; keyboard: InlineKeyboard } {
+  const name = filePath.split("/").at(-1) ?? filePath;
+  const keyboard = new InlineKeyboard();
+  if (downloadable) keyboard.text(t("ls.file.download"), `${LS_CALLBACK_DOWNLOAD_PREFIX}${filePath}`).row();
+  keyboard.text(t("ls.file.back"), `${LS_CALLBACK_BACK_PREFIX}${getParentPath(filePath)}`).row();
+  keyboard.text("← Session", "session:back");
+  const sizeLine = typeof size === "number" && Number.isFinite(size)
+    ? `\n${t("commands.download.size")}: ${formatFileSize(Math.max(0, size))}`
+    : "";
+  return {
+    text: `📄 ${t("ls.file.header")}\n<code>${escapeHtml(name)}</code>${sizeLine}`,
+    keyboard,
+  };
+}

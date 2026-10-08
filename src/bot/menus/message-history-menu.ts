@@ -162,3 +162,11 @@ export function buildMessageRevertedKeyboard(): InlineKeyboard {
     .text(t("messages.button.back"), MESSAGES_CALLBACK_BACK)
     .text(t("messages.button.cancel"), MESSAGES_CALLBACK_CANCEL);
 }
+
+/** Read-only detail controls for control-plane runtimes that do not expose
+ * session.revert/session.fork through the signed Worker boundary. */
+export function buildMessageReadOnlyDetailKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(t("messages.button.back"), MESSAGES_CALLBACK_BACK)
+    .text(t("messages.button.cancel"), MESSAGES_CALLBACK_CANCEL);
+}

@@ -41,6 +41,7 @@ function fixture(t: { after: (f: () => void) => void }) {
   const store = new ControlStore(sql, tx);
   const sent: Array<{ method: string; payload: Record<string, any> }> = [];
   const rpc: Array<{ operation: string; payload: any }> = [];
+  const rpcResults = new Map<string, unknown>();
   const secret = "n".repeat(64);
   const original = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
@@ -55,8 +56,9 @@ function fixture(t: { after: (f: () => void) => void }) {
       });
     }
     rpc.push(payload);
-    const result =
-      payload.operation === "model.inspect"
+    const result = rpcResults.has(payload.operation)
+      ? rpcResults.get(payload.operation)
+      : payload.operation === "model.inspect"
         ? { connected: true, available: true }
         : payload.operation === "session.messages"
           ? []
@@ -131,7 +133,7 @@ function fixture(t: { after: (f: () => void) => void }) {
     store.bindTopic(job.jobId, 42, "session");
     return job;
   };
-  return { plane, store, sql, sent, rpc, update, callback, bound, post, state, env };
+  return { plane, store, sql, sent, rpc, rpcResults, update, callback, bound, post, state, env };
 }
 
 test("Start restores main navigation and publishes the existing Telegram command catalog without allocating", async (t) => {
@@ -591,6 +593,57 @@ test("session dashboard exposes owned todo/diff/subagent/file navigation", async
       operation,
     );
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+test("legacy Session, Messages and Files reuse one Topic panel instead of sending message spam", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.rpcResults.set("session.get", { id: "session", title: "Legacy Topic" });
+  f.rpcResults.set("session.todos", [{ status: "pending", content: "Restore UI" }]);
+  f.rpcResults.set("session.diff", [{ path: "src/a.ts", additions: 2, deletions: 1 }]);
+  f.rpcResults.set("session.children", [{ id: "child", title: "Research" }]);
+  f.rpcResults.set("session.messages", [
+    { info: { id: "u1", role: "user", time: { created: 1000 } }, parts: [{ type: "text", text: "first prompt" }] },
+    { info: { id: "a1", role: "assistant", time: { created: 2000 } }, parts: [{ type: "text", text: "answer" }] },
+  ]);
+  f.rpcResults.set("file.list", [
+    { type: "directory", name: "src", path: "src" },
+    { type: "file", name: "README.md", path: "README.md", size: 42 },
+  ]);
+  f.rpcResults.set("file.read", { encoding: "utf8", content: "# readme", size: 8 });
+
+  await f.update("/session", 42);
+  assert.match(JSON.stringify(f.sent), /OpenCode Session/);
+  const initialSends = f.sent.filter((entry) => entry.method === "sendMessage").length;
+  assert.equal(initialSends, 1);
+
+  f.sent.length = 0;
+  await f.update("/messages", 42);
+  assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
+  assert.equal(f.sent.filter((entry) => entry.method === "editMessageText").length, 1);
+  assert.match(JSON.stringify(f.sent), /first prompt/);
+  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const message = buttons.find((button: any) => String(button.text).includes("first prompt"));
+  assert.ok(message);
+  f.sent.length = 0;
+  await f.callback(message.callback_data, 42);
+  assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
+  assert.match(JSON.stringify(f.sent), /first prompt/);
+
+  f.sent.length = 0;
+  await f.update("/ls", 42);
+  assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
+  assert.match(JSON.stringify(f.sent), /📁 src/);
+  assert.match(JSON.stringify(f.sent), /📄 README.md/);
+  buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const readme = buttons.find((button: any) => String(button.text).includes("README.md"));
+  assert.ok(readme);
+  f.sent.length = 0;
+  await f.callback(readme.callback_data, 42);
+  assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
+  assert.match(JSON.stringify(f.sent), /Workspace file|File|README.md/i);
+  assert.match(JSON.stringify(f.sent), /Download/i);
+  assert.equal(f.rpc.some((entry) => entry.operation === "execute"), false);
 });
 
 test("Model Center uses the canonical legacy root instead of the simplified Cloudflare replacement", async (t) => {

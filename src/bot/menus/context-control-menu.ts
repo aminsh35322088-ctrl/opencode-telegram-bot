@@ -39,3 +39,19 @@ export async function handleContextButtonPress(ctx: Context): Promise<void> {
     keyboard,
   });
 }
+
+/** Canonical legacy Context presentation with a safe capability gate. */
+export function buildCanonicalContextControlView(
+  title: string,
+  canCompact: boolean,
+): { text: string; keyboard: InlineKeyboard } {
+  const keyboard = new InlineKeyboard();
+  if (canCompact) keyboard.text(t("context.button.confirm"), "compact:confirm").row();
+  keyboard.text("← Topic Settings", "settings:back");
+  return {
+    text: canCompact
+      ? t("context.confirm_text", { title })
+      : `📊 <b>Context Health</b>\n\nContext compaction is unavailable for the active Core runtime.`,
+    keyboard,
+  };
+}
