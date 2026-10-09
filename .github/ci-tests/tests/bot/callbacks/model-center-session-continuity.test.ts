@@ -16,6 +16,12 @@ describe("Model Center session continuity", () => {
     expect(handlerSource).toContain("keyboardManager.updateModel(modelInfo, activeSessionId);");
   });
 
+
+  it("refreshes the Topic ReplyKeyboard label without replacing the active Model Center panel", () => {
+    expect(handlerSource).toContain("await keyboardManager.sendKeyboardUpdate(chatId, true, activeSessionId);");
+    expect(handlerSource).toContain("await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));");
+  });
+
   it("does not use destructive session lifecycle operations during model selection", () => {
     expect(handlerSource).not.toContain("clearSession(");
     expect(handlerSource).not.toContain("rotateTelegramTopicSessionForModel");

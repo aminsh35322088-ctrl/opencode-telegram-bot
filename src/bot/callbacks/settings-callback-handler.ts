@@ -33,7 +33,6 @@ import { scheduleModelsDevPriceRefresh } from "../../app/services/models-dev-pri
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import {
-  appendHomeNavigation,
   appendInlineMenuCancelButton,
   ensureActiveInlineMenu,
 } from "../menus/inline-menu.js";
@@ -162,8 +161,13 @@ function getCallbackChatId(ctx: Context): number | null {
   const id = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
   return typeof id === "number" ? id : null;
 }
-function advancedBackKeyboard(): InlineKeyboard {
-  return appendHomeNavigation(new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK));
+function advancedBackKeyboard(ctx: Context): InlineKeyboard {
+  return appendInlineMenuCancelButton(
+    new InlineKeyboard().text("← Back", SETTINGS_ADVANCED_CALLBACK),
+    "settings",
+    getTopicThreadId(ctx),
+    "back",
+  );
 }
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
@@ -408,7 +412,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         if (result.failed > 0) {
           await ctx.editMessageText(
             `⚠️ <b>History reset completed with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nCheck the bot logs before retrying.`,
-            { parse_mode: "HTML", reply_markup: advancedBackKeyboard() },
+            { parse_mode: "HTML", reply_markup: advancedBackKeyboard(ctx) },
           );
           return true;
         }
@@ -438,7 +442,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         if (result.failed > 0) {
           await ctx.editMessageText(
             `⚠️ <b>Factory reset stopped with ${result.failed} cleanup error(s).</b>\n\nDeleted Topics: ${result.deleted}\nRecovered orphaned workspaces: ${result.orphanedWorkspaces}\n\nSaved settings were not reset because cleanup was incomplete. Check the bot logs.`,
-            { parse_mode: "HTML", reply_markup: advancedBackKeyboard() },
+            { parse_mode: "HTML", reply_markup: advancedBackKeyboard(ctx) },
           );
           return true;
         }

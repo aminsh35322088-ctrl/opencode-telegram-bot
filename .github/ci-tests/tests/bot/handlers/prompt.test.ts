@@ -31,6 +31,9 @@ const mocked = vi.hoisted(() => ({
   finishCoreRunMock: vi.fn(),
   memoryRecoverMock: vi.fn(),
   resourcePressureErrorMock: vi.fn(),
+  sendChatActionMock: vi.fn(),
+  assistantHasActiveRunMock: vi.fn(),
+  assistantStartRunMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/session-error-recovery-service.js", () => ({
@@ -154,10 +157,10 @@ vi.mock("../../../src/app/managers/foreground-session-state-manager.js", () => (
 
 vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({
   assistantRunState: {
-    startRun: vi.fn(),
+    startRun: mocked.assistantStartRunMock,
     clearRun: vi.fn(),
     clearAll: vi.fn(),
-    hasActiveRun: vi.fn().mockReturnValue(false),
+    hasActiveRun: mocked.assistantHasActiveRunMock,
     hasActiveRuns: vi.fn().mockReturnValue(false),
   },
 }));
@@ -187,7 +190,10 @@ function createContext(): Context {
   return {
     chat: { id: 777 },
     reply: vi.fn().mockResolvedValue({ message_id: 100 }),
-    api: { editMessageReplyMarkup: mocked.editMessageReplyMarkupMock },
+    api: {
+      editMessageReplyMarkup: mocked.editMessageReplyMarkupMock,
+      sendChatAction: mocked.sendChatActionMock,
+    },
   } as unknown as Context;
 }
 
@@ -244,6 +250,9 @@ describe("bot/handlers/prompt", () => {
     mocked.finishCoreRunMock.mockReset();
     mocked.memoryRecoverMock.mockReset().mockResolvedValue(false);
     mocked.resourcePressureErrorMock.mockReset().mockReturnValue(false);
+    mocked.sendChatActionMock.mockReset().mockResolvedValue(true);
+    mocked.assistantHasActiveRunMock.mockReset().mockReturnValue(false);
+    mocked.assistantStartRunMock.mockReset();
     mocked.beginCoreRunMock.mockResolvedValue({ runId: "core-run-1" });
     mocked.dispatchCorePromptMock.mockImplementation((_run, options) => mocked.sessionPromptAsyncMock(options));
     mocked.recoverSessionAfterErrorMock.mockResolvedValue({ abortAttempted: true, abortAccepted: true, removedMessageIds: [], contaminationRemaining: false });
@@ -286,6 +295,30 @@ describe("bot/handlers/prompt", () => {
     >;
     foregroundMock.isSessionBusy?.mockReturnValue?.(false);
     foregroundMock.getBusySessions?.mockReturnValue?.([]);
+  });
+
+  it("starts and refreshes Telegram typing while the Topic run stays active", async () => {
+    vi.useFakeTimers();
+    try {
+      let active = false;
+      mocked.assistantHasActiveRunMock.mockImplementation(() => active);
+      mocked.assistantStartRunMock.mockImplementation(() => { active = true; });
+      const handled = await processUserPrompt(createContext(), "Review README", createDeps());
+      expect(handled).toBe(true);
+
+      await Promise.resolve();
+      expect(mocked.sendChatActionMock).toHaveBeenCalledTimes(1);
+      expect(mocked.sendChatActionMock).toHaveBeenLastCalledWith(777, "typing");
+
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(mocked.sendChatActionMock).toHaveBeenCalledTimes(2);
+
+      active = false;
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(mocked.sendChatActionMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("registers suppression entry for text prompts", async () => {

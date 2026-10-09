@@ -22,6 +22,7 @@ import { resolvePendingAttachments } from "../../app/services/prompt-attachment-
 import { startSessionStallWatchdog, stopSessionStallWatchdog } from "../../app/services/session-stall-watchdog.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { recoverSessionAfterError } from "../../app/services/session-error-recovery-service.js";
+import { typingIndicatorManager } from "../services/typing-indicator-manager.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import { beginCoreRunForSession, captureCurrentCoreBindingOwner, dispatchCorePrompt, finishCoreRunForSession, isCurrentCoreSessionRoute } from "../../core/native-core-service.js";
 import { createCoreSessionApi } from "../services/core-session-api.js";
@@ -65,6 +66,7 @@ async function handlePromptStartFailure(input: {
   foregroundSessionState.markIdle(input.session.id);
   await markAttachedSessionIdle(input.session.id);
   assistantRunState.clearRun(input.session.id, input.reason);
+  typingIndicatorManager.stop(input.session.id, input.reason);
   keyboardManager.setPaused(false, input.session.id);
   await recoverSessionAfterError(input.session.id, input.session.directory, message);
   try {
@@ -131,6 +133,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID },
       coreRun.runId,
     );
+    typingIndicatorManager.start(currentSession.id, ctx.api, ctx.chat!.id);
     summaryAggregator.beginRun(currentSession.id);
     startSessionStallWatchdog({
       sessionId: currentSession.id,
@@ -198,7 +201,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       });
     return true;
   } catch (err) {
-    if (currentSession) { finishCoreRunForSession(currentSession.id); foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
+    if (currentSession) { finishCoreRunForSession(currentSession.id); foregroundSessionState.markIdle(currentSession.id); await markAttachedSessionIdle(currentSession.id); assistantRunState.clearRun(currentSession.id, "session_prompt_handler_error"); typingIndicatorManager.stop(currentSession.id, "session_prompt_handler_error"); void keyboardManager.sendKeyboardUpdate(ctx.chat!.id, true, currentSession.id); }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) clearAllInteractionState("message_handler_error");
 

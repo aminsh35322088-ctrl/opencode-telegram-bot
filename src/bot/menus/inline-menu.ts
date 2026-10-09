@@ -55,6 +55,20 @@ function trimEmptyKeyboardRows(keyboard: InlineKeyboard): void {
   }
 }
 
+function removeHomeNavigation(keyboard: InlineKeyboard): void {
+  for (let rowIndex = keyboard.inline_keyboard.length - 1; rowIndex >= 0; rowIndex -= 1) {
+    const row = keyboard.inline_keyboard[rowIndex];
+    if (!row) continue;
+    for (let index = row.length - 1; index >= 0; index -= 1) {
+      const button = row[index];
+      if (!button || !("callback_data" in button)) continue;
+      if (isHomeButton(button as CallbackNavigationButton)) row.splice(index, 1);
+    }
+    if (row.length === 0) keyboard.inline_keyboard.splice(rowIndex, 1);
+  }
+  trimEmptyKeyboardRows(keyboard);
+}
+
 /** Add Home beside every semantic Back button. Non-topic menus also get a fallback Home row. */
 export function appendHomeNavigation(keyboard: InlineKeyboard, addFallbackHome = true): InlineKeyboard {
   trimEmptyKeyboardRows(keyboard);
@@ -87,6 +101,11 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
   const isTopic = typeof threadId === "number" && threadId > 1;
   if (!isTopic) return appendHomeNavigation(keyboard);
 
+  // Home belongs to the root/Main navigation surface. Topic panels stay local
+  // to their own stack and expose Back/Close instead. Strip any Home button a
+  // child builder may have carried in before adding the canonical Topic nav.
+  removeHomeNavigation(keyboard);
+
   const mode: Exclude<InlineMenuNavigation, "auto"> = navigation === "auto"
     ? (menuKind === "settings" ? "close" : "back")
     : navigation;
@@ -106,16 +125,16 @@ export function appendInlineMenuCancelButton(keyboard: InlineKeyboard, menuKind:
     if (!backButton) {
       keyboard.row().text(INLINE_MENU_BACK_LABEL, INLINE_MENU_SETTINGS_BACK_CALLBACK);
     } else if (menuKind === "settings" && backButton.callback_data === INLINE_MENU_SETTINGS_BACK_CALLBACK) {
-      // Topic child Settings uses one stable parent callback and a uniform Back label.
       backButton.text = INLINE_MENU_BACK_LABEL;
     }
   }
-  if ((mode === "close" || mode === "both") && !hasClose) {
+
+  const closeForTopicChild = (menuKind === "settings" || menuKind === "model") && mode === "back";
+  if ((mode === "close" || mode === "both" || closeForTopicChild) && !hasClose) {
     keyboard.row().text(INLINE_MENU_CLOSE_LABEL, `${INLINE_MENU_CANCEL_PREFIX}${menuKind}`);
   }
 
-  // Topic root Settings intentionally stays Close-only. Every actual Back row still gets Home.
-  return appendHomeNavigation(keyboard, false);
+  return keyboard;
 }
 
 export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReplyOptions): Promise<number> {
@@ -139,41 +158,27 @@ export async function replyWithInlineMenu(ctx: Context, options: InlineMenuReply
       if (isMessageNotModifiedError(error)) {
         messageId = callbackMessageId;
       } else {
-        logger.debug("[InlineMenu] Could not edit callback message; falling back to reply", error);
-        const message = await ctx.reply(options.text, {
-          ...replyOptions,
-          ...(threadId !== null ? { message_thread_id: threadId } : {}),
-        } as never);
-        messageId = message.message_id;
+        logger.warn("[InlineMenu] Callback navigation could not edit its canonical panel; refusing duplicate reply", error);
+        throw error;
       }
     }
   } else if (chatId !== null && threadId !== null && threadId > 1) {
-    const active = activeInlineMenus.get(menuKey(chatId, threadId));
+    const key = menuKey(chatId, threadId);
+    const active = activeInlineMenus.get(key);
     if (active) {
+      activeInlineMenus.delete(key);
       try {
-        await ctx.api.editMessageText(chatId, active.messageId, options.text, replyOptions);
-        messageId = active.messageId;
-        logger.debug(`[InlineMenu] Reused canonical inline panel: previousKind=${active.menuKind}, nextKind=${options.menuKind}, messageId=${messageId}, chatId=${chatId}, threadId=${threadId ?? "main"}`);
+        await ctx.api.deleteMessage(chatId, active.messageId);
       } catch (error) {
-        if (isMessageNotModifiedError(error)) {
-          messageId = active.messageId;
-        } else {
-          logger.debug("[InlineMenu] Could not reuse canonical inline panel; creating a replacement", error);
-          activeInlineMenus.delete(menuKey(chatId, threadId ?? undefined));
-          const message = await ctx.reply(options.text, {
-            ...replyOptions,
-            ...(threadId !== null ? { message_thread_id: threadId } : {}),
-          } as never);
-          messageId = message.message_id;
-        }
+        logger.debug(`[InlineMenu] Could not delete previous Topic panel; invalidating its buttons in place: chat=${chatId}, thread=${threadId}, message=${active.messageId}`, error);
+        await ctx.api.editMessageReplyMarkup(chatId, active.messageId, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
       }
-    } else {
-      const message = await ctx.reply(options.text, {
-        ...replyOptions,
-        ...(threadId !== null ? { message_thread_id: threadId } : {}),
-      } as never);
-      messageId = message.message_id;
     }
+    const message = await ctx.reply(options.text, {
+      ...replyOptions,
+      message_thread_id: threadId,
+    } as never);
+    messageId = message.message_id;
   } else {
     const message = await ctx.reply(options.text, replyOptions);
     messageId = message.message_id;

@@ -38,27 +38,31 @@ describe("inline-menu", () => {
     expect(allButtons(keyboard).some((button) => getButtonText(button) === "🏠 Home")).toBe(false);
   });
 
-  it("uses Back for Topic Settings child screens", () => {
+  it("uses Back and Close without Home for Topic Settings child screens", () => {
     const keyboard = new InlineKeyboard().text("← Settings", "settings:back");
     appendInlineMenuCancelButton(keyboard, "settings", 735542, "back");
-    const last = keyboard.inline_keyboard.at(-1)?.[0];
-    expect(getButtonText(last)).toBe("← Back");
-    expect(getCallbackData(last)).toBe("settings:back");
+    const buttons = allButtons(keyboard);
+    expect(buttons.filter((button) => getButtonText(button) === "← Back")).toHaveLength(1);
+    expect(buttons.filter((button) => getButtonText(button) === "✖ Close")).toHaveLength(1);
+    expect(buttons.some((button) => getButtonText(button) === "🏠 Home")).toBe(false);
   });
 
-  it("adds Back to Topic Model Center screens that have no existing navigation", () => {
+  it("adds Back and Close to Topic Model Center screens that have no existing navigation", () => {
     const keyboard = new InlineKeyboard().text("🧠 Model", "mc:select:test");
     appendInlineMenuCancelButton(keyboard, "model", 735542);
-    const last = keyboard.inline_keyboard.at(-1)?.[0];
-    expect(getButtonText(last)).toBe("← Back");
-    expect(getCallbackData(last)).toBe("settings:back");
+    const buttons = allButtons(keyboard);
+    expect(buttons.some((button) => getButtonText(button) === "← Back" && getCallbackData(button) === "settings:back")).toBe(true);
+    expect(buttons.some((button) => getButtonText(button) === "✖ Close")).toBe(true);
+    expect(buttons.some((button) => getButtonText(button) === "🏠 Home")).toBe(false);
   });
 
-  it("does not duplicate existing Model Center Back navigation", () => {
+  it("keeps one Model Center Back, adds Close, and never injects Home in a Topic", () => {
     const keyboard = new InlineKeyboard().text("← Back", "mc:settings_back");
-    appendInlineMenuCancelButton(keyboard, "model", 735542);
-    expect(allButtons(keyboard).filter((button) => getButtonText(button) === "← Back")).toHaveLength(1);
-    expect(getCallbackData(keyboard.inline_keyboard.at(-1)?.[0])).toBe("mc:settings_back");
+    appendInlineMenuCancelButton(keyboard, "model", 735542, "both");
+    const buttons = allButtons(keyboard);
+    expect(buttons.filter((button) => getButtonText(button) === "← Back")).toHaveLength(1);
+    expect(buttons.filter((button) => getButtonText(button) === "✖ Close")).toHaveLength(1);
+    expect(buttons.some((button) => getButtonText(button) === "🏠 Home")).toBe(false);
   });
 
   it("keeps Home for non-Topic menus", () => {
@@ -79,14 +83,17 @@ describe("inline-menu", () => {
     expect(interactionManager.getSnapshot()?.metadata.menuKind).toBe("session");
   });
 
-  it("reuses the canonical Topic panel instead of replying with duplicate menus", async () => {
-    const reply = vi.fn().mockResolvedValue({ message_id: 42 });
+  it("retires the previous Topic panel before opening a newly invoked menu", async () => {
+    const reply = vi.fn()
+      .mockResolvedValueOnce({ message_id: 42 })
+      .mockResolvedValueOnce({ message_id: 43 });
     const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const deleteMessage = vi.fn().mockResolvedValue(true);
     const ctx = {
       chat: { id: 100 },
       message: { message_id: 10, message_thread_id: 735542 },
       reply,
-      api: { editMessageText },
+      api: { editMessageText, deleteMessage },
     } as never;
 
     await replyWithInlineMenu(ctx, {
@@ -100,39 +107,55 @@ describe("inline-menu", () => {
       keyboard: new InlineKeyboard().text("Provider", "mc:providers"),
     });
 
-    expect(reply).toHaveBeenCalledTimes(1);
-    expect(editMessageText).toHaveBeenCalledWith(
-      100,
-      42,
-      "Model Center",
-      expect.objectContaining({ reply_markup: expect.any(Object) }),
-    );
-    expect(interactionManager.getSnapshot()?.metadata.messageId).toBe(42);
+    expect(deleteMessage).toHaveBeenCalledWith(100, 42);
+    expect(editMessageText).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledTimes(2);
+    expect(interactionManager.getSnapshot()?.metadata.messageId).toBe(43);
     expect(interactionManager.getSnapshot()?.metadata.menuKind).toBe("model");
   });
 
-  it("does not create a duplicate when Telegram reports message is not modified", async () => {
-    const reply = vi.fn().mockResolvedValue({ message_id: 77 });
-    const editMessageText = vi.fn().mockRejectedValue(new Error("Bad Request: message is not modified"));
+  it("never falls back to a new message when callback navigation cannot edit its panel", async () => {
+    const reply = vi.fn().mockResolvedValue({ message_id: 99 });
+    const editMessageText = vi.fn().mockRejectedValue(new Error("message can't be edited"));
     const ctx = {
       chat: { id: 100 },
-      message: { message_id: 11, message_thread_id: 735543 },
+      callbackQuery: {
+        data: "mc:providers",
+        message: { message_id: 42, message_thread_id: 735542 },
+      },
       reply,
       api: { editMessageText },
     } as never;
 
-    await replyWithInlineMenu(ctx, {
-      menuKind: "settings",
-      text: "Topic Settings",
-      keyboard: new InlineKeyboard().text("Option", "settings:appearance"),
-    });
-    await replyWithInlineMenu(ctx, {
+    await expect(replyWithInlineMenu(ctx, {
+      menuKind: "model",
+      text: "Providers",
+      keyboard: new InlineKeyboard().text("Provider", "mc:provider:p:0"),
+    })).rejects.toThrow("message can't be edited");
+    expect(reply).not.toHaveBeenCalled();
+  });
+
+  it("does not create a duplicate when callback navigation reports message is not modified", async () => {
+    const reply = vi.fn();
+    const editMessageText = vi.fn().mockRejectedValue(new Error("Bad Request: message is not modified"));
+    const ctx = {
+      chat: { id: 100 },
+      callbackQuery: {
+        data: "settings:appearance",
+        message: { message_id: 77, message_thread_id: 735543 },
+      },
+      reply,
+      api: { editMessageText },
+    } as never;
+
+    const messageId = await replyWithInlineMenu(ctx, {
       menuKind: "settings",
       text: "Topic Settings",
       keyboard: new InlineKeyboard().text("Option", "settings:appearance"),
     });
 
-    expect(reply).toHaveBeenCalledTimes(1);
+    expect(messageId).toBe(77);
+    expect(reply).not.toHaveBeenCalled();
     expect(interactionManager.getSnapshot()?.metadata.messageId).toBe(77);
   });
 

@@ -8,10 +8,10 @@ import { getCurrentProject } from "../app/stores/settings-store.js";
 import { getCurrentSession } from "../app/services/session-service.js";
 import { findTelegramTopicBindingBySession, findTelegramTopicBindingByThread } from "../app/services/telegram-topic-store.js";
 import { attachManager } from "../app/managers/attach-manager.js";
-import { clearAllInteractionState, interactionManager } from "../app/managers/interaction-manager.js";
+import { clearAllInteractionState } from "../app/managers/interaction-manager.js";
 import { configureAttachPresentation, restoreAttachedCurrentSession } from "../app/services/attach-service.js";
 import { loadTopicRuntimeStates, ensureTopicRuntimeStateSync } from "../app/stores/topic-runtime-state-store.js";
-import { runInTopicRuntimeContext, getTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
+import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { opencodeReadyLifecycle } from "../opencode/ready-lifecycle.js";
 import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
@@ -29,10 +29,6 @@ import { createEventSubscriptionService, type BotEventSubscriptionService } from
 import { createAttachPresentation } from "./services/attach-presentation.js";
 import { createTelegramBotOptions } from "./telegram-client-options.js";
 import { BOT_COMMANDS } from "./commands/definitions.js";
-import { MODEL_BUTTON_TEXT_PATTERN } from "./message-patterns.js";
-import { showModelCenterMenu } from "./menus/model-center-menu.js";
-import { closeActiveInlineMenu } from "./menus/inline-menu.js";
-import { assistantRunState } from "../app/managers/assistant-run-state-manager.js";
 import { t } from "../i18n/index.js";
 import { setModelFallbackListener } from "../app/services/model-selection-service.js";
 import { createTopicAwareBot, setTelegramTopicRuntimeDependencies } from "./services/telegram-topic-runtime.js";
@@ -46,7 +42,6 @@ class TelegramApiResponseError extends Error { constructor(readonly response: Te
 export function shouldRetryTelegramServerError(method: string): boolean { return TRANSIENT_RETRY_SAFE_TELEGRAM_METHODS.has(method); }
 function isTelegramApiErrorResponse(response: unknown): response is TelegramApiErrorResponse { return typeof response === "object" && response !== null && Reflect.get(response, "ok") === false && typeof Reflect.get(response, "error_code") === "number" && typeof Reflect.get(response, "description") === "string"; }
 async function notifyCoreUpdate(bot: Bot<Context>): Promise<void> { try { const release = await getCoreReleaseInfo(); const currentVersion = release.telegramCoreVersion; let previousVersion = ""; try { previousVersion = (await readFile(LAST_NOTIFIED_CORE_FILE, "utf8")).trim(); } catch {} if (!previousVersion) { await writeFile(LAST_NOTIFIED_CORE_FILE, `${currentVersion}\n`, "utf8"); return; } if (previousVersion === currentVersion) return; await bot.api.sendMessage(config.telegram.allowedUserId, `🚀 <b>Telegram Core Updated</b>\n\n${previousVersion} → <b>${currentVersion}</b>\n🧠 OpenCode <b>v${release.upstreamVersion}</b>\n\n🟢 The pinned Core runtime and SDK are installed and ready.`, { parse_mode: "HTML" }); await writeFile(LAST_NOTIFIED_CORE_FILE, `${currentVersion}\n`, "utf8"); } catch (error) { logger.warn("[Bot] Could not send Core update notification:", error); } }
-function registerCanonicalModelKeyboard(bot: Bot<Context>): void { bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => { const runtime = getTopicRuntimeContext(); const sessionId = runtime?.sessionId ?? getCurrentSession()?.id; if (sessionId ? assistantRunState.hasActiveRun(sessionId) : assistantRunState.hasActiveRuns()) { await ctx.reply(t("interaction.blocked.finish_current")); return; } const activeInteraction = interactionManager.getSnapshot(); if (activeInteraction?.kind === "inline") await closeActiveInlineMenu(ctx, "model-keyboard-navigation"); else if (activeInteraction) { await ctx.reply(t("interaction.blocked.finish_current")); return; } try { await showModelCenterMenu(ctx); } catch (error) { logger.error("[Bot] Error opening Model Center from persistent keyboard:", error); await ctx.reply("❌ Could not open Model Center. Please try again."); } }); }
 async function resolveInboundTelegramTopic(ctx: Context): Promise<TelegramTopicContextResult> {
   const chatId = ctx.chat?.id;
   const message = (ctx.message ?? ctx.callbackQuery?.message) as { message_thread_id?: number } | undefined;
@@ -94,5 +89,5 @@ export function createBot(): Bot<Context> { clearAllInteractionState("bot_startu
   // Reply Keyboard controls must be ahead of the interaction/prompt guard. Telegram delivers KeyboardButton presses as ordinary text messages, so the dedicated router must consume them before any busy/queue logic can classify them as prompts.
   registerReplyKeyboardRouter(bot, { bot, ensureEventSubscription });
   bot.use(interactionGuardMiddleware);
-  registerCommandRouter(bot, { ensureEventSubscription, clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason) }); registerCallbackRouter(bot, { ensureEventSubscription, setTelegramContext }); registerCanonicalModelKeyboard(bot); registerMessageRouter(bot, { ensureEventSubscription, setTelegramContext }); safeBackgroundTask({ taskName: "bot.refreshGlobalCommands", task: async () => { try { await Promise.all([bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "default" } }), bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } })]); return { success: true as const }; } catch (error) { return { success: false as const, error }; } }, onSuccess: (result) => { if (result.success) logger.debug("[Bot] Refreshed global Telegram command catalog"); else logger.warn("[Bot] Could not refresh global commands:", result.error); } }); bot.catch((err) => { logger.error("[Bot] Unhandled error in bot:", err); clearAllInteractionState("bot_unhandled_error"); }); return bot; }
+  registerCommandRouter(bot, { ensureEventSubscription, clearRuntimeState: (reason) => eventSubscriptionService.clearRuntimeState(reason) }); registerCallbackRouter(bot, { ensureEventSubscription, setTelegramContext }); registerMessageRouter(bot, { ensureEventSubscription, setTelegramContext }); safeBackgroundTask({ taskName: "bot.refreshGlobalCommands", task: async () => { try { await Promise.all([bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "default" } }), bot.api.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } })]); return { success: true as const }; } catch (error) { return { success: false as const, error }; } }, onSuccess: (result) => { if (result.success) logger.debug("[Bot] Refreshed global Telegram command catalog"); else logger.warn("[Bot] Could not refresh global commands:", result.error); } }); bot.catch((err) => { logger.error("[Bot] Unhandled error in bot:", err); clearAllInteractionState("bot_unhandled_error"); }); return bot; }
 export function cleanupBotRuntime(reason: string): void { unsubscribeReadyRestore?.(); unsubscribeReadyRestore = null; setModelFallbackListener(null); eventSubscriptionService.cleanup(reason); if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }

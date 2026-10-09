@@ -13,7 +13,6 @@ import { handleRenameTextAnswer } from "../callbacks/rename-callback-handler.js"
 import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { showAgentSelectionMenu } from "../menus/agent-selection-menu.js";
 import { showVariantSelectionMenu } from "../menus/variant-selection-menu.js";
-import { showModelCenterMenu } from "../menus/model-center-menu.js";
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import {
@@ -47,7 +46,6 @@ import { closeActiveInlineMenu } from "../menus/inline-menu.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
-import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 
 interface MessageRouterDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
@@ -96,20 +94,6 @@ async function blockMenuWhileInteractionActive(ctx: Context): Promise<boolean> {
     `[Bot] Blocking menu open while interaction active: kind=${activeInteraction.kind}, expectedInput=${activeInteraction.expectedInput}`,
   );
   await ctx.reply(t("interaction.blocked.finish_current"));
-  return true;
-}
-
-async function handleCompactModeButton(ctx: Context): Promise<boolean> {
-  const buttonText = ctx.message?.text;
-  if (!buttonText || buttonText !== MAIN_BUTTONS.compact(getCompactOutputMode())) return false;
-
-  if (await blockMenuWhileInteractionActive(ctx)) return true;
-
-  const enabled = !getCompactOutputMode();
-  setCompactOutputMode(enabled);
-  const sessionId = getTopicRuntimeContext()?.sessionId;
-  const keyboard = keyboardManager.getKeyboard(sessionId);
-  await ctx.reply(`📦 Compact Mode: ${enabled ? "ON" : "OFF"}`, keyboard ? { reply_markup: keyboard } : {});
   return true;
 }
 
@@ -309,8 +293,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     await newCommand(ctx as never, { bot, ensureEventSubscription: deps.ensureEventSubscription });
   });
 
-  bot.hears(/^📦 Compact: (?:ON|OFF)$/, handleCompactModeButton);
-
   bot.hears(QUEUED_PROMPT_BUTTON_TEXT_PATTERN, async (ctx) => {
     if (await blockMenuWhileInteractionActive(ctx)) return;
 
@@ -333,21 +315,6 @@ export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps
     } catch (err) {
       logger.error("[Bot] Error showing agent menu:", err);
       await ctx.reply(t("error.load_agents"));
-    }
-  });
-
-  bot.on("message:text", async (ctx, next) => {
-    if (normalizeControlText(ctx.message.text) !== normalizeControlText(getCurrentModelButtonText())) {
-      await next();
-      return;
-    }
-
-    try {
-      if (await blockMenuWhileInteractionActive(ctx)) return;
-      await showModelCenterMenu(ctx);
-    } catch (err) {
-      logger.error("[Bot] Error showing model center:", err);
-      await ctx.reply(t("error.load_models"));
     }
   });
 

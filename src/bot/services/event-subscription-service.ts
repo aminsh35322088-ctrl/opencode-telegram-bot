@@ -112,6 +112,7 @@ import {
 } from "../../app/managers/interaction-manager.js";
 import { stopEventListening, subscribeToEvents } from "../../opencode/events.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { typingIndicatorManager } from "./typing-indicator-manager.js";
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const SESSION_RETRY_PREFIX = "🔁";
@@ -695,6 +696,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.sessionCompletionTasks.clear();
     this.completionGenerations.clear();
     this.clearToolElapsedState(null, reason);
+    typingIndicatorManager.clearAll(reason);
     assistantRunState.clearAll(reason);
   };
 
@@ -706,6 +708,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.sessionCompletionTasks.delete(sessionId);
     this.compactProgressFinalizationTasks.delete(sessionId);
     foregroundSessionState.markIdle(sessionId);
+    typingIndicatorManager.stop(sessionId, reason);
     this.clearAssistantResponseSession(sessionId, reason);
     this.thinkingResponseStreamer.clearSession(sessionId, reason);
     for (const key of Array.from(this.thinkingSections.keys())) {
@@ -749,6 +752,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       this.compactProgressStreamer.clearAll("summary_aggregator_clear");
       this.compactProgressFinalizationTasks.clear();
       this.thinkingSections.clear();
+      typingIndicatorManager.clearAll("summary_aggregator_clear");
       this.clearToolElapsedState(null, "summary_aggregator_clear");
     });
 
@@ -1375,6 +1379,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionIdle(async (sessionId) => {
+      typingIndicatorManager.stop(sessionId, "session_idle");
       interactionEventGate.clearSession(sessionId);
       resetStreamThrottle(sessionId);
       await markAttachedSessionIdle(sessionId);
@@ -1456,6 +1461,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     });
 
     summaryAggregator.setOnSessionError(async (sessionId, message) => {
+      typingIndicatorManager.stop(sessionId, "session_error");
       interactionEventGate.clearSession(sessionId);
       await markAttachedSessionIdle(sessionId);
       this.clearToolElapsedState(sessionId, "session_error");

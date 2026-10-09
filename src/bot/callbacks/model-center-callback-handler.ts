@@ -35,6 +35,7 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { pinnedMessageManager } from "../pinned/pinned-message-manager.js";
 import { switched } from "./feedback.js";
 import { interactionManager } from "../../app/managers/interaction-manager.js";
+import { appendInlineMenuCancelButton } from "../menus/inline-menu.js";
 import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 import { logger } from "../../utils/logger.js";
@@ -46,9 +47,14 @@ interface ModelCenterSearchState { stage: "input" | "results"; }
 function getTopicThreadId(ctx: Context): number | undefined { const message = ctx.callbackQuery?.message; const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined; return typeof threadId === "number" ? threadId : undefined; }
 function getMessageThreadId(ctx: Context): number | undefined { const message = ctx.message; const threadId = message && "message_thread_id" in message ? (message as { message_thread_id?: number }).message_thread_id : undefined; return typeof threadId === "number" ? threadId : undefined; }
 function getCallbackMessageId(ctx: Context): number | null { const message = ctx.callbackQuery?.message; return message && "message_id" in message && typeof message.message_id === "number" ? message.message_id : null; }
-function searchInputKeyboard(): InlineKeyboard { return new InlineKeyboard().text("← Back", MODEL_CENTER_ROOT).text("🏠 Home", "main:home"); }
+function searchInputKeyboard(): InlineKeyboard { return new InlineKeyboard().text("← Back", MODEL_CENTER_ROOT); }
 async function deleteSearchInput(ctx: Context): Promise<void> { if (ctx.chat?.id && ctx.message?.message_id) await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {}); }
-async function editSearchPanel(ctx: Context, messageId: number, text: string, keyboard: InlineKeyboard): Promise<void> { if (!ctx.chat?.id) return; await ctx.api.editMessageText(ctx.chat.id, messageId, text, { parse_mode: "HTML", reply_markup: keyboard }); }
+async function editSearchPanel(ctx: Context, messageId: number, text: string, keyboard: InlineKeyboard): Promise<void> {
+  if (!ctx.chat?.id) return;
+  const threadId = getMessageThreadId(ctx) ?? getTopicThreadId(ctx);
+  const replyMarkup = appendInlineMenuCancelButton(keyboard, "model", threadId, "both");
+  await ctx.api.editMessageText(ctx.chat.id, messageId, text, { parse_mode: "HTML", reply_markup: replyMarkup });
+}
 
 export async function handleModelCenterCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
@@ -200,7 +206,7 @@ export async function handleModelSearchTextInput(ctx: Context): Promise<boolean>
         ...(getMessageThreadId(ctx) !== undefined ? { threadId: getMessageThreadId(ctx) } : {}),
       },
     });
-    await editSearchPanel(ctx, messageId, "❌ <b>Model search failed.</b>\n\nSend another query, go Back, or return Home.", searchInputKeyboard()).catch(() => {});
+    await editSearchPanel(ctx, messageId, "❌ <b>Model search failed.</b>\n\nSend another query or go Back.", searchInputKeyboard()).catch(() => {});
     return true;
   }
 }
@@ -221,7 +227,6 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   if (chatId) keyboardManager.initialize(ctx.api, chatId, activeSessionId, threadId);
   const previousModel = fetchCurrentModel();
 
-  interactionManager.clear("model_selected");
   selectModel(modelInfo);
   if (!getCurrentTopicSettings()) updateTopicDefaults({ model: modelInfo });
   await recordRecentModel(modelInfo);
@@ -242,23 +247,23 @@ async function applyModelSelectionAndNotify(ctx: Context, modelInfo: ModelInfo):
   keyboardManager.updateAgent(currentAgent, activeSessionId);
   if (contextInfo) keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit, activeSessionId);
 
-  const routingSummary = await buildModelRoutingSummary(modelInfo);
-
-  if (isTopic) {
-    const topicKeyboard = keyboardManager.getKeyboard(activeSessionId);
-    if (!topicKeyboard) throw new Error(`No Topic keyboard state available after model selection: session=${activeSessionId}`);
-    await switched(ctx, `✅ Model changed.\n\n${routingSummary}`, topicKeyboard);
+  if (isTopic && chatId && activeSessionId) {
+    await keyboardManager.sendKeyboardUpdate(chatId, true, activeSessionId);
+    await render(ctx, await buildModelCenterRoot(fetchCurrentModel()));
     return;
   }
 
+  interactionManager.clear("model_selected");
+  const routingSummary = await buildModelRoutingSummary(modelInfo);
   const keyboard = createMainKeyboard(currentAgent, modelInfo, contextInfo ?? undefined, formatVariantForButton(modelInfo.variant || "default"));
   await switched(ctx, `✅ Model changed.\n\n${routingSummary}`, keyboard);
 }
 
 async function render(ctx: Context, view: { text: string; keyboard: InlineKeyboard }): Promise<boolean> {
   await ctx.answerCallbackQuery().catch(() => {});
-  await ctx.editMessageText(view.text, { reply_markup: view.keyboard, parse_mode: "HTML" }).catch(() => {});
   const threadId = getTopicThreadId(ctx);
+  const replyMarkup = appendInlineMenuCancelButton(view.keyboard, "model", threadId, "both");
+  await ctx.editMessageText(view.text, { reply_markup: replyMarkup, parse_mode: "HTML" });
   interactionManager.transition({ expectedInput: "callback", metadata: { menuKind: "model", messageId: ctx.callbackQuery?.message?.message_id, ...(ctx.chat ? { chatId: ctx.chat.id } : {}), ...(threadId !== undefined ? { threadId } : {}) } });
   return true;
 }

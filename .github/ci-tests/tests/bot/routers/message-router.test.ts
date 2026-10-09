@@ -24,7 +24,7 @@ describe("bot/routers/message-router", () => {
       setTelegramContext: vi.fn(),
     });
 
-    expect(bot.hears).toHaveBeenCalledTimes(9);
+    expect(bot.hears).toHaveBeenCalledTimes(8);
     expect(bot.hears.mock.calls.some(([pattern]) => pattern === QUEUED_PROMPT_BUTTON_TEXT_PATTERN)).toBe(true);
     expect(bot.hears.mock.calls).toEqual(
       expect.arrayContaining([
@@ -33,7 +33,6 @@ describe("bot/routers/message-router", () => {
     );
     expect(bot.on.mock.calls.map(([event]) => event)).toEqual([
       "message",
-      "message:text",
       "message:text",
       "message:text",
       "message:voice",

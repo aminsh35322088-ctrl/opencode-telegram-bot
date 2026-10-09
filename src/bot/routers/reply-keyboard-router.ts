@@ -151,6 +151,7 @@ async function handleReplyKeyboardInput(
   const dynamicTopicControl = scope.aiTopic && (
     AGENT_MODE_BUTTON_TEXT_PATTERN.test(text) ||
     CONTEXT_BUTTON_TEXT_PATTERN.test(text) ||
+    MODEL_BUTTON_TEXT_PATTERN.test(text) ||
     QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(text) ||
     VARIANT_BUTTON_TEXT_PATTERN.test(text)
   );

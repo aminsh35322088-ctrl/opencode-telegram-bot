@@ -180,9 +180,10 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("consumes any 🧠 label inside a topic even when it matches no stored model", async () => {
+  it("routes stale dynamic model labels to Model Center instead of leaking or swallowing them", async () => {
     const { handler, next } = registerHandler();
     await handler(makeTopicContext("🧠 Unknown Future Model"), next);
+    expect(mocks.showModelCenterMenu).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
   });
 
