@@ -63,7 +63,7 @@ export class CloudTelegram {
         return true as T;
       if (
         body.error_code === 400 &&
-        method === "editMessageText" &&
+        ["editMessageText", "editMessageReplyMarkup"].includes(method) &&
         /^Bad Request: message to edit not found$/i.test(body.description ?? "")
       )
         throw new TelegramDeliveryError("rejected", undefined, undefined, "message_not_found");

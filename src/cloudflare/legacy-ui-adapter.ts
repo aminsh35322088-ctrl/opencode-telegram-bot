@@ -52,6 +52,16 @@ export class LegacyUiAdapter {
     };
   }
 
+  catalogTopic(): FleetTopic | undefined {
+    return this.deps.store.topics().find((topic) => {
+      const worker = this.deps.store.worker(topic.workerId);
+      return (
+        topic.state === "ACTIVE" &&
+        (!worker || ["BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(worker.state))
+      );
+    });
+  }
+
   getTopicSelection(topic: FleetTopic): LegacyTopicSelection {
     this.assertWritableTopic(topic);
     const global = this.deps.store.global()?.data;
@@ -80,7 +90,9 @@ export class LegacyUiAdapter {
 
   getGlobalSnapshot(): { revision: number; data: Record<string, unknown> } | undefined {
     const snapshot = this.deps.store.global();
-    return snapshot ? { revision: snapshot.revision, data: structuredClone(snapshot.data) } : undefined;
+    return snapshot
+      ? { revision: snapshot.revision, data: structuredClone(snapshot.data) }
+      : undefined;
   }
 
   async commitGlobal(expectedRevision: number, data: Record<string, unknown>): Promise<void> {
@@ -97,7 +109,9 @@ export class LegacyUiAdapter {
   assertWritableTopic(topic: FleetTopic): void {
     const current = this.deps.store
       .topics()
-      .find((candidate) => candidate.chatId === topic.chatId && candidate.threadId === topic.threadId);
+      .find(
+        (candidate) => candidate.chatId === topic.chatId && candidate.threadId === topic.threadId,
+      );
     if (
       !current ||
       current.state !== "ACTIVE" ||

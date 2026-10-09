@@ -406,3 +406,15 @@ test("compaction is durably queued as a distinct operation without bypassing Top
   );
   assert.equal(f.store.runOperation("first"), "run");
 });
+
+test("Topic titles are sequential, durable and stable across duplicate allocation retries", () => {
+  const f = fixture();
+  backend(f.store);
+  const first = f.store.reserveAllocation("first", -100);
+  assert.equal(f.store.reserveTopicTitle(first.jobId), "#1");
+  assert.equal(f.restart().reserveTopicTitle(first.jobId), "#1");
+  const second = f.store.reserveAllocation("second", -100);
+  assert.equal(f.store.reserveTopicTitle(second.jobId), "#2");
+  const otherChat = f.store.reserveAllocation("first", -200);
+  assert.equal(f.store.reserveTopicTitle(otherChat.jobId), "#1");
+});

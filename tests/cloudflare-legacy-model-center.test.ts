@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { ControlStore, type FleetTopic, type SqlDatabase } from "../src/cloudflare/control-store.js";
+import {
+  ControlStore,
+  type FleetTopic,
+  type SqlDatabase,
+} from "../src/cloudflare/control-store.js";
 import { LegacyUiAdapter } from "../src/cloudflare/legacy-ui-adapter.js";
 import { LegacyModelAdapter } from "../src/cloudflare/legacy-model-adapter.js";
 import {
@@ -23,7 +27,13 @@ function fixture() {
     sessionId: "session",
     state: "ACTIVE",
   };
-  sql.exec("INSERT INTO topics VALUES(?,?,?,?)", topic.chatId, topic.threadId, topic.workerId, JSON.stringify(topic));
+  sql.exec(
+    "INSERT INTO topics VALUES(?,?,?,?)",
+    topic.chatId,
+    topic.threadId,
+    topic.workerId,
+    JSON.stringify(topic),
+  );
   let providers: unknown[] = [
     {
       id: "p",
@@ -81,11 +91,17 @@ test("canonical Model Center builders preserve legacy root, provider pagination 
   const provider = (await f.models.providers(scope))[0]!;
   const page = await buildModelCenterProvider(provider, 0, current, undefined, source);
   assert.match(page.text, /10 live models · page 1\/2/);
-  assert.equal(page.keyboard.inline_keyboard.flat().some((button) => button.text === "Next ›"), true);
+  assert.equal(
+    page.keyboard.inline_keyboard.flat().some((button) => button.text === "Next ›"),
+    true,
+  );
 
   const search = await buildModelCenterSearchResults("model 9", current, source);
   assert.match(search.text, /SEARCH/);
-  assert.equal(search.keyboard.inline_keyboard.flat().some((button) => /Model 9/.test(button.text)), true);
+  assert.equal(
+    search.keyboard.inline_keyboard.flat().some((button) => /Model 9/.test(button.text)),
+    true,
+  );
 });
 
 test("model selection revalidates the live Topic catalog and refuses a disappeared model", async () => {
@@ -114,6 +130,26 @@ test("favorites and recent selections are durable and generation scoped", async 
   const staleScope = { kind: "topic" as const, topic: { ...f.topic, generation: 0 } };
   await assert.rejects(
     f.models.select(staleScope, { providerID: "p", modelID: "m2" }),
+    /stale_generation/,
+  );
+});
+
+test("General model center discovers the existing Worker catalog without allocating or executing", async () => {
+  const f = fixture();
+  const providers = await f.models.providers({ kind: "global" });
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0]!.modelCount, 10);
+  assert.deepEqual(f.rpc, ["models.list"]);
+  assert.equal((await f.models.models({ kind: "global" }, "p")).length, 10);
+  assert.deepEqual(f.rpc, ["models.list"]);
+});
+
+test("an empty legacy catalog is refreshed and cached models never bypass Topic generation fencing", async () => {
+  const f = fixture();
+  f.ui.setUiState("legacy:model:catalog", { at: Date.now(), providers: [] });
+  assert.equal((await f.models.providers({ kind: "global" })).length, 1);
+  await assert.rejects(
+    f.models.providers({ kind: "topic", topic: { ...f.topic, generation: 0 } }),
     /stale_generation/,
   );
 });

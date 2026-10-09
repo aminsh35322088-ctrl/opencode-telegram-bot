@@ -78,6 +78,7 @@ export interface AllocationJob {
   previousDeploymentId?: string;
   deploymentReceipt?: string;
   cleanupPhase?: string;
+  topicTitle?: string;
 }
 export interface FleetTopic {
   chatId: number;
@@ -600,6 +601,29 @@ export class ControlStore {
       (r) => JSON.parse(r.data) as AllocationJob,
     );
   }
+  reserveTopicTitle(jobId: string): string {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      if (job.topicTitle) return job.topicTitle;
+      const key = "topic-number:" + job.chatId;
+      const row = [
+        ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+      ][0];
+      const previous = row ? Number(JSON.parse(row.data)) : 0;
+      if (!Number.isSafeInteger(previous) || previous < 0) throw new Error("invalid_topic_number");
+      const next = previous + 1;
+      this.sql.exec(
+        "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+        key,
+        JSON.stringify(next),
+      );
+      job.topicTitle = "#" + next;
+      this.saveJob(job);
+      return job.topicTitle;
+    });
+  }
+
   configureJob(jobId: string, patch: Partial<AllocationJob>): AllocationJob {
     return this.transaction(() => {
       const job = this.job(jobId);

@@ -170,6 +170,7 @@ interface UiOptions {
   titleSource?: "auto" | "manual";
 }
 interface UiDependencies {
+  allowedUserId?: string;
   sql: SqlDatabase;
   store: ControlStore;
   telegram: CloudTelegram;
@@ -250,6 +251,7 @@ interface PanelScope {
   generation: number;
 }
 interface PanelState {
+  clearKeyboard?: boolean;
   messageId?: number;
   state?: string;
   signature?: string;
@@ -415,9 +417,20 @@ export class CloudBotUi {
               ? { message_thread_id: thread }
               : {}),
           ...payload,
+          ...(!previous.messageId && previous.clearKeyboard
+            ? { reply_markup: { remove_keyboard: true } }
+            : {}),
         },
       );
       if (this.get<PanelState>(key)?.revision !== revision) return;
+      if (!previous.messageId && previous.clearKeyboard) {
+        this.set(key, { messageId: result.message_id, revision, state: "PENDING", callbacks });
+        await this.deps.telegram.call("editMessageReplyMarkup", {
+          chat_id: chat,
+          message_id: result.message_id,
+          reply_markup: payload.reply_markup,
+        });
+      }
       this.set(key, {
         messageId: previous.messageId ?? result.message_id,
         revision,
@@ -450,9 +463,10 @@ export class CloudBotUi {
         return;
       }
       this.set(key, {
-        ...previous,
+        ...(this.get<PanelState>(key)?.messageId ? this.get<PanelState>(key) : previous),
         revision,
         state:
+          this.get<PanelState>(key)?.messageId ||
           previous.messageId ||
           (error instanceof TelegramDeliveryError && error.category !== "ambiguous")
             ? "PENDING"
@@ -637,6 +651,23 @@ export class CloudBotUi {
     return this.deps.rpc(topic, "session.diff");
   }
   async keyboard(chat: number, topic?: FleetTopic, text = "OpenCode"): Promise<void> {
+    if (!this.panelScope) {
+      const actor = Number(this.deps.allowedUserId);
+      if (!Number.isSafeInteger(actor) || actor < 1) {
+        await this.deps.telegram.call("sendMessage", {
+          chat_id: chat,
+          ...(topic ? { message_thread_id: topic.threadId } : {}),
+          text,
+          reply_markup: { remove_keyboard: true },
+        });
+        return;
+      }
+      return this.forPanel(actor, chat, topic?.threadId ?? 0, topic?.generation ?? 0).keyboard(
+        chat,
+        topic,
+        text,
+      );
+    }
     const selected = this.model(topic),
       split = selected.indexOf("/");
     const currentModel = {
@@ -694,7 +725,7 @@ export class CloudBotUi {
       chat_id: chat,
       ...(topic ? { message_thread_id: topic.threadId } : {}),
       text,
-      reply_markup: keyboard,
+      reply_markup: { remove_keyboard: true },
     });
   }
   async runKeyboard(topic: FleetTopic, runId: string, running: boolean): Promise<void> {
@@ -1384,7 +1415,9 @@ export class CloudBotUi {
     if (!formAdmitted && !protectedInput) this.set("form:" + actor + ":" + chat + ":" + thread, {});
     const mainOnly = [
       "new",
+      "new_chat",
       "history",
+      "sessions",
       "open_topic",
       "reset_history",
       "reset_history_confirm",
@@ -1461,6 +1494,11 @@ export class CloudBotUi {
         );
         return true;
       }
+      if (update.message?.message_id) {
+        await this.deps.telegram
+          .call("deleteMessage", { chat_id: chat, message_id: update.message.message_id })
+          .catch(() => undefined);
+      }
       await this.deps.saveCredential(
         update as ProtectedTelegramUpdate,
         protectedInput.providerId,
@@ -1468,22 +1506,50 @@ export class CloudBotUi {
       );
       this.set("form:" + actor + ":" + chat + ":" + thread, {});
       this.set("action_done:" + updateId, true);
-      if (update.message?.message_id) {
-        try {
-          await this.deps.telegram.call("deleteMessage", {
-            chat_id: chat,
-            message_id: update.message.message_id,
-          });
-        } catch {
-          /* Never echo credentials on deletion failure. */
-        }
-      }
-      await this.notice(chat, thread || undefined, "✅ Provider credential stored securely.");
+      await this.notice(
+        chat,
+        thread || undefined,
+        protectedInput.providerId.startsWith("integration.")
+          ? "✅ Account verified. Credential stored securely. Worker Git/VPN connection is not yet enabled."
+          : "✅ Provider credential stored securely.",
+      );
       return true;
     }
     if (name === "start") {
       if (topic) await this.keyboard(chat, topic, "OpenCode Core " + this.deps.coreVersion);
-      else await this.home(chat, actor, true);
+      else {
+        const resetKey = `start:${actor}:${chat}:${updateId}`;
+        if (!this.get(resetKey)) {
+          const key = `panel:${actor}:${chat}:0:0`;
+          const old =
+            this.get<PanelState>(key) ??
+            this.legacyAdapter().getUiState<PanelState>(`legacy:main:${chat}`);
+          if (old?.messageId) {
+            try {
+              await this.deps.telegram.call("editMessageReplyMarkup", {
+                chat_id: chat,
+                message_id: old.messageId,
+                reply_markup: { inline_keyboard: [] },
+              });
+            } catch (error) {
+              if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found")
+                throw error;
+            }
+            await this.deps.telegram
+              .call("unpinChatMessage", { chat_id: chat, message_id: old.messageId })
+              .catch(() => undefined);
+          }
+          this.deps.sql.exec(
+            "DELETE FROM ui_callbacks WHERE actor=? AND chat=? AND thread=0",
+            actor,
+            chat,
+          );
+          this.legacyAdapter().deleteUiState(`legacy:main:${chat}`);
+          this.set(key, { state: "PENDING", clearKeyboard: true, revision: old?.revision ?? 0 });
+          this.set(resetKey, { retired: true });
+        }
+        await this.home(chat, actor, true);
+      }
       return true;
     }
     if (name === "home") {
@@ -2565,6 +2631,25 @@ export class CloudBotUi {
       );
       return true;
     }
+    if (name === "integration_connect") {
+      const id = action.value;
+      if (id !== "github" && id !== "tailscale") throw new Error("invalid_integration");
+      this.set(`form:${actor}:${chat}:${thread}`, {
+        kind: "credential",
+        providerId: "integration." + id,
+        generation: topic?.generation ?? 0,
+        expires: Date.now() + 300000,
+      });
+      await this.menu(
+        chat,
+        thread || undefined,
+        id === "github"
+          ? "Send a scoped GitHub personal access token. It will be validated with GitHub and encrypted before storage. Use /cancel to cancel."
+          : "Send a Tailscale API access token (tskey-api-…). This connects the account API; it does not enroll the execution Worker in your tailnet. Use /cancel to cancel.",
+        [[this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")]],
+      );
+      return true;
+    }
     if (name === "github" || name === "tailscale") {
       const integrations = record(global?.data.integrations);
       const status = record(integrations[name]);
@@ -2573,15 +2658,42 @@ export class CloudBotUi {
         thread || undefined,
         (name === "github" ? "🐙 <b>GitHub</b>" : "🌐 <b>Tailscale</b>") +
           "\n\n" +
-          (status.connected ? "Connected" : "Not connected") +
+          (status.accountConnected
+            ? "Account connected" + (status.username ? " · " + escape(String(status.username)) : "")
+            : "Not connected") +
           "\n" +
           (name === "github"
             ? "Repository access belongs to the dedicated Core Worker. A scoped GitHub credential and governed Git transport must be configured before connecting."
             : "VPN, SSH and tailscaled run only on execution Workers. A scoped Tailscale credential and governed runtime connection are required."),
-        this.withNavigation(actor, chat, thread, topic, [], {
-          back: { action: "settings" },
-          home: true,
-        }),
+        this.withNavigation(
+          actor,
+          chat,
+          thread,
+          topic,
+          [
+            [
+              this.button(
+                actor,
+                chat,
+                thread,
+                topic,
+                status.accountConnected ? "🔑 Reconnect account" : "🔗 Connect account",
+                "integration_connect",
+                name,
+              ),
+            ],
+            [
+              {
+                text: name === "github" ? "Create GitHub token" : "Create Tailscale API token",
+                url:
+                  name === "github"
+                    ? "https://github.com/settings/personal-access-tokens"
+                    : "https://login.tailscale.com/admin/settings/keys",
+              },
+            ],
+          ],
+          { back: { action: "settings" }, home: true },
+        ),
       );
       return true;
     }

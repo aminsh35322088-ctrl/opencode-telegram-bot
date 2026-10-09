@@ -62,7 +62,9 @@ function fixture(t: { after: (f: () => void) => void }) {
         ? { connected: true, available: true }
         : payload.operation === "session.messages"
           ? []
-          : null;
+          : payload.operation === "models.list"
+            ? { providers: [] }
+            : null;
     const signed = await signEnvelope(
       {
         ...payload,

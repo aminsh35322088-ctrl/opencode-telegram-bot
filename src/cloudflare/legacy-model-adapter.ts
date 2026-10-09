@@ -41,15 +41,17 @@ export class LegacyModelAdapter {
 
   async providers(scope: LegacyModelScope): Promise<ProviderInfo[]> {
     const providers = await this.catalog(scope);
-    return providers.map((item) => {
-      const provider = record(item);
-      const models = record(provider.models);
-      return {
-        id: String(provider.id ?? ""),
-        name: String(provider.name ?? provider.id ?? "Unknown"),
-        modelCount: Object.keys(models).length,
-      };
-    }).filter((provider) => provider.id);
+    return providers
+      .map((item) => {
+        const provider = record(item);
+        const models = record(provider.models);
+        return {
+          id: String(provider.id ?? ""),
+          name: String(provider.name ?? provider.id ?? "Unknown"),
+          modelCount: Object.keys(models).length,
+        };
+      })
+      .filter((provider) => provider.id);
   }
 
   async models(scope: LegacyModelScope, providerID: string): Promise<FavoriteModel[]> {
@@ -122,20 +124,28 @@ export class LegacyModelAdapter {
     model: ModelInfo,
     refresh = false,
   ): Promise<boolean> {
-    if (refresh && scope.kind === "topic") await this.refresh(scope.topic);
-    return (await this.models(scope, model.providerID)).some((item) => item.modelID === model.modelID);
+    if (refresh) {
+      const topic = scope.kind === "topic" ? scope.topic : this.ui.catalogTopic();
+      if (topic) await this.refresh(topic);
+    }
+    return (await this.models(scope, model.providerID)).some(
+      (item) => item.modelID === model.modelID,
+    );
   }
 
   private async catalog(scope: LegacyModelScope): Promise<unknown[]> {
-    if (scope.kind === "topic") return (await this.refresh(scope.topic)).providers;
-    return this.ui.getUiState<CatalogCache>("legacy:model:catalog")?.providers ?? [];
+    if (scope.kind === "topic") this.ui.assertWritableTopic(scope.topic);
+    const cached = this.ui.getUiState<CatalogCache>("legacy:model:catalog");
+    if (cached?.providers.length && cached.at > Date.now() - 60_000) return cached.providers;
+    const topic = scope.kind === "topic" ? scope.topic : this.ui.catalogTopic();
+    if (!topic) return cached?.providers ?? [];
+    return (await this.refresh(topic)).providers;
   }
 
   private async refresh(topic: FleetTopic): Promise<CatalogCache> {
     const result = await this.ui.rpc<unknown>(topic, "models.list");
-    const providers = Array.isArray(record(result).providers)
-      ? (record(result).providers as unknown[])
-      : [];
+    if (!Array.isArray(record(result).providers)) throw new Error("worker_model_catalog_invalid");
+    const providers = record(result).providers as unknown[];
     const cache = { at: Date.now(), providers };
     this.ui.setUiState("legacy:model:catalog", cache);
     return cache;

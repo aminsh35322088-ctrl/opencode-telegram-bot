@@ -1,3 +1,4 @@
+import { CloudIntegrationConnections } from "./integration-connections.js";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import type { ControlEnvironment } from "./worker.js";
 import { ControlStore, type AllocationJob } from "./control-store.js";
@@ -902,6 +903,49 @@ export class ControlPlane {
     });
     const global = this.store.global();
     if (!global) throw new Error("snapshot_unavailable");
+    if (providerId === "integration.github" || providerId === "integration.tailscale") {
+      const id = providerId === "integration.github" ? "github" : "tailscale";
+      const key = "integration-credential:" + id;
+      const before = [
+        ...this.state.storage.sql.exec<{ data: string }>(
+          "SELECT data FROM ui_state WHERE key=?",
+          key,
+        ),
+      ][0];
+      const metadata = await new CloudIntegrationConnections(
+        this.state.storage.sql,
+        this.env.CREDENTIAL_MASTER_KEY,
+      ).connect(id, value);
+      try {
+        const current = this.store.global()!;
+        const integrations =
+          current.data.integrations && typeof current.data.integrations === "object"
+            ? current.data.integrations
+            : {};
+        const next = {
+          ...current.data,
+          integrations: { ...integrations, [id]: metadata },
+          version: 1,
+          revision: current.revision + 1,
+        };
+        const hash = await sha256(canonical(next));
+        this.store.setGlobal(next, hash, current.revision);
+      } catch (error) {
+        const active = [
+          ...this.state.storage.sql.exec<{ data: string }>(
+            "SELECT data FROM ui_state WHERE key=?",
+            key,
+          ),
+        ][0];
+        if (active && JSON.parse(active.data).credentialId === metadata.credentialId) {
+          if (before)
+            this.state.storage.sql.exec("UPDATE ui_state SET data=? WHERE key=?", before.data, key);
+          else this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+        }
+        throw error;
+      }
+      return;
+    }
     const snapshot = structuredClone(global.data);
     const configuration = snapshot.configuration as {
       runtime: { provider?: Record<string, { options?: Record<string, unknown> }> };
@@ -1014,6 +1058,7 @@ export class ControlPlane {
       commitGlobal: global,
     });
     return new CloudBotUi({
+      allowedUserId: this.env.TELEGRAM_ALLOWED_USER_ID,
       sql: this.state.storage.sql,
       store: this.store,
       telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
@@ -1240,12 +1285,13 @@ export class ControlPlane {
     let job = this.store.reserveAllocation(requestId, chatId);
     if (!job.threadId) {
       if (job.phase === "TOPIC_CREATING") throw new Error("topic_creation_reconciliation_required");
+      const topicTitle = this.store.reserveTopicTitle(job.jobId);
       this.store.configureJob(job.jobId, { phase: "TOPIC_CREATING" });
       let created: { message_thread_id: number };
       try {
         created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call("createForumTopic", {
           chat_id: chatId,
-          name: "OpenCode",
+          name: topicTitle,
         });
       } catch (error) {
         if (error instanceof TelegramDeliveryError && error.category === "rate_limited")
@@ -1371,6 +1417,14 @@ export class ControlPlane {
       });
       this.store.ready(worker.workerId, job.generation, worker.credential!);
       const bound = this.store.bindTopic(jobId, job.threadId, session.sessionId);
+      if (job.topicTitle) {
+        const key = `topic:${bound.chatId}:${bound.threadId}:${bound.generation}`;
+        this.state.storage.sql.exec(
+          "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+          key,
+          JSON.stringify({ title: job.topicTitle, titleSource: "auto" }),
+        );
+      }
       await this.topicUi(bound).ready(bound);
       // eslint-disable-next-line no-console
       console.log(

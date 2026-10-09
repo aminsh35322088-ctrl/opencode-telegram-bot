@@ -81,6 +81,10 @@ function fixture() {
     },
     rpc: async <T>(_topic: unknown, op: string) => {
       rpc.push(op);
+      if (op === "models.list") {
+        const row = db.prepare("SELECT data FROM ui_state WHERE key='legacy:model:catalog'").get()!;
+        return { providers: JSON.parse(String(row.data)).providers } as T;
+      }
       return [] as T;
     },
     global: async () => {
@@ -219,7 +223,7 @@ test("wizard prompt and answer edit the same panel and preserve explicit form ad
   await f.update("/model_edit");
   await f.update("opencode/other");
   assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
-  assert.deepEqual(f.rpc, ["global"]);
+  assert.deepEqual(f.rpc, ["models.list", "global"]);
 });
 test("definitively deleted panel receives one replacement then edits its new identity", async () => {
   const f = fixture();
@@ -400,4 +404,58 @@ test("expired restored Model Center navigation reopens safely on the same panel"
     assert.equal(JSON.stringify(f.sent).includes("expired"), false);
   }
   assert.deepEqual(f.rpc, []);
+});
+
+test("explicit General start retires the old panel, clears chat keyboard and creates one fresh panel", async () => {
+  const f = fixture();
+  await f.update("/start");
+  const old = f.sent.find((x) => x.method === "sendMessage")!.payload;
+  await f.update("/settings");
+  const oldCallback = f.button("More")!.callback_data;
+  await f.update("/start");
+  const sends = f.sent.filter((x) => x.method === "sendMessage");
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends[1]!.payload.reply_markup, { remove_keyboard: true });
+  assert.ok(
+    f.sent.some((x) => x.method === "editMessageReplyMarkup" && x.payload.message_id === 101),
+  );
+  const before = f.sent.length;
+  await f.callback(oldCallback, 0, 7, 101);
+  assert.deepEqual(
+    f.sent.slice(before).map((item) => item.method),
+    ["answerCallbackQuery"],
+  );
+  assert.equal(old.message_thread_id, undefined);
+});
+
+test("GitHub and Tailscale menus expose a protected real account connection wizard on the same panel", async () => {
+  const f = fixture();
+  await f.update("/start");
+  for (const integration of ["github", "tailscale"]) {
+    await f.update("/" + integration);
+    const button = f.sent
+      .flatMap((item) => item.payload.reply_markup?.inline_keyboard?.flat() ?? [])
+      .filter((item) => item.text === "🔗 Connect account")
+      .at(-1);
+    assert.ok(button);
+    await f.callback(button.callback_data);
+    const form = f.db.prepare("SELECT data FROM ui_state WHERE key='form:7:-100:0'").get()!;
+    assert.equal(JSON.parse(String(form.data)).providerId, "integration." + integration);
+    assert.equal(JSON.parse(String(form.data)).kind, "credential");
+    await f.update("/cancel");
+  }
+  assert.equal(f.sent.filter((item) => item.method === "sendMessage").length, 1);
+  assert.deepEqual(f.rpc, []);
+});
+
+test("replaying one explicit start after restart cannot create another panel", async () => {
+  const f = fixture();
+  const update = {
+    update_id: 9000,
+    message: { message_id: 9, chat: { id: -100 }, from: { id: 7 }, text: "/start" },
+  };
+  await f.scoped(7, 0, 0).handle(update, 9000);
+  f.restart();
+  await f.scoped(7, 0, 0).handle(update, 9000);
+  assert.equal(f.sent.filter((item) => item.method === "sendMessage").length, 1);
 });
