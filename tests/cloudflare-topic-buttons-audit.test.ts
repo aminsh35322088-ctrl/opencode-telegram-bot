@@ -41,8 +41,13 @@ function fixture(t: { after: (f: () => void) => void }) {
   const rpc: string[] = [];
   let nextId = 100,
     missing = false,
-    failTransport = false;
+    failTransport = false,
+    deleteRejects = 0;
+  const rejectedDeleteIds = new Set<number>();
+  const deleted = new Set<number>();
   let heldEdit: Promise<void> | undefined, releaseEdit: (() => void) | undefined;
+  let heldDelete: Promise<void> | undefined, releaseDelete: (() => void) | undefined;
+  const background: Promise<unknown>[] = [];
   const deps = {
     sql,
     store,
@@ -57,6 +62,25 @@ function fixture(t: { after: (f: () => void) => void }) {
         let heldEdit: Promise<void> | undefined, releaseEdit: (() => void) | undefined;
         throw new Error("network");
       }
+      if (heldDelete && method === "deleteMessage") {
+        const pending = heldDelete;
+        heldDelete = undefined;
+        await pending;
+      }
+      if (method === "deleteMessage" && rejectedDeleteIds.delete(Number(payload.message_id))) {
+        return Response.json(
+          { ok: false, error_code: 400, description: "Bad Request: not enough rights to delete messages" },
+          { status: 400 },
+        );
+      }
+      if (deleteRejects > 0 && method === "deleteMessage") {
+        deleteRejects--;
+        return Response.json(
+          { ok: false, error_code: 400, description: "Bad Request: not enough rights to delete messages" },
+          { status: 400 },
+        );
+      }
+      if (method === "deleteMessage") deleted.add(Number(payload.message_id));
       if (heldEdit && method === "editMessageText") {
         const pending = heldEdit;
         heldEdit = undefined;
@@ -92,6 +116,9 @@ function fixture(t: { after: (f: () => void) => void }) {
     },
     global: async () => {
       rpc.push("global");
+    },
+    waitUntil: (promise: Promise<unknown>) => {
+      background.push(promise);
     },
   };
   let ui = new CloudBotUi(deps),
@@ -137,6 +164,7 @@ function fixture(t: { after: (f: () => void) => void }) {
     store,
     sent,
     rpc,
+    deleted,
     update,
     callback,
     button,
@@ -156,6 +184,21 @@ function fixture(t: { after: (f: () => void) => void }) {
     },
     missing: () => {
       missing = true;
+    },
+    rejectNextDeletes: (count = 1) => {
+      deleteRejects = count;
+    },
+    rejectDeleteMessage: (messageId: number) => {
+      rejectedDeleteIds.add(messageId);
+    },
+    holdNextDelete: () => {
+      heldDelete = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+      return () => releaseDelete!();
+    },
+    drainBackground: async () => {
+      while (background.length) await background.shift();
     },
   };
 }
@@ -211,6 +254,74 @@ test("ReplyKeyboard controls are deleted, Compact has a meaningful acknowledgeme
   assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 3));
   assert.equal(f.rpc.includes("models.list"), false);
   assert.match(String(f.sent.find((entry) => entry.payload.reply_markup?.inline_keyboard)?.payload.text ?? ""), /MODEL CENTER/i);
+});
+
+
+test("ReplyKeyboard cleanup never delays the first Model Center render", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  const modelButton = latestReplyButton(f, "🧠").text;
+  const release = f.holdNextDelete();
+  const pending = f.update(modelButton, 42);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(
+      f.sent.some(
+        (entry) =>
+          entry.method === "sendMessage" &&
+          entry.payload.reply_markup?.inline_keyboard &&
+          /MODEL CENTER/i.test(String(entry.payload.text)),
+      ),
+      "Model Center should render before ReplyKeyboard text cleanup completes",
+    );
+  } finally {
+    release();
+    await pending.catch(() => undefined);
+    await f.drainBackground();
+  }
+});
+
+test("recognized dynamic Topic controls are deleted even when ReplyKeyboard history is missing", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  const modelButton = latestReplyButton(f, "🧠").text;
+  f.db.prepare("DELETE FROM ui_state WHERE key LIKE 'reply-keyboard:%'").run();
+  f.sent.length = 0;
+  await f.update(modelButton, 42);
+  await f.drainBackground();
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 2));
+  assert.equal([...f.db.prepare("SELECT request FROM runs").all()].length, 0);
+});
+
+test("model selection clears every owned Topic panel, including a previously failed retirement", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  const modelButton = latestReplyButton(f, "🧠").text;
+  await f.update(modelButton, 42);
+  const firstPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
+  assert.ok(firstPanel);
+
+  f.rejectDeleteMessage(firstPanel);
+  await f.update(modelButton, 42);
+  const secondPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
+  assert.ok(secondPanel);
+  assert.notEqual(secondPanel, firstPanel);
+  assert.equal(
+    f.sent.some(
+      (entry) => entry.method === "editMessageReplyMarkup" && entry.payload.message_id === firstPanel,
+    ),
+    false,
+    "failed retirement must not leave a dead text-only panel",
+  );
+
+  await f.callback(latestInlineButton(f, "Browse providers").callback_data, 42);
+  await f.callback(latestInlineButton(f, "opencode").callback_data, 42);
+  await f.callback(latestInlineButton(f, "Other").callback_data, 42);
+  await f.drainBackground();
+
+  assert.ok(f.deleted.has(firstPanel), "orphaned panel should be retried and deleted");
+  assert.ok(f.deleted.has(secondPanel), "current panel should be deleted after model selection");
+  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, undefined);
 });
 
 test("every idle Topic ReplyKeyboard control routes to its own scoped behavior", async (t) => {
@@ -293,6 +404,22 @@ test("General with explicit thread 1 discards unsolicited input and does not inh
   assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 1);
 });
 
+test("fresh ReplyKeyboard menus replace the previous Topic panel instead of editing it", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  await f.update(latestReplyButton(f, "🧠").text, 42);
+  const modelPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
+  assert.ok(modelPanel);
+
+  f.sent.length = 0;
+  await f.update(latestReplyButton({ ...f, sent: [{ method: "sendMessage", payload: { reply_markup: { keyboard: [[{ text: "🗑️ Delete Chat" }]] } } }] } as any, "Delete Chat").text, 42);
+  const deletePanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
+  assert.ok(deletePanel);
+  assert.notEqual(deletePanel, modelPanel);
+  assert.ok(f.deleted.has(modelPanel));
+  assert.match(String(f.sent.find((entry) => entry.payload.reply_markup?.inline_keyboard)?.payload.text ?? ""), /Delete Chat/i);
+});
+
 test("Delete Chat needs confirmation and retires only its Topic", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
@@ -311,6 +438,23 @@ test("Delete Chat needs confirmation and retires only its Topic", async (t) => {
   assert.deepEqual(f.rpc, ["delete"]);
 });
 
+
+test("model selection retries a transient panel delete and leaves no Model Center behind", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  await f.update(latestReplyButton(f, "🧠").text, 42);
+  await f.callback(latestInlineButton(f, "Browse providers").callback_data, 42);
+  await f.callback(latestInlineButton(f, "opencode").callback_data, 42);
+  const panelId = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
+  assert.ok(panelId);
+
+  f.rejectDeleteMessage(panelId);
+  await f.callback(latestInlineButton(f, "Other").callback_data, 42);
+  await f.drainBackground();
+
+  assert.ok(f.deleted.has(panelId), "transient panel deletion should be retried in the background");
+  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, undefined);
+});
 
 test("Model Center selection refreshes the Topic ReplyKeyboard with the newly selected model", async (t) => {
   const f = fixture(t);

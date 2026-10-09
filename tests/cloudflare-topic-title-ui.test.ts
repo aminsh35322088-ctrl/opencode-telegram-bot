@@ -68,29 +68,12 @@ function event(title: unknown, info: Record<string, unknown> = {}) {
 }
 
 
-test("first real prompt immediately seeds a useful automatic Topic title before Core finishes", async () => {
+test("automatic Telegram titles wait for an admitted OpenCode session title", async () => {
   const f = fixture();
   f.setOptions({ title: "#3", titleSource: "auto" });
-  assert.equal(f.ui.capturePrompt(f.topic, "لطفاً درباره ی رود نیل تحقیق کن"), true);
   await f.ui.flush();
-  assert.deepEqual(f.requests.at(-1), {
-    method: "editForumTopic",
-    payload: { chat_id: -100, message_thread_id: 42, name: "بررسی رود نیل" },
-  });
-  assert.deepEqual(f.options(), { title: "بررسی رود نیل", titleSource: "auto" });
-});
-
-test("prompt seeding never overwrites a manual or already meaningful automatic title", async () => {
-  for (const options of [
-    { title: "Manual title", titleSource: "manual" },
-    { title: "Existing subject", titleSource: "auto" },
-  ]) {
-    const f = fixture();
-    f.setOptions(options);
-    assert.equal(f.ui.capturePrompt(f.topic, "درباره رود نیل تحقیق کن"), false);
-    await f.ui.flush();
-    assert.equal(f.requests.length, 0);
-  }
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.options().title, "#3");
 });
 
 test("an admitted Core session title edits only its Telegram topic and persists its display name", async () => {

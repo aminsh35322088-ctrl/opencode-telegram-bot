@@ -177,6 +177,7 @@ interface UiDependencies {
   cancelAllocation?: (jobId: string) => Promise<void>;
   rpc: <T = unknown>(topic: FleetTopic, operation: string, payload?: unknown) => Promise<T>;
   global: (data: Record<string, unknown>, expectedRevision: number) => Promise<void>;
+  waitUntil?: (promise: Promise<unknown>) => void;
   saveCredential?: (
     update: ProtectedTelegramUpdate,
     providerId: string,
@@ -347,6 +348,7 @@ export class CloudBotUi {
     ].some((row) => row.key !== key && record(JSON.parse(row.data)).messageId === messageId);
     if (owned) return false;
     this.set(key, { messageId, state: "DELIVERED" });
+    this.rememberPanelMessage(messageId);
     return true;
   }
   private async clearLegacyKeyboard(actor: number, chat: number): Promise<void> {
@@ -465,13 +467,15 @@ export class CloudBotUi {
       );
       if (this.get<PanelState>(key)?.revision !== revision) return;
       this.clearPanelCallbacks(previous);
+      const messageId = previous.messageId ?? result.message_id;
       this.set(key, {
-        messageId: previous.messageId ?? result.message_id,
+        messageId,
         revision,
         state: "DELIVERED",
         signature,
         callbacks,
       });
+      this.rememberPanelMessage(messageId);
       if (!scope.thread) {
         const adapter = this.legacyAdapter();
         const obsolete = adapter.getUiState<{ messageId: number }>(`legacy:menu:${chat}`);
@@ -519,58 +523,154 @@ export class CloudBotUi {
     for (const callback of state?.callbacks ?? [])
       this.deps.sql.exec("DELETE FROM ui_callbacks WHERE id=?", callback);
   }
-  private async retireCurrentPanel(): Promise<void> {
+  private panelOwnedKey(): string | undefined {
     const scope = this.panelScope;
-    const key = this.panelStateKey();
-    if (!scope || !key) return;
-    const current = this.get<PanelState>(key);
-    if (!current) return;
-    this.clearPanelCallbacks(current);
-    if (current.messageId) {
+    return scope
+      ? `panel-owned:${scope.actor}:${scope.chat}:${scope.thread}:${scope.generation}`
+      : undefined;
+  }
+  private rememberPanelMessage(messageId: number | undefined): void {
+    if (!Number.isSafeInteger(messageId) || !messageId || messageId < 1) return;
+    const key = this.panelOwnedKey();
+    if (!key) return;
+    const previous = this.get<{ messageIds?: number[] }>(key)?.messageIds ?? [];
+    const messageIds = Array.from(new Set([...previous, messageId])).slice(-32);
+    this.set(key, { messageIds });
+  }
+  private forgetPanelMessage(messageId: number): void {
+    const key = this.panelOwnedKey();
+    if (!key) return;
+    const previous = this.get<{ messageIds?: number[] }>(key)?.messageIds ?? [];
+    const messageIds = previous.filter((value) => value !== messageId);
+    if (messageIds.length) this.set(key, { messageIds });
+    else this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+  }
+  private async retryOwnedPanelMessages(chat: number, messageIds: number[]): Promise<void> {
+    for (const messageId of messageIds) {
       try {
-        await this.deps.telegram.call("deleteMessage", {
-          chat_id: scope.chat,
-          message_id: current.messageId,
-        });
+        await this.deps.telegram.call("deleteMessage", { chat_id: chat, message_id: messageId });
+        this.forgetPanelMessage(messageId);
       } catch (error) {
         if (error instanceof TelegramDeliveryError && error.reason === "message_not_found") {
-          // Already retired remotely.
-        } else if (error instanceof TelegramDeliveryError && error.category === "rejected") {
-          await this.deps.telegram
-            .call("editMessageReplyMarkup", {
-              chat_id: scope.chat,
-              message_id: current.messageId,
-              reply_markup: { inline_keyboard: [] },
-            })
-            .catch(() => undefined);
-        } else throw error;
+          this.forgetPanelMessage(messageId);
+          continue;
+        }
+        // eslint-disable-next-line no-console
+        console.warn(
+          JSON.stringify({
+            event: "telegram_panel_cleanup_retry_pending",
+            category: error instanceof TelegramDeliveryError ? error.category : "unknown",
+          }),
+        );
       }
     }
-    this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", key);
   }
-  private async closeCurrentPanel(): Promise<void> {
+  private async clearOwnedPanels(): Promise<void> {
     const scope = this.panelScope;
-    const key = this.panelStateKey();
-    if (!scope || !key) return;
-    const current = this.get<PanelState>(key);
+    const panelKey = this.panelStateKey();
+    const ownedKey = this.panelOwnedKey();
+    if (!scope || !panelKey || !ownedKey) return;
+    const current = this.get<PanelState>(panelKey);
+    const registered = this.get<{ messageIds?: number[] }>(ownedKey)?.messageIds ?? [];
+    const messageIds = Array.from(
+      new Set([
+        ...registered,
+        ...(current?.messageId ? [current.messageId] : []),
+      ]),
+    );
+
     this.clearPanelCallbacks(current);
-    if (current?.messageId) {
+    this.deps.sql.exec(
+      "DELETE FROM ui_callbacks WHERE actor=? AND chat=? AND thread=? AND generation=? AND json_extract(data,'$.panel')=1",
+      scope.actor,
+      scope.chat,
+      scope.thread,
+      scope.generation,
+    );
+
+    const pending: number[] = [];
+    for (const messageId of messageIds) {
       try {
         await this.deps.telegram.call("deleteMessage", {
           chat_id: scope.chat,
-          message_id: current.messageId,
+          message_id: messageId,
         });
-      } catch {
-        await this.deps.telegram
-          .call("editMessageReplyMarkup", {
-            chat_id: scope.chat,
-            message_id: current.messageId,
-            reply_markup: { inline_keyboard: [] },
-          })
-          .catch(() => undefined);
+      } catch (error) {
+        if (error instanceof TelegramDeliveryError && error.reason === "message_not_found") continue;
+        pending.push(messageId);
+        // Keep ownership so the next close/fresh invocation retries deletion.
+        // eslint-disable-next-line no-console
+        console.warn(
+          JSON.stringify({
+            event: "telegram_panel_cleanup_pending",
+            category: error instanceof TelegramDeliveryError ? error.category : "unknown",
+          }),
+        );
       }
     }
-    this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+    this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", panelKey);
+    if (pending.length) {
+      this.set(ownedKey, { messageIds: pending });
+      if (this.deps.waitUntil)
+        this.deps.waitUntil(this.retryOwnedPanelMessages(scope.chat, pending));
+    } else this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", ownedKey);
+  }
+  private controlCleanupPrefix(): string | undefined {
+    const scope = this.panelScope;
+    return scope
+      ? `reply-control-cleanup:${scope.actor}:${scope.chat}:${scope.thread}:${scope.generation}:`
+      : undefined;
+  }
+  private async flushReplyControlCleanup(): Promise<void> {
+    const scope = this.panelScope;
+    const prefix = this.controlCleanupPrefix();
+    if (!scope || !prefix) return;
+    const rows = [
+      ...this.deps.sql.exec<{ key: string; data: string }>(
+        "SELECT key,data FROM ui_state WHERE key GLOB ? ORDER BY rowid LIMIT 32",
+        prefix + "*",
+      ),
+    ];
+    for (const row of rows) {
+      const data = JSON.parse(row.data) as { messageId?: number; attempts?: number };
+      if (!Number.isSafeInteger(data.messageId) || !data.messageId) {
+        this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", row.key);
+        continue;
+      }
+      try {
+        await this.deps.telegram.call("deleteMessage", {
+          chat_id: scope.chat,
+          message_id: data.messageId,
+        });
+        this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", row.key);
+      } catch (error) {
+        if (error instanceof TelegramDeliveryError && error.reason === "message_not_found") {
+          this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", row.key);
+          continue;
+        }
+        const attempts = (data.attempts ?? 0) + 1;
+        this.set(row.key, { messageId: data.messageId, attempts });
+        // eslint-disable-next-line no-console
+        console.warn(
+          JSON.stringify({
+            event: "telegram_reply_control_cleanup_pending",
+            category: error instanceof TelegramDeliveryError ? error.category : "unknown",
+            attempts,
+          }),
+        );
+      }
+    }
+  }
+  private async scheduleReplyControlCleanup(messageId: number): Promise<void> {
+    const prefix = this.controlCleanupPrefix();
+    if (!prefix || !Number.isSafeInteger(messageId) || messageId < 1) return;
+    this.set(prefix + messageId, { messageId, attempts: 0 });
+    const cleanup = this.flushReplyControlCleanup();
+    if (this.deps.waitUntil) {
+      this.deps.waitUntil(cleanup);
+      return;
+    }
+    await cleanup;
   }
   async showError(text: string): Promise<void> {
     if (!this.panelScope) throw new Error("panel_scope_required");
@@ -1471,10 +1571,6 @@ export class CloudBotUi {
           )?.controls ?? [])
         : [];
       const renderedControl = renderedControls.includes(label);
-      if (topic && renderedControl && update.message?.message_id)
-        await this.deps.telegram
-          .call("deleteMessage", { chat_id: chat, message_id: update.message.message_id })
-          .catch(() => undefined);
 
       const labels: Record<string, string> = {
         [normalized(MAIN_BUTTONS.newChat)]: "new",
@@ -1492,14 +1588,24 @@ export class CloudBotUi {
         ...(topicModelButton ? { [topicModelButton]: "models" } : {}),
         "❌ Cancel": "close",
       };
-      if (labels[label]) action = { action: labels[label]! };
-      else if (topic && renderedControl) {
+      let replyControl = false;
+      if (labels[label]) {
+        action = { action: labels[label]! };
+        replyControl = !!topic;
+      } else if (topic && renderedControl) {
         // A Telegram KeyboardButton press is an ordinary text message. Exact
         // rendered-control history is the only dynamic authority here so a
         // stale button can never fall through as a model prompt.
+        replyControl = true;
         if (label.startsWith("🧠 ")) action = { action: "models" };
-        else return true;
+        else {
+          if (update.message?.message_id)
+            await this.scheduleReplyControlCleanup(update.message.message_id);
+          return true;
+        }
       }
+      if (replyControl && update.message?.message_id)
+        await this.scheduleReplyControlCleanup(update.message.message_id);
       if (!action && text.startsWith("/")) {
         const match = /^\/([a-z_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/.exec(text);
         action = { action: match?.[1] ?? "unknown", value: match?.[2] };
@@ -1585,6 +1691,12 @@ export class CloudBotUi {
     )
       throw new Error("stale_generation");
     const name = action.action;
+    if (
+      topic &&
+      update.message &&
+      ["settings", "topic_settings", "models", "model", "delete", "delete_topic"].includes(name)
+    )
+      await this.clearOwnedPanels();
     if (!formAdmitted && !protectedInput) this.set("form:" + actor + ":" + chat + ":" + thread, {});
     const mainOnly = [
       "new",
@@ -1762,13 +1874,12 @@ export class CloudBotUi {
       return true;
     }
     if (name === "settings" || name === "topic_settings" || name === "back") {
-      if (topic && update.message && name !== "back") await this.retireCurrentPanel();
       await this.settings(actor, chat, thread, topic);
       return true;
     }
     if (name === "panel_close") {
       this.set("action_done:" + updateId, true);
-      await this.closeCurrentPanel();
+      await this.clearOwnedPanels();
       return true;
     }
     if (name === "close" || name === "cancel") {
@@ -2007,8 +2118,6 @@ export class CloudBotUi {
       );
       return true;
     }
-    if (topic && update.message && ["models", "model"].includes(action.action))
-      await this.retireCurrentPanel();
     return this.handleAction(actor, chat, thread, topic, action, updateId);
   }
   async interactions(topic: FleetTopic, actor: number): Promise<void> {
@@ -3056,7 +3165,7 @@ export class CloudBotUi {
       }
       if (updateId) this.set("action_done:" + updateId, true);
       if (topic) {
-        await this.closeCurrentPanel();
+        await this.clearOwnedPanels();
         await this.keyboard(
           chat,
           topic,
@@ -3101,7 +3210,7 @@ export class CloudBotUi {
       });
       if (updateId) this.set("action_done:" + updateId, true);
       if (topic) {
-        await this.closeCurrentPanel();
+        await this.clearOwnedPanels();
         await this.keyboard(
           chat,
           topic,
