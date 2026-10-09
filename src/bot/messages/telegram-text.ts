@@ -4,22 +4,36 @@ import { logger } from "../../utils/logger.js";
 import {
   editMessageWithMarkdownFallback,
   isTelegramBadRequestError,
+  isTelegramMarkdownParseError,
+  isTelegramEntityUrlError,
   sendMessageWithMarkdownFallback,
 } from "./send-with-markdown-fallback.js";
 import { chunkPlainText } from "../render/chunker.js";
 import { TELEGRAM_TEXT_MESSAGE_LIMIT } from "../render/limits.js";
-import { buildSourcePreservingRichHtml } from "../render/rich-html-fallback.js";
 import { getTelegramRenderedPartSignature } from "../render/part-signature.js";
 import { shouldRenderRtl } from "../render/text-direction.js";
 import type { TelegramRenderedPart } from "../render/types.js";
 
+/** A format retry requires an explicit parse/schema failure, never any 400. */
+function isTelegramRenderingError(error: unknown): boolean {
+  if (!isTelegramBadRequestError(error)) return false;
+  if (isTelegramMarkdownParseError(error) || isTelegramEntityUrlError(error)) return true;
+  const description =
+    typeof error === "object" && error !== null
+      ? (Reflect.get(error, "description") ?? Reflect.get(error, "message"))
+      : undefined;
+  return (
+    typeof description === "string" &&
+    /unsupported (?:rich message|rich block)|invalid (?:rich message|rich block)|rich message (?:is |are )?not supported|\bRICH_(?:MESSAGE_)?(?:BLOCK|HTML)_(?:INVALID|UNSUPPORTED)\b|message is too long/i.test(
+      description,
+    )
+  );
+}
+
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage" | "sendRichMessage">;
 type EditMessageApi = Pick<Api<RawApi>, "editMessageText">;
 type SendDraftApi = Pick<Api<RawApi>, "sendMessageDraft" | "sendRichMessageDraft">;
-type CompleteDraftApi = Pick<
-  Api<RawApi>,
-  "sendMessage" | "sendRichMessage" | "deleteMessage"
->;
+type CompleteDraftApi = Pick<Api<RawApi>, "sendMessage" | "sendRichMessage" | "deleteMessage">;
 
 type TelegramSendMessageOptions = Parameters<SendMessageApi["sendMessage"]>[2];
 type TelegramEditMessageOptions = Parameters<EditMessageApi["editMessageText"]>[3];
@@ -104,9 +118,10 @@ function stripRichFormattingOptions<T extends TelegramSendMessageOptions | undef
 
   const rawOptions = {
     ...options,
-  } as NonNullable<T> & { parse_mode?: unknown };
+  } as NonNullable<T> & { parse_mode?: unknown; entities?: unknown };
 
   delete rawOptions.parse_mode;
+  delete rawOptions.entities;
 
   return rawOptions as T;
 }
@@ -162,8 +177,7 @@ function withPlainEntities<T extends { entities?: MessageEntity[] } | undefined>
 
 function hasRichDraftApi(api: Partial<SendDraftApi>): api is SendDraftApi {
   return (
-    typeof api.sendMessageDraft === "function" &&
-    typeof api.sendRichMessageDraft === "function"
+    typeof api.sendMessageDraft === "function" && typeof api.sendRichMessageDraft === "function"
   );
 }
 
@@ -258,8 +272,11 @@ export async function sendRenderedBotPart({
         deliveredSignature: getTelegramRenderedPartSignature(part),
       };
     } catch (error) {
-      if (!allowPlainFallback || !isTelegramBadRequestError(error)) throw error;
-      logger.warn("[Bot] Native thinking draft failed, falling back to plain reasoning text", error);
+      if (!allowPlainFallback || !isTelegramRenderingError(error)) throw error;
+      logger.warn(
+        "[Bot] Native thinking draft failed, falling back to plain reasoning text",
+        error,
+      );
       const sentMessage = await api.sendMessage(chatId, part.fallbackText, rawOptions);
       return {
         messageId: sentMessage.message_id,
@@ -293,43 +310,26 @@ export async function sendRenderedBotPart({
       deliveredSignature: getTelegramRenderedPartSignature(part),
     };
   } catch (error) {
-    if (!allowPlainFallback || !isTelegramBadRequestError(error)) {
+    if (!allowPlainFallback || !isTelegramRenderingError(error)) {
       throw error;
     }
 
-    logger.warn(
-      "[Bot] Native rich blocks were rejected, retrying with source-preserving Rich HTML",
-      error,
-    );
-
-    try {
-      const sentMessage = await api.sendRichMessage(
-        chatId,
-        {
-          html: buildSourcePreservingRichHtml(part.fallbackText, {
-            preformatted: isCodeOnlyPart(part),
-          }),
-          ...(!isCodeOnlyPart(part) && shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
-        },
-        rawOptions as TelegramSendRichOptions,
-      );
-
-      if (sentMessage && typeof sentMessage.message_id === "number") {
+    logger.warn("[Bot] Native rich blocks rejected", { from: "rich", to: "entities" });
+    if (part.fallbackText.length <= TELEGRAM_TEXT_MESSAGE_LIMIT && part.entities?.length) {
+      try {
+        const sent = await api.sendMessage(
+          chatId,
+          part.fallbackText,
+          withPlainEntities(rawOptions, part),
+        );
         return {
-          messageId: sentMessage.message_id,
-          deliveredSignature: getTelegramRenderedPartSignature(part),
+          messageId: sent.message_id,
+          deliveredSignature: plainSignature(part.fallbackText, part.entities),
         };
+      } catch (normalError) {
+        if (!isTelegramRenderingError(normalError)) throw normalError;
+        logger.warn("[Bot] Normal entities rejected", { from: "entities", to: "plain" });
       }
-
-      logger.warn(
-        "[Bot] Source-preserving Rich HTML returned no message id, falling back to plain text",
-      );
-    } catch (richHtmlError) {
-      if (!isTelegramBadRequestError(richHtmlError)) throw richHtmlError;
-      logger.warn(
-        "[Bot] Source-preserving Rich HTML was also rejected, falling back to plain text",
-        richHtmlError,
-      );
     }
 
     const chunks = chunkPlainText(part.fallbackText);
@@ -377,7 +377,7 @@ async function persistThinkingDraftFinal(
     );
     return { deliveredSignature: getTelegramRenderedPartSignature(part) };
   } catch (error) {
-    if (!isTelegramBadRequestError(error)) throw error;
+    if (!isTelegramRenderingError(error)) throw error;
 
     logger.warn("[Bot] Final rich reasoning send failed, retrying as plain text", error);
     const chunks = chunkPlainText(part.fallbackText);
@@ -461,14 +461,24 @@ export async function editRenderedBotPart({
     // across; a plain retry is only possible when the text fits a message.
     if (
       !allowPlainFallback ||
-      !isTelegramBadRequestError(error) ||
+      !isTelegramRenderingError(error) ||
       part.fallbackText.length > TELEGRAM_TEXT_MESSAGE_LIMIT
     ) {
       throw error;
     }
 
-    logger.warn("[Bot] Rich message edit failed, retrying assistant edit as plain text", error);
-    await api.editMessageText(chatId, messageId, part.fallbackText, rawOptions);
+    logger.warn("[Bot] Rich message edit rejected", { from: "rich", to: "entities" });
+    try {
+      await api.editMessageText(
+        chatId,
+        messageId,
+        part.fallbackText,
+        withPlainEntities(rawOptions, part),
+      );
+    } catch (normalError) {
+      if (!part.entities?.length || !isTelegramRenderingError(normalError)) throw normalError;
+      await api.editMessageText(chatId, messageId, part.fallbackText, rawOptions);
+    }
     logger.debug("[Bot] Assistant edit part applied in plain fallback mode", {
       messageId,
       fallbackTextLength: part.fallbackText.length,
@@ -507,12 +517,7 @@ export async function sendDraftBotPart({
   });
 
   if (isPlainPart(part)) {
-    await api.sendMessageDraft(
-      chatId,
-      draftId,
-      part.fallbackText,
-      GENERATION_DRAFT_OPTIONS,
-    );
+    await api.sendMessageDraft(chatId, draftId, part.fallbackText, GENERATION_DRAFT_OPTIONS);
     return {
       deliveredSignature: plainSignature(part.fallbackText),
     };

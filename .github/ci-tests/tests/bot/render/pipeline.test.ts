@@ -20,47 +20,100 @@ describe("bot/render/pipeline", () => {
       },
       {
         block: { type: "list", items: [{ blocks: [{ type: "paragraph", text: "item" }] }] },
-        plainText: "- item",
+        plainText: "• item",
       },
     ]);
   });
 
-  it("lifts a sub-list out of a numbered item and keeps the numbering running", () => {
+  it("preserves a nested native list and exact ordered numbering", () => {
     const markdown = ["1. one", "2. two", "   - child", "3. three"].join("\n");
 
     expect(renderTelegramBlocks(markdown).map((rendered) => rendered.block)).toEqual([
-      { type: "paragraph", text: ["1. ", "one", "\n2. ", "two"] },
-      { type: "list", items: [{ blocks: [{ type: "paragraph", text: "child" }] }] },
-      { type: "paragraph", text: ["3. ", "three"] },
+      {
+        type: "list",
+        items: [
+          { type: "1", value: 1, blocks: [{ type: "paragraph", text: "one" }] },
+          {
+            type: "1",
+            value: 2,
+            blocks: [
+              { type: "paragraph", text: "two" },
+              { type: "list", items: [{ blocks: [{ type: "paragraph", text: "child" }] }] },
+            ],
+          },
+          { type: "1", value: 3, blocks: [{ type: "paragraph", text: "three" }] },
+        ],
+      },
     ]);
   });
 
-  it("keeps a sub-list that is written out as text indented inside its item", () => {
+  it("preserves ordered sub-list hierarchy inside its owning item", () => {
     const markdown = ["1. one", "   1. sub a", "   2. sub b", "2. two"].join("\n");
 
     expect(renderTelegramBlocks(markdown).map((rendered) => rendered.block)).toEqual([
       {
-        type: "paragraph",
-        text: ["1. ", "one", "\n   1. sub a\n   2. sub b", "\n2. ", "two"],
+        type: "list",
+        items: [
+          {
+            type: "1",
+            value: 1,
+            blocks: [
+              { type: "paragraph", text: "one" },
+              {
+                type: "list",
+                items: [
+                  { type: "1", value: 1, blocks: [{ type: "paragraph", text: "sub a" }] },
+                  { type: "1", value: 2, blocks: [{ type: "paragraph", text: "sub b" }] },
+                ],
+              },
+            ],
+          },
+          { type: "1", value: 2, blocks: [{ type: "paragraph", text: "two" }] },
+        ],
       },
     ]);
   });
 
-  it("lifts a sub-list that carries native content rather than flattening it", () => {
+  it("preserves three-level native lists without losing ordered numbering", () => {
     const markdown = ["1. one", "   1. sub a", "      - deep bullet", "   2. sub b", "2. two"].join(
       "\n",
     );
 
     expect(renderTelegramBlocks(markdown).map((rendered) => rendered.block)).toEqual([
-      { type: "paragraph", text: ["1. ", "one"] },
-      { type: "paragraph", text: ["1. ", "sub a"] },
-      { type: "list", items: [{ blocks: [{ type: "paragraph", text: "deep bullet" }] }] },
-      { type: "paragraph", text: ["2. ", "sub b"] },
-      { type: "paragraph", text: ["2. ", "two"] },
+      {
+        type: "list",
+        items: [
+          {
+            type: "1",
+            value: 1,
+            blocks: [
+              { type: "paragraph", text: "one" },
+              {
+                type: "list",
+                items: [
+                  {
+                    type: "1",
+                    value: 1,
+                    blocks: [
+                      { type: "paragraph", text: "sub a" },
+                      {
+                        type: "list",
+                        items: [{ blocks: [{ type: "paragraph", text: "deep bullet" }] }],
+                      },
+                    ],
+                  },
+                  { type: "1", value: 2, blocks: [{ type: "paragraph", text: "sub b" }] },
+                ],
+              },
+            ],
+          },
+          { type: "1", value: 2, blocks: [{ type: "paragraph", text: "two" }] },
+        ],
+      },
     ]);
   });
 
-  it("still lifts native content out of an item that also holds a text sub-list", () => {
+  it("keeps owned code and native sub-list in the same ordered item", () => {
     const markdown = [
       "1. one",
       "   1. sub a",
@@ -73,9 +126,24 @@ describe("bot/render/pipeline", () => {
     ].join("\n");
 
     expect(renderTelegramBlocks(markdown).map((rendered) => rendered.block)).toEqual([
-      { type: "paragraph", text: ["1. ", "one", "\n   1. sub a"] },
-      { type: "pre", text: "const a = 1;", language: "ts" },
-      { type: "paragraph", text: ["2. ", "two"] },
+      {
+        type: "list",
+        items: [
+          {
+            type: "1",
+            value: 1,
+            blocks: [
+              { type: "paragraph", text: "one" },
+              {
+                type: "list",
+                items: [{ type: "1", value: 1, blocks: [{ type: "paragraph", text: "sub a" }] }],
+              },
+              { type: "pre", text: "const a = 1;", language: "ts" },
+            ],
+          },
+          { type: "1", value: 2, blocks: [{ type: "paragraph", text: "two" }] },
+        ],
+      },
     ]);
   });
 
@@ -127,15 +195,18 @@ describe("bot/render/pipeline", () => {
     expect(defined(parts[0]).fallbackText).toContain("Paragraph with bold");
   });
 
-  it("keeps a reply longer than a plain text message in one part", () => {
-    const markdown = Array.from({ length: 60 }, (_, index) => `Paragraph ${index} ${"x".repeat(100)}`).join(
-      "\n\n",
-    );
+  it("splits long replies into independently safe normal-message fallbacks", () => {
+    const markdown = Array.from(
+      { length: 60 },
+      (_, index) => `Paragraph ${index} ${"x".repeat(100)}`,
+    ).join("\n\n");
 
     const parts = renderTelegramParts(markdown);
 
     expect(markdown.length).toBeGreaterThan(4096);
-    expect(parts).toHaveLength(1);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((part) => part.fallbackText.length <= 3800)).toBe(true);
+    expect(parts.map((part) => part.fallbackText).join("\n\n")).toBe(markdown);
   });
 
   it("splits an oversized reply so that every part fits both budgets", () => {
@@ -159,17 +230,15 @@ describe("bot/render/pipeline", () => {
     );
 
     expect(parts.length).toBeGreaterThan(1);
-    expect(
-      parts.flatMap((part) => part.blocks).every((block) => block.type === "pre"),
-    ).toBe(true);
+    expect(parts.flatMap((part) => part.blocks).every((block) => block.type === "pre")).toBe(true);
   });
 
   it("splits an oversized table by rows and repeats the header", () => {
     const rows = Array.from({ length: 12 }, (_, index) => `| api${index}.js | +${index} |`);
-    const parts = renderTelegramParts(
-      ["| Name | Score |", "| --- | --- |", ...rows].join("\n"),
-      { maxChars: 100_000, maxBlocks: 6 },
-    );
+    const parts = renderTelegramParts(["| Name | Score |", "| --- | --- |", ...rows].join("\n"), {
+      maxChars: 100_000,
+      maxBlocks: 6,
+    });
 
     expect(parts.length).toBeGreaterThan(1);
     for (const part of parts) {

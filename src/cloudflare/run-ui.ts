@@ -4,7 +4,7 @@ import {
   formatDuration,
   TOOL_ELAPSED_THRESHOLD_MS,
 } from "../app/formatters/duration-formatter.js";
-import type { renderTelegramParts } from "../bot/render/pipeline.js";
+import { renderTelegramParts } from "../bot/render/pipeline.js";
 import type { FleetTopic, SqlDatabase } from "./control-store.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 interface Preview {
@@ -16,6 +16,7 @@ interface Preview {
   message?: number;
   delivery?: string;
   last?: string;
+  signature?: string;
   at?: number;
   retryAt?: number;
 }
@@ -127,6 +128,8 @@ export class CloudRunUi {
       state.delivery !== "PENDING"
     )
       return;
+    if (state.retryAt !== undefined && this.now() < state.retryAt) return state.retryAt;
+    if (state.at !== undefined && this.now() - state.at < 1500) return state.at + 1500;
     const tools =
       options.compact || options.compactOutputMode
         ? ""
@@ -151,19 +154,21 @@ export class CloudRunUi {
             .join("\n");
     const thought =
       options.showThinkingContent && !options.compact
-        ? Object.values(state.thoughts).join("\n").slice(-1000)
+        ? Object.values(state.thoughts).join("\n")
         : "";
-    const preview = [thought ? "💭 " + thought : "", tools, text.slice(-2500)]
-      .filter(Boolean)
-      .join("\n\n")
-      .slice(0, 3900);
-    if (state.retryAt !== undefined && this.now() < state.retryAt) return state.retryAt;
+    // Parse complete snapshots before selecting a bounded semantic chunk. Never
+    // cut Markdown delimiters, code, surrogate pairs or emoji source sequences.
+    const snapshot = renderTelegramParts(
+      [thought ? "💭 " + thought : "", tools, text].filter(Boolean).join("\n\n"),
+      { maxChars: 3800 },
+    ).at(-1);
+    if (!snapshot) return;
+    const preview = JSON.stringify([snapshot.fallbackText, snapshot.entities]);
     const refresh =
       state.mode === "draft" && state.at !== undefined && this.now() - state.at >= 20_000;
-    if (!preview || (preview === state.last && !refresh)) return;
-    if (state.at !== undefined && this.now() - state.at < 1500) return state.at + 1500;
-    if (state.mode === "draft") await this.draft(topic, run, state, preview);
-    else await this.deliver(topic, run, state, preview);
+    if (!preview || (preview === state.signature && !refresh)) return;
+    if (state.mode === "draft") await this.draft(topic, run, state, preview, snapshot);
+    else await this.deliver(topic, run, state, preview, snapshot, true);
   }
   async finish(
     topic: FleetTopic,
@@ -210,32 +215,43 @@ export class CloudRunUi {
       (row.state === "ACTIVE" || (finishing && ["COMPLETED", "FAILED"].includes(row.state)))
     );
   }
-  private async draft(topic: FleetTopic, run: string, state: Preview, text: string): Promise<void> {
+  private async draft(
+    topic: FleetTopic,
+    run: string,
+    state: Preview,
+    text: string,
+    part: ReturnType<typeof renderTelegramParts>[number],
+  ): Promise<void> {
     state.delivery = "DRAFT_SENDING";
     state.retryAt = this.now() + 15_000;
     this.save(run, state);
     try {
-      await this.telegram.call("sendMessageDraft", {
-        chat_id: topic.chatId,
-        message_thread_id: topic.threadId,
-        draft_id: state.draft,
-        text,
-      });
+      await this.telegram.previewPart(
+        "sendMessageDraft",
+        {
+          chat_id: topic.chatId,
+          message_thread_id: topic.threadId,
+          draft_id: state.draft,
+        },
+        part,
+      );
       state = this.get(run);
       if (state.delivery !== "DRAFT_SENDING") return;
       state.delivery = "DELIVERED";
       state.retryAt = undefined;
-      state.last = text;
+      state.last = part.fallbackText;
+      state.signature = text;
       state.at = this.now();
       this.save(run, state);
     } catch (error) {
       state = this.get(run);
       if (state.delivery !== "DRAFT_SENDING") return;
-      if (error instanceof TelegramDeliveryError && error.category === "rejected") {
+      if (error instanceof TelegramDeliveryError && error.reason === "unsupported_draft") {
         state.mode = "edit";
         state.delivery = "PENDING";
         this.save(run, state);
-        if (this.writable(topic, run, false)) await this.deliver(topic, run, state, text);
+        if (this.writable(topic, run, false))
+          await this.deliver(topic, run, state, text, part, true);
         return;
       }
       // Ephemeral draft replacement is safe to retry, including after ambiguous transport.
@@ -254,29 +270,36 @@ export class CloudRunUi {
     state: Preview,
     text: string,
     part?: ReturnType<typeof renderTelegramParts>[number],
+    preview = false,
   ): Promise<void> {
     const editing = !!state.message;
     state.delivery = "SENDING";
     this.save(run, state);
     try {
-      const result = part
-        ? {
-            message_id: editing
-              ? await this.telegram.editPart(topic.chatId, state.message!, part)
-              : await this.telegram.sendPart(topic.chatId, topic.threadId, part),
-          }
-        : await this.telegram.call<{ message_id: number }>(
-            editing ? "editMessageText" : "sendMessage",
-            {
-              chat_id: topic.chatId,
-              ...(editing ? { message_id: state.message } : { message_thread_id: topic.threadId }),
-              text,
-            },
-          );
+      const rendered = part ?? renderTelegramParts(text, { maxChars: 3800 })[0];
+      if (!rendered) return;
+      const result =
+        preview || !part
+          ? await this.telegram.previewPart(
+              editing ? "editMessageText" : "sendMessage",
+              {
+                chat_id: topic.chatId,
+                ...(editing
+                  ? { message_id: state.message }
+                  : { message_thread_id: topic.threadId }),
+              },
+              rendered,
+            )
+          : {
+              message_id: editing
+                ? await this.telegram.editPart(topic.chatId, state.message!, rendered)
+                : await this.telegram.sendPart(topic.chatId, topic.threadId, rendered),
+            };
       if (!editing) state.message = result.message_id;
       state.delivery = "DELIVERED";
       state.retryAt = undefined;
-      state.last = text;
+      state.last = rendered.fallbackText;
+      state.signature = preview ? text : undefined;
       state.at = this.now();
       this.save(run, state);
     } catch (error) {

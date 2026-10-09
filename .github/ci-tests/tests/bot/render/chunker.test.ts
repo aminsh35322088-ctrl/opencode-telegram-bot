@@ -56,6 +56,26 @@ describe("bot/render/chunker", () => {
       expect(defined(parts[0]).fallbackText.length).toBe(PLAIN_MAX_PART_CHARS);
     });
 
+    it("keeps ZWJ emoji, combining sequences and Persian ZWNJ intact in raw fallback", () => {
+      const text = "می‌تواند 👨‍💻 🧑🏽‍💻 ❤️ e\u0301 ".repeat(20);
+      const parts = chunkPlainText(text, { maxChars: 31 });
+      expect(parts.map((part) => part.fallbackText).join("")).toBe(text);
+      const boundaries = new Set<number>([0]);
+      let offset = 0;
+      for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+        text,
+      )) {
+        offset += segment.length;
+        boundaries.add(offset);
+      }
+      offset = 0;
+      for (const part of parts) {
+        offset += part.fallbackText.length;
+        expect(boundaries.has(offset)).toBe(true);
+        expect(part.fallbackText.length).toBeLessThanOrEqual(31);
+      }
+    });
+
     it("never splits inside a surrogate pair", () => {
       const parts = chunkPlainText("😀".repeat(10), { maxChars: 5 });
 

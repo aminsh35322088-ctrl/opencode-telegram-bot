@@ -22,10 +22,9 @@ describe("summary/markdown-to-telegram-v2", () => {
       ["- item", "", "| A | B |", "| --- | --- |", "| C | D |"].join("\n"),
     );
 
-    expect(output).toContain("\\- item");
-    expect(output).toContain("\\| A \\| B \\|");
-    expect(output).toContain("\\| \\-\\-\\- \\| \\-\\-\\- \\|");
-    expect(output).toContain("\\| C \\| D \\|");
+    expect(output).toContain("• item");
+    expect(output).toContain("```\nA | B\nC | D\n```");
+    expect(output).not.toContain("---");
   });
 
   it("preserves malformed markdown content instead of throwing", () => {

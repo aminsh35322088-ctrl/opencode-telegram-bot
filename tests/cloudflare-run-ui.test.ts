@@ -159,7 +159,10 @@ test("draft streaming retains identity across restart and persists final once", 
 test("unsupported draft transport switches persistently to editing", async () => {
   const f = fixture((method) =>
     method === "sendMessageDraft"
-      ? Response.json({ ok: false, error_code: 400 }, { status: 400 })
+      ? Response.json(
+          { ok: false, error_code: 400, description: "Bad Request: drafts are not supported" },
+          { status: 400 },
+        )
       : Response.json({ ok: true, result: { message_id: 9 } }),
   );
   await f.ui.progress(f.topic, "run", "partial", { responseStreamingMode: "draft" });
@@ -444,4 +447,32 @@ test("throttled text exposes its next preview deadline rather than waiting for a
   f.advance();
   await f.ui.progress(f.topic as never, "run", "second", {});
   assert.equal(f.sent.length, 2);
+});
+
+test("stream previews use canonical entities without leaking completed Markdown", async () => {
+  const f = fixture();
+  await f.ui.progress(f.topic, "run", "**نسخه‌ی OpenCode** `foo_bar` 👨‍💻", {
+    responseStreamingMode: "draft",
+  });
+  assert.equal(f.sent[0]?.body.text, "نسخه‌ی OpenCode foo_bar 👨‍💻");
+  assert.ok(f.sent[0]?.body.entities?.some((e: { type: string }) => e.type === "bold"));
+  f.advance();
+  await f.ui.progress(f.topic, "run", "**نسخه‌ی OpenCode** `foo_bar` 👨‍💻 ✅", {
+    responseStreamingMode: "draft",
+  });
+  assert.equal(f.sent.at(-1)?.body.text, "نسخه‌ی OpenCode foo_bar 👨‍💻 ✅");
+});
+
+test("unrelated draft rejection never sends a compatibility message", async () => {
+  const f = fixture(() =>
+    Response.json(
+      { ok: false, error_code: 400, description: "Bad Request: message thread not found" },
+      { status: 400 },
+    ),
+  );
+  await assert.rejects(f.ui.progress(f.topic, "run", "hello", { responseStreamingMode: "draft" }));
+  assert.deepEqual(
+    f.sent.map((x) => x.method),
+    ["sendMessageDraft"],
+  );
 });

@@ -67,7 +67,7 @@ function createFakeBot(): { bot: Bot<Context>; api: FakeBotApi } {
     sendMessage: vi.fn().mockResolvedValue({ message_id: 100 }),
     sendRichMessage: vi
       .fn()
-      .mockRejectedValue(Object.assign(new Error("Bad Request: rich message unavailable"), { error_code: 400 })),
+      .mockRejectedValue(Object.assign(new Error("Bad Request: RICH_MESSAGE_BLOCK_UNSUPPORTED"), { error_code: 400 })),
     sendMessageDraft: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),

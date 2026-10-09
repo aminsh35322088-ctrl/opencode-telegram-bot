@@ -269,6 +269,17 @@ const navigation = new Set([
   "more",
   "models",
   "model",
+  "model_favorites",
+  "model_recent",
+  "model_providers",
+  "model_provider",
+  "model_search",
+  "topic_models",
+  "advanced",
+  "messages_page",
+  "message_select",
+  "child_messages",
+  "open",
   "providers",
   "github",
   "tailscale",
@@ -1109,10 +1120,7 @@ export class CloudBotUi {
         String(topic.threadId),
       ),
     ]);
-    rows.push(
-      [this.button(actor, chat, 0, undefined, MAIN_BUTTONS.newChat, "new")],
-      [{ text: "← Home", callback_data: "main:home" }],
-    );
+    rows.push([this.button(actor, chat, 0, undefined, MAIN_BUTTONS.newChat, "new")]);
     await this.menu(
       chat,
       undefined,

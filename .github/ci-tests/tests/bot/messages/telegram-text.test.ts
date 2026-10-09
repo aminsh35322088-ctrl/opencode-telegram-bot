@@ -279,7 +279,7 @@ describe("bot/messages/telegram-text", () => {
         .mockResolvedValueOnce({ message_id: 11 })
         .mockResolvedValueOnce({ message_id: 12 })
         .mockResolvedValueOnce({ message_id: 13 });
-      const sendRichMessage = vi.fn().mockRejectedValue(badRequestError("Bad Request: too long"));
+      const sendRichMessage = vi.fn().mockRejectedValue(badRequestError("Bad Request: message is too long"));
 
       const result = await sendRenderedBotPart({
         api: { sendMessage, sendRichMessage },

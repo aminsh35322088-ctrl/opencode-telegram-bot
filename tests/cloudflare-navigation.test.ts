@@ -385,3 +385,19 @@ test("migrated General navigation adopts the old Main and retires the old second
   assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 0);
   assert.equal(f.sent.filter((x) => x.method === "editMessageText").at(-1)?.payload.message_id, 90);
 });
+
+test("expired restored Model Center navigation reopens safely on the same panel", async () => {
+  const f = fixture();
+  for (const label of ["Favorites", "Recent", "Browse providers"]) {
+    f.sent.length = 0;
+    await f.update("/model");
+    const button = f.button(label)!;
+    assert.ok(button);
+    f.db.prepare("UPDATE ui_callbacks SET expires=0 WHERE id=?").run(button.callback_data.slice(3));
+    f.sent.length = 0;
+    await f.callback(button.callback_data);
+    assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 0);
+    assert.equal(JSON.stringify(f.sent).includes("expired"), false);
+  }
+  assert.deepEqual(f.rpc, []);
+});

@@ -149,7 +149,7 @@ describe("bot question menu/callbacks", () => {
     questionManager.startQuestions([QUESTION_ONE], "req-fallback");
     await showCurrentQuestion(api, 123);
 
-    expect(sendRichMessage).toHaveBeenCalledTimes(2);
+    expect(sendRichMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,

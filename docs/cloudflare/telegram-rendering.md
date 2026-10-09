@@ -1,0 +1,13 @@
+# Canonical Telegram response rendering
+
+Core owns Markdown parsing and semantic document rendering. Bot owns Telegram API delivery, durable stream receipts and format-error retries. Model output is parsed through the existing unified/remark/GFM Core parser, sanitized on eligible semantic prose nodes and chunked before serialization. Each ordinary message has at most 3800 UTF-16 text units and independent entities/HTML/MarkdownV2. Native Rich Messages remain supported; ordinary-message entities provide the bounded recovery path.
+
+Streaming snapshots and final responses use the same Core document. A 1.5-second preview throttle runs before parsing, and formatted preview identity is separate from visible text. Incomplete Markdown is safe; final output converges without appending raw tails. No automatic Persian digit conversion, whitespace normalization or direction-control injection occurs. ZWNJ and authored code survive; unsafe prose overrides and unsafe link destinations are neutralized. Grapheme boundaries are checked across inline formatting nodes, including in native chunking and plain fallback.
+
+The old Bot MarkdownV2 converter and Rich HTML recovery implementation were removed. The remaining legacy AST parser/builders are compatibility APIs covered by existing tests, with no production model-output caller. They do not handle stream/final serialization. Standard `__text__` remains bold; underline uses the existing supported HTML/semantic extension. GFM lists/tasks/headings/tables degrade to readable ordinary-message equivalents. Existing custom emoji/date-time/mention semantics are retained without inventing IDs.
+
+Only explicit parse/schema rejections allow `Rich Message -> Core entities -> plain text`. Rate limits, permissions, unknown chats, lost sends and transport ambiguity propagate to the existing durable delivery/reconciliation machinery. Fallback removes rejected caller formatting rather than repeating it. No unbounded format retry or alternate parser is introduced.
+
+Safe expired navigation now includes restored model-center/provider/search and message-history views. Mutating/destructive actions remain one-shot, scope-bound and generation-fenced. Main menu navigation edits the canonical persisted panel. ALL unsolicited input never executes; scoped forms remain admitted. Core session titles synchronize automatically while manual titles remain authoritative.
+
+The source of API syntax is Telegram Bot API 10.3, https://core.telegram.org/bots/api#formatting-options. Ordinary messages and Rich Messages are separate protocols. Android/iOS/Desktop visual inspection is not performed by automated API acceptance and must not be inferred from it.

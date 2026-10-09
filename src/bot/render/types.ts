@@ -18,6 +18,9 @@ export type TelegramRichBlock = NonNullable<InputRichMessageWithoutUpload["block
 export interface TelegramRenderedPart {
   blocks: TelegramRichBlock[];
   fallbackText: string;
+  /** Core serialized alternatives for the same semantic chunk. */
+  html?: string;
+  markdownV2?: string;
   source: "blocks" | "plain";
   /**
    * Entities for the plain representation. Reasoning is delivered as a text

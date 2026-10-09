@@ -39,8 +39,8 @@ describe("bot/messages/summary-message-formatter", () => {
     const longText = "a".repeat(4500);
     const parts = formatSummaryWithMode(longText, "raw");
     expect(parts.length).toBeGreaterThan(1);
-    expect(defined(parts[0]).startsWith("```\n")).toBe(true);
-    expect(defined(parts[0]).endsWith("\n```")).toBe(true);
+    expect(parts.join("")).toBe(longText);
+    expect(parts.every((part) => part.length <= 4096)).toBe(true);
   });
 
   it("formats markdown summaries for Telegram MarkdownV2 mode", () => {
@@ -68,17 +68,17 @@ describe("bot/messages/summary-message-formatter", () => {
   it("does not split escaped markdown characters across parts", () => {
     const parts = formatSummaryWithMode("a+b", "markdown", 2);
 
-    expect(parts).toEqual(["a", "\\+", "b"]);
+    expect(parts).toEqual(["a\\+", "b"]);
     expect(parts.some((part) => part.endsWith("\\"))).toBe(false);
   });
 
-  it("keeps raw code-block parts within the custom limit", () => {
+  it("keeps raw visible text within the custom limit without inserting fences", () => {
     const parts = formatSummaryWithMode("a".repeat(300), "raw", 120);
 
     expect(parts.length).toBeGreaterThan(1);
     expect(parts.every((part) => part.length <= 120)).toBe(true);
-    expect(defined(parts[0]).startsWith("```\n")).toBe(true);
-    expect(defined(parts[0]).endsWith("\n```")).toBe(true);
+    expect(parts.join("")).toBe("a".repeat(300));
+    expect(parts.some((part) => part.includes("```"))).toBe(false);
   });
 
   it("adapts headings, quotes, tables and horizontal rules for Telegram", () => {
@@ -99,12 +99,12 @@ describe("bot/messages/summary-message-formatter", () => {
 
     expect(parts).toHaveLength(1);
     expect(parts[0]).toContain("*Main heading*");
-    expect(parts[0]).toContain("> This is a quote\\.");
-    expect(parts[0]).toContain("> Quote continues on next line\\.");
-    expect(parts[0]).toContain("\\| Header 1 \\| Header 2 \\|");
-    expect(parts[0]).toContain("\\| Cell A \\| Cell B \\|");
-    expect(parts[0]).not.toContain("```\nHeader 1");
-    expect(parts[0]).toContain("──────────");
+    expect(parts[0]).toContain(">This is a quote\\.");
+    expect(parts[0]).toContain(">Quote continues on next line\\.");
+    expect(parts[0]).toContain("```\nHeader 1 | Header 2");
+    expect(parts[0]).toContain("Cell A | Cell B\n```");
+    expect(parts[0]).not.toContain("\\| Header 1");
+    expect(parts[0]).toContain("────────");
   });
 
   it("escapes table pipes for MarkdownV2 outside code blocks", () => {
@@ -122,9 +122,9 @@ describe("bot/messages/summary-message-formatter", () => {
     const parts = formatSummaryWithMode(text, "markdown");
 
     expect(parts).toHaveLength(1);
-    expect(parts[0]).toContain("🔲 Open task");
-    expect(parts[0]).toContain("✅ Done task");
-    expect(parts[0]).toContain("🔲 Numbered task");
+    expect(parts[0]).toContain("☐ Open task");
+    expect(parts[0]).toContain("☑ Done task");
+    expect(parts[0]).toContain("☐ Numbered task");
   });
 
   it("keeps malformed emphasis content when formatting markdown", () => {

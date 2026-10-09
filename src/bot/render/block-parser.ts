@@ -542,6 +542,7 @@ function parseRootContent(node: RootContent, depth = 0): TelegramBlock[] {
   }
 }
 
+/** @deprecated Legacy AST compatibility only; production rendering uses Core through pipeline.ts. */
 export function parseTelegramBlocks(markdown: string): TelegramBlock[] {
   const normalized = normalizeMarkdownForTelegramBlockParsing(markdown).trim();
   if (!normalized) {

@@ -5,7 +5,7 @@ export class TelegramDeliveryError extends Error {
     readonly category: "rate_limited" | "rejected" | "ambiguous",
     readonly retryAfter?: number,
     readonly transportCode?: "timeout" | "redirect" | "invocation" | "network",
-    readonly reason?: "message_not_found",
+    readonly reason?: "message_not_found" | "formatting" | "unsupported_draft",
   ) {
     super("telegram_" + category + (transportCode ? "_" + transportCode : ""));
   }
@@ -75,6 +75,25 @@ export class CloudTelegram {
         return true as T;
       if (body.error_code === 429)
         throw new TelegramDeliveryError("rate_limited", body.parameters?.retry_after);
+      // Only definite formatting failures authorize a format fallback. A rejected
+      // chat, permission or deleted message must not cause another delivery attempt.
+      const description = body.description ?? "";
+      if (
+        body.error_code === 400 &&
+        /can't parse (?:entities|rich message)|unsupported (?:rich message|rich block)|invalid (?:rich message|rich block)|rich message (?:is |are )?not supported|\bRICH_(?:MESSAGE_)?(?:BLOCK|HTML)_(?:INVALID|UNSUPPORTED)\b|message is too long/i.test(
+          description,
+        )
+      )
+        throw new TelegramDeliveryError("rejected", undefined, undefined, "formatting");
+      if (
+        ["sendMessageDraft", "sendRichMessageDraft"].includes(method) &&
+        ((body.error_code === 404 && /(?:method|not found)/i.test(description)) ||
+          (body.error_code === 400 &&
+            /(?:drafts? (?:are |is )?not supported|draft.*only.*private|unsupported.*draft)/i.test(
+              description,
+            )))
+      )
+        throw new TelegramDeliveryError("rejected", undefined, undefined, "unsupported_draft");
       throw new TelegramDeliveryError(response.status >= 500 ? "ambiguous" : "rejected");
     }
     return body.result as T;
@@ -171,6 +190,45 @@ export class CloudTelegram {
     }
     return bytes;
   }
+  /** Canonical Core entities, followed by one plain retry for parse errors only. */
+  private async normalPart(
+    method: string,
+    scope: Record<string, unknown>,
+    part: ReturnType<typeof renderTelegramParts>[number],
+  ): Promise<{ message_id: number }> {
+    try {
+      return await this.call(method, {
+        ...scope,
+        text: part.fallbackText,
+        ...(part.entities?.length ? { entities: part.entities } : {}),
+      });
+    } catch (error) {
+      if (
+        !(error instanceof TelegramDeliveryError) ||
+        error.reason !== "formatting" ||
+        !part.entities?.length
+      )
+        throw error;
+      // Cloudflare native structured logs; never include source or credentials.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "telegram_formatting_fallback",
+          method,
+          from: "entities",
+          to: "plain",
+        }),
+      );
+      return this.call(method, { ...scope, text: part.fallbackText });
+    }
+  }
+  async previewPart(
+    method: "sendMessage" | "editMessageText" | "sendMessageDraft",
+    scope: Record<string, unknown>,
+    part: ReturnType<typeof renderTelegramParts>[number],
+  ): Promise<{ message_id: number }> {
+    return this.normalPart(method, scope, part);
+  }
   async editPart(
     chatId: number,
     messageId: number,
@@ -178,6 +236,8 @@ export class CloudTelegram {
   ): Promise<number> {
     const scope = { chat_id: chatId, message_id: messageId };
     let result: { message_id: number };
+    if (!part.blocks.length)
+      return (await this.normalPart("editMessageText", scope, part)).message_id;
     try {
       result = await this.call("editMessageText", {
         ...scope,
@@ -187,8 +247,18 @@ export class CloudTelegram {
         },
       });
     } catch (error) {
-      if (!(error instanceof TelegramDeliveryError) || error.category !== "rejected") throw error;
-      result = await this.call("editMessageText", { ...scope, text: part.fallbackText });
+      if (!(error instanceof TelegramDeliveryError) || error.reason !== "formatting") throw error;
+      // Cloudflare native structured logs; never include source or credentials.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "telegram_formatting_fallback",
+          method: "editMessageText",
+          from: "rich",
+          to: "entities",
+        }),
+      );
+      result = await this.normalPart("editMessageText", scope, part);
     }
     return result.message_id;
   }
@@ -199,6 +269,7 @@ export class CloudTelegram {
   ): Promise<number> {
     const scope = { chat_id: chatId, ...(threadId ? { message_thread_id: threadId } : {}) };
     let result: { message_id: number };
+    if (!part.blocks.length) return (await this.normalPart("sendMessage", scope, part)).message_id;
     try {
       result = await this.call("sendRichMessage", {
         ...scope,
@@ -208,8 +279,18 @@ export class CloudTelegram {
         },
       });
     } catch (error) {
-      if (!(error instanceof TelegramDeliveryError) || error.category !== "rejected") throw error;
-      result = await this.call("sendMessage", { ...scope, text: part.fallbackText });
+      if (!(error instanceof TelegramDeliveryError) || error.reason !== "formatting") throw error;
+      // Cloudflare native structured logs; never include source or credentials.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "telegram_formatting_fallback",
+          method: "sendMessage",
+          from: "rich",
+          to: "entities",
+        }),
+      );
+      result = await this.normalPart("sendMessage", scope, part);
     }
     return result.message_id;
   }

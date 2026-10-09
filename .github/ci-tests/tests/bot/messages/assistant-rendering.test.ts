@@ -117,12 +117,14 @@ describe("bot/messages/assistant-rendering", () => {
     ]);
   });
 
-  it("treats text without a completed block as an entirely literal tail", async () => {
+  it("renders partial source through the same semantic parser as the final response", async () => {
     const { module } = await loadAssistantRendering("markdown");
 
     const payload = module.prepareAssistantStreamingPayload("# still typing");
 
-    expect(defined(payload?.parts[0]).blocks).toEqual([{ type: "paragraph", text: "# still typing" }]);
+    expect(defined(payload?.parts[0]).blocks).toEqual([
+      { type: "heading", text: "still typing", size: 1 },
+    ]);
   });
 
   it("returns no payload for empty text", async () => {
@@ -144,7 +146,7 @@ describe("bot/messages/assistant-rendering", () => {
             { blocks: [{ type: "paragraph", text: "two" }] },
           ],
         },
-        plainText: "- one\n- two",
+        plainText: "• one\n• two",
       },
       { block: { type: "paragraph", text: "tail" }, plainText: "tail" },
     ]);

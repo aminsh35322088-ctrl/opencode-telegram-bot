@@ -1,10 +1,6 @@
-import {
-  DEFAULT_MAX_PART_BLOCKS,
-  DEFAULT_MAX_PART_CHARS,
-  PLAIN_MAX_PART_CHARS,
-} from "./limits.js";
+import { DEFAULT_MAX_PART_BLOCKS, DEFAULT_MAX_PART_CHARS, PLAIN_MAX_PART_CHARS } from "./limits.js";
 import { countRichBlocks, countRichChars } from "./rich-blocks.js";
-import { splitTextIntoChunks } from "./text-splitter.js";
+import { renderTelegramMessageDocument } from "@opencode-telegram/native-runtime";
 import type { TelegramRenderedBlock, TelegramRenderedPart } from "./types.js";
 
 const DEFAULT_BLOCK_SEPARATOR = "\n\n";
@@ -26,11 +22,17 @@ export function chunkPlainText(
   text: string,
   options?: PlainChunkerOptions,
 ): TelegramRenderedPart[] {
-  const maxChars = Math.max(1, Math.floor(options?.maxChars ?? PLAIN_MAX_PART_CHARS));
+  const maxCharacters = Math.min(
+    4096,
+    Math.max(2, Math.floor(options?.maxChars ?? PLAIN_MAX_PART_CHARS)),
+  );
 
-  return splitTextIntoChunks(text, maxChars).map((chunk) => ({
+  return renderTelegramMessageDocument(
+    { blocks: [{ type: "paragraph", text }] },
+    { maxCharacters },
+  ).map((chunk) => ({
     blocks: [],
-    fallbackText: chunk,
+    fallbackText: chunk.text,
     source: "plain" as const,
   }));
 }
@@ -94,7 +96,6 @@ export function chunkTelegramRenderedBlocks(
       .join(DEFAULT_BLOCK_SEPARATOR),
     source: "blocks" as const,
   }));
-
 
   return parts;
 }

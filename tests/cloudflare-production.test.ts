@@ -104,7 +104,7 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
     sequence: 1,
     event: {
       type: "message.part.updated",
-      properties: { part: { id: "text", type: "text", text: "x".repeat(40000) } },
+      properties: { part: { id: "text", type: "text", text: "First chunk boundary marker\n\n" + "x".repeat(40000) } },
     },
   });
   f.store.recordCallback(-100, 42, {
@@ -118,6 +118,7 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
     globalThis.fetch = original;
   });
   let calls = 0;
+  const attempts: string[] = [];
   let keyboardCalls = 0;
   globalThis.fetch = async (input, init) => {
     const payload = JSON.parse(String(init?.body));
@@ -129,6 +130,7 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
       return Response.json({ ok: true, result: { message_id: 100 } });
     }
     calls++;
+    attempts.push(JSON.stringify(payload));
     return calls === 2
       ? Response.json(
           { ok: false, error_code: 429, parameters: { retry_after: 1 } },
@@ -139,7 +141,17 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
   await f.plane.alarm();
   assert.equal(calls, 2);
   await f.plane.alarm();
-  assert.equal(calls, 3);
+  const chunks = [
+    ...f.sql.exec<{ state: string }>(
+      "SELECT state FROM outbox WHERE id LIKE ? AND id NOT LIKE ?",
+      "delivery:%",
+      "%:diff",
+    ),
+  ];
+  assert.ok(chunks.length > 2);
+  assert.ok(chunks.every((chunk) => chunk.state === "DELIVERED"));
+  assert.equal(calls, chunks.length + 1);
+  assert.equal(attempts.filter((payload) => payload === attempts[0]).length, 1);
   assert.equal(keyboardCalls, 1);
   assert.equal(f.store.completedResponses().length, 0);
 });
