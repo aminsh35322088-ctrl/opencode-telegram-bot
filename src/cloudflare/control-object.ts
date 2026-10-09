@@ -89,7 +89,7 @@ export class ControlPlane {
   }
   private clearInactiveTyping(): void {
     this.state.storage.sql.exec(
-      "DELETE FROM ui_state WHERE key LIKE 'typing:%' AND substr(key,8) NOT IN (SELECT request FROM runs WHERE state='ACTIVE')",
+      "DELETE FROM ui_state WHERE key GLOB 'typing:*' AND substr(key,8) NOT IN (SELECT request FROM runs WHERE state='ACTIVE')",
     );
   }
 

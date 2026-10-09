@@ -131,6 +131,15 @@ export class ControlStore {
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS control_secrets(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL)",
       );
+      // Signed events and alarms must not scan accumulated history on every request.
+      this.sql.exec("CREATE INDEX IF NOT EXISTS nonces_expires ON nonces(expires)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS runs_topic_state ON runs(chat,thread,state,seq)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS runs_state ON runs(state)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS updates_state ON updates(state,id)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS responses_state ON responses(state)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS approvals_worker_state ON approvals(worker,generation,state)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS ui_callbacks_scope ON ui_callbacks(actor,chat,thread)");
+      this.sql.exec("CREATE INDEX IF NOT EXISTS ui_callbacks_expires ON ui_callbacks(expires)");
       this.sql.exec("UPDATE schema_version SET version=6");
     });
   }

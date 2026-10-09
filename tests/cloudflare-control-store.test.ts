@@ -436,3 +436,20 @@ test("Topic titles use the smallest free positive slot, stay durable, and never 
   const otherChat = f.store.reserveAllocation("other-chat", -200);
   assert.equal(f.store.reserveTopicTitle(otherChat.jobId), "#1");
 });
+
+test("frequent control queries use bounded indexes instead of scanning retained history", () => {
+  const f = fixture();
+  const queries = [
+    ["DELETE FROM nonces WHERE expires<=?", 1000],
+    ["SELECT request FROM runs WHERE chat=? AND thread=? AND state='ACTIVE' ORDER BY seq", -100, 42],
+    ["SELECT id FROM updates WHERE state='PENDING' ORDER BY id LIMIT 20"],
+    ["SELECT run FROM responses WHERE state='PENDING' ORDER BY rowid LIMIT 20"],
+    ["DELETE FROM ui_callbacks WHERE actor=? AND chat=? AND thread=0", 7, -100],
+  ] as const;
+  for (const [query, ...args] of queries) {
+    const plan = [...f.sql.exec<{ detail: string }>("EXPLAIN QUERY PLAN " + query, ...args)].map(row => row.detail).join("\n");
+    assert.match(plan, /SEARCH .*USING (?:COVERING )?INDEX/, query);
+    assert.doesNotMatch(plan, /SCAN /, query);
+  }
+  f.restart();
+});
