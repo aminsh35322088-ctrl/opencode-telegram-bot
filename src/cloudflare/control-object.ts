@@ -933,7 +933,7 @@ export class ControlPlane {
   ): Promise<void> {
     const chat = update.message!.chat.id,
       actor = update.message!.from!.id,
-      thread = update.message!.message_thread_id ?? 0;
+      thread = (update.message!.message_thread_id ?? 0) > 1 ? update.message!.message_thread_id! : 0;
     const value = await readCredentialInput(update, this.env.CREDENTIAL_MASTER_KEY, {
       actor,
       chat,

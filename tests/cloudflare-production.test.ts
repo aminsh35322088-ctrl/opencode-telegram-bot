@@ -5,6 +5,7 @@ import { encryptCredential } from "../src/cloudflare/credentials.js";
 import { signEnvelope } from "../src/cloudflare/protocol.js";
 import { ControlStore } from "../src/cloudflare/control-store.js";
 import { ControlPlane } from "../src/cloudflare/control-object.js";
+import { protectTelegramCredentialUpdate, type ProtectedTelegramUpdate } from "../src/cloudflare/credential-vault.js";
 function fixture() {
   const db = new DatabaseSync(":memory:");
   const sql = {
@@ -638,3 +639,20 @@ test("accepted streamed run is not resubmitted or status-polled on every token a
   assert.equal(operations.filter((o) => o === "run").length, 1);
   assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "fast-stream-run");
 });
+
+test("General thread 1 credential input uses the same normalized account scope as ingress", async (t) => {
+  const f = fixture();
+  f.store.setGlobal({}, "initial", 0);
+  f.sql.exec("INSERT INTO ui_state VALUES(?,?)", "form:7:-100:0", JSON.stringify({
+    kind: "credential", providerId: "integration.github", generation: 0, expires: Date.now() + 60_000,
+  }));
+  const protectedUpdate = await protectTelegramCredentialUpdate({ update_id: 12, message: {
+    message_id: 12, message_thread_id: 1, from: { id: 7 }, chat: { id: -100 }, text: "fixture-private-token",
+  } } as never, f.sql, btoa("k".repeat(32)));
+  t.mock.method(globalThis, "fetch", async () => Response.json({ login: "operator" }));
+  await (f.plane as unknown as { saveCredential(update: ProtectedTelegramUpdate, provider: string, generation: number): Promise<void> })
+    .saveCredential(protectedUpdate, "integration.github", 0);
+  assert.equal((f.store.global()?.data.integrations as { github: { accountConnected: boolean } }).github.accountConnected, true);
+  assert.equal(JSON.stringify(f.store.global()).includes("fixture-private-token"), false);
+});
+
