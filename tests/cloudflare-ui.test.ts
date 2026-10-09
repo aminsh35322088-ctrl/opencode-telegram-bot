@@ -104,7 +104,22 @@ function fixture(t: { after: (f: () => void) => void }) {
         from: { id: actor },
         data,
         message: {
-          message_id: 90,
+          message_id: (() => {
+            const callback = [
+              ...sql.exec<{ actor: number; chat: number; thread: number; generation: number }>(
+                "SELECT actor,chat,thread,generation FROM ui_callbacks WHERE id=?",
+                data.slice(3),
+              ),
+            ][0];
+            if (!callback) return 90;
+            const panel = [
+              ...sql.exec<{ data: string }>(
+                "SELECT data FROM ui_state WHERE key=?",
+                `panel:${callback.actor}:${callback.chat}:${callback.thread}:${callback.generation}`,
+              ),
+            ][0];
+            return panel ? JSON.parse(panel.data).messageId : 90;
+          })(),
           chat: { id: -100 },
           ...(threadId ? { message_thread_id: threadId } : {}),
         },
@@ -319,7 +334,7 @@ test("rename answer remains a control after an acknowledgement rate limit", asyn
     const payload = JSON.parse(String(init?.body));
     if (
       !failed &&
-      String(input).endsWith("/sendRichMessage") &&
+      String(input).endsWith("/editMessageText") &&
       JSON.stringify(payload).includes("renamed")
     ) {
       failed = true;
@@ -365,7 +380,12 @@ test("Stop replay cannot abort the next queued run", async (t) => {
       f.rpc.push(payload);
       return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
     }
-    if (!failed && String(input).endsWith("/sendMessage") && payload.reply_markup?.keyboard) {
+    if (
+      !failed &&
+      /\/(?:sendMessage|editMessageText)$/.test(String(input)) &&
+      payload.text === "OpenCode" &&
+      payload.reply_markup?.inline_keyboard
+    ) {
       failed = true;
       return Response.json(
         { ok: false, error_code: 429, parameters: { retry_after: 1 } },
@@ -839,8 +859,10 @@ test("active Topic keyboard exposes Pause and Abort, and idle keyboard removes t
   f.store.failRun(-100, 42, "keyboard_run", "stopped");
   f.sent.length = 0;
   await f.update("/keyboard", 42);
-  const keyboards = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  const keyboards = f.sent.filter((s) => s.payload.reply_markup?.inline_keyboard);
+  assert.ok(keyboards.length > 0);
   assert.equal(JSON.stringify(keyboards).includes("Pause"), false);
+  assert.equal(JSON.stringify(keyboards).includes("Abort"), false);
 });
 
 test("Topic preferences store only overrides and never duplicate canonical global defaults", async (t) => {

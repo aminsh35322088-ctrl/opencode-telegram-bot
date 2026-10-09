@@ -1,4 +1,5 @@
 import {
+  createMainInlineKeyboard,
   createMainKeyboard,
   createTopicKeyboard,
   MAIN_BUTTONS,
@@ -14,14 +15,10 @@ import {
 } from "../bot/message-patterns.js";
 import { CloudTaskUi, taskDraftKey } from "./task-ui.js";
 import type { ProtectedTelegramUpdate } from "./credential-vault.js";
-import {
-  CloudConfigUi,
-  resetGlobalConfiguration,
-  OUTPUT_DEFAULTS,
-} from "./config-ui.js";
+import { CloudConfigUi, resetGlobalConfiguration, OUTPUT_DEFAULTS } from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
-import { LegacyMainUi } from "./legacy-main-ui.js";
+import { LegacyMainUi, renderLegacyMainStatus } from "./legacy-main-ui.js";
 import { LegacyModelAdapter, type LegacyModelScope } from "./legacy-model-adapter.js";
 import { LegacySessionAdapter } from "./legacy-session-adapter.js";
 import {
@@ -152,6 +149,7 @@ interface UiAction {
   action: string;
   value?: string;
   targetRun?: string;
+  panel?: boolean;
 }
 interface UiOptions {
   compact?: boolean;
@@ -169,6 +167,7 @@ interface UiOptions {
   variant?: string;
   paused?: boolean;
   title?: string;
+  titleSource?: "auto" | "manual";
 }
 interface UiDependencies {
   sql: SqlDatabase;
@@ -196,8 +195,15 @@ interface UiDependencies {
 }
 type CallbackButton = { text: string; callback_data: string };
 type Button = CallbackButton | { text: string; url: string };
-interface NavigationTarget { action: string; value?: string }
-interface NavigationSpec { back?: NavigationTarget; home?: boolean; strip?: string[] }
+interface NavigationTarget {
+  action: string;
+  value?: string;
+}
+interface NavigationSpec {
+  back?: NavigationTarget;
+  home?: boolean;
+  strip?: string[];
+}
 const normalized = (text: string) =>
   text
     .normalize("NFKC")
@@ -205,7 +211,10 @@ const normalized = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 const parentWorkspacePath = (value: string): string => {
-  const normalizedPath = value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+  const normalizedPath = value
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/\/+$/, "");
   if (!normalizedPath || normalizedPath === ".") return ".";
   const separator = normalizedPath.lastIndexOf("/");
   return separator < 0 ? "." : normalizedPath.slice(0, separator) || ".";
@@ -220,7 +229,7 @@ const record = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
-function supportsContextCompaction(version: string | undefined): boolean {
+export function supportsContextCompaction(version: string | undefined): boolean {
   const match = /^v?(\d+)\.(\d+)\.(\d+)-bot\.(\d+)(?:-pre\.(\d+))?$/.exec(version ?? "");
   if (!match) return false;
   const parts = match
@@ -234,10 +243,197 @@ function supportsContextCompaction(version: string | undefined): boolean {
   return true;
 }
 
+interface PanelScope {
+  actor: number;
+  chat: number;
+  thread: number;
+  generation: number;
+}
+interface PanelState {
+  messageId?: number;
+  state?: string;
+  signature?: string;
+  callbacks?: string[];
+  revision?: number;
+}
+const navigation = new Set([
+  "start",
+  "home",
+  "keyboard",
+  "settings",
+  "topic_settings",
+  "back",
+  "history",
+  "sessions",
+  "open_topic",
+  "more",
+  "models",
+  "model",
+  "providers",
+  "github",
+  "tailscale",
+  "extensions",
+  "actions",
+  "skills",
+  "mcps",
+  "plugins",
+  "memory",
+  "commands",
+  "tasklist",
+  "experimental",
+  "topic_defaults",
+  "appearance",
+  "queue",
+  "context",
+  "session",
+  "messages",
+  "todos",
+  "diff",
+  "children",
+  "agent",
+  "variant",
+  "ls",
+  "close",
+  "cancel",
+  "config_item_providers",
+  "config_item_skills",
+  "config_item_mcps",
+  "config_item_plugins",
+  "config_item_actions",
+  "config_item_commands",
+]);
+
 /** Telegram-only application adapter. State lives in the existing canonical SQLite DO.
  * Runtime behavior is delegated to Core; General never calls execution RPC. */
 export class CloudBotUi {
-  constructor(private readonly deps: UiDependencies) {}
+  constructor(
+    private readonly deps: UiDependencies,
+    private readonly panelScope?: PanelScope,
+  ) {}
+  forPanel(actor: number, chat: number, thread: number, generation: number): CloudBotUi {
+    return new CloudBotUi(this.deps, { actor, chat, thread, generation });
+  }
+  panelIdentity(
+    actor: number,
+    chat: number,
+    thread: number,
+    generation: number,
+  ): { messageId?: number; state?: string } {
+    const state = this.get<PanelState>(`panel:${actor}:${chat}:${thread}:${generation}`);
+    return state ? { messageId: state.messageId, state: state.state } : {};
+  }
+  private adoptPanel(messageId: number | undefined): boolean {
+    const scope = this.panelScope!;
+    const key = `panel:${scope.actor}:${scope.chat}:${scope.thread}:${scope.generation}`;
+    const current = this.get<PanelState>(key);
+    if (current?.messageId) return true;
+    if (current?.state || !Number.isSafeInteger(messageId) || !messageId || messageId < 1)
+      return false;
+    const owned = [
+      ...this.deps.sql.exec<{ key: string; data: string }>(
+        "SELECT key,data FROM ui_state WHERE key LIKE ?",
+        `panel:%:${scope.chat}:${scope.thread}:${scope.generation}`,
+      ),
+    ].some((row) => row.key !== key && record(JSON.parse(row.data)).messageId === messageId);
+    if (owned) return false;
+    this.set(key, { messageId, state: "DELIVERED" });
+    return true;
+  }
+  private async panel(
+    chat: number,
+    thread: number | undefined,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const scope = this.panelScope;
+    if (!scope || scope.chat !== chat || scope.thread !== (thread ?? 0)) {
+      await this.deps.telegram.call("sendMessage", {
+        chat_id: chat,
+        ...(thread ? { message_thread_id: thread } : {}),
+        ...payload,
+      });
+      return;
+    }
+    if (
+      scope.thread &&
+      scope.generation &&
+      !this.deps.store
+        .topics()
+        .some(
+          (topic) =>
+            topic.chatId === chat &&
+            topic.threadId === scope.thread &&
+            topic.generation === scope.generation &&
+            topic.state === "ACTIVE",
+        )
+    )
+      throw new Error("stale_generation");
+    const key = `panel:${scope.actor}:${chat}:${scope.thread}:${scope.generation}`;
+    const previous = this.get<PanelState>(key) ?? {};
+    const signature = JSON.stringify(payload);
+    const markup = record(payload.reply_markup);
+    const callbacks = Array.isArray(markup.inline_keyboard)
+      ? markup.inline_keyboard
+          .flat()
+          .map((button) => String(record(button).callback_data ?? ""))
+          .filter((id) => id.startsWith("ui:"))
+          .map((id) => id.slice(3))
+      : [];
+    if (previous.signature === signature && previous.state === "DELIVERED") return;
+    if (
+      !previous.messageId &&
+      ["SENDING", "RECONCILIATION_REQUIRED"].includes(previous.state ?? "")
+    )
+      throw new TelegramDeliveryError("ambiguous");
+    const revision = (previous.revision ?? 0) + 1;
+    this.set(key, { ...previous, state: "SENDING", callbacks, revision });
+    try {
+      const result = await this.deps.telegram.call<{ message_id: number }>(
+        previous.messageId ? "editMessageText" : "sendMessage",
+        {
+          chat_id: chat,
+          ...(previous.messageId
+            ? { message_id: previous.messageId }
+            : thread
+              ? { message_thread_id: thread }
+              : {}),
+          ...payload,
+        },
+      );
+      if (this.get<PanelState>(key)?.revision !== revision) return;
+      this.set(key, {
+        messageId: previous.messageId ?? result.message_id,
+        revision,
+        state: "DELIVERED",
+        signature,
+        callbacks,
+      });
+    } catch (error) {
+      if (this.get<PanelState>(key)?.revision !== revision) return;
+      if (
+        previous.messageId &&
+        error instanceof TelegramDeliveryError &&
+        error.reason === "message_not_found"
+      ) {
+        this.set(key, { state: "PENDING", revision });
+        await this.panel(chat, thread, payload);
+        return;
+      }
+      this.set(key, {
+        ...previous,
+        revision,
+        state:
+          previous.messageId ||
+          (error instanceof TelegramDeliveryError && error.category !== "ambiguous")
+            ? "PENDING"
+            : "RECONCILIATION_REQUIRED",
+      });
+      throw error;
+    }
+  }
+  async showError(text: string): Promise<void> {
+    if (!this.panelScope) throw new Error("panel_scope_required");
+    await this.notice(this.panelScope.chat, this.panelScope.thread || undefined, text);
+  }
   private canCompactContext(topic: FleetTopic): boolean {
     return (
       !!this.deps.compact &&
@@ -319,7 +515,14 @@ export class CloudBotUi {
       thread,
       topic?.generation ?? 0,
       Date.now() + 30 * 60_000,
-      JSON.stringify({ action, value }),
+      JSON.stringify({
+        action,
+        value,
+        ...(this.panelScope ? { panel: true } : {}),
+        ...(["pause", "resume", "abort", "stop"].includes(action)
+          ? { targetRun: this.deps.store.activeRuns(chat, thread)[0]?.requestId }
+          : {}),
+      }),
     );
     return { text, callback_data: "ui:" + id };
   }
@@ -337,7 +540,10 @@ export class CloudBotUi {
         row.filter((button) => {
           if (!strip.has(button.text)) return true;
           if ("callback_data" in button && button.callback_data.startsWith("ui:"))
-            this.deps.sql.exec("DELETE FROM ui_callbacks WHERE id=?", button.callback_data.slice(3));
+            this.deps.sql.exec(
+              "DELETE FROM ui_callbacks WHERE id=?",
+              button.callback_data.slice(3),
+            );
           return false;
         }),
       )
@@ -348,7 +554,7 @@ export class CloudBotUi {
         this.button(actor, chat, thread, topic, "← Back", spec.back.action, spec.back.value),
       );
     if (spec.home) {
-      const link = this.legacyMain().mainPanelLink(chat);
+      const link = thread ? this.legacyMain().mainPanelLink(chat) : undefined;
       navigation.push(
         link
           ? { text: "🏠 Home", url: link }
@@ -365,12 +571,36 @@ export class CloudBotUi {
     text: string,
     rows: Button[][],
   ): Promise<void> {
-    const panel = { text, rows, parseMode: "HTML" as const };
-    if (thread === undefined) await this.legacyMain().editCanonicalMenuPanel(chat, panel);
-    else await this.legacyMain().editCanonicalPanel(chat, thread, panel);
+    await this.panel(chat, thread, {
+      text: text.slice(0, 4000),
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: rows },
+    });
   }
   private async notice(chat: number, thread: number | undefined, text: string): Promise<void> {
-    await this.deps.telegram.send(chat, thread, text);
+    if (!this.panelScope) {
+      await this.deps.telegram.send(chat, thread, text);
+      return;
+    }
+    await this.panel(chat, thread, {
+      text: text.slice(0, 4000),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            this.button(
+              this.panelScope.actor,
+              chat,
+              thread ?? 0,
+              this.deps.store
+                .topics()
+                .find((t) => t.chatId === chat && t.threadId === thread && t.state === "ACTIVE"),
+              "← Settings",
+              "settings",
+            ),
+          ],
+        ],
+      },
+    });
   }
   async rpcDiff(topic: FleetTopic): Promise<unknown> {
     return this.deps.rpc(topic, "session.diff");
@@ -391,6 +621,44 @@ export class CloudBotUi {
           currentModel,
         })
       : createMainKeyboard(currentModel);
+    if (
+      this.panelScope &&
+      this.panelScope.chat === chat &&
+      this.panelScope.thread === (topic?.threadId ?? 0)
+    ) {
+      const actions: Record<string, string> = {
+        [MAIN_BUTTONS.newChat]: "new",
+        [MAIN_BUTTONS.history]: "history",
+        [MAIN_BUTTONS.mainSettings]: "settings",
+        [MAIN_BUTTONS.topicSettings]: "settings",
+        [MAIN_BUTTONS.deleteChat]: "delete_topic",
+        [MAIN_BUTTONS.pause]: "pause",
+        [MAIN_BUTTONS.resume]: "resume",
+        [MAIN_BUTTONS.abort]: "abort",
+        [MAIN_BUTTONS.compact(true)]: "compact",
+        [MAIN_BUTTONS.compact(false)]: "compact",
+      };
+      await this.menu(
+        chat,
+        topic?.threadId,
+        escape(text),
+        keyboard.keyboard
+          .filter((row) => row.length)
+          .map((row) =>
+            row.map((button) =>
+              this.button(
+                this.panelScope!.actor,
+                chat,
+                topic?.threadId ?? 0,
+                topic,
+                typeof button === "string" ? button : button.text,
+                actions[typeof button === "string" ? button : button.text] ?? "models",
+              ),
+            ),
+          ),
+      );
+      return;
+    }
     await this.deps.telegram.call("sendMessage", {
       chat_id: chat,
       ...(topic ? { message_thread_id: topic.threadId } : {}),
@@ -519,10 +787,14 @@ export class CloudBotUi {
       if (page !== null) return ["messages_page", String(page)];
       if (data.startsWith(SESSION_DASHBOARD_CHILD_PREFIX))
         return ["child_messages", data.slice(SESSION_DASHBOARD_CHILD_PREFIX.length)];
-      if (data.startsWith(LS_CALLBACK_NAV_PREFIX)) return ["ls", data.slice(LS_CALLBACK_NAV_PREFIX.length)];
-      if (data.startsWith(LS_CALLBACK_FILE_PREFIX)) return ["open", data.slice(LS_CALLBACK_FILE_PREFIX.length)];
-      if (data.startsWith(LS_CALLBACK_DOWNLOAD_PREFIX)) return ["file_download", data.slice(LS_CALLBACK_DOWNLOAD_PREFIX.length)];
-      if (data.startsWith(LS_CALLBACK_BACK_PREFIX)) return ["ls", data.slice(LS_CALLBACK_BACK_PREFIX.length) || "."];
+      if (data.startsWith(LS_CALLBACK_NAV_PREFIX))
+        return ["ls", data.slice(LS_CALLBACK_NAV_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_FILE_PREFIX))
+        return ["open", data.slice(LS_CALLBACK_FILE_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_DOWNLOAD_PREFIX))
+        return ["file_download", data.slice(LS_CALLBACK_DOWNLOAD_PREFIX.length)];
+      if (data.startsWith(LS_CALLBACK_BACK_PREFIX))
+        return ["ls", data.slice(LS_CALLBACK_BACK_PREFIX.length) || "."];
       return undefined;
     });
   }
@@ -591,7 +863,8 @@ export class CloudBotUi {
       return await request();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("stale_generation") || message.includes("topic_not_writable")) throw error;
+      if (message.includes("stale_generation") || message.includes("topic_not_writable"))
+        throw error;
       return null;
     }
   }
@@ -607,42 +880,49 @@ export class CloudBotUi {
   ): Button[][] {
     const b = (text: string, action: string, value?: string) =>
       this.button(actor, chat, thread, topic, text, action, value);
-    return keyboard.inline_keyboard.map((row) =>
-      row.flatMap((button) => {
-        const data = button.callback_data ?? "";
-        if (data === MODEL_CENTER_ROOT) return [b(button.text, "models")];
-        if (data === MODEL_CENTER_FAVORITES) return [b(button.text, "model_favorites")];
-        if (data === MODEL_CENTER_RECENT) return [b(button.text, "model_recent")];
-        if (data === MODEL_CENTER_PROVIDERS) return [b(button.text, "model_providers")];
-        if (data === MODEL_CENTER_SEARCH || data === MODEL_CENTER_SEARCH_AGAIN)
-          return [b(button.text, "model_search")];
-        if (data === MODEL_CENTER_SETTINGS_BACK) return [b(button.text, "settings")];
-        if (data === "main:home") return [b(button.text, "home")];
-        if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
-          const tail = data.slice(MODEL_CENTER_PROVIDER_PREFIX.length);
-          const split = tail.lastIndexOf(":");
-          if (split < 1) return [];
-          return [
-            b(
-              button.text,
-              "model_provider",
-              JSON.stringify({ providerID: decodeURIComponent(tail.slice(0, split)), page: Number(tail.slice(split + 1)) }),
-            ),
-          ];
-        }
-        if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
-          const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
-          return model ? [b(button.text, "model_save", `${model.providerID}/${model.modelID}`)] : [];
-        }
-        if (data.startsWith(MODEL_CENTER_FAVORITE_PREFIX)) {
-          const model = resolveModelCenterAction(data.slice(MODEL_CENTER_FAVORITE_PREFIX.length));
-          return model
-            ? [b(button.text, "model_favorite_toggle", `${model.providerID}/${model.modelID}`)]
-            : [];
-        }
-        return [];
-      }),
-    ).filter((row) => row.length > 0);
+    return keyboard.inline_keyboard
+      .map((row) =>
+        row.flatMap((button) => {
+          const data = button.callback_data ?? "";
+          if (data === MODEL_CENTER_ROOT) return [b(button.text, "models")];
+          if (data === MODEL_CENTER_FAVORITES) return [b(button.text, "model_favorites")];
+          if (data === MODEL_CENTER_RECENT) return [b(button.text, "model_recent")];
+          if (data === MODEL_CENTER_PROVIDERS) return [b(button.text, "model_providers")];
+          if (data === MODEL_CENTER_SEARCH || data === MODEL_CENTER_SEARCH_AGAIN)
+            return [b(button.text, "model_search")];
+          if (data === MODEL_CENTER_SETTINGS_BACK) return [b(button.text, "settings")];
+          if (data === "main:home") return [b(button.text, "home")];
+          if (data.startsWith(MODEL_CENTER_PROVIDER_PREFIX)) {
+            const tail = data.slice(MODEL_CENTER_PROVIDER_PREFIX.length);
+            const split = tail.lastIndexOf(":");
+            if (split < 1) return [];
+            return [
+              b(
+                button.text,
+                "model_provider",
+                JSON.stringify({
+                  providerID: decodeURIComponent(tail.slice(0, split)),
+                  page: Number(tail.slice(split + 1)),
+                }),
+              ),
+            ];
+          }
+          if (data.startsWith(MODEL_CENTER_SELECT_PREFIX)) {
+            const model = resolveModelCenterAction(data.slice(MODEL_CENTER_SELECT_PREFIX.length));
+            return model
+              ? [b(button.text, "model_save", `${model.providerID}/${model.modelID}`)]
+              : [];
+          }
+          if (data.startsWith(MODEL_CENTER_FAVORITE_PREFIX)) {
+            const model = resolveModelCenterAction(data.slice(MODEL_CENTER_FAVORITE_PREFIX.length));
+            return model
+              ? [b(button.text, "model_favorite_toggle", `${model.providerID}/${model.modelID}`)]
+              : [];
+          }
+          return [];
+        }),
+      )
+      .filter((row) => row.length > 0);
   }
   private topicSettingsState(topic: FleetTopic): CanonicalTopicSettingsState {
     const options = this.options(topic);
@@ -711,12 +991,14 @@ export class CloudBotUi {
       [SETTINGS_DEFAULT_QUEUE_CALLBACK, ["config_default", "promptQueueEnabled"]],
       [SETTINGS_FREE_DETECTION_CALLBACK, ["config_free_detection"]],
     ]);
-    return keyboard.inline_keyboard.map((row) =>
-      row.flatMap((button) => {
-        const mapped = exact.get(button.callback_data ?? "");
-        return mapped ? [b(button.text, mapped[0], mapped[1])] : [];
-      }),
-    ).filter((row) => row.length > 0);
+    return keyboard.inline_keyboard
+      .map((row) =>
+        row.flatMap((button) => {
+          const mapped = exact.get(button.callback_data ?? "");
+          return mapped ? [b(button.text, mapped[0], mapped[1])] : [];
+        }),
+      )
+      .filter((row) => row.length > 0);
   }
   private async renderModelRoot(
     actor: number,
@@ -741,13 +1023,38 @@ export class CloudBotUi {
     );
   }
   private async home(chat: number, actor: number, replace: boolean): Promise<void> {
+    if (this.panelScope?.thread) return this.forPanel(actor, chat, 0, 0).home(chat, actor, replace);
     if (replace)
       await this.deps.telegram.call("setMyCommands", {
         commands: BOT_COMMANDS,
         scope: { type: "chat", chat_id: chat },
       });
-    if (replace) await this.legacyMain().replaceCanonicalMainPanel(chat, actor);
-    else await this.legacyMain().showHome(chat);
+    const adapter = this.legacyAdapter();
+    const previous = adapter.getUiState<{ messageId: number; actorId?: number }>(
+      `legacy:main:${chat}`,
+    );
+    if (this.panelScope && previous && (!previous.actorId || previous.actorId === actor))
+      this.adoptPanel(previous.messageId);
+    const status = await adapter.getMainStatus();
+    const rows = createMainInlineKeyboard({ providerID: "", modelID: "" }).inline_keyboard.map(
+      (row) =>
+        row.flatMap((button) =>
+          "callback_data" in button && button.callback_data?.startsWith("main:")
+            ? [this.button(actor, chat, 0, undefined, button.text, button.callback_data.slice(5))]
+            : [],
+        ),
+    );
+    await this.menu(chat, undefined, renderLegacyMainStatus(status), rows);
+    const identity = this.panelIdentity(actor, chat, 0, 0);
+    if (identity.messageId) {
+      adapter.setUiState(`legacy:main:${chat}`, { messageId: identity.messageId, actorId: actor });
+      if (replace)
+        await this.deps.telegram.call("pinChatMessage", {
+          chat_id: chat,
+          message_id: identity.messageId,
+          disable_notification: true,
+        });
+    }
   }
   private async settings(
     actor: number,
@@ -782,7 +1089,10 @@ export class CloudBotUi {
         String(topic.threadId),
       ),
     ]);
-    rows.push([{ text: MAIN_BUTTONS.newChat, callback_data: "main:new" }]);
+    rows.push(
+      [this.button(actor, chat, 0, undefined, MAIN_BUTTONS.newChat, "new")],
+      [{ text: "← Home", callback_data: "main:home" }],
+    );
     await this.menu(
       chat,
       undefined,
@@ -818,6 +1128,21 @@ export class CloudBotUi {
   }
   async handle(update: TelegramUpdate, updateId: number): Promise<boolean> {
     const message = update.message ?? update.callback_query?.message;
+    const actor = update.message?.from?.id ?? update.callback_query?.from.id;
+    if (!message || !actor) return true;
+    const thread = (message.message_thread_id ?? 0) > 1 ? message.message_thread_id! : 0;
+    const generation =
+      this.deps.store.topics().find((t) => t.chatId === message.chat.id && t.threadId === thread)
+        ?.generation ?? 0;
+    return new CloudBotUi(this.deps, {
+      actor,
+      chat: message.chat.id,
+      thread,
+      generation,
+    }).handleScoped(update, updateId);
+  }
+  private async handleScoped(update: TelegramUpdate, updateId: number): Promise<boolean> {
+    const message = update.message ?? update.callback_query?.message;
     const chat = message?.chat.id,
       actor = update.message?.from?.id ?? update.callback_query?.from.id;
     if (!chat || !actor) return true;
@@ -838,6 +1163,7 @@ export class CloudBotUi {
     if (saved && (saved.actor !== actor || saved.chat !== chat || saved.thread !== thread))
       throw new Error("ui_scope_mismatch");
     let action: UiAction | undefined = saved?.action;
+    let formAdmitted = false;
     const protectedInput = (update as ProtectedTelegramUpdate).credentialInput;
     if (protectedInput) action = { action: "credential_save", value: protectedInput.providerId };
     if (update.callback_query && !saved) {
@@ -861,35 +1187,62 @@ export class CloudBotUi {
             state: string;
           }>("SELECT * FROM ui_callbacks WHERE id=?", data.slice(3)),
         ][0];
+        if (!row) {
+          const current = this.panelIdentity(actor, chat, thread, this.panelScope!.generation);
+          if (
+            current.messageId &&
+            update.callback_query.message?.message_id === current.messageId
+          ) {
+            this.set("form:" + actor + ":" + chat + ":" + thread, {});
+            if (thread) await this.settings(actor, chat, thread, topic);
+            else await this.home(chat);
+          }
+          return true;
+        }
+        if (row.actor !== actor || row.chat !== chat || row.thread !== thread || (thread && !topic))
+          return true;
+        const candidate = JSON.parse(row.data) as UiAction;
+        const safe = navigation.has(candidate.action);
         if (
-          !row ||
-          row.actor !== actor ||
-          row.chat !== chat ||
-          row.thread !== thread ||
+          safe &&
+          row.generation === this.panelScope!.generation &&
+          !this.adoptPanel(update.callback_query.message?.message_id)
+        )
+          return true;
+        const panel =
+          this.get<PanelState>(`panel:${actor}:${chat}:${thread}:${topic?.generation ?? 0}`) ?? {};
+        const stale =
           row.expires < Date.now() ||
           row.state !== "READY" ||
-          row.generation !== (topic?.generation ?? 0)
-        ) {
+          row.generation !== (topic?.generation ?? 0) ||
+          (candidate.panel &&
+            (update.callback_query.message?.message_id !== panel.messageId ||
+              !panel.callbacks?.includes(data.slice(3))));
+        if (stale && !safe) {
           await this.notice(
             chat,
             thread || undefined,
-            "This menu has expired. Open the menu again.",
+            "This action has expired. Open its menu again.",
           );
           return true;
         }
-        action = JSON.parse(row.data) as UiAction;
-        // Commit ownership before I/O; retries cannot repeat a destructive operation.
-        this.deps.sql.exec(
-          "UPDATE ui_callbacks SET state='CLAIMED' WHERE id=? AND state='READY'",
-          data.slice(3),
-        );
+        action =
+          stale && row.generation !== (topic?.generation ?? 0)
+            ? { action: thread ? "settings" : "home" }
+            : candidate;
+        if (!safe)
+          this.deps.sql.exec(
+            "UPDATE ui_callbacks SET state='CLAIMED' WHERE id=? AND state='READY'",
+            data.slice(3),
+          );
       } else if (
         ["main:new", "main:home", "main:history", "main:settings"].includes(data) &&
         !thread
       ) {
-        action = { action: data.slice(5) };
+        if (!this.adoptPanel(update.callback_query.message?.message_id)) return true;
+        action = { action: data === "main:new" ? "home" : data.slice(5) };
       } else {
-        await this.notice(chat, thread || undefined, "This menu has expired. Open the menu again.");
+        await this.settings(actor, chat, thread, topic);
         return true;
       }
     } else if (!saved && !protectedInput) {
@@ -969,19 +1322,25 @@ export class CloudBotUi {
                 : form.kind + "_save",
           value: text,
         };
+        formAdmitted = true;
         this.set(actionKey, { actor, chat, thread, generation: topic?.generation ?? 0, action });
         this.set(formKey, {});
       } else if (!text || !thread) {
-        await this.notice(
-          chat,
-          thread || undefined,
-          "Use New Chat to open an AI Topic. General / ALL is for bot controls.",
-        );
+        if (update.message?.message_id) {
+          try {
+            await this.deps.telegram.call("deleteMessage", {
+              chat_id: chat,
+              message_id: update.message.message_id,
+            });
+          } catch {
+            /* Unrequested input must never reach execution. */
+          }
+        }
         return true;
       } else return false;
     }
     if (!saved) {
-      if (["pause", "resume", "abort", "stop"].includes(action.action))
+      if (!action.targetRun && ["pause", "resume", "abort", "stop"].includes(action.action))
         action.targetRun = this.deps.store.activeRuns(chat, thread)[0]?.requestId;
       this.set(actionKey, { actor, chat, thread, generation: topic?.generation ?? 0, action });
     }
@@ -994,6 +1353,7 @@ export class CloudBotUi {
     )
       throw new Error("stale_generation");
     const name = action.action;
+    if (!formAdmitted && !protectedInput) this.set("form:" + actor + ":" + chat + ":" + thread, {});
     const mainOnly = [
       "new",
       "history",
@@ -1115,8 +1475,9 @@ export class CloudBotUi {
             !["BOUND", "FAILED", "RECONCILIATION_REQUIRED"].includes(j.phase) &&
             !j.error,
         );
-      const job = pending ?? (await this.deps.newTopic(chat, "telegram_" + updateId));
-      await this.notice(chat, job.threadId, t("bot.creating_session", undefined, "en"));
+      if (!pending) await this.deps.newTopic(chat, "telegram_" + updateId);
+      this.set("action_done:" + updateId, true);
+      await this.notice(chat, thread || undefined, t("bot.creating_session", undefined, "en"));
       return true;
     }
     if (name === "history" || name === "sessions") {
@@ -1146,17 +1507,14 @@ export class CloudBotUi {
       this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", configKey);
       this.set("action_done:" + updateId, true);
       if (returnAction) {
-        if (returnAction === "settings")
-          await this.settings(actor, chat, thread, topic);
-        else if (returnAction === "topic_settings")
-          await this.settings(actor, chat, thread, topic);
+        if (returnAction === "settings") await this.settings(actor, chat, thread, topic);
+        else if (returnAction === "topic_settings") await this.settings(actor, chat, thread, topic);
         else if (returnAction === "session") {
           if (!topic) throw new Error("topic_not_writable");
           await this.renderSessionDashboard(actor, chat, thread, topic);
         } else if (returnAction === "question_return") {
           if (!topic || !returnValue) throw new Error("topic_not_writable");
-          const key =
-            "question:" + topic.workerId + ":" + topic.generation + ":" + returnValue;
+          const key = "question:" + topic.workerId + ":" + topic.generation + ":" + returnValue;
           const pending = this.get<{
             runId: string;
             questions: unknown[];
@@ -1173,13 +1531,7 @@ export class CloudBotUi {
             "DELETE FROM ui_state WHERE key=?",
             "custom_question:" + actor + ":" + chat + ":" + thread,
           );
-          await this.questionMenu(
-            topic,
-            actor,
-            returnValue,
-            pending.questions,
-            pending.answers,
-          );
+          await this.questionMenu(topic, actor, returnValue, pending.questions, pending.answers);
         } else {
           const rendered = await this.handleAction(
             actor,
@@ -1203,11 +1555,17 @@ export class CloudBotUi {
           (t) => t.chatId === chat && t.threadId === Number(action.value) && t.state === "ACTIVE",
         );
       if (!target) throw new Error("topic_not_writable");
-      await this.keyboard(chat, target, "Continue this session here.");
+      await this.forPanel(actor, chat, target.threadId, target.generation).keyboard(
+        chat,
+        target,
+        "Continue this session here.",
+      );
       return true;
     }
     if (["delete", "delete_topic"].includes(name)) {
-      await this.confirm(actor, chat, thread, topic, "delete_confirm", "Delete Chat", { action: "topic_settings" });
+      await this.confirm(actor, chat, thread, topic, "delete_confirm", "Delete Chat", {
+        action: "topic_settings",
+      });
       return true;
     }
     if (name === "delete_confirm") {
@@ -1224,7 +1582,7 @@ export class CloudBotUi {
         await this.notice(chat, thread, t("context.error"));
         return true;
       }
-      await this.deps.compact!(topic!, "telegram-compact:" + updateId);
+      await this.deps.compact!(topic!, "telegram_compact_" + updateId);
       this.assertTopic(topic!);
       this.set("action_done:" + updateId, true);
       await this.notice(chat, thread, t("context.progress"));
@@ -1289,7 +1647,7 @@ export class CloudBotUi {
         message_thread_id: thread,
         name: title,
       });
-      this.setOptions(topic!, { title });
+      this.setOptions(topic!, { title, titleSource: "manual" });
       this.set("action_done:" + updateId, true);
       await this.notice(chat, thread, "✅ Topic renamed.");
       return true;
@@ -1550,7 +1908,7 @@ export class CloudBotUi {
         message_thread_id: thread,
         name: title,
       });
-      this.setOptions(topic, { title });
+      this.setOptions(topic, { title, titleSource: "manual" });
       if (updateId) this.set("action_done:" + updateId, true);
       await this.notice(chat, thread, "✅ Topic renamed.");
       return true;
@@ -1568,31 +1926,53 @@ export class CloudBotUi {
     const configNavigation = (): NavigationSpec | undefined => {
       if (name.startsWith("config_wizard_")) return undefined;
       if (name === "memory" || name.startsWith("config_memory_"))
-        return { back: { action: "advanced" }, home: true, strip: ["← Settings", "← Back", "🏠 Home"] };
-      const direct = /^(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
-      const item = /^config_(?:item|toggle|remove|add)_(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
+        return {
+          back: { action: "advanced" },
+          home: true,
+          strip: ["← Settings", "← Back", "🏠 Home"],
+        };
+      const direct = /^(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(
+        name,
+      )?.[1];
+      const item =
+        /^config_(?:item|toggle|remove|add)_(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(
+          name,
+        )?.[1];
       const section = direct ?? item;
       if (!section) return undefined;
-      const parent = section === "commands"
-        ? "advanced"
-        : ["skills", "mcps", "plugins"].includes(section)
-          ? "extensions"
-          : "settings";
+      const parent =
+        section === "commands"
+          ? "advanced"
+          : ["skills", "mcps", "plugins"].includes(section)
+            ? "extensions"
+            : "settings";
       if (name.startsWith("config_item_"))
-        return { back: { action: section }, home: true, strip: ["← Settings", "← Back", "← " + section, "🏠 Home"] };
+        return {
+          back: { action: section },
+          home: true,
+          strip: ["← Settings", "← Back", "← " + section, "🏠 Home"],
+        };
       return { back: { action: parent }, home: true, strip: ["← Settings", "← Back", "🏠 Home"] };
     };
     const configWizardOrigin = (): NavigationTarget | undefined => {
       const row = [
-        ...this.deps.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", configDraftKey),
+        ...this.deps.sql.exec<{ data: string }>(
+          "SELECT data FROM ui_state WHERE key=?",
+          configDraftKey,
+        ),
       ][0];
       if (row) {
         const section = String(record(JSON.parse(row.data)).section ?? "");
         if (["skills", "commands", "mcps"].includes(section)) return { action: section };
       }
-      const jsonSection = /^config_json_(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
+      const jsonSection =
+        /^config_json_(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(name)?.[1];
       if (jsonSection) return { action: jsonSection };
-      if (["config_memory_add", "config_memory_forget", "config_remember", "config_forget"].includes(name))
+      if (
+        ["config_memory_add", "config_memory_forget", "config_remember", "config_forget"].includes(
+          name,
+        )
+      )
         return { action: "memory" };
       return undefined;
     };
@@ -1616,9 +1996,7 @@ export class CloudBotUi {
           chat,
           thread || undefined,
           text,
-          navigation
-            ? this.withNavigation(actor, chat, thread, topic, rows, navigation)
-            : rows,
+          navigation ? this.withNavigation(actor, chat, thread, topic, rows, navigation) : rows,
         );
       },
       prompt: async (kind, text) => {
@@ -1795,7 +2173,8 @@ export class CloudBotUi {
       return true;
     }
     if (name === "more" || name === "advanced") {
-      const view = name === "more" ? buildCanonicalMoreSettingsView() : buildCanonicalAdvancedSettingsView();
+      const view =
+        name === "more" ? buildCanonicalMoreSettingsView() : buildCanonicalAdvancedSettingsView();
       const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
         chat,
@@ -1819,7 +2198,8 @@ export class CloudBotUi {
         const topicDefaults = record(defaults.topicDefaults);
         data.defaults = defaults;
         defaults.topicDefaults = topicDefaults;
-        const previous = topicDefaults[field] ?? OUTPUT_DEFAULTS[field as keyof typeof OUTPUT_DEFAULTS];
+        const previous =
+          topicDefaults[field] ?? OUTPUT_DEFAULTS[field as keyof typeof OUTPUT_DEFAULTS];
         topicDefaults[field] =
           typeof previous === "boolean"
             ? !previous
@@ -1837,12 +2217,20 @@ export class CloudBotUi {
       const values = record(record(fresh?.data.defaults).topicDefaults);
       const view = buildCanonicalTopicDefaultsSettingsView({
         compactOutputMode: Boolean(values.compactOutputMode ?? OUTPUT_DEFAULTS.compactOutputMode),
-        showThinkingContent: Boolean(values.showThinkingContent ?? OUTPUT_DEFAULTS.showThinkingContent),
+        showThinkingContent: Boolean(
+          values.showThinkingContent ?? OUTPUT_DEFAULTS.showThinkingContent,
+        ),
         responseStreamingMode: values.responseStreamingMode === "draft" ? "draft" : "edit",
         messageFormatMode: values.messageFormatMode === "raw" ? "raw" : "markdown",
-        showAssistantRunFooter: Boolean(values.showAssistantRunFooter ?? OUTPUT_DEFAULTS.showAssistantRunFooter),
-        sendDiffFileAttachments: Boolean(values.sendDiffFileAttachments ?? OUTPUT_DEFAULTS.sendDiffFileAttachments),
-        promptQueueEnabled: Boolean(values.promptQueueEnabled ?? OUTPUT_DEFAULTS.promptQueueEnabled),
+        showAssistantRunFooter: Boolean(
+          values.showAssistantRunFooter ?? OUTPUT_DEFAULTS.showAssistantRunFooter,
+        ),
+        sendDiffFileAttachments: Boolean(
+          values.sendDiffFileAttachments ?? OUTPUT_DEFAULTS.sendDiffFileAttachments,
+        ),
+        promptQueueEnabled: Boolean(
+          values.promptQueueEnabled ?? OUTPUT_DEFAULTS.promptQueueEnabled,
+        ),
       });
       const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
@@ -1870,7 +2258,8 @@ export class CloudBotUi {
         if (updateId) this.set("action_done:" + updateId, true);
       }
       const fresh = this.deps.store.global();
-      const enabled = record(record(fresh?.data.configuration).settings).experimentalFreeModelDetection === true;
+      const enabled =
+        record(record(fresh?.data.configuration).settings).experimentalFreeModelDetection === true;
       const view = buildCanonicalExperimentalSettingsView(enabled);
       const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
       await this.menu(
@@ -2032,26 +2421,28 @@ export class CloudBotUi {
           path,
         );
         const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
-        const navigation = path === "."
-          ? this.withNavigation(actor, chat, thread, topic, rows, {
-              back: { action: "session" },
-              home: true,
-            })
-          : this.withNavigation(actor, chat, thread, topic, rows, {
-              back: { action: "ls", value: parentWorkspacePath(path) },
-              home: true,
-            });
+        const navigation =
+          path === "."
+            ? this.withNavigation(actor, chat, thread, topic, rows, {
+                back: { action: "session" },
+                home: true,
+              })
+            : this.withNavigation(actor, chat, thread, topic, rows, {
+                back: { action: "ls", value: parentWorkspacePath(path) },
+                home: true,
+              });
         await this.menu(chat, thread, view.text, navigation);
         return true;
       }
       if (name === "open") {
         const path = action.value!.trim();
         const file = record(await session.read(topic, path));
-        const size = typeof file.size === "number"
-          ? file.size
-          : typeof file.content === "string"
-            ? file.content.length
-            : undefined;
+        const size =
+          typeof file.size === "number"
+            ? file.size
+            : typeof file.content === "string"
+              ? file.content.length
+              : undefined;
         const view = buildRemoteLsFileView(path, size, true);
         const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
         await this.menu(
@@ -2064,7 +2455,9 @@ export class CloudBotUi {
       }
       if (name === "todos") {
         const result = await this.optionalCapability(() => session.todos<unknown[]>(topic));
-        const view = buildSessionTodosView(Array.isArray(result) ? result.map((item) => record(item)) : result);
+        const view = buildSessionTodosView(
+          Array.isArray(result) ? result.map((item) => record(item)) : result,
+        );
         const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
         await this.menu(
           chat,
@@ -2079,7 +2472,9 @@ export class CloudBotUi {
       }
       if (name === "diff") {
         const result = await this.optionalCapability(() => session.diff<unknown[]>(topic));
-        const view = buildSessionDiffView(Array.isArray(result) ? result.map((item) => record(item)) : result);
+        const view = buildSessionDiffView(
+          Array.isArray(result) ? result.map((item) => record(item)) : result,
+        );
         const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
         await this.menu(
           chat,
@@ -2094,7 +2489,9 @@ export class CloudBotUi {
       }
       if (name === "children") {
         const result = await this.optionalCapability(() => session.children<unknown[]>(topic));
-        const view = buildSessionChildrenView(Array.isArray(result) ? result.map((item) => record(item)) : result);
+        const view = buildSessionChildrenView(
+          Array.isArray(result) ? result.map((item) => record(item)) : result,
+        );
         const rows = this.sessionRows(actor, chat, thread, topic, view.keyboard);
         await this.menu(
           chat,
@@ -2208,7 +2605,8 @@ export class CloudBotUi {
     }
     if (name === "model_provider") {
       const input = JSON.parse(action.value ?? "{}") as { providerID?: string; page?: number };
-      if (!input.providerID || !Number.isSafeInteger(input.page ?? -1)) throw new Error("invalid_model_provider");
+      if (!input.providerID || !Number.isSafeInteger(input.page ?? -1))
+        throw new Error("invalid_model_provider");
       const models = this.legacyModels();
       const scope = this.modelScope(topic);
       const provider = (await models.providers(scope)).find((item) => item.id === input.providerID);
@@ -2301,9 +2699,7 @@ export class CloudBotUi {
         if (Array.isArray(model.variants)) names = model.variants.map(String);
       }
       this.set("catalog:" + topic.workerId + ":" + topic.generation + ":" + name, names);
-      const rows: Button[][] = names
-        .slice(0, 40)
-        .map((value) => [b(value, name + "_save", value)]);
+      const rows: Button[][] = names.slice(0, 40).map((value) => [b(value, name + "_save", value)]);
       await this.menu(
         chat,
         thread,
@@ -2393,7 +2789,9 @@ export class CloudBotUi {
       return true;
     }
     if (name === "factory_reset_confirm") {
-      await this.confirm(actor, chat, thread, topic, "factory_reset_final", "Final Factory Reset", { action: "factory_reset" });
+      await this.confirm(actor, chat, thread, topic, "factory_reset_final", "Final Factory Reset", {
+        action: "factory_reset",
+      });
       return true;
     }
     if (name === "reset_history_confirm" || name === "factory_reset_final") {

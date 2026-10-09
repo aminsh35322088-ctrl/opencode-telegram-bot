@@ -912,14 +912,35 @@ export class ControlStore {
     generation: number,
     revision: number,
     model: string,
+    operation: "run" | "session.compact" = "run",
   ): void {
     this.transaction(() => {
       const topic = this.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
       if (topic?.generation !== generation) throw new Error("stale_generation");
       if (this.global()?.revision !== revision) throw new Error("configuration_changed");
+      const prior = [...this.sql.exec("SELECT request FROM runs WHERE request=?", request)][0];
+      if (prior && this.runOperation(request) !== operation)
+        throw new Error("request_binding_mismatch");
       this.enqueue(chatId, threadId, request, prompt);
       this.pinRun(request, generation, revision, model);
+      if (operation === "session.compact")
+        this.sql.exec(
+          "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+          "operation:" + request,
+          JSON.stringify(operation),
+        );
     });
+  }
+  runOperation(request: string): "run" | "session.compact" {
+    const row = [
+      ...this.sql.exec<{ data: string }>(
+        "SELECT data FROM ui_state WHERE key=?",
+        "operation:" + request,
+      ),
+    ][0];
+    if (!row) return "run";
+    if (JSON.parse(row.data) !== "session.compact") throw new Error("invalid_run_operation");
+    return "session.compact";
   }
   pinRun(request: string, generation: number, revision: number, model: string): void {
     this.sql.exec(

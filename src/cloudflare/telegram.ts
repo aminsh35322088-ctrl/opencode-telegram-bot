@@ -5,6 +5,7 @@ export class TelegramDeliveryError extends Error {
     readonly category: "rate_limited" | "rejected" | "ambiguous",
     readonly retryAfter?: number,
     readonly transportCode?: "timeout" | "redirect" | "invocation" | "network",
+    readonly reason?: "message_not_found",
   ) {
     super("telegram_" + category + (transportCode ? "_" + transportCode : ""));
   }
@@ -48,6 +49,24 @@ export class CloudTelegram {
       parameters?: { retry_after?: number };
     };
     if (!body.ok) {
+      if (
+        body.error_code === 400 &&
+        ["editMessageText", "editMessageReplyMarkup"].includes(method) &&
+        /^Bad Request: message is not modified(?:[:.]|$)/i.test(body.description ?? "")
+      )
+        return { message_id: payload.message_id } as T;
+      if (
+        body.error_code === 400 &&
+        method === "editForumTopic" &&
+        /^(?:Bad Request: )?TOPIC_NOT_MODIFIED$/i.test(body.description ?? "")
+      )
+        return true as T;
+      if (
+        body.error_code === 400 &&
+        method === "editMessageText" &&
+        /^Bad Request: message to edit not found$/i.test(body.description ?? "")
+      )
+        throw new TelegramDeliveryError("rejected", undefined, undefined, "message_not_found");
       if (
         method === "deleteForumTopic" &&
         body.error_code === 400 &&
@@ -151,6 +170,27 @@ export class CloudTelegram {
       offset += chunk.length;
     }
     return bytes;
+  }
+  async editPart(
+    chatId: number,
+    messageId: number,
+    part: ReturnType<typeof renderTelegramParts>[number],
+  ): Promise<number> {
+    const scope = { chat_id: chatId, message_id: messageId };
+    let result: { message_id: number };
+    try {
+      result = await this.call("editMessageText", {
+        ...scope,
+        rich_message: {
+          blocks: part.blocks,
+          ...(shouldRenderRtl(part.fallbackText) ? { is_rtl: true } : {}),
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof TelegramDeliveryError) || error.category !== "rejected") throw error;
+      result = await this.call("editMessageText", { ...scope, text: part.fallbackText });
+    }
+    return result.message_id;
   }
   async sendPart(
     chatId: number,

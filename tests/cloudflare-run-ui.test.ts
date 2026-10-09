@@ -434,3 +434,14 @@ test("tool activity accepted during an awaited draft delivery remains durable", 
   const row = f.db.prepare("SELECT data FROM ui_state WHERE key='run-ui:run'").get()!;
   assert.equal(JSON.parse(String(row.data)).tools.tool.name, "read");
 });
+
+test("throttled text exposes its next preview deadline rather than waiting for a status poll", async () => {
+  const f = fixture();
+  await f.ui.progress(f.topic as never, "run", "first", {});
+  const due = await f.ui.progress(f.topic as never, "run", "second", {});
+  assert.equal(due, f.now() + 1500);
+  assert.equal(f.sent.length, 1);
+  f.advance();
+  await f.ui.progress(f.topic as never, "run", "second", {});
+  assert.equal(f.sent.length, 2);
+});

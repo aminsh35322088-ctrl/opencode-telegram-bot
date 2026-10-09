@@ -68,7 +68,11 @@ function fixture(configured = "v1.18.33-bot.13-pre.25", observed = configured) {
           id: String(id),
           from: { id: actor },
           data,
-          message: { chat: { id: -100 }, message_thread_id: thread },
+          message: {
+            message_id: ui.panelIdentity(7, -100, 42, 1).messageId,
+            chat: { id: -100 },
+            message_thread_id: thread,
+          },
         },
       },
       id,
@@ -88,7 +92,7 @@ test("Context Health admits context compaction once using a stable scoped queue 
   await f.callback(button.callback_data);
   await f.callback(button.callback_data, 3);
   assert.equal(f.admitted.length, 1);
-  assert.equal(f.admitted[0]?.request, "telegram-compact:2");
+  assert.equal(f.admitted[0]?.request, "telegram_compact_2");
   assert.equal((f.admitted[0]?.topic as any).sessionId, "session");
 });
 

@@ -353,3 +353,56 @@ test("only assistant parts are rendered into the terminal Telegram response", ()
   send({ type: "session.idle", properties: {} });
   assert.equal(f.store.completedResponses()[0]?.text, "answer");
 });
+
+test("compaction is durably queued as a distinct operation without bypassing Topic ordering", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveTopicAllocation("compact-topic", -100, 42);
+  f.store.ready(job.workerId, 1, "synthetic");
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.setGlobal({ revision: 1 }, "hash");
+  f.store.enqueueVerified(-100, 42, "first", "prompt", 1, 1, "opencode/big-pickle");
+  f.store.enqueueVerified(
+    -100,
+    42,
+    "compact",
+    "Context compaction",
+    1,
+    1,
+    "opencode/big-pickle",
+    "session.compact",
+  );
+  assert.equal(f.restart().runOperation("compact"), "session.compact");
+  assert.equal(f.store.startNext(-100, 42)?.requestId, "first");
+  assert.equal(f.store.startNext(-100, 42), undefined);
+  f.store.finishRun(-100, 42, "first");
+  assert.equal(f.store.startNext(-100, 42)?.requestId, "compact");
+  assert.throws(
+    () =>
+      f.store.enqueueVerified(
+        -100,
+        42,
+        "compact",
+        "Context compaction",
+        1,
+        1,
+        "opencode/big-pickle",
+      ),
+    /request_binding_mismatch/,
+  );
+  assert.throws(
+    () =>
+      f.store.enqueueVerified(
+        -100,
+        42,
+        "first",
+        "prompt",
+        1,
+        1,
+        "opencode/big-pickle",
+        "session.compact",
+      ),
+    /request_binding_mismatch/,
+  );
+  assert.equal(f.store.runOperation("first"), "run");
+});

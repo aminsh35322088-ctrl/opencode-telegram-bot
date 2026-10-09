@@ -162,3 +162,21 @@ test("canonical Control Plane migrates legacy secrets then authenticates with on
   assert.equal(backend.maxProjects, 2);
   assert.equal(backend.workspaceId, "df47876f-4c37-4a4d-89c7-407ec111227d");
 });
+
+test("missing internal identity never authenticates a literal undefined administrative token", async () => {
+  const { ControlPlane } = await import("../src/cloudflare/control-object.js");
+  const f = fixture();
+  const plane = new ControlPlane(
+    {
+      storage: { sql: f.sql, transactionSync: <T>(f: () => T) => f(), setAlarm: async () => {} },
+    } as never,
+    {} as never,
+  );
+  const response = await plane.fetch(
+    new Request("https://internal/control/auth", {
+      method: "POST",
+      body: JSON.stringify({ kind: "admin", supplied: "Bearer undefined" }),
+    }),
+  );
+  assert.deepEqual(await response.json(), { authorized: false });
+});

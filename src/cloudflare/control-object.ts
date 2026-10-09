@@ -10,6 +10,7 @@ import { renderTelegramParts } from "../bot/render/pipeline.js";
 import { en } from "../i18n/en.js";
 import { canonical, signEnvelope, verifyEnvelope } from "./protocol.js";
 import { CloudRunUi } from "./run-ui.js";
+import { CloudTopicTitleUi } from "./topic-title-ui.js";
 import { CloudTaskUi } from "./task-ui.js";
 import {
   CloudCredentialVault,
@@ -19,9 +20,9 @@ import {
 } from "./credential-vault.js";
 import { applyGlobalConfigMutation } from "./config-ui.js";
 import { WorkerImageUpgrade, isWorkerImageUpgrading } from "./worker-image-upgrade.js";
-import { CloudBotUi, type TelegramUpdate } from "./bot-ui.js";
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
 import packageJson from "../../package.json" with { type: "json" };
+import { CloudBotUi, supportsContextCompaction, type TelegramUpdate } from "./bot-ui.js";
 
 import { CONTROL_DEFAULTS } from "./control-config.js";
 import { resolveControlSecrets, equalSecret } from "./control-secrets.js";
@@ -30,6 +31,7 @@ export class ControlPlane {
   private readonly store: ControlStore;
   private readonly env: ControlEnvironment;
   private secretsReady?: Promise<void>;
+  private alarmScheduling: Promise<void> = Promise.resolve();
   constructor(
     private readonly state: DurableObjectState,
     env: ControlEnvironment,
@@ -38,6 +40,17 @@ export class ControlPlane {
     this.store = new ControlStore(state.storage.sql, (action) =>
       state.storage.transactionSync(action),
     );
+  }
+  private async scheduleAlarm(at: number): Promise<void> {
+    const next = this.alarmScheduling.then(async () => {
+      const current =
+        typeof this.state.storage.getAlarm === "function"
+          ? await this.state.storage.getAlarm()
+          : null;
+      if (current === null || at < current) await this.state.storage.setAlarm(at);
+    });
+    this.alarmScheduling = next.catch(() => {});
+    await next;
   }
   private async initializeSecrets(): Promise<void> {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
@@ -63,7 +76,7 @@ export class ControlPlane {
         const expected =
           value.kind === "webhook"
             ? this.env.TELEGRAM_WEBHOOK_SECRET
-            : value.kind === "admin"
+            : value.kind === "admin" && this.env.ADMIN_TOKEN
               ? "Bearer " + this.env.ADMIN_TOKEN
               : "";
         return Response.json({
@@ -146,6 +159,8 @@ export class ControlPlane {
         if (
           ![
             "start",
+            "home",
+            "history",
             "settings",
             "topic_settings",
             "model",
@@ -183,15 +198,52 @@ export class ControlPlane {
           "INSERT INTO ui_state VALUES('admin_ui_sequence',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
           String(updateId),
         );
+        const generation =
+          this.store
+            .topics()
+            .find((t) => t.chatId === chat && t.threadId === thread && t.state === "ACTIVE")
+            ?.generation ?? 0;
+        const panel = this.ui().panelIdentity(actor, chat, thread, generation);
+        const callbackAction = command === "model" ? "models" : command;
+        const callback =
+          body.callback === true
+            ? [
+                ...this.state.storage.sql.exec<{ id: string }>(
+                  "SELECT id FROM ui_callbacks WHERE actor=? AND chat=? AND thread=? AND generation=? AND json_extract(data,'$.action')=? ORDER BY rowid DESC LIMIT 1",
+                  actor,
+                  chat,
+                  thread,
+                  generation,
+                  callbackAction,
+                ),
+              ][0]
+            : undefined;
+        if (body.callback === true && (!callback || !panel.messageId))
+          throw new Error("menu_callback_missing");
         await this.ui().handle(
           {
             update_id: updateId,
-            message: {
-              chat: { id: chat },
-              from: { id: actor },
-              ...(thread > 1 ? { message_thread_id: thread } : {}),
-              text: "/" + command,
-            },
+            ...(callback
+              ? {
+                  callback_query: {
+                    id: "admin-ui-" + Math.abs(updateId),
+                    from: { id: actor },
+                    data: "ui:" + callback.id,
+                    message: {
+                      message_id: panel.messageId,
+                      chat: { id: chat },
+                      ...(thread > 1 ? { message_thread_id: thread } : {}),
+                    },
+                  },
+                }
+              : {
+                  message: {
+                    chat: { id: chat },
+                    from: { id: actor },
+                    ...(thread > 1 ? { message_thread_id: thread } : {}),
+                    text: "/" + command,
+                  },
+                }),
           },
           updateId,
         );
@@ -203,7 +255,11 @@ export class ControlPlane {
             scope: thread > 1 ? "topic" : "general",
           }),
         );
-        return Response.json({ ok: true, scope: thread > 1 ? "topic" : "general" });
+        return Response.json({
+          ok: true,
+          scope: thread > 1 ? "topic" : "general",
+          panel: this.ui().panelIdentity(actor, chat, thread, generation),
+        });
       }
       if (path === "/admin/runtime")
         return Response.json({ schemaVersion: 6, protocol: "revision-fenced-v1" });
@@ -231,6 +287,19 @@ export class ControlPlane {
           threadId: job.threadId,
           phase: job.phase,
         });
+      }
+      if (path === "/admin/compact") {
+        await this.enqueuePrompt(
+          Number(body.chatId),
+          Number(body.threadId),
+          Number(body.generation),
+          String(body.requestId ?? ""),
+          "Context compaction",
+          undefined,
+          undefined,
+          "session.compact",
+        );
+        return Response.json({ queued: true });
       }
       if (path === "/admin/run") {
         await this.enqueuePrompt(
@@ -472,7 +541,7 @@ export class ControlPlane {
           Number(body.update_id),
           JSON.stringify(protectedUpdate),
         );
-        await this.state.storage.setAlarm(Date.now() + 1);
+        await this.scheduleAlarm(Date.now() + 1);
         return Response.json({ ok: true });
       }
       if (path === "/jobs/advance") {
@@ -731,7 +800,7 @@ export class ControlPlane {
             topic.threadId,
             envelope.payload as Record<string, unknown>,
           );
-          if (admitted)
+          if (admitted) {
             new CloudRunUi(
               this.state.storage.sql,
               new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
@@ -739,7 +808,29 @@ export class ControlPlane {
               String((envelope.payload as Record<string, unknown>).runId),
               (envelope.payload as Record<string, unknown>).event,
             );
-          await this.state.storage.setAlarm(Date.now() + 1);
+            new CloudTopicTitleUi(
+              this.state.storage.sql,
+              this.store,
+              new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+            ).capture(topic, (envelope.payload as Record<string, unknown>).event);
+          }
+          const event = (envelope.payload as Record<string, unknown>).event as { type?: string };
+          if (admitted && ["question.asked", "permission.asked"].includes(event?.type ?? "")) {
+            const key = "dispatch:" + String((envelope.payload as Record<string, unknown>).runId);
+            const row = [
+              ...this.state.storage.sql.exec<{ data: string }>(
+                "SELECT data FROM ui_state WHERE key=?",
+                key,
+              ),
+            ][0];
+            if (row)
+              this.state.storage.sql.exec(
+                "UPDATE ui_state SET data=? WHERE key=?",
+                JSON.stringify({ ...JSON.parse(row.data), nextPoll: 0 }),
+                key,
+              );
+          }
+          await this.scheduleAlarm(Date.now() + 1);
           return this.signed(envelope, secret, { accepted: true });
         }
         throw new Error("unsupported_node_operation");
@@ -862,6 +953,13 @@ export class ControlPlane {
       throw error;
     }
   }
+  private topicUi(topic: import("./control-store.js").FleetTopic): CloudBotUi {
+    const actor = Number(
+      (this.env.TELEGRAM_ALLOWED_USER_ID ?? this.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(",")[0],
+    );
+    const ui = this.ui();
+    return actor ? ui.forPanel(actor, topic.chatId, topic.threadId, topic.generation) : ui;
+  }
   private ui(): CloudBotUi {
     const rpc = async <T>(
       topic: import("./control-store.js").FleetTopic,
@@ -899,7 +997,10 @@ export class ControlPlane {
         throw new Error("stale_generation");
       return result;
     };
-    const global = async (data: Record<string, unknown>, expectedRevision: number): Promise<void> => {
+    const global = async (
+      data: Record<string, unknown>,
+      expectedRevision: number,
+    ): Promise<void> => {
       const snapshot = { ...data, version: 1, revision: expectedRevision + 1 };
       const hash = await sha256(canonical(snapshot));
       this.store.setGlobal(snapshot, hash, expectedRevision);
@@ -918,6 +1019,17 @@ export class ControlPlane {
       telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
       coreVersion: this.env.WORKER_CORE_VERSION,
       legacyUi,
+      compact: (topic, request) =>
+        this.enqueuePrompt(
+          topic.chatId,
+          topic.threadId,
+          topic.generation,
+          request,
+          "Context compaction",
+          undefined,
+          undefined,
+          "session.compact",
+        ),
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
       questionDecision: (topic, request, questions, answers) =>
@@ -950,6 +1062,7 @@ export class ControlPlane {
     text: string,
     parts?: CloudPromptPart[],
     mediaModel?: string,
+    operation: "run" | "session.compact" = "run",
   ): Promise<void> {
     const topic = this.store
       .topics()
@@ -958,6 +1071,12 @@ export class ControlPlane {
     if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
       throw new Error("worker_upgrade_pending");
     if (!text || text.length > 20000) throw new Error("invalid_prompt");
+    if (
+      operation === "session.compact" &&
+      (!supportsContextCompaction(this.env.WORKER_CORE_VERSION) ||
+        !supportsContextCompaction(this.store.worker(topic.workerId)?.runtimeVersion))
+    )
+      throw new Error("worker_upgrade_required");
     const admittedGlobal = this.store.global();
     const selected =
       mediaModel ||
@@ -1028,6 +1147,7 @@ export class ControlPlane {
       topic.generation,
       admittedGlobal!.revision,
       selected,
+      operation,
     );
     if (parts)
       this.state.storage.sql.exec(
@@ -1035,7 +1155,7 @@ export class ControlPlane {
         "media:" + requestId,
         JSON.stringify(parts),
       );
-    await this.state.storage.setAlarm(Date.now() + 1);
+    await this.scheduleAlarm(Date.now() + 1);
   }
   private async setup(): Promise<void> {
     if (!this.env.RAILWAY_API_TOKEN || !this.env.RAILWAY_WORKSPACE_ID)
@@ -1149,7 +1269,7 @@ export class ControlPlane {
         threadId: created.message_thread_id,
       });
     }
-    await this.state.storage.setAlarm(Date.now() + 15_000);
+    await this.scheduleAlarm(Date.now() + 15_000);
     await this.env.JOBS.send({ jobId: job.jobId });
     return job;
   }
@@ -1170,7 +1290,7 @@ export class ControlPlane {
       const topic = this.store
         .topics()
         .find((t) => t.workerId === job.workerId && t.state === "ACTIVE");
-      if (topic) await this.ui().ready(topic);
+      if (topic) await this.topicUi(topic).ready(topic);
       return;
     }
     if (job.error) throw new Error(job.error);
@@ -1210,7 +1330,7 @@ export class ControlPlane {
       await this.driver(guard).provision(jobId);
       const worker = this.store.worker(job.workerId)!;
       if (!worker.credential) {
-        await this.state.storage.setAlarm(Date.now() + 15_000);
+        await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
       const identity = await this.identity(worker.workerId);
@@ -1221,12 +1341,12 @@ export class ControlPlane {
       try {
         health = await nodeRpc(identity, "health", {});
       } catch {
-        await this.state.storage.setAlarm(Date.now() + 15_000);
+        await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
       guard();
       if (!health.ready) {
-        await this.state.storage.setAlarm(Date.now() + 15_000);
+        await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
       if (
@@ -1237,7 +1357,7 @@ export class ControlPlane {
       guard();
       const observed = await this.driver(guard).inspectDeployment(jobId);
       if (observed.status !== "SUCCESS") {
-        await this.state.storage.setAlarm(Date.now() + 15_000);
+        await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
       const session = await nodeRpc<{ sessionId: string }>(identity, "session.create", {});
@@ -1251,7 +1371,7 @@ export class ControlPlane {
       });
       this.store.ready(worker.workerId, job.generation, worker.credential!);
       const bound = this.store.bindTopic(jobId, job.threadId, session.sessionId);
-      await this.ui().ready(bound);
+      await this.topicUi(bound).ready(bound);
       // eslint-disable-next-line no-console
       console.log(
         JSON.stringify({
@@ -1319,7 +1439,7 @@ export class ControlPlane {
       try {
         await this.advance(job.jobId);
       } catch {
-        await this.state.storage.setAlarm(Date.now() + 30_000);
+        await this.scheduleAlarm(Date.now() + 30_000);
       }
     }
 
@@ -1338,12 +1458,38 @@ export class ControlPlane {
         ]
           .map((p) => p.text)
           .join("\n");
-        await new CloudRunUi(
+        const previewDue = await new CloudRunUi(
           this.state.storage.sql,
           new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
         ).progress(topic, run.requestId, text, this.ui().options(topic));
+        if (previewDue !== undefined) await this.scheduleAlarm(previewDue);
       } catch {
         /* Execution continues; durable delivery receipt prevents duplicate sends. */
+      }
+      const dispatchKey = "dispatch:" + run.requestId;
+      const dispatchRow = [
+        ...this.state.storage.sql.exec<{ data: string }>(
+          "SELECT data FROM ui_state WHERE key=?",
+          dispatchKey,
+        ),
+      ][0];
+      const dispatch = dispatchRow
+        ? (JSON.parse(dispatchRow.data) as {
+            accepted?: boolean;
+            nextPoll?: number;
+            generation?: number;
+            sessionId?: string;
+            workerId?: string;
+          })
+        : undefined;
+      const accepted =
+        dispatch?.accepted &&
+        dispatch.generation === topic.generation &&
+        dispatch.sessionId === topic.sessionId &&
+        dispatch.workerId === topic.workerId;
+      if (accepted && (dispatch.nextPoll ?? 0) > Date.now()) {
+        await this.scheduleAlarm(dispatch.nextPoll!);
+        continue;
       }
       const owner = crypto.randomUUID(),
         lease = "dispatch:" + run.requestId;
@@ -1364,45 +1510,59 @@ export class ControlPlane {
           continue;
         }
         this.store.markRunDispatched(run.requestId);
-        const reply = await nodeRpc<{ accepted: boolean }>(
-          await this.identity(topic.workerId),
-          "run",
-          {
-            runId: run.requestId,
-            text: run.prompt,
-            ...(() => {
-              const row = [
-                ...this.state.storage.sql.exec<{ data: string }>(
-                  "SELECT data FROM ui_state WHERE key=?",
-                  "media:" + run.requestId,
-                ),
-              ][0];
-              return row
-                ? {
-                    parts: [
-                      { type: "text", text: run.prompt },
-                      ...JSON.parse(row.data).filter((p: CloudPromptPart) => p.type === "file"),
-                    ],
-                  }
-                : {};
-            })(),
-            events: true,
-            ...(this.ui().options(topic).agent ? { agent: this.ui().options(topic).agent } : {}),
-            ...(this.ui().options(topic).variant
-              ? { variant: this.ui().options(topic).variant }
-              : {}),
-            ...(pin
-              ? {
-                  expectedRevision: pin.revision,
-                  model: {
-                    providerID: pin.model.slice(0, pin.model.indexOf("/")),
-                    modelID: pin.model.slice(pin.model.indexOf("/") + 1),
-                  },
-                }
-              : {}),
-          },
-          topic.sessionId,
-        );
+        const operation = this.store.runOperation(run.requestId);
+        if (
+          operation === "session.compact" &&
+          !supportsContextCompaction(this.store.worker(topic.workerId)?.runtimeVersion)
+        )
+          throw new Error("worker_upgrade_required");
+        const reply = accepted
+          ? { accepted: true }
+          : await nodeRpc<{ accepted: boolean }>(
+              await this.identity(topic.workerId),
+              operation,
+              {
+                runId: run.requestId,
+                ...(operation === "run" ? { text: run.prompt } : {}),
+                ...(operation === "run"
+                  ? (() => {
+                      const row = [
+                        ...this.state.storage.sql.exec<{ data: string }>(
+                          "SELECT data FROM ui_state WHERE key=?",
+                          "media:" + run.requestId,
+                        ),
+                      ][0];
+                      return row
+                        ? {
+                            parts: [
+                              { type: "text", text: run.prompt },
+                              ...JSON.parse(row.data).filter(
+                                (p: CloudPromptPart) => p.type === "file",
+                              ),
+                            ],
+                          }
+                        : {};
+                    })()
+                  : {}),
+                events: true,
+                ...(operation === "run" && this.ui().options(topic).agent
+                  ? { agent: this.ui().options(topic).agent }
+                  : {}),
+                ...(operation === "run" && this.ui().options(topic).variant
+                  ? { variant: this.ui().options(topic).variant }
+                  : {}),
+                ...(pin
+                  ? {
+                      expectedRevision: pin.revision,
+                      model: {
+                        providerID: pin.model.slice(0, pin.model.indexOf("/")),
+                        modelID: pin.model.slice(pin.model.indexOf("/") + 1),
+                      },
+                    }
+                  : {}),
+              },
+              topic.sessionId,
+            );
 
         const status = await nodeRpc<{ state: string }>(
           await this.identity(topic.workerId),
@@ -1415,8 +1575,20 @@ export class ControlPlane {
             ",",
           )[0],
         );
+        if (status.state === "ACCEPTED")
+          this.state.storage.sql.exec(
+            "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+            dispatchKey,
+            JSON.stringify({
+              accepted: true,
+              nextPoll: Date.now() + 15000,
+              generation: topic.generation,
+              sessionId: topic.sessionId,
+              workerId: topic.workerId,
+            }),
+          );
         if (actor && status.state === "ACCEPTED") {
-          await this.ui().runKeyboard(topic, run.requestId, true);
+          await this.topicUi(topic).runKeyboard(topic, run.requestId, true);
           await this.ui().interactions(topic, actor);
         }
         if (!reply.accepted && !["INCOMPLETE", "SUBMITTED"].includes(status.state))
@@ -1444,7 +1616,7 @@ export class ControlPlane {
         }
         this.store.releaseLease(lease, owner);
         if (this.store.activeRuns(topic.chatId, topic.threadId).length)
-          await this.state.storage.setAlarm(Date.now() + 30_000);
+          await this.scheduleAlarm(Date.now() + 30_000);
       } catch (error) {
         if (error instanceof Error && error.message === "worker_operation_rejected") {
           try {
@@ -1466,7 +1638,7 @@ export class ControlPlane {
           }
         }
         this.store.releaseLease(lease, owner);
-        await this.state.storage.setAlarm(Date.now() + 15_000);
+        await this.scheduleAlarm(Date.now() + 15_000);
       }
     }
     for (const response of this.store.completedResponses()) {
@@ -1529,6 +1701,7 @@ export class ControlPlane {
               topic,
               response.run,
               parts[index]!.fallbackText,
+              preferences.messageFormatMode === "raw" ? undefined : parts[index]!,
             ))
           ) {
             // Finalize the already visible preview rather than duplicating the reply.
@@ -1546,7 +1719,7 @@ export class ControlPlane {
               ? "PENDING"
               : "RECONCILIATION_REQUIRED";
           this.state.storage.sql.exec("UPDATE outbox SET state=? WHERE id=?", state, id);
-          if (state === "PENDING") await this.state.storage.setAlarm(Date.now() + 30_000);
+          if (state === "PENDING") await this.scheduleAlarm(Date.now() + 30_000);
           else this.store.responseDelivered(response.run, state);
           complete = false;
           break;
@@ -1605,15 +1778,31 @@ export class ControlPlane {
               );
               if (state === "PENDING") {
                 complete = false;
-                await this.state.storage.setAlarm(Date.now() + 30000);
+                await this.scheduleAlarm(Date.now() + 30000);
               }
             }
           }
         }
       }
       if (complete) {
+        if (runCompleted && this.store.worker(topic.workerId)?.runtimeVersion) {
+          try {
+            const info = await nodeRpc(
+              await this.identity(topic.workerId),
+              "session.get",
+              {},
+              topic.sessionId,
+            );
+            new CloudTopicTitleUi(this.state.storage.sql, this.store, telegram).capture(topic, {
+              type: "session.updated",
+              properties: { info },
+            });
+          } catch {
+            /* Accepted signed title events remain the primary path. */
+          }
+        }
         this.store.responseDelivered(response.run);
-        await this.ui().runKeyboard(topic, response.run, false);
+        await this.topicUi(topic).runKeyboard(topic, response.run, false);
         // eslint-disable-next-line no-console
         console.log(
           JSON.stringify({
@@ -1623,9 +1812,17 @@ export class ControlPlane {
             runId: response.run,
           }),
         );
-        await this.state.storage.setAlarm(Date.now() + 1);
+        await this.scheduleAlarm(Date.now() + 1);
       }
     }
+    const titles = new CloudTopicTitleUi(
+      this.state.storage.sql,
+      this.store,
+      new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+    );
+    await titles.flush();
+    const nextTitle = titles.nextDue();
+    if (nextTitle !== undefined) await this.scheduleAlarm(nextTitle);
     const taskUi = new CloudTaskUi({
       sql: this.state.storage.sql,
       store: this.store,
@@ -1643,8 +1840,7 @@ export class ControlPlane {
     const nextTask = await taskUi.tick((topic, request, text) =>
       this.enqueuePrompt(topic.chatId, topic.threadId, topic.generation, request, text),
     );
-    if (nextTask !== undefined)
-      await this.state.storage.setAlarm(Math.min(nextTask, Date.now() + 60_000));
+    if (nextTask !== undefined) await this.scheduleAlarm(Math.min(nextTask, Date.now() + 60_000));
     const rows = [
       ...this.state.storage.sql.exec<{ id: number; data: string }>(
         "SELECT id,data FROM updates WHERE state='PENDING' ORDER BY id LIMIT 20",
@@ -1688,7 +1884,7 @@ export class ControlPlane {
               ) &&
             this.store.pendingTopic(chatId, threadId)
           ) {
-            await this.state.storage.setAlarm(Date.now() + 15_000);
+            await this.scheduleAlarm(Date.now() + 15_000);
             continue;
           }
           const topic = this.store
@@ -1730,34 +1926,43 @@ export class ControlPlane {
               "worker_unavailable",
             ].includes(error.message))
         ) {
-          await this.state.storage.setAlarm(Date.now() + 30_000);
+          await this.scheduleAlarm(Date.now() + 30_000);
           continue;
         }
         this.state.storage.sql.exec("UPDATE updates SET state='FAILED' WHERE id=?", row.id);
         if (chatId)
           try {
-            await telegram.send(
-              chatId,
+            const messageThread =
               update.message?.message_thread_id ??
-                update.callback_query?.message?.message_thread_id,
-              error instanceof Error &&
-                ["capacity_exhausted", "project_capacity_exhausted"].includes(error.message)
-                ? en["new.capacity_exhausted"]
-                : error instanceof Error && error.message === "execution_active"
-                  ? "Stop the current run before changing this setting."
-                  : error instanceof Error && error.message === "interaction_expired"
-                    ? "This question or permission request has expired."
-                    : error instanceof Error && error.message === "model_unavailable"
-                      ? "This model is unavailable. Select a connected provider/model."
-                      : error instanceof Error &&
-                          error.message === "provider_credential_binding_missing"
-                        ? "Connect this provider in Settings → Providers before using the model."
-                        : error instanceof Error && error.message === "stale_generation"
-                          ? "This Topic or menu has expired. Open the current menu again."
-                          : error instanceof Error && error.message === "media_too_large"
-                            ? "This attachment is too large for the current transport (256 KiB). Send a smaller file."
-                            : "The operation could not be completed. Reopen its menu and try again.",
-            );
+              update.callback_query?.message?.message_thread_id ??
+              0;
+            const thread = messageThread > 1 ? messageThread : 0;
+            const generation =
+              this.store
+                .topics()
+                .find((t) => t.chatId === chatId && t.threadId === thread && t.state === "ACTIVE")
+                ?.generation ?? 0;
+            await this.ui()
+              .forPanel(actor, chatId, thread, generation)
+              .showError(
+                error instanceof Error &&
+                  ["capacity_exhausted", "project_capacity_exhausted"].includes(error.message)
+                  ? en["new.capacity_exhausted"]
+                  : error instanceof Error && error.message === "execution_active"
+                    ? "Stop the current run before changing this setting."
+                    : error instanceof Error && error.message === "interaction_expired"
+                      ? "This question or permission request has expired."
+                      : error instanceof Error && error.message === "model_unavailable"
+                        ? "This model is unavailable. Select a connected provider/model."
+                        : error instanceof Error &&
+                            error.message === "provider_credential_binding_missing"
+                          ? "Connect this provider in Settings → Providers before using the model."
+                          : error instanceof Error && error.message === "stale_generation"
+                            ? "This Topic or menu has expired. Open the current menu again."
+                            : error instanceof Error && error.message === "media_too_large"
+                              ? "This attachment is too large for the current transport (256 KiB). Send a smaller file."
+                              : "The operation could not be completed. Reopen its menu and try again.",
+              );
           } catch {
             /* Persisted failure is available to authenticated reconciliation. */
           }
@@ -1767,6 +1972,6 @@ export class ControlPlane {
       [...this.state.storage.sql.exec("SELECT id FROM updates WHERE state='PENDING' LIMIT 1")]
         .length
     )
-      await this.state.storage.setAlarm(Date.now() + 30_000);
+      await this.scheduleAlarm(Date.now() + 30_000);
   }
 }

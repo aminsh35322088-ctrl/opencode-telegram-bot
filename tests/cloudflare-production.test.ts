@@ -22,6 +22,7 @@ function fixture() {
     }
   };
   const queued: unknown[] = [];
+  let alarmAt: number | null = null;
   const env = {
     TELEGRAM_BOT_TOKEN: "synthetic-telegram",
     RAILWAY_API_TOKEN: "synthetic-provisioning-secret",
@@ -40,10 +41,19 @@ function fixture() {
     },
   };
   const plane = new ControlPlane(
-    { storage: { sql, transactionSync: tx, setAlarm: async () => {} } } as never,
+    {
+      storage: {
+        sql,
+        transactionSync: tx,
+        getAlarm: async () => alarmAt,
+        setAlarm: async (value: number) => {
+          alarmAt = value;
+        },
+      },
+    } as never,
     env as never,
   );
-  return { plane, sql, queued, store: new ControlStore(sql, tx) };
+  return { plane, sql, queued, getAlarm: () => alarmAt, store: new ControlStore(sql, tx) };
 }
 const post = (plane: ControlPlane, path: string, body: unknown = {}) =>
   plane.fetch(
@@ -111,7 +121,10 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
   let keyboardCalls = 0;
   globalThis.fetch = async (input, init) => {
     const payload = JSON.parse(String(init?.body));
-    if (String(input).endsWith("/sendMessage") && payload.reply_markup?.keyboard) {
+    if (
+      (String(input).endsWith("/sendMessage") || String(input).endsWith("/editMessageText")) &&
+      (payload.reply_markup?.keyboard || payload.reply_markup?.inline_keyboard)
+    ) {
       keyboardCalls++;
       return Response.json({ ok: true, result: { message_id: 100 } });
     }
@@ -319,7 +332,11 @@ test("changing global configuration does not unlock an already admitted run", as
     credentialReferences: [],
   });
   await f.plane.alarm();
-  assert.deepEqual(expectedRevisions, [1, 1]);
+  // Accepted turns remain pinned without being submitted again for each stream wake.
+  assert.deepEqual(expectedRevisions, [1]);
+  assert.equal(f.store.runPin("pin-active")?.revision, 1);
+  assert.equal(f.store.runPin("pin-active")?.model, "opencode/big-pickle");
+  assert.equal(f.store.runPin("pin-active")?.dispatched, 1);
   assert.equal(f.store.activeRuns(-100, 42).length, 1);
 });
 
@@ -485,4 +502,127 @@ test("Telegram prompts require the same verified model and revision admission as
       );
     globalThis.fetch = original;
   }
+});
+
+test("Core compaction dispatch shares Topic queue and signed callback fencing without prompt fields", async (t) => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("compact-dispatch", -100, 42),
+    secret = "c".repeat(64);
+  f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+  f.store.ready(
+    job.workerId,
+    1,
+    await encryptCredential(btoa("k".repeat(32)), "node:" + job.workerId + ":1", secret),
+  );
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.saveObservation(job.workerId, 1, { runtimeVersion: "1.18.33-bot.13-pre.25" });
+  f.store.enqueueVerified(
+    -100,
+    42,
+    "compact-run",
+    "Context compaction",
+    1,
+    1,
+    "opencode/big-pickle",
+    "session.compact",
+  );
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const received: any[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("api.telegram.org"))
+      return Response.json({ ok: true, result: { message_id: 1 } });
+    const envelope = JSON.parse(String(init?.body));
+    received.push(envelope);
+    const result =
+      envelope.operation === "session.compact"
+        ? { accepted: true }
+        : envelope.operation === "callback.status"
+          ? { state: "ACCEPTED" }
+          : [];
+    const signed = await signEnvelope(
+      {
+        ...envelope,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: { ok: true, result },
+      },
+      secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await f.plane.alarm();
+  const compact = received.find((e) => e.operation === "session.compact");
+  assert.ok(compact);
+  assert.equal(compact.sessionId, "session");
+  assert.equal(compact.generation, 1);
+  assert.deepEqual(compact.payload, {
+    runId: "compact-run",
+    events: true,
+    expectedRevision: 1,
+    model: { providerID: "opencode", modelID: "big-pickle" },
+  });
+  assert.equal(
+    received.some((e) => e.operation === "run"),
+    false,
+  );
+  assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "compact-run");
+});
+
+test("stream wake alarm cannot be postponed by a slower status retry", async () => {
+  const f = fixture();
+  const schedule = (
+    f.plane as unknown as { scheduleAlarm: (at: number) => Promise<void> }
+  ).scheduleAlarm.bind(f.plane);
+  const soon = Date.now() + 1,
+    later = Date.now() + 30000;
+  await Promise.all([schedule(soon), schedule(later), schedule(later + 15000)]);
+  assert.equal(f.getAlarm(), soon);
+});
+
+test("accepted streamed run is not resubmitted or status-polled on every token alarm", async (t) => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("fast-stream", -100, 42),
+    secret = "s".repeat(64);
+  f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+  f.store.ready(
+    job.workerId,
+    1,
+    await encryptCredential(btoa("k".repeat(32)), "node:" + job.workerId + ":1", secret),
+  );
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueueVerified(-100, 42, "fast-stream-run", "prompt", 1, 1, "opencode/big-pickle");
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const operations: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("api.telegram.org"))
+      return Response.json({ ok: true, result: { message_id: 1 } });
+    const e = JSON.parse(String(init?.body));
+    operations.push(e.operation);
+    const result =
+      e.operation === "run"
+        ? { accepted: true }
+        : e.operation === "callback.status"
+          ? { state: "ACCEPTED" }
+          : [];
+    const signed = await signEnvelope(
+      { ...e, nonce: crypto.randomUUID(), timestamp: Date.now(), payload: { ok: true, result } },
+      secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await f.plane.alarm();
+  const count = operations.length;
+  await f.plane.alarm();
+  await f.plane.alarm();
+  assert.equal(operations.length, count);
+  assert.equal(operations.filter((o) => o === "run").length, 1);
+  assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "fast-stream-run");
 });

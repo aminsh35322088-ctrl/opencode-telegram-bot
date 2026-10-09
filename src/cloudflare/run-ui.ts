@@ -4,6 +4,7 @@ import {
   formatDuration,
   TOOL_ELAPSED_THRESHOLD_MS,
 } from "../app/formatters/duration-formatter.js";
+import type { renderTelegramParts } from "../bot/render/pipeline.js";
 import type { FleetTopic, SqlDatabase } from "./control-store.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 interface Preview {
@@ -109,7 +110,7 @@ export class CloudRunUi {
       showThinkingContent?: boolean;
       responseStreamingMode?: string;
     },
-  ): Promise<void> {
+  ): Promise<number | undefined> {
     if (options.responseStreamingMode === "off" || !this.writable(topic, run, false)) return;
     const state = this.get(run);
     if (state.finalized || ["SENDING", "RECONCILIATION_REQUIRED"].includes(state.delivery ?? ""))
@@ -156,19 +157,20 @@ export class CloudRunUi {
       .filter(Boolean)
       .join("\n\n")
       .slice(0, 3900);
-    if (state.retryAt !== undefined && this.now() < state.retryAt) return;
+    if (state.retryAt !== undefined && this.now() < state.retryAt) return state.retryAt;
     const refresh =
       state.mode === "draft" && state.at !== undefined && this.now() - state.at >= 20_000;
-    if (
-      !preview ||
-      (preview === state.last && !refresh) ||
-      (state.at !== undefined && this.now() - state.at < 1500)
-    )
-      return;
+    if (!preview || (preview === state.last && !refresh)) return;
+    if (state.at !== undefined && this.now() - state.at < 1500) return state.at + 1500;
     if (state.mode === "draft") await this.draft(topic, run, state, preview);
     else await this.deliver(topic, run, state, preview);
   }
-  async finish(topic: FleetTopic, run: string, text: string): Promise<boolean> {
+  async finish(
+    topic: FleetTopic,
+    run: string,
+    text: string,
+    part?: ReturnType<typeof renderTelegramParts>[number],
+  ): Promise<boolean> {
     const state = this.get(run);
     if (!this.writable(topic, run, true, !state.mode && !state.message))
       throw new Error("run_ui_fenced");
@@ -176,7 +178,8 @@ export class CloudRunUi {
     if (!state.message && ["SENDING", "RECONCILIATION_REQUIRED"].includes(state.delivery ?? ""))
       throw new TelegramDeliveryError("ambiguous");
     if (!state.message && state.mode !== "draft") return false;
-    if (!state.message || state.last !== text) await this.deliver(topic, run, state, text);
+    if (!state.message || state.last !== text || part)
+      await this.deliver(topic, run, state, text, part);
     state.finalized = true;
     this.save(run, state);
     return true;
@@ -250,19 +253,26 @@ export class CloudRunUi {
     run: string,
     state: Preview,
     text: string,
+    part?: ReturnType<typeof renderTelegramParts>[number],
   ): Promise<void> {
     const editing = !!state.message;
     state.delivery = "SENDING";
     this.save(run, state);
     try {
-      const result = await this.telegram.call<{ message_id: number }>(
-        editing ? "editMessageText" : "sendMessage",
-        {
-          chat_id: topic.chatId,
-          ...(editing ? { message_id: state.message } : { message_thread_id: topic.threadId }),
-          text,
-        },
-      );
+      const result = part
+        ? {
+            message_id: editing
+              ? await this.telegram.editPart(topic.chatId, state.message!, part)
+              : await this.telegram.sendPart(topic.chatId, topic.threadId, part),
+          }
+        : await this.telegram.call<{ message_id: number }>(
+            editing ? "editMessageText" : "sendMessage",
+            {
+              chat_id: topic.chatId,
+              ...(editing ? { message_id: state.message } : { message_thread_id: topic.threadId }),
+              text,
+            },
+          );
       if (!editing) state.message = result.message_id;
       state.delivery = "DELIVERED";
       state.retryAt = undefined;

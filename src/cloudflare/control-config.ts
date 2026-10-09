@@ -8,7 +8,7 @@ export const CONTROL_DEFAULTS = Object.freeze({
   PROVISION_ON_TOPIC_CREATE: "true",
   PROVISIONING_ENABLED: "true",
   WORKER_IMAGE:
-    "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:6faae202026012b61db18073044fed2e441a277875d72ecc23bdfd484b7511c6",
-  WORKER_CORE_COMMIT: "56106d84f1c5b8c050241141d938fe1f185dc94f",
-  WORKER_CORE_VERSION: "1.18.33-bot.13-pre.24",
+    "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:08fa4da80d7760cf68f10c677fbcad710ce51d49c19521a36ef243899839745b",
+  WORKER_CORE_COMMIT: "aae8935114a8a05e7d6ec57c9c1e35dd6065511e",
+  WORKER_CORE_VERSION: "1.18.33-bot.13-pre.25",
 });
