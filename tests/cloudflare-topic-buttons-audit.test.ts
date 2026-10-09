@@ -257,28 +257,52 @@ test("ReplyKeyboard controls are deleted, Compact has a meaningful acknowledgeme
 });
 
 
-test("ReplyKeyboard cleanup never delays the first Model Center render", async (t) => {
+test("ReplyKeyboard control is deleted before Model Center is dispatched", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
   const modelButton = latestReplyButton(f, "🧠").text;
+  f.sent.length = 0;
   const release = f.holdNextDelete();
   const pending = f.update(modelButton, 42);
-  try {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.ok(
-      f.sent.some(
-        (entry) =>
-          entry.method === "sendMessage" &&
-          entry.payload.reply_markup?.inline_keyboard &&
-          /MODEL CENTER/i.test(String(entry.payload.text)),
-      ),
-      "Model Center should render before ReplyKeyboard text cleanup completes",
-    );
-  } finally {
-    release();
-    await pending.catch(() => undefined);
-    await f.drainBackground();
-  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const renderedBeforeCleanup = f.sent.some(
+    (entry) =>
+      entry.method === "sendMessage" &&
+      entry.payload.reply_markup?.inline_keyboard &&
+      /MODEL CENTER/i.test(String(entry.payload.text)),
+  );
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 2));
+  release();
+  await pending;
+  await f.drainBackground();
+  assert.equal(
+    renderedBeforeCleanup,
+    false,
+    "Model Center must wait until the consumed ReplyKeyboard message is deleted",
+  );
+  assert.ok(
+    f.sent.some(
+      (entry) =>
+        entry.method === "sendMessage" &&
+        entry.payload.reply_markup?.inline_keyboard &&
+        /MODEL CENTER/i.test(String(entry.payload.text)),
+    ),
+    "Model Center should render immediately after control-message cleanup completes",
+  );
+});
+
+test("ReplyKeyboard dispatch continues when Telegram refuses control-message deletion", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  const modelButton = latestReplyButton(f, "🧠").text;
+  f.sent.length = 0;
+  f.rejectNextDeletes();
+  await f.update(modelButton, 42);
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage"));
+  assert.match(
+    String(f.sent.find((entry) => entry.payload.reply_markup?.inline_keyboard)?.payload.text ?? ""),
+    /MODEL CENTER/i,
+  );
 });
 
 test("recognized dynamic Topic controls are deleted even when ReplyKeyboard history is missing", async (t) => {

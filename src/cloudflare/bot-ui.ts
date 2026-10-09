@@ -615,62 +615,26 @@ export class CloudBotUi {
         this.deps.waitUntil(this.retryOwnedPanelMessages(scope.chat, pending));
     } else this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", ownedKey);
   }
-  private controlCleanupPrefix(): string | undefined {
+  private async consumeReplyKeyboardMessage(messageId: number): Promise<void> {
     const scope = this.panelScope;
-    return scope
-      ? `reply-control-cleanup:${scope.actor}:${scope.chat}:${scope.thread}:${scope.generation}:`
-      : undefined;
-  }
-  private async flushReplyControlCleanup(): Promise<void> {
-    const scope = this.panelScope;
-    const prefix = this.controlCleanupPrefix();
-    if (!scope || !prefix) return;
-    const rows = [
-      ...this.deps.sql.exec<{ key: string; data: string }>(
-        "SELECT key,data FROM ui_state WHERE key GLOB ? ORDER BY rowid LIMIT 32",
-        prefix + "*",
-      ),
-    ];
-    for (const row of rows) {
-      const data = JSON.parse(row.data) as { messageId?: number; attempts?: number };
-      if (!Number.isSafeInteger(data.messageId) || !data.messageId) {
-        this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", row.key);
-        continue;
-      }
-      try {
-        await this.deps.telegram.call("deleteMessage", {
-          chat_id: scope.chat,
-          message_id: data.messageId,
-        });
-        this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", row.key);
-      } catch (error) {
-        if (error instanceof TelegramDeliveryError && error.reason === "message_not_found") {
-          this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", row.key);
-          continue;
-        }
-        const attempts = (data.attempts ?? 0) + 1;
-        this.set(row.key, { messageId: data.messageId, attempts });
-        // eslint-disable-next-line no-console
-        console.warn(
-          JSON.stringify({
-            event: "telegram_reply_control_cleanup_pending",
-            category: error instanceof TelegramDeliveryError ? error.category : "unknown",
-            attempts,
-          }),
-        );
-      }
+    if (!scope || !Number.isSafeInteger(messageId) || messageId < 1) return;
+    try {
+      await this.deps.telegram.call("deleteMessage", {
+        chat_id: scope.chat,
+        message_id: messageId,
+      });
+    } catch (error) {
+      if (error instanceof TelegramDeliveryError && error.reason === "message_not_found") return;
+      // Match the long-standing grammY behavior: deletion is best-effort, but
+      // dispatch continues after Telegram answers so a control never becomes a prompt.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "telegram_reply_control_delete_failed",
+          category: error instanceof TelegramDeliveryError ? error.category : "unknown",
+        }),
+      );
     }
-  }
-  private async scheduleReplyControlCleanup(messageId: number): Promise<void> {
-    const prefix = this.controlCleanupPrefix();
-    if (!prefix || !Number.isSafeInteger(messageId) || messageId < 1) return;
-    this.set(prefix + messageId, { messageId, attempts: 0 });
-    const cleanup = this.flushReplyControlCleanup();
-    if (this.deps.waitUntil) {
-      this.deps.waitUntil(cleanup);
-      return;
-    }
-    await cleanup;
   }
   async showError(text: string): Promise<void> {
     if (!this.panelScope) throw new Error("panel_scope_required");
@@ -1600,12 +1564,12 @@ export class CloudBotUi {
         if (label.startsWith("🧠 ")) action = { action: "models" };
         else {
           if (update.message?.message_id)
-            await this.scheduleReplyControlCleanup(update.message.message_id);
+            await this.consumeReplyKeyboardMessage(update.message.message_id);
           return true;
         }
       }
       if (replyControl && update.message?.message_id)
-        await this.scheduleReplyControlCleanup(update.message.message_id);
+        await this.consumeReplyKeyboardMessage(update.message.message_id);
       if (!action && text.startsWith("/")) {
         const match = /^\/([a-z_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/.exec(text);
         action = { action: match?.[1] ?? "unknown", value: match?.[2] };
