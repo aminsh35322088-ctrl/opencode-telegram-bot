@@ -18,6 +18,32 @@ const object = (value: unknown): Record<string, unknown> =>
 const scope = (topic: FleetTopic): string =>
   `${topic.chatId}:${topic.threadId}:${topic.generation}`;
 
+const cleanPromptTitle = (prompt: string): string | undefined => {
+  let text = prompt
+    .replace(/```[\s\S]*?```/gu, " ")
+    .replace(/https?:\/\/\S+/gu, " ")
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!text || text.startsWith("/") || text === "Please inspect the attached file.") return undefined;
+  text = text.replace(/^(?:لطفاً|لطفا)\s+/u, "").trim();
+
+  const about = /^(?:می(?:‌| )?خوام\s+)?(?:درباره(?:\s*ی|‌ی)?|در مورد|راجع به)\s+(.+)$/u.exec(text);
+  if (about) {
+    const subject = about[1]!
+      .replace(/[؟?!.,،]+$/u, "")
+      .replace(/\s+(?:تحقیق|بررسی|توضیح|صحبت)(?:\s+(?:کن|کنیم|کنید|بکن|بکنیم))?$/u, "")
+      .trim();
+    if (subject) text = "بررسی " + subject;
+  }
+
+  const firstSentence = text.split(/[\n.!?؟]/u, 1)[0]!.trim();
+  const words = firstSentence.split(/\s+/u).filter(Boolean);
+  const concise = words.length > 10 ? words.slice(0, 10).join(" ") : firstSentence;
+  const title = [...concise].slice(0, 128).join("").trim();
+  return title || undefined;
+};
+
 /** Telegram presentation of Core-owned titles from already authenticated, admitted events. */
 export class CloudTopicTitleUi {
   constructor(
@@ -72,6 +98,31 @@ export class CloudTopicTitleUi {
     );
   }
 
+  private queue(topic: FleetTopic, title: string): boolean {
+    const key = "title-ui:" + scope(topic),
+      previous = this.get<TitleState>(key);
+    if (previous?.title === title) return false;
+    this.save(key, {
+      topic,
+      title,
+      revision: (previous?.revision ?? 0) + 1,
+      status: "pending",
+      attempts: 0,
+      retryAt: this.now(),
+      ...(previous?.applied ? { applied: previous.applied } : {}),
+    } satisfies TitleState);
+    return true;
+  }
+
+  capturePrompt(topic: FleetTopic, prompt: string): boolean {
+    if (!this.live(topic) || this.manual(topic)) return false;
+    const current = this.options(topic).title;
+    if (typeof current === "string" && current.trim() && !/^#[1-9]\d*$/.test(current.trim()))
+      return false;
+    const title = cleanPromptTitle(prompt);
+    return title ? this.queue(topic, title) : false;
+  }
+
   capture(topic: FleetTopic, event: unknown): boolean {
     const e = object(event),
       info = object(object(e.properties).info);
@@ -92,19 +143,7 @@ export class CloudTopicTitleUi {
     if (!cleaned || /^(?:New|Child) session(?:$|\s+-\s+\d{4}-\d{2}-\d{2}T)/u.test(cleaned))
       return false;
     const title = [...cleaned].slice(0, 128).join("").trim();
-    const key = "title-ui:" + scope(topic),
-      previous = this.get<TitleState>(key);
-    if (previous?.title === title) return false;
-    this.save(key, {
-      topic,
-      title,
-      revision: (previous?.revision ?? 0) + 1,
-      status: "pending",
-      attempts: 0,
-      retryAt: this.now(),
-      ...(previous?.applied ? { applied: previous.applied } : {}),
-    } satisfies TitleState);
-    return true;
+    return this.queue(topic, title);
   }
 
   /** Lets the control plane schedule persisted retries even after the run has completed. */

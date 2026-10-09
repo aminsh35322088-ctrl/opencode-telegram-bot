@@ -188,6 +188,31 @@ function assertScopedTopicMarkup(f: ReturnType<typeof fixture>) {
   assert.ok(activeCallbacks.every((row) => row.thread === 42));
 }
 
+test("ReplyKeyboard controls are deleted, Compact has a meaningful acknowledgement, and Model Center opens without catalog RPC", async (t) => {
+  const f = fixture(t);
+  await f.update("/keyboard", 42);
+  const compact = latestReplyButton(f, "Compact: OFF").text;
+  f.sent.length = 0;
+  await f.update(compact, 42);
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 2));
+  const compactAck = f.sent.filter((entry) => entry.payload.reply_markup?.keyboard).at(-1);
+  assert.ok(compactAck);
+  assert.match(String(compactAck.payload.text), /Compact mode is ON/i);
+  assert.notEqual(compactAck.payload.text, "OpenCode");
+
+  const modelButton = compactAck.payload.reply_markup.keyboard
+    .flat()
+    .find((button: any) => String(button.text).includes("🧠"))?.text;
+  assert.ok(modelButton);
+  f.sent.length = 0;
+  f.rpc.length = 0;
+  f.db.prepare("DELETE FROM ui_state WHERE key='legacy:model:catalog'").run();
+  await f.update(modelButton, 42);
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 3));
+  assert.equal(f.rpc.includes("models.list"), false);
+  assert.match(String(f.sent.find((entry) => entry.payload.reply_markup?.inline_keyboard)?.payload.text ?? ""), /MODEL CENTER/i);
+});
+
 test("every idle Topic ReplyKeyboard control routes to its own scoped behavior", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
@@ -294,9 +319,13 @@ test("Model Center selection refreshes the Topic ReplyKeyboard with the newly se
   await f.update(originalModelButton, 42);
   await f.callback(latestInlineButton(f, "Browse providers").callback_data, 42);
   await f.callback(latestInlineButton(f, "opencode").callback_data, 42);
+  const panelId = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(panelId);
   await f.callback(latestInlineButton(f, "Other").callback_data, 42);
   const updated = latestReplyButton(f, "🧠").text;
   assert.notEqual(updated, originalModelButton);
   assert.match(updated, /Other|other/i);
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === panelId));
+  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, undefined);
   assert.equal(f.store.activeRuns(-100, 42).length, 0);
 });

@@ -328,10 +328,9 @@ test("cancel clears the durable input form", async (t) => {
   await f.update("/cancel", 42);
   await f.update("normal prompt", 42);
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 1);
-  assert.equal(
-    f.sent.some((x) => x.method === "editForumTopic"),
-    false,
-  );
+  const titleEdit = f.sent.find((x) => x.method === "editForumTopic");
+  assert.ok(titleEdit);
+  assert.equal(titleEdit.payload.name, "normal prompt");
 });
 
 test("rename answer remains a control after an acknowledgement rate limit", async (t) => {

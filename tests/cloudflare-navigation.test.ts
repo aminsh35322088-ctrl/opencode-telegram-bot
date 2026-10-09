@@ -552,10 +552,7 @@ test("fresh Topic Settings invocation retires the old panel while callback navig
   assert.notEqual(second, first);
   assert.ok(
     f.sent.some(
-      (entry) =>
-        entry.method === "editMessageReplyMarkup" &&
-        entry.payload.message_id === first &&
-        entry.payload.reply_markup?.inline_keyboard?.length === 0,
+      (entry) => entry.method === "deleteMessage" && entry.payload.message_id === first,
     ),
   );
   buttons = f.sent.at(-1)!.payload.reply_markup?.inline_keyboard?.flat() ?? [];

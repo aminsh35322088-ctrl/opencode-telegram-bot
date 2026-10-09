@@ -1172,6 +1172,18 @@ export class ControlPlane {
       );
     const split = selected.indexOf("/");
     if (split < 1) throw new Error("model_not_configured");
+    if (operation === "run") {
+      const titles = new CloudTopicTitleUi(
+        this.state.storage.sql,
+        this.store,
+        new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+      );
+      if (titles.capturePrompt(topic, text)) {
+        await titles.flush();
+        const nextTitle = titles.nextDue();
+        if (nextTitle !== undefined) await this.scheduleAlarm(nextTitle);
+      }
+    }
     const worker = this.store.worker(topic.workerId);
     if (worker?.runtimeVersion) {
       const health = await nodeRpc<{ ready: boolean }>(

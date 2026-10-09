@@ -606,18 +606,23 @@ export class ControlStore {
       const job = this.job(jobId);
       if (!job) throw new Error("unknown_job");
       if (job.topicTitle) return job.topicTitle;
-      const key = "topic-number:" + job.chatId;
-      const row = [
-        ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
-      ][0];
-      const previous = row ? Number(JSON.parse(row.data)) : 0;
-      if (!Number.isSafeInteger(previous) || previous < 0) throw new Error("invalid_topic_number");
-      const next = previous + 1;
-      this.sql.exec(
-        "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-        key,
-        JSON.stringify(next),
-      );
+
+      // A Topic keeps its numeric slot while its Worker exists, even after the
+      // visible title is later replaced by a conversation-derived title. Once
+      // destruction is confirmed (REPLACED), the gap is deliberately reusable.
+      const used = new Set<number>();
+      for (const candidate of this.jobs()) {
+        if (candidate.chatId !== job.chatId || candidate.jobId === job.jobId) continue;
+        const match = /^#([1-9]\d*)$/.exec(candidate.topicTitle ?? "");
+        if (!match) continue;
+        const worker = this.worker(candidate.workerId);
+        if (!worker || worker.state === "REPLACED") continue;
+        const number = Number(match[1]);
+        if (Number.isSafeInteger(number)) used.add(number);
+      }
+      let next = 1;
+      while (used.has(next)) next++;
+      if (!Number.isSafeInteger(next)) throw new Error("topic_number_exhausted");
       job.topicTitle = "#" + next;
       this.saveJob(job);
       return job.topicTitle;

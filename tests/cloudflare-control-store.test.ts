@@ -407,14 +407,32 @@ test("compaction is durably queued as a distinct operation without bypassing Top
   assert.equal(f.store.runOperation("first"), "run");
 });
 
-test("Topic titles are sequential, durable and stable across duplicate allocation retries", () => {
+test("Topic titles use the smallest free positive slot, stay durable, and never duplicate live Topics", () => {
   const f = fixture();
   backend(f.store);
-  const first = f.store.reserveAllocation("first", -100);
-  assert.equal(f.store.reserveTopicTitle(first.jobId), "#1");
-  assert.equal(f.restart().reserveTopicTitle(first.jobId), "#1");
-  const second = f.store.reserveAllocation("second", -100);
-  assert.equal(f.store.reserveTopicTitle(second.jobId), "#2");
-  const otherChat = f.store.reserveAllocation("first", -200);
+  const jobs = Array.from({ length: 5 }, (_, index) => {
+    const job = f.store.reserveAllocation(`topic-${index + 1}`, -100);
+    assert.equal(f.store.reserveTopicTitle(job.jobId), `#${index + 1}`);
+    f.store.ready(job.workerId, job.generation, "synthetic");
+    f.store.bindTopic(job.jobId, 42 + index, `session-${index + 1}`);
+    return job;
+  });
+  assert.equal(f.restart().reserveTopicTitle(jobs[2]!.jobId), "#3");
+
+  for (const index of [0, 1, 3]) {
+    const topic = f.store.topics().find((item) => item.workerId === jobs[index]!.workerId)!;
+    const worker = f.store.fenceTopic(topic.chatId, topic.threadId);
+    f.store.transition(worker.workerId, worker.generation, "DELETING");
+    f.store.confirmDestroyed(worker.workerId, worker.generation);
+  }
+
+  const firstGap = f.store.reserveAllocation("gap-1", -100);
+  assert.equal(f.store.reserveTopicTitle(firstGap.jobId), "#1");
+  const secondGap = f.store.reserveAllocation("gap-2", -100);
+  assert.equal(f.store.reserveTopicTitle(secondGap.jobId), "#2");
+  const thirdGap = f.store.reserveAllocation("gap-3", -100);
+  assert.equal(f.store.reserveTopicTitle(thirdGap.jobId), "#4");
+
+  const otherChat = f.store.reserveAllocation("other-chat", -200);
   assert.equal(f.store.reserveTopicTitle(otherChat.jobId), "#1");
 });

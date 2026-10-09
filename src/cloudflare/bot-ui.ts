@@ -528,17 +528,22 @@ export class CloudBotUi {
     this.clearPanelCallbacks(current);
     if (current.messageId) {
       try {
-        await this.deps.telegram.call("editMessageReplyMarkup", {
+        await this.deps.telegram.call("deleteMessage", {
           chat_id: scope.chat,
           message_id: current.messageId,
-          reply_markup: { inline_keyboard: [] },
         });
       } catch (error) {
-        if (
-          !(error instanceof TelegramDeliveryError) ||
-          !["message_not_found", "message_not_editable"].includes(error.reason ?? "")
-        )
-          throw error;
+        if (error instanceof TelegramDeliveryError && error.reason === "message_not_found") {
+          // Already retired remotely.
+        } else if (error instanceof TelegramDeliveryError && error.category === "rejected") {
+          await this.deps.telegram
+            .call("editMessageReplyMarkup", {
+              chat_id: scope.chat,
+              message_id: current.messageId,
+              reply_markup: { inline_keyboard: [] },
+            })
+            .catch(() => undefined);
+        } else throw error;
       }
     }
     this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", key);
@@ -808,7 +813,9 @@ export class CloudBotUi {
         .map((button) => normalized(typeof button === "string" ? button : button.text))
         .filter(Boolean);
       const controls = Array.from(new Set([...currentControls, ...(previous?.controls ?? [])])).slice(0, 32);
-      const signature = JSON.stringify({ text, replyMarkup });
+      // Keyboard identity is the markup itself. Status/acknowledgement text must
+      // not force a duplicate keyboard message after restart or /keyboard.
+      const signature = JSON.stringify(replyMarkup);
       if (previous?.signature === signature) return;
       const sent = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
         chat_id: chat,
@@ -1458,6 +1465,17 @@ export class CloudBotUi {
             ),
           )
         : "";
+      const renderedControls = topic
+        ? (this.get<{ controls?: string[] }>(
+            `reply-keyboard:${actor}:${chat}:${thread}:${topic.generation}`,
+          )?.controls ?? [])
+        : [];
+      const renderedControl = renderedControls.includes(label);
+      if (topic && renderedControl && update.message?.message_id)
+        await this.deps.telegram
+          .call("deleteMessage", { chat_id: chat, message_id: update.message.message_id })
+          .catch(() => undefined);
+
       const labels: Record<string, string> = {
         [normalized(MAIN_BUTTONS.newChat)]: "new",
         [normalized(MAIN_BUTTONS.history)]: "history",
@@ -1475,16 +1493,12 @@ export class CloudBotUi {
         "❌ Cancel": "close",
       };
       if (labels[label]) action = { action: labels[label]! };
-      else if (topic) {
-        const stateKey = `reply-keyboard:${actor}:${chat}:${thread}:${topic.generation}`;
-        const rendered = this.get<{ controls?: string[] }>(stateKey)?.controls ?? [];
-        if (rendered.includes(label)) {
-          // A Telegram KeyboardButton press is an ordinary text message. Exact
-          // rendered-control history is the only dynamic authority here so a
-          // stale button can never fall through as a model prompt.
-          if (label.startsWith("🧠 ")) action = { action: "models" };
-          else return true;
-        }
+      else if (topic && renderedControl) {
+        // A Telegram KeyboardButton press is an ordinary text message. Exact
+        // rendered-control history is the only dynamic authority here so a
+        // stale button can never fall through as a model prompt.
+        if (label.startsWith("🧠 ")) action = { action: "models" };
+        else return true;
       }
       if (!action && text.startsWith("/")) {
         const match = /^\/([a-z_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/.exec(text);
@@ -1858,11 +1872,10 @@ export class CloudBotUi {
       return true;
     }
     if (name === "compact") {
-      this.setOptions(topic!, {
-        compact: !(this.options(topic!).compact ?? this.options(topic!).compactOutputMode),
-      });
+      const compact = !(this.options(topic!).compact ?? this.options(topic!).compactOutputMode);
+      this.setOptions(topic!, { compact });
       this.set("action_done:" + updateId, true);
-      await this.keyboard(chat, topic);
+      await this.keyboard(chat, topic, `✅ Compact mode is ${compact ? "ON" : "OFF"}.`);
       return true;
     }
     if (["pause", "resume", "abort", "stop"].includes(name)) {
@@ -2873,9 +2886,6 @@ export class CloudBotUi {
       return true;
     }
     if (name === "models" || name === "model") {
-      const models = this.legacyModels();
-      const scope = this.modelScope(topic);
-      if (topic) await models.providers(scope);
       await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }
@@ -3045,11 +3055,19 @@ export class CloudBotUi {
         );
       }
       if (updateId) this.set("action_done:" + updateId, true);
-      await this.notice(
-        chat,
-        thread || undefined,
-        "✅ Media model saved. Capability and credentials are checked before execution.",
-      );
+      if (topic) {
+        await this.closeCurrentPanel();
+        await this.keyboard(
+          chat,
+          topic,
+          `✅ ${name === "config_image_model" ? "Image" : "Audio"} model updated.`,
+        );
+      } else
+        await this.notice(
+          chat,
+          thread || undefined,
+          "✅ Media model saved. Capability and credentials are checked before execution.",
+        );
       return true;
     }
     if (name === "model_edit" || name === "agent" || name === "variant") {
@@ -3082,8 +3100,14 @@ export class CloudBotUi {
         modelID: selected.slice(split + 1),
       });
       if (updateId) this.set("action_done:" + updateId, true);
-      if (topic) await this.keyboard(chat, topic, "✅ Model updated");
-      await this.renderModelRoot(actor, chat, thread, topic);
+      if (topic) {
+        await this.closeCurrentPanel();
+        await this.keyboard(
+          chat,
+          topic,
+          `✅ Model updated to ${selected.slice(split + 1)}.`,
+        );
+      } else await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }
     if (name === "agent_save" || name === "variant_save") {
