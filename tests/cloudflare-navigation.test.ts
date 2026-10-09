@@ -23,6 +23,19 @@ function fixture() {
   const job = store.reserveTopicAllocation("topic", -100, 42);
   store.ready(job.workerId, 1, "synthetic");
   store.bindTopic(job.jobId, 42, "session");
+  sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "legacy:model:catalog",
+    JSON.stringify({
+      at: Date.now(),
+      providers: [
+        {
+          id: "opencode",
+          models: { other: { name: "Other" }, "big-pickle": { name: "Big Pickle" } },
+        },
+      ],
+    }),
+  );
   const sent: Array<{ method: string; payload: any }> = [];
   const rpc: string[] = [];
   let nextId = 100,
@@ -354,4 +367,21 @@ test("scoped UI errors edit the canonical panel rather than append an error mess
   assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
   assert.equal(f.sent.at(-1)!.method, "editMessageText");
   assert.equal(f.sent.at(-1)!.payload.message_id, 101);
+});
+
+test("migrated General navigation adopts the old Main and retires the old secondary menu", async () => {
+  const f = fixture();
+  f.db
+    .prepare("INSERT INTO ui_state VALUES(?,?)")
+    .run("legacy:main:-100", JSON.stringify({ messageId: 90, actorId: 7 }));
+  f.db
+    .prepare("INSERT INTO ui_state VALUES(?,?)")
+    .run("legacy:menu:-100", JSON.stringify({ messageId: 91 }));
+  await f.update("/settings");
+  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 0);
+  assert.equal(f.sent.find((x) => x.method === "editMessageText")?.payload.message_id, 90);
+  assert.equal(f.sent.find((x) => x.method === "deleteMessage")?.payload.message_id, 91);
+  await f.update("/home");
+  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 0);
+  assert.equal(f.sent.filter((x) => x.method === "editMessageText").at(-1)?.payload.message_id, 90);
 });

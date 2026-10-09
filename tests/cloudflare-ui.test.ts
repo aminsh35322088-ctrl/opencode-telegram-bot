@@ -156,8 +156,8 @@ test("Start restores main navigation and publishes the existing Telegram command
   await f.update("/start");
   const output = JSON.stringify(f.sent);
   assert.match(output, /⚡ <b>OpenCode Telegram<\/b>/);
-  assert.match(output, /main:history/);
-  assert.match(output, /main:settings/);
+  assert.match(output, /🕘 History/);
+  assert.match(output, /⚙️ Main Settings/);
   assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
   assert.ok(f.sent.some((x) => x.method === "pinChatMessage"));
   assert.ok(
@@ -247,7 +247,10 @@ test("legacy Settings submenus keep More/Advanced and Topic Models navigation", 
   assert.match(output, /Primary \/ Chat & Coding/);
   assert.match(output, /Image AI/);
   assert.match(output, /Voice → Text/);
-  assert.equal(f.rpc.some((r) => r.operation === "execute"), false);
+  assert.equal(
+    f.rpc.some((r) => r.operation === "execute"),
+    false,
+  );
 });
 
 test("delete requires a generation-scoped confirmation and rejects it after fencing", async (t) => {
@@ -623,8 +626,14 @@ test("legacy Session, Messages and Files reuse one Topic panel instead of sendin
   f.rpcResults.set("session.diff", [{ path: "src/a.ts", additions: 2, deletions: 1 }]);
   f.rpcResults.set("session.children", [{ id: "child", title: "Research" }]);
   f.rpcResults.set("session.messages", [
-    { info: { id: "u1", role: "user", time: { created: 1000 } }, parts: [{ type: "text", text: "first prompt" }] },
-    { info: { id: "a1", role: "assistant", time: { created: 2000 } }, parts: [{ type: "text", text: "answer" }] },
+    {
+      info: { id: "u1", role: "user", time: { created: 1000 } },
+      parts: [{ type: "text", text: "first prompt" }],
+    },
+    {
+      info: { id: "a1", role: "assistant", time: { created: 2000 } },
+      parts: [{ type: "text", text: "answer" }],
+    },
   ]);
   f.rpcResults.set("file.list", [
     { type: "directory", name: "src", path: "src" },
@@ -642,7 +651,9 @@ test("legacy Session, Messages and Files reuse one Topic panel instead of sendin
   assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
   assert.equal(f.sent.filter((entry) => entry.method === "editMessageText").length, 1);
   assert.match(JSON.stringify(f.sent), /first prompt/);
-  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  let buttons = f.sent.flatMap(
+    (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
+  );
   const message = buttons.find((button: any) => String(button.text).includes("first prompt"));
   assert.ok(message);
   f.sent.length = 0;
@@ -663,7 +674,10 @@ test("legacy Session, Messages and Files reuse one Topic panel instead of sendin
   assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
   assert.match(JSON.stringify(f.sent), /Workspace file|File|README.md/i);
   assert.match(JSON.stringify(f.sent), /Download/i);
-  assert.equal(f.rpc.some((entry) => entry.operation === "execute"), false);
+  assert.equal(
+    f.rpc.some((entry) => entry.operation === "execute"),
+    false,
+  );
 });
 
 test("Model Center uses the canonical legacy root instead of the simplified Cloudflare replacement", async (t) => {
@@ -960,7 +974,10 @@ test("canonical Topic defaults apply without being copied into Topic overrides",
   await f.update("/appearance", 42);
   let buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   assert.ok(buttons.some((b: any) => b.text === "📦 Compact output: ON"));
-  assert.equal(buttons.some((b: any) => String(b.text).includes("Prompt queue")), false);
+  assert.equal(
+    buttons.some((b: any) => String(b.text).includes("Prompt queue")),
+    false,
+  );
   const streaming = buttons.find((b: any) => String(b.text).toLowerCase().includes("streaming"));
   assert.ok(streaming);
   await f.callback(streaming.callback_data, 42);
@@ -1074,7 +1091,7 @@ test("authenticated read-only UI checks render guided Skills and MCP menus witho
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
 });
 
-test("General menus never overwrite the pinned canonical Home panel", async (t) => {
+test("General menus edit the same pinned canonical panel without creating a second panel", async (t) => {
   const f = fixture(t);
   await f.update("/start");
   const main = [
@@ -1088,8 +1105,9 @@ test("General menus never overwrite the pinned canonical Home panel", async (t) 
     f.sent.some(
       (entry) => entry.method === "editMessageText" && entry.payload.message_id === mainMessageId,
     ),
-    false,
+    true,
   );
+  assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, 0);
   const after = [
     ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='legacy:main:-100'"),
   ][0];
@@ -1099,14 +1117,18 @@ test("General menus never overwrite the pinned canonical Home panel", async (t) 
 test("Settings descendants use explicit Back parents and Home", async (t) => {
   const f = fixture(t);
   await f.update("/settings");
-  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  let buttons = f.sent.flatMap(
+    (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
+  );
   const more = buttons.find((button: any) => button.text === "⋯ More");
   assert.ok(more);
   f.sent.length = 0;
   await f.callback(more.callback_data);
   buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   assert.deepEqual(
-    buttons.filter((button: any) => ["← Back", "🏠 Home"].includes(button.text)).map((button: any) => button.text),
+    buttons
+      .filter((button: any) => ["← Back", "🏠 Home"].includes(button.text))
+      .map((button: any) => button.text),
     ["← Back", "🏠 Home"],
   );
   const advanced = buttons.find((button: any) => button.text === "🧰 Advanced");
@@ -1125,14 +1147,19 @@ test("Topic Settings child returns to Topic Settings and exposes Home", async (t
   const f = fixture(t);
   await f.bound();
   await f.update("⚙️ Topic Settings", 42);
-  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  let buttons = f.sent.flatMap(
+    (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
+  );
   const appearance = buttons.find((button: any) => button.text === "💬 Response & Output");
   assert.ok(appearance);
   f.sent.length = 0;
   await f.callback(appearance.callback_data, 42);
   buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   const navigation = buttons.filter((button: any) => ["← Back", "🏠 Home"].includes(button.text));
-  assert.deepEqual(navigation.map((button: any) => button.text), ["← Back", "🏠 Home"]);
+  assert.deepEqual(
+    navigation.map((button: any) => button.text),
+    ["← Back", "🏠 Home"],
+  );
   f.sent.length = 0;
   await f.callback(navigation[0].callback_data, 42);
   assert.match(JSON.stringify(f.sent), /🧵 <b>Topic Settings<\/b>/);
@@ -1144,7 +1171,9 @@ test("Session and Model Center children return to their exact parents", async (t
   await f.bound();
 
   await f.update("/session", 42);
-  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  let buttons = f.sent.flatMap(
+    (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
+  );
   const messages = buttons.find((button: any) => button.text === "🕘 Messages");
   assert.ok(messages);
   f.sent.length = 0;
@@ -1211,7 +1240,9 @@ test("File browser subdirectories have explicit parent Back plus Home", async (t
   await f.bound();
   f.rpcResults.set("file.list", [{ type: "directory", name: "src", path: "src" }]);
   await f.update("/ls", 42);
-  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  let buttons = f.sent.flatMap(
+    (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
+  );
   const src = buttons.find((button: any) => String(button.text).includes("src"));
   assert.ok(src);
   f.sent.length = 0;

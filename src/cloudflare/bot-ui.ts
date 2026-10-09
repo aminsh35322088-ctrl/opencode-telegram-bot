@@ -368,6 +368,13 @@ export class CloudBotUi {
     )
       throw new Error("stale_generation");
     const key = `panel:${scope.actor}:${chat}:${scope.thread}:${scope.generation}`;
+    if (!scope.thread && !this.get<PanelState>(key)) {
+      const legacy = this.legacyAdapter().getUiState<{ messageId: number; actorId?: number }>(
+        `legacy:main:${chat}`,
+      );
+      if (legacy && (!legacy.actorId || legacy.actorId === scope.actor))
+        this.adoptPanel(legacy.messageId);
+    }
     const previous = this.get<PanelState>(key) ?? {};
     const signature = JSON.stringify(payload);
     const markup = record(payload.reply_markup);
@@ -407,6 +414,19 @@ export class CloudBotUi {
         signature,
         callbacks,
       });
+      if (!scope.thread) {
+        const adapter = this.legacyAdapter();
+        const obsolete = adapter.getUiState<{ messageId: number }>(`legacy:menu:${chat}`);
+        if (obsolete && obsolete.messageId !== (previous.messageId ?? result.message_id)) {
+          await this.deps.telegram
+            .call("deleteMessage", {
+              chat_id: chat,
+              message_id: obsolete.messageId,
+            })
+            .then(() => adapter.deleteUiState(`legacy:menu:${chat}`))
+            .catch(() => undefined);
+        }
+      }
     } catch (error) {
       if (this.get<PanelState>(key)?.revision !== revision) return;
       if (
@@ -734,7 +754,7 @@ export class CloudBotUi {
     );
   }
   private legacyMain(): LegacyMainUi {
-    return new LegacyMainUi(this.legacyAdapter(), this.deps.telegram);
+    return new LegacyMainUi(this.legacyAdapter());
   }
   private legacyModels(): LegacyModelAdapter {
     return new LegacyModelAdapter(this.legacyAdapter());
@@ -1195,7 +1215,7 @@ export class CloudBotUi {
           ) {
             this.set("form:" + actor + ":" + chat + ":" + thread, {});
             if (thread) await this.settings(actor, chat, thread, topic);
-            else await this.home(chat);
+            else await this.home(chat, actor, false);
           }
           return true;
         }
