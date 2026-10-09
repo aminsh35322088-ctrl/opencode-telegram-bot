@@ -94,6 +94,31 @@ export class CloudTelegram {
             )))
       )
         throw new TelegramDeliveryError("rejected", undefined, undefined, "unsupported_draft");
+      const reason = /chat not found/i.test(description)
+        ? "chat_not_found"
+        : /bot was blocked|user is deactivated/i.test(description)
+          ? "bot_unreachable"
+          : /message.*(?:not found|invalid.*id|identifier.*not specified)/i.test(description)
+            ? "message_not_found"
+            : /message.*(?:can.t be edited|not editable)/i.test(description)
+              ? "message_not_editable"
+              : /keyboard.*(?:unsupported|not supported|invalid)/i.test(description)
+                ? "keyboard_rejected"
+                : /thread|topic/i.test(description)
+                  ? "topic_rejected"
+                  : /rights|permission|administrator/i.test(description)
+                    ? "permission_denied"
+                    : "request_rejected";
+      // Diagnostic metadata only: Telegram descriptions can contain user content.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "telegram_api_rejected",
+          method: /^[A-Za-z]{1,64}$/.test(method) ? method : "unknown",
+          apiCode: body.error_code ?? response.status,
+          reason,
+        }),
+      );
       throw new TelegramDeliveryError(response.status >= 500 ? "ambiguous" : "rejected");
     }
     return body.result as T;
