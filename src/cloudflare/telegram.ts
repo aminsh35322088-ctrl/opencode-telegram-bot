@@ -69,6 +69,12 @@ export class CloudTelegram {
       )
         throw new TelegramDeliveryError("rejected", undefined, undefined, "message_not_found");
       if (
+        body.error_code === 400 &&
+        method === "deleteMessage" &&
+        /^Bad Request: message to delete not found$/i.test(body.description ?? "")
+      )
+        throw new TelegramDeliveryError("rejected", undefined, undefined, "message_not_found");
+      if (
         method === "deleteForumTopic" &&
         body.error_code === 400 &&
         /TOPIC_NOT_FOUND|message thread not found/i.test(body.description ?? "")
@@ -124,7 +130,7 @@ export class CloudTelegram {
         response.status >= 500 ? "ambiguous" : "rejected",
         undefined,
         undefined,
-        reason === "message_not_editable" || reason === "message_not_found" ? reason : undefined,
+        reason === "message_not_editable" ? reason : undefined,
       );
     }
     return body.result as T;

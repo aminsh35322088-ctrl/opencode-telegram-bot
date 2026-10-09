@@ -21,7 +21,7 @@ test("only definite missing edit target permits recreating a panel", async () =>
   );
   await assert.rejects(
     telegram("Bad Request: message can't be edited").call("editMessageText", {}),
-    (e: unknown) => e instanceof TelegramDeliveryError && !e.reason,
+    (e: unknown) => e instanceof TelegramDeliveryError && e.reason === "message_not_editable",
   );
   await assert.rejects(
     telegram("Unauthorized", 401).call("editMessageText", {}),

@@ -352,6 +352,47 @@ export class CloudBotUi {
     this.set(key, { messageId, state: "DELIVERED" });
     return true;
   }
+  private async clearLegacyKeyboard(actor: number, chat: number): Promise<void> {
+    const key = `keyboard-cleared:${actor}:${chat}`;
+    let receipt = this.get<{ state: string; messageId?: number }>(key);
+    if (receipt?.state === "CLEARED") return;
+    if (
+      !receipt?.messageId &&
+      ["SENDING", "RECONCILIATION_REQUIRED"].includes(receipt?.state ?? "")
+    )
+      throw new TelegramDeliveryError("ambiguous");
+    if (!receipt?.messageId) {
+      this.set(key, { state: "SENDING" });
+      try {
+        const sent = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
+          chat_id: chat,
+          text: "⌨️ Updating controls…",
+          disable_notification: true,
+          reply_markup: { remove_keyboard: true },
+        });
+        receipt = { state: "DELIVERED", messageId: sent.message_id };
+        this.set(key, receipt);
+      } catch (error) {
+        this.set(key, {
+          state:
+            error instanceof TelegramDeliveryError && error.category !== "ambiguous"
+              ? "PENDING"
+              : "RECONCILIATION_REQUIRED",
+        });
+        throw error;
+      }
+    }
+    try {
+      await this.deps.telegram.call("deleteMessage", {
+        chat_id: chat,
+        message_id: receipt.messageId,
+      });
+    } catch (error) {
+      if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found")
+        throw error;
+    }
+    this.set(key, { state: "CLEARED" });
+  }
   private async panel(
     chat: number,
     thread: number | undefined,
@@ -388,7 +429,13 @@ export class CloudBotUi {
       if (legacy && (!legacy.actorId || legacy.actorId === scope.actor))
         this.adoptPanel(legacy.messageId);
     }
-    const previous = this.get<PanelState>(key) ?? {};
+    let previous = this.get<PanelState>(key) ?? {};
+    if (previous.clearKeyboard) {
+      await this.clearLegacyKeyboard(scope.actor, chat);
+      if (this.get<PanelState>(key)?.revision !== previous.revision) return;
+      previous = { ...previous, clearKeyboard: false };
+      this.set(key, previous);
+    }
     const signature = JSON.stringify(payload);
     const markup = record(payload.reply_markup);
     const callbacks = Array.isArray(markup.inline_keyboard)
@@ -417,20 +464,9 @@ export class CloudBotUi {
               ? { message_thread_id: thread }
               : {}),
           ...payload,
-          ...(!previous.messageId && previous.clearKeyboard
-            ? { reply_markup: { remove_keyboard: true } }
-            : {}),
         },
       );
       if (this.get<PanelState>(key)?.revision !== revision) return;
-      if (!previous.messageId && previous.clearKeyboard) {
-        this.set(key, { messageId: result.message_id, revision, state: "PENDING", callbacks });
-        await this.deps.telegram.call("editMessageReplyMarkup", {
-          chat_id: chat,
-          message_id: result.message_id,
-          reply_markup: payload.reply_markup,
-        });
-      }
       this.set(key, {
         messageId: previous.messageId ?? result.message_id,
         revision,
@@ -1548,7 +1584,14 @@ export class CloudBotUi {
             chat,
           );
           this.legacyAdapter().deleteUiState(`legacy:main:${chat}`);
-          this.set(key, { state: "PENDING", clearKeyboard: true, revision: old?.revision ?? 0 });
+          const cleared =
+            this.get<{ state: string }>(`keyboard-cleared:${actor}:${chat}`)?.state === "CLEARED";
+          if (!old?.messageId) this.set(`keyboard-cleared:${actor}:${chat}`, { state: "CLEARED" });
+          this.set(key, {
+            state: "PENDING",
+            clearKeyboard: !!old?.messageId && !cleared,
+            revision: old?.revision ?? 0,
+          });
           this.set(resetKey, { retired: true });
         }
         await this.home(chat, actor, true);

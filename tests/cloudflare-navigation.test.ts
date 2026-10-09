@@ -38,6 +38,8 @@ function fixture() {
   );
   const sent: Array<{ method: string; payload: any }> = [];
   const rpc: string[] = [];
+  const replyMessages = new Set<number>();
+  let enforceKeyboardEdits = false;
   let nextId = 100,
     missing = false,
     failTransport = false,
@@ -51,6 +53,18 @@ function fixture() {
       const method = String(input).split("/").at(-1)!,
         payload = JSON.parse(String(init?.body));
       sent.push({ method, payload });
+      if (
+        enforceKeyboardEdits &&
+        ["editMessageText", "editMessageReplyMarkup"].includes(method) &&
+        replyMessages.has(payload.message_id)
+      ) {
+        return Response.json(
+          { ok: false, error_code: 400, description: "Bad Request: message can't be edited" },
+          { status: 400 },
+        );
+      }
+      if (method === "sendMessage" && payload.reply_markup?.remove_keyboard)
+        replyMessages.add(nextId + 1);
       if (failTransport && method === "sendMessage") {
         failTransport = false;
         let heldEdit: Promise<void> | undefined, releaseEdit: (() => void) | undefined;
@@ -154,6 +168,9 @@ function fixture() {
         releaseEdit = resolve;
       });
       return () => releaseEdit!();
+    },
+    enforceKeyboardEditRules: () => {
+      enforceKeyboardEdits = true;
     },
     failRetirement: () => {
       uneditable = true;
@@ -426,7 +443,7 @@ test("explicit General start retires the old panel, clears chat keyboard and cre
   await f.update("/start");
   const sends = f.sent.filter((x) => x.method === "sendMessage");
   assert.equal(sends.length, 2);
-  assert.deepEqual(sends[1]!.payload.reply_markup, { remove_keyboard: true });
+  assert.ok(sends[1]!.payload.reply_markup.inline_keyboard);
   assert.ok(
     f.sent.some((x) => x.method === "editMessageReplyMarkup" && x.payload.message_id === 101),
   );
@@ -480,4 +497,34 @@ test("start still replaces a Telegram panel that can no longer be edited", async
   assert.equal(f.sent.filter((item) => item.method === "sendMessage").length, 2);
   const edits = f.sent.filter((item) => item.method === "editMessageText");
   assert.equal(edits.at(-1)!.payload.message_id, 102);
+});
+
+test("canonical panels never use non-editable ReplyKeyboardRemove markup", async () => {
+  const f = fixture();
+  f.enforceKeyboardEditRules();
+  await f.update("/start");
+  await f.update("/settings");
+  const panels = f.sent.filter((item) => item.method === "sendMessage");
+  assert.equal(panels.length, 1);
+  assert.ok(panels[0]!.payload.reply_markup.inline_keyboard);
+});
+
+test("legacy keyboard cleanup uses one deleted helper and a separately editable canonical panel", async () => {
+  const f = fixture();
+  await f.update("/start");
+  f.db.prepare("DELETE FROM ui_state WHERE key='keyboard-cleared:7:-100'").run();
+  f.enforceKeyboardEditRules();
+  await f.update("/start");
+  await f.update("/settings");
+  const sends = f.sent.filter((item) => item.method === "sendMessage");
+  assert.equal(sends.length, 3);
+  assert.deepEqual(sends[1]!.payload.reply_markup, { remove_keyboard: true });
+  assert.ok(
+    f.sent.some((item) => item.method === "deleteMessage" && item.payload.message_id === 102),
+  );
+  assert.ok(sends[2]!.payload.reply_markup.inline_keyboard);
+  assert.equal(
+    f.sent.filter((item) => item.method === "editMessageText").at(-1)!.payload.message_id,
+    103,
+  );
 });
