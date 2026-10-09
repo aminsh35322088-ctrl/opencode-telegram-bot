@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- this test intentionally captures Cloudflare structured diagnostics */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CloudTelegram } from "../src/cloudflare/telegram.js";
