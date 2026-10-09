@@ -53,6 +53,46 @@ export class ControlPlane {
     this.alarmScheduling = next.catch(() => {});
     await next;
   }
+  private async refreshTyping(
+    topic: import("./control-store.js").FleetTopic,
+    runId: string,
+  ): Promise<void> {
+    const key = `typing:${runId}`;
+    const row = [
+      ...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+    ][0];
+    const previous = row ? (JSON.parse(row.data) as { nextAt?: number }) : undefined;
+    const now = Date.now();
+    if ((previous?.nextAt ?? 0) > now) {
+      await this.scheduleAlarm(previous!.nextAt!);
+      return;
+    }
+    let delay = 4_000;
+    try {
+      await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call("sendChatAction", {
+        chat_id: topic.chatId,
+        message_thread_id: topic.threadId,
+        action: "typing",
+      });
+    } catch (error) {
+      if (error instanceof TelegramDeliveryError && error.category === "rate_limited")
+        delay = Math.max(delay, (error.retryAfter ?? 1) * 1_000);
+      // Typing is best-effort presentation and must never block execution.
+    }
+    const nextAt = Date.now() + delay;
+    this.state.storage.sql.exec(
+      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      key,
+      JSON.stringify({ nextAt, chat: topic.chatId, thread: topic.threadId, generation: topic.generation }),
+    );
+    await this.scheduleAlarm(nextAt);
+  }
+  private clearInactiveTyping(): void {
+    this.state.storage.sql.exec(
+      "DELETE FROM ui_state WHERE key LIKE 'typing:%' AND substr(key,8) NOT IN (SELECT request FROM runs WHERE state='ACTIVE')",
+    );
+  }
+
   private async initializeSecrets(): Promise<void> {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
     if (!this.env.TELEGRAM_BOT_TOKEN || !this.env.RAILWAY_API_TOKEN) return;
@@ -1497,12 +1537,14 @@ export class ControlPlane {
       }
     }
 
+    this.clearInactiveTyping();
     for (const topic of this.store.topics().filter((t) => t.state === "ACTIVE")) {
       if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId)) continue;
       const run =
         this.store.activeRuns(topic.chatId, topic.threadId)[0] ??
         this.store.startNext(topic.chatId, topic.threadId);
       if (!run || this.store.worker(topic.workerId)?.state === "UNHEALTHY") continue;
+      await this.refreshTyping(topic, run.requestId);
       try {
         const text = [
           ...this.state.storage.sql.exec<{ text: string }>(
@@ -1856,6 +1898,7 @@ export class ControlPlane {
           }
         }
         this.store.responseDelivered(response.run);
+        this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", `typing:${response.run}`);
         await this.topicUi(topic).runKeyboard(topic, response.run, false);
         // eslint-disable-next-line no-console
         console.log(

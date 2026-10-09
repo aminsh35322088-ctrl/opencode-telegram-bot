@@ -304,7 +304,12 @@ test("compact is durable Topic presentation state and does not duplicate global 
     message: { chat: { id: -100 }, from: { id: 7 }, message_thread_id: 42, text: "/keyboard" },
   });
   await restarted.alarm();
-  assert.match(JSON.stringify(f.sent), /Compact: ON/);
+  assert.equal(f.sent.filter((entry) => entry.payload.reply_markup?.keyboard).length, 0);
+  const keyboardState = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'reply-keyboard:%' LIMIT 1"),
+  ][0];
+  assert.ok(keyboardState);
+  assert.match(keyboardState.data, /Compact: ON/);
   assert.equal(f.store.global()!.revision, revision);
 });
 
@@ -389,7 +394,7 @@ test("Stop replay cannot abort the next queued run", async (t) => {
       !failed &&
       /\/(?:sendMessage|editMessageText)$/.test(String(input)) &&
       payload.text === "OpenCode" &&
-      payload.reply_markup?.inline_keyboard
+      payload.reply_markup?.keyboard
     ) {
       failed = true;
       return Response.json(
@@ -864,21 +869,22 @@ test("streaming toggle persists an actual transport mode rather than a boolean",
   assert.equal(JSON.parse(row.data).responseStreamingMode, "off");
 });
 
-test("active Topic keyboard exposes Pause and Abort, and idle keyboard removes them", async (t) => {
+test("active Topic ReplyKeyboard exposes Pause and Abort, and idle keyboard removes them", async (t) => {
   const f = fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "keyboard_run", "prompt");
   f.store.startNext(-100, 42);
   await f.update("/keyboard", 42);
-  assert.match(JSON.stringify(f.sent), /Pause/);
-  assert.match(JSON.stringify(f.sent), /Abort/);
+  const active = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  assert.match(JSON.stringify(active), /Pause/);
+  assert.match(JSON.stringify(active), /Abort/);
   f.store.failRun(-100, 42, "keyboard_run", "stopped");
   f.sent.length = 0;
   await f.update("/keyboard", 42);
-  const keyboards = f.sent.filter((s) => s.payload.reply_markup?.inline_keyboard);
-  assert.ok(keyboards.length > 0);
-  assert.equal(JSON.stringify(keyboards).includes("Pause"), false);
-  assert.equal(JSON.stringify(keyboards).includes("Abort"), false);
+  const idle = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  assert.ok(idle.length > 0);
+  assert.equal(JSON.stringify(idle).includes("Pause"), false);
+  assert.equal(JSON.stringify(idle).includes("Abort"), false);
 });
 
 test("Topic preferences store only overrides and never duplicate canonical global defaults", async (t) => {
@@ -1145,7 +1151,7 @@ test("Settings descendants use explicit Back parents and Home", async (t) => {
   assert.match(JSON.stringify(f.sent), /Topic Defaults|Experimental|Advanced/);
 });
 
-test("Topic Settings child returns to Topic Settings and exposes Home", async (t) => {
+test("Topic Settings child returns to Topic Settings with Back and Close only", async (t) => {
   const f = fixture(t);
   await f.bound();
   await f.update("⚙️ Topic Settings", 42);
@@ -1157,10 +1163,10 @@ test("Topic Settings child returns to Topic Settings and exposes Home", async (t
   f.sent.length = 0;
   await f.callback(appearance.callback_data, 42);
   buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
-  const navigation = buttons.filter((button: any) => ["← Back", "🏠 Home"].includes(button.text));
+  const navigation = buttons.filter((button: any) => ["← Back", "🏠 Home", "✖ Close"].includes(button.text));
   assert.deepEqual(
     navigation.map((button: any) => button.text),
-    ["← Back", "🏠 Home"],
+    ["← Back", "✖ Close"],
   );
   f.sent.length = 0;
   await f.callback(navigation[0].callback_data, 42);
@@ -1198,7 +1204,8 @@ test("Session and Model Center children return to their exact parents", async (t
   buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   back = buttons.find((button: any) => button.text === "← Back");
   assert.ok(back);
-  assert.ok(buttons.some((button: any) => button.text === "🏠 Home"));
+  assert.equal(buttons.some((button: any) => button.text === "🏠 Home"), false);
+  assert.ok(buttons.some((button: any) => button.text === "✖ Close"));
   f.sent.length = 0;
   await f.callback(back.callback_data, 42);
   assert.match(JSON.stringify(f.sent), /MODEL CENTER/);
@@ -1258,4 +1265,36 @@ test("File browser subdirectories have explicit parent Back plus Home", async (t
   const lists = f.rpc.filter((entry) => entry.operation === "file.list");
   assert.equal(lists.at(-1)?.payload.path, ".");
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
+});
+
+
+test("active Cloudflare runs emit a Topic-scoped typing action without making typing a run dependency", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  f.store.enqueue(-100, 42, "typing_probe", "probe");
+  f.store.startNext(-100, 42);
+  await f.plane.alarm();
+  const typing = f.sent.find((entry) => entry.method === "sendChatAction");
+  assert.ok(typing);
+  assert.deepEqual(typing.payload, { chat_id: -100, message_thread_id: 42, action: "typing" });
+  const row = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='typing:typing_probe'"),
+  ][0];
+  assert.ok(row, "typing refresh state must be persisted for the next Durable Object alarm");
+});
+
+test("only exact rendered Topic controls are consumed; an emoji-prefixed user prompt still reaches the model", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+  await f.update("/keyboard", 42);
+  const modelButton = f.sent
+    .flatMap((entry) => entry.payload.reply_markup?.keyboard?.flat() ?? [])
+    .find((button: any) => String(button.text).startsWith("🧠 "));
+  assert.ok(modelButton);
+  const before = [...f.sql.exec("SELECT request FROM runs")].length;
+  await f.update(modelButton.text, 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, before);
+  assert.match(JSON.stringify(f.sent), /MODEL CENTER/);
+  await f.update("🧠 Explain this architecture", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, before + 1);
 });

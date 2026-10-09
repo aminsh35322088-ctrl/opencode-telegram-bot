@@ -3,16 +3,11 @@ import {
   createMainKeyboard,
   createTopicKeyboard,
   MAIN_BUTTONS,
+  TOPIC_BUTTONS,
 } from "../bot/keyboards/main-reply-keyboard.js";
 import { BOT_COMMANDS } from "../bot/commands/definitions.js";
 import { t } from "../i18n/index.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
-import {
-  AGENT_MODE_BUTTON_TEXT_PATTERN,
-  CONTEXT_BUTTON_TEXT_PATTERN,
-  VARIANT_BUTTON_TEXT_PATTERN,
-  QUEUED_PROMPT_BUTTON_TEXT_PATTERN,
-} from "../bot/message-patterns.js";
 import { CloudTaskUi, taskDraftKey } from "./task-ui.js";
 import type { ProtectedTelegramUpdate } from "./credential-vault.js";
 import { CloudConfigUi, resetGlobalConfiguration, OUTPUT_DEFAULTS } from "./config-ui.js";
@@ -203,6 +198,7 @@ interface NavigationTarget {
 interface NavigationSpec {
   back?: NavigationTarget;
   home?: boolean;
+  close?: boolean;
   strip?: string[];
 }
 const normalized = (text: string) =>
@@ -308,6 +304,7 @@ const navigation = new Set([
   "ls",
   "close",
   "cancel",
+  "panel_close",
   "config_item_providers",
   "config_item_skills",
   "config_item_mcps",
@@ -467,6 +464,7 @@ export class CloudBotUi {
         },
       );
       if (this.get<PanelState>(key)?.revision !== revision) return;
+      this.clearPanelCallbacks(previous);
       this.set(key, {
         messageId: previous.messageId ?? result.message_id,
         revision,
@@ -510,6 +508,64 @@ export class CloudBotUi {
       });
       throw error;
     }
+  }
+  private panelStateKey(): string | undefined {
+    const scope = this.panelScope;
+    return scope
+      ? `panel:${scope.actor}:${scope.chat}:${scope.thread}:${scope.generation}`
+      : undefined;
+  }
+  private clearPanelCallbacks(state?: PanelState): void {
+    for (const callback of state?.callbacks ?? [])
+      this.deps.sql.exec("DELETE FROM ui_callbacks WHERE id=?", callback);
+  }
+  private async retireCurrentPanel(): Promise<void> {
+    const scope = this.panelScope;
+    const key = this.panelStateKey();
+    if (!scope || !key) return;
+    const current = this.get<PanelState>(key);
+    if (!current) return;
+    this.clearPanelCallbacks(current);
+    if (current.messageId) {
+      try {
+        await this.deps.telegram.call("editMessageReplyMarkup", {
+          chat_id: scope.chat,
+          message_id: current.messageId,
+          reply_markup: { inline_keyboard: [] },
+        });
+      } catch (error) {
+        if (
+          !(error instanceof TelegramDeliveryError) ||
+          !["message_not_found", "message_not_editable"].includes(error.reason ?? "")
+        )
+          throw error;
+      }
+    }
+    this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+  }
+  private async closeCurrentPanel(): Promise<void> {
+    const scope = this.panelScope;
+    const key = this.panelStateKey();
+    if (!scope || !key) return;
+    const current = this.get<PanelState>(key);
+    this.clearPanelCallbacks(current);
+    if (current?.messageId) {
+      try {
+        await this.deps.telegram.call("deleteMessage", {
+          chat_id: scope.chat,
+          message_id: current.messageId,
+        });
+      } catch {
+        await this.deps.telegram
+          .call("editMessageReplyMarkup", {
+            chat_id: scope.chat,
+            message_id: current.messageId,
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => undefined);
+      }
+    }
+    this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", key);
   }
   async showError(text: string): Promise<void> {
     if (!this.panelScope) throw new Error("panel_scope_required");
@@ -642,8 +698,24 @@ export class CloudBotUi {
           : this.button(actor, chat, thread, topic, "🏠 Home", "home"),
       );
     }
+    if (spec.close)
+      navigation.push(this.button(actor, chat, thread, topic, "✖ Close", "panel_close"));
     if (navigation.length) next.push(navigation);
     return next;
+  }
+
+  private scopedMenuNavigation(
+    topic: FleetTopic | undefined,
+    back?: NavigationTarget,
+    strip: string[] = [],
+  ): NavigationSpec {
+    return topic
+      ? {
+          back,
+          close: true,
+          strip: Array.from(new Set([...strip, "🏠 Home", "✖ Close"])),
+        }
+      : { back, home: true, strip };
   }
 
   private async menu(
@@ -694,7 +766,7 @@ export class CloudBotUi {
           chat_id: chat,
           ...(topic ? { message_thread_id: topic.threadId } : {}),
           text,
-          reply_markup: { remove_keyboard: true },
+          reply_markup: topic ? undefined : { remove_keyboard: true },
         });
         return;
       }
@@ -707,8 +779,8 @@ export class CloudBotUi {
     const selected = this.model(topic),
       split = selected.indexOf("/");
     const currentModel = {
-      providerID: selected.slice(0, split),
-      modelID: selected.slice(split + 1),
+      providerID: split > 0 ? selected.slice(0, split) : "",
+      modelID: split > 0 ? selected.slice(split + 1) : "",
     };
     const options = topic ? this.options(topic) : {};
     const keyboard = topic
@@ -719,26 +791,44 @@ export class CloudBotUi {
           currentModel,
         })
       : createMainKeyboard(currentModel);
-    if (
-      this.panelScope &&
-      this.panelScope.chat === chat &&
-      this.panelScope.thread === (topic?.threadId ?? 0)
-    ) {
+
+    if (topic) {
+      const replyMarkup = {
+        keyboard: keyboard.keyboard.filter((row) => row.length > 0),
+        resize_keyboard: true,
+        is_persistent: true,
+      };
+      const scope = this.panelScope;
+      const stateKey = scope
+        ? `reply-keyboard:${scope.actor}:${chat}:${topic.threadId}:${topic.generation}`
+        : `reply-keyboard:${chat}:${topic.threadId}:${topic.generation}`;
+      const previous = this.get<{ signature?: string; controls?: string[] }>(stateKey);
+      const currentControls = replyMarkup.keyboard
+        .flat()
+        .map((button) => normalized(typeof button === "string" ? button : button.text))
+        .filter(Boolean);
+      const controls = Array.from(new Set([...currentControls, ...(previous?.controls ?? [])])).slice(0, 32);
+      const signature = JSON.stringify({ text, replyMarkup });
+      if (previous?.signature === signature) return;
+      const sent = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
+        chat_id: chat,
+        message_thread_id: topic.threadId,
+        text,
+        reply_markup: replyMarkup,
+      });
+      this.set(stateKey, { signature, messageId: sent.message_id, controls });
+      return;
+    }
+
+    if (this.panelScope && this.panelScope.chat === chat && this.panelScope.thread === 0) {
       const actions: Record<string, string> = {
         [MAIN_BUTTONS.newChat]: "new",
         [MAIN_BUTTONS.history]: "history",
         [MAIN_BUTTONS.mainSettings]: "settings",
-        [MAIN_BUTTONS.topicSettings]: "settings",
-        [MAIN_BUTTONS.deleteChat]: "delete_topic",
-        [MAIN_BUTTONS.pause]: "pause",
-        [MAIN_BUTTONS.resume]: "resume",
-        [MAIN_BUTTONS.abort]: "abort",
-        [MAIN_BUTTONS.compact(true)]: "compact",
-        [MAIN_BUTTONS.compact(false)]: "compact",
       };
       await this.menu(
         chat,
-        topic?.threadId,
+        undefined,
         escape(text),
         keyboard.keyboard
           .filter((row) => row.length)
@@ -747,10 +837,10 @@ export class CloudBotUi {
               this.button(
                 this.panelScope!.actor,
                 chat,
-                topic?.threadId ?? 0,
-                topic,
+                0,
+                undefined,
                 typeof button === "string" ? button : button.text,
-                actions[typeof button === "string" ? button : button.text] ?? "models",
+                actions[typeof button === "string" ? button : button.text] ?? "home",
               ),
             ),
           ),
@@ -759,7 +849,6 @@ export class CloudBotUi {
     }
     await this.deps.telegram.call("sendMessage", {
       chat_id: chat,
-      ...(topic ? { message_thread_id: topic.threadId } : {}),
       text,
       reply_markup: { remove_keyboard: true },
     });
@@ -1113,11 +1202,18 @@ export class CloudBotUi {
       chat,
       thread || undefined,
       view.text,
-      this.withNavigation(actor, chat, thread, topic, rows, {
-        back: { action: topic ? "topic_settings" : "settings" },
-        home: true,
-        strip: ["← Back", "🏠 Home"],
-      }),
+      this.withNavigation(
+        actor,
+        chat,
+        thread,
+        topic,
+        rows,
+        this.scopedMenuNavigation(
+          topic,
+          { action: topic ? "topic_settings" : "settings" },
+          ["← Back", "🏠 Home", "✖ Close"],
+        ),
+      ),
     );
   }
   private async home(chat: number, actor: number, replace: boolean): Promise<void> {
@@ -1166,10 +1262,16 @@ export class CloudBotUi {
       chat,
       topic ? thread : undefined,
       view.text,
-      this.withNavigation(actor, chat, thread, topic, rows, {
-        home: true,
-        strip: ["✖ Close"],
-      }),
+      this.withNavigation(
+        actor,
+        chat,
+        thread,
+        topic,
+        rows,
+        topic
+          ? this.scopedMenuNavigation(topic, undefined, ["🏠 Home", "✖ Close"])
+          : { home: true, strip: ["✖ Close"] },
+      ),
     );
   }
   private async history(actor: number, chat: number): Promise<void> {
@@ -1342,6 +1444,20 @@ export class CloudBotUi {
       }
     } else if (!saved && !protectedInput) {
       const label = normalized(text);
+      const topicModel = topic ? this.model(topic) : "";
+      const topicModelSplit = topicModel.indexOf("/");
+      const topicModelButton = topic
+        ? normalized(
+            TOPIC_BUTTONS.modelCenter(
+              topicModelSplit > 0
+                ? {
+                    providerID: topicModel.slice(0, topicModelSplit),
+                    modelID: topicModel.slice(topicModelSplit + 1),
+                  }
+                : undefined,
+            ),
+          )
+        : "";
       const labels: Record<string, string> = {
         [normalized(MAIN_BUTTONS.newChat)]: "new",
         [normalized(MAIN_BUTTONS.history)]: "history",
@@ -1355,15 +1471,22 @@ export class CloudBotUi {
         [normalized(MAIN_BUTTONS.compact(false))]: "compact",
         "🧠 Models": "models",
         "🧠 Model Center": "models",
+        ...(topicModelButton ? { [topicModelButton]: "models" } : {}),
         "❌ Cancel": "close",
       };
       if (labels[label]) action = { action: labels[label]! };
-      else if (AGENT_MODE_BUTTON_TEXT_PATTERN.test(label)) action = { action: "agent" };
-      else if (CONTEXT_BUTTON_TEXT_PATTERN.test(label)) action = { action: "context" };
-      else if (VARIANT_BUTTON_TEXT_PATTERN.test(label)) action = { action: "variant" };
-      else if (QUEUED_PROMPT_BUTTON_TEXT_PATTERN.test(label)) action = { action: "queue" };
-      else if (/^🧠 /.test(label)) action = { action: "models" };
-      else if (text.startsWith("/")) {
+      else if (topic) {
+        const stateKey = `reply-keyboard:${actor}:${chat}:${thread}:${topic.generation}`;
+        const rendered = this.get<{ controls?: string[] }>(stateKey)?.controls ?? [];
+        if (rendered.includes(label)) {
+          // A Telegram KeyboardButton press is an ordinary text message. Exact
+          // rendered-control history is the only dynamic authority here so a
+          // stale button can never fall through as a model prompt.
+          if (label.startsWith("🧠 ")) action = { action: "models" };
+          else return true;
+        }
+      }
+      if (!action && text.startsWith("/")) {
         const match = /^\/([a-z_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/.exec(text);
         action = { action: match?.[1] ?? "unknown", value: match?.[2] };
         if (
@@ -1625,7 +1748,13 @@ export class CloudBotUi {
       return true;
     }
     if (name === "settings" || name === "topic_settings" || name === "back") {
+      if (topic && update.message && name !== "back") await this.retireCurrentPanel();
       await this.settings(actor, chat, thread, topic);
+      return true;
+    }
+    if (name === "panel_close") {
+      this.set("action_done:" + updateId, true);
+      await this.closeCurrentPanel();
       return true;
     }
     if (name === "close" || name === "cancel") {
@@ -1816,11 +1945,10 @@ export class CloudBotUi {
         chat,
         thread,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "topic_settings" },
-          home: true,
-          strip: ["← Back", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "topic_settings" }, ["← Back", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -1866,6 +1994,8 @@ export class CloudBotUi {
       );
       return true;
     }
+    if (topic && update.message && ["models", "model"].includes(action.action))
+      await this.retireCurrentPanel();
     return this.handleAction(actor, chat, thread, topic, action, updateId);
   }
   async interactions(topic: FleetTopic, actor: number): Promise<void> {
@@ -2066,11 +2196,11 @@ export class CloudBotUi {
     const configNavigation = (): NavigationSpec | undefined => {
       if (name.startsWith("config_wizard_")) return undefined;
       if (name === "memory" || name.startsWith("config_memory_"))
-        return {
-          back: { action: "advanced" },
-          home: true,
-          strip: ["← Settings", "← Back", "🏠 Home"],
-        };
+        return this.scopedMenuNavigation(
+          topic,
+          { action: "advanced" },
+          ["← Settings", "← Back", "🏠 Home", "✖ Close"],
+        );
       const direct = /^(providers|extensions|actions|skills|mcps|plugins|commands)$/.exec(
         name,
       )?.[1];
@@ -2087,12 +2217,16 @@ export class CloudBotUi {
             ? "extensions"
             : "settings";
       if (name.startsWith("config_item_"))
-        return {
-          back: { action: section },
-          home: true,
-          strip: ["← Settings", "← Back", "← " + section, "🏠 Home"],
-        };
-      return { back: { action: parent }, home: true, strip: ["← Settings", "← Back", "🏠 Home"] };
+        return this.scopedMenuNavigation(
+          topic,
+          { action: section },
+          ["← Settings", "← Back", "← " + section, "🏠 Home", "✖ Close"],
+        );
+      return this.scopedMenuNavigation(
+        topic,
+        { action: parent },
+        ["← Settings", "← Back", "🏠 Home", "✖ Close"],
+      );
     };
     const configWizardOrigin = (): NavigationTarget | undefined => {
       const row = [
@@ -2266,11 +2400,10 @@ export class CloudBotUi {
         chat,
         thread,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "topic_settings" },
-          home: true,
-          strip: ["← Back", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "topic_settings" }, ["← Back", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2289,10 +2422,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         "🔌 <b>" + escape(action.value) + "</b>",
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "providers" },
-          home: true,
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "providers" }),
+        ),
       );
       return true;
     }
@@ -2304,11 +2437,10 @@ export class CloudBotUi {
         chat,
         thread,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "topic_settings" },
-          home: true,
-          strip: ["← Topic Settings", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "topic_settings" }, ["← Topic Settings", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2320,11 +2452,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: name === "more" ? "settings" : "more" },
-          home: true,
-          strip: ["← Settings", "← Back", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: name === "more" ? "settings" : "more" }, ["← Settings", "← Back", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2377,11 +2508,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "more" },
-          home: true,
-          strip: ["← Back", "← Settings", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "more" }, ["← Back", "← Settings", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2406,11 +2536,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "more" },
-          home: true,
-          strip: ["← Back", "← Settings", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "more" }, ["← Back", "← Settings", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2738,7 +2867,7 @@ export class CloudBotUi {
               },
             ],
           ],
-          { back: { action: "settings" }, home: true },
+          this.scopedMenuNavigation(topic, { action: "settings" }),
         ),
       );
       return true;
@@ -2764,11 +2893,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "models" },
-          home: true,
-          strip: ["← Model Center", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "models" }, ["← Model Center", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2781,11 +2909,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "models" },
-          home: true,
-          strip: ["← Model Center", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "models" }, ["← Model Center", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2810,11 +2937,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "model_providers" },
-          home: true,
-          strip: ["← Providers", "← Model Center", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "model_providers" }, ["← Providers", "← Model Center", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2845,11 +2971,10 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         view.text,
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "models" },
-          home: true,
-          strip: ["← Back", "← Model Center", "🏠 Home"],
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "models" }, ["← Back", "← Model Center", "🏠 Home", "✖ Close"]),
+        ),
       );
       return true;
     }
@@ -2891,10 +3016,10 @@ export class CloudBotUi {
         thread,
         (name === "agent" ? "🤖 <b>Agent</b>" : "🎛 <b>Variant</b>") +
           (names.length ? "" : "\nNo choices advertised by this runtime/model."),
-        this.withNavigation(actor, chat, thread, topic, rows, {
-          back: { action: "topic_settings" },
-          home: true,
-        }),
+        this.withNavigation(
+          actor, chat, thread, topic, rows,
+          this.scopedMenuNavigation(topic, { action: "topic_settings" }),
+        ),
       );
       return true;
     }
@@ -2957,6 +3082,7 @@ export class CloudBotUi {
         modelID: selected.slice(split + 1),
       });
       if (updateId) this.set("action_done:" + updateId, true);
+      if (topic) await this.keyboard(chat, topic, "✅ Model updated");
       await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }

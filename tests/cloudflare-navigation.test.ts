@@ -83,7 +83,8 @@ function fixture() {
         );
       }
       if (missing && method === "editMessageText") {
-        ((missing = false), (failTransport = false));
+        missing = false;
+        failTransport = false;
         return Response.json(
           { ok: false, error_code: 400, description: "Bad Request: message to edit not found" },
           { status: 400 },
@@ -272,7 +273,7 @@ test("a destructive callback replaced by navigation cannot execute from its old 
   assert.deepEqual(f.rpc, []);
 });
 
-test("run readiness and active idle controls reuse the existing scoped panel", async () => {
+test("run readiness and active/idle controls refresh only the scoped Topic ReplyKeyboard", async () => {
   const f = fixture();
   await f.update("/settings", 42);
   const topic = f.store.topics()[0]!;
@@ -282,10 +283,10 @@ test("run readiness and active idle controls reuse the existing scoped panel", a
   await f.scoped().runKeyboard(topic, "run", true);
   f.store.finishRun(-100, 42, "run");
   await f.scoped().runKeyboard(topic, "run", false);
-  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
-  assert.ok(
-    f.sent.filter((x) => x.method === "editMessageText").every((x) => x.payload.message_id === 101),
-  );
+  const replyKeyboards = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
+  assert.equal(replyKeyboards.length, 3);
+  assert.ok(replyKeyboards.every((x) => x.method === "sendMessage" && x.payload.message_thread_id === 42));
+  assert.equal(replyKeyboards.some((x) => x.payload.reply_markup?.inline_keyboard), false);
 });
 
 test("legacy New Chat callback reopens home and never allocates", async () => {
@@ -380,7 +381,7 @@ test("a late edit acknowledgement cannot invalidate the newer panel's callback o
   assert.deepEqual(f.rpc, ["new"]);
 });
 
-test("History reopening another Topic edits its existing panel without another control message", async () => {
+test("History reopening another Topic deduplicates the same ReplyKeyboard refresh", async () => {
   const f = fixture();
   await f.update("/settings", 42);
   await f.update("/history");
@@ -388,8 +389,9 @@ test("History reopening another Topic edits its existing panel without another c
   assert.ok(button);
   await f.callback(button.callback_data);
   await f.callback(button.callback_data);
-  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 2);
-  assert.equal(f.sent.at(-1)!.payload.message_id, 101);
+  const topicKeyboards = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
+  assert.equal(topicKeyboards.length, 1);
+  assert.equal(topicKeyboards[0]!.payload.message_thread_id, 42);
 });
 
 test("scoped UI errors edit the canonical panel rather than append an error message", async () => {
@@ -527,4 +529,36 @@ test("legacy keyboard cleanup uses one deleted helper and a separately editable 
     f.sent.filter((item) => item.method === "editMessageText").at(-1)!.payload.message_id,
     103,
   );
+});
+
+test("fresh Topic Settings invocation retires the old panel while callback navigation edits the new panel in place", async () => {
+  const f = fixture();
+  await f.update("⚙️ Topic Settings", 42);
+  const first = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(first);
+  let buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+  const appearance = buttons.find((button: any) => button.text === "💬 Response & Output");
+  assert.ok(appearance);
+
+  const sendsBeforeNavigation = f.sent.filter((entry) => entry.method === "sendMessage").length;
+  await f.callback(appearance.callback_data, 42);
+  assert.equal(f.sent.filter((entry) => entry.method === "sendMessage").length, sendsBeforeNavigation);
+  assert.equal(f.sent.at(-1)!.method, "editMessageText");
+  assert.equal(f.sent.at(-1)!.payload.message_id, first);
+
+  await f.update("⚙️ Topic Settings", 42);
+  const second = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(second);
+  assert.notEqual(second, first);
+  assert.ok(
+    f.sent.some(
+      (entry) =>
+        entry.method === "editMessageReplyMarkup" &&
+        entry.payload.message_id === first &&
+        entry.payload.reply_markup?.inline_keyboard?.length === 0,
+    ),
+  );
+  buttons = f.sent.at(-1)!.payload.reply_markup?.inline_keyboard?.flat() ?? [];
+  assert.equal(buttons.some((button: any) => button.text === "🏠 Home"), false);
+  assert.ok(buttons.some((button: any) => button.text === "✖ Close"));
 });
