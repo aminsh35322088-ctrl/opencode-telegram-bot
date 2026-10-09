@@ -1532,7 +1532,10 @@ export class CloudBotUi {
                 reply_markup: { inline_keyboard: [] },
               });
             } catch (error) {
-              if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found")
+              if (
+                !(error instanceof TelegramDeliveryError) ||
+                !["message_not_found", "message_not_editable"].includes(error.reason ?? "")
+              )
                 throw error;
             }
             await this.deps.telegram

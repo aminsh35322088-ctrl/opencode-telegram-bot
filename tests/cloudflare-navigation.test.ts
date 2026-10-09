@@ -40,7 +40,8 @@ function fixture() {
   const rpc: string[] = [];
   let nextId = 100,
     missing = false,
-    failTransport = false;
+    failTransport = false,
+    uneditable = false;
   let heldEdit: Promise<void> | undefined, releaseEdit: (() => void) | undefined;
   const deps = {
     sql,
@@ -59,6 +60,13 @@ function fixture() {
         const pending = heldEdit;
         heldEdit = undefined;
         await pending;
+      }
+      if (uneditable && method === "editMessageReplyMarkup") {
+        uneditable = false;
+        return Response.json(
+          { ok: false, error_code: 400, description: "Bad Request: message can't be edited" },
+          { status: 400 },
+        );
       }
       if (missing && method === "editMessageText") {
         ((missing = false), (failTransport = false));
@@ -146,6 +154,9 @@ function fixture() {
         releaseEdit = resolve;
       });
       return () => releaseEdit!();
+    },
+    failRetirement: () => {
+      uneditable = true;
     },
     failNextSend: () => {
       failTransport = true;
@@ -458,4 +469,15 @@ test("replaying one explicit start after restart cannot create another panel", a
   f.restart();
   await f.scoped(7, 0, 0).handle(update, 9000);
   assert.equal(f.sent.filter((item) => item.method === "sendMessage").length, 1);
+});
+
+test("start still replaces a Telegram panel that can no longer be edited", async () => {
+  const f = fixture();
+  await f.update("/start");
+  f.failRetirement();
+  await f.update("/start");
+  await f.update("/settings");
+  assert.equal(f.sent.filter((item) => item.method === "sendMessage").length, 2);
+  const edits = f.sent.filter((item) => item.method === "editMessageText");
+  assert.equal(edits.at(-1)!.payload.message_id, 102);
 });

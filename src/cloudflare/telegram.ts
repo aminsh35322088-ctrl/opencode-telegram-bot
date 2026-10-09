@@ -5,7 +5,8 @@ export class TelegramDeliveryError extends Error {
     readonly category: "rate_limited" | "rejected" | "ambiguous",
     readonly retryAfter?: number,
     readonly transportCode?: "timeout" | "redirect" | "invocation" | "network",
-    readonly reason?: "message_not_found" | "formatting" | "unsupported_draft",
+    readonly reason?:
+      "message_not_found" | "message_not_editable" | "formatting" | "unsupported_draft",
   ) {
     super("telegram_" + category + (transportCode ? "_" + transportCode : ""));
   }
@@ -119,7 +120,12 @@ export class CloudTelegram {
           reason,
         }),
       );
-      throw new TelegramDeliveryError(response.status >= 500 ? "ambiguous" : "rejected");
+      throw new TelegramDeliveryError(
+        response.status >= 500 ? "ambiguous" : "rejected",
+        undefined,
+        undefined,
+        reason === "message_not_editable" || reason === "message_not_found" ? reason : undefined,
+      );
     }
     return body.result as T;
   }
