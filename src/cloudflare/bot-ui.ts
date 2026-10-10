@@ -882,9 +882,66 @@ export class CloudBotUi {
     if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
       throw new Error("main_panel_scope_required");
     await this.panel(job.chatId, undefined, {
-      text: `⚠️ Cleanup verification pending\n\n${reason}`,
-      reply_markup: { inline_keyboard: [] },
+      text: `⚠️ Cleanup verification pending\n\n${escape(reason)}`,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            this.button(
+              this.panelScope.actor,
+              job.chatId,
+              0,
+              undefined,
+              "↻ Retry",
+              "allocation_retry",
+              job.jobId,
+            ),
+            this.button(
+              this.panelScope.actor,
+              job.chatId,
+              0,
+              undefined,
+              "✖ Cancel",
+              "allocation_cancel",
+              job.jobId,
+            ),
+          ],
+        ],
+      },
     });
+  }
+  private async retryAllocationCleanup(
+    job: AllocationJob,
+    chat: number,
+    updateId: number,
+  ): Promise<void> {
+    const worker = this.deps.store.worker(job.workerId);
+    if (worker?.state !== "REPLACED") {
+      if (!this.deps.cancelAllocation) {
+        await this.allocationCleanupPending(
+          job,
+          "Cleanup retry is unavailable. Try again shortly.",
+        );
+        return;
+      }
+      try {
+        await this.deps.cancelAllocation(job.jobId);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "cleanup_reconciliation_required";
+        await this.allocationCleanupPending(job, reason);
+        return;
+      }
+    }
+    const cleaned = this.deps.store.worker(job.workerId);
+    if (!cleaned || cleaned.state !== "REPLACED") {
+      await this.allocationCleanupPending(job, "Cleanup has not been confirmed yet.");
+      return;
+    }
+    const next = await this.deps.newTopic(
+      chat,
+      `telegram_retry_${updateId}_${crypto.randomUUID()}`,
+    );
+    this.set("action_done:" + updateId, true);
+    await this.allocationProgress(next, "ALLOCATING");
   }
   async rpcDiff(topic: FleetTopic): Promise<unknown> {
     return this.deps.rpc(topic, "session.diff");
@@ -1895,14 +1952,7 @@ export class CloudBotUi {
         )
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0];
       if (blocked) {
-        const worker = this.deps.store.worker(blocked.workerId);
-        if (worker?.state === "REPLACED")
-          await this.allocationFailure(blocked, blocked.error ?? "Provisioning failed.");
-        else
-          await this.allocationCleanupPending(
-            blocked,
-            "The previous allocation must be cleaned up before Retry.",
-          );
+        await this.retryAllocationCleanup(blocked, chat, updateId);
         return true;
       }
       const pending = this.deps.store
@@ -1921,28 +1971,23 @@ export class CloudBotUi {
     if (name === "allocation_retry") {
       const failed = this.deps.store.job(String(action.value ?? ""));
       if (!failed || failed.chatId !== chat) return true;
-      const worker = this.deps.store.worker(failed.workerId);
-      if (!worker || worker.state !== "REPLACED") {
-        await this.allocationCleanupPending(
-          failed,
-          "The previous allocation is still being cleaned up.",
-        );
-        return true;
-      }
-      const job = await this.deps.newTopic(
-        chat,
-        `telegram_retry_${updateId}_${crypto.randomUUID()}`,
-      );
-      this.set("action_done:" + updateId, true);
-      await this.allocationProgress(job, "ALLOCATING");
+      await this.retryAllocationCleanup(failed, chat, updateId);
       return true;
     }
     if (name === "allocation_cancel") {
       const failed = this.deps.store.job(String(action.value ?? ""));
       if (failed && failed.chatId === chat) {
         const worker = this.deps.store.worker(failed.workerId);
-        if (worker && worker.state !== "REPLACED" && this.deps.cancelAllocation)
-          await this.deps.cancelAllocation(failed.jobId);
+        if (worker && worker.state !== "REPLACED" && this.deps.cancelAllocation) {
+          try {
+            await this.deps.cancelAllocation(failed.jobId);
+          } catch (error) {
+            const reason =
+              error instanceof Error ? error.message : "cleanup_reconciliation_required";
+            await this.allocationCleanupPending(failed, reason);
+            return true;
+          }
+        }
       }
       this.set("action_done:" + updateId, true);
       await this.home(chat, actor, false);

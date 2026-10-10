@@ -1467,6 +1467,78 @@ test("historical cleaned allocation failures cannot block a later New Chat", asy
   assert.doesNotMatch(JSON.stringify(f.sent), /The operation could not be completed/);
 });
 
+test("New Chat actively reconciles an unresolved historical allocation before creating another", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const stale = f.store.reserveAllocation("historical-cleanup", -100);
+  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
+  const fenced = f.store.fenceWorker(stale.workerId);
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+
+  let destroyCalls = 0;
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => { destroyCalls++; },
+    provision: async () => { throw new Error("provisioning_pending"); },
+  });
+
+  const before = f.store.jobs().length;
+  await f.update("/new_chat");
+
+  assert.equal(destroyCalls, 1);
+  assert.equal(f.store.worker(stale.workerId)?.state, "REPLACED");
+  assert.equal(f.store.jobs().length, before + 1);
+});
+
+test("cleanup verification failure keeps New Chat actionable with Retry and Cancel", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const stale = f.store.reserveAllocation("historical-cleanup-timeout", -100);
+  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
+  const fenced = f.store.fenceWorker(stale.workerId);
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => { throw new Error("railway_transport_timeout"); },
+  });
+
+  await f.update("/new_chat");
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /Cleanup verification pending/);
+  assert.match(output, /↻ Retry/);
+  assert.match(output, /✖ Cancel/);
+});
+
+test("Retry from cleanup pending performs cleanup instead of repainting the dead end", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const stale = f.store.reserveAllocation("historical-cleanup-retry", -100);
+  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
+  const fenced = f.store.fenceWorker(stale.workerId);
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+
+  let destroyCalls = 0;
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => {
+      destroyCalls++;
+      if (destroyCalls === 1) throw new Error("railway_transport_timeout");
+    },
+    provision: async () => { throw new Error("provisioning_pending"); },
+  });
+
+  const before = f.store.jobs().length;
+  await f.update("/new_chat");
+  const retry = [...f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [])]
+    .reverse()
+    .find((button: any) => button.text === "↻ Retry");
+  assert.ok(retry);
+
+  await f.callback((retry as any).callback_data);
+
+  assert.equal(destroyCalls, 2);
+  assert.equal(f.store.worker(stale.workerId)?.state, "REPLACED");
+  assert.equal(f.store.jobs().length, before + 1);
+});
+
 test("account removal remains committed when Telegram notification is rate limited", async (t) => {
   const f = fixture(t);
   await f.post("/admin/setup");
