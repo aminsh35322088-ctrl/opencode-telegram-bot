@@ -192,7 +192,8 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
   assert.ok(chunks.every((chunk) => chunk.state === "DELIVERED"));
   assert.equal(calls, chunks.length + 1);
   assert.equal(attempts.filter((payload) => payload === attempts[0]).length, 1);
-  assert.equal(keyboardCalls, 2);
+  // Native Stop owns run control; start/finalization must not spam ReplyKeyboard refreshes.
+  assert.equal(keyboardCalls, 0);
   assert.equal(f.store.completedResponses().length, 0);
 });
 
@@ -780,7 +781,11 @@ test("native Stop without from is ingested and durably fences the exact draft be
     false,
   );
   assert.equal(f.store.completedResponses().length, 0);
-  await post(f.plane, "/telegram/webhook", stop);
+  const firstReceipt = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='native-stop:native_run'"),
+  ][0];
+  assert.equal(JSON.parse(firstReceipt!.data).updateId, 8801);
+  await post(f.plane, "/telegram/webhook", { ...stop, update_id: 8802 });
   assert.equal(
     [
       ...f.sql.exec<{ data: string }>(
@@ -789,6 +794,10 @@ test("native Stop without from is ingested and durably fences the exact draft be
     ].map((r) => JSON.parse(r.data).state)[0],
     "CANCELLING",
   );
+  const duplicateReceipt = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='native-stop:native_run'"),
+  ][0];
+  assert.equal(JSON.parse(duplicateReceipt!.data).updateId, 8801);
 });
 
 async function nativeExecutionFixture() {

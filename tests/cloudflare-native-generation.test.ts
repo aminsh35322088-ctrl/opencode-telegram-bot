@@ -144,6 +144,59 @@ for (const activity of ["thinking", "read", "bash", "custom", "task", "streaming
     assert.equal(f.ui.binding("run")?.state, "CANCELLED");
   });
 }
+test("Native Stop requires the exact chat thread draft session worker and generation owner", async () => {
+  const cases: Array<{ name: string; mutateStop?: (stop: any) => any; mutateTopic?: (topic: any) => any }> = [
+    { name: "wrong chat", mutateStop: (stop) => ({ ...stop, chat: { id: 8, type: "private" } }) },
+    { name: "wrong thread", mutateStop: (stop) => ({ ...stop, message_thread_id: 43 }) },
+    { name: "wrong draft", mutateStop: (stop) => ({ ...stop, draft_id: stop.draft_id + 1 }) },
+    { name: "replacement session", mutateTopic: (topic) => ({ ...topic, sessionId: "replacement-session" }) },
+    { name: "replacement worker", mutateTopic: (topic) => ({ ...topic, workerId: "replacement-worker" }) },
+    { name: "replacement generation", mutateTopic: (topic) => ({ ...topic, generation: 2 }) },
+  ];
+  for (const entry of cases) {
+    const f = fixture();
+    await f.ui.start(f.topic, "run");
+    const original = {
+      chat: { id: 7, type: "private" },
+      message_thread_id: 42,
+      draft_id: drafts(f)[0]!.body.draft_id,
+    };
+    if (entry.mutateTopic)
+      f.sql.exec("UPDATE topics SET data=? WHERE chat=7 AND thread=42", JSON.stringify(entry.mutateTopic(f.topic)));
+    const stop = entry.mutateStop ? entry.mutateStop(original) : original;
+    assert.equal(f.ui.acceptStop(stop), undefined, entry.name);
+    assert.equal(f.ui.binding("run")?.state === "CANCELLING", false, entry.name);
+    assert.equal(f.store.activeRuns(7, 42)[0]?.requestId, "run", entry.name);
+  }
+});
+
+test("accepted Native Stop synchronously fences response and queue ownership before cancellation I/O", async () => {
+  const f = fixture();
+  await f.ui.start(f.topic, "run");
+  f.sql.exec(
+    "INSERT INTO responses(run,chat,thread,state) VALUES(?,?,?,?)",
+    "run",
+    7,
+    42,
+    "PENDING",
+  );
+  const stop = {
+    chat: { id: 7, type: "private" },
+    message_thread_id: 42,
+    draft_id: drafts(f)[0]!.body.draft_id,
+  };
+
+  const admitted = f.ui.acceptStop(stop);
+
+  assert.equal(admitted?.runId, "run");
+  assert.equal(f.ui.binding("run")?.state, "CANCELLING");
+  assert.equal([...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='run'")][0]?.state, "CANCELLING");
+  assert.equal([...f.sql.exec<{ state: string }>("SELECT state FROM responses WHERE run='run'")][0]?.state, "FENCED");
+  assert.equal([...f.sql.exec("SELECT request FROM active_runs WHERE request='run'")].length, 0);
+  assert.equal(f.ui.canDeliver(f.topic, "run"), false);
+  assert.equal(f.ui.acceptStop(stop), undefined);
+});
+
 test("wrong topic, old session/generation and recreated topic cannot route Stop", async () => {
   const f = fixture();
   await f.ui.start(f.topic, "run");
