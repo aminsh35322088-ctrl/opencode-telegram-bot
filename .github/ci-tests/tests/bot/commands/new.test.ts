@@ -89,7 +89,6 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     updateAgent: vi.fn(),
     updateModel: vi.fn(),
     getContextInfo: vi.fn(() => null),
-    setPaused: vi.fn(),
     enterTopicMode: vi.fn().mockResolvedValue(undefined),
     clearMainInlineMessage: vi.fn().mockResolvedValue(undefined),
     sendMainInlineKeyboard: vi.fn().mockResolvedValue(undefined),
@@ -97,10 +96,6 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
     getKeyboard: vi.fn().mockReturnValue(undefined),
     markKeyboardDelivered: vi.fn(),
   },
-}));
-
-vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
-  clearPausedSession: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/agent-selection-service.js", () => ({

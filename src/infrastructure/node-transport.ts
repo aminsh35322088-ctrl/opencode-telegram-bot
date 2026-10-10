@@ -4,7 +4,7 @@ import {NodeProtocol} from "../control-plane/node-protocol.js";
 import type {captureNodeRegistry} from "./node-registry.js";
 import type {InfrastructureNodeIdentity} from "./node-registry.js";
 
-const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","pause","resume","stop","retire"]);
+const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","stop","retire"]);
 export class InfrastructureNodeTransport {
  constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch,private readonly wait:(milliseconds:number)=>Promise<void>=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))){}
  /** Root-only fixed canary for an available, unassigned Worker. Not a model/IPC operation. */

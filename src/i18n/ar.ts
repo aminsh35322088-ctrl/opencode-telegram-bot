@@ -58,14 +58,14 @@ export const ar: I18nDictionary = {
     "🔴 تعذر بدء جلسة جديدة. جرّب /new أو افحص حالة الخادم باستخدام /status.",
   "bot.session_created": "✅ تم إنشاء الجلسة: {title}",
   "bot.session_busy":
-    "⏳ الوكيل مشغول بتنفيذ مهمة الآن. انتظر حتى ينتهي، أو استخدم /abort لإيقاف المهمة الحالية.",
+    "⏳ الوكيل مشغول بتنفيذ مهمة الآن. انتظر حتى ينتهي، أو استخدم Telegram Stop لإيقاف المهمة الحالية.",
   "bot.session_reset_project_mismatch":
     "⚠️ الجلسة النشطة مرتبطة بمشروع مختلف، لذلك تمت إعادة ضبطها. استخدم /sessions لاختيار جلسة أو /new لبدء جلسة جديدة.",
   "bot.prompt_send_error": "تعذر إرسال الطلب إلى OpenCode.",
   "bot.empty_prompt": "⚠️ لا يوجد ما يُرسل: الرسالة فارغة بعد معالجة المرفق.",
   "bot.session_error": "🔴 أعاد OpenCode الخطأ التالي: {message}",
   "bot.session_retry":
-    "🔁 {message}\n\nاستمر مزوّد الخدمة في إرجاع الخطأ نفسه بعد عدة محاولات. استخدم /abort لإيقاف المهمة.",
+    "🔁 {message}\n\nاستمر مزوّد الخدمة في إرجاع الخطأ نفسه بعد عدة محاولات. استخدم Telegram Stop لإيقاف المهمة.",
   "bot.external_user_input": "رسالة واردة من واجهة أخرى",
   "background.session_fallback": "الجلسة {id}",
   "background.assistant_response": "🔔 وصل رد جديد من جلسة تعمل في الخلفية: {session}",
@@ -189,15 +189,15 @@ export const ar: I18nDictionary = {
   "stop.in_progress":
     "🛑 تم إيقاف تدفق الأحداث، جارٍ إرسال إشارة الإيقاف...\n\nبانتظار توقف الوكيل.",
   "stop.warn_unconfirmed":
-    "⚠️ تم إيقاف تدفق الأحداث، لكن الخادم لم يؤكد الإيقاف.\n\nتحقق من /status ثم أعد محاولة /abort بعد بضع ثوانٍ.",
+    "⚠️ تم إيقاف تدفق الأحداث، لكن الخادم لم يؤكد الإيقاف.\n\nتحقق من /status ثم أعد محاولة Telegram Stop بعد بضع ثوانٍ.",
   "stop.warn_maybe_finished": "⚠️ تم إيقاف تدفق الأحداث، لكن الوكيل ربما كان قد انتهى بالفعل.",
   "stop.success": "✅ تم إيقاف إجراء الوكيل. لن تُرسل أي رسائل أخرى من هذا التشغيل.",
   "stop.warn_still_busy":
     "⚠️ تم إرسال الإشارة، لكن الوكيل لا يزال مشغولًا.\n\nتدفق الأحداث معطّل بالفعل، لذلك لن تُرسل رسائل وسيطة.",
   "stop.warn_timeout":
-    "⚠️ انتهت مهلة طلب الإيقاف.\n\nتدفق الأحداث معطّل بالفعل، أعد محاولة /abort بعد بضع ثوانٍ.",
+    "⚠️ انتهت مهلة طلب الإيقاف.\n\nتدفق الأحداث معطّل بالفعل، أعد محاولة Telegram Stop بعد بضع ثوانٍ.",
   "stop.warn_local_only": "⚠️ تم إيقاف تدفق الأحداث محليًا، لكن فشل الإيقاف على الخادم.",
-  "stop.error": "🔴 تعذر إيقاف الإجراء.\n\nتم إيقاف تدفق الأحداث، حاول /abort مرة أخرى.",
+  "stop.error": "🔴 تعذر إيقاف الإجراء.\n\nتم إيقاف تدفق الأحداث، حاول Telegram Stop مرة أخرى.",
 
   "opencode_start.already_running": "✅ خادم OpenCode يعمل بالفعل\n\nالإصدار: {version}",
   "opencode_start.remote_configured": "⚠️ يعمل /opencode_start فقط مع خادم OpenCode محلي.",
@@ -625,4 +625,9 @@ export const ar: I18nDictionary = {
   "mcps.detail.type": "Type: {type}",
   "mcps.add.field.remote_url": "Server URL",
   "mcps.add.field.command": "Command",
+  "generation.activity": "Working: {activity}…",
+  "generation.finalizing": "Preparing the final response…",
+  "generation.streaming": "Preparing the response…",
+  "generation.summary": "Completed a model planning phase.",
+  "generation.completed": "Execution completed.",
 };

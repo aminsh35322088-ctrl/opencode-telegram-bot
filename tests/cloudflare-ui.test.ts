@@ -304,12 +304,15 @@ test("compact is durable Topic presentation state and does not duplicate global 
     message: { chat: { id: -100 }, from: { id: 7 }, message_thread_id: 42, text: "/keyboard" },
   });
   await restarted.alarm();
-  assert.equal(f.sent.filter((entry) => entry.payload.reply_markup?.keyboard).length, 0);
-  const keyboardState = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'reply-keyboard:%' LIMIT 1"),
+  assert.equal(f.sent.filter((entry) => entry.payload.reply_markup?.keyboard).length, 1);
+  const labels = f.sent.flatMap((entry) =>
+    (entry.payload.reply_markup?.keyboard?.flat() ?? []).map((button: any) => String(button.text)),
+  );
+  assert.ok(labels.some((label) => /Compact: ON/.test(label)));
+  const topicState = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
   ][0];
-  assert.ok(keyboardState);
-  assert.match(keyboardState.data, /Compact: ON/);
+  assert.equal(JSON.parse(topicState!.data).compact, true);
   assert.equal(f.store.global()!.revision, revision);
 });
 
@@ -363,58 +366,19 @@ test("rename answer remains a control after an acknowledgement rate limit", asyn
   assert.equal(f.sent.filter((x) => x.method === "editForumTopic").length, 1);
 });
 
-test("Stop replay cannot abort the next queued run", async (t) => {
+test("legacy Abort command cannot cancel the current or next run", async (t) => {
   const f = fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "run_a", "a");
   f.store.startNext(-100, 42);
-  const before = globalThis.fetch;
-  let failed = false;
-  globalThis.fetch = async (input, init) => {
-    const payload = JSON.parse(String(init?.body));
-    if (String(input).includes("canary.up.railway.app")) {
-      const result =
-        payload.operation === "run"
-          ? { accepted: true }
-          : payload.operation === "callback.status"
-            ? { state: "ACCEPTED" }
-            : null;
-      const signed = await signEnvelope(
-        {
-          ...payload,
-          nonce: crypto.randomUUID(),
-          timestamp: Date.now(),
-          payload: { ok: true, result },
-        },
-        "n".repeat(64),
-      );
-      f.rpc.push(payload);
-      return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
-    }
-    if (
-      !failed &&
-      /\/(?:sendMessage|editMessageText)$/.test(String(input)) &&
-      payload.text === "OpenCode" &&
-      payload.reply_markup?.keyboard
-    ) {
-      failed = true;
-      return Response.json(
-        { ok: false, error_code: 429, parameters: { retry_after: 1 } },
-        { status: 429 },
-      );
-    }
-    return before(input, init);
-  };
   await f.update("/abort", 42);
+  assert.equal(f.rpc.some((entry) => entry.operation === "stop"), false);
+  assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "run_a");
+  f.store.failRun(-100, 42, "run_a", "done");
   f.store.enqueue(-100, 42, "run_b", "b");
   f.store.startNext(-100, 42);
-  await f.plane.alarm();
-  assert.equal(failed, true);
-  assert.deepEqual(
-    f.rpc.filter((x) => x.operation === "stop").map((x) => x.payload.runId),
-    ["run_a"],
-  );
   assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "run_b");
+  assert.equal(f.rpc.some((entry) => entry.operation === "stop"), false);
 });
 
 test("readiness keyboard retries Telegram 429 without duplicating a delivered notice", async (t) => {
@@ -435,8 +399,12 @@ test("readiness keyboard retries Telegram 429 without duplicating a delivered no
   const ui = (f.plane as unknown as { ui: () => { ready: (topic: any) => Promise<void> } }).ui();
   await assert.rejects(ui.ready(f.store.topics()[0]));
   await ui.ready(f.store.topics()[0]);
+  const afterSuccess = f.sent.length;
   await ui.ready(f.store.topics()[0]);
-  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
+  assert.equal(f.sent.length, afterSuccess);
+  assert.equal(f.sent.filter((x) => x.payload.reply_markup?.remove_keyboard).length, 0);
+  assert.equal(f.sent.filter((x) => x.payload.reply_markup?.inline_keyboard).length, 0);
+  assert.equal(f.sent.filter((x) => x.payload.reply_markup?.keyboard).length, 1);
 });
 
 test("questions render in their Topic and their answers never become prompts", async (t) => {
@@ -575,7 +543,7 @@ test("double taps on New Chat reuse the pending allocation instead of creating a
   await f.update("/new");
   await f.update("/new");
   assert.equal(f.store.workers().length, 1);
-  assert.equal(f.sent.filter((x) => x.method === "createForumTopic").length, 1);
+  assert.equal(f.sent.filter((x) => x.method === "createForumTopic").length, 0);
 });
 
 test("a Topic fenced before final Telegram delivery cannot publish its old response", async (t) => {
@@ -870,22 +838,24 @@ test("streaming toggle persists an actual transport mode rather than a boolean",
   assert.equal(JSON.parse(row.data).responseStreamingMode, "off");
 });
 
-test("active Topic ReplyKeyboard exposes Pause and Abort, and idle keyboard removes them", async (t) => {
+test("managed Topic ReplyKeyboard never exposes legacy Pause Resume or Abort controls", async (t) => {
   const f = fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "keyboard_run", "prompt");
   f.store.startNext(-100, 42);
   await f.update("/keyboard", 42);
-  const active = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
-  assert.match(JSON.stringify(active), /Pause/);
-  assert.match(JSON.stringify(active), /Abort/);
+  const active = f.sent.filter((entry) => entry.payload.reply_markup?.keyboard);
+  assert.ok(active.length > 0);
+  assert.match(JSON.stringify(active), /Compact/);
+  assert.match(JSON.stringify(active), /Delete Chat/);
+  assert.match(JSON.stringify(active), /Topic Settings/);
+  assert.doesNotMatch(JSON.stringify(active), /Pause|Resume|Abort/);
   f.store.failRun(-100, 42, "keyboard_run", "stopped");
   f.sent.length = 0;
   await f.update("/keyboard", 42);
-  const idle = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  const idle = f.sent.filter((entry) => entry.payload.reply_markup?.keyboard);
   assert.ok(idle.length > 0);
-  assert.equal(JSON.stringify(idle).includes("Pause"), false);
-  assert.equal(JSON.stringify(idle).includes("Abort"), false);
+  assert.doesNotMatch(JSON.stringify(idle), /Pause|Resume|Abort/);
 });
 
 test("Topic preferences store only overrides and never duplicate canonical global defaults", async (t) => {
@@ -1284,6 +1254,31 @@ test("active Cloudflare runs emit a Topic-scoped typing action without making ty
   assert.ok(row, "typing refresh state must be persisted for the next Durable Object alarm");
 });
 
+test("ordinary user text is never deleted just because it is not a ReplyKeyboard control", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+
+  f.sent.length = 0;
+  const before = [...f.sql.exec("SELECT request FROM runs")].length;
+  await f.update("Please inspect the project and fix the bug", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, before + 1);
+  assert.equal(
+    f.sent.filter((entry) => entry.method === "deleteMessage").length,
+    0,
+    "an ordinary AI Topic prompt must remain visible",
+  );
+
+  f.sent.length = 0;
+  const afterTopicPrompt = [...f.sql.exec("SELECT request FROM runs")].length;
+  await f.update("This is ordinary text in General");
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, afterTopicPrompt);
+  assert.equal(
+    f.sent.filter((entry) => entry.method === "deleteMessage").length,
+    0,
+    "ordinary General text may be blocked from execution but must not be deleted",
+  );
+});
+
 test("only exact rendered Topic controls are consumed; an emoji-prefixed user prompt still reaches the model", async (t) => {
   const f = fixture(t);
   await f.bound();
@@ -1298,4 +1293,37 @@ test("only exact rendered Topic controls are consumed; an emoji-prefixed user pr
   assert.match(JSON.stringify(f.sent), /MODEL CENTER/);
   await f.update("🧠 Explain this architecture", 42);
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, before + 1);
+});
+
+test("Factory Reset preserves configuration evidence when Railway reconciliation is ambiguous", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  await f.post("/admin/global", {
+    configuration: { runtime: { model: "keep/provider-model" }, marker: "preserve-me" },
+    skills: [],
+    actions: [],
+    catalog: {},
+    defaults: {},
+    credentialReferences: [],
+  });
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    reconcileManagedResources: async () => {
+      throw new Error("cleanup_reconciliation_required");
+    },
+  });
+  const latestButton = (text: string) => {
+    const buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+    const button = [...buttons].reverse().find((candidate: any) => candidate.text === text);
+    assert.ok(button, `missing button ${text}`);
+    return button as any;
+  };
+  await f.update("/settings");
+  await f.callback(latestButton("⋯ More").callback_data);
+  await f.callback(latestButton("🧰 Advanced").callback_data);
+  await f.callback(latestButton("☢️ Factory Reset").callback_data);
+  await f.callback(latestButton("🗑️ Factory Reset").callback_data);
+  await f.callback(latestButton("🗑️ Final Factory Reset").callback_data);
+  const global = f.store.global()!;
+  assert.equal((global.data.configuration as any).marker, "preserve-me");
+  assert.match(JSON.stringify(f.sent), /cleanup_reconciliation_required/);
 });

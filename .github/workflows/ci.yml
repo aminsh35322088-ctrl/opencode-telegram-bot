@@ -31,6 +31,16 @@ jobs:
       - name: Install CI test runner
         run: npm install --no-save --package-lock=false vitest@3.2.4
 
+      - name: Run Telegram lifecycle regression gate
+        run: >-
+          node --import tsx --test
+          tests/cloudflare-control-store.test.ts
+          tests/cloudflare-railway-fleet.test.ts
+          tests/cloudflare-production.test.ts
+          tests/cloudflare-ui.test.ts
+          tests/cloudflare-native-generation.test.ts
+          tests/main-reply-keyboard.test.ts
+
       - name: Run Core routing and distributed boundary tests
         run: node --import tsx --test tests/*.test.ts
 

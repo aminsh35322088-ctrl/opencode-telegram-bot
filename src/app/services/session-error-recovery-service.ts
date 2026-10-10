@@ -1,5 +1,5 @@
 import { opencodeClient } from "../../opencode/client.js";
-import { markAbortExpected } from "../managers/abort-suppression-manager.js";
+import { markCancellationExpected } from "../managers/cancellation-suppression-manager.js";
 import { logger } from "../../utils/logger.js";
 
 const ABORT_TIMEOUT_MS = 4_000;
@@ -50,7 +50,7 @@ async function waitUntilNotBusy(sessionId: string, directory: string): Promise<v
 }
 
 async function abortSessionBestEffort(sessionId: string, directory: string): Promise<{ attempted: boolean; accepted: boolean }> {
-  markAbortExpected(sessionId);
+  markCancellationExpected(sessionId);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
   try {

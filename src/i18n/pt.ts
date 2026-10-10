@@ -60,14 +60,14 @@ export const pt: I18nDictionary = {
     "🔴 Não foi possível criar a sessão. Tente /new ou verifique o status do servidor com /status.",
   "bot.session_created": "✅ Sessão criada: {title}",
   "bot.session_busy":
-    "⏳ O agente já está executando uma tarefa. Aguarde a conclusão ou use /abort para interromper a execução atual.",
+    "⏳ O agente já está executando uma tarefa. Aguarde a conclusão ou use Telegram Stop para interromper a execução atual.",
   "bot.session_reset_project_mismatch":
     "⚠️ A sessão ativa não corresponde ao projeto selecionado, então ela foi redefinida. Use /sessions para escolher uma ou /new para criar uma nova sessão.",
   "bot.prompt_send_error": "Não foi possível enviar a solicitação ao OpenCode.",
   "bot.empty_prompt": "⚠️ Nada para enviar: a mensagem fica vazia após o processamento do anexo.",
   "bot.session_error": "🔴 O OpenCode retornou um erro: {message}",
   "bot.session_retry":
-    "🔁 {message}\n\nO provedor continua retornando o mesmo erro nas novas tentativas. Use /abort para abortar.",
+    "🔁 {message}\n\nO provedor continua retornando o mesmo erro nas novas tentativas. Use Telegram Stop para abortar.",
   "bot.external_user_input": "Entrada externa do usuário",
   "background.session_fallback": "sessão {id}",
   "background.assistant_response":
@@ -199,7 +199,7 @@ export const pt: I18nDictionary = {
   "stop.in_progress":
     "🛑 Fluxo de eventos interrompido, enviando sinal de cancelamento...\n\nAguardando o agente parar.",
   "stop.warn_unconfirmed":
-    "⚠️ Fluxo de eventos interrompido, mas o servidor não confirmou o cancelamento.\n\nVerifique /status e tente /abort novamente em alguns segundos.",
+    "⚠️ Fluxo de eventos interrompido, mas o servidor não confirmou o cancelamento.\n\nVerifique /status e tente Telegram Stop novamente em alguns segundos.",
   "stop.warn_maybe_finished":
     "⚠️ Fluxo de eventos interrompido, mas o agente pode já ter terminado.",
   "stop.success":
@@ -207,11 +207,11 @@ export const pt: I18nDictionary = {
   "stop.warn_still_busy":
     "⚠️ Sinal enviado, mas o agente ainda está ocupado.\n\nO fluxo de eventos já está desativado, então nenhuma mensagem intermediária será enviada.",
   "stop.warn_timeout":
-    "⚠️ Tempo esgotado ao solicitar o cancelamento.\n\nO fluxo de eventos já está desativado, tente /abort novamente em alguns segundos.",
+    "⚠️ Tempo esgotado ao solicitar o cancelamento.\n\nO fluxo de eventos já está desativado, tente Telegram Stop novamente em alguns segundos.",
   "stop.warn_local_only":
     "⚠️ Fluxo de eventos interrompido localmente, mas o cancelamento no servidor falhou.",
   "stop.error":
-    "🔴 Não foi possível parar a ação.\n\nO fluxo de eventos está interrompido, tente /abort novamente.",
+    "🔴 Não foi possível parar a ação.\n\nO fluxo de eventos está interrompido, tente Telegram Stop novamente.",
 
   "opencode_start.already_running": "✅ O OpenCode Server já está em execução\n\nVersão: {version}",
   "opencode_start.remote_configured":
@@ -650,4 +650,9 @@ export const pt: I18nDictionary = {
   "mcps.detail.type": "Type: {type}",
   "mcps.add.field.remote_url": "Server URL",
   "mcps.add.field.command": "Command",
+  "generation.activity": "Working: {activity}…",
+  "generation.finalizing": "Preparing the final response…",
+  "generation.streaming": "Preparing the response…",
+  "generation.summary": "Completed a model planning phase.",
+  "generation.completed": "Execution completed.",
 };

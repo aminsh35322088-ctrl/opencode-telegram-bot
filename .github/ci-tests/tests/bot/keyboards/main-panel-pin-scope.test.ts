@@ -10,8 +10,6 @@ const mocks = vi.hoisted(() => ({
   formatVariantForButton: vi.fn(() => "Default"),
   getTopicRuntimeStateSync: vi.fn(() => null),
   getTopicRuntimeContext: vi.fn(() => undefined),
-  isChatPaused: vi.fn(() => false),
-  hasActiveRun: vi.fn(() => false),
 }));
 
 vi.mock("../../../src/app/stores/settings-store.js", () => ({
@@ -25,8 +23,6 @@ vi.mock("../../../src/app/services/model-selection-service.js", () => ({ getStor
 vi.mock("../../../src/app/services/variant-selection-service.js", () => ({ formatVariantForButton: mocks.formatVariantForButton }));
 vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({ getTopicRuntimeStateSync: mocks.getTopicRuntimeStateSync }));
 vi.mock("../../../src/app/services/topic-runtime-context.js", () => ({ getTopicRuntimeContext: mocks.getTopicRuntimeContext }));
-vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({ isChatPaused: mocks.isChatPaused }));
-vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: { hasActiveRun: mocks.hasActiveRun } }));
 vi.mock("../../../src/app/services/version-info-service.js", () => ({ BOT_VERSION: "test", getOpenCodeVersion: vi.fn(async () => "test") }));
 vi.mock("../../../src/app/types/model.js", () => ({ formatModelForDisplay: vi.fn((_provider: string, _model: string, name?: string) => name ?? "Model") }));
 vi.mock("../../../src/bot/keyboards/queued-prompt-button.js", () => ({ getQueuedPromptButtonLabels: vi.fn(() => []) }));
@@ -55,8 +51,6 @@ describe("Main panel All/root pin isolation", () => {
     mocks.getTopicRuntimeStateSync.mockReturnValue(null);
     mocks.getTopicRuntimeContext.mockReturnValue(undefined);
     mocks.getCompactOutputMode.mockReturnValue(false);
-    mocks.isChatPaused.mockReturnValue(false);
-    mocks.hasActiveRun.mockReturnValue(false);
   });
 
   it("creates the Main panel outside Topics and pins exactly that root message", async () => {

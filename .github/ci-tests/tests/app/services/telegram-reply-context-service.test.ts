@@ -53,16 +53,16 @@ function contextWithReply(text: string): Context {
 
 describe("enrichTelegramReplyContext", () => {
   it("does not rewrite a slash command sent as a reply", async () => {
-    const ctx = contextWithReply("/abort");
+    const ctx = contextWithReply("/help");
     await enrichTelegramReplyContext(ctx, "/tmp/workspace");
-    expect(ctx.message?.text).toBe("/abort");
+    expect(ctx.message?.text).toBe("/help");
     expect(downloadTelegramFileMock).not.toHaveBeenCalled();
   });
 
   it("does not rewrite a command with a bot-mention suffix", async () => {
-    const ctx = contextWithReply("/pause@my_bot");
+    const ctx = contextWithReply("/status@my_bot");
     await enrichTelegramReplyContext(ctx, "/tmp/workspace");
-    expect(ctx.message?.text).toBe("/pause@my_bot");
+    expect(ctx.message?.text).toBe("/status@my_bot");
   });
 
   it("still enriches an ordinary prompt sent as a reply", async () => {

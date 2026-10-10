@@ -73,9 +73,6 @@ function staticControlMap(): ReadonlyMap<string, string> {
   add(MAIN_BUTTONS.mainSettings, "main-settings");
   add(MAIN_BUTTONS.topicSettings, "topic-settings");
   add(MAIN_BUTTONS.deleteChat, "delete-chat");
-  add(MAIN_BUTTONS.pause, "pause");
-  add(MAIN_BUTTONS.resume, "resume");
-  add(MAIN_BUTTONS.abort, "abort");
   add("🧠 Model Center", "model-center");
   add("❌ Cancel", "cancel");
   add(MAIN_BUTTONS.compact(true), "compact");

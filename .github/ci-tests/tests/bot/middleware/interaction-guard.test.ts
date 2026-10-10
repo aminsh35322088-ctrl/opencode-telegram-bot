@@ -385,10 +385,10 @@ describe("interactionGuardMiddleware", () => {
     expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
   });
 
-  it("allows abort, detach, status, help, and opencode_stop while busy", async () => {
+  it("allows safe navigation and administration commands while busy", async () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
-    for (const command of ["/abort", "/detach", "/status", "/help", "/opencode_stop"]) {
+    for (const command of ["/detach", "/status", "/help", "/opencode_stop"]) {
       const ctx = createTextContext(command);
       const next: NextFunction = vi.fn().mockResolvedValue(undefined);
 
@@ -402,7 +402,7 @@ describe("interactionGuardMiddleware", () => {
   it("allows AI Topic management commands while busy so they match the Reply Keyboard buttons", async () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
-    for (const command of ["/pause", "/resume", "/delete_topic", "/stop", "/keyboard"]) {
+    for (const command of ["/delete_topic", "/keyboard", "/settings", "/start"]) {
       const ctx = createTextContext(command);
       const next: NextFunction = vi.fn().mockResolvedValue(undefined);
 

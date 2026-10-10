@@ -121,8 +121,8 @@ export async function enrichTelegramReplyContext(ctx: Context, workspace: string
 
   // A Telegram command must keep its exact leading "/name" so grammY's
   // bot.command() router can match it. When the user is in reply mode and
-  // sends a control command (for example /abort), enriching the text with a
-  // "Replying to ..." prefix would break command parsing and leak the command
+  // sends a slash command, enriching the text with a "Replying to ..." prefix
+  // would break command parsing and leak the command
   // into Coding AI prompt handling. Reply context only applies to prompts.
   if (isSlashCommand(message.text as string | undefined)) return;
 

@@ -119,6 +119,7 @@ import {
 
 export interface TelegramUpdate {
   update_id?: number;
+  stopped_message_generation?: import("./run-presentation.js").NativeStop;
   message?: {
     message_id?: number;
     text?: string;
@@ -143,7 +144,6 @@ export interface TelegramUpdate {
 interface UiAction {
   action: string;
   value?: string;
-  targetRun?: string;
   panel?: boolean;
 }
 interface UiOptions {
@@ -160,7 +160,6 @@ interface UiOptions {
   model?: string;
   agent?: string;
   variant?: string;
-  paused?: boolean;
   title?: string;
   titleSource?: "auto" | "manual";
 }
@@ -175,6 +174,7 @@ interface UiDependencies {
   newTopic: (chat: number, request: string) => Promise<AllocationJob>;
   deleteTopic: (chat: number, thread: number) => Promise<void>;
   cancelAllocation?: (jobId: string) => Promise<void>;
+  reconcileManagedCleanup?: (chat: number) => Promise<void>;
   rpc: <T = unknown>(topic: FleetTopic, operation: string, payload?: unknown) => Promise<T>;
   global: (data: Record<string, unknown>, expectedRevision: number) => Promise<void>;
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -725,9 +725,6 @@ export class CloudBotUi {
         action,
         value,
         ...(this.panelScope ? { panel: true } : {}),
-        ...(["pause", "resume", "abort", "stop"].includes(action)
-          ? { targetRun: this.deps.store.activeRuns(chat, thread)[0]?.requestId }
-          : {}),
       }),
     );
     return { text, callback_data: "ui:" + id };
@@ -824,6 +821,48 @@ export class CloudBotUi {
       },
     });
   }
+  async allocationProgress(job: AllocationJob, stage: string): Promise<void> {
+    if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
+      throw new Error("main_panel_scope_required");
+    if (stage === "READY") {
+      await this.home(job.chatId, this.panelScope.actor, false);
+      return;
+    }
+    const stages = [
+      ["ALLOCATING", "Allocating Railway worker"],
+      ["DEPLOYING", "Deploying runtime"],
+      ["HEALTH", "Waiting for health"],
+      ["PROBING", "Preparing OpenCode"],
+      ["TOPIC", "Creating Telegram Topic"],
+      ["BINDING", "Binding Topic runtime"],
+    ] as const;
+    const current = Math.max(0, stages.findIndex(([id]) => id === stage));
+    const lines = stages.map(([, label], index) =>
+      `${index < current ? "✅" : index === current ? "⏳" : "▫️"} ${label}`,
+    );
+    await this.panel(job.chatId, undefined, {
+      text: ["Creating new thread…", "", ...lines].join("\n"),
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
+  async allocationFailure(job: AllocationJob, reason: string): Promise<void> {
+    if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
+      throw new Error("main_panel_scope_required");
+    await this.menu(job.chatId, undefined, `❌ Chat creation failed\n\n${escape(reason)}`, [
+      [
+        this.button(this.panelScope.actor, job.chatId, 0, undefined, "↻ Retry", "allocation_retry", job.jobId),
+        this.button(this.panelScope.actor, job.chatId, 0, undefined, "✖ Cancel", "allocation_cancel", job.jobId),
+      ],
+    ]);
+  }
+  async allocationCleanupPending(job: AllocationJob, reason: string): Promise<void> {
+    if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
+      throw new Error("main_panel_scope_required");
+    await this.panel(job.chatId, undefined, {
+      text: `⚠️ Cleanup verification pending\n\n${reason}`,
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
   async rpcDiff(topic: FleetTopic): Promise<unknown> {
     return this.deps.rpc(topic, "session.diff");
   }
@@ -852,45 +891,28 @@ export class CloudBotUi {
       modelID: split > 0 ? selected.slice(split + 1) : "",
     };
     const options = topic ? this.options(topic) : {};
-    const keyboard = topic
-      ? createTopicKeyboard({
-          compactOutputMode: options.compact ?? options.compactOutputMode ?? false,
-          paused: options.paused ?? false,
-          running: this.deps.store.activeRuns(chat, topic.threadId).length > 0,
-          currentModel,
-        })
-      : createMainKeyboard(currentModel);
 
     if (topic) {
-      const replyMarkup = {
-        keyboard: keyboard.keyboard.filter((row) => row.length > 0),
-        resize_keyboard: true,
-        is_persistent: true,
-      };
-      const scope = this.panelScope;
-      const stateKey = scope
-        ? `reply-keyboard:${scope.actor}:${chat}:${topic.threadId}:${topic.generation}`
-        : `reply-keyboard:${chat}:${topic.threadId}:${topic.generation}`;
-      const previous = this.get<{ signature?: string; controls?: string[] }>(stateKey);
-      const currentControls = replyMarkup.keyboard
+      const actor = this.panelScope!.actor;
+      const advertised = (await this.legacyModels().current(topic)) ?? currentModel;
+      const replyMarkup = createTopicKeyboard({
+        compactOutputMode: options.compact ?? options.compactOutputMode ?? false,
+        currentModel: advertised,
+      });
+      const controls = replyMarkup.keyboard
         .flat()
-        .map((button) => normalized(typeof button === "string" ? button : button.text))
-        .filter(Boolean);
-      const controls = Array.from(new Set([...currentControls, ...(previous?.controls ?? [])])).slice(0, 32);
-      // Keyboard identity is the markup itself. Status/acknowledgement text must
-      // not force a duplicate keyboard message after restart or /keyboard.
-      const signature = JSON.stringify(replyMarkup);
-      if (previous?.signature === signature) return;
-      const sent = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
+        .map((button) => normalized(typeof button === "string" ? button : button.text));
+      this.set(`reply-keyboard:${actor}:${chat}:${topic.threadId}:${topic.generation}`, { controls });
+      await this.deps.telegram.call("sendMessage", {
         chat_id: chat,
         message_thread_id: topic.threadId,
-        text,
+        text: text.slice(0, 4000),
         reply_markup: replyMarkup,
       });
-      this.set(stateKey, { signature, messageId: sent.message_id, controls });
       return;
     }
 
+    const keyboard = createMainKeyboard(currentModel);
     if (this.panelScope && this.panelScope.chat === chat && this.panelScope.thread === 0) {
       const actions: Record<string, string> = {
         [MAIN_BUTTONS.newChat]: "new",
@@ -924,31 +946,34 @@ export class CloudBotUi {
       reply_markup: { remove_keyboard: true },
     });
   }
+  private async modelCapabilitySummary(topic: FleetTopic): Promise<string> {
+    const models = this.legacyModels();
+    const current = await models.current(topic);
+    if (!current) return "🧠 Model not configured";
+    return models.routingSummary({ kind: "topic", topic }, current);
+  }
+  private topicDisplayTitle(topic: FleetTopic): string {
+    const configured = this.options(topic).title ??
+      this.deps.store.jobs().find((job) => job.workerId === topic.workerId)?.topicTitle;
+    const match = /^(?:Chat )?#(\d+)$/.exec(configured ?? "");
+    if (match) return `Chat #${String(Number(match[1])).padStart(2, "0")}`;
+    if (configured?.trim()) return configured.trim();
+    const ordered = this.deps.store
+      .topics()
+      .filter((candidate) => candidate.chatId === topic.chatId && candidate.state === "ACTIVE")
+      .sort((left, right) => left.threadId - right.threadId);
+    const index = Math.max(0, ordered.findIndex((candidate) => candidate.workerId === topic.workerId));
+    return `Chat #${String(index + 1).padStart(2, "0")}`;
+  }
   async runKeyboard(topic: FleetTopic, runId: string, running: boolean): Promise<void> {
     this.assertTopic(topic);
-    if (!running && !this.deps.store.activeRuns(topic.chatId, topic.threadId).length)
-      this.setOptions(topic, { paused: false });
+    // Execution control is Telegram Native Stop. The Topic ReplyKeyboard does not
+    // change between idle and running states, so refreshing it here only creates spam.
     const id = "keyboard:" + runId + ":" + (running ? "active" : "idle");
-    const receipt = [
-      ...this.deps.sql.exec<{ state: string }>("SELECT state FROM ui_delivery WHERE id=?", id),
-    ][0];
-    if (receipt && receipt.state !== "PENDING") return;
     this.deps.sql.exec(
-      "INSERT INTO ui_delivery VALUES(?,'SENDING',NULL) ON CONFLICT(id) DO UPDATE SET state='SENDING'",
+      "INSERT INTO ui_delivery VALUES(?,'DELIVERED',NULL) ON CONFLICT(id) DO UPDATE SET state='DELIVERED'",
       id,
     );
-    try {
-      await this.keyboard(topic.chatId, topic, running ? "▶ OpenCode is running…" : "✅ Ready");
-      this.deps.sql.exec("UPDATE ui_delivery SET state='DELIVERED' WHERE id=?", id);
-    } catch (error) {
-      this.deps.sql.exec(
-        "UPDATE ui_delivery SET state=? WHERE id=?",
-        error instanceof TelegramDeliveryError && error.category === "rate_limited"
-          ? "PENDING"
-          : "RECONCILIATION_REQUIRED",
-        id,
-      );
-    }
   }
   async ready(topic: FleetTopic): Promise<void> {
     const id = "ready:" + topic.workerId + ":" + topic.generation;
@@ -961,10 +986,11 @@ export class CloudBotUi {
       id,
     );
     try {
+      const summary = await this.modelCapabilitySummary(topic);
       await this.keyboard(
         topic.chatId,
         topic,
-        t("new.created", { title: this.options(topic).title ?? "OpenCode" }, "en"),
+        `✅ ${this.topicDisplayTitle(topic)} created\n\n${summary}`,
       );
       this.deps.sql.exec("UPDATE ui_delivery SET state='DELIVERED' WHERE id=?", id);
     } catch (error) {
@@ -1419,6 +1445,9 @@ export class CloudBotUi {
     const topic = this.deps.store
       .topics()
       .find((t) => t.chatId === chat && t.threadId === thread && t.state === "ACTIVE");
+    // Telegram Topics created manually by the user are outside the managed AI fleet.
+    // Fail closed before interpreting commands or ReplyKeyboard-looking text.
+    if (thread && !topic) return true;
     const text = update.message?.text ?? "";
     const actionKey = "action:" + updateId;
     const saved = this.get<{
@@ -1517,15 +1546,20 @@ export class CloudBotUi {
       const label = normalized(text);
       const topicModel = topic ? this.model(topic) : "";
       const topicModelSplit = topicModel.indexOf("/");
+      const advertisedModel =
+        topic && label.startsWith("🧠 ")
+          ? await this.legacyModels().current(topic).catch(() => undefined)
+          : undefined;
       const topicModelButton = topic
         ? normalized(
             TOPIC_BUTTONS.modelCenter(
-              topicModelSplit > 0
-                ? {
-                    providerID: topicModel.slice(0, topicModelSplit),
-                    modelID: topicModel.slice(topicModelSplit + 1),
-                  }
-                : undefined,
+              advertisedModel ??
+                (topicModelSplit > 0
+                  ? {
+                      providerID: topicModel.slice(0, topicModelSplit),
+                      modelID: topicModel.slice(topicModelSplit + 1),
+                    }
+                  : undefined),
             ),
           )
         : "";
@@ -1542,9 +1576,6 @@ export class CloudBotUi {
         [normalized(MAIN_BUTTONS.mainSettings)]: "settings",
         [normalized(MAIN_BUTTONS.topicSettings)]: "topic_settings",
         [normalized(MAIN_BUTTONS.deleteChat)]: "delete_topic",
-        [normalized(MAIN_BUTTONS.pause)]: "pause",
-        [normalized(MAIN_BUTTONS.resume)]: "resume",
-        [normalized(MAIN_BUTTONS.abort)]: "abort",
         [normalized(MAIN_BUTTONS.compact(true))]: "compact",
         [normalized(MAIN_BUTTONS.compact(false))]: "compact",
         "🧠 Models": "models",
@@ -1628,22 +1659,15 @@ export class CloudBotUi {
         this.set(actionKey, { actor, chat, thread, generation: topic?.generation ?? 0, action });
         this.set(formKey, {});
       } else if (!text || !thread) {
-        if (update.message?.message_id) {
-          try {
-            await this.deps.telegram.call("deleteMessage", {
-              chat_id: chat,
-              message_id: update.message.message_id,
-            });
-          } catch {
-            /* Unrequested input must never reach execution. */
-          }
-        }
+        // General/non-prompt input is blocked from execution, but ordinary user
+        // messages must remain visible. Only recognized ReplyKeyboard controls
+        // are consumed via consumeReplyKeyboardMessage().
+        if (text && !thread)
+          await this.notice(chat, undefined, "Open an AI Topic to send prompts to OpenCode.");
         return true;
       } else return false;
     }
     if (!saved) {
-      if (!action.targetRun && ["pause", "resume", "abort", "stop"].includes(action.action))
-        action.targetRun = this.deps.store.activeRuns(chat, thread)[0]?.requestId;
       this.set(actionKey, { actor, chat, thread, generation: topic?.generation ?? 0, action });
     }
     const done = this.get<boolean>("action_done:" + updateId) === true;
@@ -1680,10 +1704,6 @@ export class CloudBotUi {
       "delete",
       "delete_topic",
       "delete_confirm",
-      "pause",
-      "resume",
-      "abort",
-      "stop",
       "session",
       "messages",
       "messages_page",
@@ -1820,6 +1840,18 @@ export class CloudBotUi {
       return true;
     }
     if (name === "new" || name === "new_chat") {
+      const blocked = this.deps.store
+        .jobs()
+        .filter((j) => j.chatId === chat && (j.error || ["FAILED", "CLEANUP_PENDING", "RECONCILIATION_REQUIRED"].includes(j.phase)))
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0];
+      if (blocked) {
+        const worker = this.deps.store.worker(blocked.workerId);
+        if (worker?.state === "REPLACED")
+          await this.allocationFailure(blocked, blocked.error ?? "Provisioning failed.");
+        else
+          await this.allocationCleanupPending(blocked, "The previous allocation must be cleaned up before Retry.");
+        return true;
+      }
       const pending = this.deps.store
         .jobs()
         .find(
@@ -1828,9 +1860,36 @@ export class CloudBotUi {
             !["BOUND", "FAILED", "RECONCILIATION_REQUIRED"].includes(j.phase) &&
             !j.error,
         );
-      if (!pending) await this.deps.newTopic(chat, "telegram_" + updateId);
+      const job = pending ?? (await this.deps.newTopic(chat, "telegram_" + updateId));
       this.set("action_done:" + updateId, true);
-      await this.notice(chat, thread || undefined, t("bot.creating_session", undefined, "en"));
+      await this.allocationProgress(job, "ALLOCATING");
+      return true;
+    }
+    if (name === "allocation_retry") {
+      const failed = this.deps.store.job(String(action.value ?? ""));
+      if (!failed || failed.chatId !== chat) return true;
+      const worker = this.deps.store.worker(failed.workerId);
+      if (!worker || worker.state !== "REPLACED") {
+        await this.allocationCleanupPending(failed, "The previous allocation is still being cleaned up.");
+        return true;
+      }
+      const job = await this.deps.newTopic(
+        chat,
+        `telegram_retry_${updateId}_${crypto.randomUUID()}`,
+      );
+      this.set("action_done:" + updateId, true);
+      await this.allocationProgress(job, "ALLOCATING");
+      return true;
+    }
+    if (name === "allocation_cancel") {
+      const failed = this.deps.store.job(String(action.value ?? ""));
+      if (failed && failed.chatId === chat) {
+        const worker = this.deps.store.worker(failed.workerId);
+        if (worker && worker.state !== "REPLACED" && this.deps.cancelAllocation)
+          await this.deps.cancelAllocation(failed.jobId);
+      }
+      this.set("action_done:" + updateId, true);
+      await this.home(chat, actor, false);
       return true;
     }
     if (name === "history" || name === "sessions") {
@@ -1950,27 +2009,7 @@ export class CloudBotUi {
       const compact = !(this.options(topic!).compact ?? this.options(topic!).compactOutputMode);
       this.setOptions(topic!, { compact });
       this.set("action_done:" + updateId, true);
-      await this.keyboard(chat, topic, `✅ Compact mode is ${compact ? "ON" : "OFF"}.`);
-      return true;
-    }
-    if (["pause", "resume", "abort", "stop"].includes(name)) {
-      const run = this.deps.store
-        .activeRuns(chat, thread)
-        .find((r) => r.requestId === action.targetRun);
-      if (!run) {
-        await this.notice(chat, thread, "No active execution.");
-        return true;
-      }
-      await this.deps.rpc(topic!, name === "abort" ? "stop" : name, { runId: run.requestId });
-      this.assertTopic(topic!);
-      if (["stop", "abort"].includes(name)) {
-        const status = await this.deps.rpc(topic!, "status");
-        if (status) throw new Error("execution_cleanup_pending");
-        this.deps.store.failRun(chat, thread, run.requestId, "🛑 Execution stopped.");
-        this.setOptions(topic!, { paused: false });
-      } else this.setOptions(topic!, { paused: name === "pause" });
-      this.set("action_done:" + updateId, true);
-      await this.keyboard(chat, topic);
+      await this.keyboard(chat, topic, `✅ Compact: ${compact ? "ON" : "OFF"}`);
       return true;
     }
     if (name === "rename") {
@@ -2888,7 +2927,7 @@ export class CloudBotUi {
       await this.notice(
         chat,
         thread || undefined,
-        "This Topic owns a dedicated managed Core runtime and workspace. Use /session to inspect it, /abort to stop work, or Delete Chat to retire it. Runtime creation and cleanup are controlled by Cloudflare.",
+        "This Topic owns a dedicated managed Core runtime and workspace. Use /session to inspect it, Telegram Native Stop to cancel the current run, or Delete Chat to retire it. Runtime creation and cleanup are controlled by Cloudflare.",
       );
       return true;
     }
@@ -3175,11 +3214,8 @@ export class CloudBotUi {
       if (updateId) this.set("action_done:" + updateId, true);
       if (topic) {
         await this.clearOwnedPanels();
-        await this.keyboard(
-          chat,
-          topic,
-          `✅ Model updated to ${selected.slice(split + 1)}.`,
-        );
+        const summary = await this.modelCapabilitySummary(topic);
+        await this.keyboard(chat, topic, `✅ Model changed\n\n${summary}`);
       } else await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }
@@ -3207,14 +3243,14 @@ export class CloudBotUi {
       this.set("reset:" + chat, { updateId });
       for (const job of this.deps.store
         .jobs()
-        .filter((j) => j.chatId === chat && !["BOUND", "FAILED"].includes(j.phase))) {
+        .filter(
+          (j) =>
+            j.chatId === chat &&
+            j.phase !== "BOUND" &&
+            this.deps.store.worker(j.workerId)?.state !== "REPLACED",
+        )) {
         if (!this.deps.cancelAllocation) throw new Error("pending_worker_cleanup_required");
         await this.deps.cancelAllocation(job.jobId);
-        if (job.threadId)
-          await this.deps.telegram.call("deleteForumTopic", {
-            chat_id: chat,
-            message_thread_id: job.threadId,
-          });
       }
       const key = "cleanup:" + updateId;
       let plan = this.get<Array<{ threadId: number; deleted?: boolean }>>(key);
@@ -3236,6 +3272,16 @@ export class CloudBotUi {
         this.set(key, plan);
       }
       if (name === "factory_reset_final") {
+        try {
+          await this.deps.reconcileManagedCleanup?.(chat);
+        } catch (error) {
+          await this.notice(
+            chat,
+            undefined,
+            "⚠️ cleanup_reconciliation_required. Railway cleanup must be reconciled before Factory Reset can finish.",
+          );
+          throw error;
+        }
         const current = this.deps.store.global();
         if (!current) throw new Error("snapshot_unavailable");
         await this.deps.global(resetGlobalConfiguration(current.data), current.revision);

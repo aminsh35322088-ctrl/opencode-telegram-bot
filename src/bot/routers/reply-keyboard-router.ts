@@ -6,8 +6,6 @@ import { assistantRunState } from "../../app/managers/assistant-run-state-manage
 import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { formatModelForButton } from "../../app/types/model.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
-import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
-import { abortCurrentOperation } from "../commands/abort-command.js";
 import { sessionsCommand } from "../commands/sessions-command.js";
 import { newCommand } from "../commands/new-command.js";
 import { settingsCommand, topicModelsCommand } from "../commands/settings-command.js";
@@ -144,7 +142,6 @@ async function handleReplyKeyboardInput(
     ...renderedButtonTexts,
     normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings),
     normalized(MAIN_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.deleteChat),
-    normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort),
     normalized("🧠 Model Center"), normalized("❌ Cancel"), compactOn, compactOff, mainModelButton, topicModelButton,
   ]);
 
@@ -163,7 +160,7 @@ async function handleReplyKeyboardInput(
   }
 
   const mainOnly = new Set([normalized(MAIN_BUTTONS.history), normalized(MAIN_BUTTONS.newChat), normalized(MAIN_BUTTONS.mainSettings), mainModelButton]);
-  const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), normalized(MAIN_BUTTONS.pause), normalized(MAIN_BUTTONS.resume), normalized(MAIN_BUTTONS.abort), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
+  const topicOnly = new Set([normalized(TOPIC_BUTTONS.deleteChat), normalized(TOPIC_BUTTONS.topicSettings), compactOn, compactOff, normalized("🧠 Model Center"), topicModelButton]);
   const allowedInRoute = scope.aiTopic ? topicOnly.has(text) || dynamicTopicControl : mainOnly.has(text);
   if (!allowedInRoute) {
     logger.info(`[Bot] Consuming stale/wrong-scope Reply Keyboard control instead of falling through to prompt: scope=${scope.topicMode ? "topic" : "main"}${scope.topicMode && !scope.aiTopic ? "/general" : ""} thread=${ctx.message?.message_thread_id ?? 0} text=${text}`);
@@ -174,9 +171,6 @@ async function handleReplyKeyboardInput(
   logger.info(`[Bot] Consuming Reply Keyboard control: scope=${scope.aiTopic ? "ai-topic" : scope.topicMode ? "general" : "main"} thread=${ctx.message?.message_thread_id ?? 0} text=${text}`);
   await consumeReplyKeyboardMessage(ctx);
   try {
-    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.pause)) { await pauseCurrentChat(ctx); return; }
-    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.resume)) { await resumePausedChat(ctx, { bot: deps.bot, ensureEventSubscription: deps.ensureEventSubscription }); return; }
-    if (scope.aiTopic && isExact(text, TOPIC_BUTTONS.abort)) { await abortCurrentOperation(ctx); return; }
     if (isExact(text, "❌ Cancel")) {
       if (isProviderWizardActive()) { clearProviderWizard(); await providersCommand(ctx as never); return; }
       if (isIntegrationWizardActive()) { clearIntegrationWizard(); await settingsCommand(ctx as never); return; }

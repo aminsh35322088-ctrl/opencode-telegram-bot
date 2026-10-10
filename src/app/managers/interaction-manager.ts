@@ -6,7 +6,7 @@ import { taskCreationManager } from "./scheduled-task-creation-manager.js";
 import { logger } from "../../utils/logger.js";
 import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 
-export const DEFAULT_ALLOWED_INTERACTION_COMMANDS = ["/help", "/status", "/abort", "/detach", "/opencode_stop"] as const;
+export const DEFAULT_ALLOWED_INTERACTION_COMMANDS = ["/help", "/status", "/detach", "/opencode_stop"] as const;
 export const DEFAULT_INLINE_MENU_TTL_MS = 15 * 60 * 1000;
 function normalizeCommand(command: string): string | null { const trimmed = command.trim().toLowerCase(); if (!trimmed) return null; const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`; const withoutMention = withSlash.split("@")[0] ?? ""; return withoutMention.length > 1 ? withoutMention : null; }
 function normalizeAllowedCommands(commands?: string[]): string[] { if (commands === undefined) return [...DEFAULT_ALLOWED_INTERACTION_COMMANDS]; const normalized = new Set<string>(); for (const command of commands) { const value = normalizeCommand(command); if (value) normalized.add(value); } return [...normalized]; }

@@ -4,10 +4,9 @@ import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { clearSession } from "../../app/services/session-service.js";
 import * as settingsStore from "../../app/stores/settings-store.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
-import { abortCurrentOperation } from "./abort-command.js";
+import { cancelCurrentRun } from "../../app/services/current-run-cancellation-service.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { detachAttachedSession } from "../../app/services/attach-service.js";
-import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { getBotUpdateNotice, markBotVersionNotified } from "../../app/services/version-info-service.js";
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
@@ -59,12 +58,10 @@ export async function startCommand(ctx: Context): Promise<void> {
   keyboardManager.initialize(ctx.api, chatId);
 
   if (!isInTopic && !isTopicMode) {
-    await abortCurrentOperation(ctx, { notifyUser: false });
+    await cancelCurrentRun({ reason: "start_command_reset" });
     detachAttachedSession("start_command_reset");
     foregroundSessionState.clearAll("start_command_reset");
     assistantRunState.clearAll("start_command_reset");
-    clearPausedSession();
-    keyboardManager.setPaused(false);
     clearSession();
     settingsStore.clearProject();
     keyboardManager.clearContext();

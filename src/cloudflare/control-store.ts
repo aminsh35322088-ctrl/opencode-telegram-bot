@@ -1,4 +1,5 @@
 import type { SqlStorage } from "@cloudflare/workers-types";
+import { t } from "../i18n/index.js";
 export type SqlDatabase = Pick<SqlStorage, "exec">;
 export type WorkerState =
   | "PROVISIONING"
@@ -74,6 +75,7 @@ export interface AllocationJob {
   endpoint?: string;
   desiredImage?: string;
   threadId?: number;
+  pendingThreadId?: number;
   error?: string;
   previousDeploymentId?: string;
   deploymentReceipt?: string;
@@ -122,6 +124,23 @@ export class ControlStore {
         "CREATE TABLE IF NOT EXISTS run_pins(request TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL,model TEXT NOT NULL,dispatched INTEGER NOT NULL DEFAULT 0)",
       );
       this.sql.exec("CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY,data TEXT NOT NULL)");
+      if (
+        ![
+          ...this.sql.exec(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_run_presentations'",
+          ),
+        ].length
+      ) {
+        this.sql.exec(
+          "CREATE TABLE telegram_run_presentations(run TEXT PRIMARY KEY,chat INTEGER NOT NULL,thread INTEGER NOT NULL,draft INTEGER NOT NULL UNIQUE,data TEXT NOT NULL)",
+        );
+        this.sql.exec(
+          "CREATE INDEX native_scope_state ON telegram_run_presentations(chat,thread,json_extract(data,'$.state'))",
+        );
+        this.sql.exec(
+          "CREATE INDEX native_state ON telegram_run_presentations(json_extract(data,'$.state'))",
+        );
+      }
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS ui_callbacks(id TEXT PRIMARY KEY,actor INTEGER NOT NULL,chat INTEGER NOT NULL,thread INTEGER NOT NULL,generation INTEGER NOT NULL,expires INTEGER NOT NULL,data TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'READY')",
       );
@@ -259,6 +278,7 @@ export class ControlStore {
         else if (run.state === "QUEUED") this.sql.exec(
           "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING", run.chat, run.thread, run.seq, run.request);
       });
+
   }
   private ensureTelegramUpdateQueue(): void {
     this.migrateQueue<{ cursor: number; id: number; data: string; state: string }>(
@@ -361,8 +381,19 @@ export class ControlStore {
         ].length
       )
         return false;
-      if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === runId))
+      if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === runId)) {
+        const stopped = [
+          ...this.sql.exec<{ state: string }>(
+            "SELECT state FROM runs WHERE request=? AND chat=? AND thread=?",
+            runId,
+            chatId,
+            threadId,
+          ),
+        ][0];
+        if (stopped && ["CANCELLING", "CANCELLED", "FINALIZING"].includes(stopped.state))
+          return false;
         throw new Error("run_mismatch");
+      }
       this.sql.exec("INSERT INTO callbacks VALUES(?,?,?)", runId, stream, sequence);
       const event = payload.event as {
         type?: string;
@@ -453,6 +484,37 @@ export class ControlStore {
           threadId,
           runId,
         );
+
+        const native = [
+          ...this.sql.exec<{ data: string }>(
+            "SELECT data FROM telegram_run_presentations WHERE run=?",
+            runId,
+          ),
+        ][0];
+        if (native && JSON.parse(native.data).state !== "UNSUPPORTED") {
+          this.sql.exec(
+            "UPDATE runs SET state=? WHERE request=? AND state='COMPLETED'",
+            event?.type === "session.error" ? "FAILED" : "FINALIZING",
+            runId,
+          );
+          const text = [
+            ...this.sql.exec<{ text: string }>(
+              "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant')",
+              runId,
+            ),
+          ]
+            .map((p) => p.text)
+            .join("");
+          if (!text.trim())
+            this.sql.exec(
+              "INSERT INTO response_parts(run,part,text) VALUES(?,?,?)",
+              runId,
+              "terminal-status",
+              event?.type === "session.error"
+                ? t("bot.prompt_send_error", undefined, "en")
+                : t("generation.completed", undefined, "en"),
+            );
+        }
       }
       return true;
     });
@@ -633,30 +695,19 @@ export class ControlStore {
         (b) => b.enabled && b.health !== "UNHEALTHY" && b.quotaStatus !== "EXHAUSTED",
       );
       const workers = this.workers();
-      let worker = workers.find(
-        (w) =>
-          backends.some((b) => b.backendId === w.backendId) &&
-          (w.chatId === undefined || w.chatId === 0) &&
-          (w.state === "READY_UNBOUND" ||
-            (w.state === "SLEEPING" && !this.topics().some((t) => t.workerId === w.workerId))),
+      const selected = backends.find(
+        (b) =>
+          workers.filter((w) => w.backendId === b.backendId && w.state !== "REPLACED").length <
+          b.desiredMaximumWorkers,
       );
-      if (worker) {
-        worker = { ...worker, generation: worker.generation + 1, state: "BINDING" };
-      } else {
-        const selected = backends.find(
-          (b) =>
-            workers.filter((w) => w.backendId === b.backendId && w.state !== "REPLACED").length <
-            b.desiredMaximumWorkers,
-        );
-        if (!selected) throw new Error("capacity_exhausted");
-        worker = {
-          workerId: crypto.randomUUID(),
-          backendId: selected.backendId,
-          generation: 1,
-          state: "PROVISIONING",
-          revision: 0,
-        };
-      }
+      if (!selected) throw new Error("capacity_exhausted");
+      const worker: FleetWorker = {
+        workerId: crypto.randomUUID(),
+        backendId: selected.backendId,
+        generation: 1,
+        state: "PROVISIONING",
+        revision: 0,
+      };
       if (threadId !== undefined) {
         worker.chatId = chatId;
         worker.threadId = threadId;
@@ -868,6 +919,61 @@ export class ControlStore {
     worker.state = worker.state === "BINDING" ? "BINDING" : "READY_UNBOUND";
     this.saveWorker(worker);
   }
+  markSessionProbed(jobId: string): AllocationJob {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      const worker = this.worker(job.workerId);
+      if (
+        job.phase === "SESSION_PROBED" ||
+        job.threadId !== undefined ||
+        !worker ||
+        worker.generation !== job.generation ||
+        worker.state !== "READY_UNBOUND" ||
+        !worker.credential
+      )
+        throw new Error("session_probe_state_mismatch");
+      job.phase = "SESSION_PROBED";
+      this.saveJob(job);
+      return job;
+    });
+  }
+  rotateAllocationToTopic(jobId: string, threadId: number): AllocationJob {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      if (!Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("invalid_topic");
+      if (
+        !["SESSION_PROBED", "TOPIC_CREATED"].includes(job.phase) ||
+        job.threadId !== undefined ||
+        (job.pendingThreadId !== undefined && job.pendingThreadId !== threadId)
+      )
+        throw new Error("allocation_rotation_rejected");
+      const worker = this.worker(job.workerId);
+      if (
+        !worker ||
+        worker.generation !== job.generation ||
+        worker.state !== "READY_UNBOUND" ||
+        !worker.credential
+      )
+        throw new Error("stale_generation");
+      worker.generation += 1;
+      worker.state = "BINDING";
+      worker.chatId = job.chatId;
+      worker.threadId = threadId;
+      worker.credential = undefined;
+      this.saveWorker(worker);
+      this.sql.exec("UPDATE bootstrap SET used=1 WHERE job=?", jobId);
+      job.generation = worker.generation;
+      job.threadId = threadId;
+      job.pendingThreadId = undefined;
+      job.phase = "BINDING";
+      job.previousDeploymentId = worker.deploymentId;
+      job.deploymentReceipt = undefined;
+      this.saveJob(job);
+      return job;
+    });
+  }
   transition(workerId: string, generation: number, state: WorkerState): FleetWorker {
     const worker = this.worker(workerId);
     if (!worker || worker.generation !== generation) throw new Error("stale_generation");
@@ -999,6 +1105,18 @@ export class ControlStore {
       this.sql.exec("DELETE FROM topics WHERE worker=?", workerId);
       worker.state = "READY_UNBOUND";
       this.saveWorker(worker);
+    });
+  }
+  finalizeAllocationFailure(jobId: string): AllocationJob {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      const worker = this.worker(job.workerId);
+      if (!worker || worker.state !== "REPLACED") throw new Error("cleanup_not_confirmed");
+      job.phase = "FAILED";
+      job.error = job.error ?? "provisioning_failed";
+      this.saveJob(job);
+      return job;
     });
   }
   recordVolumeDeletion(workerId: string, generation: number, pendingUntil: string): void {
@@ -1228,7 +1346,9 @@ export class ControlStore {
       if (
         [
           ...this.sql.exec(
-            "SELECT request FROM active_runs WHERE chat=? AND thread=?",
+            "SELECT request FROM active_runs WHERE chat=? AND thread=? UNION ALL SELECT run FROM telegram_run_presentations WHERE chat=? AND thread=? AND json_extract(data,'$.state') IN ('THINKING','ACTIVITY','STREAMING','FINALIZING','CANCELLING') LIMIT 1",
+            chatId,
+            threadId,
             chatId,
             threadId,
           ),

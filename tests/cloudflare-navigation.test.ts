@@ -234,17 +234,17 @@ test("navigation clears active form so ALL later input cannot mutate configurati
   assert.deepEqual(f.rpc, []);
   assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
 });
-test("ALL unsolicited text is consumed without panel replies or execution", async () => {
+test("ALL unsolicited text stays visible, gets Topic guidance, and never executes", async () => {
   const f = fixture();
   await f.update("hello");
   await f.update("another message");
   assert.deepEqual(f.rpc, []);
-  assert.equal(
-    f.sent.filter((x) => ["sendMessage", "sendRichMessage", "editMessageText"].includes(x.method))
-      .length,
-    0,
+  assert.ok(
+    f.sent.some(
+      (x) => ["sendMessage", "editMessageText"].includes(x.method) && /Open an AI Topic/.test(String(x.payload.text)),
+    ),
   );
-  assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 2);
+  assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 0);
 });
 test("wizard prompt and answer edit the same panel and preserve explicit form admission", async () => {
   const f = fixture();
@@ -273,7 +273,7 @@ test("a destructive callback replaced by navigation cannot execute from its old 
   assert.deepEqual(f.rpc, []);
 });
 
-test("run readiness and active/idle controls refresh only the scoped Topic ReplyKeyboard", async () => {
+test("run readiness keeps ReplyKeyboard scoped to the managed Topic while native Stop owns run control", async () => {
   const f = fixture();
   await f.update("/settings", 42);
   const topic = f.store.topics()[0]!;
@@ -283,10 +283,13 @@ test("run readiness and active/idle controls refresh only the scoped Topic Reply
   await f.scoped().runKeyboard(topic, "run", true);
   f.store.finishRun(-100, 42, "run");
   await f.scoped().runKeyboard(topic, "run", false);
-  const replyKeyboards = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
-  assert.equal(replyKeyboards.length, 3);
-  assert.ok(replyKeyboards.every((x) => x.method === "sendMessage" && x.payload.message_thread_id === 42));
-  assert.equal(replyKeyboards.some((x) => x.payload.reply_markup?.inline_keyboard), false);
+  const reply = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
+  assert.ok(reply.length >= 1);
+  assert.ok(reply.every((x) => x.payload.message_thread_id === 42));
+  assert.equal(f.sent.some((x) => x.payload.reply_markup?.remove_keyboard), false);
+  assert.doesNotMatch(JSON.stringify(reply), /Pause|Resume|Abort/);
+  const callbackThreads = f.db.prepare("SELECT thread FROM ui_callbacks").all() as Array<{ thread: number }>;
+  assert.ok(callbackThreads.every((row) => row.thread === 42));
 });
 
 test("legacy New Chat callback reopens home and never allocates", async () => {
@@ -381,17 +384,18 @@ test("a late edit acknowledgement cannot invalidate the newer panel's callback o
   assert.deepEqual(f.rpc, ["new"]);
 });
 
-test("History reopening another Topic deduplicates the same ReplyKeyboard refresh", async () => {
+test("History reopening another Topic restores its scoped ReplyKeyboard without changing panel identity", async () => {
   const f = fixture();
   await f.update("/settings", 42);
   await f.update("/history");
   const button = f.button("OpenCode · 42")!;
   assert.ok(button);
   await f.callback(button.callback_data);
+  const firstPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(firstPanel);
   await f.callback(button.callback_data);
-  const topicKeyboards = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
-  assert.equal(topicKeyboards.length, 1);
-  assert.equal(topicKeyboards[0]!.payload.message_thread_id, 42);
+  assert.equal(f.sent.some((x) => x.payload.reply_markup?.keyboard), true);
+  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, firstPanel);
 });
 
 test("scoped UI errors edit the canonical panel rather than append an error message", async () => {

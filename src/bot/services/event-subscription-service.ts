@@ -52,7 +52,7 @@ import type { Question } from "../../app/types/question.js";
 import type { PermissionRequest } from "../../app/types/permission.js";
 import { restorePendingInteractions } from "../../app/services/pending-interaction-restore-service.js";
 import { deliverThinkingMessage } from "../messages/thinking-message.js";
-import { shouldSuppressUserAbortSessionError } from "../../app/managers/abort-suppression-manager.js";
+import { shouldSuppressExpectedCancellationError } from "../../app/managers/cancellation-suppression-manager.js";
 import {
   markToolCallStarted,
   markToolCallFinished,
@@ -71,7 +71,6 @@ import { formatAssistantRunFooter } from "../../app/formatters/assistant-run-foo
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { scheduledTaskRuntime } from "../../app/services/scheduled-task-runtime-service.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
-import { clearPausedSession, isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { ResponseStreamer, type StreamingMessagePayload } from "../streaming/response-streamer.js";
 import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
 import { presentPendingExtensionAutomation } from "./extension-automation-ui.js";
@@ -1392,18 +1391,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
 
-      // Pause intentionally owns the only user-visible completion message.
-      // Drop queued tool/footer output and let pauseCurrentChat attach the
-      // paused ReplyKeyboard to that single message.
-      if (isChatPaused(sessionId)) {
-        this.toolMessageBatcher.clearSession(sessionId, "session_idle_paused");
-        this.toolCallStreamer.clearSession(sessionId, "session_idle_paused");
-        this.clearAssistantResponseSession(sessionId, "session_idle_paused");
-        foregroundSessionState.markIdle(sessionId);
-        await scheduledTaskRuntime.flushDeferredDeliveries();
-        return;
-      }
-
       if (!this.botInstance || !this.chatIdInstance) {
         foregroundSessionState.markIdle(sessionId);
         return;
@@ -1476,7 +1463,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       // An abort-related error emitted after a bot/user initiated abort is expected.
       // Keep it silent and only release local state.
-      if (shouldSuppressUserAbortSessionError(sessionId, normalizedMessage)) {
+      if (shouldSuppressExpectedCancellationError(sessionId, normalizedMessage)) {
         logger.debug(`[Bot] Suppressed expected abort error: session=${sessionId}`);
         this.clearAssistantResponseSession(sessionId, "session_error_abort_suppressed");
         this.toolCallStreamer.clearSession(sessionId, "session_error_abort_suppressed");
@@ -1485,15 +1472,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         foregroundSessionState.markIdle(sessionId);
         const keyboardState = keyboardManager.getState(sessionId);
         if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
-          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, {
-            runState: isChatPaused(sessionId) ? "paused" : "idle",
-          });
+          updateTopicRuntimeStateSync(keyboardState.chatId, keyboardState.threadId, { runState: "idle" });
         }
         await scheduledTaskRuntime.flushDeferredDeliveries();
         return;
       }
 
-      clearPausedSession(sessionId);
       if (!this.botInstance || !this.chatIdInstance) {
         this.clearAssistantResponseSession(sessionId, "session_error_no_bot_context");
         this.toolCallStreamer.clearSession(sessionId, "session_error_no_bot_context");
@@ -1543,8 +1527,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         .catch((err) => logger.error("[Bot] Failed to send session.error message:", err));
 
       foregroundSessionState.markIdle(sessionId);
-      clearPausedSession(sessionId);
-      keyboardManager.setPaused(false, sessionId);
       const keyboardState = keyboardManager.getState(sessionId);
       if (keyboardState?.chatId && keyboardState.threadId !== undefined) {
         const scopeKey = `${keyboardState.chatId}:${keyboardState.threadId}`;

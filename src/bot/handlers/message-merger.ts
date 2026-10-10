@@ -1,10 +1,7 @@
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
-import { resumePausedChatWithPrompt } from "../commands/pause-command.js";
 import type { Context } from "grammy";
 import { logger } from "../../utils/logger.js";
 import { classifyReplyKeyboardInteraction } from "../interaction-classifier.js";
-import { getCurrentSession } from "../../app/services/session-service.js";
-import { isChatPaused } from "../../app/managers/paused-session-manager.js";
 import { getTopicRuntimeContext, runInTopicRuntimeContext, type TopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 const TELEGRAM_SPLIT_CHUNK_MIN_LENGTH = 4000;
@@ -106,18 +103,6 @@ export async function queuePromptForMerging(
     logger.info(
       `[Bot] Final prompt-ingress guard consumed Reply Keyboard control: scope=${classified.scope}, thread=${ctx.message?.message_thread_id ?? 0}, text=${JSON.stringify(text)}`,
     );
-    return;
-  }
-
-  // A paused session accepts the next normal prompt as an implicit Resume.
-  // Execute this inside the captured Topic context as well; otherwise a Topic
-  // prompt could accidentally resume/check the main-chat session.
-  const currentSession = getCurrentSession();
-  if (currentSession && isChatPaused(currentSession.id)) {
-    logger.info(`[Pause] Treating incoming prompt as implicit resume: session=${currentSession.id}, ${routeKey}`);
-    void runWithCapturedTopicContext(topicContext, () => resumePausedChatWithPrompt(ctx, text, deps)).catch((err) => {
-      logger.error(`[Pause] Failed to resume paused chat from prompt (${routeKey})`, err);
-    });
     return;
   }
 

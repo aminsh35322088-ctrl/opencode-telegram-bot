@@ -64,13 +64,12 @@ describe("bot/keyboards/main-reply-keyboard", () => {
     expect(buttonTextAt(keyboard, 3, 1)).toBe("⚙️ Main Settings");
   });
 
-  it("keeps running controls isolated inside the Topic keyboard", () => {
+  it("keeps legacy run controls absent from the Topic keyboard while running", () => {
     const keyboard = createMainKeyboard(
       { providerID: "openrouter", modelID: "openai/gpt-4o" },
       { running: true, paused: false, compactOutputMode: true, isTopic: true },
     );
     expect(keyboard.keyboard.filter((row) => row.length > 0)).toEqual([
-      [{ text: "⏸️ Pause" }, { text: "🛑 Abort" }],
       [{ text: "📦 Compact: ON" }],
       [{ text: "🧠 GPT 4o" }],
       [{ text: "🗑️ Delete Chat" }, { text: "⚙️ Topic Settings" }],

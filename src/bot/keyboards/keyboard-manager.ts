@@ -8,8 +8,6 @@ import { getCompactOutputMode, getMainNavigationMessageId, setMainNavigationMess
 import { getTopicRuntimeStateSync } from "../../app/stores/topic-runtime-state-store.js";
 import type { ModelInfo } from "../../app/types/model.js";
 import type { ContextInfo, KeyboardState } from "./keyboard-types.js";
-import { isChatPaused } from "../../app/managers/paused-session-manager.js";
-import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { BOT_VERSION, getOpenCodeVersion } from "../../app/services/version-info-service.js";
 import { formatModelForDisplay } from "../../app/types/model.js";
@@ -103,7 +101,6 @@ class KeyboardManager {
         currentModel,
         contextInfo: null,
         variantName: formatVariantForButton(currentModel.variant || "default"),
-        paused: sessionId ? isChatPaused(sessionId) : isChatPaused(),
       });
       return;
     }
@@ -343,7 +340,6 @@ class KeyboardManager {
   public updateAgent(agent: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.currentAgent = agent; }
   public updateModel(model: ModelInfo, sessionId?: string): void { const state = this.state(sessionId); if (!state) return; state.currentModel = model; state.variantName = formatVariantForButton(model.variant || "default"); }
   public updateVariant(variantId: string, sessionId?: string): void { const state = this.state(sessionId); if (state) state.variantName = formatVariantForButton(variantId); }
-  public setPaused(paused: boolean, sessionId?: string): void { const state = this.state(sessionId); if (state) state.paused = paused; }
   public updateContext(tokensUsed: number, tokensLimit: number, sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = { tokensUsed, tokensLimit }; }
   public clearContext(sessionId?: string): void { const state = this.state(sessionId); if (state) state.contextInfo = null; }
   public getContextInfo(sessionId?: string): ContextInfo | null { return this.state(sessionId)?.contextInfo ?? null; }
@@ -377,17 +373,13 @@ class KeyboardManager {
   private buildKeyboard(sessionId?: string) {
     const state = this.state(sessionId);
     if (state?.sessionId && state.threadId !== undefined) {
-      const paused = isChatPaused(state.sessionId);
-      const running = assistantRunState.hasActiveRun(state.sessionId);
       return createTopicKeyboard({
-        paused,
-        running,
         compactOutputMode: getCompactOutputMode(),
         currentModel: state.currentModel ?? getStoredModel(),
       });
     }
-    if (!state) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
-    return createMainKeyboard(state.currentModel, { queuedPromptLabels: getQueuedPromptButtonLabels(), paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
+    if (!state) return createMainKeyboard({ providerID: "", modelID: "" }, { compactOutputMode: getCompactOutputMode(), isTopic: false });
+    return createMainKeyboard(state.currentModel, { queuedPromptLabels: getQueuedPromptButtonLabels(), compactOutputMode: getCompactOutputMode(), isTopic: false });
   }
 
   public async sendKeyboardUpdate(chatId?: number, force = false, sessionId?: string): Promise<void> {
@@ -417,8 +409,7 @@ class KeyboardManager {
     const key = this.key(resolvedSessionId);
     const isTopic = Boolean(state?.sessionId && state.threadId !== undefined);
 
-    // State transitions must arrive even within debounce (idle -> running ->
-    // paused). Deduplicate identical layouts, never suppress running controls.
+    // Topic keyboards are stable across run-state changes. Deduplicate identical layouts.
     const fingerprint = isTopic ? this.replyKeyboardFingerprint(resolvedSessionId) : null;
     if (fingerprint && this.replyKeyboardFingerprints.get(key) === fingerprint) return;
 
@@ -434,7 +425,7 @@ class KeyboardManager {
       if (threadId !== undefined) options.message_thread_id = threadId;
       await this.api.sendMessage(targetChatId, "⌨️ Keyboard updated", options as never);
       if (fingerprint) this.replyKeyboardFingerprints.set(key, fingerprint);
-      logger.info(`[KeyboardManager] Refreshed persistent AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
+      logger.info(`[KeyboardManager] Refreshed AI Topic ReplyKeyboard: chat=${targetChatId}, thread=${threadId ?? "General(native-default)"}, model=${state?.currentModel?.modelID ?? "unset"}, compact=${getCompactOutputMode()}`);
     } catch (err) { logger.error("[KeyboardManager] Failed to send keyboard update:", err); }
   }
 
@@ -444,7 +435,7 @@ class KeyboardManager {
     if (state) {
       return this.buildKeyboard(resolved);
     }
-    if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { paused: false, running: false, compactOutputMode: getCompactOutputMode(), isTopic: false });
+    if (!resolved && this.api) return createMainKeyboard({ providerID: "", modelID: "" }, { compactOutputMode: getCompactOutputMode(), isTopic: false });
     return undefined;
   }
 

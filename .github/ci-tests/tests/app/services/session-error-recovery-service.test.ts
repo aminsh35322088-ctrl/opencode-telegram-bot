@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   status: vi.fn(),
   messages: vi.fn(),
   deleteMessage: vi.fn(),
-  markAbortExpected: vi.fn(),
+  markCancellationExpected: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -19,8 +19,8 @@ vi.mock("../../../src/opencode/client.js", () => ({
   },
 }));
 
-vi.mock("../../../src/app/managers/abort-suppression-manager.js", () => ({
-  markAbortExpected: mocks.markAbortExpected,
+vi.mock("../../../src/app/managers/cancellation-suppression-manager.js", () => ({
+  markCancellationExpected: mocks.markCancellationExpected,
 }));
 
 import {
@@ -66,7 +66,7 @@ describe("session error recovery", () => {
       "'file part media type audio/ogg' functionality not supported.",
     );
 
-    expect(mocks.markAbortExpected).toHaveBeenCalledWith("session-1");
+    expect(mocks.markCancellationExpected).toHaveBeenCalledWith("session-1");
     expect(mocks.abort).toHaveBeenCalledWith(
       { sessionID: "session-1", directory: "/repo" },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),

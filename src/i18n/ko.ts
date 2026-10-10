@@ -66,14 +66,14 @@ export const ko: I18nDictionary = {
     "🔴 세션 생성에 실패했습니다. /new를 다시 시도하거나 /status로 서버 상태를 확인해 주세요.",
   "bot.session_created": "✅ 세션이 생성되었습니다: {title}",
   "bot.session_busy":
-    "⏳ 에이전트가 이미 작업을 실행 중입니다. 완료될 때까지 기다리거나 /abort로 현재 실행을 중단하세요.",
+    "⏳ 에이전트가 이미 작업을 실행 중입니다. 완료될 때까지 기다리거나 Telegram Stop로 현재 실행을 중단하세요.",
   "bot.session_reset_project_mismatch":
     "⚠️ 활성 세션이 선택한 프로젝트와 일치하지 않아 초기화되었습니다. /sessions에서 세션을 선택하거나 /new로 새 세션을 만들어 주세요.",
   "bot.prompt_send_error": "OpenCode에 요청을 보내지 못했습니다.",
   "bot.empty_prompt": "⚠️ 보낼 내용이 없습니다: 첨부는 처리된 뒤 메시지가 비어 있습니다.",
   "bot.session_error": "🔴 OpenCode 오류가 발생했습니다: {message}",
   "bot.session_retry":
-    "🔁 {message}\n\n재시도할 때마다 동일한 오류가 반복됩니다. /abort로 중단하세요.",
+    "🔁 {message}\n\n재시도할 때마다 동일한 오류가 반복됩니다. Telegram Stop로 중단하세요.",
   "bot.external_user_input": "외부 사용자 입력",
   "background.session_fallback": "세션 {id}",
   "background.assistant_response": "🔔 백그라운드 세션에서 답변이 도착했습니다: {session}",
@@ -202,15 +202,15 @@ export const ko: I18nDictionary = {
   "stop.in_progress":
     "🛑 이벤트 스트림이 중지되었으며 중단 신호를 보내는 중...\n\n에이전트가 멈출 때까지 기다려 주세요.",
   "stop.warn_unconfirmed":
-    "⚠️ 이벤트 스트림은 중지되었지만 서버가 중단을 확인하지 않았습니다.\n\n/status를 확인하고 몇 초 후 /abort를 다시 시도해 주세요.",
+    "⚠️ 이벤트 스트림은 중지되었지만 서버가 중단을 확인하지 않았습니다.\n\n/status를 확인하고 몇 초 후 Telegram Stop를 다시 시도해 주세요.",
   "stop.warn_maybe_finished": "⚠️ 이벤트 스트림이 중지되었지만 에이전트가 이미 작업을 마쳤을 수도 있습니다.",
   "stop.success": "✅ 에이전트 작업이 중단되었습니다. 이 실행의 추가 메시지는 더 이상 전송되지 않습니다.",
   "stop.warn_still_busy":
     "⚠️ 신호를 보냈지만 에이전트가 아직 작업 중입니다.\n\n이벤트 스트림이 이미 비활성화되어 중간 메시지는 전송되지 않습니다.",
   "stop.warn_timeout":
-    "⚠️ 중단 요청 시간이 초과되었습니다.\n\n이벤트 스트림은 이미 비활성화되어 있습니다. 몇 초 후 /abort를 다시 시도해 주세요.",
+    "⚠️ 중단 요청 시간이 초과되었습니다.\n\n이벤트 스트림은 이미 비활성화되어 있습니다. 몇 초 후 Telegram Stop를 다시 시도해 주세요.",
   "stop.warn_local_only": "⚠️ 로컬에서는 이벤트 스트림이 중지되었지만 서버 측 중단에는 실패했습니다.",
-  "stop.error": "🔴 작업 중지에 실패했습니다.\n\n이벤트 스트림은 중지되었습니다. /abort를 다시 시도해 주세요.",
+  "stop.error": "🔴 작업 중지에 실패했습니다.\n\n이벤트 스트림은 중지되었습니다. Telegram Stop를 다시 시도해 주세요.",
 
   "opencode_start.already_running": "✅ OpenCode 서버가 이미 실행 중입니다\n\n버전: {version}",
   "opencode_start.remote_configured": "⚠️ /opencode_start는 로컬 OpenCode 서버에서만 동작합니다.",
@@ -639,4 +639,9 @@ export const ko: I18nDictionary = {
   "mcps.detail.type": "Type: {type}",
   "mcps.add.field.remote_url": "Server URL",
   "mcps.add.field.command": "Command",
+  "generation.activity": "Working: {activity}…",
+  "generation.finalizing": "Preparing the final response…",
+  "generation.streaming": "Preparing the response…",
+  "generation.summary": "Completed a model planning phase.",
+  "generation.completed": "Execution completed.",
 };

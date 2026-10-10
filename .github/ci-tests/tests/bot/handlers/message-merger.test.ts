@@ -18,14 +18,6 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
   getCurrentSession: vi.fn(() => undefined),
 }));
 
-vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
-  isChatPaused: vi.fn(() => false),
-}));
-
-vi.mock("../../../src/bot/commands/pause-command.js", () => ({
-  resumePausedChatWithPrompt: vi.fn(),
-}));
-
 vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: loggerErrorMock },
 }));

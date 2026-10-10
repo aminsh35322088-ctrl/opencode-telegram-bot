@@ -13,24 +13,17 @@ import { formatModelForButton } from "../../app/types/model.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { getCurrentSession } from "../../app/services/session-service.js";
 
-// Commands that manage an existing run must reach their handler while the
-// session is busy. The equivalent Reply Keyboard buttons are consumed by the
-// router before this guard runs, so slash-command parity requires the same
-// commands to pass the busy gate here. Pure navigation commands (/start,
-// /settings) only open UI panels and are equally safe during a run; menu
-// BUTTON taps follow the same principle via the busy callback allowance.
+// Safe navigation/administrative commands may reach their handlers while a
+// session is busy. Generation cancellation itself is owned by Telegram Native
+// Stop and never enters the slash-command or ReplyKeyboard product surface.
 // During an active interaction the stricter per-interaction allowedCommands
 // list still applies.
 const ALWAYS_REACHABLE_CONTROL_COMMANDS = new Set<string>([
-  "/abort",
   "/keyboard",
-  "/stop",
   "/detach",
   "/status",
   "/help",
   "/opencode_stop",
-  "/pause",
-  "/resume",
   "/delete_topic",
   "/start",
   "/settings",

@@ -21,7 +21,6 @@ export interface LegacyTopicSelection {
   sendDiffFileAttachments?: boolean;
   imageModel?: string;
   voiceModel?: string;
-  paused?: boolean;
   title?: string;
 }
 

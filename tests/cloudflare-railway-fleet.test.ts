@@ -42,7 +42,8 @@ function fixture() {
   }> = [];
   let loseProject = false,
     loseVolume = false,
-    quota = false;
+    quota = false,
+    projectSerial = 0;
   let rejectMutation = "";
   const mutations: string[] = [];
   const request = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
@@ -63,35 +64,40 @@ function fixture() {
     else if (query.includes("FleetProjectCreate")) {
       if (quota) throw new Error("railway_quota_exhausted");
       const p = {
-        id: "p" + projects.length,
+        id: "p" + projectSerial,
         name: input.name as string,
-        environments: { edges: [{ node: { id: "e" + projects.length, name: "production" } }] },
+        environments: { edges: [{ node: { id: "e" + projectSerial, name: "production" } }] },
       };
+      projectSerial++;
       projects.push(p);
       if (loseProject) {
         loseProject = false;
         throw new Error("transport_error");
       }
       result = { projectCreate: p };
-    } else if (query.includes("FleetInventory"))
-      result = {
-        project: {
-          services: { edges: services.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
-          volumes: { edges: volumes.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
-        },
-        environment: {
-          serviceInstances: {
-            edges: services.map((s) => ({
-              node: {
-                serviceId: s.id,
-                domains: { serviceDomains: [{ domain: s.id + ".up.railway.app" }] },
-                latestDeployment: null,
+    } else if (query.includes("FleetInventory")) {
+      const liveProject = projects.find((project) => project.id === variables.projectId);
+      result = liveProject
+        ? {
+            project: {
+              services: { edges: services.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
+              volumes: { edges: volumes.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
+            },
+            environment: {
+              serviceInstances: {
+                edges: services.map((s) => ({
+                  node: {
+                    serviceId: s.id,
+                    domains: { serviceDomains: [{ domain: s.id + ".up.railway.app" }] },
+                    latestDeployment: null,
+                  },
+                })),
+                pageInfo: { hasNextPage: false },
               },
-            })),
-            pageInfo: { hasNextPage: false },
-          },
-        },
-      };
+            },
+          }
+        : { project: null, environment: null };
+    }
     else if (query.includes("FleetDestroyService")) {
       const i = services.findIndex((s) => s.id === variables.id);
       if (i >= 0) services.splice(i, 1);
@@ -182,6 +188,75 @@ test("first allocation creates execution project/service/volume and deploys immu
     false,
   );
 });
+
+test("identity rotation redeploys the same allocation service and volume with a fresh generation bootstrap", async () => {
+  const f = fixture();
+  const generations: number[] = [];
+  const driver = new RailwayFleetDriver(f.store, f.request, {
+    image: "ghcr.io/example/worker@sha256:" + "a".repeat(64),
+    controlUrl: "https://control.example",
+    bootstrap: async (job) => {
+      generations.push(job.generation);
+      return "bootstrap-" + job.generation;
+    },
+  });
+  const first = f.store.reserveAllocation("two-generation", -100);
+  const provisioned = await driver.provision(first.jobId);
+  const serviceId = provisioned.serviceId;
+  const volumeId = provisioned.volumeId;
+  f.store.ready(first.workerId, first.generation, "first-secret");
+  f.store.markSessionProbed(first.jobId);
+  const rotated = f.store.rotateAllocationToTopic(first.jobId, 42);
+  assert.equal(rotated.generation, 2);
+  const second = await driver.provision(first.jobId);
+  assert.equal(second.serviceId, serviceId);
+  assert.equal(second.volumeId, volumeId);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+  assert.deepEqual(generations, [1, 2]);
+  assert.equal(second.phase, "DEPLOYING");
+});
+
+test("externally deleted Railway project is recreated before a fresh allocation uses the stored slot", async () => {
+  const f = fixture();
+  const first = f.store.reserveAllocation("first-project", -100);
+  await f.driver.provision(first.jobId);
+  const oldProjectId = f.store.job(first.jobId)!.projectId!;
+  const fenced = f.store.fenceWorker(first.workerId);
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+  f.store.confirmDestroyed(fenced.workerId, fenced.generation);
+
+  f.projects.splice(0);
+  f.services.splice(0);
+  f.volumes.splice(0);
+
+  const second = f.store.reserveAllocation("after-external-project-delete", -100);
+  await f.driver.provision(second.jobId);
+
+  assert.equal(f.projects.length, 1);
+  assert.equal(f.projects[0]!.name, "workers-a-01");
+  assert.notEqual(f.store.job(second.jobId)!.projectId, oldProjectId);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+});
+
+test("cleanup treats a Railway project proven absent from the workspace as already destroyed", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("external-delete-cleanup", -100);
+  await f.driver.provision(job.jobId);
+  f.store.ready(job.workerId, job.generation, "key");
+  const fenced = f.store.fenceWorker(job.workerId);
+  const deleting = f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+
+  f.projects.splice(0);
+  f.services.splice(0);
+  f.volumes.splice(0);
+
+  await f.driver.destroy(deleting.workerId, deleting.generation);
+  f.store.confirmDestroyed(deleting.workerId, deleting.generation);
+  assert.equal(f.store.worker(job.workerId)!.state, "REPLACED");
+});
+
 test("lost project create response reconciles deterministic workspace project without duplication", async () => {
   const f = fixture();
   const job = f.store.reserveAllocation("lost", -100);
@@ -404,4 +479,61 @@ test("a deleted project with the deterministic name is not adopted", async () =>
   const provisioned = await f.driver.provision(job.jobId);
   assert.notEqual(provisioned.projectId, "deleted-project");
   assert.equal(f.projects.length, 2);
+});
+
+test("managed cleanup reconciliation accepts a managed project proven absent from Railway", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("reconcile-missing-project", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  f.projects.splice(0);
+  f.services.splice(0);
+  f.volumes.splice(0);
+
+  const result = await f.driver.reconcileManagedResources([worker.workerId]);
+
+  assert.ok(result.resources.some((resource) => resource.kind === "service" && resource.classification === "deleted_or_pending_purge"));
+  assert.ok(result.resources.some((resource) => resource.kind === "volume" && resource.classification === "deleted_or_pending_purge"));
+});
+
+test("managed cleanup reconciliation deletes only exact stored Railway ownership", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("reconcile-owned", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  const result = await f.driver.reconcileManagedResources([worker.workerId]);
+  assert.equal(f.services.length, 0);
+  assert.equal(f.volumes.length, 0);
+  assert.ok(result.resources.some((resource) => resource.kind === "service" && resource.classification === "owned"));
+  assert.ok(result.resources.some((resource) => resource.kind === "volume" && resource.classification === "owned"));
+});
+
+test("managed cleanup reconciliation fails closed on managed-looking service without exact stored id", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("reconcile-ambiguous", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  f.services[0]!.id = "foreign-service";
+  await assert.rejects(
+    f.driver.reconcileManagedResources([worker.workerId]),
+    /cleanup_reconciliation_required/,
+  );
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+});
+
+test("managed cleanup reconciliation preserves unrelated resources in a shared project", async () => {
+  const f = fixture();
+  const first = f.store.reserveAllocation("reconcile-first", -100);
+  await f.driver.provision(first.jobId);
+  const second = f.store.reserveAllocation("reconcile-second", -200);
+  await f.driver.provision(second.jobId);
+  const firstWorker = f.store.worker(first.workerId)!;
+  const secondWorker = f.store.worker(second.workerId)!;
+  const result = await f.driver.reconcileManagedResources([firstWorker.workerId]);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.services[0]!.id, secondWorker.serviceId);
+  assert.equal(f.volumes.length, 1);
+  assert.equal(f.volumes[0]!.id, secondWorker.volumeId);
+  assert.ok(result.resources.some((resource) => resource.classification === "unrelated"));
 });

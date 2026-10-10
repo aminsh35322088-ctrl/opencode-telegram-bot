@@ -3,7 +3,7 @@ import {
   type TemporarySessionPort,
 } from "@opencode-telegram/native-runtime";
 import { opencodeClient } from "../opencode/client.js";
-import { markAbortExpected } from "../app/managers/abort-suppression-manager.js";
+import { markCancellationExpected } from "../app/managers/cancellation-suppression-manager.js";
 
 export function createOpenCodeTemporarySessionPort(): TemporarySessionPort {
   return {
@@ -32,7 +32,7 @@ export function createOpenCodeTemporarySessionPort(): TemporarySessionPort {
       };
     },
     async abort(session, signal) {
-      markAbortExpected(session.sessionId);
+      markCancellationExpected(session.sessionId);
       const { data, error } = await opencodeClient.session.abort(
         { sessionID: session.sessionId, directory: session.directory },
         { signal },

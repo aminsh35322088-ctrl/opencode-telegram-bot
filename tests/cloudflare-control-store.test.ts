@@ -139,7 +139,7 @@ test("Topic binding requires ready authenticated Worker and is idempotent", () =
   assert.deepEqual(store.bindTopic(job.jobId, 42, "session"), topic);
   assert.equal(store.workers()[0]!.state, "BOUND_IDLE");
 });
-test("delete fences before cleanup and releases same Worker only after verified cleanup", () => {
+test("verified cleanup never makes a prior Worker eligible for a fresh New Chat", () => {
   const { store } = fixture();
   backend(store);
   const job = store.reserveAllocation("bind", -100);
@@ -153,9 +153,56 @@ test("delete fences before cleanup and releases same Worker only after verified 
   );
   assert.notEqual(store.reserveAllocation("another", -100).workerId, job.workerId);
   store.completeCleanup(job.workerId, fenced.generation);
-  const reused = store.reserveAllocation("reuse", -100);
-  assert.equal(reused.workerId, job.workerId);
-  assert.ok(reused.generation > fenced.generation);
+  const fresh = store.reserveAllocation("fresh", -100);
+  assert.notEqual(fresh.workerId, job.workerId);
+  assert.equal(fresh.generation, 1);
+});
+
+test("session probe and Topic identity rotation are explicit one-way allocation phases", () => {
+  const { store } = fixture();
+  backend(store);
+  const job = store.reserveAllocation("handoff", -100);
+  store.configureJob(job.jobId, {
+    serviceId: "service",
+    volumeId: "volume",
+    projectId: "project",
+    environmentId: "environment",
+    deploymentReceipt: "deploy-1",
+  });
+  assert.throws(() => store.markSessionProbed(job.jobId), /session_probe_state_mismatch/);
+  store.ready(job.workerId, job.generation, "unbound-secret");
+  const probed = store.markSessionProbed(job.jobId);
+  assert.equal(probed.phase, "SESSION_PROBED");
+  assert.throws(() => store.markSessionProbed(job.jobId), /session_probe_state_mismatch/);
+  assert.throws(() => store.rotateAllocationToTopic(job.jobId, 1), /invalid_topic/);
+  const rotated = store.rotateAllocationToTopic(job.jobId, 42);
+  assert.equal(rotated.phase, "BINDING");
+  assert.equal(rotated.threadId, 42);
+  assert.equal(rotated.generation, job.generation + 1);
+  assert.equal(rotated.serviceId, "service");
+  assert.equal(rotated.volumeId, "volume");
+  const worker = store.worker(job.workerId)!;
+  assert.equal(worker.generation, rotated.generation);
+  assert.equal(worker.state, "BINDING");
+  assert.equal(worker.chatId, -100);
+  assert.equal(worker.threadId, 42);
+  assert.equal(worker.credential, undefined);
+  assert.throws(() => store.rotateAllocationToTopic(job.jobId, 43), /allocation_rotation_rejected/);
+});
+
+test("fresh New Chat never selects READY_UNBOUND or SLEEPING capacity from an earlier allocation", () => {
+  const { store } = fixture();
+  backend(store);
+  const first = store.reserveAllocation("first", -100);
+  store.ready(first.workerId, first.generation, "key");
+  const ready = store.worker(first.workerId)!;
+  assert.equal(ready.state, "READY_UNBOUND");
+  const second = store.reserveAllocation("second", -100);
+  assert.notEqual(second.workerId, first.workerId);
+  store.transition(first.workerId, first.generation, "SLEEPING");
+  const third = store.reserveAllocation("third", -100);
+  assert.notEqual(third.workerId, first.workerId);
+  assert.notEqual(third.workerId, second.workerId);
 });
 test("stale and replayed Worker events are rejected durably", () => {
   const f = fixture();
@@ -441,14 +488,14 @@ test("Topic titles use the smallest free positive slot, stay durable, and never 
   assert.equal(f.store.reserveTopicTitle(otherChat.jobId), "#1");
 });
 
-test("ControlStore startup never builds secondary indexes over retained history", () => {
+test("ControlStore startup indexes only the new presentation table, never retained history", () => {
   const f = fixture();
   const secondary = [
     ...f.sql.exec<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
     ),
   ].map((row) => row.name);
-  assert.deepEqual(secondary, []);
+  assert.deepEqual(secondary, ["native_scope_state", "native_state"]);
 
   f.queries.length = 0;
   f.restart();

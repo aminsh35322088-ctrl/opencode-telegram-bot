@@ -14,7 +14,6 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
-import { clearPausedSession } from "../../app/managers/paused-session-manager.js";
 import { attachToSession, detachAttachedSession, markAttachedSessionBusy, markAttachedSessionIdle } from "../../app/services/attach-service.js";
 import { externalUserInputSuppressionManager } from "../../app/managers/external-input-suppression-manager.js";
 import { promptAttachment } from "../../app/managers/prompt-attachment-manager.js";
@@ -60,14 +59,12 @@ async function handlePromptStartFailure(input: {
   const message = input.error instanceof Error ? input.error.message : String(input.error);
   promptQueue.clear(input.reason, input.session.id);
   promptAttachment.clear(input.reason, input.session.id);
-  clearPausedSession(input.session.id);
   clearAllInteractionState(input.reason);
   stopSessionStallWatchdog(input.session.id);
   foregroundSessionState.markIdle(input.session.id);
   await markAttachedSessionIdle(input.session.id);
   assistantRunState.clearRun(input.session.id, input.reason);
   typingIndicatorManager.stop(input.session.id, input.reason);
-  keyboardManager.setPaused(false, input.session.id);
   await recoverSessionAfterError(input.session.id, input.session.directory, message);
   try {
     await keyboardManager.sendKeyboardUpdate(input.chatId, true, input.session.id);

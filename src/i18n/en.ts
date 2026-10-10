@@ -57,14 +57,14 @@ export const en = {
     "🔴 Failed to create session. Try /new or check server status with /status.",
   "bot.session_created": "✅ Session created: {title}",
   "bot.session_busy":
-    "⏳ Agent is already running a task. Wait for completion or use /abort to interrupt current run.",
+    "⏳ Agent is already running a task. Wait for completion or use Telegram Stop to interrupt current run.",
   "bot.session_reset_project_mismatch":
     "⚠️ Active session does not match the selected project, so it was reset. Use /sessions to pick one or /new to create a new session.",
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
   "bot.empty_prompt": "⚠️ Nothing to send: the message is empty after attachment handling.",
   "bot.session_error": "🔴 OpenCode returned an error: {message}",
   "bot.session_retry":
-    "🔁 {message}\n\nProvider keeps returning the same error on repeated retries. Use /abort to abort.",
+    "🔁 {message}\n\nProvider keeps returning the same error on repeated retries. Use Telegram Stop to cancel the current run.",
   "bot.external_user_input": "External user input",
   "background.session_fallback": "session {id}",
   "background.assistant_response": "🔔 Assistant replied in background session: {session}",
@@ -192,17 +192,17 @@ export const en = {
   "stop.no_active_session":
     "🛑 Agent was not started\n\nCreate a session with /new or select one via /sessions.",
   "stop.in_progress":
-    "🛑 Event stream stopped, sending abort signal...\n\nWaiting for agent to stop.",
+    "🛑 Event stream stopped, sending cancellation signal...\n\nWaiting for agent to stop.",
   "stop.warn_unconfirmed":
-    "⚠️ Event stream stopped, but server did not confirm abort.\n\nCheck /status and retry /abort in a few seconds.",
+    "⚠️ Event stream stopped, but server did not confirm cancellation.\n\nCheck /status and retry Telegram Stop in a few seconds.",
   "stop.warn_maybe_finished": "⚠️ Event stream stopped, but the agent may have already finished.",
   "stop.success": "✅ Agent action interrupted. No more messages from this run will be sent.",
   "stop.warn_still_busy":
     "⚠️ Signal sent, but agent is still busy.\n\nEvent stream is already disabled, so no intermediate messages will be sent.",
   "stop.warn_timeout":
-    "⚠️ Abort request timeout.\n\nEvent stream is already disabled, retry /abort in a few seconds.",
-  "stop.warn_local_only": "⚠️ Event stream stopped locally, but server-side abort failed.",
-  "stop.error": "🔴 Failed to stop action.\n\nEvent stream is stopped, try /abort again.",
+    "⚠️ Cancellation request timeout.\n\nEvent stream is already disabled, retry Telegram Stop in a few seconds.",
+  "stop.warn_local_only": "⚠️ Event stream stopped locally, but server-side cancellation failed.",
+  "stop.error": "🔴 Failed to stop action.\n\nEvent stream is stopped, try Telegram Stop again.",
 
   "opencode_start.already_running": "✅ OpenCode Server is already running\n\nVersion: {version}",
   "opencode_start.remote_configured": "⚠️ /opencode_start works only with a local OpenCode Server.",
@@ -642,6 +642,11 @@ export const en = {
   "attachment.cancel": "❌ Cancel attachment",
   "attachment.cancelled": "❌ Attachment cancelled",
   "attachment.invalid": "⚠️ The attached file is no longer available. Sending the message without it.",
+  "generation.activity": "Working: {activity}…",
+  "generation.finalizing": "Preparing the final response…",
+  "generation.streaming": "Preparing the response…",
+  "generation.summary": "Completed a model planning phase.",
+  "generation.completed": "Execution completed.",
 } as const;
 
 export type I18nKey = keyof typeof en;

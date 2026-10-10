@@ -24,7 +24,6 @@ import {
 } from "../message-patterns.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
-import { MAIN_BUTTONS } from "../keyboards/main-reply-keyboard.js";
 import { findQueuedPromptByButtonLabel } from "../keyboards/queued-prompt-button.js";
 import { handleDocumentMessage } from "../handlers/document-handler.js";
 import { createMediaGroupAttachmentMiddleware } from "../handlers/media-group-handler.js";
@@ -38,8 +37,6 @@ import { isMcpTextWizardActive } from "../commands/mcp-server-command.js";
 import { clearSkillWizard, handleSkillWizardMessage, isSkillWizardActive } from "../commands/skills-wizard.js";
 import { clearSkillImportFlow, handleSkillImportMessage, isSkillImportActive } from "../commands/skills-import-flow.js";
 import { newCommand } from "../commands/new-command.js";
-import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
-import { abortCurrentOperation } from "../commands/abort-command.js";
 import { sessionsCommand } from "../commands/sessions-command.js";
 import { settingsCommand } from "../commands/settings-command.js";
 import { closeActiveInlineMenu } from "../menus/inline-menu.js";
@@ -52,15 +49,7 @@ interface MessageRouterDeps {
   setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void;
 }
 
-const CONTROL_TEXT = {
-  cancel: "❌ Cancel",
-  pause: MAIN_BUTTONS.pause,
-  abort: MAIN_BUTTONS.abort,
-  resume: MAIN_BUTTONS.resume,
-} as const;
-
-let botInstance: Bot<Context> | null = null;
-let currentEnsureEventSubscription: ((directory: string) => Promise<void>) | null = null;
+const CONTROL_TEXT = { cancel: "❌ Cancel" } as const;
 
 function normalizeControlText(text: string): string {
   return text
@@ -102,26 +91,6 @@ async function handlePriorityControlButton(ctx: Context): Promise<boolean> {
   if (!rawText || !ctx.chat?.id) return false;
 
   const text = normalizeControlText(rawText);
-
-  if (text === normalizeControlText(CONTROL_TEXT.pause)) {
-    logger.info(`[Bot] Control button received: Pause chatId=${ctx.chat.id}`);
-    await pauseCurrentChat(ctx);
-    return true;
-  }
-
-  if (text === normalizeControlText(CONTROL_TEXT.resume)) {
-    logger.info(`[Bot] Control button received: Resume chatId=${ctx.chat.id}`);
-    if (botInstance && currentEnsureEventSubscription) {
-      await resumePausedChat(ctx, { bot: botInstance, ensureEventSubscription: currentEnsureEventSubscription });
-    }
-    return true;
-  }
-
-  if (text === normalizeControlText(CONTROL_TEXT.abort)) {
-    logger.info(`[Bot] Control button received: Abort chatId=${ctx.chat.id}`);
-    await abortCurrentOperation(ctx);
-    return true;
-  }
 
   if (text === normalizeControlText(CONTROL_TEXT.cancel)) {
     logger.info(`[Bot] Control button received: Cancel chatId=${ctx.chat.id}`);
@@ -249,9 +218,6 @@ function installTextRouting(bot: Bot<Context>, deps: MessageRouterDeps): void {
 }
 
 export function registerMessageRouter(bot: Bot<Context>, deps: MessageRouterDeps): void {
-  botInstance = bot;
-  currentEnsureEventSubscription = deps.ensureEventSubscription;
-
   bot.on("message", async (ctx, next) => {
     if (!ctx.chat) {
       await next();
