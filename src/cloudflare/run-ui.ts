@@ -170,13 +170,38 @@ export class CloudRunUi {
       // Compatibility previews are transient presentation, not the durable final.
       // Always publish the completed answer as a fresh Topic-scoped message: some
       // Telegram clients can acknowledge preview edits without surfacing them.
-      await this.deliver(topic, run, state, text, part, false, true);
-      const finalState = this.get(run);
-      if (previewMessage !== finalState.message)
-        await this.telegram
-          .call("deleteMessage", { chat_id: topic.chatId, message_id: previewMessage })
-          .catch(() => undefined);
-      state = finalState;
+      const rendered = part ?? renderTelegramParts(text, { maxChars: 3800 })[0];
+      if (rendered) {
+        state.delivery = "SENDING";
+        this.save(run, state);
+        try {
+          const result = part
+            ? { message_id: await this.telegram.sendPart(topic.chatId, topic.threadId, rendered) }
+            : await this.telegram.previewPart(
+                "sendMessage",
+                { chat_id: topic.chatId, message_thread_id: topic.threadId },
+                rendered,
+              );
+          state.message = result.message_id;
+          state.delivery = "DELIVERED";
+          state.retryAt = undefined;
+          state.last = rendered.fallbackText;
+          state.signature = undefined;
+          state.at = this.now();
+          this.save(run, state);
+        } catch (error) {
+          state.delivery =
+            error instanceof TelegramDeliveryError && error.category === "rate_limited"
+              ? "PENDING"
+              : "RECONCILIATION_REQUIRED";
+          this.save(run, state);
+          throw error;
+        }
+        if (previewMessage !== state.message)
+          await this.telegram
+            .call("deleteMessage", { chat_id: topic.chatId, message_id: previewMessage })
+            .catch(() => undefined);
+      }
     } else if (!state.message || state.last !== text || part)
       await this.deliver(topic, run, state, text, part);
     state.finalized = true;
@@ -265,9 +290,8 @@ export class CloudRunUi {
     text: string,
     part?: ReturnType<typeof renderTelegramParts>[number],
     preview = false,
-    forceNew = false,
   ): Promise<void> {
-    const editing = !!state.message && !forceNew;
+    const editing = !!state.message;
     state.delivery = "SENDING";
     this.save(run, state);
     try {
