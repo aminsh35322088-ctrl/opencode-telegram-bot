@@ -273,7 +273,7 @@ test("a destructive callback replaced by navigation cannot execute from its old 
   assert.deepEqual(f.rpc, []);
 });
 
-test("run readiness and active/idle controls refresh only the scoped Topic ReplyKeyboard", async () => {
+test("run readiness and active/idle controls refresh only the scoped Topic inline panel", async () => {
   const f = fixture();
   await f.update("/settings", 42);
   const topic = f.store.topics()[0]!;
@@ -283,10 +283,15 @@ test("run readiness and active/idle controls refresh only the scoped Topic Reply
   await f.scoped().runKeyboard(topic, "run", true);
   f.store.finishRun(-100, 42, "run");
   await f.scoped().runKeyboard(topic, "run", false);
-  const replyKeyboards = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
-  assert.equal(replyKeyboards.length, 3);
-  assert.ok(replyKeyboards.every((x) => x.method === "sendMessage" && x.payload.message_thread_id === 42));
-  assert.equal(replyKeyboards.some((x) => x.payload.reply_markup?.inline_keyboard), false);
+  assert.equal(f.sent.some((x) => x.payload.reply_markup?.keyboard), false);
+  const cleanup = f.sent.filter((x) => x.payload.reply_markup?.remove_keyboard);
+  assert.equal(cleanup.length, 1);
+  assert.equal(cleanup[0]!.payload.message_thread_id, 42);
+  const inline = f.sent.filter((x) => x.payload.reply_markup?.inline_keyboard);
+  assert.ok(inline.length >= 1);
+  assert.equal(inline.find((x) => x.method === "sendMessage")?.payload.message_thread_id, 42);
+  const callbackThreads = f.db.prepare("SELECT thread FROM ui_callbacks").all() as Array<{ thread: number }>;
+  assert.ok(callbackThreads.every((row) => row.thread === 42));
 });
 
 test("legacy New Chat callback reopens home and never allocates", async () => {
@@ -381,17 +386,18 @@ test("a late edit acknowledgement cannot invalidate the newer panel's callback o
   assert.deepEqual(f.rpc, ["new"]);
 });
 
-test("History reopening another Topic deduplicates the same ReplyKeyboard refresh", async () => {
+test("History reopening another Topic reuses the same scoped inline control panel", async () => {
   const f = fixture();
   await f.update("/settings", 42);
   await f.update("/history");
   const button = f.button("OpenCode · 42")!;
   assert.ok(button);
   await f.callback(button.callback_data);
+  const firstPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(firstPanel);
   await f.callback(button.callback_data);
-  const topicKeyboards = f.sent.filter((x) => x.payload.reply_markup?.keyboard);
-  assert.equal(topicKeyboards.length, 1);
-  assert.equal(topicKeyboards[0]!.payload.message_thread_id, 42);
+  assert.equal(f.sent.some((x) => x.payload.reply_markup?.keyboard), false);
+  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, firstPanel);
 });
 
 test("scoped UI errors edit the canonical panel rather than append an error message", async () => {

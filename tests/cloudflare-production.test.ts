@@ -5,7 +5,10 @@ import { encryptCredential } from "../src/cloudflare/credentials.js";
 import { signEnvelope } from "../src/cloudflare/protocol.js";
 import { ControlStore } from "../src/cloudflare/control-store.js";
 import { ControlPlane } from "../src/cloudflare/control-object.js";
-import { protectTelegramCredentialUpdate, type ProtectedTelegramUpdate } from "../src/cloudflare/credential-vault.js";
+import {
+  protectTelegramCredentialUpdate,
+  type ProtectedTelegramUpdate,
+} from "../src/cloudflare/credential-vault.js";
 function fixture() {
   const db = new DatabaseSync(":memory:");
   const sql = {
@@ -105,7 +108,13 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
     sequence: 1,
     event: {
       type: "message.part.updated",
-      properties: { part: { id: "text", type: "text", text: "First chunk boundary marker\n\n" + "x".repeat(40000) } },
+      properties: {
+        part: {
+          id: "text",
+          type: "text",
+          text: "First chunk boundary marker\n\n" + "x".repeat(40000),
+        },
+      },
     },
   });
   f.store.recordCallback(-100, 42, {
@@ -125,7 +134,9 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
     const payload = JSON.parse(String(init?.body));
     if (
       (String(input).endsWith("/sendMessage") || String(input).endsWith("/editMessageText")) &&
-      (payload.reply_markup?.keyboard || payload.reply_markup?.inline_keyboard)
+      (payload.reply_markup?.keyboard ||
+        payload.reply_markup?.inline_keyboard ||
+        payload.reply_markup?.remove_keyboard)
     ) {
       keyboardCalls++;
       return Response.json({ ok: true, result: { message_id: 100 } });
@@ -153,7 +164,7 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
   assert.ok(chunks.every((chunk) => chunk.state === "DELIVERED"));
   assert.equal(calls, chunks.length + 1);
   assert.equal(attempts.filter((payload) => payload === attempts[0]).length, 1);
-  assert.equal(keyboardCalls, 1);
+  assert.equal(keyboardCalls, 2);
   assert.equal(f.store.completedResponses().length, 0);
 });
 
@@ -643,15 +654,298 @@ test("accepted streamed run is not resubmitted or status-polled on every token a
 test("General thread 1 credential input uses the same normalized account scope as ingress", async (t) => {
   const f = fixture();
   f.store.setGlobal({}, "initial", 0);
-  f.sql.exec("INSERT INTO ui_state VALUES(?,?)", "form:7:-100:0", JSON.stringify({
-    kind: "credential", providerId: "integration.github", generation: 0, expires: Date.now() + 60_000,
-  }));
-  const protectedUpdate = await protectTelegramCredentialUpdate({ update_id: 12, message: {
-    message_id: 12, message_thread_id: 1, from: { id: 7 }, chat: { id: -100 }, text: "fixture-private-token",
-  } } as never, f.sql, btoa("k".repeat(32)));
+  f.sql.exec(
+    "INSERT INTO ui_state VALUES(?,?)",
+    "form:7:-100:0",
+    JSON.stringify({
+      kind: "credential",
+      providerId: "integration.github",
+      generation: 0,
+      expires: Date.now() + 60_000,
+    }),
+  );
+  const protectedUpdate = await protectTelegramCredentialUpdate(
+    {
+      update_id: 12,
+      message: {
+        message_id: 12,
+        message_thread_id: 1,
+        from: { id: 7 },
+        chat: { id: -100 },
+        text: "fixture-private-token",
+      },
+    } as never,
+    f.sql,
+    btoa("k".repeat(32)),
+  );
   t.mock.method(globalThis, "fetch", async () => Response.json({ login: "operator" }));
-  await (f.plane as unknown as { saveCredential(update: ProtectedTelegramUpdate, provider: string, generation: number): Promise<void> })
-    .saveCredential(protectedUpdate, "integration.github", 0);
-  assert.equal((f.store.global()?.data.integrations as { github: { accountConnected: boolean } }).github.accountConnected, true);
+  await (
+    f.plane as unknown as {
+      saveCredential(
+        update: ProtectedTelegramUpdate,
+        provider: string,
+        generation: number,
+      ): Promise<void>;
+    }
+  ).saveCredential(protectedUpdate, "integration.github", 0);
+  assert.equal(
+    (f.store.global()?.data.integrations as { github: { accountConnected: boolean } }).github
+      .accountConnected,
+    true,
+  );
   assert.equal(JSON.stringify(f.store.global()).includes("fixture-private-token"), false);
+});
+
+test("native Stop without from is ingested and durably fences the exact draft before cancellation", async () => {
+  const f = fixture();
+  const topic = {
+    chatId: 7,
+    threadId: 42,
+    workerId: "native-worker",
+    generation: 1,
+    sessionId: "native-session",
+    state: "ACTIVE",
+  };
+  f.sql.exec("INSERT INTO topics VALUES(?,?,?,?)", 7, 42, topic.workerId, JSON.stringify(topic));
+  f.store.enqueue(7, 42, "native_run", "prompt");
+  f.store.pinRun("native_run", 1, 1, "p/m");
+  f.store.startNext(7, 42);
+  const binding = {
+    ...topic,
+    runId: "native_run",
+    draftId: 99,
+    state: "ACTIVITY",
+    summaries: [],
+    thinking: [],
+    completedThinking: [],
+    activities: {},
+  };
+  f.sql.exec(
+    "INSERT INTO telegram_run_presentations VALUES(?,?,?,?,?)",
+    "native_run",
+    7,
+    42,
+    99,
+    JSON.stringify(binding),
+  );
+  const stop = {
+    update_id: 8801,
+    stopped_message_generation: {
+      chat: { id: 7, type: "private" },
+      message_thread_id: 42,
+      draft_id: 99,
+    },
+  };
+  assert.equal((await post(f.plane, "/telegram/webhook", stop)).status, 200);
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='native_run'")][0]
+      ?.state,
+    "CANCELLING",
+  );
+  assert.equal(
+    f.store.recordCallback(7, 42, {
+      runId: "native_run",
+      streamNonce: "late",
+      sequence: 1,
+      event: { type: "session.idle" },
+    }),
+    false,
+  );
+  assert.equal(f.store.completedResponses().length, 0);
+  await post(f.plane, "/telegram/webhook", stop);
+  assert.equal(
+    [
+      ...f.sql.exec<{ data: string }>(
+        "SELECT data FROM telegram_run_presentations WHERE run='native_run'",
+      ),
+    ].map((r) => JSON.parse(r.data).state)[0],
+    "CANCELLING",
+  );
+});
+
+async function nativeExecutionFixture() {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("native_exec", 7, 42);
+  const secret = "n".repeat(64);
+  const credential = await encryptCredential(
+    btoa("k".repeat(32)),
+    "node:" + job.workerId + ":1",
+    secret,
+  );
+  f.store.configureJob(job.jobId, { endpoint: "https://native.up.railway.app" });
+  f.store.ready(job.workerId, 1, credential);
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(7, 42, "native_exec", "prompt");
+  f.store.pinRun("native_exec", 1, f.store.global()?.revision ?? 0, "p/m");
+  return { ...f, secret, job };
+}
+test("native cancellation reaches the signed exact-run Worker stop and joins before queue release", async (t) => {
+  const f = await nativeExecutionFixture();
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let execution = false;
+  const operations: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(input).includes("api.telegram.org"))
+      return Response.json({
+        ok: true,
+        result: String(input).endsWith("/getChat")
+          ? { id: 7, type: "private" }
+          : { message_id: 99 },
+      });
+    operations.push(body.operation);
+    assert.equal(body.sessionId, "session");
+    let result: unknown = null;
+    if (body.operation === "run") {
+      assert.equal(body.payload.runId, "native_exec");
+      execution = true;
+      result = { accepted: true };
+    }
+    if (body.operation === "callback.status") result = { state: "ACCEPTED", runId: body.payload.runId };
+    if (body.operation === "status") result = execution ? { externalRunId: "native_exec" } : null;
+    if (body.operation === "stop") {
+      assert.equal(body.payload.runId, "native_exec");
+      execution = false;
+    }
+    if (body.operation.endsWith(".list")) result = [];
+    const signed = await signEnvelope(
+      { ...body, nonce: crypto.randomUUID(), timestamp: Date.now(), payload: { ok: true, result } },
+      f.secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await f.plane.alarm();
+  const binding = JSON.parse(
+    [
+      ...f.sql.exec<{ data: string }>(
+        "SELECT data FROM telegram_run_presentations WHERE run='native_exec'",
+      ),
+    ][0]!.data,
+  );
+  await post(f.plane, "/telegram/webhook", {
+    update_id: 9901,
+    stopped_message_generation: {
+      chat: { id: 7, type: "private" },
+      message_thread_id: 42,
+      draft_id: binding.draftId,
+    },
+  });
+  await f.plane.alarm();
+  assert.equal(execution, false);
+  assert.deepEqual(operations.slice(-3), ["status", "stop", "status"]);
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='native_exec'")][0]!
+      .state,
+    "CANCELLED",
+  );
+});
+
+test("Stop while initial submission is in flight cannot release ownership or start queued execution", async (t) => {
+  const f = await nativeExecutionFixture();
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let release!: () => void;
+  let execution = false;
+  globalThis.fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(input).includes("api.telegram.org"))
+      return Response.json({
+        ok: true,
+        result: String(input).endsWith("/getChat")
+          ? { id: 7, type: "private" }
+          : { message_id: 99 },
+      });
+    let result: unknown = null;
+    if (body.operation === "run") {
+      await new Promise<void>((r) => {
+        release = r;
+      });
+      execution = true;
+      result = { accepted: true };
+    }
+    if (body.operation === "callback.status") result = { state: "ACCEPTED", runId: body.payload.runId };
+    if (body.operation === "status") result = execution ? { externalRunId: "native_exec" } : null;
+    if (body.operation === "stop") execution = false;
+    if (body.operation.endsWith(".list")) result = [];
+    const signed = await signEnvelope(
+      { ...body, nonce: crypto.randomUUID(), timestamp: Date.now(), payload: { ok: true, result } },
+      f.secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  const running = f.plane.alarm();
+  while (!release) await new Promise((r) => setTimeout(r, 0));
+  const binding = JSON.parse(
+    [
+      ...f.sql.exec<{ data: string }>(
+        "SELECT data FROM telegram_run_presentations WHERE run='native_exec'",
+      ),
+    ][0]!.data,
+  );
+  await post(f.plane, "/telegram/webhook", {
+    update_id: 9902,
+    stopped_message_generation: {
+      chat: { id: 7, type: "private" },
+      message_thread_id: 42,
+      draft_id: binding.draftId,
+    },
+  });
+  f.store.enqueue(7, 42, "next_exec", "next");
+  await f.plane.alarm();
+  assert.equal(f.store.startNext(7, 42), undefined);
+  release();
+  await running;
+  f.sql.exec("UPDATE runs SET state='CANCELLED' WHERE request='next_exec'"); // Keep the test focused on joining the stopped admission.
+  await f.plane.alarm();
+  assert.equal(execution, false);
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='native_exec'")][0]!
+      .state,
+    "CANCELLED",
+  );
+});
+
+test("timed-out admission cannot free cancellation ownership while a delayed Worker submission is unknown", async(t)=>{
+ const f=await nativeExecutionFixture();const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ let admitted=false,execution=false;
+ globalThis.fetch=async(input,init)=>{
+  const body=JSON.parse(String(init?.body));
+  if(String(input).includes("api.telegram.org"))return Response.json({ok:true,result:String(input).endsWith("/getChat")?{id:7,type:"private"}:{message_id:99}});
+  if(body.operation==="run")throw new Error("transport timeout while server keeps processing");
+  let result:unknown=null;
+  if(body.operation==="callback.status")result={runId:admitted?"native_exec":"previous",state:admitted?"ACCEPTED":"NOT_SUBMITTED"};
+  if(body.operation==="status")result=execution?{externalRunId:"native_exec"}:null;
+  if(body.operation==="stop")execution=false;
+  if(body.operation.endsWith(".list"))result=[];
+  const signed=await signEnvelope({...body,nonce:crypto.randomUUID(),timestamp:Date.now(),payload:{ok:true,result}},f.secret);
+  return new Response(signed.body,{headers:{"x-node-signature":signed.signature}});
+ };
+ await f.plane.alarm();
+ const binding=JSON.parse([...f.sql.exec<{data:string}>("SELECT data FROM telegram_run_presentations WHERE run='native_exec'")][0]!.data);
+ await post(f.plane,"/telegram/webhook",{update_id:9903,stopped_message_generation:{chat:{id:7,type:"private"},message_thread_id:42,draft_id:binding.draftId}});
+ f.store.enqueue(7,42,"queued_next","next");await f.plane.alarm();
+ assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLING");
+ assert.equal(f.store.startNext(7,42),undefined);
+ admitted=true;execution=true;f.sql.exec("UPDATE runs SET state='CANCELLED' WHERE request='queued_next'");await f.plane.alarm();
+ assert.equal(execution,false);assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLED");
+});
+
+test("Stop during identity resolution cancels the unsubmitted run without requiring a Worker admission receipt",async(t)=>{
+ const f=await nativeExecutionFixture();const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ let release!:()=>void;
+ (f.plane as any).identity=async()=>{await new Promise<void>(r=>{release=r;});throw new Error("identity resolution interrupted");};
+ let workerCalls=0;
+ globalThis.fetch=async(input)=>{if(!String(input).includes("api.telegram.org")){workerCalls++;throw new Error("must not submit");}return Response.json({ok:true,result:String(input).endsWith("/getChat")?{id:7,type:"private"}:{message_id:99}});};
+ const running=f.plane.alarm();while(!release)await new Promise(r=>setTimeout(r,0));
+ const binding=JSON.parse([...f.sql.exec<{data:string}>("SELECT data FROM telegram_run_presentations WHERE run='native_exec'")][0]!.data);
+ await post(f.plane,"/telegram/webhook",{update_id:9904,stopped_message_generation:{chat:{id:7,type:"private"},message_thread_id:42,draft_id:binding.draftId}});
+ assert.equal(Boolean(f.store.runPin("native_exec")?.dispatched),false);
+ release();await running;await f.plane.alarm();
+ assert.equal(workerCalls,0);assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLED");
 });

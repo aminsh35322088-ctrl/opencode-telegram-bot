@@ -1,7 +1,6 @@
 import {
   createMainInlineKeyboard,
   createMainKeyboard,
-  createTopicKeyboard,
   MAIN_BUTTONS,
   TOPIC_BUTTONS,
 } from "../bot/keyboards/main-reply-keyboard.js";
@@ -119,6 +118,7 @@ import {
 
 export interface TelegramUpdate {
   update_id?: number;
+  stopped_message_generation?: import("./run-presentation.js").NativeStop;
   message?: {
     message_id?: number;
     text?: string;
@@ -852,45 +852,72 @@ export class CloudBotUi {
       modelID: split > 0 ? selected.slice(split + 1) : "",
     };
     const options = topic ? this.options(topic) : {};
-    const keyboard = topic
-      ? createTopicKeyboard({
-          compactOutputMode: options.compact ?? options.compactOutputMode ?? false,
-          paused: options.paused ?? false,
-          running: this.deps.store.activeRuns(chat, topic.threadId).length > 0,
-          currentModel,
-        })
-      : createMainKeyboard(currentModel);
 
     if (topic) {
-      const replyMarkup = {
-        keyboard: keyboard.keyboard.filter((row) => row.length > 0),
-        resize_keyboard: true,
-        is_persistent: true,
-      };
-      const scope = this.panelScope;
-      const stateKey = scope
-        ? `reply-keyboard:${scope.actor}:${chat}:${topic.threadId}:${topic.generation}`
-        : `reply-keyboard:${chat}:${topic.threadId}:${topic.generation}`;
-      const previous = this.get<{ signature?: string; controls?: string[] }>(stateKey);
-      const currentControls = replyMarkup.keyboard
-        .flat()
-        .map((button) => normalized(typeof button === "string" ? button : button.text))
-        .filter(Boolean);
-      const controls = Array.from(new Set([...currentControls, ...(previous?.controls ?? [])])).slice(0, 32);
-      // Keyboard identity is the markup itself. Status/acknowledgement text must
-      // not force a duplicate keyboard message after restart or /keyboard.
-      const signature = JSON.stringify(replyMarkup);
-      if (previous?.signature === signature) return;
-      const sent = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
-        chat_id: chat,
-        message_thread_id: topic.threadId,
-        text,
-        reply_markup: replyMarkup,
-      });
-      this.set(stateKey, { signature, messageId: sent.message_id, controls });
+      const actor = this.panelScope!.actor;
+      const running = this.deps.store.activeRuns(chat, topic.threadId).length > 0;
+      const paused = options.paused ?? false;
+      const nativeStop =
+        this.get<{ verified?: boolean }>(`native-qualified:${chat}`)?.verified === true &&
+        this.get<string>(`native-capability:${chat}`) === "private";
+
+      // ReplyKeyboardMarkup is chat-wide in Telegram clients. In private bot Topics it can
+      // leak across Topic tabs and cause subsequent mobile messages to arrive without a
+      // message_thread_id. Retire any legacy keyboard once, then keep every Topic control
+      // on an inline panel whose callback is generation- and thread-scoped.
+      const clearedKey = `reply-keyboard-cleared:${chat}`;
+      if (!this.get(clearedKey)) {
+        const cleared = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
+          chat_id: chat,
+          message_thread_id: topic.threadId,
+          text: "⌨️ Topic controls updated.",
+          reply_markup: { remove_keyboard: true },
+        });
+        this.set(clearedKey, { messageId: cleared.message_id, at: Date.now() });
+      }
+
+      const rows: Button[][] = [];
+      if (!nativeStop && (running || paused))
+        rows.push([
+          this.button(
+            actor,
+            chat,
+            topic.threadId,
+            topic,
+            paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause,
+            paused ? "resume" : "pause",
+          ),
+          this.button(actor, chat, topic.threadId, topic, MAIN_BUTTONS.abort, "abort"),
+        ]);
+      rows.push([
+        this.button(
+          actor,
+          chat,
+          topic.threadId,
+          topic,
+          MAIN_BUTTONS.compact(options.compact ?? options.compactOutputMode ?? false),
+          "compact",
+        ),
+      ]);
+      rows.push([
+        this.button(
+          actor,
+          chat,
+          topic.threadId,
+          topic,
+          TOPIC_BUTTONS.modelCenter(currentModel),
+          "models",
+        ),
+      ]);
+      rows.push([
+        this.button(actor, chat, topic.threadId, topic, MAIN_BUTTONS.deleteChat, "delete"),
+        this.button(actor, chat, topic.threadId, topic, MAIN_BUTTONS.topicSettings, "topic_settings"),
+      ]);
+      await this.menu(chat, topic.threadId, escape(text), rows);
       return;
     }
 
+    const keyboard = createMainKeyboard(currentModel);
     if (this.panelScope && this.panelScope.chat === chat && this.panelScope.thread === 0) {
       const actions: Record<string, string> = {
         [MAIN_BUTTONS.newChat]: "new",

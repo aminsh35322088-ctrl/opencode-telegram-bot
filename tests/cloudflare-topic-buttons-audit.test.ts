@@ -216,10 +216,13 @@ function latestInlineButton(f: ReturnType<typeof fixture>, label: string) {
 }
 function latestReplyButton(f: ReturnType<typeof fixture>, label: string) {
   const button = f.sent
-    .flatMap((x) => x.payload.reply_markup?.keyboard?.flat() ?? [])
+    .flatMap((x) => [
+      ...(x.payload.reply_markup?.keyboard?.flat() ?? []),
+      ...(x.payload.reply_markup?.inline_keyboard?.flat() ?? []),
+    ])
     .filter((b: any) => String(b.text).includes(label))
     .at(-1);
-  assert.ok(button, `Missing ${label} on current ReplyKeyboard`);
+  assert.ok(button, `Missing ${label} on current Topic controls`);
   return button;
 }
 function assertScopedTopicMarkup(f: ReturnType<typeof fixture>) {
@@ -231,180 +234,91 @@ function assertScopedTopicMarkup(f: ReturnType<typeof fixture>) {
   assert.ok(activeCallbacks.every((row) => row.thread === 42));
 }
 
-test("ReplyKeyboard controls are deleted, Compact has a meaningful acknowledgement, and Model Center opens without catalog RPC", async (t) => {
+test("Topic inline controls route only inside their AI Topic", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
-  const compact = latestReplyButton(f, "Compact: OFF").text;
-  f.sent.length = 0;
-  await f.update(compact, 42);
-  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 2));
-  const compactAck = f.sent.filter((entry) => entry.payload.reply_markup?.keyboard).at(-1);
-  assert.ok(compactAck);
-  assert.match(String(compactAck.payload.text), /Compact mode is ON/i);
-  assert.notEqual(compactAck.payload.text, "OpenCode");
+  assert.equal(f.sent.some((x) => x.payload.reply_markup?.keyboard), false);
+  assert.ok(f.sent.some((x) => x.payload.reply_markup?.remove_keyboard === true));
 
-  const modelButton = compactAck.payload.reply_markup.keyboard
-    .flat()
-    .find((button: any) => String(button.text).includes("🧠"))?.text;
-  assert.ok(modelButton);
-  f.sent.length = 0;
-  f.rpc.length = 0;
-  f.db.prepare("DELETE FROM ui_state WHERE key='legacy:model:catalog'").run();
-  await f.update(modelButton, 42);
-  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 3));
+  await f.callback(latestInlineButton(f, "Compact: OFF").callback_data, 42);
+  assert.equal(f.scoped().options(f.store.topics()[0]!).compact, true);
+  await f.callback(latestInlineButton(f, "Compact: ON").callback_data, 42);
+  assert.equal(f.scoped().options(f.store.topics()[0]!).compact, false);
+
+  await f.callback(latestInlineButton(f, "🧠").callback_data, 42);
+  assert.match(latestPanel(f).payload.text, /Model Center/i);
   assert.equal(f.rpc.includes("models.list"), false);
-  assert.match(String(f.sent.find((entry) => entry.payload.reply_markup?.inline_keyboard)?.payload.text ?? ""), /MODEL CENTER/i);
+
+  await f.update("/keyboard", 42);
+  await f.callback(latestInlineButton(f, "Topic Settings").callback_data, 42);
+  assert.match(latestPanel(f).payload.text, /Topic Settings/);
 });
 
-
-test("ReplyKeyboard control is deleted before Model Center is dispatched", async (t) => {
+test("legacy exact Topic control text is still consumed and deleted before dispatch", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
-  const modelButton = latestReplyButton(f, "🧠").text;
+  const modelText = latestInlineButton(f, "🧠").text;
   f.sent.length = 0;
   const release = f.holdNextDelete();
-  const pending = f.update(modelButton, 42);
+  const pending = f.update(modelText, 42);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const renderedBeforeCleanup = f.sent.some(
-    (entry) =>
-      entry.method === "sendMessage" &&
-      entry.payload.reply_markup?.inline_keyboard &&
-      /MODEL CENTER/i.test(String(entry.payload.text)),
-  );
   assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 2));
+  assert.equal(
+    f.sent.some((entry) => /MODEL CENTER/i.test(String(entry.payload.text ?? ""))),
+    false,
+  );
   release();
   await pending;
   await f.drainBackground();
-  assert.equal(
-    renderedBeforeCleanup,
-    false,
-    "Model Center must wait until the consumed ReplyKeyboard message is deleted",
-  );
-  assert.ok(
-    f.sent.some(
-      (entry) =>
-        entry.method === "sendMessage" &&
-        entry.payload.reply_markup?.inline_keyboard &&
-        /MODEL CENTER/i.test(String(entry.payload.text)),
-    ),
-    "Model Center should render immediately after control-message cleanup completes",
-  );
+  assert.match(latestPanel(f).payload.text, /MODEL CENTER/i);
 });
 
-test("ReplyKeyboard dispatch continues when Telegram refuses control-message deletion", async (t) => {
+test("legacy dynamic Topic control text never becomes a model prompt", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
-  const modelButton = latestReplyButton(f, "🧠").text;
-  f.sent.length = 0;
-  f.rejectNextDeletes();
-  await f.update(modelButton, 42);
-  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage"));
-  assert.match(
-    String(f.sent.find((entry) => entry.payload.reply_markup?.inline_keyboard)?.payload.text ?? ""),
-    /MODEL CENTER/i,
-  );
-});
-
-test("recognized dynamic Topic controls are deleted even when ReplyKeyboard history is missing", async (t) => {
-  const f = fixture(t);
-  await f.update("/keyboard", 42);
-  const modelButton = latestReplyButton(f, "🧠").text;
+  const modelText = latestInlineButton(f, "🧠").text;
   f.db.prepare("DELETE FROM ui_state WHERE key LIKE 'reply-keyboard:%'").run();
   f.sent.length = 0;
-  await f.update(modelButton, 42);
-  await f.drainBackground();
-  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 2));
+  await f.update(modelText, 42);
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage"));
   assert.equal([...f.db.prepare("SELECT request FROM runs").all()].length, 0);
 });
 
-test("model selection clears every owned Topic panel, including a previously failed retirement", async (t) => {
-  const f = fixture(t);
-  await f.update("/keyboard", 42);
-  const modelButton = latestReplyButton(f, "🧠").text;
-  await f.update(modelButton, 42);
-  const firstPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
-  assert.ok(firstPanel);
-
-  f.rejectDeleteMessage(firstPanel);
-  await f.update(modelButton, 42);
-  const secondPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId!;
-  assert.ok(secondPanel);
-  assert.notEqual(secondPanel, firstPanel);
-  assert.equal(
-    f.sent.some(
-      (entry) => entry.method === "editMessageReplyMarkup" && entry.payload.message_id === firstPanel,
-    ),
-    false,
-    "failed retirement must not leave a dead text-only panel",
-  );
-
-  await f.callback(latestInlineButton(f, "Browse providers").callback_data, 42);
-  await f.callback(latestInlineButton(f, "opencode").callback_data, 42);
-  await f.callback(latestInlineButton(f, "Other").callback_data, 42);
-  await f.drainBackground();
-
-  assert.ok(f.deleted.has(firstPanel), "orphaned panel should be retried and deleted");
-  assert.ok(f.deleted.has(secondPanel), "current panel should be deleted after model selection");
-  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, undefined);
-});
-
-test("every idle Topic ReplyKeyboard control routes to its own scoped behavior", async (t) => {
-  const f = fixture(t);
-  await f.update("/keyboard", 42);
-  assert.equal(f.sent.filter((x) => x.payload.reply_markup?.keyboard).at(-1)!.payload.message_thread_id, 42);
-  assertScopedTopicMarkup(f);
-  await f.update(latestReplyButton(f, "Compact: OFF").text, 42);
-  assert.equal(f.scoped().options(f.store.topics()[0]!).compact, true);
-  await f.update(latestReplyButton(f, "Compact: ON").text, 42);
-  assert.equal(f.scoped().options(f.store.topics()[0]!).compact, false);
-  await f.update(latestReplyButton(f, "🧠").text, 42);
-  assert.match(latestPanel(f).payload.text, /Model Center/i);
-  await f.update("/keyboard", 42);
-  await f.update(latestReplyButton(f, "Topic Settings").text, 42);
-  assert.match(latestPanel(f).payload.text, /Topic Settings/);
-  await f.update("/keyboard", 42);
-  await f.update(latestReplyButton(f, "Delete Chat").text, 42);
-  assert.match(latestPanel(f).payload.text, /Delete Chat/);
-  assert.deepEqual(f.rpc, []);
-  assertScopedTopicMarkup(f);
-});
-
-test("Pause, Resume, and Abort ReplyKeyboard controls target only the Topic active run", async (t) => {
+test("Pause, Resume, and Abort inline controls target only the Topic active run", async (t) => {
   const f = fixture(t);
   f.store.enqueue(-100, 42, "run", "question");
   f.store.startNext(-100, 42);
   await f.update("/keyboard", 42);
-  await f.update(latestReplyButton(f, "Pause").text, 42);
+  await f.callback(latestInlineButton(f, "Pause").callback_data, 42);
   assert.deepEqual(f.rpc, ["pause"]);
   assert.equal(f.scoped().options(f.store.topics()[0]!).paused, true);
-  await f.update(latestReplyButton(f, "Resume").text, 42);
+  await f.callback(latestInlineButton(f, "Resume").callback_data, 42);
   assert.deepEqual(f.rpc, ["pause", "resume"]);
   assert.equal(f.scoped().options(f.store.topics()[0]!).paused, false);
-  await f.update(latestReplyButton(f, "Abort").text, 42);
+  await f.callback(latestInlineButton(f, "Abort").callback_data, 42);
   assert.deepEqual(f.rpc, ["pause", "resume", "stop", "status"]);
   assert.equal(f.store.activeRuns(-100, 42).length, 0);
-  assertScopedTopicMarkup(f);
 });
 
-test("Topic ReplyKeyboard text cannot execute from General or another Topic", async (t) => {
+test("Topic control callbacks cannot execute from another Topic", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
-  const compact = latestReplyButton(f, "Compact: OFF").text;
-  await f.update(compact, 0);
-  await f.update(compact, 99);
+  const compact = latestInlineButton(f, "Compact: OFF").callback_data;
+  await f.callback(compact, 99);
   assert.equal(f.scoped().options(f.store.topics()[0]!).compact, false);
-  assert.deepEqual(f.rpc, []);
 });
 
 for (const method of ["ready", "runKeyboard"] as const) {
-  test(`${method} always scopes the ReplyKeyboard to its AI Topic`, async (t) => {
+  test(`${method} keeps controls inline and scoped to its AI Topic`, async (t) => {
     const f = fixture(t);
     const topic = f.store.topics()[0]!;
     if (method === "ready") await f.ui.ready(topic);
     else await f.ui.runKeyboard(topic, "background-run", true);
-    const keyboard = f.sent.filter((x) => x.payload.reply_markup?.keyboard).at(-1)!;
-    assert.equal(keyboard.payload.message_thread_id, 42);
-    assertScopedTopicMarkup(f);
+    assert.equal(f.sent.some((x) => x.payload.reply_markup?.keyboard), false);
+    const panel = f.sent.filter((x) => x.payload.reply_markup?.inline_keyboard).at(-1)!;
+    assert.equal(panel.payload.message_thread_id, 42);
+    const callbacks = f.db.prepare("SELECT thread FROM ui_callbacks").all() as Array<{ thread: number }>;
+    assert.ok(callbacks.every((row) => row.thread === 42));
   });
 }
 
@@ -480,10 +394,13 @@ test("model selection retries a transient panel delete and leaves no Model Cente
   await f.drainBackground();
 
   assert.ok(f.deleted.has(panelId), "transient panel deletion should be retried in the background");
-  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, undefined);
+  const refreshedPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(refreshedPanel);
+  assert.notEqual(refreshedPanel, panelId);
+  assert.doesNotMatch(String(latestPanel(f).payload.text ?? ""), /MODEL CENTER/i);
 });
 
-test("Model Center selection refreshes the Topic ReplyKeyboard with the newly selected model", async (t) => {
+test("Model Center selection refreshes the Topic inline controls with the newly selected model", async (t) => {
   const f = fixture(t);
   await f.update("/keyboard", 42);
   const originalModelButton = latestReplyButton(f, "🧠").text;
@@ -497,6 +414,30 @@ test("Model Center selection refreshes the Topic ReplyKeyboard with the newly se
   assert.notEqual(updated, originalModelButton);
   assert.match(updated, /Other|other/i);
   assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === panelId));
-  assert.equal(f.scoped().panelIdentity(7, -100, 42, 1).messageId, undefined);
+  const refreshedPanel = f.scoped().panelIdentity(7, -100, 42, 1).messageId;
+  assert.ok(refreshedPanel);
+  assert.notEqual(refreshedPanel, panelId);
   assert.equal(f.store.activeRuns(-100, 42).length, 0);
+});
+
+test("AI Topic controls are inline-scoped and retire chat-wide ReplyKeyboard markup", async (t) => {
+  const f = fixture(t);
+  const topic = f.store.topics()[0]!;
+  await f.scoped().keyboard(topic.chatId, topic, "✅ Ready");
+  assert.equal(f.sent.some((entry) => entry.payload.reply_markup?.keyboard), false);
+  assert.ok(
+    f.sent.some(
+      (entry) =>
+        entry.method === "sendMessage" &&
+        entry.payload.message_thread_id === 42 &&
+        entry.payload.reply_markup?.remove_keyboard === true,
+    ),
+  );
+  const labels = f.sent.flatMap((entry) =>
+    (entry.payload.reply_markup?.inline_keyboard?.flat() ?? []).map((button: any) => String(button.text)),
+  );
+  assert.ok(labels.some((label) => label.includes("Compact: OFF")));
+  assert.ok(labels.some((label) => label.includes("big pickle")));
+  assert.ok(labels.some((label) => label.includes("Delete Chat")));
+  assert.ok(labels.some((label) => label.includes("Topic Settings")));
 });

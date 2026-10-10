@@ -8,7 +8,6 @@ import { renderTelegramParts } from "../bot/render/pipeline.js";
 import type { FleetTopic, SqlDatabase } from "./control-store.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 interface Preview {
-  thoughts: Record<string, string>;
   tools: Record<string, { name: string; status: string; started?: number; ended?: number }>;
   mode?: "draft" | "edit";
   draft?: number;
@@ -39,7 +38,8 @@ const toolIcons: Record<string, string> = {
 };
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-/** Bounded presentation of accepted signed events. Never includes tool input/output or auth. */
+/** Compatibility-only preview for legacy/unsupported chats. Native runs never enter this path.
+ * Never captures reasoning text, tool input/output or auth. */
 export class CloudRunUi {
   constructor(
     private sql: SqlDatabase,
@@ -50,7 +50,7 @@ export class CloudRunUi {
     const row = [
       ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "run-ui:" + run),
     ][0];
-    return row ? JSON.parse(row.data) : { thoughts: {}, tools: {} };
+    return row ? JSON.parse(row.data) : { tools: {} };
   }
   private save(run: string, value: Preview): void {
     this.sql.exec(
@@ -67,20 +67,6 @@ export class CloudRunUi {
     if (!id || id.length > 128) return;
     const state = this.get(run);
     if (
-      e.type === "message.part.updated" &&
-      part.type === "reasoning" &&
-      typeof part.text === "string"
-    ) {
-      if (Object.keys(state.thoughts).length < 16 || id in state.thoughts)
-        state.thoughts[id] = part.text.slice(-8000);
-    } else if (
-      e.type === "message.part.delta" &&
-      p.field === "text" &&
-      typeof p.delta === "string" &&
-      id in state.thoughts
-    )
-      state.thoughts[id] = (state.thoughts[id] + p.delta).slice(-8000);
-    else if (
       e.type === "message.part.updated" &&
       part.type === "tool" &&
       typeof part.tool === "string"
@@ -152,14 +138,10 @@ export class CloudRunUi {
                 : line;
             })
             .join("\n");
-    const thought =
-      options.showThinkingContent && !options.compact
-        ? Object.values(state.thoughts).join("\n")
-        : "";
     // Parse complete snapshots before selecting a bounded semantic chunk. Never
     // cut Markdown delimiters, code, surrogate pairs or emoji source sequences.
     const snapshot = renderTelegramParts(
-      [thought ? "💭 " + thought : "", tools, text].filter(Boolean).join("\n\n"),
+      [tools, text].filter(Boolean).join("\n\n"),
       { maxChars: 3800 },
     ).at(-1);
     if (!snapshot) return;
@@ -176,14 +158,26 @@ export class CloudRunUi {
     text: string,
     part?: ReturnType<typeof renderTelegramParts>[number],
   ): Promise<boolean> {
-    const state = this.get(run);
+    let state = this.get(run);
     if (!this.writable(topic, run, true, !state.mode && !state.message))
       throw new Error("run_ui_fenced");
     if (state.finalized) return true;
     if (!state.message && ["SENDING", "RECONCILIATION_REQUIRED"].includes(state.delivery ?? ""))
       throw new TelegramDeliveryError("ambiguous");
     if (!state.message && state.mode !== "draft") return false;
-    if (!state.message || state.last !== text || part)
+    const previewMessage = state.mode !== "draft" ? state.message : undefined;
+    if (previewMessage) {
+      // Compatibility previews are transient presentation, not the durable final.
+      // Always publish the completed answer as a fresh Topic-scoped message: some
+      // Telegram clients can acknowledge preview edits without surfacing them.
+      await this.deliver(topic, run, state, text, part, false, true);
+      const finalState = this.get(run);
+      if (previewMessage !== finalState.message)
+        await this.telegram
+          .call("deleteMessage", { chat_id: topic.chatId, message_id: previewMessage })
+          .catch(() => undefined);
+      state = finalState;
+    } else if (!state.message || state.last !== text || part)
       await this.deliver(topic, run, state, text, part);
     state.finalized = true;
     this.save(run, state);
@@ -271,8 +265,9 @@ export class CloudRunUi {
     text: string,
     part?: ReturnType<typeof renderTelegramParts>[number],
     preview = false,
+    forceNew = false,
   ): Promise<void> {
-    const editing = !!state.message;
+    const editing = !!state.message && !forceNew;
     state.delivery = "SENDING";
     this.save(run, state);
     try {

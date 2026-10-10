@@ -305,11 +305,14 @@ test("compact is durable Topic presentation state and does not duplicate global 
   });
   await restarted.alarm();
   assert.equal(f.sent.filter((entry) => entry.payload.reply_markup?.keyboard).length, 0);
-  const keyboardState = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key LIKE 'reply-keyboard:%' LIMIT 1"),
+  const labels = f.sent.flatMap((entry) =>
+    (entry.payload.reply_markup?.inline_keyboard?.flat() ?? []).map((button: any) => String(button.text)),
+  );
+  assert.ok(labels.some((label) => /Compact: ON/.test(label)));
+  const topicState = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
   ][0];
-  assert.ok(keyboardState);
-  assert.match(keyboardState.data, /Compact: ON/);
+  assert.equal(JSON.parse(topicState!.data).compact, true);
   assert.equal(f.store.global()!.revision, revision);
 });
 
@@ -395,7 +398,7 @@ test("Stop replay cannot abort the next queued run", async (t) => {
       !failed &&
       /\/(?:sendMessage|editMessageText)$/.test(String(input)) &&
       payload.text === "OpenCode" &&
-      payload.reply_markup?.keyboard
+      payload.reply_markup?.inline_keyboard
     ) {
       failed = true;
       return Response.json(
@@ -435,8 +438,11 @@ test("readiness keyboard retries Telegram 429 without duplicating a delivered no
   const ui = (f.plane as unknown as { ui: () => { ready: (topic: any) => Promise<void> } }).ui();
   await assert.rejects(ui.ready(f.store.topics()[0]));
   await ui.ready(f.store.topics()[0]);
+  const afterSuccess = f.sent.length;
   await ui.ready(f.store.topics()[0]);
-  assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
+  assert.equal(f.sent.length, afterSuccess);
+  assert.equal(f.sent.filter((x) => x.payload.reply_markup?.remove_keyboard).length, 1);
+  assert.equal(f.sent.filter((x) => x.payload.reply_markup?.inline_keyboard).length, 1);
 });
 
 test("questions render in their Topic and their answers never become prompts", async (t) => {
@@ -870,19 +876,19 @@ test("streaming toggle persists an actual transport mode rather than a boolean",
   assert.equal(JSON.parse(row.data).responseStreamingMode, "off");
 });
 
-test("active Topic ReplyKeyboard exposes Pause and Abort, and idle keyboard removes them", async (t) => {
+test("active Topic inline controls expose Pause and Abort, and idle controls remove them", async (t) => {
   const f = fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "keyboard_run", "prompt");
   f.store.startNext(-100, 42);
   await f.update("/keyboard", 42);
-  const active = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  const active = f.sent.filter((s) => s.payload.reply_markup?.inline_keyboard);
   assert.match(JSON.stringify(active), /Pause/);
   assert.match(JSON.stringify(active), /Abort/);
   f.store.failRun(-100, 42, "keyboard_run", "stopped");
   f.sent.length = 0;
   await f.update("/keyboard", 42);
-  const idle = f.sent.filter((s) => s.payload.reply_markup?.keyboard);
+  const idle = f.sent.filter((s) => s.payload.reply_markup?.inline_keyboard);
   assert.ok(idle.length > 0);
   assert.equal(JSON.stringify(idle).includes("Pause"), false);
   assert.equal(JSON.stringify(idle).includes("Abort"), false);
@@ -1314,7 +1320,7 @@ test("only exact rendered Topic controls are consumed; an emoji-prefixed user pr
   await f.bound();
   await f.update("/keyboard", 42);
   const modelButton = f.sent
-    .flatMap((entry) => entry.payload.reply_markup?.keyboard?.flat() ?? [])
+    .flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [])
     .find((button: any) => String(button.text).startsWith("🧠 "));
   assert.ok(modelButton);
   const before = [...f.sql.exec("SELECT request FROM runs")].length;
