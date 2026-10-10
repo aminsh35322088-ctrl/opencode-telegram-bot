@@ -158,7 +158,7 @@ export class CloudRunUi {
     text: string,
     part?: ReturnType<typeof renderTelegramParts>[number],
   ): Promise<boolean> {
-    let state = this.get(run);
+    const state = this.get(run);
     if (!this.writable(topic, run, true, !state.mode && !state.message))
       throw new Error("run_ui_fenced");
     if (state.finalized) return true;
