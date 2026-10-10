@@ -60,7 +60,10 @@ function fixture() {
       } as T;
     const input = variables.input as Record<string, unknown>;
     let result: unknown;
-    if (query.includes("FleetProjects"))
+    if (query.includes("FixedFleetProject($id")) {
+      const project = projects.find((candidate) => candidate.id === variables.id);
+      result = { project: project ?? null };
+    } else if (query.includes("FleetProjects"))
       result = {
         workspace: {
           projects: { edges: projects.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
@@ -746,4 +749,27 @@ test("fixed Worker bind and recycle redeploy the same Service and Volume across 
   assert.equal(f.services.length, 1);
   assert.equal(f.volumes.length, 1);
   assert.deepEqual(generations, [1, 2, 3]);
+});
+
+
+test("fixed fleet recreates a persisted project that is absent from the authenticated Railway account", async () => {
+  const f = fixture();
+  const job = f.store.ensureFixedFleet("a", 10, 5)[0]!;
+  const project = f.store.projects().find((candidate) => candidate.projectKey === job.projectKey)!;
+  f.store.saveProject({ ...project, projectId: "stale-project", environmentId: "stale-environment", phase: "READY" });
+  f.store.configureJob(job.jobId, {
+    projectId: "stale-project",
+    environmentId: "stale-environment",
+    serviceId: "stale-service",
+    volumeId: "stale-volume",
+    endpoint: "https://stale.up.railway.app",
+  });
+
+  const recovered = await f.driver.provisionFixed(job.jobId);
+
+  assert.notEqual(recovered.projectId, "stale-project");
+  assert.notEqual(recovered.serviceId, "stale-service");
+  assert.notEqual(recovered.volumeId, "stale-volume");
+  assert.equal(f.projects.length, 1);
+  assert.equal(f.projects[0]?.name, "opencode-telegram-01");
 });

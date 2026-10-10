@@ -1604,8 +1604,12 @@ export class ControlPlane {
     const workers = this.store.workers().filter((worker) => worker.backendId === "railway");
     const totalWorkers = 10;
     const readyStates = new Set(["READY_UNBOUND", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"]);
-    const failed = workers.filter((worker) => worker.state === "UNHEALTHY").length +
-      this.store.jobs().filter((job) => this.fixedFleetJob(job) && !!job.error).length;
+    const failedWorkers = new Set(
+      workers.filter((worker) => worker.state === "UNHEALTHY").map((worker) => worker.workerId),
+    );
+    for (const job of this.store.jobs())
+      if (this.fixedFleetJob(job) && job.error) failedWorkers.add(job.workerId);
+    const failed = failedWorkers.size;
     const projectsCreated = projects.filter((project) => !!project.projectId && !!project.environmentId).length;
     const workersCreated = workers.filter((worker) => !!worker.serviceId && !!worker.endpoint).length;
     const volumesAttached = workers.filter((worker) => !!worker.volumeId).length;
@@ -1635,6 +1639,16 @@ export class ControlPlane {
       failed,
     };
   }
+  private async resumeRailwaySetup(): Promise<RailwaySetupStatus> {
+    let status = this.railwaySetupStatus();
+    if (!status.configured || status.ready) return status;
+    await this.setup();
+    this.store.ensureFixedFleet("railway", 10, 5);
+    await this.scheduleAlarm(Date.now() + 1);
+    status = this.railwaySetupStatus();
+    return status;
+  }
+
   private async saveRailwayCredentialInput(
     update: ProtectedRailwayTelegramUpdate,
     generation: number,
@@ -1793,7 +1807,7 @@ export class ControlPlane {
         this.manageIntegration(id, action, credentialId),
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
-      railwayStatus: () => this.railwaySetupStatus(),
+      railwayStatus: () => this.resumeRailwaySetup(),
       saveRailwayCredential: (update, generation) =>
         this.saveRailwayCredentialInput(update, generation),
       questionDecision: (topic, request, questions, answers) =>

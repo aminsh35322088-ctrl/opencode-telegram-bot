@@ -1915,3 +1915,14 @@ test("Railway token replacement rejects another account without changing the sto
   assert.equal(stored?.accountId, "account-1");
   assert.equal(stored?.token, "old-token");
 });
+
+
+test("Railway setup counts one failed fixed slot once even when both Worker and bootstrap job record the failure", async (t) => {
+  const f = await fixture(t);
+  const bootstrap = f.store.jobs().find((job) => job.requestId === "fleet-bootstrap:worker-01")!;
+  f.store.configureJob(bootstrap.jobId, { phase: "FAILED", error: "railway_scope_missing" });
+  f.store.transition("worker-01", 1, "UNHEALTHY");
+
+  const status = (f.plane as any).railwaySetupStatus();
+  assert.equal(status.failed, 1);
+});

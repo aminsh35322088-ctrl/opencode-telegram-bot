@@ -826,3 +826,19 @@ test("fixed Worker recycle preserves Railway ownership and rotates a fenced boun
   assert.equal(recycle.serviceId, "service-1");
   assert.equal(f.store.topics().some((topic) => topic.workerId === "worker-01"), false);
 });
+
+
+test("fixed fleet retry reopens a failed bootstrap slot without creating duplicate capacity", () => {
+  const f = fixture();
+  backend(f.store, "railway", 10, 5);
+  const first = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(first.jobId, { phase: "FAILED", error: "railway_scope_missing" });
+  f.store.transition(first.workerId, first.generation, "UNHEALTHY");
+
+  const retried = f.store.ensureFixedFleet("railway", 10, 5).find((job) => job.workerId === first.workerId)!;
+
+  assert.equal(retried.phase, "RESERVED");
+  assert.equal(retried.error, undefined);
+  assert.equal(f.store.worker(first.workerId)?.state, "RECOVERING");
+  assert.equal(f.store.workers().length, 10);
+});

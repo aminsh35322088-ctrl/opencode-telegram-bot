@@ -778,6 +778,15 @@ export class ControlStore {
         if (existingJob) {
           if (existingJob.workerId !== workerId || existingJob.generation !== worker.generation)
             throw new Error("fixed_fleet_job_conflict");
+          if ((existingJob.phase === "FAILED" || existingJob.error) && worker.state === "UNHEALTHY") {
+            worker.state = "RECOVERING";
+            this.saveWorker(worker);
+            existingJob.phase = "RESERVED";
+            existingJob.createdAt = Date.now();
+            delete existingJob.error;
+            delete existingJob.cleanupPhase;
+            this.saveJob(existingJob);
+          }
           jobs.push(existingJob);
           continue;
         }
@@ -801,6 +810,73 @@ export class ControlStore {
         jobs.push(job);
       }
       return jobs;
+    });
+  }
+
+  resetFixedProjectOwnership(projectKey: string, backendId: string): FleetProject {
+    return this.transaction(() => {
+      const project = this.projects().find(
+        (candidate) => candidate.projectKey === projectKey && candidate.backendId === backendId,
+      );
+      if (!project || !/^opencode-telegram-\d{2}$/u.test(project.projectKey))
+        throw new Error("fixed_fleet_project_missing");
+      const workers = this.workers().filter(
+        (worker) => worker.backendId === backendId && worker.projectKey === projectKey,
+      );
+      if (
+        workers.some(
+          (worker) =>
+            worker.chatId !== undefined ||
+            worker.threadId !== undefined ||
+            !["PROVISIONING", "READY_UNBOUND", "UNHEALTHY", "RECOVERING"].includes(worker.state),
+        ) ||
+        this.topics().some((topic) => workers.some((worker) => worker.workerId === topic.workerId))
+      )
+        throw new Error("cleanup_reconciliation_required");
+
+      delete project.projectId;
+      delete project.environmentId;
+      project.phase = "RESERVED";
+      this.saveProject(project);
+
+      const workerIds = new Set(workers.map((worker) => worker.workerId));
+      for (const worker of workers) {
+        delete worker.projectId;
+        delete worker.environmentId;
+        delete worker.serviceId;
+        delete worker.volumeId;
+        delete worker.endpoint;
+        delete worker.credential;
+        delete worker.image;
+        delete worker.deploymentId;
+        delete worker.runtimeCommit;
+        delete worker.runtimeVersion;
+        delete worker.lastHealthAt;
+        worker.state = "RECOVERING";
+        this.saveWorker(worker);
+      }
+      for (const job of this.jobs()) {
+        if (
+          job.backendId !== backendId ||
+          job.projectKey !== projectKey ||
+          !workerIds.has(job.workerId) ||
+          !job.requestId.startsWith("fleet-bootstrap:")
+        )
+          continue;
+        delete job.projectId;
+        delete job.environmentId;
+        delete job.serviceId;
+        delete job.volumeId;
+        delete job.endpoint;
+        delete job.error;
+        delete job.cleanupPhase;
+        delete job.previousDeploymentId;
+        delete job.deploymentReceipt;
+        job.phase = "RESERVED";
+        job.createdAt = Date.now();
+        this.saveJob(job);
+      }
+      return project;
     });
   }
   reservePreparedAllocation(requestId: string, chatId: number): AllocationJob {

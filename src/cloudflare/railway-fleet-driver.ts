@@ -198,7 +198,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
     if (!project) throw new Error("fixed_fleet_project_missing");
     if (!project.projectId || !project.environmentId)
       project = fixed
-        ? await this.resolveFixedProject(project, false)
+        ? await this.resolveFixedProject(project, true)
         : await this.resolveProject(project, false);
     job = this.store.configureJob(jobId, {
       projectId: project.projectId,
@@ -209,11 +209,15 @@ export class RailwayFleetDriver implements FleetProvisioner {
       inventory = await this.inventory(job);
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "railway_scope_missing") throw error;
-      if (job.serviceId || job.volumeId || job.endpoint)
-        throw new Error("cleanup_reconciliation_required");
-      project = fixed
-        ? await this.resolveFixedProject(project, true)
-        : await this.resolveProject(project, true);
+      if (fixed) {
+        project = this.store.resetFixedProjectOwnership(project.projectKey, job.backendId);
+        job = this.store.job(jobId)!;
+        project = await this.resolveFixedProject(project, true);
+      } else {
+        if (job.serviceId || job.volumeId || job.endpoint)
+          throw new Error("cleanup_reconciliation_required");
+        project = await this.resolveProject(project, true);
+      }
       job = this.store.configureJob(jobId, {
         projectId: project.projectId,
         environmentId: project.environmentId,
