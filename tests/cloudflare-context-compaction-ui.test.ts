@@ -24,6 +24,26 @@ function fixture(configured = "v1.18.33-bot.13-pre.25", observed = configured) {
   const job = store.reserveTopicAllocation("topic", -100, 42);
   store.ready(job.workerId, 1, "synthetic");
   store.bindTopic(job.jobId, 42, "session");
+  sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "legacy:model:catalog",
+    JSON.stringify({
+      at: Date.now(),
+      providers: [
+        {
+          id: "opencode",
+          name: "OpenCode",
+          models: {
+            "big-pickle": {
+              name: "Big Pickle",
+              modalities: { input: ["text"], output: ["text"] },
+              capabilities: { tools: true, reasoning: true },
+            },
+          },
+        },
+      ],
+    }),
+  );
   if (observed) store.saveObservation(job.workerId, 1, { runtimeVersion: observed });
   const sent: Array<{ method: string; payload: any }> = [];
   const admitted: Array<{ topic: unknown; request: string }> = [];

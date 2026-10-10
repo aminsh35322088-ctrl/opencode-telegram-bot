@@ -1326,6 +1326,7 @@ export class ControlPlane {
       newTopic: (chat, request) => this.newTopic(chat, request),
       deleteTopic: (chat, thread) => this.deleteTopic(chat, thread),
       cancelAllocation: (jobId) => this.cancelAllocation(jobId),
+      reconcileManagedCleanup: (chat) => this.reconcileManagedCleanup(chat),
       rpc,
       global,
       ...(typeof this.state.waitUntil === "function"
@@ -1835,11 +1836,37 @@ export class ControlPlane {
     }
     this.store.finalizeAllocationFailure(jobId);
   }
+  private async reconcileManagedCleanup(chatId: number): Promise<void> {
+    const workerIds = [
+      ...new Set(
+        this.store
+          .jobs()
+          .filter((job) => job.chatId === chatId)
+          .map((job) => job.workerId),
+      ),
+    ];
+    await this.driver().reconcileManagedResources(workerIds);
+  }
   private async deleteTopic(chatId: number, threadId: number): Promise<void> {
     const topic = this.store.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
     if (!topic) return;
     const previousGeneration = topic.state === "FENCED" ? topic.generation - 1 : topic.generation;
-    this.presentation().fenceTopic(topic);
+    const presentation = this.presentation();
+    const active = presentation.activeBinding(topic);
+    const activeRunId = active?.runId ?? this.store.activeRuns(chatId, threadId)[0]?.requestId;
+    presentation.fenceTopic(topic);
+    if (activeRunId) {
+      try {
+        await nodeRpc(
+          await this.identity(topic.workerId, previousGeneration),
+          "stop",
+          { runId: activeRunId },
+          topic.sessionId,
+        );
+      } catch {
+        /* Retirement below remains authoritative when exact-run cancellation cannot be confirmed. */
+      }
+    }
     const worker = this.store.fenceTopic(chatId, threadId);
     try {
       await nodeRpc(await this.identity(worker.workerId, previousGeneration), "retire", {});
@@ -1849,6 +1876,7 @@ export class ControlPlane {
     this.store.transition(worker.workerId, worker.generation, "DELETING");
     await this.driver().destroy(worker.workerId, worker.generation);
     this.store.confirmDestroyed(worker.workerId, worker.generation);
+    if (active) presentation.cancelled(active.runId);
   }
   async alarm(): Promise<void> {
     await this.initializeSecrets();

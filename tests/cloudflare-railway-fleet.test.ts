@@ -434,3 +434,45 @@ test("a deleted project with the deterministic name is not adopted", async () =>
   assert.notEqual(provisioned.projectId, "deleted-project");
   assert.equal(f.projects.length, 2);
 });
+
+test("managed cleanup reconciliation deletes only exact stored Railway ownership", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("reconcile-owned", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  const result = await f.driver.reconcileManagedResources([worker.workerId]);
+  assert.equal(f.services.length, 0);
+  assert.equal(f.volumes.length, 0);
+  assert.ok(result.resources.some((resource) => resource.kind === "service" && resource.classification === "owned"));
+  assert.ok(result.resources.some((resource) => resource.kind === "volume" && resource.classification === "owned"));
+});
+
+test("managed cleanup reconciliation fails closed on managed-looking service without exact stored id", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("reconcile-ambiguous", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  f.services[0]!.id = "foreign-service";
+  await assert.rejects(
+    f.driver.reconcileManagedResources([worker.workerId]),
+    /cleanup_reconciliation_required/,
+  );
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+});
+
+test("managed cleanup reconciliation preserves unrelated resources in a shared project", async () => {
+  const f = fixture();
+  const first = f.store.reserveAllocation("reconcile-first", -100);
+  await f.driver.provision(first.jobId);
+  const second = f.store.reserveAllocation("reconcile-second", -200);
+  await f.driver.provision(second.jobId);
+  const firstWorker = f.store.worker(first.workerId)!;
+  const secondWorker = f.store.worker(second.workerId)!;
+  const result = await f.driver.reconcileManagedResources([firstWorker.workerId]);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.services[0]!.id, secondWorker.serviceId);
+  assert.equal(f.volumes.length, 1);
+  assert.equal(f.volumes[0]!.id, secondWorker.volumeId);
+  assert.ok(result.resources.some((resource) => resource.classification === "unrelated"));
+});

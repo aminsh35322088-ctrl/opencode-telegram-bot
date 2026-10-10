@@ -174,6 +174,7 @@ interface UiDependencies {
   newTopic: (chat: number, request: string) => Promise<AllocationJob>;
   deleteTopic: (chat: number, thread: number) => Promise<void>;
   cancelAllocation?: (jobId: string) => Promise<void>;
+  reconcileManagedCleanup?: (chat: number) => Promise<void>;
   rpc: <T = unknown>(topic: FleetTopic, operation: string, payload?: unknown) => Promise<T>;
   global: (data: Record<string, unknown>, expectedRevision: number) => Promise<void>;
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -3242,14 +3243,14 @@ export class CloudBotUi {
       this.set("reset:" + chat, { updateId });
       for (const job of this.deps.store
         .jobs()
-        .filter((j) => j.chatId === chat && !["BOUND", "FAILED"].includes(j.phase))) {
+        .filter(
+          (j) =>
+            j.chatId === chat &&
+            j.phase !== "BOUND" &&
+            this.deps.store.worker(j.workerId)?.state !== "REPLACED",
+        )) {
         if (!this.deps.cancelAllocation) throw new Error("pending_worker_cleanup_required");
         await this.deps.cancelAllocation(job.jobId);
-        if (job.threadId)
-          await this.deps.telegram.call("deleteForumTopic", {
-            chat_id: chat,
-            message_thread_id: job.threadId,
-          });
       }
       const key = "cleanup:" + updateId;
       let plan = this.get<Array<{ threadId: number; deleted?: boolean }>>(key);
@@ -3271,6 +3272,16 @@ export class CloudBotUi {
         this.set(key, plan);
       }
       if (name === "factory_reset_final") {
+        try {
+          await this.deps.reconcileManagedCleanup?.(chat);
+        } catch (error) {
+          await this.notice(
+            chat,
+            undefined,
+            "⚠️ cleanup_reconciliation_required. Railway cleanup must be reconciled before Factory Reset can finish.",
+          );
+          throw error;
+        }
         const current = this.deps.store.global();
         if (!current) throw new Error("snapshot_unavailable");
         await this.deps.global(resetGlobalConfiguration(current.data), current.revision);

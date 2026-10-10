@@ -986,3 +986,91 @@ test("Stop during identity resolution cancels the unsubmitted run without requir
  release();await running;await f.plane.alarm();
  assert.equal(workerCalls,0);assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLED");
 });
+
+test("Delete Chat fences output, cancels the exact run, retires runtime, destroys Railway, then deletes Telegram Topic", async (t) => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  await post(f.plane, "/admin/global", {
+    configuration: { runtime: { model: "opencode/big-pickle" } },
+    skills: [],
+    actions: [],
+    catalog: {},
+    defaults: {},
+    credentialReferences: [],
+  });
+  const job = f.store.reserveTopicAllocation("delete-order", -100, 42);
+  const secret = "n".repeat(64);
+  const credential = await encryptCredential(
+    btoa("k".repeat(32)),
+    "node:" + job.workerId + ":1",
+    secret,
+  );
+  f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+  f.store.ready(job.workerId, 1, credential);
+  const topic = f.store.bindTopic(job.jobId, 42, "session");
+  const revision = f.store.global()!.revision;
+  f.store.enqueueVerified(-100, 42, "delete-run", "prompt", topic.generation, revision, "opencode/big-pickle");
+  f.store.startNext(-100, 42);
+  const binding = {
+    chatId: -100,
+    threadId: 42,
+    sessionId: "session",
+    generation: topic.generation,
+    workerId: topic.workerId,
+    runId: "delete-run",
+    draftId: 77,
+    state: "STREAMING",
+    summaries: [],
+    thinking: [],
+    completedThinking: [],
+    activities: {},
+  };
+  f.sql.exec(
+    "INSERT INTO telegram_run_presentations VALUES(?,?,?,?,?)",
+    "delete-run",
+    -100,
+    42,
+    77,
+    JSON.stringify(binding),
+  );
+  const order: string[] = [];
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => {
+      order.push("destroy");
+    },
+    reconcileManagedResources: async () => ({ resources: [] }),
+  });
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const payload = JSON.parse(String(init?.body));
+    if (url.includes("api.telegram.org")) {
+      if (url.endsWith("/deleteForumTopic")) order.push("deleteForumTopic");
+      return Response.json({ ok: true, result: true });
+    }
+    order.push(payload.operation);
+    const result = payload.operation === "status" ? null : true;
+    const signed = await signEnvelope(
+      {
+        ...payload,
+        nonce: crypto.randomUUID(),
+        timestamp: Date.now(),
+        payload: { ok: true, result },
+      },
+      secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  const response = await post(f.plane, "/admin/delete-topic", { chatId: -100, threadId: 42 });
+  assert.equal(response.status, 200);
+  assert.deepEqual(order, ["stop", "retire", "destroy", "deleteForumTopic"]);
+  assert.equal(f.store.worker(job.workerId)?.state, "REPLACED");
+  assert.equal(f.store.topics().length, 0);
+  const presentation = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM telegram_run_presentations WHERE run=?", "delete-run"),
+  ][0];
+  assert.equal(JSON.parse(presentation!.data).state, "CANCELLED");
+});

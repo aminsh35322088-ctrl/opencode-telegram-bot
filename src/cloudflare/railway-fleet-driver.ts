@@ -1,7 +1,15 @@
 import { ControlStore, type AllocationJob } from "./control-store.js";
+export type CleanupClassification = "owned" | "deleted_or_pending_purge" | "unrelated" | "ambiguous";
+export interface CleanupResource {
+  kind: "service" | "volume";
+  id: string;
+  classification: CleanupClassification;
+}
+export interface ManagedCleanupResult { resources: CleanupResource[] }
 export interface FleetProvisioner {
   provision(jobId: string): Promise<AllocationJob>;
   destroy(workerId: string, generation: number): Promise<void>;
+  reconcileManagedResources(workerIds: string[]): Promise<ManagedCleanupResult>;
   inspectDeployment(
     jobId: string,
   ): Promise<{ image: string; deploymentId: string; status: string }>;
@@ -327,6 +335,129 @@ export class RailwayFleetDriver implements FleetProvisioner {
       status: instance.latestDeployment.status ?? "UNKNOWN",
     };
   }
+  async reconcileManagedResources(workerIds: string[]): Promise<ManagedCleanupResult> {
+    const targets = new Set(workerIds);
+    const allWorkers = this.store.workers();
+    const targetWorkers = allWorkers.filter((worker) => targets.has(worker.workerId));
+    const resources: CleanupResource[] = [];
+    const scopes = new Map<string, { projectId: string; environmentId: string }>();
+    for (const worker of targetWorkers) {
+      if (!worker.projectId || !worker.environmentId) continue;
+      scopes.set(worker.projectId + ":" + worker.environmentId, {
+        projectId: worker.projectId,
+        environmentId: worker.environmentId,
+      });
+    }
+    for (const scope of scopes.values()) {
+      let inventory = await this.inventory(scope as AllocationJob);
+      const scopedWorkers = allWorkers.filter(
+        (worker) => worker.projectId === scope.projectId && worker.environmentId === scope.environmentId,
+      );
+      const byName = new Map(scopedWorkers.map((worker) => ["topic-node-" + worker.workerId, worker]));
+      let ambiguous = false;
+      const ownedServiceIds: string[] = [];
+      const ownedVolumeIds: string[] = [];
+      for (const edge of inventory.project.services.edges) {
+        const service = edge.node;
+        if (!service.name.startsWith("topic-node-")) {
+          resources.push({ kind: "service", id: service.id, classification: "unrelated" });
+          continue;
+        }
+        const worker = byName.get(service.name);
+        if (!worker) {
+          ambiguous = true;
+          resources.push({ kind: "service", id: service.id, classification: "ambiguous" });
+          continue;
+        }
+        if (!targets.has(worker.workerId)) {
+          resources.push({ kind: "service", id: service.id, classification: "unrelated" });
+          continue;
+        }
+        if (!worker.serviceId || worker.serviceId !== service.id) {
+          ambiguous = true;
+          resources.push({ kind: "service", id: service.id, classification: "ambiguous" });
+          continue;
+        }
+        ownedServiceIds.push(service.id);
+        resources.push({ kind: "service", id: service.id, classification: "owned" });
+      }
+      for (const worker of targetWorkers.filter(
+        (candidate) =>
+          candidate.projectId === scope.projectId && candidate.environmentId === scope.environmentId,
+      )) {
+        if (!worker.volumeId) continue;
+        const volume = inventory.project.volumes.edges.find((edge) => edge.node.id === worker.volumeId);
+        if (!volume) {
+          resources.push({
+            kind: "volume",
+            id: worker.volumeId,
+            classification: "deleted_or_pending_purge",
+          });
+          continue;
+        }
+        const instances = volume.node.volumeInstances.edges.map((edge) => edge.node);
+        const pending =
+          instances.length > 0 &&
+          instances.every(
+            (instance) =>
+              instance.serviceId === null &&
+              instance.isPendingDeletion === true &&
+              typeof instance.deletedAt === "string" &&
+              Number.isFinite(Date.parse(instance.deletedAt)),
+          );
+        if (pending) {
+          resources.push({
+            kind: "volume",
+            id: worker.volumeId,
+            classification: "deleted_or_pending_purge",
+          });
+          continue;
+        }
+        if (
+          instances.some(
+            (instance) => instance.serviceId !== null && instance.serviceId !== worker.serviceId,
+          )
+        ) {
+          ambiguous = true;
+          resources.push({ kind: "volume", id: worker.volumeId, classification: "ambiguous" });
+          continue;
+        }
+        ownedVolumeIds.push(worker.volumeId);
+        resources.push({ kind: "volume", id: worker.volumeId, classification: "owned" });
+      }
+      if (ambiguous) throw new Error("cleanup_reconciliation_required");
+      for (const id of ownedServiceIds)
+        await this.mutate("mutation FleetDestroyService($id:String!){serviceDelete(id:$id)}", { id });
+      for (const volumeId of ownedVolumeIds)
+        await this.mutate(
+          "mutation FleetDestroyVolume($volumeId:String!){volumeDelete(volumeId:$volumeId)}",
+          { volumeId },
+        );
+      inventory = await this.inventory(scope as AllocationJob);
+      if (
+        inventory.project.services.edges.some((edge) => ownedServiceIds.includes(edge.node.id))
+      )
+        throw new Error("cleanup_reconciliation_required");
+      for (const volumeId of ownedVolumeIds) {
+        const retained = inventory.project.volumes.edges.find((edge) => edge.node.id === volumeId);
+        if (!retained) continue;
+        const instances = retained.node.volumeInstances.edges.map((edge) => edge.node);
+        if (
+          !instances.length ||
+          !instances.every(
+            (instance) =>
+              instance.serviceId === null &&
+              instance.isPendingDeletion === true &&
+              typeof instance.deletedAt === "string" &&
+              Number.isFinite(Date.parse(instance.deletedAt)),
+          )
+        )
+          throw new Error("cleanup_reconciliation_required");
+      }
+    }
+    return { resources };
+  }
+
   async inspectCleanup(workerId: string): Promise<unknown> {
     const worker = this.store.worker(workerId);
     if (!worker?.projectId || !worker.environmentId) throw new Error("unknown_worker_scope");
