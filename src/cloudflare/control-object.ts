@@ -2273,11 +2273,15 @@ export class ControlPlane {
         "railway_transport_error",
       ]);
       if (transient.has(reason)) {
-        if (reason === "railway_rate_limited") {
+        if (["railway_rate_limited", "railway_transport_timeout", "railway_transport_error"].includes(reason)) {
           const requested =
-            error instanceof RailwayApiError && Number.isFinite(error.retryAfterMs)
+            reason === "railway_rate_limited" &&
+            error instanceof RailwayApiError &&
+            Number.isFinite(error.retryAfterMs)
               ? error.retryAfterMs!
-              : 60_000;
+              : reason === "railway_rate_limited"
+                ? 60_000
+                : 30_000;
           const delay = Math.min(60 * 60_000, Math.max(1_000, requested));
           const until = Date.now() + delay;
           this.setRailwayBackoff(until);
