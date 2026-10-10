@@ -144,7 +144,6 @@ export interface TelegramUpdate {
 interface UiAction {
   action: string;
   value?: string;
-  targetRun?: string;
   panel?: boolean;
 }
 interface UiOptions {
@@ -161,7 +160,6 @@ interface UiOptions {
   model?: string;
   agent?: string;
   variant?: string;
-  paused?: boolean;
   title?: string;
   titleSource?: "auto" | "manual";
 }
@@ -726,9 +724,6 @@ export class CloudBotUi {
         action,
         value,
         ...(this.panelScope ? { panel: true } : {}),
-        ...(["pause", "resume", "abort", "stop"].includes(action)
-          ? { targetRun: this.deps.store.activeRuns(chat, thread)[0]?.requestId }
-          : {}),
       }),
     );
     return { text, callback_data: "ui:" + id };
@@ -1580,9 +1575,6 @@ export class CloudBotUi {
         [normalized(MAIN_BUTTONS.mainSettings)]: "settings",
         [normalized(MAIN_BUTTONS.topicSettings)]: "topic_settings",
         [normalized(MAIN_BUTTONS.deleteChat)]: "delete_topic",
-        [normalized(MAIN_BUTTONS.pause)]: "pause",
-        [normalized(MAIN_BUTTONS.resume)]: "resume",
-        [normalized(MAIN_BUTTONS.abort)]: "abort",
         [normalized(MAIN_BUTTONS.compact(true))]: "compact",
         [normalized(MAIN_BUTTONS.compact(false))]: "compact",
         "🧠 Models": "models",
@@ -1675,8 +1667,6 @@ export class CloudBotUi {
       } else return false;
     }
     if (!saved) {
-      if (!action.targetRun && ["pause", "resume", "abort", "stop"].includes(action.action))
-        action.targetRun = this.deps.store.activeRuns(chat, thread)[0]?.requestId;
       this.set(actionKey, { actor, chat, thread, generation: topic?.generation ?? 0, action });
     }
     const done = this.get<boolean>("action_done:" + updateId) === true;
@@ -1713,10 +1703,6 @@ export class CloudBotUi {
       "delete",
       "delete_topic",
       "delete_confirm",
-      "pause",
-      "resume",
-      "abort",
-      "stop",
       "session",
       "messages",
       "messages_page",
@@ -2023,26 +2009,6 @@ export class CloudBotUi {
       this.setOptions(topic!, { compact });
       this.set("action_done:" + updateId, true);
       await this.keyboard(chat, topic, `✅ Compact: ${compact ? "ON" : "OFF"}`);
-      return true;
-    }
-    if (["pause", "resume", "abort", "stop"].includes(name)) {
-      const run = this.deps.store
-        .activeRuns(chat, thread)
-        .find((r) => r.requestId === action.targetRun);
-      if (!run) {
-        await this.notice(chat, thread, "No active execution.");
-        return true;
-      }
-      await this.deps.rpc(topic!, name === "abort" ? "stop" : name, { runId: run.requestId });
-      this.assertTopic(topic!);
-      if (["stop", "abort"].includes(name)) {
-        const status = await this.deps.rpc(topic!, "status");
-        if (status) throw new Error("execution_cleanup_pending");
-        this.deps.store.failRun(chat, thread, run.requestId, "🛑 Execution stopped.");
-        this.setOptions(topic!, { paused: false });
-      } else this.setOptions(topic!, { paused: name === "pause" });
-      this.set("action_done:" + updateId, true);
-      await this.keyboard(chat, topic);
       return true;
     }
     if (name === "rename") {
@@ -2960,7 +2926,7 @@ export class CloudBotUi {
       await this.notice(
         chat,
         thread || undefined,
-        "This Topic owns a dedicated managed Core runtime and workspace. Use /session to inspect it, /abort to stop work, or Delete Chat to retire it. Runtime creation and cleanup are controlled by Cloudflare.",
+        "This Topic owns a dedicated managed Core runtime and workspace. Use /session to inspect it, Telegram Native Stop to cancel the current run, or Delete Chat to retire it. Runtime creation and cleanup are controlled by Cloudflare.",
       );
       return true;
     }

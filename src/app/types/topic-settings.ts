@@ -4,7 +4,7 @@ import type { MessageFormatMode, ResponseStreamingMode } from "./settings.js";
 import type { ImageModelSelection } from "./image-model.js";
 import type { CapabilityModelBindings } from "./model-capability.js";
 
-export type TopicRunState = "idle" | "running" | "paused" | "aborting";
+export type TopicRunState = "idle" | "running";
 
 /**
  * Settings and execution state that belong exclusively to one Telegram Topic.

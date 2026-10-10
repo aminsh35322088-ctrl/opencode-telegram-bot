@@ -16,7 +16,7 @@ import { createTopicAwareBot, getTelegramTopicRuntimeDependencies } from "../ser
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
-import { abortCurrentOperation } from "../commands/abort-command.js";
+import { cancelCurrentRun } from "../../app/services/current-run-cancellation-service.js";
 import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
 import path from "node:path";
 
@@ -167,11 +167,10 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
   return true;
 }
 
-async function abortStoppedGeneration(ctx: Context): Promise<void> {
+async function cancelStoppedGeneration(ctx: Context): Promise<void> {
   const stopped = ctx.stoppedMessageGeneration;
   if (!stopped) return;
-
-  const result = await abortCurrentOperation(ctx, { notifyUser: false });
+  const result = await cancelCurrentRun({ reason: "telegram_native_stop" });
   logger.info(
     `[Bot] Native generation stop handled: chat=${stopped.chat.id}, thread=${stopped.message_thread_id}, draft=${stopped.draft_id}, result=${result}`,
   );
@@ -236,7 +235,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
           }
 
           if (ctx.stoppedMessageGeneration) {
-            await abortStoppedGeneration(ctx);
+            await cancelStoppedGeneration(ctx)
             return;
           }
 
@@ -268,7 +267,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   }
 
   if (ctx.stoppedMessageGeneration) {
-    await abortStoppedGeneration(ctx);
+    await cancelStoppedGeneration(ctx)
     return;
   }
 

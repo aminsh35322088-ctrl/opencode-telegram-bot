@@ -50,7 +50,7 @@ class AssistantRunState {
   hasActiveRun(sessionId: string): boolean {
     if (!sessionId) return false;
     // A run remains active until OpenCode emits session.idle (or an explicit
-    // error/abort clears it). The assistant response can become terminal before
+    // error/cancellation clears it). The assistant response can become terminal before
     // the final Telegram/tool streams are flushed, so completion alone must not
     // invalidate the run guards used by those finalization paths.
     return this.runs.has(sessionId);

@@ -13,22 +13,18 @@ function deleteExpiredAbortRequests(now: number = Date.now()): void {
 
 /**
  * Registers that the next "Aborted" session.error for this session is an
- * expected consequence of an abort the bot itself initiated (user /abort,
+ * expected consequence of cancellation the bot itself initiated (Telegram Native Stop,
  * stall watchdog recovery, scheduled-task cleanup, media-operation cancellation, or the
  * deterministic provider-retry policy) and must not be surfaced as a raw
  * 🔴 error in the middle of the conversation.
  */
-export function markAbortExpected(sessionId: string): void {
+export function markCancellationExpected(sessionId: string): void {
   const now = Date.now();
   deleteExpiredAbortRequests(now);
   userAbortRequestedAtBySession.set(sessionId, now);
 }
 
-export function markUserAbortRequested(sessionId: string): void {
-  markAbortExpected(sessionId);
-}
-
-export function shouldSuppressUserAbortSessionError(sessionId: string, message: string): boolean {
+export function shouldSuppressExpectedCancellationError(sessionId: string, message: string): boolean {
   if (message.trim().toLowerCase() !== "aborted") {
     return false;
   }
@@ -42,10 +38,10 @@ export function shouldSuppressUserAbortSessionError(sessionId: string, message: 
   return Date.now() - requestedAt <= USER_ABORT_SUPPRESSION_WINDOW_MS;
 }
 
-export function __resetUserAbortErrorSuppressionForTests(): void {
+export function __resetCancellationErrorSuppressionForTests(): void {
   userAbortRequestedAtBySession.clear();
 }
 
-export function __getUserAbortErrorSuppressionSizeForTests(): number {
+export function __getCancellationErrorSuppressionSizeForTests(): number {
   return userAbortRequestedAtBySession.size;
 }

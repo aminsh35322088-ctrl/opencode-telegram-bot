@@ -19,7 +19,7 @@ import { clearAllToolActivity } from "../managers/tool-activity-manager.js";
 import { logger } from "../../utils/logger.js";
 
 // Binding-aware sweep: workspace directories of still-bound topics are kept,
-// everything unreferenced (failed/aborted/interrupted deletes) is removed.
+// everything unreferenced (failed/cancelled/interrupted deletes) is removed.
 // Runs unconditionally, because gating it on "no delete failed" leaked orphan
 // workspaces forever whenever a single delete errored.
 async function removeOrphanedTopicWorkspaces(): Promise<number> {

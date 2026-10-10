@@ -11,7 +11,7 @@ import { nodeBindings } from "../control-plane/node-bindings.js";
 import { getTopicRuntimeContext, type TopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { topicTelemetry } from "../utils/topic-observability.js";
-import { markAbortExpected } from "../app/managers/abort-suppression-manager.js";
+import { markCancellationExpected } from "../app/managers/cancellation-suppression-manager.js";
 
 export type TopicEventCallback = (event: Event) => void | Promise<void>;
 type EventLike = { type: string; properties: Record<string, unknown> };
@@ -39,7 +39,7 @@ function getSessionId(event: EventLike): string | null { const p = event.propert
 function getEventDirectory(event: EventLike): string | null { const candidates: unknown[] = [event.properties["directory"], event.properties["worktree"]]; if (isRecord(event.properties["info"])) candidates.push(event.properties["info"]["directory"], event.properties["info"]["worktree"]); if (isRecord(event.properties["part"])) candidates.push(event.properties["part"]["directory"], event.properties["part"]["worktree"]); return candidates.find((value): value is string => typeof value === "string" && value.length > 0) ?? null; }
 function getReconnectDelayMs(attempt: number): number { return Math.min(RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1), RECONNECT_MAX_DELAY_MS); }
 function wait(ms: number, signal: AbortSignal): Promise<boolean> { return new Promise((resolve) => { if (signal.aborted) return resolve(false); const onAbort = () => { clearTimeout(timer); signal.removeEventListener("abort", onAbort); resolve(false); }; const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(true); }, ms); signal.addEventListener("abort", onAbort, { once: true }); }); }
-function abortDeterministicRetrySession(sessionId: string, message: string, directory: string, attempt?: number): void { if (abortedRetrySessions.has(sessionId)) return; abortedRetrySessions.add(sessionId); markAbortExpected(sessionId); logger.warn(`[ProviderPolicy] Aborting non-retryable provider error: session=${sessionId} attempt=${attempt ?? "n/a"} message=${message}`); if (!directory) return; void opencodeClient.session.abort({ sessionID: sessionId, directory }).catch((error) => logger.warn(`[ProviderPolicy] Exception aborting deterministic retry session=${sessionId}`, error)); }
+function abortDeterministicRetrySession(sessionId: string, message: string, directory: string, attempt?: number): void { if (abortedRetrySessions.has(sessionId)) return; abortedRetrySessions.add(sessionId); markCancellationExpected(sessionId); logger.warn(`[ProviderPolicy] Aborting non-retryable provider error: session=${sessionId} attempt=${attempt ?? "n/a"} message=${message}`); if (!directory) return; void opencodeClient.session.abort({ sessionID: sessionId, directory }).catch((error) => logger.warn(`[ProviderPolicy] Exception aborting deterministic retry session=${sessionId}`, error)); }
 async function readNextWithIdleTimeout<T>(iterator: AsyncIterator<T>, signal: AbortSignal): Promise<IteratorResult<T>> {
   if (signal.aborted) return { done: true, value: undefined as never };
   let timer: ReturnType<typeof setTimeout> | undefined;

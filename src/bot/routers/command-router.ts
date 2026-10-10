@@ -9,8 +9,6 @@ import { worktreeCommand } from "../commands/worktree-command.js";
 import { openCommand } from "../commands/open-command.js";
 import { lsCommand } from "../commands/ls-command.js";
 import { messagesCommand } from "../commands/messages-command.js";
-import { abortCommand } from "../commands/abort-command.js";
-import { pauseCurrentChat, resumePausedChat } from "../commands/pause-command.js";
 import { detachCommand } from "../commands/detach-command.js";
 import { taskCommand } from "../commands/task-command.js";
 import { taskListCommand } from "../commands/tasklist-command.js";
@@ -116,14 +114,6 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.command("open", openCommand);
   bot.command("ls", lsCommand);
   bot.command("messages", messagesCommand);
-  bot.command("abort", abortCommand);
-  bot.command("stop", abortCommand);
-  bot.command("pause", async (ctx) => {
-    if (await requireAiTopic(ctx, "pause")) await pauseCurrentChat(ctx);
-  });
-  bot.command("resume", async (ctx) => {
-    if (await requireAiTopic(ctx, "resume")) await resumePausedChat(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription });
-  });
   bot.command("model", async (ctx) => {
     if (await requireAiTopic(ctx, "model")) await showModelCenterMenu(ctx);
   });

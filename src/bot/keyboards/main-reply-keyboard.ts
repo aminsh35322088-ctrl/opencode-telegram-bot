@@ -11,15 +11,9 @@ export const MAIN_BUTTONS = {
   settings: "⚙️ Main Settings",
   deleteChat: "🗑️ Delete Chat",
   compact: (enabled: boolean) => `📦 Compact: ${enabled ? "ON" : "OFF"}`,
-  pause: "⏸️ Pause",
-  resume: "▶️ Resume",
-  abort: "🛑 Abort",
 } as const;
 
 export const TOPIC_BUTTONS = {
-  abort: MAIN_BUTTONS.abort,
-  pause: MAIN_BUTTONS.pause,
-  resume: MAIN_BUTTONS.resume,
   compact: (enabled: boolean) => MAIN_BUTTONS.compact(enabled),
   models: "🧠 Models",
   modelCenter: (model?: ModelInfo) =>
@@ -32,12 +26,9 @@ export const TOPIC_BUTTONS = {
 
 export interface MainKeyboardOptions {
   queuedPromptLabels?: string[];
-  paused?: boolean;
-  running?: boolean;
   compactOutputMode?: boolean;
   currentModel?: ModelInfo;
   isTopic?: boolean;
-  nativeStop?: boolean;
 }
 
 function addQueuedPromptButtons(keyboard: Keyboard, labels: string[]): void {
@@ -51,11 +42,8 @@ function addMainControls(keyboard: Keyboard): void {
 
 function addTopicControls(
   keyboard: Keyboard,
-  _paused: boolean,
-  _running: boolean,
   compactOutputMode: boolean,
   currentModel?: ModelInfo,
-  _nativeStop = false,
 ): void {
   keyboard.text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter(currentModel)).row();
@@ -68,11 +56,8 @@ function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions
   if (options.isTopic === true) {
     addTopicControls(
       keyboard,
-      options.paused ?? false,
-      options.running ?? false,
       options.compactOutputMode ?? false,
       options.currentModel ?? currentModel,
-      options.nativeStop,
     );
   } else {
     addMainControls(keyboard);
@@ -92,12 +77,9 @@ export function createMainInlineKeyboard(_currentModel: ModelInfo): InlineKeyboa
 /** Keyboard used exclusively inside an AI Topic backed by an OpenCode session. */
 export function createTopicKeyboard(
   options: {
-    paused?: boolean;
-    running?: boolean;
     compactOutputMode?: boolean;
     currentModel?: ModelInfo;
-    nativeStop?: boolean;
-  } = {},
+    } = {},
 ): Keyboard {
   return buildMainKeyboard(options.currentModel ?? { providerID: "", modelID: "" }, {
     ...options,
@@ -115,8 +97,6 @@ export function createMainKeyboard(
   _contextInfo?: ContextInfo,
   _variantName?: string,
   queuedPromptLabels?: string[],
-  paused?: boolean,
-  running?: boolean,
 ): Keyboard;
 export function createMainKeyboard(
   first: ModelInfo | string,
@@ -124,15 +104,11 @@ export function createMainKeyboard(
   _contextInfo?: ContextInfo,
   _variantName?: string,
   queuedPromptLabels: string[] = [],
-  paused = false,
-  running = false,
 ): Keyboard {
   if (typeof first !== "string")
     return buildMainKeyboard(first, (second as MainKeyboardOptions | undefined) ?? {});
   return buildMainKeyboard(second as ModelInfo, {
     queuedPromptLabels,
-    paused,
-    running,
     isTopic: false,
   });
 }

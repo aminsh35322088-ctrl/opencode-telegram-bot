@@ -14,25 +14,17 @@ test("legacy General reply keyboard remains New Chat / History / Main Settings",
 });
 
 test("managed Topic ReplyKeyboard has exactly three dynamic rows and no legacy run controls", () => {
-  for (const state of [
-    {},
-    { running: true },
-    { paused: true, running: true },
-    { nativeStop: true, running: true },
-  ]) {
-    const keyboard = createTopicKeyboard({
-      ...state,
-      compactOutputMode: true,
-      currentModel: { providerID: "p", modelID: "gpt-5", name: "GPT 5" },
-    });
-    assert.deepEqual(rows(keyboard), [
-      ["📦 Compact: ON"],
-      ["🧠 GPT 5"],
-      ["🗑️ Delete Chat", "⚙️ Topic Settings"],
-    ]);
-    const markup = keyboard as unknown as { resize_keyboard?: boolean; is_persistent?: boolean };
-    assert.equal(markup.resize_keyboard, true);
-    assert.equal(markup.is_persistent, undefined);
-    assert.equal(/Pause|Resume|Abort/.test(JSON.stringify(keyboard.keyboard)), false);
-  }
+  const keyboard = createTopicKeyboard({
+    compactOutputMode: true,
+    currentModel: { providerID: "p", modelID: "gpt-5", name: "GPT 5" },
+  });
+  assert.deepEqual(rows(keyboard), [
+    ["📦 Compact: ON"],
+    ["🧠 GPT 5"],
+    ["🗑️ Delete Chat", "⚙️ Topic Settings"],
+  ]);
+  const markup = keyboard as unknown as { resize_keyboard?: boolean; is_persistent?: boolean };
+  assert.equal(markup.resize_keyboard, true);
+  assert.equal(markup.is_persistent, undefined);
+  assert.equal(/Pause|Resume|Abort/.test(JSON.stringify(keyboard.keyboard)), false);
 });
