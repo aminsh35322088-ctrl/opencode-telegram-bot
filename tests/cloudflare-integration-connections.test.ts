@@ -11,14 +11,57 @@ import {
 const master = btoa("k".repeat(32));
 const secret = "github-secret-test";
 test("account API diagnostics expose only bounded stage and category, never exception material", async (t) => {
-  const logs:unknown[]=[];
-  t.mock.method(console,"error",(...args:unknown[])=>{logs.push(args);});
-  const f=fixture(async()=>{throw new TypeError("private-token-in-error");});
-  await assert.rejects(f.connections.connect("github",secret),/integration_unavailable/);
-  assert.match(JSON.stringify(logs),/integration_account_verification_failed/);
-  assert.match(JSON.stringify(logs),/transport/);
-  assert.equal(JSON.stringify(logs).includes("private-token-in-error"),false);
-  assert.equal(JSON.stringify(logs).includes(secret),false);
+  const logs: unknown[] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => {
+    logs.push(args);
+  });
+  const f = fixture(async () => {
+    throw new TypeError("private-token-in-error");
+  });
+  await assert.rejects(f.connections.connect("github", secret), /integration_unavailable/);
+  assert.match(JSON.stringify(logs), /integration_account_verification_failed/);
+  assert.match(JSON.stringify(logs), /transport/);
+  assert.equal(JSON.stringify(logs).includes("private-token-in-error"), false);
+  assert.equal(JSON.stringify(logs).includes(secret), false);
+});
+test("prepared rotation preserves the active account until synchronous activation", async () => {
+  const f = fixture(async () => Response.json({ login: "operator" }));
+  const first = await f.connections.connect("github", secret);
+  const prepared = await f.connections.prepare("github", "replacement-secret");
+  assert.equal(await f.connections.readCredential("github", first.credentialId), secret);
+  await assert.rejects(f.connections.readCredential("github", prepared.credentialId));
+  f.connections.activate(prepared);
+  await assert.rejects(f.connections.readCredential("github", first.credentialId));
+  assert.equal(
+    await f.connections.readCredential("github", prepared.credentialId),
+    "replacement-secret",
+  );
+});
+test("multiple accounts keep separate encrypted references and switch without changing credentials", async () => {
+  const f = fixture(async () => Response.json({ login: "operator" }));
+  const first = await f.connections.connect("github", secret);
+  const second = await f.connections.prepare("github", "second-account-secret");
+  f.connections.activate(second, "add");
+  assert.equal(f.connections.accounts("github").length, 2);
+  f.connections.select("github", first.credentialId);
+  assert.equal(await f.connections.readCredential("github", first.credentialId), secret);
+  assert.equal(
+    f.connections.accounts("github").some((a) => a.credentialId === second.credentialId),
+    true,
+  );
+  const replacement = await f.connections.prepare("github", "rotated-secret");
+  f.connections.activate(replacement);
+  assert.equal(f.connections.accounts("github").length, 2);
+  assert.equal(
+    f.connections.accounts("github").some((a) => a.credentialId === first.credentialId),
+    false,
+  );
+  f.connections.select("github", second.credentialId);
+  assert.equal(
+    await f.connections.readCredential("github", second.credentialId),
+    "second-account-secret",
+  );
+  assert.equal(f.dump().includes("second-account-secret"), false);
 });
 function fixture(fetcher: typeof fetch) {
   const db = new DatabaseSync(":memory:");

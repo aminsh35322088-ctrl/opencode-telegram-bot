@@ -1,9 +1,21 @@
-import { CloudIntegrationConnections } from "./integration-connections.js";
+import { uiValidationNotice } from "./ui-errors.js";
+import { integrationFailureCategory, integrationFailureNotice } from "./integration-errors.js";
+import {
+  CloudIntegrationConnections,
+  type IntegrationConnection,
+} from "./integration-connections.js";
+import {
+  CloudCapabilityBroker,
+  type CredentialOwner,
+  type CredentialRequest,
+  type CapabilityGrant,
+} from "./capability-broker.js";
+import { createIntegrationRegistry } from "./integration-registry.js";
+import { integrationDelivery } from "./integration-delivery.js";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import type { ControlEnvironment } from "./worker.js";
 import { ControlStore, type AllocationJob } from "./control-store.js";
 import { decryptCredential, encryptCredential, randomSecret, sha256 } from "./credentials.js";
-import { integrationFailureCategory, integrationFailureNotice } from "./integration-errors.js";
 import { RailwayFleetDriver, railwayApi } from "./railway-fleet-driver.js";
 import { nodeRpc, type RpcIdentity } from "./node-rpc.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
@@ -216,14 +228,214 @@ export class ControlPlane {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
     if (!this.env.TELEGRAM_BOT_TOKEN || !this.env.RAILWAY_API_TOKEN) return;
     this.secretsReady ??= resolveControlSecrets(this.state.storage.sql, this.env)
-      .then((value) => {
+      .then(async (value) => {
         Object.assign(this.env, value);
+        await this.migrateLegacyCredentials();
       })
       .catch((error: unknown) => {
         this.secretsReady = undefined;
         throw error;
       });
     await this.secretsReady;
+  }
+  /** Import already encrypted account/provider records; preserve UUIDs and existing proxy configuration. */
+  private async migrateLegacyCredentials(): Promise<void> {
+    const current = this.store.global();
+    if (!current) return;
+    const broker = this.capabilityBroker();
+    const connections = new CloudIntegrationConnections(
+      this.state.storage.sql,
+      this.env.CREDENTIAL_MASTER_KEY,
+    );
+    const references = Array.isArray(current.data.credentialReferences)
+      ? current.data.credentialReferences
+      : [];
+    const nextReferences = [];
+    const imported: string[] = [];
+    const accounts: IntegrationConnection[] = [];
+    for (const reference of references) {
+      if (
+        !reference ||
+        typeof reference !== "object" ||
+        reference.integrationId ||
+        typeof reference.id !== "string" ||
+        reference.capability !== "model-provider:" + reference.id ||
+        reference.configured !== true
+      ) {
+        nextReferences.push(reference);
+        continue;
+      }
+      const id = "provider:" + reference.id;
+      if (!this.integrationRegistry().get(id)) {
+        nextReferences.push(reference);
+        continue;
+      }
+      try {
+        let generic = broker.reference(id, reference.credentialId);
+        if (!generic) {
+          const legacy = await new CloudCredentialVault(
+            this.state.storage.sql,
+            this.env.CREDENTIAL_MASTER_KEY,
+          ).readLease(reference.capability, reference.credentialId);
+          generic = await broker.save(
+            id,
+            legacy.value,
+            ["provider.request"],
+            reference.credentialId,
+          );
+          imported.push(generic.credentialId);
+        }
+        nextReferences.push({ ...reference, ...generic, capabilities: ["provider.request"] });
+      } catch {
+        // Corrupt/unconfigured records stay recoverable through Settings; never block webhook authentication.
+        nextReferences.push(reference);
+      }
+    }
+    const integrations = current.data.integrations as
+      Record<string, Record<string, unknown>> | undefined;
+    const nextIntegrations = { ...integrations };
+    for (const id of ["github", "tailscale"] as const) {
+      const account = integrations?.[id];
+      if (
+        !account ||
+        account.configured !== true ||
+        typeof account.credentialId !== "string" ||
+        nextReferences.some((reference) => reference?.integrationId === id)
+      )
+        continue;
+      const definition = this.integrationRegistry().get(id)!;
+      try {
+        let generic = broker.reference(id, account.credentialId);
+        if (!generic) {
+          const material = await connections.readCredential(id, account.credentialId);
+          generic = await broker.save(
+            id,
+            material,
+            [...definition.capabilities],
+            account.credentialId,
+          );
+          imported.push(generic.credentialId);
+        }
+        const metadata: IntegrationConnection = {
+          ...account,
+          id,
+          credentialId: generic.credentialId,
+          capability: "integration:" + id,
+          configured: true,
+          accountConnected: true,
+          accountVerified: true,
+          credentialState: "valid",
+          connected: false,
+          reason: "core_runtime_unavailable",
+          configuredAt:
+            typeof account.configuredAt === "string"
+              ? account.configuredAt
+              : new Date().toISOString(),
+        };
+        accounts.push(metadata);
+        nextIntegrations[id] = { ...metadata, accounts: connections.previewActivation(metadata) };
+        nextReferences.push({ ...generic, capabilities: [...definition.capabilities] });
+      } catch {
+        /* Invalid account stays visible for explicit reconnection. */
+      }
+    }
+    if (canonical(nextReferences) === canonical(references) && accounts.length === 0) return;
+    const next = {
+      ...current.data,
+      integrations: nextIntegrations,
+      credentialReferences: nextReferences,
+      version: 1,
+      revision: current.revision + 1,
+    };
+    try {
+      const hash = await sha256(canonical(next));
+      this.store.setGlobal(next, hash, current.revision, undefined, () => {
+        for (const metadata of accounts) connections.activate(metadata);
+      });
+    } catch {
+      const published = this.store.global()?.data.credentialReferences;
+      for (const id of imported)
+        if (
+          !Array.isArray(published) ||
+          !published.some((reference) => reference?.integrationId && reference.credentialId === id)
+        )
+          broker.remove(id);
+      // Concurrent settings publication wins; migration is retried by the next Control Plane instance.
+    }
+  }
+  private integrationRegistry() {
+    const runtime = (
+      this.store.global()?.data.configuration as
+        | { runtime?: { provider?: Record<string, unknown>; mcp?: Record<string, unknown> } }
+        | undefined
+    )?.runtime;
+    const valid = (id: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id);
+    return createIntegrationRegistry(
+      Object.keys(runtime?.provider ?? {}).filter(valid),
+      Object.keys(runtime?.mcp ?? {}).filter(valid),
+    );
+  }
+  private capabilityBroker(): CloudCapabilityBroker {
+    return new CloudCapabilityBroker(
+      this.state.storage.sql,
+      this.env.CREDENTIAL_MASTER_KEY,
+      this.integrationRegistry(),
+      (owner) => {
+        const worker = this.store.worker(owner.workerId);
+        const topic = this.store.topics().find((t) => t.workerId === owner.workerId);
+        if (
+          !worker ||
+          !topic ||
+          !["BOUND_ACTIVE", "BOUND_IDLE"].includes(worker.state) ||
+          topic.state !== "ACTIVE" ||
+          worker.generation !== owner.generation ||
+          topic.generation !== owner.generation ||
+          owner.topicId !== `${topic.chatId}:${topic.threadId}` ||
+          owner.sessionId !== topic.sessionId
+        )
+          return undefined;
+        const references = this.store.global()?.data.credentialReferences;
+        const grants = Array.isArray(references)
+          ? references.filter(
+              (r): r is CapabilityGrant =>
+                !!r &&
+                typeof r === "object" &&
+                typeof r.integrationId === "string" &&
+                typeof r.credentialId === "string" &&
+                r.configured === true &&
+                Array.isArray(r.capabilities) &&
+                r.capabilities.every((c: unknown) => typeof c === "string") &&
+                Array.isArray(r.scopes) &&
+                r.scopes.every((s: unknown) => typeof s === "string"),
+            )
+          : [];
+        const runtime = (
+          this.store.global()?.data.configuration as
+            | {
+                runtime?: {
+                  provider?: Record<string, { options?: { apiKey?: string } }>;
+                  disabled_providers?: string[];
+                };
+              }
+            | undefined
+        )?.runtime;
+        return {
+          ...owner,
+          grants: grants.filter((grant) => {
+            if (!grant.integrationId.startsWith("provider:")) return true;
+            const id = grant.integrationId.slice("provider:".length);
+            return (
+              this.store.activeRuns(topic.chatId, topic.threadId).length > 0 &&
+              !runtime?.disabled_providers?.includes(id) &&
+              runtime?.provider?.[id]?.options?.apiKey ===
+                "bot-credential-proxy:model-provider:" + id + ":" + grant.credentialId
+            );
+          }),
+        };
+      },
+      Date.now,
+      integrationDelivery(),
+    );
   }
   async fetch(request: Request): Promise<Response> {
     try {
@@ -829,6 +1041,45 @@ export class ControlPlane {
           if (!global) throw new Error("snapshot_unavailable");
           return this.signed(envelope, secret, { ...global.data, hash: global.hash });
         }
+        if (
+          [
+            "capability.authorize",
+            "credential.acquire",
+            "credential.validate",
+            "credential.release",
+          ].includes(envelope.operation)
+        ) {
+          const owner: CredentialOwner = {
+            workerId: worker.workerId,
+            topicId: `${envelope.chatId}:${envelope.threadId}`,
+            generation: envelope.generation,
+            sessionId: envelope.sessionId ?? "",
+          };
+          const broker = this.capabilityBroker();
+          const payload = envelope.payload;
+          if (!payload || typeof payload !== "object" || Array.isArray(payload))
+            throw new Error("credential_scope_rejected");
+          if (envelope.operation === "capability.authorize") {
+            const result = broker.authorize(owner, payload as CredentialRequest);
+            const response = await this.signed(envelope, secret, result);
+            broker.authorize(owner, payload as CredentialRequest);
+            return response;
+          }
+          if (envelope.operation === "credential.release") {
+            broker.release(owner, (payload as { leaseId: string }).leaseId);
+            return this.signed(envelope, secret, { released: true });
+          }
+          if (envelope.operation === "credential.validate") {
+            const result = broker.validate(owner, (payload as { leaseId: string }).leaseId);
+            const response = await this.signed(envelope, secret, result);
+            broker.validate(owner, (payload as { leaseId: string }).leaseId);
+            return response;
+          }
+          const lease = await broker.acquire(owner, payload as CredentialRequest);
+          const response = await this.signed(envelope, secret, lease);
+          broker.validate(owner, lease.leaseId);
+          return response;
+        }
         if (envelope.operation === "credential.get") {
           if (
             !topic ||
@@ -872,13 +1123,31 @@ export class ControlPlane {
               "bot-credential-proxy:" + input.capability + ":" + input.credentialId
           )
             throw new Error("credential_scope_rejected");
-          const lease = await new CloudCredentialVault(
-            this.state.storage.sql,
-            this.env.CREDENTIAL_MASTER_KEY,
-          ).readLease(input.capability, input.credentialId);
-          if (this.store.worker(worker.workerId)?.generation !== envelope.generation)
-            throw new Error("stale_generation");
-          return this.signed(envelope, secret, lease);
+          // Compatibility transport for existing Workers; storage and authorization are generic.
+          const owner: CredentialOwner = {
+            workerId: worker.workerId,
+            topicId: `${envelope.chatId}:${envelope.threadId}`,
+            generation: envelope.generation,
+            sessionId: envelope.sessionId ?? "",
+          };
+          const broker = this.capabilityBroker();
+          const lease = await broker.acquire(owner, {
+            ...owner,
+            integrationId: "provider:" + id,
+            credentialId: input.credentialId,
+            capability: "provider.request",
+            scopes: ["provider.request"],
+          });
+          try {
+            const response = await this.signed(envelope, secret, {
+              value: lease.value,
+              expiresAt: lease.expiresAt,
+            });
+            broker.validate(owner, lease.leaseId);
+            return response;
+          } finally {
+            broker.release(owner, lease.leaseId);
+          }
         }
         if (envelope.operation === "mutation.prepare" || envelope.operation === "mutation.commit") {
           if (!topic || topic.state !== "ACTIVE" || envelope.sessionId !== topic.sessionId)
@@ -1063,7 +1332,8 @@ export class ControlPlane {
       }
       return new Response("Not found", { status: 404 });
     } catch (error) {
-      if (error instanceof Error && error.message === "queue_migration_pending") await this.scheduleAlarm(Date.now() + 1_000);
+      if (error instanceof Error && error.message === "queue_migration_pending")
+        await this.scheduleAlarm(Date.now() + 1_000);
       const category =
         error instanceof Error && /^[a-z_]+$/.test(error.message)
           ? error.message
@@ -1112,6 +1382,67 @@ export class ControlPlane {
       );
     }
   }
+  private async manageIntegration(id: string, action: string, credentialId: string): Promise<void> {
+    if ((id !== "github" && id !== "tailscale") || !["select", "remove"].includes(action))
+      throw new Error("invalid_integration");
+    const connections = new CloudIntegrationConnections(
+      this.state.storage.sql,
+      this.env.CREDENTIAL_MASTER_KEY,
+    );
+    const accounts = connections.accounts(id);
+    const selected = accounts.find((account) => account.credentialId === credentialId);
+    if (!selected) throw new Error("integration_account_unavailable");
+    const current = this.store.global();
+    if (!current) throw new Error("snapshot_unavailable");
+    const remaining =
+      action === "remove"
+        ? accounts.filter((account) => account.credentialId !== credentialId)
+        : accounts;
+    const existing = (
+      current.data.integrations as Record<string, { credentialId?: string }> | undefined
+    )?.[id];
+    const active =
+      action === "select"
+        ? selected
+        : (remaining.find((account) => account.credentialId === existing?.credentialId) ??
+          remaining[0]);
+    const definitions = createIntegrationRegistry().get(id)!;
+    const references = Array.isArray(current.data.credentialReferences)
+      ? current.data.credentialReferences
+      : [];
+    const next = {
+      ...current.data,
+      version: 1,
+      revision: current.revision + 1,
+      integrations: {
+        ...((current.data.integrations as Record<string, unknown>) ?? {}),
+        [id]: active
+          ? { ...active, accounts: remaining }
+          : { configured: false, accountVerified: false, credentialState: "removed", accounts: [] },
+      },
+      credentialReferences: [
+        ...references.filter(
+          (reference: { integrationId?: string }) => reference.integrationId !== id,
+        ),
+        ...(active
+          ? [
+              {
+                integrationId: id,
+                credentialId: active.credentialId,
+                configured: true,
+                capabilities: [...definitions.capabilities],
+                scopes: [...definitions.capabilities],
+              },
+            ]
+          : []),
+      ],
+    };
+    const hash = await sha256(canonical(next));
+    this.store.setGlobal(next, hash, current.revision, undefined, () => {
+      if (action === "select") connections.select(id, credentialId);
+      else connections.removeAccount(id, credentialId);
+    });
+  }
   private async saveCredential(
     update: ProtectedTelegramUpdate,
     providerId: string,
@@ -1130,19 +1461,15 @@ export class ControlPlane {
     });
     const global = this.store.global();
     if (!global) throw new Error("snapshot_unavailable");
-    if (providerId === "integration.github" || providerId === "integration.tailscale") {
-      const id = providerId === "integration.github" ? "github" : "tailscale";
-      const key = "integration-credential:" + id;
-      const before = [
-        ...this.state.storage.sql.exec<{ data: string }>(
-          "SELECT data FROM ui_state WHERE key=?",
-          key,
-        ),
-      ][0];
-      const metadata = await new CloudIntegrationConnections(
+    if (/^integration\.(github|tailscale)(\.add)?$/.test(providerId)) {
+      if (thread > 1 || generation !== 0) throw new Error("credential_scope_rejected");
+      const id = providerId.startsWith("integration.github") ? "github" : "tailscale";
+      const mode = providerId.endsWith(".add") ? "add" : "rotate";
+      const connections = new CloudIntegrationConnections(
         this.state.storage.sql,
         this.env.CREDENTIAL_MASTER_KEY,
-      ).connect(id, value);
+      );
+      const metadata = await connections.prepare(id, value);
       try {
         const current = this.store.global()!;
         const integrations =
@@ -1151,24 +1478,39 @@ export class ControlPlane {
             : {};
         const next = {
           ...current.data,
-          integrations: { ...integrations, [id]: metadata },
+          integrations: {
+            ...integrations,
+            [id]: { ...metadata, accounts: connections.previewActivation(metadata, mode) },
+          },
+          credentialReferences: [
+            ...(Array.isArray(current.data.credentialReferences)
+              ? current.data.credentialReferences
+              : []
+            ).filter((r: { integrationId?: string }) => r.integrationId !== id),
+            {
+              integrationId: id,
+              credentialId: metadata.credentialId,
+              configured: true,
+              capabilities:
+                id === "github"
+                  ? ["repo.read", "repo.write"]
+                  : ["device.enroll", "network.status", "network.devices", "ssh.exec"],
+              scopes:
+                id === "github"
+                  ? ["repo.read", "repo.write"]
+                  : ["device.enroll", "network.status", "network.devices", "ssh.exec"],
+            },
+          ],
           version: 1,
           revision: current.revision + 1,
         };
         const hash = await sha256(canonical(next));
-        this.store.setGlobal(next, hash, current.revision);
+        this.store.setGlobal(next, hash, current.revision, undefined, () =>
+          connections.activate(metadata, mode),
+        );
       } catch (error) {
-        const active = [
-          ...this.state.storage.sql.exec<{ data: string }>(
-            "SELECT data FROM ui_state WHERE key=?",
-            key,
-          ),
-        ][0];
-        if (active && JSON.parse(active.data).credentialId === metadata.credentialId) {
-          if (before)
-            this.state.storage.sql.exec("UPDATE ui_state SET data=? WHERE key=?", before.data, key);
-          else this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", key);
-        }
+        // A failed CAS never displaced the active credential. Only discard this unpublished preparation.
+        this.capabilityBroker().remove(metadata.credentialId);
         throw error;
       }
       return;
@@ -1179,51 +1521,37 @@ export class ControlPlane {
     };
     const provider = configuration.runtime.provider?.[providerId];
     if (!provider) throw new Error("provider_not_configured");
-    const before = [
-      ...this.state.storage.sql.exec<{ data: string }>(
-        "SELECT data FROM ui_state WHERE key=?",
-        "credential:" + providerId,
-      ),
-    ][0];
-    const metadata = await new CloudCredentialVault(
-      this.state.storage.sql,
-      this.env.CREDENTIAL_MASTER_KEY,
-    ).saveProvider(providerId, value);
+    const broker = this.capabilityBroker();
+    const reference = await broker.save("provider:" + providerId, value, ["provider.request"]);
+    const metadata = {
+      ...reference,
+      id: providerId,
+      capability: "model-provider:" + providerId,
+      capabilities: ["provider.request"],
+    };
     const references = Array.isArray(snapshot.credentialReferences)
-      ? (snapshot.credentialReferences as Array<{ id?: string }>)
+      ? (snapshot.credentialReferences as Array<{ id?: string; credentialId?: string }>)
       : [];
-    snapshot.credentialReferences = [...references.filter((r) => r.id !== metadata.id), metadata];
+    const displaced = references.find((r) => r.id === providerId);
+    snapshot.credentialReferences = [...references.filter((r) => r.id !== providerId), metadata];
     provider.options = {
       ...provider.options,
       apiKey: "bot-credential-proxy:" + metadata.capability + ":" + metadata.credentialId,
     };
     const next = { ...snapshot, version: 1, revision: global.revision + 1 };
-    const hash = await sha256(canonical(next));
     try {
-      this.store.setGlobal(next, hash, global.revision);
+      const hash = await sha256(canonical(next));
+      this.store.setGlobal(next, hash, global.revision, undefined, () => {
+        if (displaced?.credentialId) broker.remove(displaced.credentialId);
+        // Superseded legacy copies cease to be authoritative after atomic activation.
+        this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "credential:" + providerId);
+      });
     } catch (error) {
-      const current = [
-        ...this.state.storage.sql.exec<{ data: string }>(
-          "SELECT data FROM ui_state WHERE key=?",
-          "credential:" + providerId,
-        ),
-      ][0];
-      if (current && JSON.parse(current.data).credentialId === metadata.credentialId) {
-        if (before)
-          this.state.storage.sql.exec(
-            "UPDATE ui_state SET data=? WHERE key=?",
-            before.data,
-            "credential:" + providerId,
-          );
-        else
-          this.state.storage.sql.exec(
-            "DELETE FROM ui_state WHERE key=?",
-            "credential:" + providerId,
-          );
-      }
+      broker.remove(metadata.credentialId);
       throw error;
     }
   }
+
   private topicUi(topic: import("./control-store.js").FleetTopic): CloudBotUi {
     const actor = Number(
       (this.env.TELEGRAM_ALLOWED_USER_ID ?? this.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(",")[0],
@@ -1271,10 +1599,24 @@ export class ControlPlane {
     const global = async (
       data: Record<string, unknown>,
       expectedRevision: number,
+      resetCredentials = false,
     ): Promise<void> => {
       const snapshot = { ...data, version: 1, revision: expectedRevision + 1 };
       const hash = await sha256(canonical(snapshot));
-      this.store.setGlobal(snapshot, hash, expectedRevision);
+      this.store.setGlobal(
+        snapshot,
+        hash,
+        expectedRevision,
+        undefined,
+        resetCredentials
+          ? () => {
+              this.state.storage.sql.exec("DELETE FROM capability_leases");
+              this.state.storage.sql.exec(
+                "DELETE FROM ui_state WHERE key GLOB 'capability-credential:*' OR key GLOB 'integration-credential:*' OR key GLOB 'integration-accounts:*' OR key GLOB 'credential:*'",
+              );
+            }
+          : undefined,
+      );
     };
     const legacyUi = new LegacyUiAdapter({
       sql: this.state.storage.sql,
@@ -1319,6 +1661,8 @@ export class ControlPlane {
           undefined,
           "session.compact",
         ),
+      integrationAccount: (id, action, credentialId) =>
+        this.manageIntegration(id, action, credentialId),
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
       questionDecision: (topic, request, questions, answers) =>
@@ -1580,7 +1924,10 @@ export class ControlPlane {
       try {
         await this.cancelAllocation(jobId);
         const failed = this.store.job(jobId)!;
-        await this.allocationUi(failed)?.allocationFailure(failed, failed.error ?? "Provisioning failed.");
+        await this.allocationUi(failed)?.allocationFailure(
+          failed,
+          failed.error ?? "Provisioning failed.",
+        );
       } catch (error) {
         const pending = this.store.job(jobId)!;
         await this.allocationUi(pending)?.allocationCleanupPending(
@@ -1636,8 +1983,12 @@ export class ControlPlane {
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
     if (
-      [...this.state.storage.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + job.chatId)]
-        .length
+      [
+        ...this.state.storage.sql.exec(
+          "SELECT key FROM ui_state WHERE key=?",
+          "reset:" + job.chatId,
+        ),
+      ].length
     )
       throw new Error("control_reset_pending");
     if (job.phase === "BOUND") {
@@ -1659,8 +2010,12 @@ export class ControlPlane {
       const currentJob = this.store.job(jobId);
       if (!currentJob) throw new Error("unknown_job");
       if (
-        [...this.state.storage.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + currentJob.chatId)]
-          .length
+        [
+          ...this.state.storage.sql.exec(
+            "SELECT key FROM ui_state WHERE key=?",
+            "reset:" + currentJob.chatId,
+          ),
+        ].length
       )
         throw new Error("control_reset_pending");
       this.store.renewLease("railway-provisioning", owner, Date.now(), 180_000);
@@ -1679,10 +2034,12 @@ export class ControlPlane {
         const identity = await this.unboundIdentity(job.workerId);
         if (job.phase === "SESSION_PROBED") {
           await this.allocationProgress(job, "TOPIC");
-          const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{ message_thread_id: number }>(
-            "createForumTopic",
-            { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) },
-          );
+          const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{
+            message_thread_id: number;
+          }>("createForumTopic", {
+            chat_id: job.chatId,
+            name: this.store.reserveTopicTitle(jobId),
+          });
           if (!Number.isSafeInteger(created.message_thread_id) || created.message_thread_id <= 1)
             throw new Error("invalid_topic");
           job = this.store.configureJob(jobId, {
@@ -1717,7 +2074,10 @@ export class ControlPlane {
         ? await this.identity(worker.workerId)
         : await this.unboundIdentity(worker.workerId);
       await this.allocationProgress(job, "HEALTH");
-      let health: { ready: boolean; runtime?: { telegramCoreCommit: string; telegramCoreVersion: string } };
+      let health: {
+        ready: boolean;
+        runtime?: { telegramCoreCommit: string; telegramCoreVersion: string };
+      };
       try {
         health = await nodeRpc(rpcIdentity, "health", {});
       } catch {
@@ -1750,15 +2110,19 @@ export class ControlPlane {
 
       if (!job.threadId) {
         await this.allocationProgress(job, "PROBING");
-        const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(rpcIdentity, "session.probe", {});
+        const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(
+          rpcIdentity,
+          "session.probe",
+          {},
+        );
         guard();
-        if (probe.created !== true || probe.deleted !== true) throw new Error("session_probe_failed");
+        if (probe.created !== true || probe.deleted !== true)
+          throw new Error("session_probe_failed");
         job = this.store.markSessionProbed(jobId);
         await this.allocationProgress(job, "TOPIC");
-        const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{ message_thread_id: number }>(
-          "createForumTopic",
-          { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) },
-        );
+        const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{
+          message_thread_id: number;
+        }>("createForumTopic", { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) });
         if (!Number.isSafeInteger(created.message_thread_id) || created.message_thread_id <= 1)
           throw new Error("invalid_topic");
         job = this.store.configureJob(jobId, {
@@ -1792,7 +2156,13 @@ export class ControlPlane {
       await this.topicUi(bound).ready(bound);
       await this.allocationProgress(this.store.job(jobId)!, "READY");
       // eslint-disable-next-line no-console
-      console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
+      console.log(
+        JSON.stringify({
+          event: "worker_bound",
+          workerId: job.workerId,
+          generation: job.generation,
+        }),
+      );
     } finally {
       this.store.releaseLease("railway-provisioning", owner);
     }
@@ -1808,7 +2178,10 @@ export class ControlPlane {
     let current = this.store.worker(job.workerId);
     if (!current) throw new Error("unknown_worker");
     if (current.state !== "REPLACED") {
-      if (current.generation === job.generation && !["FENCING", "DELETING"].includes(current.state)) {
+      if (
+        current.generation === job.generation &&
+        !["FENCING", "DELETING"].includes(current.state)
+      ) {
         this.store.configureJob(jobId, {
           phase: "CLEANUP_PENDING",
           error: job.error ?? "provisioning_cancelled",
@@ -1831,7 +2204,8 @@ export class ControlPlane {
           message_thread_id: visibleThread,
         });
       } catch (error) {
-        if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found") throw error;
+        if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found")
+          throw error;
       }
     }
     this.store.finalizeAllocationFailure(jobId);
@@ -1880,27 +2254,28 @@ export class ControlPlane {
   }
   async alarm(): Promise<void> {
     await this.initializeSecrets();
-    try { this.store.prepareQueues(); } catch (error) {
+    try {
+      this.store.prepareQueues();
+    } catch (error) {
       if (!(error instanceof Error) || error.message !== "queue_migration_pending") throw error;
       await this.scheduleAlarm(Date.now() + 1_000);
       return;
     }
     const pending = [...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM jobs")]
       .map((r) => JSON.parse(r.data) as AllocationJob)
-      .filter(
-        (j) =>
-          [
-            "PROVISIONING",
-            "VOLUME_CREATING",
-            "VOLUME_CREATED",
-            "VOLUME_ATTACHING",
-            "BINDING",
-            "DEPLOYING",
-            "DEPLOY_SUBMITTED",
-            "SESSION_PROBED",
-            "TOPIC_CREATED",
-            "CLEANUP_PENDING",
-          ].includes(j.phase),
+      .filter((j) =>
+        [
+          "PROVISIONING",
+          "VOLUME_CREATING",
+          "VOLUME_CREATED",
+          "VOLUME_ATTACHING",
+          "BINDING",
+          "DEPLOYING",
+          "DEPLOY_SUBMITTED",
+          "SESSION_PROBED",
+          "TOPIC_CREATED",
+          "CLEANUP_PENDING",
+        ].includes(j.phase),
       );
     for (const job of pending) {
       try {
@@ -2482,8 +2857,13 @@ export class ControlPlane {
         }
         // Fixed allowlisted categories only; never serialize the submitted input or exception.
         // eslint-disable-next-line no-console
-        console.error(JSON.stringify({ event: "telegram_ui_operation_failed", category: integrationFailureCategory(error),
-          credentialInput: !!(update as ProtectedTelegramUpdate).credentialInput }));
+        console.error(
+          JSON.stringify({
+            event: "telegram_ui_operation_failed",
+            category: integrationFailureCategory(error),
+            credentialInput: !!(update as ProtectedTelegramUpdate).credentialInput,
+          }),
+        );
         this.store.completeTelegramUpdate(row.id, "FAILED");
         if (chatId)
           try {
@@ -2516,7 +2896,9 @@ export class ControlPlane {
                             ? "This Topic or menu has expired. Open the current menu again."
                             : error instanceof Error && error.message === "media_too_large"
                               ? "This attachment is too large for the current transport (256 KiB). Send a smaller file."
-                              : integrationFailureNotice(error) ?? "The operation could not be completed. Reopen its menu and try again.",
+                              : (integrationFailureNotice(error) ??
+                                uiValidationNotice(error) ??
+                                "The operation could not be completed. Reopen its menu and try again."),
               );
           } catch {
             /* Persisted failure is available to authenticated reconciliation. */

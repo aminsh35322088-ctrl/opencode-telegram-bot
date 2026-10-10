@@ -1,5 +1,7 @@
 import type { SqlDatabase } from "./control-store.js";
-import { decryptCredential, encryptCredential } from "./credentials.js";
+import { decryptCredential } from "./credentials.js";
+import { CloudCapabilityBroker } from "./capability-broker.js";
+import { createIntegrationRegistry } from "./integration-registry.js";
 
 export type IntegrationId = "github" | "tailscale";
 export interface IntegrationConnection {
@@ -8,6 +10,8 @@ export interface IntegrationConnection {
   capability: string;
   configured: true;
   accountConnected: true;
+  accountVerified: true;
+  credentialState: "valid";
   /** API authentication does not establish Core repository transport or a VPN. */
   connected: false;
   reason: "core_runtime_unavailable";
@@ -20,7 +24,7 @@ interface StoredCredential {
   id: IntegrationId;
   credentialId: string;
   capability: string;
-  ciphertext: string;
+  ciphertext?: string;
 }
 function integrationId(id: unknown): IntegrationId {
   if (id !== "github" && id !== "tailscale") throw new Error("invalid_integration");
@@ -73,7 +77,21 @@ export class CloudIntegrationConnections {
     private readonly master: string,
     private readonly fetcher: typeof fetch = (input, init) => fetch(input, init),
   ) {}
+  private broker(): CloudCapabilityBroker {
+    return new CloudCapabilityBroker(
+      this.sql,
+      this.master,
+      createIntegrationRegistry(),
+      () => undefined,
+    );
+  }
   async connect(idValue: IntegrationId, value: string): Promise<IntegrationConnection> {
+    const prepared = await this.prepare(idValue, value);
+    this.activate(prepared);
+    return prepared;
+  }
+  /** Preparation never changes the current account or deletes its credential. */
+  async prepare(idValue: IntegrationId, value: string): Promise<IntegrationConnection> {
     const id = integrationId(idValue);
     const token = tokenValue(value);
     if (id === "tailscale" && !token.startsWith("tskey-api-"))
@@ -99,18 +117,36 @@ export class CloudIntegrationConnections {
         signal: AbortSignal.timeout(10_000),
       });
     } catch (error) {
-      const reason = error instanceof Error && /too many subrequests|subrequest limit/i.test(error.message)
-        ? "subrequest_limit" : error instanceof Error && /Illegal invocation/.test(error.message)
-          ? "receiver" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)
-          ? "timeout" : "transport";
+      const reason =
+        error instanceof Error && /too many subrequests|subrequest limit/i.test(error.message)
+          ? "subrequest_limit"
+          : error instanceof Error && /Illegal invocation/.test(error.message)
+            ? "receiver"
+            : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)
+              ? "timeout"
+              : "transport";
       // Fixed metadata only; exception messages and submitted credential values are excluded.
       // eslint-disable-next-line no-console
-      console.error(JSON.stringify({ event: "integration_account_verification_failed", integrationId: id, stage: "transport", reason }));
+      console.error(
+        JSON.stringify({
+          event: "integration_account_verification_failed",
+          integrationId: id,
+          stage: "transport",
+          reason,
+        }),
+      );
       throw new Error("integration_unavailable");
     }
     if (!response.ok) {
       // eslint-disable-next-line no-console
-      console.error(JSON.stringify({ event: "integration_account_verification_failed", integrationId: id, stage: "response", status: response.status }));
+      console.error(
+        JSON.stringify({
+          event: "integration_account_verification_failed",
+          integrationId: id,
+          stage: "response",
+          status: response.status,
+        }),
+      );
       await response.body?.cancel().catch(() => undefined);
       if (response.status === 401) throw new Error("integration_unauthorized");
       if (response.status === 403) throw new Error("integration_forbidden");
@@ -130,21 +166,17 @@ export class CloudIntegrationConnections {
       identity.tailnet = "-";
       identity.visibleDevices = payload.devices.length;
     }
-    const credentialId = crypto.randomUUID();
     const capability = `integration:${id}`;
-    const key = `integration-credential:${id}`;
-    let ciphertext: string;
+    let credentialId: string;
     try {
-      ciphertext = await encryptCredential(
-        this.master,
-        key,
-        JSON.stringify({ id, credentialId, capability, value: token }),
+      const reference = await this.broker().save(
+        id,
+        token,
+        id === "github"
+          ? ["repo.read", "repo.write"]
+          : ["device.enroll", "network.status", "network.devices", "ssh.exec"],
       );
-      this.sql.exec(
-        "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-        key,
-        JSON.stringify({ id, credentialId, capability, ciphertext }),
-      );
+      credentialId = reference.credentialId;
     } catch {
       throw new Error("invalid_integration_credential");
     }
@@ -154,11 +186,111 @@ export class CloudIntegrationConnections {
       capability,
       configured: true,
       accountConnected: true,
+      accountVerified: true,
+      credentialState: "valid",
       connected: false,
       reason: "core_runtime_unavailable",
       configuredAt: new Date().toISOString(),
       ...identity,
     };
+  }
+  /** Call within the snapshot transaction; no await may separate activation from publication. */
+  accounts(idValue: IntegrationId): IntegrationConnection[] {
+    const id = integrationId(idValue);
+    try {
+      const row = [
+        ...this.sql.exec<{ data: string }>(
+          "SELECT data FROM ui_state WHERE key=?",
+          "integration-accounts:" + id,
+        ),
+      ][0];
+      return row ? (JSON.parse(row.data) as IntegrationConnection[]) : [];
+    } catch {
+      throw new Error("integration_account_state_invalid");
+    }
+  }
+  previewActivation(
+    metadata: IntegrationConnection,
+    mode: "rotate" | "add" = "rotate",
+  ): IntegrationConnection[] {
+    const key = "integration-credential:" + integrationId(metadata.id);
+    const previous = [
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+    ][0];
+    const displaced = previous
+      ? (JSON.parse(previous.data) as StoredCredential).credentialId
+      : undefined;
+    return [
+      ...this.accounts(metadata.id).filter(
+        (account) =>
+          account.credentialId !== metadata.credentialId &&
+          (mode === "add" || account.credentialId !== displaced),
+      ),
+      metadata,
+    ];
+  }
+  select(idValue: IntegrationId, credentialId: string): IntegrationConnection {
+    const id = integrationId(idValue);
+    const metadata = this.accounts(id).find((account) => account.credentialId === credentialId);
+    if (
+      !metadata ||
+      ![
+        ...this.sql.exec(
+          "SELECT key FROM ui_state WHERE key=?",
+          "capability-credential:" + credentialId,
+        ),
+      ].length
+    )
+      throw new Error("integration_account_unavailable");
+    this.sql.exec(
+      "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      "integration-credential:" + id,
+      JSON.stringify({ id, credentialId, capability: metadata.capability }),
+    );
+    return metadata;
+  }
+  removeAccount(idValue: IntegrationId, credentialId: string): void {
+    const id = integrationId(idValue);
+    const accounts = this.accounts(id);
+    if (!accounts.some((account) => account.credentialId === credentialId))
+      throw new Error("integration_account_unavailable");
+    const remaining = accounts.filter((account) => account.credentialId !== credentialId);
+    this.broker().remove(credentialId);
+    this.sql.exec(
+      "UPDATE ui_state SET data=? WHERE key=?",
+      JSON.stringify(remaining),
+      "integration-accounts:" + id,
+    );
+    const key = "integration-credential:" + id;
+    const active = [
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+    ][0];
+    if (active && (JSON.parse(active.data) as StoredCredential).credentialId === credentialId) {
+      if (remaining[0]) this.select(id, remaining[0].credentialId);
+      else this.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+    }
+  }
+  activate(metadata: IntegrationConnection, mode: "rotate" | "add" = "rotate"): void {
+    const id = integrationId(metadata.id);
+    const key = `integration-credential:${id}`;
+    const previous = [
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+    ][0];
+    const accounts = this.previewActivation(metadata, mode);
+    this.sql.exec(
+      "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      "integration-accounts:" + id,
+      JSON.stringify(accounts),
+    );
+    this.sql.exec(
+      "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      key,
+      JSON.stringify({ id, credentialId: metadata.credentialId, capability: metadata.capability }),
+    );
+    if (previous) {
+      const displaced = (JSON.parse(previous.data) as StoredCredential).credentialId;
+      if (mode === "rotate" && displaced !== metadata.credentialId) this.broker().remove(displaced);
+    }
   }
   /** For privileged revalidation only; never expose via model-provider credential leases. */
   async readCredential(idValue: IntegrationId, credentialId: string): Promise<string> {
@@ -180,6 +312,8 @@ export class CloudIntegrationConnections {
         stored.capability !== `integration:${id}`
       )
         throw new Error();
+      if (!stored.ciphertext) return await this.broker().readAccount(id, credentialId);
+      // Existing encrypted accounts stay readable until their explicit replacement is qualified.
       const content = record(
         JSON.parse(await decryptCredential(this.master, key, stored.ciphertext)),
       );
@@ -196,6 +330,8 @@ export class CloudIntegrationConnections {
   }
   remove(idValue: IntegrationId): void {
     const id = integrationId(idValue);
+    this.broker().removeIntegration(id);
     this.sql.exec("DELETE FROM ui_state WHERE key=?", `integration-credential:${id}`);
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", `integration-accounts:${id}`);
   }
 }

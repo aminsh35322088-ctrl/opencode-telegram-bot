@@ -251,9 +251,17 @@ export class ControlStore {
     });
   }
   /** Complete recovery in bounded primary-key pages, with durable progress between retries. */
-  private migrateQueue<T extends { cursor: number }>(key: string, query: string, consume: (row: T) => void): void {
-    const marker = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key)][0];
-    const progress = marker ? JSON.parse(marker.data) as { cursor?: number; complete?: boolean } : {};
+  private migrateQueue<T extends { cursor: number }>(
+    key: string,
+    query: string,
+    consume: (row: T) => void,
+  ): void {
+    const marker = [
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+    ][0];
+    const progress = marker
+      ? (JSON.parse(marker.data) as { cursor?: number; complete?: boolean })
+      : {};
     if (progress.complete) return;
     let cursor = progress.cursor ?? -1;
     // Workers clocks do not advance during synchronous work: use a fixed row budget.
@@ -263,38 +271,84 @@ export class ControlStore {
       this.transaction(() => {
         for (const row of rows) consume(row);
         cursor = rows.at(-1)?.cursor ?? cursor;
-        this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-          key, JSON.stringify({ cursor, complete }));
+        this.sql.exec(
+          "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+          key,
+          JSON.stringify({ cursor, complete }),
+        );
       });
       if (complete) return;
     }
     throw new Error("queue_migration_pending");
   }
   private ensureRunRouting(): void {
-    this.migrateQueue<{ cursor: number; seq: number; request: string; chat: number; thread: number; state: string }>(
-      "run-routing-v3", "SELECT seq AS cursor,seq,request,chat,thread,state FROM runs WHERE seq>? ORDER BY seq LIMIT ?", run => {
-        if (run.state === "ACTIVE") this.sql.exec(
-          "INSERT INTO active_runs(chat,thread,request) VALUES(?,?,?) ON CONFLICT(chat,thread) DO UPDATE SET request=excluded.request", run.chat, run.thread, run.request);
-        else if (run.state === "QUEUED") this.sql.exec(
-          "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING", run.chat, run.thread, run.seq, run.request);
-      });
-
+    this.migrateQueue<{
+      cursor: number;
+      seq: number;
+      request: string;
+      chat: number;
+      thread: number;
+      state: string;
+    }>(
+      "run-routing-v3",
+      "SELECT seq AS cursor,seq,request,chat,thread,state FROM runs WHERE seq>? ORDER BY seq LIMIT ?",
+      (run) => {
+        if (run.state === "ACTIVE")
+          this.sql.exec(
+            "INSERT INTO active_runs(chat,thread,request) VALUES(?,?,?) ON CONFLICT(chat,thread) DO UPDATE SET request=excluded.request",
+            run.chat,
+            run.thread,
+            run.request,
+          );
+        else if (run.state === "QUEUED")
+          this.sql.exec(
+            "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING",
+            run.chat,
+            run.thread,
+            run.seq,
+            run.request,
+          );
+      },
+    );
   }
   private ensureTelegramUpdateQueue(): void {
     this.migrateQueue<{ cursor: number; id: number; data: string; state: string }>(
-      "telegram-update-queue-v3", "SELECT id AS cursor,id,data,state FROM updates WHERE id>? ORDER BY id LIMIT ?", update => {
-        const receipt = [...this.sql.exec<{ state: string }>("SELECT state FROM update_receipts WHERE id=?", update.id)][0];
+      "telegram-update-queue-v3",
+      "SELECT id AS cursor,id,data,state FROM updates WHERE id>? ORDER BY id LIMIT ?",
+      (update) => {
+        const receipt = [
+          ...this.sql.exec<{ state: string }>(
+            "SELECT state FROM update_receipts WHERE id=?",
+            update.id,
+          ),
+        ][0];
         if (update.state !== "PENDING" || (receipt && receipt.state !== "PENDING")) return;
-        this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING') ON CONFLICT(id) DO NOTHING", update.id);
-        this.sql.exec("INSERT INTO pending_updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING", update.id, update.data);
-      });
+        this.sql.exec(
+          "INSERT INTO update_receipts(id,state) VALUES(?,'PENDING') ON CONFLICT(id) DO NOTHING",
+          update.id,
+        );
+        this.sql.exec(
+          "INSERT INTO pending_updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
+          update.id,
+          update.data,
+        );
+      },
+    );
   }
   private ensurePendingResponseQueue(): void {
     this.migrateQueue<{ cursor: number; run: string; chat: number; thread: number; state: string }>(
-      "pending-response-queue-v3", "SELECT rowid AS cursor,run,chat,thread,state FROM responses WHERE rowid>? ORDER BY rowid LIMIT ?", response => {
-        if (response.state === "PENDING") this.sql.exec(
-          "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING", response.run, response.chat, response.thread);
-      });
+      "pending-response-queue-v3",
+      "SELECT rowid AS cursor,run,chat,thread,state FROM responses WHERE rowid>? ORDER BY rowid LIMIT ?",
+      (response) => {
+        if (response.state === "PENDING")
+          this.sql.exec(
+            "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING",
+            response.run,
+            response.chat,
+            response.thread,
+          );
+      },
+    );
   }
   prepareQueues(): void {
     this.ensureRunRouting();
@@ -306,7 +360,9 @@ export class ControlStore {
     if (!Number.isSafeInteger(id) || id < 0 || !data) throw new Error("invalid_update");
     this.ensureTelegramUpdateQueue();
     if ([...this.sql.exec("SELECT id FROM update_receipts WHERE id=?", id)].length) return false;
-    const legacy = [...this.sql.exec<{ state: string }>("SELECT state FROM updates WHERE id=?", id)][0];
+    const legacy = [
+      ...this.sql.exec<{ state: string }>("SELECT state FROM updates WHERE id=?", id),
+    ][0];
     if (legacy && legacy.state !== "PENDING") return false;
     this.transaction(() => {
       this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING')", id);
@@ -1411,6 +1467,7 @@ export class ControlStore {
     hash: string,
     expectedRevision?: number,
     approval?: { id: string; data: Record<string, unknown> },
+    commit?: () => void,
   ): { revision: number; hash: string; data: Record<string, unknown> } {
     return this.transaction(() => {
       if (!hash || !data || typeof data !== "object") throw new Error("invalid_snapshot");
@@ -1438,6 +1495,7 @@ export class ControlStore {
           approval.id,
         );
       }
+      commit?.();
       return { revision, hash, data };
     });
   }

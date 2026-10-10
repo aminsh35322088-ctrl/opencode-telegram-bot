@@ -902,6 +902,7 @@ export function resetGlobalConfiguration(data: Record<string, unknown>): Record<
     catalog: {},
     defaults: {},
     credentialReferences: [],
+    integrations: {},
   };
 }
 

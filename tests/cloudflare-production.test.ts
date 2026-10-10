@@ -5,10 +5,13 @@ import { encryptCredential } from "../src/cloudflare/credentials.js";
 import { signEnvelope } from "../src/cloudflare/protocol.js";
 import { ControlStore } from "../src/cloudflare/control-store.js";
 import { ControlPlane } from "../src/cloudflare/control-object.js";
+import { CloudCapabilityBroker } from "../src/cloudflare/capability-broker.js";
+import { createIntegrationRegistry } from "../src/cloudflare/integration-registry.js";
 import {
   protectTelegramCredentialUpdate,
   type ProtectedTelegramUpdate,
 } from "../src/cloudflare/credential-vault.js";
+import { CloudCredentialVault } from "../src/cloudflare/credential-vault.js";
 function fixture() {
   const db = new DatabaseSync(":memory:");
   const sql = {
@@ -73,7 +76,11 @@ test("initial Worker bootstrap is strictly unbound 0/0 even though the allocatio
   const f = fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("bootstrap-unbound", -100);
-  f.store.configureJob(job.jobId, { serviceId: "service", projectId: "project", environmentId: "env" });
+  f.store.configureJob(job.jobId, {
+    serviceId: "service",
+    projectId: "project",
+    environmentId: "env",
+  });
   const token = "bootstrap-token";
   f.store.issueBootstrap(job.jobId, await tokenHash(token), Date.now() + 60_000);
   const response = await post(f.plane, "/nodes/bootstrap", {
@@ -82,7 +89,9 @@ test("initial Worker bootstrap is strictly unbound 0/0 even though the allocatio
     projectId: "project",
   });
   assert.equal(response.status, 200);
-  const body = await response.json() as { identity: { nodeId: string; generation: number; chatId: number; threadId: number } };
+  const body = (await response.json()) as {
+    identity: { nodeId: string; generation: number; chatId: number; threadId: number };
+  };
   assert.deepEqual(body.identity, {
     nodeId: job.workerId,
     generation: 1,
@@ -91,6 +100,280 @@ test("initial Worker bootstrap is strictly unbound 0/0 even though the allocatio
   });
 });
 
+test("global account selection and removal publish only the selected credential grant", async (t) => {
+  const f = fixture();
+  f.store.setGlobal({}, "initial", 0);
+  t.mock.method(globalThis, "fetch", async () => Response.json({ login: "operator" }));
+  const { CloudIntegrationConnections } =
+    await import("../src/cloudflare/integration-connections.js");
+  const connections = new CloudIntegrationConnections(f.sql, btoa("k".repeat(32)));
+  const first = await connections.connect("github", "first-secret");
+  const second = await connections.prepare("github", "second-secret");
+  connections.activate(second, "add");
+  const manage = (
+    f.plane as unknown as {
+      manageIntegration(id: string, action: string, credentialId: string): Promise<void>;
+    }
+  ).manageIntegration.bind(f.plane);
+  await manage("github", "select", first.credentialId);
+  assert.equal(
+    (f.store.global()?.data.credentialReferences as { credentialId: string }[])[0].credentialId,
+    first.credentialId,
+  );
+  await manage("github", "remove", first.credentialId);
+  assert.equal(
+    (f.store.global()?.data.credentialReferences as { credentialId: string }[])[0].credentialId,
+    second.credentialId,
+  );
+  await manage("github", "remove", second.credentialId);
+  assert.deepEqual(f.store.global()?.data.credentialReferences, []);
+  await assert.rejects(
+    manage("github", "select", first.credentialId),
+    /integration_account_unavailable/,
+  );
+  assert.equal(JSON.stringify(f.store.global()).includes("secret"), false);
+});
+test("legacy provider credentials migrate to the generic broker without changing proxy references", async () => {
+  const f = fixture();
+  const metadata = await new CloudCredentialVault(f.sql, btoa("k".repeat(32))).saveProvider(
+    "sample",
+    "provider-private-secret",
+  );
+  const apiKey = "bot-credential-proxy:" + metadata.capability + ":" + metadata.credentialId;
+  f.store.setGlobal(
+    {
+      configuration: { runtime: { provider: { sample: { options: { apiKey } } } } },
+      credentialReferences: [metadata],
+    },
+    "initial",
+    0,
+  );
+  await (
+    f.plane as unknown as { migrateLegacyCredentials(): Promise<void> }
+  ).migrateLegacyCredentials();
+  const data = f.store.global()!.data;
+  const references = data.credentialReferences as {
+    integrationId: string;
+    credentialId: string;
+    capabilities: string[];
+  }[];
+  assert.equal(references[0].integrationId, "provider:sample");
+  assert.equal(references[0].credentialId, metadata.credentialId);
+  assert.deepEqual(references[0].capabilities, ["provider.request"]);
+  assert.equal((data.configuration as any).runtime.provider.sample.options.apiKey, apiKey);
+  const registry = createIntegrationRegistry(["sample"]);
+  const broker = new CloudCapabilityBroker(f.sql, btoa("k".repeat(32)), registry, () => undefined);
+  assert.equal(
+    await broker.readAccount("provider:sample", metadata.credentialId),
+    "provider-private-secret",
+  );
+  assert.equal(
+    JSON.stringify([...f.sql.exec("SELECT data FROM ui_state")]).includes(
+      "provider-private-secret",
+    ),
+    false,
+  );
+});
+
+test("legacy maximum-length provider names retain generic credential compatibility", async () => {
+  const f = fixture();
+  const id = "p".repeat(128);
+  const metadata = await new CloudCredentialVault(f.sql, btoa("k".repeat(32))).saveProvider(
+    id,
+    "private-provider-value",
+  );
+  f.store.setGlobal(
+    {
+      configuration: {
+        runtime: {
+          provider: {
+            [id]: {
+              options: {
+                apiKey: "bot-credential-proxy:" + metadata.capability + ":" + metadata.credentialId,
+              },
+            },
+          },
+        },
+      },
+      credentialReferences: [metadata],
+    },
+    "initial",
+    0,
+  );
+  await (
+    f.plane as unknown as { migrateLegacyCredentials(): Promise<void> }
+  ).migrateLegacyCredentials();
+  assert.equal(
+    (f.store.global()!.data.credentialReferences as { integrationId: string }[])[0].integrationId,
+    "provider:" + id,
+  );
+});
+
+test("provider credential rotation uses the generic store and revokes the displaced reference atomically", async () => {
+  const f = fixture();
+  f.store.setGlobal(
+    { configuration: { runtime: { provider: { sample: { options: {} } } } } },
+    "initial",
+    0,
+  );
+  const save = (
+    f.plane as unknown as {
+      saveCredential(
+        update: ProtectedTelegramUpdate,
+        provider: string,
+        generation: number,
+      ): Promise<void>;
+    }
+  ).saveCredential.bind(f.plane);
+  const submit = async (value: string, updateId: number) => {
+    f.sql.exec(
+      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      "form:7:-100:0",
+      JSON.stringify({
+        kind: "credential",
+        providerId: "sample",
+        generation: 0,
+        expires: Date.now() + 60000,
+      }),
+    );
+    const update = await protectTelegramCredentialUpdate(
+      {
+        update_id: updateId,
+        message: { message_id: updateId, from: { id: 7 }, chat: { id: -100 }, text: value },
+      } as never,
+      f.sql,
+      btoa("k".repeat(32)),
+    );
+    await save(update, "sample", 0);
+    return (
+      f.store.global()!.data.credentialReferences as {
+        integrationId: string;
+        credentialId: string;
+      }[]
+    )[0];
+  };
+  const first = await submit("first-provider-private", 40);
+  assert.equal(first.integrationId, "provider:sample");
+  const second = await submit("second-provider-private", 41);
+  const broker = new CloudCapabilityBroker(
+    f.sql,
+    btoa("k".repeat(32)),
+    createIntegrationRegistry(["sample"]),
+    () => undefined,
+  );
+  assert.equal(
+    await broker.readAccount("provider:sample", second.credentialId),
+    "second-provider-private",
+  );
+  await assert.rejects(
+    broker.readAccount("provider:sample", first.credentialId),
+    /invalid_credential/,
+  );
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='credential:sample'")].length, 0);
+  assert.equal(JSON.stringify(f.store.global()).includes("provider-private"), false);
+});
+
+test("production signed transport leases only a current Topic capability reference", async (t) => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) =>
+    String(url).startsWith("https://api.github.com/")
+      ? Response.json({ private: true })
+      : new Response("refs", {
+          headers: { "Content-Type": "application/x-git-upload-pack-advertisement" },
+        });
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveTopicAllocation("broker", -100, 42);
+  const secret = "n".repeat(64);
+  const master = btoa("k".repeat(32));
+  f.store.ready(
+    job.workerId,
+    1,
+    await encryptCredential(master, "node:" + job.workerId + ":1", secret),
+  );
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(-100, 42, "broker-run", "fixture prompt");
+  f.store.startNext(-100, 42);
+  const broker = new CloudCapabilityBroker(
+    f.sql,
+    master,
+    createIntegrationRegistry(),
+    () => undefined,
+  );
+  const reference = await broker.save("github", "fixture-github-secret", ["repo.read"]);
+  await post(f.plane, "/admin/global", {
+    configuration: { runtime: {} },
+    skills: [],
+    actions: [],
+    catalog: {},
+    defaults: {},
+    credentialReferences: [{ ...reference, capabilities: ["repo.read"] }],
+  });
+  async function call(operation: string, payload: unknown, change = {}) {
+    const signed = await signEnvelope(
+      {
+        version: 1,
+        nodeId: job.workerId,
+        generation: 1,
+        chatId: -100,
+        threadId: 42,
+        sessionId: "session",
+        timestamp: Date.now(),
+        nonce: crypto.randomUUID().replaceAll("-", ""),
+        operation,
+        payload,
+        ...change,
+      },
+      secret,
+    );
+    return f.plane.fetch(
+      new Request("https://internal/node-control", {
+        method: "POST",
+        body: signed.body,
+        headers: { "x-node-signature": signed.signature },
+      }),
+    );
+  }
+  const payload = {
+    integrationId: reference.integrationId,
+    credentialId: reference.credentialId,
+    capability: "repo.read",
+    scopes: ["repo.read"],
+    workerId: job.workerId,
+    topicId: "-100:42",
+    generation: 1,
+    sessionId: "session",
+    resource: "owner/repository",
+  };
+  const authorized = await call("capability.authorize", payload);
+  assert.equal(authorized.status, 200);
+  const authorization = (await authorized.json()).payload;
+  assert.equal(authorization.authorized, true);
+  assert.equal(Object.hasOwn(authorization, "value"), false);
+  assert.equal((await call("capability.authorize", { ...payload, scopes: [] })).status, 409);
+  const acquired = await call("credential.acquire", payload);
+  assert.equal(acquired.status, 200);
+  const lease = (await acquired.json()).payload;
+  assert.equal(lease.value, "fixture-github-secret");
+  assert.equal((await call("credential.validate", { leaseId: lease.leaseId })).status, 200);
+  assert.equal((await call("credential.acquire", { ...payload, topicId: "-100:43" })).status, 409);
+  assert.equal((await call("credential.acquire", payload, { generation: 2 })).status, 409);
+  assert.equal(
+    (await call("credential.acquire", { ...payload, capability: "repo.write" })).status,
+    409,
+  );
+  broker.remove(reference.credentialId);
+  assert.equal((await call("capability.authorize", payload)).status, 409);
+  assert.equal((await call("credential.validate", { leaseId: lease.leaseId })).status, 409);
+  assert.equal((await call("credential.release", { leaseId: lease.leaseId })).status, 200);
+  assert.equal(
+    JSON.stringify([...f.sql.exec("SELECT data FROM ui_state")]).includes("fixture-github-secret"),
+    false,
+  );
+});
 test("production setup stores only secret reference and preserves lazy zero-project inventory", async () => {
   const f = fixture();
   const response = await post(f.plane, "/admin/setup");
@@ -842,7 +1125,8 @@ test("native cancellation reaches the signed exact-run Worker stop and joins bef
       execution = true;
       result = { accepted: true };
     }
-    if (body.operation === "callback.status") result = { state: "ACCEPTED", runId: body.payload.runId };
+    if (body.operation === "callback.status")
+      result = { state: "ACCEPTED", runId: body.payload.runId };
     if (body.operation === "status") result = execution ? { externalRunId: "native_exec" } : null;
     if (body.operation === "stop") {
       assert.equal(body.payload.runId, "native_exec");
@@ -906,7 +1190,8 @@ test("Stop while initial submission is in flight cannot release ownership or sta
       execution = true;
       result = { accepted: true };
     }
-    if (body.operation === "callback.status") result = { state: "ACCEPTED", runId: body.payload.runId };
+    if (body.operation === "callback.status")
+      result = { state: "ACCEPTED", runId: body.payload.runId };
     if (body.operation === "status") result = execution ? { externalRunId: "native_exec" } : null;
     if (body.operation === "stop") execution = false;
     if (body.operation.endsWith(".list")) result = [];
@@ -948,43 +1233,127 @@ test("Stop while initial submission is in flight cannot release ownership or sta
   );
 });
 
-test("timed-out admission cannot free cancellation ownership while a delayed Worker submission is unknown", async(t)=>{
- const f=await nativeExecutionFixture();const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
- let admitted=false,execution=false;
- globalThis.fetch=async(input,init)=>{
-  const body=JSON.parse(String(init?.body));
-  if(String(input).includes("api.telegram.org"))return Response.json({ok:true,result:String(input).endsWith("/getChat")?{id:7,type:"private"}:{message_id:99}});
-  if(body.operation==="run")throw new Error("transport timeout while server keeps processing");
-  let result:unknown=null;
-  if(body.operation==="callback.status")result={runId:admitted?"native_exec":"previous",state:admitted?"ACCEPTED":"NOT_SUBMITTED"};
-  if(body.operation==="status")result=execution?{externalRunId:"native_exec"}:null;
-  if(body.operation==="stop")execution=false;
-  if(body.operation.endsWith(".list"))result=[];
-  const signed=await signEnvelope({...body,nonce:crypto.randomUUID(),timestamp:Date.now(),payload:{ok:true,result}},f.secret);
-  return new Response(signed.body,{headers:{"x-node-signature":signed.signature}});
- };
- await f.plane.alarm();
- const binding=JSON.parse([...f.sql.exec<{data:string}>("SELECT data FROM telegram_run_presentations WHERE run='native_exec'")][0]!.data);
- await post(f.plane,"/telegram/webhook",{update_id:9903,stopped_message_generation:{chat:{id:7,type:"private"},message_thread_id:42,draft_id:binding.draftId}});
- f.store.enqueue(7,42,"queued_next","next");await f.plane.alarm();
- assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLING");
- assert.equal(f.store.startNext(7,42),undefined);
- admitted=true;execution=true;f.sql.exec("UPDATE runs SET state='CANCELLED' WHERE request='queued_next'");await f.plane.alarm();
- assert.equal(execution,false);assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLED");
+test("timed-out admission cannot free cancellation ownership while a delayed Worker submission is unknown", async (t) => {
+  const f = await nativeExecutionFixture();
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let admitted = false,
+    execution = false;
+  globalThis.fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(input).includes("api.telegram.org"))
+      return Response.json({
+        ok: true,
+        result: String(input).endsWith("/getChat")
+          ? { id: 7, type: "private" }
+          : { message_id: 99 },
+      });
+    if (body.operation === "run")
+      throw new Error("transport timeout while server keeps processing");
+    let result: unknown = null;
+    if (body.operation === "callback.status")
+      result = {
+        runId: admitted ? "native_exec" : "previous",
+        state: admitted ? "ACCEPTED" : "NOT_SUBMITTED",
+      };
+    if (body.operation === "status") result = execution ? { externalRunId: "native_exec" } : null;
+    if (body.operation === "stop") execution = false;
+    if (body.operation.endsWith(".list")) result = [];
+    const signed = await signEnvelope(
+      { ...body, nonce: crypto.randomUUID(), timestamp: Date.now(), payload: { ok: true, result } },
+      f.secret,
+    );
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await f.plane.alarm();
+  const binding = JSON.parse(
+    [
+      ...f.sql.exec<{ data: string }>(
+        "SELECT data FROM telegram_run_presentations WHERE run='native_exec'",
+      ),
+    ][0]!.data,
+  );
+  await post(f.plane, "/telegram/webhook", {
+    update_id: 9903,
+    stopped_message_generation: {
+      chat: { id: 7, type: "private" },
+      message_thread_id: 42,
+      draft_id: binding.draftId,
+    },
+  });
+  f.store.enqueue(7, 42, "queued_next", "next");
+  await f.plane.alarm();
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='native_exec'")][0]!
+      .state,
+    "CANCELLING",
+  );
+  assert.equal(f.store.startNext(7, 42), undefined);
+  admitted = true;
+  execution = true;
+  f.sql.exec("UPDATE runs SET state='CANCELLED' WHERE request='queued_next'");
+  await f.plane.alarm();
+  assert.equal(execution, false);
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='native_exec'")][0]!
+      .state,
+    "CANCELLED",
+  );
 });
 
-test("Stop during identity resolution cancels the unsubmitted run without requiring a Worker admission receipt",async(t)=>{
- const f=await nativeExecutionFixture();const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
- let release!:()=>void;
- (f.plane as any).identity=async()=>{await new Promise<void>(r=>{release=r;});throw new Error("identity resolution interrupted");};
- let workerCalls=0;
- globalThis.fetch=async(input)=>{if(!String(input).includes("api.telegram.org")){workerCalls++;throw new Error("must not submit");}return Response.json({ok:true,result:String(input).endsWith("/getChat")?{id:7,type:"private"}:{message_id:99}});};
- const running=f.plane.alarm();while(!release)await new Promise(r=>setTimeout(r,0));
- const binding=JSON.parse([...f.sql.exec<{data:string}>("SELECT data FROM telegram_run_presentations WHERE run='native_exec'")][0]!.data);
- await post(f.plane,"/telegram/webhook",{update_id:9904,stopped_message_generation:{chat:{id:7,type:"private"},message_thread_id:42,draft_id:binding.draftId}});
- assert.equal(Boolean(f.store.runPin("native_exec")?.dispatched),false);
- release();await running;await f.plane.alarm();
- assert.equal(workerCalls,0);assert.equal([...f.sql.exec<{state:string}>("SELECT state FROM runs WHERE request='native_exec'")][0]!.state,"CANCELLED");
+test("Stop during identity resolution cancels the unsubmitted run without requiring a Worker admission receipt", async (t) => {
+  const f = await nativeExecutionFixture();
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let release!: () => void;
+  (f.plane as any).identity = async () => {
+    await new Promise<void>((r) => {
+      release = r;
+    });
+    throw new Error("identity resolution interrupted");
+  };
+  let workerCalls = 0;
+  globalThis.fetch = async (input) => {
+    if (!String(input).includes("api.telegram.org")) {
+      workerCalls++;
+      throw new Error("must not submit");
+    }
+    return Response.json({
+      ok: true,
+      result: String(input).endsWith("/getChat") ? { id: 7, type: "private" } : { message_id: 99 },
+    });
+  };
+  const running = f.plane.alarm();
+  while (!release) await new Promise((r) => setTimeout(r, 0));
+  const binding = JSON.parse(
+    [
+      ...f.sql.exec<{ data: string }>(
+        "SELECT data FROM telegram_run_presentations WHERE run='native_exec'",
+      ),
+    ][0]!.data,
+  );
+  await post(f.plane, "/telegram/webhook", {
+    update_id: 9904,
+    stopped_message_generation: {
+      chat: { id: 7, type: "private" },
+      message_thread_id: 42,
+      draft_id: binding.draftId,
+    },
+  });
+  assert.equal(Boolean(f.store.runPin("native_exec")?.dispatched), false);
+  release();
+  await running;
+  await f.plane.alarm();
+  assert.equal(workerCalls, 0);
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='native_exec'")][0]!
+      .state,
+    "CANCELLED",
+  );
 });
 
 test("Delete Chat fences output, cancels the exact run, retires runtime, destroys Railway, then deletes Telegram Topic", async (t) => {
@@ -1009,7 +1378,15 @@ test("Delete Chat fences output, cancels the exact run, retires runtime, destroy
   f.store.ready(job.workerId, 1, credential);
   const topic = f.store.bindTopic(job.jobId, 42, "session");
   const revision = f.store.global()!.revision;
-  f.store.enqueueVerified(-100, 42, "delete-run", "prompt", topic.generation, revision, "opencode/big-pickle");
+  f.store.enqueueVerified(
+    -100,
+    42,
+    "delete-run",
+    "prompt",
+    topic.generation,
+    revision,
+    "opencode/big-pickle",
+  );
   f.store.startNext(-100, 42);
   const binding = {
     chatId: -100,
@@ -1070,7 +1447,10 @@ test("Delete Chat fences output, cancels the exact run, retires runtime, destroy
   assert.equal(f.store.worker(job.workerId)?.state, "REPLACED");
   assert.equal(f.store.topics().length, 0);
   const presentation = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM telegram_run_presentations WHERE run=?", "delete-run"),
+    ...f.sql.exec<{ data: string }>(
+      "SELECT data FROM telegram_run_presentations WHERE run=?",
+      "delete-run",
+    ),
   ][0];
   assert.equal(JSON.parse(presentation!.data).state, "CANCELLED");
 });

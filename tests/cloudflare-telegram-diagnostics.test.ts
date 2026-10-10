@@ -33,3 +33,11 @@ test("Telegram rejections expose only safe method/code diagnostics, never API de
     console.warn = previous;
   }
 });
+
+test("document upload and download use Workers-compatible redirects and refuse credential forwarding", async () => {
+  const api = new CloudTelegram("synthetic-secret", async (url, options) => {
+    assert.equal(options?.redirect, "manual");
+    return new Response(null, { status: 302, headers: { Location: "https://untrusted.example/" } });
+  });
+  await assert.rejects(api.document(1, 0, "file.txt", "fixture"), /telegram_ambiguous_redirect/);
+});

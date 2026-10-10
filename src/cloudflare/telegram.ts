@@ -190,12 +190,14 @@ export class CloudTelegram {
       response = await transport("https://api.telegram.org/bot" + this.token + "/sendDocument", {
         method: "POST",
         body: form,
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(15_000),
       });
     } catch {
       throw new TelegramDeliveryError("ambiguous");
     }
+    if (response.status >= 300 && response.status < 400)
+      throw new TelegramDeliveryError("ambiguous", undefined, "redirect");
     const result = (await response.json()) as {
       ok?: boolean;
       error_code?: number;
@@ -233,7 +235,7 @@ export class CloudTelegram {
     const transport = this.transport;
     const response = await transport(
       "https://api.telegram.org/file/bot" + this.token + "/" + file.file_path,
-      { redirect: "error", signal: AbortSignal.timeout(15_000) },
+      { redirect: "manual", signal: AbortSignal.timeout(15_000) },
     );
     if (!response.ok || !response.body) throw new Error("media_download_failed");
     if (Number(response.headers.get("content-length") ?? 0) > maximum)

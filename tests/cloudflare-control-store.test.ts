@@ -44,6 +44,26 @@ function backend(store: ControlStore, id = "a", maximum = 10, perProject = 5) {
   });
 }
 
+test("credential activation and snapshot publication commit or roll back together", () => {
+  const f = fixture();
+  f.store.setGlobal({ revision: 1 }, "first", 0);
+  f.sql.exec("INSERT INTO ui_state VALUES('active-account','old')");
+  assert.throws(() => f.store.setGlobal({ revision: 2 }, "second", 1, undefined, () => {
+    f.sql.exec("UPDATE ui_state SET data='new' WHERE key='active-account'");
+    throw new Error("activation_failed");
+  }), /activation_failed/);
+  assert.equal(f.store.global()?.hash, "first");
+  assert.equal([...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='active-account'")][0].data, "old");
+  let activated = false;
+  assert.throws(() => f.store.setGlobal({}, "stale", 0, undefined, () => { activated = true; }), /snapshot_revision_conflict/);
+  assert.equal(activated, false);
+  f.store.setGlobal({ revision: 2 }, "second", 1, undefined, () => {
+    f.sql.exec("UPDATE ui_state SET data='new' WHERE key='active-account'");
+  });
+  assert.equal(f.store.global()?.hash, "second");
+  assert.equal([...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='active-account'")][0].data, "new");
+});
+
 test("zero-project New Chat reserves lazy capacity without creating a writable Topic", () => {
   const { store } = fixture();
   backend(store);

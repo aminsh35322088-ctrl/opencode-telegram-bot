@@ -217,6 +217,44 @@ test("settings preserves separate global and Topic navigation", async (t) => {
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
 });
 
+test("crafted Topic integration callbacks cannot open global account credential forms", async (t) => {
+  const f = fixture(t);
+  const job = await f.bound();
+  for (const action of [
+    "github",
+    "tailscale",
+    "integration_connect",
+    "integration_account_add",
+    "integration_account_select",
+    "integration_remove",
+    "allocation_retry",
+    "allocation_cancel",
+  ]) {
+    await f.update("/settings", 42);
+    const id = crypto.randomUUID().replaceAll("-", "");
+    f.sql.exec(
+      "INSERT INTO ui_callbacks(id,actor,chat,thread,generation,expires,data) VALUES(?,?,?,?,?,?,?)",
+      id,
+      7,
+      -100,
+      42,
+      job.generation,
+      Date.now() + 60000,
+      JSON.stringify({ action, ...(action === "integration_connect" ? { value: "github" } : {}) }),
+    );
+    f.sent.length = 0;
+    await f.callback("ui:" + id, 42);
+    assert.match(JSON.stringify(f.sent), /General \/ ALL/);
+    const rows = [
+      ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "form:7:-100:42"),
+    ];
+    assert.equal(
+      rows.some((r) => JSON.parse(r.data).providerId === "integration.github"),
+      false,
+    );
+  }
+});
+
 test("legacy Settings submenus keep More/Advanced and Topic Models navigation", async (t) => {
   const f = fixture(t);
   await f.bound();
@@ -372,13 +410,19 @@ test("legacy Abort command cannot cancel the current or next run", async (t) => 
   f.store.enqueue(-100, 42, "run_a", "a");
   f.store.startNext(-100, 42);
   await f.update("/abort", 42);
-  assert.equal(f.rpc.some((entry) => entry.operation === "stop"), false);
+  assert.equal(
+    f.rpc.some((entry) => entry.operation === "stop"),
+    false,
+  );
   assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "run_a");
   f.store.failRun(-100, 42, "run_a", "done");
   f.store.enqueue(-100, 42, "run_b", "b");
   f.store.startNext(-100, 42);
   assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "run_b");
-  assert.equal(f.rpc.some((entry) => entry.operation === "stop"), false);
+  assert.equal(
+    f.rpc.some((entry) => entry.operation === "stop"),
+    false,
+  );
 });
 
 test("readiness keyboard retries Telegram 429 without duplicating a delivered notice", async (t) => {
@@ -1134,7 +1178,9 @@ test("Topic Settings child returns to Topic Settings with Back and Close only", 
   f.sent.length = 0;
   await f.callback(appearance.callback_data, 42);
   buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
-  const navigation = buttons.filter((button: any) => ["← Back", "🏠 Home", "✖ Close"].includes(button.text));
+  const navigation = buttons.filter((button: any) =>
+    ["← Back", "🏠 Home", "✖ Close"].includes(button.text),
+  );
   assert.deepEqual(
     navigation.map((button: any) => button.text),
     ["← Back", "✖ Close"],
@@ -1175,7 +1221,10 @@ test("Session and Model Center children return to their exact parents", async (t
   buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   back = buttons.find((button: any) => button.text === "← Back");
   assert.ok(back);
-  assert.equal(buttons.some((button: any) => button.text === "🏠 Home"), false);
+  assert.equal(
+    buttons.some((button: any) => button.text === "🏠 Home"),
+    false,
+  );
   assert.ok(buttons.some((button: any) => button.text === "✖ Close"));
   f.sent.length = 0;
   await f.callback(back.callback_data, 42);
@@ -1237,7 +1286,6 @@ test("File browser subdirectories have explicit parent Back plus Home", async (t
   assert.equal(lists.at(-1)?.payload.path, ".");
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
 });
-
 
 test("active Cloudflare runs emit a Topic-scoped typing action without making typing a run dependency", async (t) => {
   const f = fixture(t);
@@ -1312,7 +1360,9 @@ test("Factory Reset preserves configuration evidence when Railway reconciliation
     },
   });
   const latestButton = (text: string) => {
-    const buttons = f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []);
+    const buttons = f.sent.flatMap(
+      (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
+    );
     const button = [...buttons].reverse().find((candidate: any) => candidate.text === text);
     assert.ok(button, `missing button ${text}`);
     return button as any;
@@ -1326,4 +1376,177 @@ test("Factory Reset preserves configuration evidence when Railway reconciliation
   const global = f.store.global()!;
   assert.equal((global.data.configuration as any).marker, "preserve-me");
   assert.match(JSON.stringify(f.sent), /cleanup_reconciliation_required/);
+});
+
+test("Factory Reset removes every integration reference and encrypted lease store across restart", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const { CloudIntegrationConnections } =
+    await import("../src/cloudflare/integration-connections.js");
+  const connections = new CloudIntegrationConnections(
+    f.sql,
+    f.env.CREDENTIAL_MASTER_KEY,
+    async (url) =>
+      String(url).includes("github")
+        ? Response.json({ login: "fixture" })
+        : Response.json({ devices: [] }),
+  );
+  const github = await connections.connect("github", "synthetic-github");
+  const tailscale = await connections.connect("tailscale", "tskey-api-synthetic");
+  const { CloudCredentialVault } = await import("../src/cloudflare/credential-vault.js");
+  await new CloudCredentialVault(f.sql, f.env.CREDENTIAL_MASTER_KEY).saveProvider("legacy", "synthetic-legacy");
+  f.sql.exec("INSERT INTO capability_leases VALUES(?,?,?)", "fixture-lease", Date.now()+60000, JSON.stringify({leaseId:"fixture-lease"}));
+  assert.equal([...f.sql.exec("SELECT id FROM capability_leases")].length,1);
+
+  const current = f.store.global()!;
+  f.store.setGlobal(
+    {
+      ...current.data,
+      integrations: { github, tailscale },
+      credentialReferences: [{ integrationId: "github", credentialId: github.credentialId }],
+    },
+    "fixture",
+    current.revision,
+  );
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    reconcileManagedResources: async () => ({}),
+  });
+  const button = (text: string) => {
+    const b = [...f.sent.flatMap((e) => e.payload.reply_markup?.inline_keyboard?.flat() ?? [])]
+      .reverse()
+      .find((b: any) => b.text === text);
+    assert.ok(b, text);
+    return b.callback_data;
+  };
+  await f.update("/settings");
+  for (const label of [
+    "⋯ More",
+    "🧰 Advanced",
+    "☢️ Factory Reset",
+    "🗑️ Factory Reset",
+    "🗑️ Final Factory Reset",
+  ])
+    await f.callback(button(label));
+  assert.deepEqual(f.store.global()!.data.integrations, {});
+  assert.deepEqual(f.store.global()!.data.credentialReferences, []);
+  assert.equal(
+    [
+      ...f.sql.exec(
+        "SELECT key FROM ui_state WHERE key LIKE 'capability-credential:%' OR key LIKE 'integration-credential:%' OR key LIKE 'integration-accounts:%' OR key LIKE 'credential:%'",
+      ),
+    ].length,
+    0,
+  );
+  assert.equal([...f.sql.exec("SELECT id FROM capability_leases")].length, 0);
+  const restarted = new ControlPlane(f.state as never, f.env as never);
+  assert.equal(
+    (
+      await restarted.fetch(
+        new Request("https://internal/admin/inventory", { method: "POST", body: "{}" }),
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(f.store.global()!.data.integrations, {});
+});
+
+test("historical cleaned allocation failures cannot block a later New Chat", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const job = f.store.reserveAllocation("historical-failure", -100);
+  const worker = f.store.worker(job.workerId)!;
+  f.sql.exec(
+    "UPDATE workers SET data=? WHERE id=?",
+    JSON.stringify({ ...worker, state: "REPLACED" }),
+    worker.workerId,
+  );
+  f.store.finalizeAllocationFailure(job.jobId);
+  const before = f.store.jobs().length;
+  await f.update("/new_chat");
+  assert.equal(f.store.jobs().length, before + 1);
+  assert.doesNotMatch(JSON.stringify(f.sent), /The operation could not be completed/);
+});
+
+test("account removal remains committed when Telegram notification is rate limited", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const { CloudIntegrationConnections } =
+    await import("../src/cloudflare/integration-connections.js");
+  const connections = new CloudIntegrationConnections(
+    f.sql,
+    f.env.CREDENTIAL_MASTER_KEY,
+    async () => Response.json({ login: "fixture" }),
+  );
+  const account = await connections.connect("github", "synthetic-github");
+  const g = f.store.global()!;
+  f.store.setGlobal(
+    { ...g.data, integrations: { github: { ...account, accounts: [account] } } },
+    "fixture",
+    g.revision,
+  );
+  await f.update("/github");
+  const button = [...f.sent.flatMap((e) => e.payload.reply_markup?.inline_keyboard?.flat() ?? [])]
+    .reverse()
+    .find((b: any) => b.text === "Remove active account");
+  assert.ok(button);
+  const transport = globalThis.fetch;
+  let blocked = true;
+  globalThis.fetch = async (input, init) => {
+    const p = JSON.parse(String(init?.body));
+    if (
+      String(input).includes("api.telegram.org") &&
+      String(p.text).includes("Account removed") &&
+      blocked
+    ) {
+      blocked = false;
+      return Response.json(
+        { ok: false, error_code: 429, parameters: { retry_after: 0 } },
+        { status: 429 },
+      );
+    }
+    return transport(input, init);
+  };
+  await f.callback(button.callback_data);
+  const revision = f.store.global()!.revision;
+  await f.plane.alarm();
+  await f.plane.alarm();
+  assert.equal(f.store.global()!.revision, revision);
+  assert.equal(connections.accounts("github").length, 0);
+  assert.doesNotMatch(
+    JSON.stringify(f.sent),
+    /account reference has expired|The operation could not be completed/,
+  );
+});
+
+test("bad General configuration input keeps its form and never exposes submitted material", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "form:7:-100:0",
+    JSON.stringify({ kind: "config_save_mcps", generation: 0, expires: Date.now() + 60000 }),
+  );
+  await f.update("invalid-json-private-fixture");
+  const form = [
+    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "form:7:-100:0"),
+  ][0];
+  assert.equal(JSON.parse(form!.data).kind, "config_save_mcps");
+  assert.doesNotMatch(
+    JSON.stringify(f.sent),
+    /The operation could not be completed|invalid-json-private-fixture/,
+  );
+  assert.match(JSON.stringify(f.sent), /valid JSON/);
+});
+
+test("all General settings sections render without operation failures or Worker execution",async(t)=>{
+ const f=fixture(t);await f.bound();
+ const before=f.store.jobs().length;
+ for(const command of ["settings","more","advanced","models","providers","extensions","actions","skills","mcps","plugins","commands","memory","github","tailscale","history","help"]){
+  f.sent.length=0;await f.update("/"+command,1);
+  const output=JSON.stringify(f.sent);
+  assert.ok(f.sent.length,command);
+  assert.doesNotMatch(output,/The operation could not be completed|Unknown or unavailable command/,command);
+ }
+ assert.equal(f.store.jobs().length,before);
+ assert.equal([...f.sql.exec("SELECT request FROM runs")].length,0);
 });
