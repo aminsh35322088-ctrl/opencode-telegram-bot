@@ -87,12 +87,6 @@ export class ControlPlane {
     );
     await this.scheduleAlarm(nextAt);
   }
-  private clearInactiveTyping(): void {
-    this.state.storage.sql.exec(
-      "DELETE FROM ui_state WHERE key GLOB 'typing:*' AND substr(key,8) NOT IN (SELECT request FROM runs WHERE state='ACTIVE')",
-    );
-  }
-
   private async initializeSecrets(): Promise<void> {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
     if (!this.env.TELEGRAM_BOT_TOKEN || !this.env.RAILWAY_API_TOKEN) return;
@@ -577,12 +571,8 @@ export class ControlPlane {
           this.state.storage.sql,
           this.env.CREDENTIAL_MASTER_KEY,
         );
-        this.state.storage.sql.exec(
-          "INSERT INTO updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
-          Number(body.update_id),
-          JSON.stringify(protectedUpdate),
-        );
-        await this.scheduleAlarm(Date.now() + 1);
+        if (this.store.recordTelegramUpdate(Number(body.update_id), JSON.stringify(protectedUpdate)))
+          await this.scheduleAlarm(Date.now() + 1);
         return Response.json({ ok: true });
       }
       if (path === "/jobs/advance") {
@@ -1540,7 +1530,7 @@ export class ControlPlane {
       }
     }
 
-    this.clearInactiveTyping();
+    this.store.clearInactiveTyping();
     for (const topic of this.store.topics().filter((t) => t.state === "ACTIVE")) {
       if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId)) continue;
       const run =
@@ -1941,11 +1931,7 @@ export class ControlPlane {
       this.enqueuePrompt(topic.chatId, topic.threadId, topic.generation, request, text),
     );
     if (nextTask !== undefined) await this.scheduleAlarm(Math.min(nextTask, Date.now() + 60_000));
-    const rows = [
-      ...this.state.storage.sql.exec<{ id: number; data: string }>(
-        "SELECT id,data FROM updates WHERE state='PENDING' ORDER BY id LIMIT 20",
-      ),
-    ];
+    const rows = this.store.pendingTelegramUpdates(20);
     for (const row of rows) {
       const update = JSON.parse(row.data) as TelegramUpdate;
       const actor = update.message?.from?.id ?? update.callback_query?.from.id;
@@ -1957,7 +1943,7 @@ export class ControlPlane {
         .split(",")
         .map((v) => Number(v.trim()));
       if (!actor || !allowed.includes(actor)) {
-        this.state.storage.sql.exec("UPDATE updates SET state='REJECTED' WHERE id=?", row.id);
+        this.store.completeTelegramUpdate(row.id, "REJECTED");
         continue;
       }
       const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
@@ -2010,7 +1996,7 @@ export class ControlPlane {
                 : undefined,
           );
         }
-        this.state.storage.sql.exec("UPDATE updates SET state='DISPATCHED' WHERE id=?", row.id);
+        this.store.completeTelegramUpdate(row.id, "DISPATCHED");
       } catch (error) {
         // Ambiguous Topic creation must not be retried into a second Telegram Topic.
         if (
@@ -2029,7 +2015,7 @@ export class ControlPlane {
           await this.scheduleAlarm(Date.now() + 30_000);
           continue;
         }
-        this.state.storage.sql.exec("UPDATE updates SET state='FAILED' WHERE id=?", row.id);
+        this.store.completeTelegramUpdate(row.id, "FAILED");
         if (chatId)
           try {
             const messageThread =
@@ -2068,10 +2054,6 @@ export class ControlPlane {
           }
       }
     }
-    if (
-      [...this.state.storage.sql.exec("SELECT id FROM updates WHERE state='PENDING' LIMIT 1")]
-        .length
-    )
-      await this.scheduleAlarm(Date.now() + 30_000);
+    if (this.store.hasPendingTelegramUpdates()) await this.scheduleAlarm(Date.now() + 30_000);
   }
 }

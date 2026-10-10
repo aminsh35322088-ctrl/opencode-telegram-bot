@@ -125,7 +125,7 @@ export class CloudTaskUi {
   private tasks(): CloudScheduledTask[] {
     return [
       ...this.context.sql.exec<{ data: string }>(
-        "SELECT data FROM ui_state WHERE key LIKE 'task:%'",
+        "SELECT data FROM ui_state WHERE key GLOB 'task:*'",
       ),
     ].map((row) => JSON.parse(row.data) as CloudScheduledTask);
   }

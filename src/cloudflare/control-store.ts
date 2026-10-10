@@ -131,16 +131,23 @@ export class ControlStore {
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS control_secrets(id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL)",
       );
-      // Signed events and alarms must not scan accumulated history on every request.
-      this.sql.exec("CREATE INDEX IF NOT EXISTS nonces_expires ON nonces(expires)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS runs_topic_state ON runs(chat,thread,state,seq)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS runs_state ON runs(state)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS updates_state ON updates(state,id)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS responses_state ON responses(state)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS approvals_worker_state ON approvals(worker,generation,state)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS ui_callbacks_scope ON ui_callbacks(actor,chat,thread)");
-      this.sql.exec("CREATE INDEX IF NOT EXISTS ui_callbacks_expires ON ui_callbacks(expires)");
-      this.sql.exec("UPDATE schema_version SET version=6");
+      // Hot-path routing lives in compact tables so retained history is never scanned by alarms.
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS active_runs(chat INTEGER NOT NULL,thread INTEGER NOT NULL,request TEXT NOT NULL UNIQUE,PRIMARY KEY(chat,thread))",
+      );
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS run_queue(chat INTEGER NOT NULL,thread INTEGER NOT NULL,seq INTEGER NOT NULL,request TEXT NOT NULL UNIQUE,PRIMARY KEY(chat,thread,seq))",
+      );
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS pending_updates(id INTEGER PRIMARY KEY,data TEXT NOT NULL)",
+      );
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS update_receipts(id INTEGER PRIMARY KEY,state TEXT NOT NULL)",
+      );
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS pending_responses(run TEXT PRIMARY KEY,chat INTEGER NOT NULL,thread INTEGER NOT NULL)",
+      );
+      this.sql.exec("UPDATE schema_version SET version=7");
     });
   }
   private migrate(): void {
@@ -148,7 +155,7 @@ export class ControlStore {
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 6) throw new Error("unsupported_schema");
+    if (version > 7) throw new Error("unsupported_schema");
     if (version >= 3) return;
     if (version === 2) {
       this.migrateEvents();
@@ -224,7 +231,155 @@ export class ControlStore {
       this.sql.exec("UPDATE schema_version SET version=3");
     });
   }
+  private ensureRunRouting(): void {
+    const marker = [
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='run-routing-v2'"),
+    ][0];
+    if (marker) return;
+    // Recover only a bounded tail once. New runs are indexed transactionally below.
+    const recent = [
+      ...this.sql.exec<{ seq: number; request: string; chat: number; thread: number; state: string }>(
+        "SELECT seq,request,chat,thread,state FROM runs ORDER BY seq DESC LIMIT 5000",
+      ),
+    ].reverse();
+    for (const run of recent) {
+      if (run.state === "ACTIVE")
+        this.sql.exec(
+          "INSERT INTO active_runs(chat,thread,request) VALUES(?,?,?) ON CONFLICT(chat,thread) DO UPDATE SET request=excluded.request",
+          run.chat,
+          run.thread,
+          run.request,
+        );
+      else if (run.state === "QUEUED")
+        this.sql.exec(
+          "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING",
+          run.chat,
+          run.thread,
+          run.seq,
+          run.request,
+        );
+    }
+    this.sql.exec(
+      "INSERT INTO ui_state(key,data) VALUES('run-routing-v2','{}') ON CONFLICT(key) DO NOTHING",
+    );
+  }
+
+  private ensureTelegramUpdateQueue(): { legacyMax: number } {
+    const key = "telegram-update-queue-v2";
+    const marker = [
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+    ][0];
+    if (marker) return JSON.parse(marker.data) as { legacyMax: number };
+    const recent = [
+      ...this.sql.exec<{ id: number; data: string; state: string }>(
+        "SELECT id,data,state FROM updates ORDER BY id DESC LIMIT 1000",
+      ),
+    ];
+    const legacyMax = recent[0]?.id ?? -1;
+    for (const update of recent) {
+      this.sql.exec(
+        "INSERT INTO update_receipts(id,state) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
+        update.id,
+        update.state,
+      );
+      if (update.state === "PENDING")
+        this.sql.exec(
+          "INSERT INTO pending_updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
+          update.id,
+          update.data,
+        );
+    }
+    const value = { legacyMax };
+    this.sql.exec(
+      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      key,
+      JSON.stringify(value),
+    );
+    return value;
+  }
+
+  private ensurePendingResponseQueue(): void {
+    const key = "pending-response-queue-v2";
+    if ([...this.sql.exec("SELECT key FROM ui_state WHERE key=?", key)].length) return;
+    // A bounded tail is sufficient to recover in-flight deliveries; terminal history stays cold.
+    const recent = [
+      ...this.sql.exec<{ run: string; chat: number; thread: number; state: string }>(
+        "SELECT run,chat,thread,state FROM responses ORDER BY rowid DESC LIMIT 1000",
+      ),
+    ];
+    for (const response of recent)
+      if (response.state === "PENDING")
+        this.sql.exec(
+          "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING",
+          response.run,
+          response.chat,
+          response.thread,
+        );
+    this.sql.exec(
+      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+      key,
+      "{}",
+    );
+  }
+
+  recordTelegramUpdate(id: number, data: string): boolean {
+    if (!Number.isSafeInteger(id) || id < 0 || !data) throw new Error("invalid_update");
+    const { legacyMax } = this.ensureTelegramUpdateQueue();
+    if ([...this.sql.exec("SELECT id FROM update_receipts WHERE id=?", id)].length) return false;
+    if (id <= legacyMax) {
+      const legacy = [
+        ...this.sql.exec<{ data: string; state: string }>(
+          "SELECT data,state FROM updates WHERE id=?",
+          id,
+        ),
+      ][0];
+      if (!legacy || legacy.state !== "PENDING") return false;
+      this.transaction(() => {
+        this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING')", id);
+        this.sql.exec("INSERT INTO pending_updates(id,data) VALUES(?,?)", id, legacy.data);
+      });
+      return true;
+    }
+    this.transaction(() => {
+      this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING')", id);
+      this.sql.exec("INSERT INTO pending_updates(id,data) VALUES(?,?)", id, data);
+    });
+    return true;
+  }
+
+  pendingTelegramUpdates(limit = 20): Array<{ id: number; data: string }> {
+    this.ensureTelegramUpdateQueue();
+    return [
+      ...this.sql.exec<{ id: number; data: string }>(
+        "SELECT id,data FROM pending_updates ORDER BY id LIMIT ?",
+        Math.max(1, Math.min(100, Math.trunc(limit))),
+      ),
+    ].map((row) => ({ id: row.id, data: row.data }));
+  }
+
+  completeTelegramUpdate(id: number, state: "DISPATCHED" | "REJECTED" | "FAILED"): void {
+    this.transaction(() => {
+      this.sql.exec("UPDATE update_receipts SET state=? WHERE id=?", state, id);
+      this.sql.exec("DELETE FROM pending_updates WHERE id=?", id);
+    });
+  }
+
+  hasPendingTelegramUpdates(): boolean {
+    this.ensureTelegramUpdateQueue();
+    return [...this.sql.exec("SELECT id FROM pending_updates ORDER BY id LIMIT 1")].length > 0;
+  }
+
+  clearInactiveTyping(): void {
+    // `ui_state.key` and `runs.request` are already indexed by their primary/unique keys.
+    // Correlating each small `typing:*` range entry back to its exact run avoids a
+    // full scan of retained run history on the 4-second typing heartbeat.
+    this.sql.exec(
+      "DELETE FROM ui_state WHERE key GLOB 'typing:*' AND NOT EXISTS (SELECT 1 FROM runs WHERE request=substr(ui_state.key,8) AND state='ACTIVE')",
+    );
+  }
+
   activeRuns(chatId: number, threadId: number): Run[] {
+    this.ensureRunRouting();
     return [
       ...this.sql.exec<{
         requestId: string;
@@ -233,7 +388,7 @@ export class ControlStore {
         prompt: string;
         state: string;
       }>(
-        "SELECT request AS requestId,chat AS chatId,thread AS threadId,prompt,state FROM runs WHERE chat=? AND thread=? AND state='ACTIVE' ORDER BY seq",
+        "SELECT r.request AS requestId,r.chat AS chatId,r.thread AS threadId,r.prompt,r.state FROM active_runs a JOIN runs r ON r.request=a.request WHERE a.chat=? AND a.thread=?",
         chatId,
         threadId,
       ),
@@ -331,7 +486,24 @@ export class ControlStore {
           chatId,
           threadId,
         );
-        this.finishRun(chatId, threadId, runId);
+        this.sql.exec(
+          "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING",
+          runId,
+          chatId,
+          threadId,
+        );
+        this.sql.exec(
+          "UPDATE runs SET state='COMPLETED' WHERE request=? AND chat=? AND thread=? AND state='ACTIVE'",
+          runId,
+          chatId,
+          threadId,
+        );
+        this.sql.exec(
+          "DELETE FROM active_runs WHERE chat=? AND thread=? AND request=?",
+          chatId,
+          threadId,
+          runId,
+        );
       }
       return true;
     });
@@ -351,13 +523,26 @@ export class ControlStore {
         chatId,
         threadId,
       );
+      this.sql.exec(
+        "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING",
+        requestId,
+        chatId,
+        threadId,
+      );
       this.sql.exec("UPDATE runs SET state='FAILED' WHERE request=? AND state='ACTIVE'", requestId);
+      this.sql.exec(
+        "DELETE FROM active_runs WHERE chat=? AND thread=? AND request=?",
+        chatId,
+        threadId,
+        requestId,
+      );
     });
   }
   completedResponses(): Array<{ run: string; chat: number; thread: number; text: string }> {
+    this.ensurePendingResponseQueue();
     return [
       ...this.sql.exec<{ run: string; chat: number; thread: number }>(
-        "SELECT run,chat,thread FROM responses WHERE state='PENDING' ORDER BY rowid LIMIT 20",
+        "SELECT run,chat,thread FROM pending_responses ORDER BY rowid LIMIT 20",
       ),
     ].map((row) => ({
       ...row,
@@ -372,7 +557,10 @@ export class ControlStore {
     }));
   }
   responseDelivered(run: string, state = "DELIVERED"): void {
-    this.sql.exec("UPDATE responses SET state=? WHERE run=?", state, run);
+    this.transaction(() => {
+      this.sql.exec("UPDATE responses SET state=? WHERE run=?", state, run);
+      this.sql.exec("DELETE FROM pending_responses WHERE run=?", run);
+    });
   }
   acquireLease(id: string, owner: string, now: number, lifetime: number): boolean {
     return this.transaction(() => {
@@ -788,6 +976,7 @@ export class ControlStore {
     });
   }
   fenceTopic(chatId: number, threadId: number): FleetWorker {
+    this.ensureRunRouting();
     return this.transaction(() => {
       const topic = this.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
       if (!topic) throw new Error("topic_missing");
@@ -804,11 +993,27 @@ export class ControlStore {
           chatId,
           threadId,
         );
-        this.sql.exec(
-          "UPDATE runs SET state='CANCELLED' WHERE chat=? AND thread=? AND state IN ('ACTIVE','QUEUED')",
-          chatId,
-          threadId,
-        );
+        const active = [
+          ...this.sql.exec<{ request: string }>(
+            "SELECT request FROM active_runs WHERE chat=? AND thread=?",
+            chatId,
+            threadId,
+          ),
+        ];
+        const queued = [
+          ...this.sql.exec<{ request: string }>(
+            "SELECT request FROM run_queue WHERE chat=? AND thread=? ORDER BY seq",
+            chatId,
+            threadId,
+          ),
+        ];
+        for (const run of [...active, ...queued])
+          this.sql.exec(
+            "UPDATE runs SET state='CANCELLED' WHERE request=? AND state IN ('ACTIVE','QUEUED')",
+            run.request,
+          );
+        this.sql.exec("DELETE FROM active_runs WHERE chat=? AND thread=?", chatId, threadId);
+        this.sql.exec("DELETE FROM run_queue WHERE chat=? AND thread=?", chatId, threadId);
       }
       return worker;
     });
@@ -920,7 +1125,28 @@ export class ControlStore {
         (!topic || topic.sessionId !== sessionId || topic.state !== "ACTIVE")
       )
         throw new Error("session_mismatch");
-      this.sql.exec("DELETE FROM nonces WHERE expires<=?", now);
+      const nonceGcKey = `nonce-gc:${workerId}:${generation}`;
+      const nonceGcRow = [
+        ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", nonceGcKey),
+      ][0];
+      const nextNonceGc = nonceGcRow
+        ? Number((JSON.parse(nonceGcRow.data) as { nextAt?: number }).nextAt ?? 0)
+        : 0;
+      if (!Number.isFinite(nextNonceGc) || nextNonceGc <= now) {
+        // The composite primary key starts with worker+generation, so this cleanup
+        // only walks the current generation instead of the account's nonce history.
+        this.sql.exec(
+          "DELETE FROM nonces WHERE worker=? AND generation=? AND expires<=?",
+          workerId,
+          generation,
+          now,
+        );
+        this.sql.exec(
+          "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+          nonceGcKey,
+          JSON.stringify({ nextAt: now + 60_000 }),
+        );
+      }
       if (
         [
           ...this.sql.exec(
@@ -1003,6 +1229,7 @@ export class ControlStore {
     ][0];
   }
   enqueue(chatId: number, threadId: number, requestId: string, prompt: string): void {
+    this.ensureRunRouting();
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId) || !prompt || prompt.length > 20000)
       throw new Error("invalid_prompt");
     const previous = [
@@ -1029,19 +1256,42 @@ export class ControlStore {
       threadId,
       prompt,
     );
+    const run = [
+      ...this.sql.exec<{ seq: number; state: string }>(
+        "SELECT seq,state FROM runs WHERE request=?",
+        requestId,
+      ),
+    ][0];
+    if (run?.state === "QUEUED")
+      this.sql.exec(
+        "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING",
+        chatId,
+        threadId,
+        run.seq,
+        requestId,
+      );
   }
   startNext(chatId: number, threadId: number): Run | undefined {
+    this.ensureRunRouting();
     return this.transaction(() => {
       if (
         [
           ...this.sql.exec(
-            "SELECT request FROM runs WHERE chat=? AND thread=? AND state='ACTIVE'",
+            "SELECT request FROM active_runs WHERE chat=? AND thread=?",
             chatId,
             threadId,
           ),
         ].length
       )
         return;
+      const queued = [
+        ...this.sql.exec<{ request: string }>(
+          "SELECT request FROM run_queue WHERE chat=? AND thread=? ORDER BY seq LIMIT 1",
+          chatId,
+          threadId,
+        ),
+      ][0];
+      if (!queued) return;
       const run = [
         ...this.sql.exec<{
           requestId: string;
@@ -1050,23 +1300,40 @@ export class ControlStore {
           prompt: string;
           state: string;
         }>(
-          "SELECT request AS requestId,chat AS chatId,thread AS threadId,prompt,state FROM runs WHERE chat=? AND thread=? AND state='QUEUED' ORDER BY seq LIMIT 1",
-          chatId,
-          threadId,
+          "SELECT request AS requestId,chat AS chatId,thread AS threadId,prompt,state FROM runs WHERE request=?",
+          queued.request,
         ),
       ][0];
-      if (!run) return;
+      if (!run || run.state !== "QUEUED") {
+        this.sql.exec("DELETE FROM run_queue WHERE request=?", queued.request);
+        return;
+      }
+      this.sql.exec("DELETE FROM run_queue WHERE request=?", run.requestId);
+      this.sql.exec(
+        "INSERT INTO active_runs(chat,thread,request) VALUES(?,?,?) ON CONFLICT(chat,thread) DO UPDATE SET request=excluded.request",
+        chatId,
+        threadId,
+        run.requestId,
+      );
       this.sql.exec("UPDATE runs SET state='ACTIVE' WHERE request=?", run.requestId);
       return { ...run, state: "ACTIVE" };
     });
   }
   finishRun(chatId: number, threadId: number, requestId: string): void {
-    this.sql.exec(
-      "UPDATE runs SET state='COMPLETED' WHERE request=? AND chat=? AND thread=? AND state='ACTIVE'",
-      requestId,
-      chatId,
-      threadId,
-    );
+    this.transaction(() => {
+      this.sql.exec(
+        "UPDATE runs SET state='COMPLETED' WHERE request=? AND chat=? AND thread=? AND state='ACTIVE'",
+        requestId,
+        chatId,
+        threadId,
+      );
+      this.sql.exec(
+        "DELETE FROM active_runs WHERE chat=? AND thread=? AND request=?",
+        chatId,
+        threadId,
+        requestId,
+      );
+    });
   }
   setGlobal(
     data: Record<string, unknown>,

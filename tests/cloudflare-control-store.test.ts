@@ -6,8 +6,12 @@ import { encryptCredential, decryptCredential } from "../src/cloudflare/credenti
 
 function fixture() {
   const db = new DatabaseSync(":memory:");
+  const queries: Array<{ query: string; bindings: unknown[] }> = [];
   const sql: SqlDatabase = {
-    exec: (query, ...bindings) => db.prepare(query).all(...bindings) as never,
+    exec: (query, ...bindings) => {
+      queries.push({ query, bindings });
+      return db.prepare(query).all(...bindings) as never;
+    },
   };
   const transaction = <T>(action: () => T): T => {
     db.exec("BEGIN IMMEDIATE");
@@ -25,6 +29,7 @@ function fixture() {
     transaction,
     store: new ControlStore(sql, transaction),
     restart: () => new ControlStore(sql, transaction),
+    queries,
   };
 }
 function backend(store: ControlStore, id = "a", maximum = 10, perProject = 5) {
@@ -244,8 +249,7 @@ test("durable update alarm rearms until all persisted batches drain", async () =
     { TELEGRAM_ALLOWED_USER_IDS: "7" } as never,
   );
   for (let i = 0; i < 41; i++)
-    f.sql.exec(
-      "INSERT INTO updates(id,data) VALUES(?,?)",
+    f.store.recordTelegramUpdate(
       i,
       JSON.stringify({
         update_id: i,
@@ -257,7 +261,7 @@ test("durable update alarm rearms until all persisted batches drain", async () =
   await plane.alarm();
   assert.equal(alarms, 2);
   await plane.alarm();
-  assert.equal([...f.sql.exec("SELECT id FROM updates WHERE state='PENDING'")].length, 0);
+  assert.equal(f.store.hasPendingTelegramUpdates(), false);
 });
 test("backend enforces a separate maximum project count before reserving another shard", () => {
   const f = fixture();
@@ -437,19 +441,199 @@ test("Topic titles use the smallest free positive slot, stay durable, and never 
   assert.equal(f.store.reserveTopicTitle(otherChat.jobId), "#1");
 });
 
-test("frequent control queries use bounded indexes instead of scanning retained history", () => {
+test("ControlStore startup never builds secondary indexes over retained history", () => {
   const f = fixture();
-  const queries = [
-    ["DELETE FROM nonces WHERE expires<=?", 1000],
-    ["SELECT request FROM runs WHERE chat=? AND thread=? AND state='ACTIVE' ORDER BY seq", -100, 42],
-    ["SELECT id FROM updates WHERE state='PENDING' ORDER BY id LIMIT 20"],
-    ["SELECT run FROM responses WHERE state='PENDING' ORDER BY rowid LIMIT 20"],
-    ["DELETE FROM ui_callbacks WHERE actor=? AND chat=? AND thread=0", 7, -100],
-  ] as const;
-  for (const [query, ...args] of queries) {
-    const plan = [...f.sql.exec<{ detail: string }>("EXPLAIN QUERY PLAN " + query, ...args)].map(row => row.detail).join("\n");
-    assert.match(plan, /SEARCH .*USING (?:COVERING )?INDEX/, query);
-    assert.doesNotMatch(plan, /SCAN /, query);
-  }
+  const secondary = [
+    ...f.sql.exec<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
+    ),
+  ].map((row) => row.name);
+  assert.deepEqual(secondary, []);
+
+  f.queries.length = 0;
   f.restart();
+  assert.equal(
+    f.queries.some(({ query }) => /CREATE\s+INDEX/i.test(query)),
+    false,
+    "a Durable Object restart must not rebuild indexes over historical rows",
+  );
+});
+
+test("typing cleanup uses primary-key lookups instead of scanning run history", () => {
+  const f = fixture();
+  f.sql.exec(
+    "INSERT INTO runs(request,chat,thread,prompt,state) VALUES(?,?,?,?,?)",
+    "active-run",
+    -100,
+    42,
+    "prompt",
+    "ACTIVE",
+  );
+  f.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?)", "typing:active-run", "{}");
+  f.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?)", "typing:old-run", "{}");
+
+  f.store.clearInactiveTyping();
+
+  assert.equal(
+    [...f.sql.exec("SELECT key FROM ui_state WHERE key='typing:active-run'")].length,
+    1,
+  );
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='typing:old-run'")].length, 0);
+  const plan = [
+    ...f.sql.exec<{ detail: string }>(
+      "EXPLAIN QUERY PLAN DELETE FROM ui_state WHERE key GLOB 'typing:*' AND NOT EXISTS (SELECT 1 FROM runs WHERE request=substr(ui_state.key,8) AND state='ACTIVE')",
+    ),
+  ]
+    .map((row) => row.detail)
+    .join("\n");
+  assert.match(plan, /ui_state.*INDEX/i);
+  assert.match(plan, /runs.*(?:INDEX|sqlite_autoindex_runs_1)/i);
+  assert.doesNotMatch(plan, /SCAN runs/i);
+});
+
+test("signed-event nonce GC is worker scoped and rate limited", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveAllocation("nonce-gc", -100);
+  f.store.ready(job.workerId, job.generation, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+
+  f.queries.length = 0;
+  f.store.admitEvent(job.workerId, job.generation, "nonce-1", 1000, 1000, "session");
+  const firstDeletes = f.queries.filter(({ query }) => query.startsWith("DELETE FROM nonces"));
+  assert.deepEqual(
+    firstDeletes.map(({ query }) => query),
+    ["DELETE FROM nonces WHERE worker=? AND generation=? AND expires<=?"],
+  );
+
+  f.queries.length = 0;
+  f.store.admitEvent(job.workerId, job.generation, "nonce-2", 1001, 1001, "session");
+  assert.equal(
+    f.queries.some(({ query }) => query.startsWith("DELETE FROM nonces")),
+    false,
+    "nonce history must not be rescanned for every signed event",
+  );
+});
+
+
+test("active/queued run routing never scans retained run history", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveAllocation("run-routing", -100);
+  f.store.ready(job.workerId, job.generation, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  for (let i = 0; i < 25; i++) {
+    f.store.enqueue(-100, 42, `history-${i}`, `prompt-${i}`);
+    const run = f.store.startNext(-100, 42)!;
+    f.store.finishRun(-100, 42, run.requestId);
+  }
+  f.store.enqueue(-100, 42, "current", "current prompt");
+
+  f.queries.length = 0;
+  assert.equal(f.store.activeRuns(-100, 42).length, 0);
+  assert.equal(f.store.startNext(-100, 42)?.requestId, "current");
+  assert.equal(f.store.activeRuns(-100, 42)[0]?.requestId, "current");
+
+  assert.equal(
+    f.queries.some(({ query }) => /FROM runs WHERE chat=\? AND thread=\? AND state=/.test(query)),
+    false,
+    "active/queued lookup must use compact routing state, not scan the historical runs table",
+  );
+});
+
+test("Telegram pending updates live in a compact queue with durable dedupe receipts", () => {
+  const f = fixture();
+  const update = JSON.stringify({ update_id: 100, message: { text: "hello" } });
+  assert.equal(f.store.recordTelegramUpdate(100, update), true);
+  assert.equal(f.store.recordTelegramUpdate(100, update), false);
+  assert.deepEqual(f.store.pendingTelegramUpdates(20), [{ id: 100, data: update }]);
+  assert.equal(f.store.hasPendingTelegramUpdates(), true);
+  f.store.completeTelegramUpdate(100, "DISPATCHED");
+  assert.deepEqual(f.store.pendingTelegramUpdates(20), []);
+  assert.equal(f.store.hasPendingTelegramUpdates(), false);
+  assert.equal(f.store.recordTelegramUpdate(100, update), false);
+});
+
+test("pending responses are compact and delivered history is never rescanned", () => {
+  const f = fixture();
+  f.sql.exec(
+    "INSERT INTO responses(run,chat,thread,state) VALUES(?,?,?,?)",
+    "old-delivered",
+    -100,
+    42,
+    "DELIVERED",
+  );
+  f.sql.exec(
+    "INSERT INTO responses(run,chat,thread,state) VALUES(?,?,?,?)",
+    "pending",
+    -100,
+    42,
+    "PENDING",
+  );
+  f.sql.exec(
+    "INSERT INTO response_parts(run,part,text,message) VALUES(?,?,?,?)",
+    "pending",
+    "part",
+    "answer",
+    null,
+  );
+  // Seed the compact queue through the migration/reconciliation path.
+  f.queries.length = 0;
+  assert.equal(f.store.completedResponses()[0]?.run, "pending");
+  assert.equal(
+    f.queries.some(({ query }) => /FROM responses WHERE state='PENDING'/.test(query)),
+    false,
+    "response delivery must not scan retained response history",
+  );
+  f.store.responseDelivered("pending");
+  f.queries.length = 0;
+  assert.deepEqual(f.store.completedResponses(), []);
+  assert.equal(
+    f.queries.some(({ query }) => /FROM responses WHERE state='PENDING'/.test(query)),
+    false,
+  );
+});
+
+test("a retried legacy pending Telegram update outside the recovery tail is recovered by exact id", () => {
+  const f = fixture();
+  for (let id = 1; id <= 1002; id++)
+    f.sql.exec(
+      "INSERT INTO updates(id,data,state) VALUES(?,?,?)",
+      id,
+      JSON.stringify({ update_id: id }),
+      id === 1 ? "PENDING" : "DISPATCHED",
+    );
+
+  // Initialize the bounded migration from the newest 1000 rows; id=1 is deliberately outside it.
+  assert.deepEqual(f.store.pendingTelegramUpdates(), []);
+  assert.equal(f.store.recordTelegramUpdate(1, JSON.stringify({ update_id: 1 })), true);
+  assert.deepEqual(f.store.pendingTelegramUpdates(), [
+    { id: 1, data: JSON.stringify({ update_id: 1 }) },
+  ]);
+});
+
+test("Topic fencing cancels only compact active/queued ids without scanning run history", () => {
+  const f = fixture();
+  backend(f.store);
+  const job = f.store.reserveAllocation("fence-compact", -100);
+  f.store.ready(job.workerId, job.generation, "key");
+  f.store.bindTopic(job.jobId, 42, "session");
+  f.store.enqueue(-100, 42, "active", "a");
+  f.store.enqueue(-100, 42, "queued", "b");
+  f.store.startNext(-100, 42);
+
+  f.queries.length = 0;
+  f.store.fenceTopic(-100, 42);
+  assert.equal(
+    f.queries.some(
+      ({ query }) =>
+        /UPDATE runs SET state='CANCELLED' WHERE chat=\? AND thread=\?/.test(query),
+    ),
+    false,
+    "Topic fencing must update exact run ids from compact routing state",
+  );
+  assert.equal(
+    [...f.sql.exec("SELECT request FROM runs WHERE state IN ('ACTIVE','QUEUED')")].length,
+    0,
+  );
 });

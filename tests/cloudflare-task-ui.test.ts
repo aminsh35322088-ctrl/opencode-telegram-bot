@@ -10,7 +10,13 @@ import { CloudTaskUi } from "../src/cloudflare/task-ui.js";
 
 function fixture(threadId = 2) {
   const db = new DatabaseSync(":memory:");
-  const sql: SqlDatabase = { exec: (q, ...v) => db.prepare(q).all(...v) as never };
+  const queries: string[] = [];
+  const sql: SqlDatabase = {
+    exec: (q, ...v) => {
+      queries.push(q);
+      return db.prepare(q).all(...v) as never;
+    },
+  };
   const store = new ControlStore(sql, (fn) => fn());
   const topic: FleetTopic = {
     chatId: -100,
@@ -64,6 +70,7 @@ function fixture(threadId = 2) {
     store,
     context,
     ui: new CloudTaskUi(context),
+    queries,
     messages,
     prompts,
     enqueue,
@@ -459,4 +466,18 @@ test("each accepted task-wizard step renews its input deadline", async () => {
   );
   assert.equal(draft.stage, "confirm");
   assert.equal(draft.expires, f.now() + 300000);
+});
+
+
+test("task scheduler uses the ui_state primary-key prefix instead of LIKE scans", async () => {
+  const f = fixture();
+  await save(f, { due: "2026-10-08T10:01:00Z" });
+  f.queries.length = 0;
+  await f.ui.tick(f.enqueue);
+  assert.equal(
+    f.queries.some((query) => query.includes("key LIKE 'task:%'")),
+    false,
+    "alarm-driven task enumeration must not full-scan ui_state",
+  );
+  assert.ok(f.queries.some((query) => query.includes("key GLOB 'task:*'")));
 });
