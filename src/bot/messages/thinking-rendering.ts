@@ -21,40 +21,57 @@ function formatHeader(title?: string): string {
   return normalizedTitle ? `${fallback} — ${normalizedTitle}` : fallback;
 }
 
-function createThinkingBlock(header: string, text: string): TelegramRichBlock {
+export function isLongThinking(text: string): boolean {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lineCount = normalized.length === 0 ? 0 : normalized.split("\n").length;
+  return normalized.length > 320 || lineCount > 4;
+}
+
+function quoteText(header: string, text: string) {
+  return text
+    ? [{ type: "bold" as const, text: header }, "\n", text]
+    : { type: "bold" as const, text: header };
+}
+
+function createOpenThinkingBlock(header: string, text: string): TelegramRichBlock {
   return {
-    type: "thinking",
-    text: text ? `${header}\n${text}` : header,
+    type: "blockquote",
+    blocks: [{ type: "paragraph", text: quoteText(header, text) }],
   };
 }
 
-function createFinalThinkingBlock(header: string, text: string): TelegramRichBlock {
-  return {
-    type: "expandable_blockquote",
-    text: text
-      ? [{ type: "bold", text: header }, "\n", text]
-      : { type: "bold", text: header },
-  };
+function createCompletedThinkingBlock(
+  header: string,
+  text: string,
+  long: boolean,
+): TelegramRichBlock {
+  return long
+    ? { type: "expandable_blockquote", text: quoteText(header, text) }
+    : createOpenThinkingBlock(header, text);
 }
 
 function createThinkingPart(
   header: string,
   text: string,
   final: boolean,
+  long: boolean,
 ): TelegramRenderedPart {
   const fallbackText = text ? `${header}\n${text}` : header;
   return {
-    blocks: [final ? createFinalThinkingBlock(header, text) : createThinkingBlock(header, text)],
+    blocks: [
+      final
+        ? createCompletedThinkingBlock(header, text, long)
+        : createOpenThinkingBlock(header, text),
+    ],
     fallbackText,
     source: "blocks",
   };
 }
 
 /**
- * While a model run is active, reasoning is represented by Telegram's native
- * `thinking` rich block and therefore must travel through sendRichMessageDraft.
- * On completion the same visible content is converted to a persistent,
- * collapsible rich quotation because `thinking` blocks are draft-only.
+ * Visible reasoning summaries stay open while a run is active. On completion,
+ * short summaries remain open while long summaries become expandable. Raw
+ * provider chain-of-thought is not an input to this renderer.
  */
 export function prepareThinkingPayload(
   sections: ThinkingSection[],
@@ -68,9 +85,10 @@ export function prepareThinkingPayload(
     const text = section.text.replace(/\r\n/g, "\n").trimEnd();
     const textLimit = Math.max(1, DEFAULT_MAX_PART_CHARS - header.length - 1);
     const chunks = text ? splitTextIntoChunks(text, textLimit) : [""];
+    const long = isLongThinking(text);
 
     for (const chunk of chunks) {
-      parts.push(createThinkingPart(header, chunk, final));
+      parts.push(createThinkingPart(header, chunk, final, long));
     }
   }
 

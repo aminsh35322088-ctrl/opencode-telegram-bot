@@ -79,6 +79,14 @@ test("thinking and every execution activity keep Stop without accumulating tool 
     "run",
     part("reason", "reasoning", { text: "SECRET CHAIN OF THOUGHT", time: { start: 1 } }),
   );
+  f.ui.capture(f.topic, "run", {
+    type: "message.part.delta",
+    properties: {
+      partID: "reason",
+      field: "text",
+      delta: "SECRET REASONING DELTA",
+    },
+  });
   for (const tool of ["read", "grep", "bash", "custom", "mcp", "lsp", "task", "webfetch"]) {
     f.ui.capture(
       f.topic,
@@ -101,7 +109,8 @@ test("thinking and every execution activity keep Stop without accumulating tool 
   f.advance();
   await f.ui.update(f.topic, "run", "سلام **answer**");
   const blocks = drafts(f).at(-1)!.body.rich_message.blocks;
-  assert.equal(blocks.filter((b: any) => b.type === "expandable_blockquote").length, 1);
+  assert.equal(blocks.filter((b: any) => b.type === "blockquote").length, 1);
+  assert.equal(blocks.filter((b: any) => b.type === "expandable_blockquote").length, 0);
   assert.equal(blocks.at(-1).type, "thinking");
   assert.equal(JSON.stringify(f.sent).includes("SECRET CHAIN"), false);
   assert.equal(
@@ -110,8 +119,32 @@ test("thinking and every execution activity keep Stop without accumulating tool 
     ),
     false,
   );
+  assert.equal(JSON.stringify(f.sent).includes("SECRET REASONING DELTA"), false);
+  assert.equal(
+    JSON.stringify([...f.sql.exec("SELECT data FROM telegram_run_presentations")]).includes(
+      "SECRET REASONING DELTA",
+    ),
+    false,
+  );
   assert.equal(JSON.stringify(f.sent).includes("PRIVATE INPUT"), false);
 });
+test("trusted completed summary uses the exact 320-character/four-line collapse threshold", async () => {
+  for (const summary of ["x".repeat(321), "a\nb\nc\nd\ne"]) {
+    const f = fixture();
+    await f.ui.start(f.topic, "run");
+    const binding = f.ui.binding("run")!;
+    binding.summaries = [summary];
+    f.sql.exec(
+      "UPDATE telegram_run_presentations SET data=? WHERE run='run'",
+      JSON.stringify(binding),
+    );
+    f.advance();
+    await f.ui.update(f.topic, "run", "");
+    const blocks = drafts(f).at(-1)!.body.rich_message.blocks;
+    assert.equal(blocks.filter((block: any) => block.type === "expandable_blockquote").length, 1);
+  }
+});
+
 for (const activity of ["thinking", "read", "bash", "custom", "task", "streaming", "finalizing"]) {
   test(`native Stop during ${activity} fences exact run and late output`, async () => {
     const f = fixture();

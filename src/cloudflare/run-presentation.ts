@@ -3,6 +3,7 @@ import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 import { renderTelegramParts } from "../bot/render/pipeline.js";
 import { shouldRenderRtl } from "../bot/render/text-direction.js";
 import { t } from "../i18n/index.js";
+import { isLongThinking } from "../bot/messages/thinking-rendering.js";
 
 export type RunPresentationState =
   | "THINKING"
@@ -41,6 +42,13 @@ const active = (s: RunPresentationState) =>
   ["THINKING", "ACTIVITY", "STREAMING", "FINALIZING"].includes(s);
 const object = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const completedSummaryBlock = (text: string) =>
+  isLongThinking(text)
+    ? { type: "expandable_blockquote" as const, text }
+    : {
+        type: "blockquote" as const,
+        blocks: [{ type: "paragraph" as const, text }],
+      };
 const tools = new Set([
   "read",
   "write",
@@ -335,7 +343,7 @@ export class TelegramRunPresentationController {
       ? (renderTelegramParts(text, { maxChars: 3000 }).at(-1)?.blocks ?? [])
       : [];
     const blocks = [
-      ...b.summaries.map((text) => ({ type: "expandable_blockquote", text })),
+      ...b.summaries.map(completedSummaryBlock),
       ...content,
       { type: "thinking", text: label },
     ];
