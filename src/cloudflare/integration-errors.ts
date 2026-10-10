@@ -13,6 +13,11 @@ const notices: Readonly<Record<string, string>> = Object.freeze({
   insufficient_write_permission: "This credential needs repository write permission.",
   enrollment_not_authorized: "Tailscale enrollment is not authorized. Check API access and ownership of tag:opencode-bot.",
   integration_account_unavailable: "This account reference has expired. Reopen Main Settings and select a current account.",
+  railway_unauthorized: "Railway authorization expired or was revoked. Update the Control Plane RAILWAY_API_TOKEN secret, then Retry.",
+  railway_forbidden: "The Railway credential cannot manage this workspace. Replace RAILWAY_API_TOKEN with a credential that has workspace provisioning access, then Retry.",
+  railway_scope_missing: "The configured Railway workspace or project is no longer accessible to this credential. Verify the Railway account and workspace, then Retry.",
+  railway_schema_mismatch: "Railway rejected the provisioning request because its API contract changed. Update the bot before retrying.",
+  railway_provider_rejected: "Railway rejected the provisioning request. Check Railway account access and limits before retrying.",
 });
 /** Only exact internal codes reach presentation. Arbitrary upstream exception text is discarded. */
 export function integrationFailureNotice(error: unknown): string | undefined {

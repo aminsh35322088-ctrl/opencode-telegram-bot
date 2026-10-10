@@ -11,6 +11,7 @@ import { t } from "../i18n/index.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 import { CloudTaskUi, taskDraftKey } from "./task-ui.js";
 import type { ProtectedTelegramUpdate } from "./credential-vault.js";
+import { integrationFailureNotice } from "./integration-errors.js";
 import { CloudConfigUi, resetGlobalConfiguration, OUTPUT_DEFAULTS } from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
@@ -860,7 +861,8 @@ export class CloudBotUi {
   async allocationFailure(job: AllocationJob, reason: string): Promise<void> {
     if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
       throw new Error("main_panel_scope_required");
-    await this.menu(job.chatId, undefined, `❌ Chat creation failed\n\n${escape(reason)}`, [
+    const notice = integrationFailureNotice(new Error(reason)) ?? reason;
+    await this.menu(job.chatId, undefined, `❌ Chat creation failed\n\n${escape(notice)}`, [
       [
         this.button(
           this.panelScope.actor,

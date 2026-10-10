@@ -153,6 +153,18 @@ function fixture(t: { after: (f: () => void) => void }) {
   return { plane, store, sql, sent, rpc, rpcResults, update, callback, bound, post, state, env };
 }
 
+test("Railway authorization failures render actionable recovery instead of internal error codes", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  await f.update("/start");
+  const job = f.store.reserveAllocation("railway-auth-ui", -100);
+  const ui = (f.plane as any).allocationUi(job);
+  await ui.allocationFailure(job, "railway_unauthorized");
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /Railway authorization expired/i);
+  assert.doesNotMatch(output, /railway_unauthorized/);
+});
+
 test("Start restores main navigation and publishes the existing Telegram command catalog without allocating", async (t) => {
   const f = fixture(t);
   await f.update("/start");
