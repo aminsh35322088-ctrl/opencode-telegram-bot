@@ -210,7 +210,7 @@ interface UiDependencies {
     generation: number,
   ) => Promise<void>;
   railwayStatus?: () => RailwaySetupStatus | Promise<RailwaySetupStatus>;
-  railwayResume?: () => Promise<void>;
+  railwayResume?: (actor: number, chat: number) => Promise<void>;
   saveRailwayCredential?: (
     update: ProtectedRailwayTelegramUpdate,
     generation: number,
@@ -1612,7 +1612,7 @@ export class CloudBotUi {
   }
   async railwayOnboarding(actor: number, chat: number, resume = true): Promise<void> {
     if (this.panelScope?.thread) return;
-    if (resume) await this.deps.railwayResume?.();
+    if (resume) await this.deps.railwayResume?.(actor, chat);
     await this.railwayOnboardingPanel(actor, chat);
   }
   private async home(chat: number, actor: number, replace: boolean): Promise<void> {

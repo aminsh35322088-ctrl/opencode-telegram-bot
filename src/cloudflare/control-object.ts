@@ -1850,7 +1850,13 @@ export class ControlPlane {
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
       railwayStatus: () => this.railwaySetupStatus(),
-      railwayResume: async () => {
+      railwayResume: async (actor, chat) => {
+        this.state.storage.sql.exec(
+          "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+          "railway:onboarding",
+          JSON.stringify({ actor, chat }),
+        );
+        this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding:paused");
         await this.resumeRailwaySetup();
       },
       saveRailwayCredential: (update, generation) =>

@@ -1788,8 +1788,18 @@ test("internal Railway onboarding refresh is read-only while explicit onboarding
   await (f.plane as any).refreshRailwayOnboarding();
   assert.equal(resumes, 0);
 
+  f.sql.exec(
+    "DELETE FROM ui_state WHERE key='railway:onboarding'",
+  );
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "railway:onboarding:paused",
+    JSON.stringify({ actor: 7, chat: -100 }),
+  );
   await (f.plane as any).ui().railwayOnboarding(7, -100);
   assert.equal(resumes, 1);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='railway:onboarding'")].length, 1);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='railway:onboarding:paused'")].length, 0);
 });
 
 test("Railway onboarding protects token, seeds ten slots, updates one panel, welcomes, and Continue opens Home", async (t) => {
