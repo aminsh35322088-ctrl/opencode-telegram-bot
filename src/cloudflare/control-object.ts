@@ -3,6 +3,7 @@ import type { DurableObjectState } from "@cloudflare/workers-types";
 import type { ControlEnvironment } from "./worker.js";
 import { ControlStore, type AllocationJob } from "./control-store.js";
 import { decryptCredential, encryptCredential, randomSecret, sha256 } from "./credentials.js";
+import { integrationFailureCategory, integrationFailureNotice } from "./integration-errors.js";
 import { RailwayFleetDriver, railwayApi } from "./railway-fleet-driver.js";
 import { nodeRpc, type RpcIdentity } from "./node-rpc.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
@@ -2015,6 +2016,10 @@ export class ControlPlane {
           await this.scheduleAlarm(Date.now() + 30_000);
           continue;
         }
+        // Fixed allowlisted categories only; never serialize the submitted input or exception.
+        // eslint-disable-next-line no-console
+        console.error(JSON.stringify({ event: "telegram_ui_operation_failed", category: integrationFailureCategory(error),
+          credentialInput: !!(update as ProtectedTelegramUpdate).credentialInput }));
         this.store.completeTelegramUpdate(row.id, "FAILED");
         if (chatId)
           try {
@@ -2047,7 +2052,7 @@ export class ControlPlane {
                             ? "This Topic or menu has expired. Open the current menu again."
                             : error instanceof Error && error.message === "media_too_large"
                               ? "This attachment is too large for the current transport (256 KiB). Send a smaller file."
-                              : "The operation could not be completed. Reopen its menu and try again.",
+                              : integrationFailureNotice(error) ?? "The operation could not be completed. Reopen its menu and try again.",
               );
           } catch {
             /* Persisted failure is available to authenticated reconciliation. */
