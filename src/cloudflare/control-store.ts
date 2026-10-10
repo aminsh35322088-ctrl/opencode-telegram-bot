@@ -694,30 +694,19 @@ export class ControlStore {
         (b) => b.enabled && b.health !== "UNHEALTHY" && b.quotaStatus !== "EXHAUSTED",
       );
       const workers = this.workers();
-      let worker = workers.find(
-        (w) =>
-          backends.some((b) => b.backendId === w.backendId) &&
-          (w.chatId === undefined || w.chatId === 0) &&
-          (w.state === "READY_UNBOUND" ||
-            (w.state === "SLEEPING" && !this.topics().some((t) => t.workerId === w.workerId))),
+      const selected = backends.find(
+        (b) =>
+          workers.filter((w) => w.backendId === b.backendId && w.state !== "REPLACED").length <
+          b.desiredMaximumWorkers,
       );
-      if (worker) {
-        worker = { ...worker, generation: worker.generation + 1, state: "BINDING" };
-      } else {
-        const selected = backends.find(
-          (b) =>
-            workers.filter((w) => w.backendId === b.backendId && w.state !== "REPLACED").length <
-            b.desiredMaximumWorkers,
-        );
-        if (!selected) throw new Error("capacity_exhausted");
-        worker = {
-          workerId: crypto.randomUUID(),
-          backendId: selected.backendId,
-          generation: 1,
-          state: "PROVISIONING",
-          revision: 0,
-        };
-      }
+      if (!selected) throw new Error("capacity_exhausted");
+      const worker: FleetWorker = {
+        workerId: crypto.randomUUID(),
+        backendId: selected.backendId,
+        generation: 1,
+        state: "PROVISIONING",
+        revision: 0,
+      };
       if (threadId !== undefined) {
         worker.chatId = chatId;
         worker.threadId = threadId;
@@ -928,6 +917,56 @@ export class ControlStore {
     worker.credential = credential;
     worker.state = worker.state === "BINDING" ? "BINDING" : "READY_UNBOUND";
     this.saveWorker(worker);
+  }
+  markSessionProbed(jobId: string): AllocationJob {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      const worker = this.worker(job.workerId);
+      if (
+        job.phase === "SESSION_PROBED" ||
+        job.threadId !== undefined ||
+        !worker ||
+        worker.generation !== job.generation ||
+        worker.state !== "READY_UNBOUND" ||
+        !worker.credential
+      )
+        throw new Error("session_probe_state_mismatch");
+      job.phase = "SESSION_PROBED";
+      this.saveJob(job);
+      return job;
+    });
+  }
+  rotateAllocationToTopic(jobId: string, threadId: number): AllocationJob {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      if (!Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("invalid_topic");
+      if (job.phase !== "SESSION_PROBED" || job.threadId !== undefined)
+        throw new Error("allocation_rotation_rejected");
+      const worker = this.worker(job.workerId);
+      if (
+        !worker ||
+        worker.generation !== job.generation ||
+        worker.state !== "READY_UNBOUND" ||
+        !worker.credential
+      )
+        throw new Error("stale_generation");
+      worker.generation += 1;
+      worker.state = "BINDING";
+      worker.chatId = job.chatId;
+      worker.threadId = threadId;
+      worker.credential = undefined;
+      this.saveWorker(worker);
+      this.sql.exec("UPDATE bootstrap SET used=1 WHERE job=?", jobId);
+      job.generation = worker.generation;
+      job.threadId = threadId;
+      job.phase = "BINDING";
+      job.previousDeploymentId = worker.deploymentId;
+      job.deploymentReceipt = undefined;
+      this.saveJob(job);
+      return job;
+    });
   }
   transition(workerId: string, generation: number, state: WorkerState): FleetWorker {
     const worker = this.worker(workerId);
