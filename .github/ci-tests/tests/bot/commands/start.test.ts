@@ -3,11 +3,10 @@ import type { Context } from "grammy";
 import { startCommand } from "../../../src/bot/commands/start-command.js";
 
 const mocked = vi.hoisted(() => ({
-  abortCurrentOperationMock: vi.fn(),
+  cancelCurrentRunMock: vi.fn(),
   clearSessionMock: vi.fn(),
   clearProjectMock: vi.fn(),
   detachAttachedSessionMock: vi.fn(),
-  clearPausedSessionMock: vi.fn(),
   foregroundClearAllMock: vi.fn(),
   assistantRunClearAllMock: vi.fn(),
   getBotUpdateNoticeMock: vi.fn().mockResolvedValue(null),
@@ -19,15 +18,14 @@ const mocked = vi.hoisted(() => ({
   pinnedClearMock: vi.fn().mockResolvedValue(undefined),
   keyboardInitializeMock: vi.fn(),
   keyboardClearContextMock: vi.fn(),
-  keyboardSetPausedMock: vi.fn(),
   keyboardIsTopicModeMock: vi.fn(() => false),
   replaceMainInlineKeyboardMock: vi.fn().mockResolvedValue(true),
   sendMainInlineKeyboardMock: vi.fn().mockResolvedValue(undefined),
   findTelegramTopicBindingByThreadMock: vi.fn(),
 }));
 
-vi.mock("../../../src/bot/commands/abort-command.js", () => ({
-  abortCurrentOperation: mocked.abortCurrentOperationMock,
+vi.mock("../../../src/app/services/current-run-cancellation-service.js", () => ({
+  cancelCurrentRun: mocked.cancelCurrentRunMock,
 }));
 
 vi.mock("../../../src/app/services/session-service.js", () => ({
@@ -40,10 +38,6 @@ vi.mock("../../../src/app/stores/settings-store.js", () => ({
 
 vi.mock("../../../src/app/services/attach-service.js", () => ({
   detachAttachedSession: mocked.detachAttachedSessionMock,
-}));
-
-vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({
-  clearPausedSession: mocked.clearPausedSessionMock,
 }));
 
 vi.mock("../../../src/app/managers/foreground-session-state-manager.js", () => ({
@@ -77,7 +71,6 @@ vi.mock("../../../src/bot/keyboards/keyboard-manager.js", () => ({
   keyboardManager: {
     initialize: mocked.keyboardInitializeMock,
     clearContext: mocked.keyboardClearContextMock,
-    setPaused: mocked.keyboardSetPausedMock,
     isTopicMode: mocked.keyboardIsTopicModeMock,
     replaceMainInlineKeyboard: mocked.replaceMainInlineKeyboardMock,
     sendMainInlineKeyboard: mocked.sendMainInlineKeyboardMock,
@@ -99,11 +92,10 @@ function createStartContext(threadId?: number): Context {
 
 describe("bot/commands/start-command", () => {
   beforeEach(() => {
-    mocked.abortCurrentOperationMock.mockReset().mockResolvedValue(undefined);
+    mocked.cancelCurrentRunMock.mockReset().mockResolvedValue("confirmed");
     mocked.clearSessionMock.mockReset();
     mocked.clearProjectMock.mockReset();
     mocked.detachAttachedSessionMock.mockReset();
-    mocked.clearPausedSessionMock.mockReset();
     mocked.foregroundClearAllMock.mockReset();
     mocked.assistantRunClearAllMock.mockReset();
     mocked.getBotUpdateNoticeMock.mockReset().mockResolvedValue(null);
@@ -115,7 +107,6 @@ describe("bot/commands/start-command", () => {
     mocked.pinnedClearMock.mockReset().mockResolvedValue(undefined);
     mocked.keyboardInitializeMock.mockReset();
     mocked.keyboardClearContextMock.mockReset();
-    mocked.keyboardSetPausedMock.mockReset();
     mocked.keyboardIsTopicModeMock.mockReset().mockReturnValue(false);
     mocked.replaceMainInlineKeyboardMock.mockReset().mockResolvedValue(true);
     mocked.sendMainInlineKeyboardMock.mockReset().mockResolvedValue(undefined);
@@ -127,12 +118,10 @@ describe("bot/commands/start-command", () => {
 
     await startCommand(ctx);
 
-    expect(mocked.abortCurrentOperationMock).toHaveBeenCalledWith(ctx, { notifyUser: false });
+    expect(mocked.cancelCurrentRunMock).toHaveBeenCalledWith({ reason: "start_command_reset" });
     expect(mocked.detachAttachedSessionMock).toHaveBeenCalledWith("start_command_reset");
     expect(mocked.foregroundClearAllMock).toHaveBeenCalledWith("start_command_reset");
     expect(mocked.assistantRunClearAllMock).toHaveBeenCalledWith("start_command_reset");
-    expect(mocked.clearPausedSessionMock).toHaveBeenCalledTimes(1);
-    expect(mocked.keyboardSetPausedMock).toHaveBeenCalledWith(false);
     expect(mocked.clearSessionMock).toHaveBeenCalledTimes(1);
     expect(mocked.clearProjectMock).toHaveBeenCalledTimes(1);
     expect(mocked.keyboardClearContextMock).toHaveBeenCalledTimes(1);
@@ -154,7 +143,7 @@ describe("bot/commands/start-command", () => {
 
     expect(mocked.replaceMainInlineKeyboardMock).toHaveBeenCalledWith(100);
     expect(mocked.sendMainInlineKeyboardMock).not.toHaveBeenCalled();
-    expect(mocked.abortCurrentOperationMock).not.toHaveBeenCalled();
+    expect(mocked.cancelCurrentRunMock).not.toHaveBeenCalled();
   });
 
   it("treats /start inside a Telegram Topic as navigation without replacing the root anchor", async () => {
@@ -168,7 +157,7 @@ describe("bot/commands/start-command", () => {
     await startCommand(ctx);
 
     expect(mocked.findTelegramTopicBindingByThreadMock).toHaveBeenCalledWith(100, 731925);
-    expect(mocked.abortCurrentOperationMock).not.toHaveBeenCalled();
+    expect(mocked.cancelCurrentRunMock).not.toHaveBeenCalled();
     expect(mocked.clearSessionMock).not.toHaveBeenCalled();
     expect(mocked.clearProjectMock).not.toHaveBeenCalled();
     expect(mocked.pinnedClearMock).not.toHaveBeenCalled();

@@ -6,7 +6,7 @@ import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
 describe("bot/messages/thinking-rendering", () => {
-  it("renders live reasoning as Telegram's native thinking block", () => {
+  it("renders live reasoning as an open Telegram blockquote", () => {
     const header = `${t("bot.thinking")} — Analysis`;
 
     const payload = prepareThinkingPayload([
@@ -16,9 +16,10 @@ describe("bot/messages/thinking-rendering", () => {
     expect(payload?.parts).toHaveLength(1);
     const firstPart = defined(payload?.parts[0]);
     expect(firstPart.source).toBe("blocks");
-    expect(firstPart.blocks).toEqual([
-      { type: "thinking", text: `${header}\nLine one\nLine two` },
-    ]);
+    expect(firstPart.blocks).toEqual([{
+      type: "blockquote",
+      blocks: [{ type: "paragraph", text: [{ type: "bold", text: header }, "\n", "Line one\nLine two"] }],
+    }]);
     expect(firstPart.fallbackText).toBe(`${header}\nLine one\nLine two`);
     expect(firstPart.entities).toBeUndefined();
   });
@@ -29,20 +30,19 @@ describe("bot/messages/thinking-rendering", () => {
     expect(defined(payload?.parts[0]).fallbackText).toBe(`${t("bot.thinking")}\nA`);
   });
 
-  it("uses the native thinking block while the model is still reasoning", () => {
+  it("keeps visible reasoning open while the model is still reasoning", () => {
     const payload = prepareThinkingPayload([{ id: "r1", text: "Line one" }]);
 
-    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("thinking");
+    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("blockquote");
   });
 
-  it("converts completed reasoning to an expandable blockquote", () => {
+  it("keeps completed short reasoning open and collapses only long reasoning", () => {
     const header = t("bot.thinking");
     const payload = prepareThinkingPayload([{ id: "r1", text: "Line one" }], { final: true });
 
-    expect(defined(payload?.parts[0]?.blocks?.[0])).toEqual({
-      type: "expandable_blockquote",
-      text: [{ type: "bold", text: header }, "\n", "Line one"],
-    });
+    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("blockquote");
+    const longPayload = prepareThinkingPayload([{ id: "r1", text: "x".repeat(321) }], { final: true });
+    expect(defined(longPayload?.parts[0]?.blocks?.[0]).type).toBe("expandable_blockquote");
   });
 
   it("emits one part per reasoning section, in order", () => {
@@ -90,12 +90,15 @@ describe("bot/messages/thinking-rendering", () => {
     expect(joined).toBe(text);
   });
 
-  it("keeps an empty section as a native thinking header", () => {
+  it("keeps an empty section as an open thinking header", () => {
     const header = `${t("bot.thinking")} — Empty`;
     const payload = prepareThinkingPayload([{ id: "r1", title: "Empty", text: "" }]);
 
     expect(defined(payload?.parts[0]).fallbackText).toBe(header);
-    expect(defined(payload?.parts[0]).blocks).toEqual([{ type: "thinking", text: header }]);
+    expect(defined(payload?.parts[0]).blocks).toEqual([{
+      type: "blockquote",
+      blocks: [{ type: "paragraph", text: { type: "bold", text: header } }],
+    }]);
   });
 
   it("returns no payload without sections", () => {

@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   getStoredModel: vi.fn(),
   assistantRunState: { hasActiveRun: vi.fn(), hasActiveRuns: vi.fn() },
   interactionManager: { getSnapshot: vi.fn(), clear: vi.fn(), clearAll: vi.fn(), start: vi.fn(), isActive: vi.fn(), clearSession: vi.fn() },
-  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), setPaused: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn() },
+  keyboardManager: { getState: vi.fn(), getKeyboard: vi.fn(), isTopicMode: vi.fn(), sendKeyboardUpdate: vi.fn(), updateAgent: vi.fn(), updateModel: vi.fn() },
   showModelCenterMenu: vi.fn(),
   showAgentSelectionMenu: vi.fn(),
   showVariantSelectionMenu: vi.fn(),
@@ -18,9 +18,6 @@ const mocks = vi.hoisted(() => ({
   topicModelsCommand: vi.fn(),
   sessionsCommand: vi.fn(),
   newCommand: vi.fn(),
-  abortCurrentOperation: vi.fn(),
-  pauseCurrentChat: vi.fn(),
-  resumePausedChat: vi.fn(),
   showTelegramTopicDeleteConfirmation: vi.fn(),
   findQueuedPromptByButtonLabel: vi.fn(),
   promptQueue: { removeById: vi.fn(), __resetForTests: vi.fn() },
@@ -49,8 +46,6 @@ vi.mock("../../../src/bot/menus/context-control-menu.js", () => ({ handleContext
 vi.mock("../../../src/bot/commands/settings-command.js", () => ({ settingsCommand: mocks.settingsCommand, topicModelsCommand: mocks.topicModelsCommand }));
 vi.mock("../../../src/bot/commands/sessions-command.js", () => ({ sessionsCommand: mocks.sessionsCommand }));
 vi.mock("../../../src/bot/commands/new-command.js", () => ({ newCommand: mocks.newCommand }));
-vi.mock("../../../src/bot/commands/abort-command.js", () => ({ abortCurrentOperation: mocks.abortCurrentOperation }));
-vi.mock("../../../src/bot/commands/pause-command.js", () => ({ pauseCurrentChat: mocks.pauseCurrentChat, resumePausedChat: mocks.resumePausedChat }));
 vi.mock("../../../src/bot/services/telegram-topic-delete-handler.js", () => ({ showTelegramTopicDeleteConfirmation: mocks.showTelegramTopicDeleteConfirmation }));
 vi.mock("../../../src/bot/commands/providers-command.js", () => ({ isProviderWizardActive: mocks.isProviderWizardActive, clearProviderWizard: vi.fn(), providersCommand: vi.fn() }));
 vi.mock("../../../src/bot/commands/integrations-command.js", () => ({ isIntegrationWizardActive: mocks.isIntegrationWizardActive, clearIntegrationWizard: vi.fn() }));
@@ -98,7 +93,7 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     mocks.findQueuedPromptByButtonLabel.mockReturnValue(null);
   });
 
-  const topicButtons = ["🛑 Abort", "⏸️ Pause", "▶️ Resume", "📦 Compact: OFF", "🧠 Models", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
+  const topicButtons = ["📦 Compact: OFF", "🧠 Models", "🧠 Model Center", "🗑️ Delete Chat", "⚙️ Topic Settings"];
 
   for (const button of topicButtons) {
     it(`consumes "${button}" inside a topic without forwarding it as a prompt`, async () => {
@@ -110,13 +105,6 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
       expect(next).not.toHaveBeenCalled();
     });
   }
-
-  it("dispatches Abort inside a topic", async () => {
-    const { handler, next } = registerHandler();
-    await handler(makeTopicContext("🛑 Abort"), next);
-    expect(mocks.abortCurrentOperation).toHaveBeenCalledTimes(1);
-    expect(next).not.toHaveBeenCalled();
-  });
 
   it("dispatches the unified Models hub inside a topic", async () => {
     const { handler, next } = registerHandler();
@@ -145,17 +133,6 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
     await handler(ctx, next);
 
     expect(mocks.showTelegramTopicDeleteConfirmation).toHaveBeenCalledTimes(1);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("dispatches an enriched Abort press from its authentic stashed label", async () => {
-    const { handler, next } = registerHandler();
-    const ctx = makeTopicContext("Replying to @Chat Bot.\n\n🛑 Abort");
-    stashRawReplyKeyboardText(ctx, "🛑 Abort");
-
-    await handler(ctx, next);
-
-    expect(mocks.abortCurrentOperation).toHaveBeenCalledTimes(1);
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -196,8 +173,8 @@ describe("bot/routers/reply-keyboard-router topic scope", () => {
   it("does not dispatch a Topic control when Core points at a different session", async () => {
     mocks.resolveCoreTopicBinding.mockReturnValue({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: "stale-session", normalizedDirectory: path.resolve("/proj") });
     const { handler, next } = registerHandler();
-    await handler(makeTopicContext("🛑 Abort"), next);
-    expect(mocks.abortCurrentOperation).not.toHaveBeenCalled();
+    await handler(makeTopicContext("🗑️ Delete Chat"), next);
+    expect(mocks.showTelegramTopicDeleteConfirmation).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
   });
 

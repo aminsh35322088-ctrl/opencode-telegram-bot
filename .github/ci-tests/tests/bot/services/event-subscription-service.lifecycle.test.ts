@@ -278,21 +278,21 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       { foregroundSessionState },
       { assistantRunState },
       { attachManager },
-      abortSuppression,
+      cancellationSuppression,
       { externalUserInputSuppressionManager },
     ] = await Promise.all([
       import("../../../src/app/stores/settings-store.js"),
       import("../../../src/app/managers/foreground-session-state-manager.js"),
       import("../../../src/app/managers/assistant-run-state-manager.js"),
       import("../../../src/app/managers/attach-manager.js"),
-      import("../../../src/app/managers/abort-suppression-manager.js"),
+      import("../../../src/app/managers/cancellation-suppression-manager.js"),
       import("../../../src/app/managers/external-input-suppression-manager.js"),
     ]);
     settingsStore.__resetSettingsForTests();
     foregroundSessionState.__resetForTests();
     assistantRunState.__resetForTests();
     attachManager.__resetForTests();
-    abortSuppression.__resetUserAbortErrorSuppressionForTests();
+    cancellationSuppression.__resetCancellationErrorSuppressionForTests();
     externalUserInputSuppressionManager.__resetForTests();
     await resetSingletonState();
   });
@@ -900,14 +900,14 @@ describe("bot/services/event-subscription-service lifecycle", () => {
       expect(assistantRunState.finishRun("session-1", "assertion")).toBeNull();
     });
 
-    it("stays silent for the error that follows a user-requested abort", async () => {
+    it("stays silent for the error that follows an expected cancellation", async () => {
       const { api, summaryAggregator } = await setupService();
-      const [{ markUserAbortRequested }, { foregroundSessionState }] = await Promise.all([
-        import("../../../src/app/managers/abort-suppression-manager.js"),
+      const [{ markCancellationExpected }, { foregroundSessionState }] = await Promise.all([
+        import("../../../src/app/managers/cancellation-suppression-manager.js"),
         import("../../../src/app/managers/foreground-session-state-manager.js"),
       ]);
       foregroundSessionState.markBusy("session-1", "D:/repo");
-      markUserAbortRequested("session-1");
+      markCancellationExpected("session-1");
 
       emitSessionError(summaryAggregator, "Aborted");
 
@@ -915,30 +915,6 @@ describe("bot/services/event-subscription-service lifecycle", () => {
         expect(foregroundSessionState.isBusy()).toBe(false);
       });
       expect(api.sendMessage).not.toHaveBeenCalled();
-    });
-
-    it("preserves Resume and Abort after the expected Pause abort error and idle", async () => {
-      const { api, summaryAggregator } = await setupService();
-      const { markUserAbortRequested } = await import("../../../src/app/managers/abort-suppression-manager.js");
-      const { setPausedSession, isChatPaused, clearPausedSession } = await import("../../../src/app/managers/paused-session-manager.js");
-      const { keyboardManager } = await import("../../../src/bot/keyboards/keyboard-manager.js");
-      const { foregroundSessionState } = await import("../../../src/app/managers/foreground-session-state-manager.js");
-      keyboardManager.bindTopic(api as never, 42, 7, "session-1");
-      setPausedSession({ id: "session-1", title: "Paused", directory: "D:/repo" });
-      foregroundSessionState.markBusy("session-1", "D:/repo");
-      markUserAbortRequested("session-1");
-      emitSessionError(summaryAggregator, "Aborted");
-      await vi.waitFor(() => expect(foregroundSessionState.isBusy()).toBe(false));
-      summaryAggregator.processEvent({ type: "session.idle", properties: { sessionID: "session-1" } } as unknown as Event);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      expect(isChatPaused("session-1")).toBe(true);
-      const buttons = keyboardManager.getKeyboard("session-1")!.keyboard.flat().map(button => button.text);
-      expect(buttons).toContain("▶️ Resume");
-      expect(buttons).toContain("🛑 Abort");
-      expect(buttons).not.toContain("⏸️ Pause");
-      expect(api.sendMessage).not.toHaveBeenCalled();
-      clearPausedSession("session-1");
-      keyboardManager.clearSession("session-1");
     });
 
     it("truncates an oversized session error", async () => {

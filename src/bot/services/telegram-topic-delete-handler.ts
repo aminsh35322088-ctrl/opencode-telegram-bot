@@ -50,7 +50,7 @@ export async function showTelegramTopicDeleteConfirmation(ctx: Context): Promise
 
   const running = assistantRunState.hasActiveRun(binding.sessionId);
   const warning = running
-    ? "\n\n⚠️ The model is currently working. Confirming will abort the run first and then delete this Topic."
+    ? "\n\n⚠️ The model is currently working. Confirming will cancel the current run first and then delete this Topic."
     : "";
 
   await ctx.reply(

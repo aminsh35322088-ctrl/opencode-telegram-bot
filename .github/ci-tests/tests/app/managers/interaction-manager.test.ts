@@ -45,7 +45,7 @@ describe("interactionManager", () => {
     const transitioned = interactionManager.transition({
       kind: "question",
       expectedInput: "mixed",
-      allowedCommands: ["/abort"],
+      allowedCommands: ["/help"],
       metadata: { step: 2 },
       expiresInMs: 5000,
     });
@@ -53,7 +53,7 @@ describe("interactionManager", () => {
     expect(transitioned).not.toBeNull();
     expect(transitioned?.kind).toBe("question");
     expect(transitioned?.expectedInput).toBe("mixed");
-    expect(transitioned?.allowedCommands).toEqual(["/abort"]);
+    expect(transitioned?.allowedCommands).toEqual(["/help"]);
     expect(transitioned?.metadata).toEqual({ step: 2 });
     expect(typeof transitioned?.expiresAt).toBe("number");
   });

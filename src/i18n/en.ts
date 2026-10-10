@@ -64,7 +64,7 @@ export const en = {
   "bot.empty_prompt": "⚠️ Nothing to send: the message is empty after attachment handling.",
   "bot.session_error": "🔴 OpenCode returned an error: {message}",
   "bot.session_retry":
-    "🔁 {message}\n\nProvider keeps returning the same error on repeated retries. Use Telegram Stop to abort.",
+    "🔁 {message}\n\nProvider keeps returning the same error on repeated retries. Use Telegram Stop to cancel the current run.",
   "bot.external_user_input": "External user input",
   "background.session_fallback": "session {id}",
   "background.assistant_response": "🔔 Assistant replied in background session: {session}",
@@ -192,16 +192,16 @@ export const en = {
   "stop.no_active_session":
     "🛑 Agent was not started\n\nCreate a session with /new or select one via /sessions.",
   "stop.in_progress":
-    "🛑 Event stream stopped, sending abort signal...\n\nWaiting for agent to stop.",
+    "🛑 Event stream stopped, sending cancellation signal...\n\nWaiting for agent to stop.",
   "stop.warn_unconfirmed":
-    "⚠️ Event stream stopped, but server did not confirm abort.\n\nCheck /status and retry Telegram Stop in a few seconds.",
+    "⚠️ Event stream stopped, but server did not confirm cancellation.\n\nCheck /status and retry Telegram Stop in a few seconds.",
   "stop.warn_maybe_finished": "⚠️ Event stream stopped, but the agent may have already finished.",
   "stop.success": "✅ Agent action interrupted. No more messages from this run will be sent.",
   "stop.warn_still_busy":
     "⚠️ Signal sent, but agent is still busy.\n\nEvent stream is already disabled, so no intermediate messages will be sent.",
   "stop.warn_timeout":
-    "⚠️ Abort request timeout.\n\nEvent stream is already disabled, retry Telegram Stop in a few seconds.",
-  "stop.warn_local_only": "⚠️ Event stream stopped locally, but server-side abort failed.",
+    "⚠️ Cancellation request timeout.\n\nEvent stream is already disabled, retry Telegram Stop in a few seconds.",
+  "stop.warn_local_only": "⚠️ Event stream stopped locally, but server-side cancellation failed.",
   "stop.error": "🔴 Failed to stop action.\n\nEvent stream is stopped, try Telegram Stop again.",
 
   "opencode_start.already_running": "✅ OpenCode Server is already running\n\nVersion: {version}",

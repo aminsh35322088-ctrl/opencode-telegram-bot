@@ -313,10 +313,9 @@ describe("interaction guard", () => {
     expect(decision.inputType).toBe("other");
   });
 
-  it("allows abort, detach, status, help, and opencode_stop while busy without interaction", () => {
+  it("allows safe navigation and administration commands while busy without interaction", () => {
     foregroundSessionState.markBusy("session-1", "D:\\Projects\\Repo");
 
-    expect(resolveInteractionGuardDecision(createContext({ text: "/abort" })).allow).toBe(true);
     expect(resolveInteractionGuardDecision(createContext({ text: "/detach" })).allow).toBe(true);
     expect(resolveInteractionGuardDecision(createContext({ text: "/status" })).allow).toBe(true);
     expect(resolveInteractionGuardDecision(createContext({ text: "/help" })).allow).toBe(true);

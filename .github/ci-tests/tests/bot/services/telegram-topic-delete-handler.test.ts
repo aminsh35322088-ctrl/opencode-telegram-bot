@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentSessionMock: vi.fn(() => undefined),
   detachMock: vi.fn(),
   clearInteractionsMock: vi.fn(),
-  abortMock: vi.fn(),
+  cancelMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({
@@ -29,8 +29,8 @@ vi.mock("../../../src/app/services/session-service.js", () => ({
 vi.mock("../../../src/app/services/attach-service.js", () => ({
   detachAttachedSession: mocks.detachMock,
 }));
-vi.mock("../../../src/bot/commands/abort-command.js", () => ({
-  abortCurrentOperation: mocks.abortMock,
+vi.mock("../../../src/app/services/current-run-cancellation-service.js", () => ({
+  cancelCurrentRun: mocks.cancelMock,
 }));
 vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

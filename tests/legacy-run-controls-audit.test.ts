@@ -27,12 +27,19 @@ test("Telegram exposes no legacy Pause Resume Abort or custom Stop product contr
   const replyRouter = text("src/bot/routers/reply-keyboard-router.ts");
   const messageRouter = text("src/bot/routers/message-router.ts");
   const classifier = text("src/bot/interaction-classifier.ts");
+  const messagePatterns = text("src/bot/message-patterns.ts");
   const cloudUi = text("src/cloudflare/bot-ui.ts");
-  for (const source of [replyRouter, messageRouter, classifier, cloudUi]) {
+  for (const source of [replyRouter, messageRouter, classifier, messagePatterns, cloudUi]) {
     assert.doesNotMatch(source, /MAIN_BUTTONS\.(?:pause|resume|abort)/);
   }
   assert.doesNotMatch(cloudUi, /\["pause",\s*"resume",\s*"abort",\s*"stop"\]/);
   assert.doesNotMatch(cloudUi, /name === "abort"|name === "pause"|name === "resume"/);
+  assert.doesNotMatch(messagePatterns, /⏸(?:️)? Pause|▶(?:️)? Resume|🛑 Abort/);
+
+  const topicDeleteUi = text("src/bot/services/telegram-topic-delete-handler.ts");
+  const englishUi = text("src/i18n/en.ts");
+  assert.doesNotMatch(topicDeleteUi, /\babort\b/i);
+  assert.doesNotMatch(englishUi, /\babort\b/i);
 });
 
 test("dedicated legacy run-control modules are retired and an internal cancellation service exists", async () => {

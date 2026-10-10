@@ -14,7 +14,7 @@ describe("model routing summary", () => {
         modelID: "muse",
         modelName: "Muse Spark 1.2 Free",
         availability: "available",
-        capabilities: { operations: { chat: true }, agent: { toolCalling: false } },
+        capabilities: { operations: { chat: true }, agent: { toolCalling: false, reasoning: true } },
       }],
       routes: new Map([
         ["vision", { routeSource: "primary-native" }],
@@ -30,6 +30,7 @@ describe("model routing summary", () => {
       "",
       "💬 Chat ✅",
       "👁️ Vision ✅",
+      "🧠 Reasoning ✅",
       "🎙️ Voice → Text ❌",
       "🎨 Image AI ↪️",
       "🔊 Text → Voice ✅ ⚙️",

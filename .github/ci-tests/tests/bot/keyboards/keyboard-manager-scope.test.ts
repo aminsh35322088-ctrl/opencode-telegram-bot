@@ -6,8 +6,6 @@ const mocks = vi.hoisted(() => ({
   getStoredModel: vi.fn(),
   formatVariantForButton: vi.fn(),
   getQueuedPromptButtonLabels: vi.fn(),
-  isChatPaused: vi.fn(),
-  assistantRunState: { hasActiveRun: vi.fn() },
   getTopicRuntimeStateSync: vi.fn(),
 }));
 
@@ -16,8 +14,6 @@ vi.mock("../../../src/app/services/agent-selection-service.js", () => ({ getStor
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({ getStoredModel: mocks.getStoredModel }));
 vi.mock("../../../src/app/services/variant-selection-service.js", () => ({ formatVariantForButton: mocks.formatVariantForButton }));
 vi.mock("../../../src/bot/keyboards/queued-prompt-button.js", () => ({ getQueuedPromptButtonLabels: mocks.getQueuedPromptButtonLabels }));
-vi.mock("../../../src/app/managers/paused-session-manager.js", () => ({ isChatPaused: mocks.isChatPaused }));
-vi.mock("../../../src/app/managers/assistant-run-state-manager.js", () => ({ assistantRunState: mocks.assistantRunState }));
 vi.mock("../../../src/app/stores/topic-runtime-state-store.js", () => ({ getTopicRuntimeStateSync: mocks.getTopicRuntimeStateSync }));
 vi.mock("../../../src/i18n/index.js", () => ({ t: (key: string) => key, normalizeLocale: vi.fn(() => "en") }));
 vi.mock("../../../src/utils/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -41,8 +37,6 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     mocks.getStoredAgent.mockReturnValue("code");
     mocks.formatVariantForButton.mockReturnValue("Default");
     mocks.getQueuedPromptButtonLabels.mockReturnValue([]);
-    mocks.isChatPaused.mockReturnValue(false);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
     mocks.getTopicRuntimeStateSync.mockReturnValue(null);
     mocks.getCompactOutputMode.mockReturnValue(false);
   });
@@ -96,35 +90,16 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(texts).not.toContain("🛑 Abort");
   });
 
-  it("returns the Topic keyboard with running controls while the session is running", () => {
+  it("keeps the approved Topic keyboard invariant while a run is active", () => {
     keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
-    const keyboard = keyboardManager.getKeyboard(SESSION_ID);
-    expect(keyboard).toBeDefined();
-    const texts = keyboardTexts(keyboard);
+    const texts = keyboardTexts(keyboardManager.getKeyboard(SESSION_ID));
     expect(texts).toContain("🧠 Global Model");
-    expect(texts).toContain("⏸️ Pause");
-    expect(texts).toContain("🛑 Abort");
-
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
-    const idleKeyboard = keyboardManager.getKeyboard(SESSION_ID);
-    expect(idleKeyboard).toBeDefined();
-    const idleTexts = keyboardTexts(idleKeyboard);
-    expect(idleTexts).toContain("🧠 Global Model");
-    expect(idleTexts).not.toContain("⏸️ Pause");
-    expect(idleTexts).not.toContain("▶️ Resume");
-    expect(idleTexts).not.toContain("🛑 Abort");
-  });
-
-  it("uses Resume and Abort for a paused Topic run", () => {
-    keyboardManager.bindTopic({} as never, CHAT_ID, THREAD_ID, SESSION_ID);
-    mocks.isChatPaused.mockReturnValue(true);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
-    const keyboard = keyboardManager.getKeyboard(SESSION_ID);
-    const texts = keyboardTexts(keyboard);
-    expect(texts).toContain("▶️ Resume");
-    expect(texts).toContain("🛑 Abort");
+    expect(texts).toContain("📦 Compact: OFF");
+    expect(texts).toContain("🗑️ Delete Chat");
+    expect(texts).toContain("⚙️ Topic Settings");
     expect(texts).not.toContain("⏸️ Pause");
+    expect(texts).not.toContain("▶️ Resume");
+    expect(texts).not.toContain("🛑 Abort");
   });
 
   it("sendKeyboardUpdate keeps a summonable Topic keyboard and suppresses duplicate layouts", async () => {
@@ -151,50 +126,19 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(updateMain).toHaveBeenCalledWith(CHAT_ID, expect.objectContaining({ modelID: "m" }), true);
   });
 
-  it("delivers running controls once even within debounce, without reopening for duplicate updates", async () => {
+  it("does not re-deliver an identical Topic keyboard for run-state-only changes", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 901, message_thread_id: THREAD_ID });
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
-
-    // Deliver once while idle so the user's keyboard exists before the run starts.
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
-    const deliveredCount = sendMessage.mock.calls.length;
-    expect(deliveredCount).toBe(1);
-
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, false));
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
-    expect(sendMessage).toHaveBeenCalledTimes(deliveredCount + 1);
-    const options = sendMessage.mock.calls.at(-1)![2];
-    expect(keyboardTexts(options.reply_markup)).toContain("⏸️ Pause");
-    expect(keyboardTexts(options.reply_markup)).toContain("🛑 Abort");
-  });
-
-  it("updates controls from running to paused", async () => {
-    const sendMessage = vi.fn().mockResolvedValue({ message_id: 902, message_thread_id: THREAD_ID });
-    keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
-
-    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
-    const deliveredCount = sendMessage.mock.calls.length;
-
-    // Every state transition delivers its controls, including an immediate pause.
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
-    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
-    mocks.isChatPaused.mockReturnValue(true);
-    await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: SESSION_ID }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
-
-    expect(sendMessage).toHaveBeenCalledTimes(deliveredCount + 2);
-    const [, , options] = sendMessage.mock.calls.at(-1) as [number, string, Record<string, unknown>];
-    expect(options.message_thread_id).toBe(THREAD_ID);
-    expect(keyboardTexts(options.reply_markup)).toContain("▶️ Resume");
-    expect(keyboardTexts(options.reply_markup)).toContain("🛑 Abort");
-    expect(keyboardTexts(options.reply_markup)).not.toContain("⏸️ Pause");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(keyboardTexts(sendMessage.mock.calls[0]![2].reply_markup)).not.toContain("🛑 Abort");
   });
 
   it("delivers the initial Topic keyboard even when the first refresh arrives while running", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 903, message_thread_id: THREAD_ID });
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, "session-fresh");
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
 
     await runInTopicRuntimeContext({ chatId: CHAT_ID, threadId: THREAD_ID, sessionId: "session-fresh" }, () => keyboardManager.sendKeyboardUpdate(CHAT_ID, true));
 
@@ -214,20 +158,19 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
   it("explicit restore re-delivers an unchanged keyboard even during a run", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 904 });
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
     await keyboardManager.sendKeyboardUpdate(CHAT_ID, true, SESSION_ID);
     await keyboardManager.restoreTopicKeyboard(SESSION_ID);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     const options = sendMessage.mock.calls.at(-1)![2];
     expect(options.message_thread_id).toBe(THREAD_ID);
     expect(options.reply_markup.remove_keyboard).toBeUndefined();
-    expect(keyboardTexts(options.reply_markup)).toContain("🛑 Abort");
+    expect(keyboardTexts(options.reply_markup)).toContain("🧠 Global Model");
+    expect(keyboardTexts(options.reply_markup)).not.toContain("🛑 Abort");
   });
 
   it("serializes concurrent refreshes so identical controls are delivered once", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 905 });
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
     await Promise.all([
       keyboardManager.sendKeyboardUpdate(CHAT_ID, true, SESSION_ID),
       keyboardManager.sendKeyboardUpdate(CHAT_ID, true, SESSION_ID),
@@ -235,15 +178,13 @@ describe("bot/keyboards/keyboard-manager scope resolution", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("restores idle controls after a run without waiting for debounce", async () => {
+  it("deduplicates an unchanged Topic keyboard across lifecycle refreshes", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 906 });
     keyboardManager.bindTopic({ sendMessage } as never, CHAT_ID, THREAD_ID, SESSION_ID);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(true);
     await keyboardManager.sendKeyboardUpdate(CHAT_ID, false, SESSION_ID);
-    mocks.assistantRunState.hasActiveRun.mockReturnValue(false);
     await keyboardManager.sendKeyboardUpdate(CHAT_ID, false, SESSION_ID);
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(keyboardTexts(sendMessage.mock.calls.at(-1)![2].reply_markup)).not.toContain("🛑 Abort");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(keyboardTexts(sendMessage.mock.calls[0]![2].reply_markup)).not.toContain("🛑 Abort");
   });
 
   it("an explicit sessionId always wins over the runtime context", () => {
