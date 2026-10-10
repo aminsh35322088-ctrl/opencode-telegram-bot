@@ -222,10 +222,13 @@ export class LegacyModelAdapter {
     if (cached && (cached.providers.length || cached.verified) && cached.at > Date.now() - 60_000)
       return cached.providers;
     if (scope.kind === "topic") return (await this.refresh(scope.topic)).providers;
+    const failedAt = this.ui.getUiState<number>("legacy:model:unavailableAt") ?? 0;
+    if (failedAt > Date.now() - 15_000) return cached?.providers ?? [];
     try {
       return (await this.refreshGeneral()).providers;
     } catch {
       this.ui.setUiState("legacy:model:unavailable", true);
+      this.ui.setUiState("legacy:model:unavailableAt", Date.now());
       return cached?.providers ?? [];
     }
   }
@@ -240,6 +243,7 @@ export class LegacyModelAdapter {
         try {
           const catalog = await this.refresh(topic);
           this.ui.setUiState("legacy:model:unavailable", false);
+          this.ui.setUiState("legacy:model:unavailableAt", 0);
           return catalog;
         } catch {
           /* Reject stale or unsigned responses; try another current Worker. */

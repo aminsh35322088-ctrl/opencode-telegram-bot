@@ -220,3 +220,18 @@ test("one signed empty catalog serves concurrent General readers without repeate
   await f.models.providers(scope);
   assert.equal(f.rpc.filter((op) => op === "models.list").length, 1);
 });
+
+test("unavailable General browsing has a short cooldown but selection retries live authorization", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.ui.rpc = async () => {
+    calls++;
+    throw new Error("worker_unavailable");
+  };
+  const scope = { kind: "global" as const };
+  await f.models.providers(scope);
+  await f.models.providers(scope);
+  assert.equal(calls, 1);
+  await assert.rejects(f.models.select(scope, { providerID: "p", modelID: "m0" }), /model_catalog_unavailable/);
+  assert.equal(calls, 2);
+});
