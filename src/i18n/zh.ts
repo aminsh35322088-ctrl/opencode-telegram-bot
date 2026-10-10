@@ -32,6 +32,17 @@ export const zh: I18nDictionary = {
   "common.unknown": "未知",
   "common.unknown_error": "未知错误",
 
+  "reset.pending.factory_title": "恢复出厂设置已暂停",
+  "reset.pending.history_title": "清除对话历史已暂停",
+  "reset.pending.legacy_title": "先前的重置操作已暂停",
+  "reset.pending.resume_or_cancel": "继续以执行已保存的清理计划，或取消待处理的重置以解锁主页。",
+  "reset.pending.legacy_help": "此重置由旧版本创建。请取消它以解锁主页；如果仍需要重置，请从“设置”重新开始。",
+  "reset.pending.cleanup_retry": "目前仍无法安全确认清理结果。请继续同一清理计划，或取消待处理的重置以解锁主页。",
+  "reset.pending.resume_button": "↻ 继续重置",
+  "reset.pending.cancel_button": "✖ 取消待处理的重置",
+  "reset.completed.factory": "✅ 恢复出厂设置已完成。",
+  "reset.completed.history": "✅ 对话历史已清除。",
+
   "help.keyboard_hint": "💡 Agent、模型、变体和上下文操作请使用底部键盘按钮。",
 
   "bot.thinking": "💭 思考中...",

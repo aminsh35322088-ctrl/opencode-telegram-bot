@@ -38,6 +38,17 @@ export const ar: I18nDictionary = {
   "common.unknown": "غير معروف",
   "common.unknown_error": "خطأ غير معروف",
 
+  "reset.pending.factory_title": "تم إيقاف إعادة ضبط المصنع مؤقتًا",
+  "reset.pending.history_title": "تم إيقاف مسح سجل المحادثات مؤقتًا",
+  "reset.pending.legacy_title": "توجد عملية إعادة ضبط سابقة متوقفة مؤقتًا",
+  "reset.pending.resume_or_cancel": "تابع لإكمال خطة التنظيف المحفوظة، أو ألغِ عملية إعادة الضبط المعلقة لفتح الصفحة الرئيسية.",
+  "reset.pending.legacy_help": "تم إنشاء عملية إعادة الضبط هذه بواسطة إصدار أقدم. ألغها لفتح الصفحة الرئيسية، ثم ابدأ إعادة الضبط من الإعدادات إذا كنت لا تزال تحتاج إليها.",
+  "reset.pending.cleanup_retry": "تعذر التحقق من التنظيف بأمان حتى الآن. تابع لإعادة محاولة خطة التنظيف نفسها، أو ألغِ عملية إعادة الضبط المعلقة لفتح الصفحة الرئيسية.",
+  "reset.pending.resume_button": "↻ متابعة إعادة الضبط",
+  "reset.pending.cancel_button": "✖ إلغاء إعادة الضبط المعلقة",
+  "reset.completed.factory": "✅ اكتملت إعادة ضبط المصنع.",
+  "reset.completed.history": "✅ تم مسح سجل المحادثات.",
+
   "help.keyboard_hint":
     "💡 استخدم الأزرار السفلية للتبديل بين الوكيل والنموذج وخيارات التشغيل وإدارة السياق.",
 

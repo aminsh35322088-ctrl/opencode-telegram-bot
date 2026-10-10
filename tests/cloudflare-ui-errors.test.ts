@@ -11,6 +11,7 @@ test("ordinary Main configuration failures provide bounded recovery without refl
     "invalid_model_search",
     "model_provider_unavailable",
     "use_protected_credential_reference",
+    "control_reset_pending",
   ]) {
     const notice = uiValidationNotice(new Error(code));
     assert.ok(notice, code);

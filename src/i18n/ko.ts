@@ -45,6 +45,17 @@ export const ko: I18nDictionary = {
   "common.unknown": "알 수 없음",
   "common.unknown_error": "알 수 없는 오류",
 
+  "reset.pending.factory_title": "공장 초기화가 일시 중지되었습니다",
+  "reset.pending.history_title": "대화 기록 초기화가 일시 중지되었습니다",
+  "reset.pending.legacy_title": "이전 초기화 작업이 일시 중지되었습니다",
+  "reset.pending.resume_or_cancel": "저장된 정리 계획을 계속하려면 재개하고, 홈 잠금을 해제하려면 대기 중인 초기화를 취소하세요.",
+  "reset.pending.legacy_help": "이 초기화 작업은 이전 버전에서 생성되었습니다. 홈 잠금을 해제하려면 취소한 뒤, 여전히 필요하면 설정에서 다시 시작하세요.",
+  "reset.pending.cleanup_retry": "정리가 안전하게 완료되었는지 아직 확인할 수 없습니다. 같은 정리 계획을 재개하거나 대기 중인 초기화를 취소해 홈 잠금을 해제하세요.",
+  "reset.pending.resume_button": "↻ 초기화 재개",
+  "reset.pending.cancel_button": "✖ 대기 중인 초기화 취소",
+  "reset.completed.factory": "✅ 공장 초기화가 완료되었습니다.",
+  "reset.completed.history": "✅ 대화 기록이 삭제되었습니다.",
+
   "help.keyboard_hint":
     "💡 아래 키보드 버튼으로 에이전트, 모델, 변형 및 컨텍스트 작업을 사용할 수 있습니다.",
 

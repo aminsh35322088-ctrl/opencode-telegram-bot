@@ -39,6 +39,17 @@ export const de: I18nDictionary = {
   "common.unknown": "unbekannt",
   "common.unknown_error": "unbekannter Fehler",
 
+  "reset.pending.factory_title": "Der Werksreset wurde pausiert",
+  "reset.pending.history_title": "Das Zurücksetzen des Gesprächsverlaufs wurde pausiert",
+  "reset.pending.legacy_title": "Ein früherer Reset wurde pausiert",
+  "reset.pending.resume_or_cancel": "Fortsetzen, um den gespeicherten Bereinigungsplan weiterzuführen, oder den ausstehenden Reset abbrechen, um Home wieder freizugeben.",
+  "reset.pending.legacy_help": "Dieser Reset wurde von einer älteren Version erstellt. Brich ihn ab, um Home freizugeben, und starte ihn bei Bedarf erneut in den Einstellungen.",
+  "reset.pending.cleanup_retry": "Die Bereinigung konnte noch nicht sicher bestätigt werden. Setze denselben Bereinigungsplan fort oder brich den ausstehenden Reset ab, um Home freizugeben.",
+  "reset.pending.resume_button": "↻ Reset fortsetzen",
+  "reset.pending.cancel_button": "✖ Ausstehenden Reset abbrechen",
+  "reset.completed.factory": "✅ Werksreset abgeschlossen.",
+  "reset.completed.history": "✅ Gesprächsverlauf gelöscht.",
+
   "help.keyboard_hint":
     "💡 Nutze die unteren Buttons für Agent, Modell, Variante und Kontextaktionen.",
 

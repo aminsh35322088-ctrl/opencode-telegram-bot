@@ -39,6 +39,17 @@ export const fr: I18nDictionary = {
   "common.unknown": "inconnu",
   "common.unknown_error": "erreur inconnue",
 
+  "reset.pending.factory_title": "La réinitialisation d’usine est en pause",
+  "reset.pending.history_title": "La suppression de l’historique de conversation est en pause",
+  "reset.pending.legacy_title": "Une réinitialisation précédente est en pause",
+  "reset.pending.resume_or_cancel": "Reprenez pour poursuivre le plan de nettoyage enregistré, ou annulez la réinitialisation en attente pour déverrouiller l’accueil.",
+  "reset.pending.legacy_help": "Cette réinitialisation a été créée par une ancienne version. Annulez-la pour déverrouiller l’accueil, puis relancez-la depuis les paramètres si nécessaire.",
+  "reset.pending.cleanup_retry": "Le nettoyage n’a pas encore pu être vérifié en toute sécurité. Reprenez le même plan de nettoyage ou annulez la réinitialisation en attente pour déverrouiller l’accueil.",
+  "reset.pending.resume_button": "↻ Reprendre la réinitialisation",
+  "reset.pending.cancel_button": "✖ Annuler la réinitialisation en attente",
+  "reset.completed.factory": "✅ Réinitialisation d’usine terminée.",
+  "reset.completed.history": "✅ Historique de conversation effacé.",
+
   "help.keyboard_hint":
     "💡 Utilisez les boutons du bas pour l'agent, le modèle, la variante et les actions de contexte.",
 

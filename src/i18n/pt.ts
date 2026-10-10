@@ -38,6 +38,17 @@ export const pt: I18nDictionary = {
   "common.unknown": "desconhecido",
   "common.unknown_error": "erro desconhecido",
 
+  "reset.pending.factory_title": "A redefinição de fábrica está pausada",
+  "reset.pending.history_title": "A limpeza do histórico da conversa está pausada",
+  "reset.pending.legacy_title": "Uma redefinição anterior está pausada",
+  "reset.pending.resume_or_cancel": "Retome para continuar o plano de limpeza salvo ou cancele a redefinição pendente para desbloquear a tela inicial.",
+  "reset.pending.legacy_help": "Esta redefinição foi criada por uma versão antiga. Cancele-a para desbloquear a tela inicial e inicie-a novamente nas Configurações se ainda precisar.",
+  "reset.pending.cleanup_retry": "A limpeza ainda não pôde ser verificada com segurança. Retome o mesmo plano de limpeza ou cancele a redefinição pendente para desbloquear a tela inicial.",
+  "reset.pending.resume_button": "↻ Retomar redefinição",
+  "reset.pending.cancel_button": "✖ Cancelar redefinição pendente",
+  "reset.completed.factory": "✅ Redefinição de fábrica concluída.",
+  "reset.completed.history": "✅ Histórico da conversa apagado.",
+
   "help.keyboard_hint":
     "💡 Use os botões do teclado inferior para o agente, o modelo, a variante e as ações de contexto.",
 

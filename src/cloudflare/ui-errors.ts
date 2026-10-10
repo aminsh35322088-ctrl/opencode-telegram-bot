@@ -21,6 +21,8 @@ const notices: Readonly<Record<string, string>> = Object.freeze({
     "This configuration value is invalid or no longer available. Correct the value or reopen its menu; no changes were saved.",
   configuration_revision_changed:
     "Settings changed while this form was open. Reopen the form to use the current settings.",
+  control_reset_pending:
+    "A reset is still pending. Open Home and resume or cancel the pending reset before creating a new chat.",
   duplicate_action_id:
     "This configuration value is invalid or no longer available. Correct the value or reopen its menu; no changes were saved.",
   immutable_plugin_version_required:

@@ -1375,7 +1375,11 @@ test("Factory Reset preserves configuration evidence when Railway reconciliation
   await f.callback(latestButton("🗑️ Final Factory Reset").callback_data);
   const global = f.store.global()!;
   assert.equal((global.data.configuration as any).marker, "preserve-me");
-  assert.match(JSON.stringify(f.sent), /cleanup_reconciliation_required/);
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /Factory Reset is paused/);
+  assert.match(output, /↻ Resume Reset/);
+  assert.match(output, /✖ Cancel Pending Reset/);
+  assert.doesNotMatch(output, /The operation could not be completed/);
 });
 
 test("Factory Reset removes every integration reference and encrypted lease store across restart", async (t) => {
@@ -1448,6 +1452,130 @@ test("Factory Reset removes every integration reference and encrypted lease stor
     200,
   );
   assert.deepEqual(f.store.global()!.data.integrations, {});
+});
+
+test("pending Factory Reset lock makes New Chat actionable instead of showing the generic failure", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "reset:-100",
+    JSON.stringify({ updateId: 444, kind: "factory" }),
+  );
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "cleanup:444",
+    JSON.stringify([]),
+  );
+
+  const before = f.store.jobs().length;
+  await f.update("/new_chat");
+
+  const output = JSON.stringify(f.sent);
+  assert.equal(f.store.jobs().length, before);
+  assert.match(output, /Factory Reset is paused/);
+  assert.match(output, /↻ Resume Reset/);
+  assert.match(output, /✖ Cancel Pending Reset/);
+  assert.doesNotMatch(output, /The operation could not be completed/);
+});
+
+test("legacy reset locks from older builds can be cancelled without the generic failure", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "reset:-100",
+    JSON.stringify({ updateId: 447 }),
+  );
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "cleanup:447",
+    JSON.stringify([]),
+  );
+
+  await f.update("/new_chat");
+  const output = JSON.stringify(f.sent);
+  assert.match(output, /A previous reset is paused/);
+  assert.match(output, /older build/);
+  assert.match(output, /✖ Cancel Pending Reset/);
+  assert.doesNotMatch(output, /↻ Resume Reset/);
+  assert.doesNotMatch(output, /The operation could not be completed/);
+});
+
+test("Cancel Pending Reset clears the stale lock and lets the next New Chat allocate", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "reset:-100",
+    JSON.stringify({ updateId: 445, kind: "factory" }),
+  );
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "cleanup:445",
+    JSON.stringify([]),
+  );
+
+  await f.update("/new_chat");
+  const cancel = [...f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [])]
+    .reverse()
+    .find((button: any) => button.text === "✖ Cancel Pending Reset");
+  assert.ok(cancel);
+  await f.callback(cancel.callback_data);
+
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='reset:-100'")].length, 0);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='cleanup:445'")].length, 0);
+  const before = f.store.jobs().length;
+  await f.update("/new_chat");
+  assert.equal(f.store.jobs().length, before + 1);
+  assert.doesNotMatch(JSON.stringify(f.sent), /The operation could not be completed/);
+});
+
+test("Resume Reset reuses the original cleanup plan and completes Factory Reset", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  f.sql.exec(
+    "CREATE TABLE IF NOT EXISTS capability_leases(id TEXT PRIMARY KEY,expires INTEGER NOT NULL,data TEXT NOT NULL)",
+  );
+  const current = f.store.global()!;
+  f.store.setGlobal(
+    {
+      ...current.data,
+      defaults: { marker: "pending-reset" },
+    },
+    "fixture",
+    current.revision,
+  );
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "reset:-100",
+    JSON.stringify({ updateId: 446, kind: "factory" }),
+  );
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "cleanup:446",
+    JSON.stringify([]),
+  );
+  let reconciled = 0;
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    reconcileManagedResources: async () => {
+      reconciled++;
+      return {};
+    },
+  });
+
+  await f.update("/new_chat");
+  const resume = [...f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [])]
+    .reverse()
+    .find((button: any) => button.text === "↻ Resume Reset");
+  assert.ok(resume);
+  await f.callback(resume.callback_data);
+
+  assert.equal(reconciled, 1);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='reset:-100'")].length, 0);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='cleanup:446'")].length, 0);
+  assert.equal((f.store.global()!.data.defaults as any).marker, undefined);
+  assert.match(JSON.stringify(f.sent), /Factory Reset completed/);
 });
 
 test("historical cleaned allocation failures cannot block a later New Chat", async (t) => {

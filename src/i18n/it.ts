@@ -40,6 +40,17 @@ export const it: I18nDictionary = {
   "common.unknown": "sconosciuto",
   "common.unknown_error": "errore sconosciuto",
 
+  "reset.pending.factory_title": "Il ripristino di fabbrica è in pausa",
+  "reset.pending.history_title": "La cancellazione della cronologia della conversazione è in pausa",
+  "reset.pending.legacy_title": "Un ripristino precedente è in pausa",
+  "reset.pending.resume_or_cancel": "Riprendi per continuare il piano di pulizia salvato oppure annulla il ripristino in sospeso per sbloccare Home.",
+  "reset.pending.legacy_help": "Questo ripristino è stato creato da una versione precedente. Annullalo per sbloccare Home, quindi avvialo di nuovo dalle Impostazioni se ti serve ancora.",
+  "reset.pending.cleanup_retry": "La pulizia non può ancora essere verificata in modo sicuro. Riprendi lo stesso piano di pulizia oppure annulla il ripristino in sospeso per sbloccare Home.",
+  "reset.pending.resume_button": "↻ Riprendi ripristino",
+  "reset.pending.cancel_button": "✖ Annulla ripristino in sospeso",
+  "reset.completed.factory": "✅ Ripristino di fabbrica completato.",
+  "reset.completed.history": "✅ Cronologia della conversazione cancellata.",
+
   "help.keyboard_hint":
     "💡 Usa i pulsanti della tastiera in basso per le azioni di agente, modello, variante e contesto.",
 

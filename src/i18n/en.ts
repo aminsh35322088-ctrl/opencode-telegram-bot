@@ -36,6 +36,17 @@ export const en = {
   "common.unknown": "unknown",
   "common.unknown_error": "unknown error",
 
+  "reset.pending.factory_title": "Factory Reset is paused",
+  "reset.pending.history_title": "Conversation history reset is paused",
+  "reset.pending.legacy_title": "A previous reset is paused",
+  "reset.pending.resume_or_cancel": "Resume to continue the saved cleanup plan, or cancel the pending reset to unlock Home.",
+  "reset.pending.legacy_help": "This reset was created by an older build. Cancel it to unlock Home, then start the reset again from Settings if you still need it.",
+  "reset.pending.cleanup_retry": "Cleanup could not be verified safely yet. Resume to retry the same cleanup plan, or cancel the pending reset to unlock Home.",
+  "reset.pending.resume_button": "↻ Resume Reset",
+  "reset.pending.cancel_button": "✖ Cancel Pending Reset",
+  "reset.completed.factory": "✅ Factory Reset completed.",
+  "reset.completed.history": "✅ Conversation history cleared.",
+
   "help.keyboard_hint":
     "💡 Use the bottom keyboard buttons for the agent, model, variant, and context actions.",
 

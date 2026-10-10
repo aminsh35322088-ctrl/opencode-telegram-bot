@@ -147,6 +147,11 @@ interface UiAction {
   value?: string;
   panel?: boolean;
 }
+type ResetKind = "factory" | "history";
+interface PendingResetState {
+  updateId: number;
+  kind?: ResetKind;
+}
 interface UiOptions {
   compact?: boolean;
   compactOutputMode?: boolean;
@@ -950,6 +955,127 @@ export class CloudBotUi {
     this.set("action_done:" + updateId, true);
     await this.allocationProgress(next, "ALLOCATING");
   }
+  private pendingReset(chat: number): PendingResetState | undefined {
+    const state = this.get<PendingResetState>("reset:" + chat);
+    return state && Number.isSafeInteger(state.updateId) && state.updateId > 0 ? state : undefined;
+  }
+  private async pendingResetMenu(
+    actor: number,
+    chat: number,
+    state: PendingResetState,
+    detail?: string,
+  ): Promise<void> {
+    const known = state.kind === "factory" || state.kind === "history";
+    const title =
+      state.kind === "factory"
+        ? t("reset.pending.factory_title")
+        : state.kind === "history"
+          ? t("reset.pending.history_title")
+          : t("reset.pending.legacy_title");
+    const text = [
+      `⚠️ ${title}.`,
+      "",
+      detail ??
+        (known ? t("reset.pending.resume_or_cancel") : t("reset.pending.legacy_help")),
+    ].join("\n");
+    const buttons: CallbackButton[] = [];
+    if (known)
+      buttons.push(
+        this.button(
+          actor,
+          chat,
+          0,
+          undefined,
+          t("reset.pending.resume_button"),
+          "pending_reset_resume",
+        ),
+      );
+    buttons.push(
+      this.button(
+        actor,
+        chat,
+        0,
+        undefined,
+        t("reset.pending.cancel_button"),
+        "pending_reset_cancel",
+      ),
+    );
+    await this.menu(chat, undefined, text, [buttons]);
+  }
+  private async runReset(
+    actor: number,
+    chat: number,
+    kind: ResetKind,
+    resetUpdateId: number,
+    actionUpdateId: number,
+  ): Promise<boolean> {
+    const resetKey = "reset:" + chat;
+    const cleanupKey = "cleanup:" + resetUpdateId;
+    this.set(resetKey, { updateId: resetUpdateId, kind });
+    if (actionUpdateId) this.set("action_done:" + actionUpdateId, true);
+    try {
+      for (const job of this.deps.store
+        .jobs()
+        .filter(
+          (j) =>
+            j.chatId === chat &&
+            j.phase !== "BOUND" &&
+            this.deps.store.worker(j.workerId)?.state !== "REPLACED",
+        )) {
+        if (!this.deps.cancelAllocation) throw new Error("pending_worker_cleanup_required");
+        await this.deps.cancelAllocation(job.jobId);
+      }
+      let plan = this.get<Array<{ threadId: number; deleted?: boolean }>>(cleanupKey);
+      if (!plan) {
+        plan = this.deps.store
+          .topics()
+          .filter((t) => t.chatId === chat)
+          .map((t) => ({ threadId: t.threadId }));
+        this.set(cleanupKey, plan);
+      }
+      for (const target of plan) {
+        if (target.deleted) continue;
+        await this.deps.deleteTopic(chat, target.threadId);
+        try {
+          await this.deps.telegram.call("deleteForumTopic", {
+            chat_id: chat,
+            message_thread_id: target.threadId,
+          });
+        } catch (error) {
+          if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found")
+            throw error;
+        }
+        target.deleted = true;
+        this.set(cleanupKey, plan);
+      }
+      if (kind === "factory") {
+        await this.deps.reconcileManagedCleanup?.(chat);
+        const current = this.deps.store.global();
+        if (!current) throw new Error("snapshot_unavailable");
+        await this.deps.global(resetGlobalConfiguration(current.data), current.revision, true);
+        this.deps.sql.exec(
+          "DELETE FROM ui_state WHERE key GLOB 'credential:*' OR key GLOB 'form:*' OR key GLOB 'task:*'",
+        );
+      }
+      this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", resetKey);
+      this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", cleanupKey);
+      await this.notice(
+        chat,
+        undefined,
+        kind === "factory" ? t("reset.completed.factory") : t("reset.completed.history"),
+      );
+      return true;
+    } catch {
+      await this.pendingResetMenu(
+        actor,
+        chat,
+        { updateId: resetUpdateId, kind },
+        t("reset.pending.cleanup_retry"),
+      );
+      return false;
+    }
+  }
+
   async rpcDiff(topic: FleetTopic): Promise<unknown> {
     return this.deps.rpc(topic, "session.diff");
   }
@@ -1949,6 +2075,11 @@ export class CloudBotUi {
       return true;
     }
     if (name === "new" || name === "new_chat") {
+      const pendingReset = this.pendingReset(chat);
+      if (pendingReset) {
+        await this.pendingResetMenu(actor, chat, pendingReset);
+        return true;
+      }
       const blocked = this.deps.store
         .jobs()
         .filter(
@@ -1979,6 +2110,29 @@ export class CloudBotUi {
       const failed = this.deps.store.job(String(action.value ?? ""));
       if (!failed || failed.chatId !== chat) return true;
       await this.retryAllocationCleanup(failed, chat, updateId);
+      return true;
+    }
+    if (name === "pending_reset_resume") {
+      const state = this.pendingReset(chat);
+      if (!state) {
+        await this.home(chat, actor, false);
+        return true;
+      }
+      if (state.kind !== "factory" && state.kind !== "history") {
+        await this.pendingResetMenu(actor, chat, state);
+        return true;
+      }
+      await this.runReset(actor, chat, state.kind, state.updateId, updateId);
+      return true;
+    }
+    if (name === "pending_reset_cancel") {
+      const state = this.pendingReset(chat);
+      if (state) {
+        this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", "reset:" + chat);
+        this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", "cleanup:" + state.updateId);
+      }
+      this.set("action_done:" + updateId, true);
+      await this.home(chat, actor, false);
       return true;
     }
     if (name === "allocation_cancel") {
@@ -3515,63 +3669,14 @@ export class CloudBotUi {
       return true;
     }
     if (name === "reset_history_confirm" || name === "factory_reset_final") {
-      this.set("reset:" + chat, { updateId });
-      for (const job of this.deps.store
-        .jobs()
-        .filter(
-          (j) =>
-            j.chatId === chat &&
-            j.phase !== "BOUND" &&
-            this.deps.store.worker(j.workerId)?.state !== "REPLACED",
-        )) {
-        if (!this.deps.cancelAllocation) throw new Error("pending_worker_cleanup_required");
-        await this.deps.cancelAllocation(job.jobId);
-      }
-      const key = "cleanup:" + updateId;
-      let plan = this.get<Array<{ threadId: number; deleted?: boolean }>>(key);
-      if (!plan) {
-        plan = this.deps.store
-          .topics()
-          .filter((t) => t.chatId === chat)
-          .map((t) => ({ threadId: t.threadId }));
-        this.set(key, plan);
-      }
-      for (const target of plan) {
-        if (target.deleted) continue;
-        await this.deps.deleteTopic(chat, target.threadId);
-        await this.deps.telegram.call("deleteForumTopic", {
-          chat_id: chat,
-          message_thread_id: target.threadId,
-        });
-        target.deleted = true;
-        this.set(key, plan);
-      }
-      if (name === "factory_reset_final") {
-        try {
-          await this.deps.reconcileManagedCleanup?.(chat);
-        } catch (error) {
-          await this.notice(
-            chat,
-            undefined,
-            "⚠️ cleanup_reconciliation_required. Railway cleanup must be reconciled before Factory Reset can finish.",
-          );
-          throw error;
-        }
-        const current = this.deps.store.global();
-        if (!current) throw new Error("snapshot_unavailable");
-        await this.deps.global(resetGlobalConfiguration(current.data), current.revision, true);
-        this.deps.sql.exec(
-          "DELETE FROM ui_state WHERE key GLOB 'credential:*' OR key GLOB 'form:*' OR key GLOB 'task:*'",
-        );
-      }
-      if (updateId) this.set("action_done:" + updateId, true);
-      this.deps.sql.exec("DELETE FROM ui_state WHERE key=?", "reset:" + chat);
-      await this.notice(
+      if (typeof updateId !== "number" || !Number.isSafeInteger(updateId))
+        throw new Error("interaction_expired");
+      await this.runReset(
+        actor,
         chat,
-        undefined,
-        "✅ " +
-          (name === "factory_reset_final" ? "Factory Reset" : "Conversation history cleared") +
-          " completed.",
+        name === "factory_reset_final" ? "factory" : "history",
+        updateId,
+        updateId,
       );
       return true;
     }

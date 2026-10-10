@@ -39,6 +39,17 @@ export const es: I18nDictionary = {
   "common.unknown": "desconocido",
   "common.unknown_error": "error desconocido",
 
+  "reset.pending.factory_title": "El restablecimiento de fábrica está en pausa",
+  "reset.pending.history_title": "El borrado del historial de conversación está en pausa",
+  "reset.pending.legacy_title": "Hay un restablecimiento anterior en pausa",
+  "reset.pending.resume_or_cancel": "Reanuda para continuar el plan de limpieza guardado o cancela el restablecimiento pendiente para desbloquear Inicio.",
+  "reset.pending.legacy_help": "Este restablecimiento fue creado por una versión anterior. Cancélalo para desbloquear Inicio y vuelve a iniciarlo desde Ajustes si aún lo necesitas.",
+  "reset.pending.cleanup_retry": "Aún no se pudo verificar la limpieza de forma segura. Reanuda el mismo plan de limpieza o cancela el restablecimiento pendiente para desbloquear Inicio.",
+  "reset.pending.resume_button": "↻ Reanudar restablecimiento",
+  "reset.pending.cancel_button": "✖ Cancelar restablecimiento pendiente",
+  "reset.completed.factory": "✅ Restablecimiento de fábrica completado.",
+  "reset.completed.history": "✅ Historial de conversación borrado.",
+
   "help.keyboard_hint":
     "💡 Usa los botones inferiores para agente, modelo, variante y acciones de contexto.",
 
