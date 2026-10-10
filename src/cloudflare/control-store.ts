@@ -75,6 +75,7 @@ export interface AllocationJob {
   endpoint?: string;
   desiredImage?: string;
   threadId?: number;
+  pendingThreadId?: number;
   error?: string;
   previousDeploymentId?: string;
   deploymentReceipt?: string;
@@ -942,7 +943,11 @@ export class ControlStore {
       const job = this.job(jobId);
       if (!job) throw new Error("unknown_job");
       if (!Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("invalid_topic");
-      if (job.phase !== "SESSION_PROBED" || job.threadId !== undefined)
+      if (
+        !["SESSION_PROBED", "TOPIC_CREATED"].includes(job.phase) ||
+        job.threadId !== undefined ||
+        (job.pendingThreadId !== undefined && job.pendingThreadId !== threadId)
+      )
         throw new Error("allocation_rotation_rejected");
       const worker = this.worker(job.workerId);
       if (
@@ -961,6 +966,7 @@ export class ControlStore {
       this.sql.exec("UPDATE bootstrap SET used=1 WHERE job=?", jobId);
       job.generation = worker.generation;
       job.threadId = threadId;
+      job.pendingThreadId = undefined;
       job.phase = "BINDING";
       job.previousDeploymentId = worker.deploymentId;
       job.deploymentReceipt = undefined;
@@ -1099,6 +1105,18 @@ export class ControlStore {
       this.sql.exec("DELETE FROM topics WHERE worker=?", workerId);
       worker.state = "READY_UNBOUND";
       this.saveWorker(worker);
+    });
+  }
+  finalizeAllocationFailure(jobId: string): AllocationJob {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      if (!job) throw new Error("unknown_job");
+      const worker = this.worker(job.workerId);
+      if (!worker || worker.state !== "REPLACED") throw new Error("cleanup_not_confirmed");
+      job.phase = "FAILED";
+      job.error = job.error ?? "provisioning_failed";
+      this.saveJob(job);
+      return job;
     });
   }
   recordVolumeDeletion(workerId: string, generation: number, pendingUntil: string): void {

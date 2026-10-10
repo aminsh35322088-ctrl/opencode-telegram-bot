@@ -824,6 +824,48 @@ export class CloudBotUi {
       },
     });
   }
+  async allocationProgress(job: AllocationJob, stage: string): Promise<void> {
+    if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
+      throw new Error("main_panel_scope_required");
+    if (stage === "READY") {
+      await this.home(job.chatId, this.panelScope.actor, false);
+      return;
+    }
+    const stages = [
+      ["ALLOCATING", "Allocating Railway worker"],
+      ["DEPLOYING", "Deploying runtime"],
+      ["HEALTH", "Waiting for health"],
+      ["PROBING", "Preparing OpenCode"],
+      ["TOPIC", "Creating Telegram Topic"],
+      ["BINDING", "Binding Topic runtime"],
+    ] as const;
+    const current = Math.max(0, stages.findIndex(([id]) => id === stage));
+    const lines = stages.map(([, label], index) =>
+      `${index < current ? "✅" : index === current ? "⏳" : "▫️"} ${label}`,
+    );
+    await this.panel(job.chatId, undefined, {
+      text: ["Creating new thread…", "", ...lines].join("\n"),
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
+  async allocationFailure(job: AllocationJob, reason: string): Promise<void> {
+    if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
+      throw new Error("main_panel_scope_required");
+    await this.menu(job.chatId, undefined, `❌ Chat creation failed\n\n${escape(reason)}`, [
+      [
+        this.button(this.panelScope.actor, job.chatId, 0, undefined, "↻ Retry", "allocation_retry", job.jobId),
+        this.button(this.panelScope.actor, job.chatId, 0, undefined, "✖ Cancel", "allocation_cancel", job.jobId),
+      ],
+    ]);
+  }
+  async allocationCleanupPending(job: AllocationJob, reason: string): Promise<void> {
+    if (!this.panelScope || this.panelScope.thread !== 0 || this.panelScope.chat !== job.chatId)
+      throw new Error("main_panel_scope_required");
+    await this.panel(job.chatId, undefined, {
+      text: `⚠️ Cleanup verification pending\n\n${reason}`,
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
   async rpcDiff(topic: FleetTopic): Promise<unknown> {
     return this.deps.rpc(topic, "session.diff");
   }
@@ -1842,6 +1884,18 @@ export class CloudBotUi {
       return true;
     }
     if (name === "new" || name === "new_chat") {
+      const blocked = this.deps.store
+        .jobs()
+        .filter((j) => j.chatId === chat && (j.error || ["FAILED", "CLEANUP_PENDING", "RECONCILIATION_REQUIRED"].includes(j.phase)))
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0];
+      if (blocked) {
+        const worker = this.deps.store.worker(blocked.workerId);
+        if (worker?.state === "REPLACED")
+          await this.allocationFailure(blocked, blocked.error ?? "Provisioning failed.");
+        else
+          await this.allocationCleanupPending(blocked, "The previous allocation must be cleaned up before Retry.");
+        return true;
+      }
       const pending = this.deps.store
         .jobs()
         .find(
@@ -1850,9 +1904,36 @@ export class CloudBotUi {
             !["BOUND", "FAILED", "RECONCILIATION_REQUIRED"].includes(j.phase) &&
             !j.error,
         );
-      if (!pending) await this.deps.newTopic(chat, "telegram_" + updateId);
+      const job = pending ?? (await this.deps.newTopic(chat, "telegram_" + updateId));
       this.set("action_done:" + updateId, true);
-      await this.notice(chat, thread || undefined, t("bot.creating_session", undefined, "en"));
+      await this.allocationProgress(job, "ALLOCATING");
+      return true;
+    }
+    if (name === "allocation_retry") {
+      const failed = this.deps.store.job(String(action.value ?? ""));
+      if (!failed || failed.chatId !== chat) return true;
+      const worker = this.deps.store.worker(failed.workerId);
+      if (!worker || worker.state !== "REPLACED") {
+        await this.allocationCleanupPending(failed, "The previous allocation is still being cleaned up.");
+        return true;
+      }
+      const job = await this.deps.newTopic(
+        chat,
+        `telegram_retry_${updateId}_${crypto.randomUUID()}`,
+      );
+      this.set("action_done:" + updateId, true);
+      await this.allocationProgress(job, "ALLOCATING");
+      return true;
+    }
+    if (name === "allocation_cancel") {
+      const failed = this.deps.store.job(String(action.value ?? ""));
+      if (failed && failed.chatId === chat) {
+        const worker = this.deps.store.worker(failed.workerId);
+        if (worker && worker.state !== "REPLACED" && this.deps.cancelAllocation)
+          await this.deps.cancelAllocation(failed.jobId);
+      }
+      this.set("action_done:" + updateId, true);
+      await this.home(chat, actor, false);
       return true;
     }
     if (name === "history" || name === "sessions") {

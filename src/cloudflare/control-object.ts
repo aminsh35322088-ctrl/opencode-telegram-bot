@@ -761,7 +761,7 @@ export class ControlPlane {
         return Response.json({ ok: true });
       }
       if (path === "/jobs/advance") {
-        await this.advance(String(body.jobId));
+        await this.advanceSafely(String(body.jobId));
         return Response.json({ ok: true });
       }
       if (path === "/nodes/bootstrap") {
@@ -1561,17 +1561,82 @@ export class ControlPlane {
     await this.env.JOBS.send({ jobId: job.jobId });
     return this.store.job(job.jobId)!;
   }
+  private allocationUi(job: AllocationJob): CloudBotUi | undefined {
+    const actor = Number(
+      (this.env.TELEGRAM_ALLOWED_USER_ID ?? this.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(",")[0],
+    );
+    return Number.isSafeInteger(actor) && actor > 0
+      ? this.ui().forPanel(actor, job.chatId, 0, 0)
+      : undefined;
+  }
+  private async allocationProgress(job: AllocationJob, stage: string): Promise<void> {
+    await this.allocationUi(job)?.allocationProgress(job, stage);
+  }
+  private async advanceSafely(jobId: string): Promise<void> {
+    const existing = this.store.job(jobId);
+    if (!existing) throw new Error("unknown_job");
+    if (existing.phase === "CLEANUP_PENDING") {
+      try {
+        await this.cancelAllocation(jobId);
+        const failed = this.store.job(jobId)!;
+        await this.allocationUi(failed)?.allocationFailure(failed, failed.error ?? "Provisioning failed.");
+      } catch (error) {
+        const pending = this.store.job(jobId)!;
+        await this.allocationUi(pending)?.allocationCleanupPending(
+          pending,
+          error instanceof Error ? error.message : "cleanup_reconciliation_required",
+        );
+        await this.scheduleAlarm(Date.now() + 30_000);
+      }
+      return;
+    }
+    try {
+      await this.advance(jobId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "provisioning_failed";
+      const transient = new Set([
+        "provisioning_pending",
+        "deployment_reconciliation_pending",
+        "volume_activation_pending",
+        "worker_unavailable",
+        "railway_rate_limited",
+        "railway_transport_timeout",
+        "railway_transport_error",
+      ]);
+      if (transient.has(reason)) {
+        await this.scheduleAlarm(Date.now() + 15_000);
+        return;
+      }
+      const job = this.store.job(jobId);
+      if (!job || job.phase === "BOUND") throw error;
+      const worker = this.store.worker(job.workerId);
+      if (worker?.state !== "REPLACED" && worker && worker.generation === job.generation)
+        this.store.configureJob(jobId, {
+          phase: "CLEANUP_PENDING",
+          error: reason,
+          cleanupPhase: job.cleanupPhase ?? job.phase,
+        });
+      try {
+        await this.cancelAllocation(jobId);
+        const failed = this.store.job(jobId)!;
+        await this.allocationUi(failed)?.allocationFailure(failed, reason);
+      } catch (cleanupError) {
+        const pending = this.store.job(jobId)!;
+        await this.allocationUi(pending)?.allocationCleanupPending(
+          pending,
+          cleanupError instanceof Error ? cleanupError.message : "cleanup_reconciliation_required",
+        );
+        await this.scheduleAlarm(Date.now() + 30_000);
+      }
+    }
+  }
   private async advance(jobId: string): Promise<void> {
     if (this.env.PROVISIONING_ENABLED !== "true") throw new Error("provisioning_disabled");
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
     if (
-      [
-        ...this.state.storage.sql.exec(
-          "SELECT key FROM ui_state WHERE key=?",
-          "reset:" + job.chatId,
-        ),
-      ].length
+      [...this.state.storage.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + job.chatId)]
+        .length
     )
       throw new Error("control_reset_pending");
     if (job.phase === "BOUND") {
@@ -1579,18 +1644,13 @@ export class ControlPlane {
         .topics()
         .find((t) => t.workerId === job!.workerId && t.state === "ACTIVE");
       if (topic) await this.topicUi(topic).ready(topic);
+      await this.allocationProgress(job, "READY");
       return;
     }
-    if (job.error) throw new Error(job.error);
-    if (job.createdAt && Date.now() - job.createdAt > 20 * 60_000) {
-      this.store.configureJob(jobId, {
-        phase: "RECONCILIATION_REQUIRED",
-        error: "worker_bootstrap_timeout",
-        cleanupPhase: job.phase,
-      });
-      this.store.transition(job.workerId, job.generation, "UNHEALTHY");
+    if (job.error && job.phase !== "CLEANUP_PENDING") throw new Error(job.error);
+    if (job.createdAt && Date.now() - job.createdAt > 20 * 60_000)
       throw new Error("worker_bootstrap_timeout");
-    }
+
     const owner = crypto.randomUUID();
     if (!this.store.acquireLease("railway-provisioning", owner, Date.now(), 180_000))
       throw new Error("provisioning_pending");
@@ -1598,12 +1658,8 @@ export class ControlPlane {
       const currentJob = this.store.job(jobId);
       if (!currentJob) throw new Error("unknown_job");
       if (
-        [
-          ...this.state.storage.sql.exec(
-            "SELECT key FROM ui_state WHERE key=?",
-            "reset:" + currentJob.chatId,
-          ),
-        ].length
+        [...this.state.storage.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + currentJob.chatId)]
+          .length
       )
         throw new Error("control_reset_pending");
       this.store.renewLease("railway-provisioning", owner, Date.now(), 180_000);
@@ -1616,20 +1672,51 @@ export class ControlPlane {
         throw new Error("stale_generation");
     };
     try {
+      // A crash after the probe or after Topic creation must resume the same one-way handoff,
+      // never redeploy the unbound generation or create a second Telegram Topic.
+      if (!job.threadId && ["SESSION_PROBED", "TOPIC_CREATED"].includes(job.phase)) {
+        const identity = await this.unboundIdentity(job.workerId);
+        if (job.phase === "SESSION_PROBED") {
+          await this.allocationProgress(job, "TOPIC");
+          const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{ message_thread_id: number }>(
+            "createForumTopic",
+            { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) },
+          );
+          if (!Number.isSafeInteger(created.message_thread_id) || created.message_thread_id <= 1)
+            throw new Error("invalid_topic");
+          job = this.store.configureJob(jobId, {
+            pendingThreadId: created.message_thread_id,
+            phase: "TOPIC_CREATED",
+          });
+        }
+        const pendingThread = job.pendingThreadId;
+        if (!pendingThread) throw new Error("topic_creation_reconciliation_required");
+        await this.allocationProgress(job, "BINDING");
+        await nodeRpc(identity, "retire", {});
+        const rotated = this.store.rotateAllocationToTopic(jobId, pendingThread);
+        this.store.saveObservation(rotated.workerId, rotated.generation, {
+          chatId: rotated.chatId,
+          threadId: pendingThread,
+        });
+        await this.scheduleAlarm(Date.now() + 1);
+        await this.env.JOBS.send({ jobId });
+        return;
+      }
+
+      await this.allocationProgress(job, job.threadId ? "BINDING" : "DEPLOYING");
       await this.driver(guard).provision(jobId);
       job = this.store.job(jobId)!;
       const worker = this.store.worker(job.workerId)!;
       if (!worker.credential) {
+        await this.allocationProgress(job, "HEALTH");
         await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
       const rpcIdentity = job.threadId
         ? await this.identity(worker.workerId)
         : await this.unboundIdentity(worker.workerId);
-      let health: {
-        ready: boolean;
-        runtime?: { telegramCoreCommit: string; telegramCoreVersion: string };
-      };
+      await this.allocationProgress(job, "HEALTH");
+      let health: { ready: boolean; runtime?: { telegramCoreCommit: string; telegramCoreVersion: string } };
       try {
         health = await nodeRpc(rpcIdentity, "health", {});
       } catch {
@@ -1651,7 +1738,6 @@ export class ControlPlane {
         await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
-      guard();
       this.store.saveObservation(worker.workerId, job.generation, {
         image: observed.image,
         deploymentId: observed.deploymentId,
@@ -1662,21 +1748,23 @@ export class ControlPlane {
       this.store.ready(worker.workerId, job.generation, worker.credential);
 
       if (!job.threadId) {
-        const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(
-          rpcIdentity,
-          "session.probe",
-          {},
-        );
+        await this.allocationProgress(job, "PROBING");
+        const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(rpcIdentity, "session.probe", {});
         guard();
-        if (probe.created !== true || probe.deleted !== true)
-          throw new Error("session_probe_failed");
-        this.store.markSessionProbed(jobId);
-        const topicTitle = this.store.reserveTopicTitle(jobId);
-        const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<
-          { message_thread_id: number }
-        >("createForumTopic", { chat_id: job.chatId, name: topicTitle });
+        if (probe.created !== true || probe.deleted !== true) throw new Error("session_probe_failed");
+        job = this.store.markSessionProbed(jobId);
+        await this.allocationProgress(job, "TOPIC");
+        const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{ message_thread_id: number }>(
+          "createForumTopic",
+          { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) },
+        );
         if (!Number.isSafeInteger(created.message_thread_id) || created.message_thread_id <= 1)
           throw new Error("invalid_topic");
+        job = this.store.configureJob(jobId, {
+          pendingThreadId: created.message_thread_id,
+          phase: "TOPIC_CREATED",
+        });
+        await this.allocationProgress(job, "BINDING");
         await nodeRpc(rpcIdentity, "retire", {});
         const rotated = this.store.rotateAllocationToTopic(jobId, created.message_thread_id);
         this.store.saveObservation(rotated.workerId, rotated.generation, {
@@ -1688,6 +1776,7 @@ export class ControlPlane {
         return;
       }
 
+      await this.allocationProgress(job, "BINDING");
       const session = await nodeRpc<{ sessionId: string }>(rpcIdentity, "session.create", {});
       guard();
       const bound = this.store.bindTopic(jobId, job.threadId, session.sessionId);
@@ -1700,38 +1789,51 @@ export class ControlPlane {
         );
       }
       await this.topicUi(bound).ready(bound);
+      await this.allocationProgress(this.store.job(jobId)!, "READY");
       // eslint-disable-next-line no-console
-      console.log(
-        JSON.stringify({
-          event: "worker_bound",
-          workerId: job.workerId,
-          generation: job.generation,
-        }),
-      );
+      console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
     } finally {
       this.store.releaseLease("railway-provisioning", owner);
     }
   }
   private async cancelAllocation(jobId: string): Promise<void> {
-    const job = this.store.job(jobId);
+    let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
-    const topic = this.store.topics().find((t) => t.workerId === job.workerId);
+    const topic = this.store.topics().find((t) => t.workerId === job!.workerId);
     if (topic) {
       await this.deleteTopic(topic.chatId, topic.threadId);
       return;
     }
-    const current = this.store.worker(job.workerId)!;
-    if (current.state === "REPLACED") return;
-    this.store.configureJob(job.jobId, {
-      phase: "FAILED",
-      error: "provisioning_cancelled",
-      cleanupPhase: job.cleanupPhase ?? job.phase,
-    });
-    const worker = this.store.fenceWorker(job.workerId);
-    if (worker.state !== "DELETING")
-      this.store.transition(worker.workerId, worker.generation, "DELETING");
-    await this.driver().destroy(worker.workerId, worker.generation);
-    this.store.confirmDestroyed(worker.workerId, worker.generation);
+    let current = this.store.worker(job.workerId);
+    if (!current) throw new Error("unknown_worker");
+    if (current.state !== "REPLACED") {
+      if (current.generation === job.generation && !["FENCING", "DELETING"].includes(current.state)) {
+        this.store.configureJob(jobId, {
+          phase: "CLEANUP_PENDING",
+          error: job.error ?? "provisioning_cancelled",
+          cleanupPhase: job.cleanupPhase ?? job.phase,
+        });
+        current = this.store.fenceWorker(job.workerId);
+      }
+      if (current.state === "FENCING")
+        current = this.store.transition(current.workerId, current.generation, "DELETING");
+      if (current.state !== "DELETING") throw new Error("cleanup_reconciliation_required");
+      await this.driver().destroy(current.workerId, current.generation);
+      this.store.confirmDestroyed(current.workerId, current.generation);
+    }
+    job = this.store.job(jobId)!;
+    const visibleThread = job.threadId ?? job.pendingThreadId;
+    if (visibleThread) {
+      try {
+        await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call("deleteForumTopic", {
+          chat_id: job.chatId,
+          message_thread_id: visibleThread,
+        });
+      } catch (error) {
+        if (!(error instanceof TelegramDeliveryError) || error.reason !== "message_not_found") throw error;
+      }
+    }
+    this.store.finalizeAllocationFailure(jobId);
   }
   private async deleteTopic(chatId: number, threadId: number): Promise<void> {
     const topic = this.store.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
@@ -1768,11 +1870,13 @@ export class ControlPlane {
             "DEPLOYING",
             "DEPLOY_SUBMITTED",
             "SESSION_PROBED",
+            "TOPIC_CREATED",
+            "CLEANUP_PENDING",
           ].includes(j.phase),
       );
     for (const job of pending) {
       try {
-        await this.advance(job.jobId);
+        await this.advanceSafely(job.jobId);
       } catch {
         await this.scheduleAlarm(Date.now() + 30_000);
       }

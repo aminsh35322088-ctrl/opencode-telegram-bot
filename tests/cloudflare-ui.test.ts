@@ -581,7 +581,7 @@ test("double taps on New Chat reuse the pending allocation instead of creating a
   await f.update("/new");
   await f.update("/new");
   assert.equal(f.store.workers().length, 1);
-  assert.equal(f.sent.filter((x) => x.method === "createForumTopic").length, 1);
+  assert.equal(f.sent.filter((x) => x.method === "createForumTopic").length, 0);
 });
 
 test("a Topic fenced before final Telegram delivery cannot publish its old response", async (t) => {
