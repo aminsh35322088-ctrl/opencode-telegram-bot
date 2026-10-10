@@ -51,21 +51,15 @@ function addMainControls(keyboard: Keyboard): void {
 
 function addTopicControls(
   keyboard: Keyboard,
-  paused: boolean,
-  running: boolean,
+  _paused: boolean,
+  _running: boolean,
   compactOutputMode: boolean,
   currentModel?: ModelInfo,
-  nativeStop = false,
+  _nativeStop = false,
 ): void {
-  if (!nativeStop && (running || paused)) {
-    keyboard
-      .text(paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause)
-      .text(MAIN_BUTTONS.abort)
-      .row();
-  }
   keyboard.text(MAIN_BUTTONS.compact(compactOutputMode)).row();
   keyboard.text(TOPIC_BUTTONS.modelCenter(currentModel)).row();
-  keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.topicSettings).row();
+  keyboard.text(MAIN_BUTTONS.deleteChat).text(MAIN_BUTTONS.topicSettings);
 }
 
 function buildMainKeyboard(currentModel: ModelInfo, options: MainKeyboardOptions = {}): Keyboard {

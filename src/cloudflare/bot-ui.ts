@@ -1,6 +1,7 @@
 import {
   createMainInlineKeyboard,
   createMainKeyboard,
+  createTopicKeyboard,
   MAIN_BUTTONS,
   TOPIC_BUTTONS,
 } from "../bot/keyboards/main-reply-keyboard.js";
@@ -897,65 +898,21 @@ export class CloudBotUi {
 
     if (topic) {
       const actor = this.panelScope!.actor;
-      const running = this.deps.store.activeRuns(chat, topic.threadId).length > 0;
-      const paused = options.paused ?? false;
-      const nativeStop =
-        this.get<{ verified?: boolean }>(`native-qualified:${chat}`)?.verified === true &&
-        this.get<string>(`native-capability:${chat}`) === "private";
-
-      // ReplyKeyboardMarkup is chat-wide in Telegram clients. In private bot Topics it can
-      // leak across Topic tabs and cause subsequent mobile messages to arrive without a
-      // message_thread_id. Retire any legacy keyboard once, then keep every Topic control
-      // on an inline panel whose callback is generation- and thread-scoped.
-      const clearedKey = `reply-keyboard-cleared:${chat}`;
-      if (!this.get(clearedKey)) {
-        const cleared = await this.deps.telegram.call<{ message_id: number }>("sendMessage", {
-          chat_id: chat,
-          message_thread_id: topic.threadId,
-          text: "⌨️ Topic controls updated.",
-          reply_markup: { remove_keyboard: true },
-        });
-        this.set(clearedKey, { messageId: cleared.message_id, at: Date.now() });
-      }
-
-      const rows: Button[][] = [];
-      if (!nativeStop && (running || paused))
-        rows.push([
-          this.button(
-            actor,
-            chat,
-            topic.threadId,
-            topic,
-            paused ? MAIN_BUTTONS.resume : MAIN_BUTTONS.pause,
-            paused ? "resume" : "pause",
-          ),
-          this.button(actor, chat, topic.threadId, topic, MAIN_BUTTONS.abort, "abort"),
-        ]);
-      rows.push([
-        this.button(
-          actor,
-          chat,
-          topic.threadId,
-          topic,
-          MAIN_BUTTONS.compact(options.compact ?? options.compactOutputMode ?? false),
-          "compact",
-        ),
-      ]);
-      rows.push([
-        this.button(
-          actor,
-          chat,
-          topic.threadId,
-          topic,
-          TOPIC_BUTTONS.modelCenter(currentModel),
-          "models",
-        ),
-      ]);
-      rows.push([
-        this.button(actor, chat, topic.threadId, topic, MAIN_BUTTONS.deleteChat, "delete"),
-        this.button(actor, chat, topic.threadId, topic, MAIN_BUTTONS.topicSettings, "topic_settings"),
-      ]);
-      await this.menu(chat, topic.threadId, escape(text), rows);
+      const advertised = (await this.legacyModels().current(topic)) ?? currentModel;
+      const replyMarkup = createTopicKeyboard({
+        compactOutputMode: options.compact ?? options.compactOutputMode ?? false,
+        currentModel: advertised,
+      });
+      const controls = replyMarkup.keyboard
+        .flat()
+        .map((button) => normalized(typeof button === "string" ? button : button.text));
+      this.set(`reply-keyboard:${actor}:${chat}:${topic.threadId}:${topic.generation}`, { controls });
+      await this.deps.telegram.call("sendMessage", {
+        chat_id: chat,
+        message_thread_id: topic.threadId,
+        text: text.slice(0, 4000),
+        reply_markup: replyMarkup,
+      });
       return;
     }
 
@@ -993,31 +950,34 @@ export class CloudBotUi {
       reply_markup: { remove_keyboard: true },
     });
   }
+  private async modelCapabilitySummary(topic: FleetTopic): Promise<string> {
+    const models = this.legacyModels();
+    const current = await models.current(topic);
+    if (!current) return "🧠 Model not configured";
+    return models.routingSummary({ kind: "topic", topic }, current);
+  }
+  private topicDisplayTitle(topic: FleetTopic): string {
+    const configured = this.options(topic).title ??
+      this.deps.store.jobs().find((job) => job.workerId === topic.workerId)?.topicTitle;
+    const match = /^(?:Chat )?#(\d+)$/.exec(configured ?? "");
+    if (match) return `Chat #${String(Number(match[1])).padStart(2, "0")}`;
+    if (configured?.trim()) return configured.trim();
+    const ordered = this.deps.store
+      .topics()
+      .filter((candidate) => candidate.chatId === topic.chatId && candidate.state === "ACTIVE")
+      .sort((left, right) => left.threadId - right.threadId);
+    const index = Math.max(0, ordered.findIndex((candidate) => candidate.workerId === topic.workerId));
+    return `Chat #${String(index + 1).padStart(2, "0")}`;
+  }
   async runKeyboard(topic: FleetTopic, runId: string, running: boolean): Promise<void> {
     this.assertTopic(topic);
-    if (!running && !this.deps.store.activeRuns(topic.chatId, topic.threadId).length)
-      this.setOptions(topic, { paused: false });
+    // Execution control is Telegram Native Stop. The Topic ReplyKeyboard does not
+    // change between idle and running states, so refreshing it here only creates spam.
     const id = "keyboard:" + runId + ":" + (running ? "active" : "idle");
-    const receipt = [
-      ...this.deps.sql.exec<{ state: string }>("SELECT state FROM ui_delivery WHERE id=?", id),
-    ][0];
-    if (receipt && receipt.state !== "PENDING") return;
     this.deps.sql.exec(
-      "INSERT INTO ui_delivery VALUES(?,'SENDING',NULL) ON CONFLICT(id) DO UPDATE SET state='SENDING'",
+      "INSERT INTO ui_delivery VALUES(?,'DELIVERED',NULL) ON CONFLICT(id) DO UPDATE SET state='DELIVERED'",
       id,
     );
-    try {
-      await this.keyboard(topic.chatId, topic, running ? "▶ OpenCode is running…" : "✅ Ready");
-      this.deps.sql.exec("UPDATE ui_delivery SET state='DELIVERED' WHERE id=?", id);
-    } catch (error) {
-      this.deps.sql.exec(
-        "UPDATE ui_delivery SET state=? WHERE id=?",
-        error instanceof TelegramDeliveryError && error.category === "rate_limited"
-          ? "PENDING"
-          : "RECONCILIATION_REQUIRED",
-        id,
-      );
-    }
   }
   async ready(topic: FleetTopic): Promise<void> {
     const id = "ready:" + topic.workerId + ":" + topic.generation;
@@ -1030,10 +990,11 @@ export class CloudBotUi {
       id,
     );
     try {
+      const summary = await this.modelCapabilitySummary(topic);
       await this.keyboard(
         topic.chatId,
         topic,
-        t("new.created", { title: this.options(topic).title ?? "OpenCode" }, "en"),
+        `✅ ${this.topicDisplayTitle(topic)} created\n\n${summary}`,
       );
       this.deps.sql.exec("UPDATE ui_delivery SET state='DELIVERED' WHERE id=?", id);
     } catch (error) {
@@ -1488,6 +1449,9 @@ export class CloudBotUi {
     const topic = this.deps.store
       .topics()
       .find((t) => t.chatId === chat && t.threadId === thread && t.state === "ACTIVE");
+    // Telegram Topics created manually by the user are outside the managed AI fleet.
+    // Fail closed before interpreting commands or ReplyKeyboard-looking text.
+    if (thread && !topic) return true;
     const text = update.message?.text ?? "";
     const actionKey = "action:" + updateId;
     const saved = this.get<{
@@ -1586,15 +1550,20 @@ export class CloudBotUi {
       const label = normalized(text);
       const topicModel = topic ? this.model(topic) : "";
       const topicModelSplit = topicModel.indexOf("/");
+      const advertisedModel =
+        topic && label.startsWith("🧠 ")
+          ? await this.legacyModels().current(topic).catch(() => undefined)
+          : undefined;
       const topicModelButton = topic
         ? normalized(
             TOPIC_BUTTONS.modelCenter(
-              topicModelSplit > 0
-                ? {
-                    providerID: topicModel.slice(0, topicModelSplit),
-                    modelID: topicModel.slice(topicModelSplit + 1),
-                  }
-                : undefined,
+              advertisedModel ??
+                (topicModelSplit > 0
+                  ? {
+                      providerID: topicModel.slice(0, topicModelSplit),
+                      modelID: topicModel.slice(topicModelSplit + 1),
+                    }
+                  : undefined),
             ),
           )
         : "";
@@ -2053,7 +2022,7 @@ export class CloudBotUi {
       const compact = !(this.options(topic!).compact ?? this.options(topic!).compactOutputMode);
       this.setOptions(topic!, { compact });
       this.set("action_done:" + updateId, true);
-      await this.keyboard(chat, topic, `✅ Compact mode is ${compact ? "ON" : "OFF"}.`);
+      await this.keyboard(chat, topic, `✅ Compact: ${compact ? "ON" : "OFF"}`);
       return true;
     }
     if (["pause", "resume", "abort", "stop"].includes(name)) {
@@ -3278,11 +3247,8 @@ export class CloudBotUi {
       if (updateId) this.set("action_done:" + updateId, true);
       if (topic) {
         await this.clearOwnedPanels();
-        await this.keyboard(
-          chat,
-          topic,
-          `✅ Model updated to ${selected.slice(split + 1)}.`,
-        );
+        const summary = await this.modelCapabilitySummary(topic);
+        await this.keyboard(chat, topic, `✅ Model changed\n\n${summary}`);
       } else await this.renderModelRoot(actor, chat, thread, topic);
       return true;
     }

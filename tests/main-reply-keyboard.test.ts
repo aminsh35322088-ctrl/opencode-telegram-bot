@@ -13,39 +13,26 @@ test("legacy General reply keyboard remains New Chat / History / Main Settings",
   assert.deepEqual(rows(keyboard), [["💬 New Chat"], ["🕘 History", "⚙️ Main Settings"]]);
 });
 
-test("legacy Topic reply keyboard changes run controls without changing the base layout", () => {
-  const idle = createTopicKeyboard({
-    currentModel: { providerID: "p", modelID: "gpt-5", name: "GPT 5" },
-  });
-  assert.deepEqual(rows(idle), [
-    ["📦 Compact: OFF"],
-    ["🧠 GPT 5"],
-    ["🗑️ Delete Chat", "⚙️ Topic Settings"],
-  ]);
-
-  const running = createTopicKeyboard({
-    running: true,
-    currentModel: { providerID: "p", modelID: "gpt-5", name: "GPT 5" },
-  });
-  assert.deepEqual(rows(running)[0], ["⏸️ Pause", "🛑 Abort"]);
-
-  const paused = createTopicKeyboard({
-    paused: true,
-    running: true,
-    currentModel: { providerID: "p", modelID: "gpt-5", name: "GPT 5" },
-  });
-  assert.deepEqual(rows(paused)[0], ["▶️ Resume", "🛑 Abort"]);
-});
-
-test("qualified native Stop hides only the user-facing execution controls", () => {
-  const keyboard = createTopicKeyboard({
-    running: true,
-    nativeStop: true,
-    currentModel: { providerID: "p", modelID: "m" },
-  });
-  const text = JSON.stringify(keyboard.keyboard);
-  assert.equal(/Pause|Resume|Abort/.test(text), false);
-  assert.match(text, /Compact/);
-  assert.match(text, /Delete Chat/);
-  assert.match(text, /Topic Settings/);
+test("managed Topic ReplyKeyboard has exactly three dynamic rows and no legacy run controls", () => {
+  for (const state of [
+    {},
+    { running: true },
+    { paused: true, running: true },
+    { nativeStop: true, running: true },
+  ]) {
+    const keyboard = createTopicKeyboard({
+      ...state,
+      compactOutputMode: true,
+      currentModel: { providerID: "p", modelID: "gpt-5", name: "GPT 5" },
+    });
+    assert.deepEqual(rows(keyboard), [
+      ["📦 Compact: ON"],
+      ["🧠 GPT 5"],
+      ["🗑️ Delete Chat", "⚙️ Topic Settings"],
+    ]);
+    const markup = keyboard as unknown as { resize_keyboard?: boolean; is_persistent?: boolean };
+    assert.equal(markup.resize_keyboard, true);
+    assert.equal(markup.is_persistent, undefined);
+    assert.equal(/Pause|Resume|Abort/.test(JSON.stringify(keyboard.keyboard)), false);
+  }
 });

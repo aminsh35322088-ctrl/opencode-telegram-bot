@@ -1,4 +1,8 @@
 import type { FavoriteModel, ModelInfo, ProviderInfo } from "../app/types/model.js";
+import type { CapabilityRoute, ModelRoutingCapability, UnifiedModelCatalogEntry } from "../app/types/model-capability.js";
+import { detectModelCapabilities } from "../app/services/model-capability-detection-service.js";
+import { detectModelExecutionCapabilities } from "../app/services/model-execution-capability-service.js";
+import { formatModelRoutingSummary } from "../app/services/model-routing-summary-formatter.js";
 import type { ModelCenterDataSource } from "../bot/menus/model-center-menu.js";
 import type { FleetTopic } from "./control-store.js";
 import type { LegacyUiAdapter } from "./legacy-ui-adapter.js";
@@ -27,7 +31,60 @@ export class LegacyModelAdapter {
     if (!selected) return undefined;
     const slash = selected.indexOf("/");
     if (slash < 1) return undefined;
-    return { providerID: selected.slice(0, slash), modelID: selected.slice(slash + 1) };
+    const providerID = selected.slice(0, slash), modelID = selected.slice(slash + 1);
+    const scope: LegacyModelScope = topic ? { kind: "topic", topic } : { kind: "global" };
+    const advertised = (await this.models(scope, providerID)).find((model) => model.modelID === modelID);
+    return { providerID, modelID, ...(advertised?.name ? { name: advertised.name } : {}) };
+  }
+
+  async routingSummary(scope: LegacyModelScope, primary: ModelInfo): Promise<string> {
+    const providers = await this.catalog(scope);
+    const catalog: UnifiedModelCatalogEntry[] = [];
+    for (const providerValue of providers) {
+      const provider = record(providerValue);
+      const providerID = String(provider.id ?? "");
+      if (!providerID) continue;
+      for (const [modelID, modelValue] of Object.entries(record(provider.models))) {
+        const metadata = record(modelValue);
+        const detected = detectModelCapabilities(metadata, { source: "model-catalog" });
+        const execution = detectModelExecutionCapabilities(metadata);
+        catalog.push({
+          providerID,
+          providerName: String(provider.name ?? providerID),
+          modelID,
+          modelName: String(metadata.name ?? modelID),
+          capabilities: detected.capabilities,
+          execution: execution.execution,
+          capabilityDetection: detected.detection,
+          availability: "available",
+          origin: "opencode-runtime",
+        });
+      }
+    }
+    const entry = catalog.find(
+      (model) => model.providerID === primary.providerID && model.modelID === primary.modelID,
+    );
+    const supports = (capability: ModelRoutingCapability): boolean => {
+      if (!entry) return false;
+      if (capability === "vision")
+        return entry.capabilities.modalities.input.image === true && entry.capabilities.modalities.output.text === true;
+      if (capability === "imageGenerate") return entry.capabilities.operations.imageGenerate === true;
+      if (capability === "textToSpeech") return entry.capabilities.operations.textToSpeech === true;
+      return entry.capabilities.modalities.input.audio === true && entry.execution?.nativeAudioFileInput === true;
+    };
+    const capabilities: readonly ModelRoutingCapability[] = ["vision", "voiceInput", "imageGenerate", "textToSpeech"];
+    const routes = new Map<ModelRoutingCapability, CapabilityRoute>(
+      capabilities.map((capability) => {
+        const native = supports(capability);
+        return [capability, {
+          capability,
+          ...(native ? { model: { providerID: primary.providerID, modelID: primary.modelID } } : {}),
+          routeSource: native ? "primary-native" : "unavailable",
+          primarySupportsCapability: native,
+        }];
+      }),
+    );
+    return formatModelRoutingSummary(primary, catalog, routes);
   }
 
   source(scope: LegacyModelScope): ModelCenterDataSource {
