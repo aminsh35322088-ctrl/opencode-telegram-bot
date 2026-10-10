@@ -1789,6 +1789,15 @@ test("Railway onboarding protects token, seeds ten slots, updates one panel, wel
   const progress = f.sent.filter((entry) => entry.method === "editMessageText").at(-1);
   assert.ok(progress);
   assert.match(String(progress.payload.text), /Setting up Railway/);
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+    "railway:api-backoff",
+    JSON.stringify({ until: Date.now() + 60_000 }),
+  );
+  await (f.plane as any).refreshRailwayOnboarding();
+  const limited = f.sent.filter((entry) => entry.method === "editMessageText").at(-1)!;
+  assert.match(String(limited.payload.text), /Railway API rate limited/);
+  f.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
 
   for (const worker of f.store.workers()) {
     const job = f.store.jobs().find((candidate) => candidate.requestId === `fleet-bootstrap:${worker.workerId}`)!;

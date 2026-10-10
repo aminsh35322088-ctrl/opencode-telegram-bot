@@ -182,6 +182,7 @@ export interface RailwaySetupStatus {
   workersReady: number;
   totalWorkers: number;
   failed: number;
+  retryAt?: number;
 }
 interface UiDependencies {
   allowedUserId?: string;
@@ -1588,7 +1589,10 @@ export class CloudBotUi {
           mark(workersDone, projectsDone && !workersDone, `Workers created ${status.workersCreated}/${status.totalWorkers}`) + "\n" +
           mark(volumesDone, workersDone && !volumesDone, `Volumes attached ${status.volumesAttached}/${status.totalWorkers}`) + "\n" +
           mark(readyDone, volumesDone && !readyDone, `Deploy & health checks ${status.workersReady}/${status.totalWorkers}`) +
-          (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : ""),
+          (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : "") +
+          (status.retryAt && status.retryAt > Date.now()
+            ? "\n\n⏳ Railway API rate limited · retrying automatically."
+            : ""),
         [],
       );
       return;

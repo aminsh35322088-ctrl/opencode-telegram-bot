@@ -1676,6 +1676,7 @@ export class ControlPlane {
       workersReady,
       totalWorkers,
       failed,
+      ...(this.railwayBackoffUntil() > Date.now() ? { retryAt: this.railwayBackoffUntil() } : {}),
     };
   }
   private async resumeRailwaySetup(): Promise<RailwaySetupStatus> {
@@ -2232,6 +2233,8 @@ export class ControlPlane {
     const backoffUntil = this.railwayBackoffUntil();
     if (backoffUntil > now) {
       await this.scheduleAlarm(backoffUntil);
+      if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing))
+        await this.refreshRailwayOnboarding();
       return;
     }
     if (backoffUntil) this.clearRailwayBackoff();
@@ -2289,6 +2292,8 @@ export class ControlPlane {
         } else {
           await this.scheduleAlarm(Date.now() + 15_000);
         }
+        if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing))
+          await this.refreshRailwayOnboarding();
         return;
       }
       const job = this.store.job(jobId);
