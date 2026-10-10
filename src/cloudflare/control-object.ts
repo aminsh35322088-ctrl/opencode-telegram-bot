@@ -786,8 +786,8 @@ export class ControlPlane {
           identity: {
             nodeId: job.workerId,
             generation: job.generation,
-            chatId: job.chatId,
-            threadId: job.threadId,
+            chatId: job.threadId === undefined ? 0 : job.chatId,
+            threadId: job.threadId ?? 0,
           },
           secret,
           revision: this.store.global()?.revision ?? 0,
@@ -1501,6 +1501,32 @@ export class ControlPlane {
       },
     });
   }
+  private async unboundIdentity(workerId: string, generation?: number): Promise<RpcIdentity> {
+    const worker = this.store.worker(workerId);
+    if (
+      !worker?.credential ||
+      !worker.endpoint ||
+      worker.chatId ||
+      worker.threadId ||
+      worker.state !== "READY_UNBOUND"
+    )
+      throw new Error("unbound_worker_not_ready");
+    const selected = generation ?? worker.generation;
+    if (selected !== worker.generation) throw new Error("stale_generation");
+    const secret = await decryptCredential(
+      this.env.CREDENTIAL_MASTER_KEY,
+      "node:" + workerId + ":" + selected,
+      worker.credential,
+    );
+    return {
+      workerId,
+      generation: selected,
+      chatId: 0,
+      threadId: 0,
+      endpoint: worker.endpoint,
+      secret,
+    };
+  }
   private async identity(workerId: string, generation?: number): Promise<RpcIdentity> {
     const worker = this.store.worker(workerId);
     if (!worker?.credential || !worker.endpoint || !worker.chatId || !worker.threadId)
@@ -1529,46 +1555,15 @@ export class ControlPlane {
     if (this.env.PROVISION_ON_TOPIC_CREATE !== "true" || this.env.PROVISIONING_ENABLED !== "true")
       throw new Error("provisioning_disabled");
     await this.setup();
-    let job = this.store.reserveAllocation(requestId, chatId);
-    if (!job.threadId) {
-      if (job.phase === "TOPIC_CREATING") throw new Error("topic_creation_reconciliation_required");
-      const topicTitle = this.store.reserveTopicTitle(job.jobId);
-      this.store.configureJob(job.jobId, { phase: "TOPIC_CREATING" });
-      let created: { message_thread_id: number };
-      try {
-        created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call("createForumTopic", {
-          chat_id: chatId,
-          name: topicTitle,
-        });
-      } catch (error) {
-        if (error instanceof TelegramDeliveryError && error.category === "rate_limited")
-          this.store.configureJob(job.jobId, { phase: "PROVISIONING" });
-        if (error instanceof TelegramDeliveryError && error.category === "rejected") {
-          this.store.configureJob(job.jobId, {
-            phase: "FAILED",
-            error: "telegram_topic_creation_rejected",
-          });
-          this.store.transition(job.workerId, job.generation, "DELETING");
-          this.store.confirmDestroyed(job.workerId, job.generation);
-        }
-        throw error;
-      }
-      job = this.store.configureJob(job.jobId, {
-        threadId: created.message_thread_id,
-        phase: "PROVISIONING",
-      });
-      this.store.saveObservation(job.workerId, job.generation, {
-        chatId,
-        threadId: created.message_thread_id,
-      });
-    }
+    const job = this.store.reserveAllocation(requestId, chatId);
+    this.store.reserveTopicTitle(job.jobId);
     await this.scheduleAlarm(Date.now() + 15_000);
     await this.env.JOBS.send({ jobId: job.jobId });
-    return job;
+    return this.store.job(job.jobId)!;
   }
   private async advance(jobId: string): Promise<void> {
     if (this.env.PROVISIONING_ENABLED !== "true") throw new Error("provisioning_disabled");
-    const job = this.store.job(jobId);
+    let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
     if (
       [
@@ -1582,7 +1577,7 @@ export class ControlPlane {
     if (job.phase === "BOUND") {
       const topic = this.store
         .topics()
-        .find((t) => t.workerId === job.workerId && t.state === "ACTIVE");
+        .find((t) => t.workerId === job!.workerId && t.state === "ACTIVE");
       if (topic) await this.topicUi(topic).ready(topic);
       return;
     }
@@ -1596,43 +1591,47 @@ export class ControlPlane {
       this.store.transition(job.workerId, job.generation, "UNHEALTHY");
       throw new Error("worker_bootstrap_timeout");
     }
-    if (!job.threadId) throw new Error("topic_pending");
     const owner = crypto.randomUUID();
     if (!this.store.acquireLease("railway-provisioning", owner, Date.now(), 180_000))
       throw new Error("provisioning_pending");
     const guard = () => {
+      const currentJob = this.store.job(jobId);
+      if (!currentJob) throw new Error("unknown_job");
       if (
         [
           ...this.state.storage.sql.exec(
             "SELECT key FROM ui_state WHERE key=?",
-            "reset:" + job.chatId,
+            "reset:" + currentJob.chatId,
           ),
         ].length
       )
         throw new Error("control_reset_pending");
       this.store.renewLease("railway-provisioning", owner, Date.now(), 180_000);
-      const current = this.store.worker(job.workerId);
+      const current = this.store.worker(currentJob.workerId);
       if (
         !current ||
-        current.generation !== job.generation ||
+        current.generation !== currentJob.generation ||
         ["FENCING", "DELETING", "REPLACED"].includes(current.state)
       )
         throw new Error("stale_generation");
     };
     try {
       await this.driver(guard).provision(jobId);
+      job = this.store.job(jobId)!;
       const worker = this.store.worker(job.workerId)!;
       if (!worker.credential) {
         await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
-      const identity = await this.identity(worker.workerId);
+      const rpcIdentity = job.threadId
+        ? await this.identity(worker.workerId)
+        : await this.unboundIdentity(worker.workerId);
       let health: {
         ready: boolean;
         runtime?: { telegramCoreCommit: string; telegramCoreVersion: string };
       };
       try {
-        health = await nodeRpc(identity, "health", {});
+        health = await nodeRpc(rpcIdentity, "health", {});
       } catch {
         await this.scheduleAlarm(Date.now() + 15_000);
         return;
@@ -1647,13 +1646,11 @@ export class ControlPlane {
         health.runtime?.telegramCoreVersion !== this.env.WORKER_CORE_VERSION
       )
         throw new Error("worker_image_mismatch");
-      guard();
       const observed = await this.driver(guard).inspectDeployment(jobId);
       if (observed.status !== "SUCCESS") {
         await this.scheduleAlarm(Date.now() + 15_000);
         return;
       }
-      const session = await nodeRpc<{ sessionId: string }>(identity, "session.create", {});
       guard();
       this.store.saveObservation(worker.workerId, job.generation, {
         image: observed.image,
@@ -1662,7 +1659,37 @@ export class ControlPlane {
         runtimeVersion: health.runtime.telegramCoreVersion,
         lastHealthAt: Date.now(),
       });
-      this.store.ready(worker.workerId, job.generation, worker.credential!);
+      this.store.ready(worker.workerId, job.generation, worker.credential);
+
+      if (!job.threadId) {
+        const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(
+          rpcIdentity,
+          "session.probe",
+          {},
+        );
+        guard();
+        if (probe.created !== true || probe.deleted !== true)
+          throw new Error("session_probe_failed");
+        this.store.markSessionProbed(jobId);
+        const topicTitle = this.store.reserveTopicTitle(jobId);
+        const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<
+          { message_thread_id: number }
+        >("createForumTopic", { chat_id: job.chatId, name: topicTitle });
+        if (!Number.isSafeInteger(created.message_thread_id) || created.message_thread_id <= 1)
+          throw new Error("invalid_topic");
+        await nodeRpc(rpcIdentity, "retire", {});
+        const rotated = this.store.rotateAllocationToTopic(jobId, created.message_thread_id);
+        this.store.saveObservation(rotated.workerId, rotated.generation, {
+          chatId: rotated.chatId,
+          threadId: created.message_thread_id,
+        });
+        await this.scheduleAlarm(Date.now() + 1);
+        await this.env.JOBS.send({ jobId });
+        return;
+      }
+
+      const session = await nodeRpc<{ sessionId: string }>(rpcIdentity, "session.create", {});
+      guard();
       const bound = this.store.bindTopic(jobId, job.threadId, session.sessionId);
       if (job.topicTitle) {
         const key = `topic:${bound.chatId}:${bound.threadId}:${bound.generation}`;
@@ -1740,7 +1767,8 @@ export class ControlPlane {
             "BINDING",
             "DEPLOYING",
             "DEPLOY_SUBMITTED",
-          ].includes(j.phase) && j.threadId !== undefined,
+            "SESSION_PROBED",
+          ].includes(j.phase),
       );
     for (const job of pending) {
       try {

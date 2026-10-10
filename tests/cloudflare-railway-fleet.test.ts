@@ -182,6 +182,35 @@ test("first allocation creates execution project/service/volume and deploys immu
     false,
   );
 });
+
+test("identity rotation redeploys the same allocation service and volume with a fresh generation bootstrap", async () => {
+  const f = fixture();
+  const generations: number[] = [];
+  const driver = new RailwayFleetDriver(f.store, f.request, {
+    image: "ghcr.io/example/worker@sha256:" + "a".repeat(64),
+    controlUrl: "https://control.example",
+    bootstrap: async (job) => {
+      generations.push(job.generation);
+      return "bootstrap-" + job.generation;
+    },
+  });
+  const first = f.store.reserveAllocation("two-generation", -100);
+  const provisioned = await driver.provision(first.jobId);
+  const serviceId = provisioned.serviceId;
+  const volumeId = provisioned.volumeId;
+  f.store.ready(first.workerId, first.generation, "first-secret");
+  f.store.markSessionProbed(first.jobId);
+  const rotated = f.store.rotateAllocationToTopic(first.jobId, 42);
+  assert.equal(rotated.generation, 2);
+  const second = await driver.provision(first.jobId);
+  assert.equal(second.serviceId, serviceId);
+  assert.equal(second.volumeId, volumeId);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+  assert.deepEqual(generations, [1, 2]);
+  assert.equal(second.phase, "DEPLOYING");
+});
+
 test("lost project create response reconciles deterministic workspace project without duplication", async () => {
   const f = fixture();
   const job = f.store.reserveAllocation("lost", -100);

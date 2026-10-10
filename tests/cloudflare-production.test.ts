@@ -63,6 +63,34 @@ const post = (plane: ControlPlane, path: string, body: unknown = {}) =>
   plane.fetch(
     new Request("https://internal" + path, { method: "POST", body: JSON.stringify(body) }),
   );
+
+async function tokenHash(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+test("initial Worker bootstrap is strictly unbound 0/0 even though the allocation knows its Telegram chat", async () => {
+  const f = fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.reserveAllocation("bootstrap-unbound", -100);
+  f.store.configureJob(job.jobId, { serviceId: "service", projectId: "project", environmentId: "env" });
+  const token = "bootstrap-token";
+  f.store.issueBootstrap(job.jobId, await tokenHash(token), Date.now() + 60_000);
+  const response = await post(f.plane, "/nodes/bootstrap", {
+    bootstrapToken: token,
+    serviceId: "service",
+    projectId: "project",
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json() as { identity: { nodeId: string; generation: number; chatId: number; threadId: number } };
+  assert.deepEqual(body.identity, {
+    nodeId: job.workerId,
+    generation: 1,
+    chatId: 0,
+    threadId: 0,
+  });
+});
+
 test("production setup stores only secret reference and preserves lazy zero-project inventory", async () => {
   const f = fixture();
   const response = await post(f.plane, "/admin/setup");
@@ -237,9 +265,9 @@ test("admin canary and webhook share idempotent Topic creation", async (t) => {
   const body = { chatId: -100, requestId: "canary_new" };
   const a = await (await post(f.plane, "/admin/new-topic", body)).json();
   const b = await (await post(f.plane, "/admin/new-topic", body)).json();
-  assert.equal(creates, 1);
+  assert.equal(creates, 0);
   assert.equal(a.jobId, b.jobId);
-  assert.equal(a.threadId, 42);
+  assert.equal(a.threadId, undefined);
   assert.equal(f.store.workers().length, 1);
   assert.equal(f.store.topics().length, 0);
 });
