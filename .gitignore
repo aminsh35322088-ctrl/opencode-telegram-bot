@@ -53,3 +53,6 @@ manager/
 .wrangler/
 .dev.vars
 .dev.vars.*
+
+.worktrees/
+.superpowers/
