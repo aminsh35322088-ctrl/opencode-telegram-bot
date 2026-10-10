@@ -46,6 +46,7 @@ function fixture() {
     rejectVolumeCreate = false,
     quota = false,
     projectSerial = 0;
+  const serviceCreateInputs: Record<string, unknown>[] = [];
   const volumeCreateInputs: Record<string, unknown>[] = [];
   let rejectMutation = "";
   const mutations: string[] = [];
@@ -110,6 +111,7 @@ function fixture() {
       if (i >= 0) volumes.splice(i, 1);
       result = { volumeDelete: true };
     } else if (query.includes("FleetServiceCreate")) {
+      serviceCreateInputs.push({ ...input });
       const s = { id: "s" + services.length, name: input.name as string };
       services.push(s);
       result = { serviceCreate: s };
@@ -189,6 +191,7 @@ function fixture() {
     services,
     volumes,
     mutations,
+    serviceCreateInputs,
     volumeCreateInputs,
     loseProject: () => {
       loseProject = true;
@@ -243,6 +246,18 @@ test("cleanup can prove legacy VOLUME_CREATING has no orphan volume and retire t
 
   assert.equal(f.services.length, 0);
   assert.equal(f.store.worker(worker.workerId)?.state, "REPLACED");
+});
+
+test("service creation uses Railway current project-scoped ServiceCreateInput", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("service-create-input", -100);
+
+  await f.driver.provision(job.jobId);
+
+  assert.equal(f.serviceCreateInputs.length, 1);
+  assert.equal(f.serviceCreateInputs[0]!.projectId, f.store.job(job.jobId)!.projectId);
+  assert.equal(typeof f.serviceCreateInputs[0]!.name, "string");
+  assert.equal("environmentId" in f.serviceCreateInputs[0]!, false);
 });
 
 test("first allocation creates execution project/service/volume and deploys immutable image", async () => {

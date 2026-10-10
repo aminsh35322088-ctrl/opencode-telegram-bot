@@ -197,7 +197,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
         (
           await this.request<{ serviceCreate: { id: string } }>(
             "mutation FleetServiceCreate($input:ServiceCreateInput!){serviceCreate(input:$input){id}}",
-            { input: { name, projectId: job.projectId, environmentId: job.environmentId } },
+            { input: { name, projectId: job.projectId } },
           )
         ).serviceCreate;
       job = this.store.configureJob(jobId, { serviceId: service.id });
