@@ -119,6 +119,7 @@ import {
 
 export interface TelegramUpdate {
   update_id?: number;
+  stopped_message_generation?: import("./run-presentation.js").NativeStop;
   message?: {
     message_id?: number;
     text?: string;
@@ -857,6 +858,9 @@ export class CloudBotUi {
           compactOutputMode: options.compact ?? options.compactOutputMode ?? false,
           paused: options.paused ?? false,
           running: this.deps.store.activeRuns(chat, topic.threadId).length > 0,
+          nativeStop:
+            this.get<{ verified?: boolean }>(`native-qualified:${chat}`)?.verified === true &&
+            this.get<string>(`native-capability:${chat}`) === "private",
           currentModel,
         })
       : createMainKeyboard(currentModel);

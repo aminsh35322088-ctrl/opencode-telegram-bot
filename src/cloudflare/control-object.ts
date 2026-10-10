@@ -12,6 +12,7 @@ import { renderTelegramParts } from "../bot/render/pipeline.js";
 import { en } from "../i18n/en.js";
 import { canonical, signEnvelope, verifyEnvelope } from "./protocol.js";
 import { CloudRunUi } from "./run-ui.js";
+import { TelegramRunPresentationController } from "./run-presentation.js";
 import { CloudTopicTitleUi } from "./topic-title-ui.js";
 import { CloudTaskUi } from "./task-ui.js";
 import {
@@ -60,7 +61,10 @@ export class ControlPlane {
   ): Promise<void> {
     const key = `typing:${runId}`;
     const row = [
-      ...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
+      ...this.state.storage.sql.exec<{ data: string }>(
+        "SELECT data FROM ui_state WHERE key=?",
+        key,
+      ),
     ][0];
     const previous = row ? (JSON.parse(row.data) as { nextAt?: number }) : undefined;
     const now = Date.now();
@@ -84,10 +88,130 @@ export class ControlPlane {
     this.state.storage.sql.exec(
       "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
       key,
-      JSON.stringify({ nextAt, chat: topic.chatId, thread: topic.threadId, generation: topic.generation }),
+      JSON.stringify({
+        nextAt,
+        chat: topic.chatId,
+        thread: topic.threadId,
+        generation: topic.generation,
+      }),
     );
     await this.scheduleAlarm(nextAt);
   }
+  private presentation(): TelegramRunPresentationController {
+    return new TelegramRunPresentationController(
+      this.state.storage.sql,
+      new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+    );
+  }
+  private async reconcileNativeCancellations(): Promise<void> {
+    const presentation = this.presentation();
+    for (const binding of presentation.pendingCancellations()) {
+      const dispatchLease = [
+        ...this.state.storage.sql.exec<{ expires: number }>(
+          "SELECT expires FROM leases WHERE id=?",
+          `dispatch:${binding.runId}`,
+        ),
+      ][0];
+      if (dispatchLease && dispatchLease.expires > Date.now()) {
+        // Admission may still be in flight. Never release this run's queue slot
+        // before the signed Worker has processed that exact admission attempt.
+        await this.scheduleAlarm(Math.min(dispatchLease.expires, Date.now() + 2000));
+        continue;
+      }
+      const topic = this.store
+        .topics()
+        .find((t) => t.chatId === binding.chatId && t.threadId === binding.threadId);
+      if (
+        !topic ||
+        topic.state !== "ACTIVE" ||
+        topic.generation !== binding.generation ||
+        topic.sessionId !== binding.sessionId ||
+        topic.workerId !== binding.workerId
+      ) {
+        presentation.cancelled(binding.runId);
+        continue;
+      }
+      try {
+        if (this.store.runPin(binding.runId)?.dispatched) {
+          // A retry first reconciles status: the previous abort may have succeeded despite a lost reply.
+          const identity = await this.identity(binding.workerId);
+          // Signed admission proof is required even when execution currently reads
+          // null. A timed-out run submission may still be reaching the Worker.
+          const dispatch = [
+            ...this.state.storage.sql.exec<{ data: string }>(
+              "SELECT data FROM ui_state WHERE key=?",
+              `dispatch:${binding.runId}`,
+            ),
+          ][0];
+          const admitted = dispatch ? JSON.parse(dispatch.data) : undefined;
+          let receiptNeedsCleanup = false;
+          if (
+            !admitted?.accepted ||
+            admitted.sessionId !== binding.sessionId ||
+            admitted.generation !== binding.generation ||
+            admitted.workerId !== binding.workerId
+          ) {
+            const receipt = await nodeRpc<{ runId?: string; state?: string }>(
+              identity,
+              "callback.status",
+              { runId: binding.runId },
+              binding.sessionId,
+            );
+            if (
+              receipt.runId !== binding.runId ||
+              !["ACCEPTED", "INCOMPLETE", "SUBMITTED"].includes(receipt.state ?? "")
+            )
+              throw new Error("admission_reconciliation_pending");
+            receiptNeedsCleanup = receipt.state !== "ACCEPTED";
+          }
+          const status = await nodeRpc<{ externalRunId?: string } | null>(
+            identity,
+            "status",
+            {},
+            binding.sessionId,
+          );
+          if (status || receiptNeedsCleanup) {
+            if (status && status.externalRunId !== binding.runId) throw new Error("run_mismatch");
+            // eslint-disable-next-line no-console
+            console.log(
+              JSON.stringify({
+                event: "run_cancellation_started",
+                runId: binding.runId,
+                generation: binding.generation,
+                sessionId: binding.sessionId,
+                workerId: binding.workerId,
+              }),
+            );
+            await nodeRpc(identity, "stop", { runId: binding.runId }, binding.sessionId);
+            if (await nodeRpc(identity, "status", {}, binding.sessionId))
+              throw new Error("execution_cleanup_pending");
+          }
+        }
+        presentation.cancelled(binding.runId);
+        const stopReceipt = [
+          ...this.state.storage.sql.exec<{ data: string }>(
+            "SELECT data FROM ui_state WHERE key=?",
+            `native-stop:${binding.runId}`,
+          ),
+        ][0];
+        if (stopReceipt && binding.at !== undefined)
+          this.state.storage.sql.exec(
+            "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+            `native-qualified:${binding.chatId}`,
+            JSON.stringify({
+              verified: true,
+              runId: binding.runId,
+              draftId: binding.draftId,
+              at: Date.now(),
+            }),
+          );
+        await this.topicUi(topic).runKeyboard(topic, binding.runId, false);
+      } catch {
+        await this.scheduleAlarm(Date.now() + 2000);
+      }
+    }
+  }
+
   private async initializeSecrets(): Promise<void> {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
     if (!this.env.TELEGRAM_BOT_TOKEN || !this.env.RAILWAY_API_TOKEN) return;
@@ -139,6 +263,34 @@ export class ControlPlane {
             .map(({ credential: _credential, ...publicData }) => publicData),
           topics: this.store.topics(),
         });
+      if (path === "/admin/native-status") {
+        const bindings = [
+          ...this.state.storage.sql.exec<{ data: string }>(
+            "SELECT data FROM telegram_run_presentations ORDER BY rowid DESC LIMIT 100",
+          ),
+        ].map((row) => {
+          const b = JSON.parse(row.data) as import("./run-presentation.js").RunDraftBinding;
+          const receipt = [
+            ...this.state.storage.sql.exec<{ data: string }>(
+              "SELECT data FROM ui_state WHERE key=?",
+              `native-stop:${b.runId}`,
+            ),
+          ][0];
+          return {
+            chatId: b.chatId,
+            threadId: b.threadId,
+            sessionId: b.sessionId,
+            generation: b.generation,
+            runId: b.runId,
+            draftId: b.draftId,
+            presentationState: b.state,
+            lastAcceptedAt: b.at,
+            retryAt: b.retryAt,
+            stop: receipt ? JSON.parse(receipt.data) : undefined,
+          };
+        });
+        return Response.json({ bindings });
+      }
       const raw = await request.text();
       const body = JSON.parse(raw) as Record<string, unknown>;
       if (path === "/admin/setup") {
@@ -450,12 +602,13 @@ export class ControlPlane {
           await telegram.call("setWebhook", {
             url: this.env.CONTROL_PLANE_URL + "/telegram/webhook",
             secret_token: this.env.TELEGRAM_WEBHOOK_SECRET,
-            allowed_updates: ["message", "callback_query"],
+            allowed_updates: ["message", "callback_query", "stopped_message_generation"],
           });
-        const hook = await telegram.call<{ url: string; pending_update_count: number }>(
-          "getWebhookInfo",
-          {},
-        );
+        const hook = await telegram.call<{
+          url: string;
+          pending_update_count: number;
+          allowed_updates?: string[];
+        }>("getWebhookInfo", {});
         const chat = body.chatId
           ? await telegram.call<{ id: number; type: string; is_forum?: boolean }>("getChat", {
               chat_id: Number(body.chatId),
@@ -470,6 +623,7 @@ export class ControlPlane {
           username: me.username,
           webhook: hook.url,
           pending: hook.pending_update_count,
+          allowedUpdates: hook.allowed_updates,
           admissionConfigured: Boolean(
             this.env.TELEGRAM_ALLOWED_USER_ID || this.env.TELEGRAM_ALLOWED_USER_IDS,
           ),
@@ -566,13 +720,43 @@ export class ControlPlane {
         )
           .split(",")
           .map((v) => Number(v.trim()));
+        if (update.stopped_message_generation) {
+          const stop = update.stopped_message_generation;
+          // Native Stop has no from field. Only an authenticated private-chat update
+          // whose chat is an allowlisted user may resolve a durable draft owner.
+          if (stop.chat?.type !== "private" || !allowed.includes(stop.chat.id))
+            return Response.json({ ok: true });
+          const binding = this.state.storage.transactionSync(() =>
+            this.presentation().acceptStop(stop),
+          );
+          if (binding) {
+            this.state.storage.sql.exec(
+              "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+              `native-stop:${binding.runId}`,
+              JSON.stringify({
+                updateId: body.update_id,
+                chatId: binding.chatId,
+                threadId: binding.threadId,
+                draftId: binding.draftId,
+                generation: binding.generation,
+                sessionId: binding.sessionId,
+                runId: binding.runId,
+                receivedAt: Date.now(),
+              }),
+            );
+            await this.scheduleAlarm(Date.now() + 1);
+          }
+          return Response.json({ ok: true });
+        }
         if (!actor || !allowed.includes(actor)) return Response.json({ ok: true });
         const protectedUpdate = await protectTelegramCredentialUpdate(
           update,
           this.state.storage.sql,
           this.env.CREDENTIAL_MASTER_KEY,
         );
-        if (this.store.recordTelegramUpdate(Number(body.update_id), JSON.stringify(protectedUpdate)))
+        if (
+          this.store.recordTelegramUpdate(Number(body.update_id), JSON.stringify(protectedUpdate))
+        )
           await this.scheduleAlarm(Date.now() + 1);
         return Response.json({ ok: true });
       }
@@ -835,13 +1019,21 @@ export class ControlPlane {
             envelope.payload as Record<string, unknown>,
           );
           if (admitted) {
-            new CloudRunUi(
-              this.state.storage.sql,
-              new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
-            ).capture(
-              String((envelope.payload as Record<string, unknown>).runId),
-              (envelope.payload as Record<string, unknown>).event,
-            );
+            const runId = String((envelope.payload as Record<string, unknown>).runId);
+            if (this.presentation().enabled(runId))
+              this.presentation().capture(
+                topic,
+                runId,
+                (envelope.payload as Record<string, unknown>).event,
+              );
+            else
+              new CloudRunUi(
+                this.state.storage.sql,
+                new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+              ).capture(
+                String((envelope.payload as Record<string, unknown>).runId),
+                (envelope.payload as Record<string, unknown>).event,
+              );
             new CloudTopicTitleUi(
               this.state.storage.sql,
               this.store,
@@ -927,7 +1119,8 @@ export class ControlPlane {
   ): Promise<void> {
     const chat = update.message!.chat.id,
       actor = update.message!.from!.id,
-      thread = (update.message!.message_thread_id ?? 0) > 1 ? update.message!.message_thread_id! : 0;
+      thread =
+        (update.message!.message_thread_id ?? 0) > 1 ? update.message!.message_thread_id! : 0;
     const value = await readCredentialInput(update, this.env.CREDENTIAL_MASTER_KEY, {
       actor,
       chat,
@@ -1095,7 +1288,24 @@ export class ControlPlane {
       allowedUserId: this.env.TELEGRAM_ALLOWED_USER_ID,
       sql: this.state.storage.sql,
       store: this.store,
-      telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+      telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN, fetch, async (payload) => {
+        const chat = Number(payload.chat_id),
+          thread = Number(payload.message_thread_id);
+        const topic = this.store.topics().find((t) => t.chatId === chat && t.threadId === thread);
+        if (!topic) return;
+        const binding = this.presentation().activeBinding(topic);
+        if (binding) {
+          const text = [
+            ...this.state.storage.sql.exec<{ text: string }>(
+              "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
+              binding.runId,
+            ),
+          ]
+            .map((p) => p.text)
+            .join("\n");
+          await this.presentation().restore(topic, binding.runId, text);
+        }
+      }),
       coreVersion: this.env.WORKER_CORE_VERSION,
       legacyUi,
       compact: (topic, request) =>
@@ -1500,6 +1710,7 @@ export class ControlPlane {
     const topic = this.store.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
     if (!topic) return;
     const previousGeneration = topic.state === "FENCED" ? topic.generation - 1 : topic.generation;
+    this.presentation().fenceTopic(topic);
     const worker = this.store.fenceTopic(chatId, threadId);
     try {
       await nodeRpc(await this.identity(worker.workerId, previousGeneration), "retire", {});
@@ -1540,13 +1751,31 @@ export class ControlPlane {
     }
 
     this.store.clearInactiveTyping();
+    await this.reconcileNativeCancellations();
+    // Ambiguous persistent deliveries must retain a reachable, refreshable Stop
+    // while the existing outbox requires reconciliation. Never resend them blindly.
+    for (const binding of this.presentation().finalizingBindings()) {
+      const topic = this.store
+        .topics()
+        .find((t) => t.chatId === binding.chatId && t.threadId === binding.threadId);
+      if (!topic || !this.presentation().owns(topic, binding.runId)) continue;
+      const text = [
+        ...this.state.storage.sql.exec<{ text: string }>(
+          "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
+          binding.runId,
+        ),
+      ]
+        .map((p) => p.text)
+        .join("\n");
+      const due = await this.presentation().update(topic, binding.runId, text);
+      if (due !== undefined) await this.scheduleAlarm(due);
+    }
     for (const topic of this.store.topics().filter((t) => t.state === "ACTIVE")) {
       if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId)) continue;
       const run =
         this.store.activeRuns(topic.chatId, topic.threadId)[0] ??
         this.store.startNext(topic.chatId, topic.threadId);
       if (!run || this.store.worker(topic.workerId)?.state === "UNHEALTHY") continue;
-      await this.refreshTyping(topic, run.requestId);
       try {
         const text = [
           ...this.state.storage.sql.exec<{ text: string }>(
@@ -1556,15 +1785,27 @@ export class ControlPlane {
         ]
           .map((p) => p.text)
           .join("\n");
-        const previewDue = await new CloudRunUi(
-          this.state.storage.sql,
-          new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
-        ).progress(topic, run.requestId, text, this.ui().options(topic));
+        const presentation = this.presentation();
+        await presentation.start(topic, run.requestId);
+        const previewDue = presentation.enabled(run.requestId)
+          ? await presentation.update(topic, run.requestId, text)
+          : await new CloudRunUi(
+              this.state.storage.sql,
+              new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
+            ).progress(topic, run.requestId, text, this.ui().options(topic));
         if (previewDue !== undefined) await this.scheduleAlarm(previewDue);
+        if (!presentation.enabled(run.requestId)) await this.refreshTyping(topic, run.requestId);
       } catch {
         /* Execution continues; durable delivery receipt prevents duplicate sends. */
       }
       const dispatchKey = "dispatch:" + run.requestId;
+      // Stop may have arrived while Telegram/metadata I/O yielded.
+      if (
+        !this.store
+          .activeRuns(topic.chatId, topic.threadId)
+          .some((r) => r.requestId === run.requestId)
+      )
+        continue;
       const dispatchRow = [
         ...this.state.storage.sql.exec<{ data: string }>(
           "SELECT data FROM ui_state WHERE key=?",
@@ -1607,17 +1848,26 @@ export class ControlPlane {
           );
           continue;
         }
-        this.store.markRunDispatched(run.requestId);
         const operation = this.store.runOperation(run.requestId);
         if (
           operation === "session.compact" &&
           !supportsContextCompaction(this.store.worker(topic.workerId)?.runtimeVersion)
         )
           throw new Error("worker_upgrade_required");
+        const dispatchIdentity = await this.identity(topic.workerId);
+        if (
+          !this.store
+            .activeRuns(topic.chatId, topic.threadId)
+            .some((r) => r.requestId === run.requestId)
+        ) {
+          this.store.releaseLease(lease, owner);
+          continue;
+        }
+        this.store.markRunDispatched(run.requestId);
         const reply = accepted
           ? { accepted: true }
           : await nodeRpc<{ accepted: boolean }>(
-              await this.identity(topic.workerId),
+              dispatchIdentity,
               operation,
               {
                 runId: run.requestId,
@@ -1668,6 +1918,15 @@ export class ControlPlane {
           { runId: run.requestId },
           topic.sessionId,
         );
+        if (
+          !this.store
+            .activeRuns(topic.chatId, topic.threadId)
+            .some((r) => r.requestId === run.requestId)
+        ) {
+          this.store.releaseLease(lease, owner);
+          await this.scheduleAlarm(Date.now() + 1);
+          continue;
+        }
         const actor = Number(
           (this.env.TELEGRAM_ALLOWED_USER_IDS ?? this.env.TELEGRAM_ALLOWED_USER_ID ?? "").split(
             ",",
@@ -1686,7 +1945,8 @@ export class ControlPlane {
             }),
           );
         if (actor && status.state === "ACCEPTED") {
-          await this.topicUi(topic).runKeyboard(topic, run.requestId, true);
+          if (!this.presentation().enabled(run.requestId))
+            await this.topicUi(topic).runKeyboard(topic, run.requestId, true);
           await this.ui().interactions(topic, actor);
         }
         if (!reply.accepted && !["INCOMPLETE", "SUBMITTED"].includes(status.state))
@@ -1752,6 +2012,12 @@ export class ControlPlane {
         continue;
       }
       const preferences = this.ui().options(topic);
+      const presentation = this.presentation();
+      if (!presentation.canDeliver(topic, response.run)) {
+        this.store.responseDelivered(response.run, "FENCED");
+        continue;
+      }
+      presentation.finalizing(topic, response.run);
       const text =
         response.text +
         (preferences.showAssistantRunFooter
@@ -1773,7 +2039,31 @@ export class ControlPlane {
             : renderTelegramParts(text),
         telegram = new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN);
       let complete = true;
+      if (presentation.enabled(response.run)) {
+        const due = await presentation.update(topic, response.run, text);
+        if (due !== undefined) await this.scheduleAlarm(due);
+      }
+      const runCompleted =
+        [
+          ...this.state.storage.sql.exec<{ state: string }>(
+            "SELECT state FROM runs WHERE request=?",
+            response.run,
+          ),
+        ][0]?.state !== "FAILED";
+      let collectedDiff: unknown;
+      if (runCompleted && preferences.sendDiffFileAttachments) {
+        try {
+          collectedDiff = await this.ui().rpcDiff(topic);
+        } catch {
+          /* Optional artifact. */
+        }
+        if (!presentation.canDeliver(topic, response.run)) continue;
+      }
       for (let index = 0; index < parts.length; index++) {
+        if (!presentation.canDeliver(topic, response.run)) {
+          complete = false;
+          break;
+        }
         const id = response.run + ":" + index;
         const previous = [
           ...this.state.storage.sql.exec<{ state: string }>(
@@ -1795,6 +2085,7 @@ export class ControlPlane {
         try {
           if (
             index === 0 &&
+            !presentation.enabled(response.run) &&
             (await new CloudRunUi(this.state.storage.sql, telegram).finish(
               topic,
               response.run,
@@ -1809,8 +2100,13 @@ export class ControlPlane {
               message_thread_id: response.thread,
               text: parts[index]!.fallbackText,
             });
-          } else await telegram.sendPart(response.chat, response.thread, parts[index]!);
+          } else
+            await telegram.sendPart(response.chat, response.thread, parts[index]!, () =>
+              presentation.canDeliver(topic, response.run),
+            );
           this.state.storage.sql.exec("UPDATE outbox SET state='DELIVERED' WHERE id=?", id);
+          if (index < parts.length - 1 && presentation.enabled(response.run))
+            await presentation.restore(topic, response.run, text);
         } catch (error) {
           const state =
             error instanceof TelegramDeliveryError && error.category === "rate_limited"
@@ -1823,13 +2119,6 @@ export class ControlPlane {
           break;
         }
       }
-      const runCompleted =
-        [
-          ...this.state.storage.sql.exec<{ state: string }>(
-            "SELECT state FROM runs WHERE request=?",
-            response.run,
-          ),
-        ][0]?.state === "COMPLETED";
       if (complete && runCompleted && preferences.sendDiffFileAttachments) {
         const id = response.run + ":diff";
         const receipt = [
@@ -1840,7 +2129,8 @@ export class ControlPlane {
         ][0];
         if (!receipt || receipt.state === "PENDING") {
           try {
-            const files = await this.ui().rpcDiff(topic);
+            const files = collectedDiff;
+            if (!presentation.canDeliver(topic, response.run)) continue;
             const patch = Array.isArray(files)
               ? files
                   .slice(0, 32)
@@ -1883,6 +2173,12 @@ export class ControlPlane {
         }
       }
       if (complete) {
+        if (!presentation.canDeliver(topic, response.run)) continue;
+        await presentation.complete(topic, response.run, runCompleted ? "COMPLETED" : "FAILED");
+        this.state.storage.sql.exec(
+          "UPDATE runs SET state='COMPLETED' WHERE request=? AND state='FINALIZING'",
+          response.run,
+        );
         if (runCompleted && this.store.worker(topic.workerId)?.runtimeVersion) {
           try {
             const info = await nodeRpc(

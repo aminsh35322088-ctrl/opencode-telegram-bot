@@ -7,6 +7,7 @@ export class TelegramDeliveryError extends Error {
     readonly transportCode?: "timeout" | "redirect" | "invocation" | "network",
     readonly reason?:
       "message_not_found" | "message_not_editable" | "formatting" | "unsupported_draft",
+    readonly apiCode?: number,
   ) {
     super("telegram_" + category + (transportCode ? "_" + transportCode : ""));
   }
@@ -16,6 +17,7 @@ export class CloudTelegram {
   constructor(
     private readonly token: string,
     private readonly transport: typeof fetch = fetch,
+    private readonly afterPersistent?: (payload: Record<string, unknown>) => Promise<void>,
   ) {}
   async call<T>(method: string, payload: Record<string, unknown>): Promise<T> {
     let response: Response;
@@ -91,7 +93,13 @@ export class CloudTelegram {
           description,
         )
       )
-        throw new TelegramDeliveryError("rejected", undefined, undefined, "formatting");
+        throw new TelegramDeliveryError(
+          "rejected",
+          undefined,
+          undefined,
+          "formatting",
+          body.error_code,
+        );
       if (
         ["sendMessageDraft", "sendRichMessageDraft"].includes(method) &&
         ((body.error_code === 404 && /(?:method|not found)/i.test(description)) ||
@@ -100,7 +108,13 @@ export class CloudTelegram {
               description,
             )))
       )
-        throw new TelegramDeliveryError("rejected", undefined, undefined, "unsupported_draft");
+        throw new TelegramDeliveryError(
+          "rejected",
+          undefined,
+          undefined,
+          "unsupported_draft",
+          body.error_code,
+        );
       const reason = /chat not found/i.test(description)
         ? "chat_not_found"
         : /bot was blocked|user is deactivated/i.test(description)
@@ -131,7 +145,24 @@ export class CloudTelegram {
         undefined,
         undefined,
         reason === "message_not_editable" ? reason : undefined,
+        body.error_code ?? response.status,
       );
+    }
+    if (
+      [
+        "sendMessage",
+        "sendRichMessage",
+        "sendPhoto",
+        "sendVideo",
+        "sendAudio",
+        "sendDocument",
+      ].includes(method)
+    ) {
+      try {
+        await this.afterPersistent?.(payload);
+      } catch {
+        /* Delivery is already accepted; never retry it because a preview failed. */
+      }
     }
     return body.result as T;
   }
@@ -180,6 +211,11 @@ export class CloudTelegram {
             : "rejected",
         result.parameters?.retry_after,
       );
+    try {
+      await this.afterPersistent?.({ chat_id: chatId, message_thread_id: threadId });
+    } catch {
+      /* Persistent receipt wins. */
+    }
     return result.result!.message_id;
   }
   async download(fileId: string, maximum: number): Promise<Uint8Array> {
@@ -232,7 +268,9 @@ export class CloudTelegram {
     method: string,
     scope: Record<string, unknown>,
     part: ReturnType<typeof renderTelegramParts>[number],
+    guard: () => boolean = () => true,
   ): Promise<{ message_id: number }> {
+    if (!guard()) throw new Error("run_ui_fenced");
     try {
       return await this.call(method, {
         ...scope,
@@ -256,6 +294,7 @@ export class CloudTelegram {
           to: "plain",
         }),
       );
+      if (!guard()) throw new Error("run_ui_fenced");
       return this.call(method, { ...scope, text: part.fallbackText });
     }
   }
@@ -303,10 +342,13 @@ export class CloudTelegram {
     chatId: number,
     threadId: number | undefined,
     part: ReturnType<typeof renderTelegramParts>[number],
+    guard: () => boolean = () => true,
   ): Promise<number> {
+    if (!guard()) throw new Error("run_ui_fenced");
     const scope = { chat_id: chatId, ...(threadId ? { message_thread_id: threadId } : {}) };
     let result: { message_id: number };
-    if (!part.blocks.length) return (await this.normalPart("sendMessage", scope, part)).message_id;
+    if (!part.blocks.length)
+      return (await this.normalPart("sendMessage", scope, part, guard)).message_id;
     try {
       result = await this.call("sendRichMessage", {
         ...scope,
@@ -327,7 +369,7 @@ export class CloudTelegram {
           to: "entities",
         }),
       );
-      result = await this.normalPart("sendMessage", scope, part);
+      result = await this.normalPart("sendMessage", scope, part, guard);
     }
     return result.message_id;
   }

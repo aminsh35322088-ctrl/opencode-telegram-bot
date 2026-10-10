@@ -85,7 +85,7 @@ test("run controls stream bounded text, show governed tools and retain receipt a
   assert.equal(f.sent.at(-1)?.method, "editMessageText");
   assert.equal(f.sent.at(-1)?.body.message_id, 9);
 });
-test("compact hides tool/thinking preview; thought visibility is explicit", async () => {
+test("compatibility preview hides compact tools and never exposes reasoning", async () => {
   const f = fixture();
   const topic = {
     chatId: 1,
@@ -103,7 +103,7 @@ test("compact hides tool/thinking preview; thought visibility is explicit", asyn
   assert.equal(f.sent[0]?.body.text, "answer");
   f.advance();
   await f.ui.progress(topic, "run", "answer2", { showThinkingContent: true });
-  assert.match(f.sent.at(-1)?.body.text, /internal thought/);
+  assert.doesNotMatch(f.sent.at(-1)?.body.text ?? "", /internal thought/);
 });
 
 test("an ambiguous preview send cannot be followed by a duplicate final send", async () => {
