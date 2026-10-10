@@ -1284,6 +1284,31 @@ test("active Cloudflare runs emit a Topic-scoped typing action without making ty
   assert.ok(row, "typing refresh state must be persisted for the next Durable Object alarm");
 });
 
+test("ordinary user text is never deleted just because it is not a ReplyKeyboard control", async (t) => {
+  const f = fixture(t);
+  await f.bound();
+
+  f.sent.length = 0;
+  const before = [...f.sql.exec("SELECT request FROM runs")].length;
+  await f.update("Please inspect the project and fix the bug", 42);
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, before + 1);
+  assert.equal(
+    f.sent.filter((entry) => entry.method === "deleteMessage").length,
+    0,
+    "an ordinary AI Topic prompt must remain visible",
+  );
+
+  f.sent.length = 0;
+  const afterTopicPrompt = [...f.sql.exec("SELECT request FROM runs")].length;
+  await f.update("This is ordinary text in General");
+  assert.equal([...f.sql.exec("SELECT request FROM runs")].length, afterTopicPrompt);
+  assert.equal(
+    f.sent.filter((entry) => entry.method === "deleteMessage").length,
+    0,
+    "ordinary General text may be blocked from execution but must not be deleted",
+  );
+});
+
 test("only exact rendered Topic controls are consumed; an emoji-prefixed user prompt still reaches the model", async (t) => {
   const f = fixture(t);
   await f.bound();

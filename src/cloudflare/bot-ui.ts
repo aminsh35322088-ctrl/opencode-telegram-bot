@@ -1632,16 +1632,11 @@ export class CloudBotUi {
         this.set(actionKey, { actor, chat, thread, generation: topic?.generation ?? 0, action });
         this.set(formKey, {});
       } else if (!text || !thread) {
-        if (update.message?.message_id) {
-          try {
-            await this.deps.telegram.call("deleteMessage", {
-              chat_id: chat,
-              message_id: update.message.message_id,
-            });
-          } catch {
-            /* Unrequested input must never reach execution. */
-          }
-        }
+        // General/non-prompt input is blocked from execution, but ordinary user
+        // messages must remain visible. Only recognized ReplyKeyboard controls
+        // are consumed via consumeReplyKeyboardMessage().
+        if (text && !thread)
+          await this.notice(chat, undefined, "Open an AI Topic to send prompts to OpenCode.");
         return true;
       } else return false;
     }

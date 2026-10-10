@@ -234,17 +234,17 @@ test("navigation clears active form so ALL later input cannot mutate configurati
   assert.deepEqual(f.rpc, []);
   assert.equal(f.sent.filter((x) => x.method === "sendMessage").length, 1);
 });
-test("ALL unsolicited text is consumed without panel replies or execution", async () => {
+test("ALL unsolicited text stays visible, gets Topic guidance, and never executes", async () => {
   const f = fixture();
   await f.update("hello");
   await f.update("another message");
   assert.deepEqual(f.rpc, []);
-  assert.equal(
-    f.sent.filter((x) => ["sendMessage", "sendRichMessage", "editMessageText"].includes(x.method))
-      .length,
-    0,
+  assert.ok(
+    f.sent.some(
+      (x) => ["sendMessage", "editMessageText"].includes(x.method) && /Open an AI Topic/.test(String(x.payload.text)),
+    ),
   );
-  assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 2);
+  assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 0);
 });
 test("wizard prompt and answer edit the same panel and preserve explicit form admission", async () => {
   const f = fixture();

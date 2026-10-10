@@ -418,14 +418,17 @@ for (const alias of ["/new_chat", "/sessions"]) {
   });
 }
 
-test("General with explicit thread 1 discards unsolicited input and does not inherit a Topic form", async (t) => {
+test("General with explicit thread 1 preserves unsolicited text and does not inherit a Topic form", async (t) => {
   const f = fixture(t);
   await f.update("/rename", 42);
   f.sent.length = 0;
   await f.update("random conversation", 1);
   assert.deepEqual(f.rpc, []);
-  assert.equal(f.sent.filter((x) => ["sendMessage", "editMessageText"].includes(x.method)).length, 0);
-  assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 1);
+  assert.equal(
+    f.sent.filter((x) => x.method === "sendMessage" && /Open an AI Topic/.test(String(x.payload.text))).length,
+    1,
+  );
+  assert.equal(f.sent.filter((x) => x.method === "deleteMessage").length, 0);
 });
 
 test("fresh ReplyKeyboard menus replace the previous Topic panel instead of editing it", async (t) => {
