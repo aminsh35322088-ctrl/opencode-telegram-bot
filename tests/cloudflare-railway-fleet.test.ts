@@ -434,6 +434,71 @@ test("transport diagnostics classify failures without exposing exception credent
   );
 });
 
+test("Railway GraphQL failures map provider-safe scope auth and schema categories", async () => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const cases = [
+    [{ message: "Project not found" }, "railway_scope_missing"],
+    [{ message: "Not Authorized" }, "railway_unauthorized"],
+    [{ message: 'Cannot query field "oldField" on type "Project".' }, "railway_schema_mismatch"],
+  ] as const;
+  for (const [providerError, expected] of cases) {
+    const api = railwayApi("synthetic-secret", async () =>
+      Response.json({ errors: [providerError], data: null }),
+    );
+    await assert.rejects(
+      api("query FleetInventory{__typename}", {}),
+      (error) => error instanceof Error && error.message === expected,
+    );
+  }
+
+  for (const [status, expected] of [
+    [401, "railway_unauthorized"],
+    [403, "railway_forbidden"],
+  ] as const) {
+    const api = railwayApi("synthetic-secret", async () =>
+      Response.json({ errors: [{ message: "request rejected" }], data: null }, { status }),
+    );
+    await assert.rejects(
+      api("query FleetInventory{__typename}", {}),
+      (error) => error instanceof Error && error.message === expected,
+    );
+  }
+});
+
+test("Railway API rejection diagnostics expose only operation category code and trace", async () => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const secret = "do-not-log-provider-detail";
+  const logs: string[] = [];
+  const previous = console.warn;
+  console.warn = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+  try {
+    const api = railwayApi("synthetic-token", async () =>
+      Response.json({
+        errors: [
+          {
+            message: "Project not found " + secret,
+            extensions: { code: "INTERNAL_SERVER_ERROR" },
+            traceId: "trace-123",
+          },
+        ],
+        data: null,
+      }),
+    );
+    await assert.rejects(api("query FleetInventory($projectId:String!){project(id:$projectId){id}}", { projectId: "hidden-project" }));
+  } finally {
+    console.warn = previous;
+  }
+  assert.equal(logs.length, 1);
+  const diagnostic = JSON.parse(logs[0]!) as Record<string, unknown>;
+  assert.equal(diagnostic.event, "railway_api_rejected");
+  assert.equal(diagnostic.operation, "FleetInventory");
+  assert.equal(diagnostic.category, "railway_scope_missing");
+  assert.equal(diagnostic.providerCode, "INTERNAL_SERVER_ERROR");
+  assert.equal(diagnostic.traceId, "trace-123");
+  assert.equal(logs[0]!.includes(secret), false);
+  assert.equal(logs[0]!.includes("hidden-project"), false);
+});
+
 test("Workers-compatible manual redirects never forward the Railway credential", async () => {
   const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
   let count = 0;

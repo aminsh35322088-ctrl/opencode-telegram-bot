@@ -701,18 +701,57 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
     }
     if (response.status >= 300 && response.status < 400)
       throw new Error("railway_redirect_rejected");
-    const result = (await response.json()) as { data?: T; errors?: Array<{ message?: string }> };
+    const result = (await response.json()) as {
+      data?: T;
+      errors?: Array<{
+        message?: string;
+        extensions?: { code?: string };
+        traceId?: string;
+      }>;
+    };
     if (!response.ok || result.errors?.length || !result.data) {
-      const quota = result.errors?.some((e) =>
-        /resource provision limit|limit exceeded|upgrade to provision/i.test(e.message ?? ""),
+      const messages = result.errors?.map((error) => error.message ?? "") ?? [];
+      const has = (pattern: RegExp) => messages.some((message) => pattern.test(message));
+      const category =
+        response.status === 401 || has(/\bnot authorized\b|\bunauthorized\b|\bnot authenticated\b/i)
+          ? "railway_unauthorized"
+          : response.status === 403 ||
+              has(/\bforbidden\b|permission denied|insufficient permission/i)
+            ? "railway_forbidden"
+            : response.status === 429 || has(/rate limit|too many requests/i)
+              ? "railway_rate_limited"
+              : has(/resource provision limit|limit exceeded|upgrade to provision/i)
+                ? "railway_quota_exhausted"
+                : has(/project not found|environment not found|workspace not found|service not found/i)
+                  ? "railway_scope_missing"
+                  : has(
+                        /cannot query field|unknown argument|is not defined by type|unknown type|was not provided/i,
+                      )
+                    ? "railway_schema_mismatch"
+                    : has(/problem processing request/i)
+                      ? "railway_provider_rejected"
+                      : "railway_api_failure";
+      const operation =
+        /\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(query)?.[1] ?? "anonymous";
+      const providerCode = result.errors?.[0]?.extensions?.code;
+      const traceId = result.errors?.[0]?.traceId;
+      // Provider error text and variables may contain user/resource material; log only bounded diagnostics.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "railway_api_rejected",
+          operation,
+          category,
+          status: response.status,
+          ...(typeof providerCode === "string" && /^[A-Z0-9_:-]{1,64}$/.test(providerCode)
+            ? { providerCode }
+            : {}),
+          ...(typeof traceId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(traceId)
+            ? { traceId }
+            : {}),
+        }),
       );
-      throw new Error(
-        quota
-          ? "railway_quota_exhausted"
-          : response.status === 429
-            ? "railway_rate_limited"
-            : "railway_api_failure",
-      );
+      throw new Error(category);
     }
     return result.data;
   };
