@@ -64,6 +64,8 @@ function fixture() {
     models: new LegacyModelAdapter(ui),
     topic,
     rpc,
+    store,
+    sql,
     setProviders(value: unknown[]) {
       providers = value;
     },
@@ -152,4 +154,69 @@ test("an empty legacy catalog is refreshed and cached models never bypass Topic 
     f.models.providers({ kind: "topic", topic: { ...f.topic, generation: 0 } }),
     /stale_generation/,
   );
+});
+
+test("General catalog bypasses an unavailable older Worker without weakening signed refresh", async () => {
+  const f = fixture();
+  const newest = { ...f.topic, threadId: 43, workerId: "newest", sessionId: "new-session" };
+  f.sql.exec(
+    "INSERT INTO topics VALUES(?,?,?,?)",
+    newest.chatId,
+    newest.threadId,
+    newest.workerId,
+    JSON.stringify(newest),
+  );
+  f.sql.exec(
+    "INSERT INTO workers VALUES(?,?,?)",
+    "worker",
+    "fixture",
+    JSON.stringify({
+      workerId: "worker",
+      generation: 1,
+      state: "BOUND_IDLE",
+      runtimeVersion: "1.18.33-bot.13-pre.24",
+    }),
+  );
+  f.sql.exec(
+    "INSERT INTO workers VALUES(?,?,?)",
+    "newest",
+    "fixture",
+    JSON.stringify({
+      workerId: "newest",
+      generation: 1,
+      state: "BOUND_IDLE",
+      runtimeVersion: "1.18.33-bot.13-pre.27",
+    }),
+  );
+  assert.equal(f.ui.catalogTopic()?.workerId, "newest");
+});
+test("unavailable General catalogs remain readable while selection still requires live authorization", async () => {
+  const f = fixture();
+  f.ui.setUiState("legacy:model:catalog", {
+    at: 0,
+    providers: [{ id: "p", models: { m0: { name: "Cached" } } }],
+  });
+  f.ui.rpc = async () => {
+    throw new Error("signature_rejected");
+  };
+  assert.equal((await f.models.providers({ kind: "global" }))[0]?.id, "p");
+  assert.equal(f.models.catalogUnavailable(), true);
+  await assert.rejects(
+    f.models.select({ kind: "global" }, { providerID: "p", modelID: "m0" }),
+    /model_catalog_unavailable/,
+  );
+  await assert.rejects(f.models.providers({ kind: "topic", topic: f.topic }), /signature_rejected/);
+});
+
+test("one signed empty catalog serves concurrent General readers without repeated Worker requests", async () => {
+  const f = fixture();
+  f.setProviders([]);
+  const scope = { kind: "global" as const };
+  await Promise.all([
+    f.models.providers(scope),
+    f.models.providers(scope),
+    f.models.providers(scope),
+  ]);
+  await f.models.providers(scope);
+  assert.equal(f.rpc.filter((op) => op === "models.list").length, 1);
 });

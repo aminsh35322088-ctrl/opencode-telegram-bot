@@ -1,5 +1,9 @@
 import type { FavoriteModel, ModelInfo, ProviderInfo } from "../app/types/model.js";
-import type { CapabilityRoute, ModelRoutingCapability, UnifiedModelCatalogEntry } from "../app/types/model-capability.js";
+import type {
+  CapabilityRoute,
+  ModelRoutingCapability,
+  UnifiedModelCatalogEntry,
+} from "../app/types/model-capability.js";
 import { detectModelCapabilities } from "../app/services/model-capability-detection-service.js";
 import { detectModelExecutionCapabilities } from "../app/services/model-execution-capability-service.js";
 import { formatModelRoutingSummary } from "../app/services/model-routing-summary-formatter.js";
@@ -12,6 +16,7 @@ export type LegacyModelScope = { kind: "global" } | { kind: "topic"; topic: Flee
 interface CatalogCache {
   at: number;
   providers: unknown[];
+  verified?: boolean;
 }
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -22,6 +27,7 @@ const key = (model: Pick<ModelInfo, "providerID" | "modelID">) =>
   `${model.providerID}/${model.modelID}`;
 
 export class LegacyModelAdapter {
+  private generalRefresh?: Promise<CatalogCache>;
   constructor(private readonly ui: LegacyUiAdapter) {}
 
   async current(topic?: FleetTopic): Promise<ModelInfo | undefined> {
@@ -31,9 +37,12 @@ export class LegacyModelAdapter {
     if (!selected) return undefined;
     const slash = selected.indexOf("/");
     if (slash < 1) return undefined;
-    const providerID = selected.slice(0, slash), modelID = selected.slice(slash + 1);
+    const providerID = selected.slice(0, slash),
+      modelID = selected.slice(slash + 1);
     const scope: LegacyModelScope = topic ? { kind: "topic", topic } : { kind: "global" };
-    const advertised = (await this.models(scope, providerID)).find((model) => model.modelID === modelID);
+    const advertised = (await this.models(scope, providerID)).find(
+      (model) => model.modelID === modelID,
+    );
     return { providerID, modelID, ...(advertised?.name ? { name: advertised.name } : {}) };
   }
 
@@ -67,21 +76,38 @@ export class LegacyModelAdapter {
     const supports = (capability: ModelRoutingCapability): boolean => {
       if (!entry) return false;
       if (capability === "vision")
-        return entry.capabilities.modalities.input.image === true && entry.capabilities.modalities.output.text === true;
-      if (capability === "imageGenerate") return entry.capabilities.operations.imageGenerate === true;
+        return (
+          entry.capabilities.modalities.input.image === true &&
+          entry.capabilities.modalities.output.text === true
+        );
+      if (capability === "imageGenerate")
+        return entry.capabilities.operations.imageGenerate === true;
       if (capability === "textToSpeech") return entry.capabilities.operations.textToSpeech === true;
-      return entry.capabilities.modalities.input.audio === true && entry.execution?.nativeAudioFileInput === true;
+      return (
+        entry.capabilities.modalities.input.audio === true &&
+        entry.execution?.nativeAudioFileInput === true
+      );
     };
-    const capabilities: readonly ModelRoutingCapability[] = ["vision", "voiceInput", "imageGenerate", "textToSpeech"];
+    const capabilities: readonly ModelRoutingCapability[] = [
+      "vision",
+      "voiceInput",
+      "imageGenerate",
+      "textToSpeech",
+    ];
     const routes = new Map<ModelRoutingCapability, CapabilityRoute>(
       capabilities.map((capability) => {
         const native = supports(capability);
-        return [capability, {
+        return [
           capability,
-          ...(native ? { model: { providerID: primary.providerID, modelID: primary.modelID } } : {}),
-          routeSource: native ? "primary-native" : "unavailable",
-          primarySupportsCapability: native,
-        }];
+          {
+            capability,
+            ...(native
+              ? { model: { providerID: primary.providerID, modelID: primary.modelID } }
+              : {}),
+            routeSource: native ? "primary-native" : "unavailable",
+            primarySupportsCapability: native,
+          },
+        ];
       }),
     );
     return formatModelRoutingSummary(primary, catalog, routes);
@@ -182,8 +208,8 @@ export class LegacyModelAdapter {
     refresh = false,
   ): Promise<boolean> {
     if (refresh) {
-      const topic = scope.kind === "topic" ? scope.topic : this.ui.catalogTopic();
-      if (topic) await this.refresh(topic);
+      if (scope.kind === "topic") await this.refresh(scope.topic);
+      else await this.refreshGeneral();
     }
     return (await this.models(scope, model.providerID)).some(
       (item) => item.modelID === model.modelID,
@@ -193,17 +219,48 @@ export class LegacyModelAdapter {
   private async catalog(scope: LegacyModelScope): Promise<unknown[]> {
     if (scope.kind === "topic") this.ui.assertWritableTopic(scope.topic);
     const cached = this.ui.getUiState<CatalogCache>("legacy:model:catalog");
-    if (cached?.providers.length && cached.at > Date.now() - 60_000) return cached.providers;
-    const topic = scope.kind === "topic" ? scope.topic : this.ui.catalogTopic();
-    if (!topic) return cached?.providers ?? [];
-    return (await this.refresh(topic)).providers;
+    if (cached && (cached.providers.length || cached.verified) && cached.at > Date.now() - 60_000)
+      return cached.providers;
+    if (scope.kind === "topic") return (await this.refresh(scope.topic)).providers;
+    try {
+      return (await this.refreshGeneral()).providers;
+    } catch {
+      this.ui.setUiState("legacy:model:unavailable", true);
+      return cached?.providers ?? [];
+    }
+  }
+
+  catalogUnavailable(): boolean {
+    return this.ui.getUiState<boolean>("legacy:model:unavailable") === true;
+  }
+  private refreshGeneral(): Promise<CatalogCache> {
+    if (this.generalRefresh) return this.generalRefresh;
+    const pending = (async () => {
+      for (const topic of this.ui.catalogTopics().slice(0, 3)) {
+        try {
+          const catalog = await this.refresh(topic);
+          this.ui.setUiState("legacy:model:unavailable", false);
+          return catalog;
+        } catch {
+          /* Reject stale or unsigned responses; try another current Worker. */
+        }
+      }
+      throw new Error("model_catalog_unavailable");
+    })();
+    this.generalRefresh = pending;
+    void pending
+      .finally(() => {
+        if (this.generalRefresh === pending) this.generalRefresh = undefined;
+      })
+      .catch(() => undefined);
+    return pending;
   }
 
   private async refresh(topic: FleetTopic): Promise<CatalogCache> {
     const result = await this.ui.rpc<unknown>(topic, "models.list");
     if (!Array.isArray(record(result).providers)) throw new Error("worker_model_catalog_invalid");
     const providers = record(result).providers as unknown[];
-    const cache = { at: Date.now(), providers };
+    const cache = { at: Date.now(), providers, verified: true };
     this.ui.setUiState("legacy:model:catalog", cache);
     return cache;
   }

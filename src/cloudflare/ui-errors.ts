@@ -1,5 +1,7 @@
 /** Fixed internal validation codes only; never reflect arbitrary exception or submitted material. */
 const notices: Readonly<Record<string, string>> = Object.freeze({
+  model_catalog_unavailable:
+    "The Worker model catalog is unavailable. Wake or create a healthy Topic, then reopen Model Center.",
   action_extension_missing:
     "This configuration value is invalid or no longer available. Correct the value or reopen its menu; no changes were saved.",
   action_limit:

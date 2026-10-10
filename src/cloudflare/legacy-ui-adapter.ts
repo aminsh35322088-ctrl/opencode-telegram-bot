@@ -51,14 +51,28 @@ export class LegacyUiAdapter {
     };
   }
 
-  catalogTopic(): FleetTopic | undefined {
-    return this.deps.store.topics().find((topic) => {
-      const worker = this.deps.store.worker(topic.workerId);
-      return (
-        topic.state === "ACTIVE" &&
-        (!worker || ["BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(worker.state))
+  catalogTopics(): FleetTopic[] {
+    return this.deps.store
+      .topics()
+      .filter((topic) => {
+        const worker = this.deps.store.worker(topic.workerId);
+        return (
+          topic.state === "ACTIVE" &&
+          (!worker ||
+            (worker.generation === topic.generation &&
+              ["BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(worker.state)))
+        );
+      })
+      .sort((a, b) =>
+        (this.deps.store.worker(b.workerId)?.runtimeVersion ?? "").localeCompare(
+          this.deps.store.worker(a.workerId)?.runtimeVersion ?? "",
+          undefined,
+          { numeric: true },
+        ),
       );
-    });
+  }
+  catalogTopic(): FleetTopic | undefined {
+    return this.catalogTopics()[0];
   }
 
   getTopicSelection(topic: FleetTopic): LegacyTopicSelection {

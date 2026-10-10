@@ -1323,11 +1323,13 @@ export class CloudBotUi {
     const scope = this.modelScope(topic);
     const current = await models.current(topic);
     const view = await buildModelCenterRoot(current, models.source(scope));
+    const text = view.text + (!topic && models.catalogUnavailable()
+      ? "\n\nWorker catalog is temporarily unavailable. Cached models are for browsing; selection requires a live authorized Worker." : "");
     const rows = this.modelButtonRows(actor, chat, thread, topic, view.keyboard);
     await this.menu(
       chat,
       thread || undefined,
-      view.text,
+      text,
       this.withNavigation(
         actor,
         chat,
