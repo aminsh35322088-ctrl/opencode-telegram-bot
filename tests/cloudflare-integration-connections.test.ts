@@ -135,12 +135,22 @@ test("Tailscale verifies default tailnet API access without claiming VPN or expo
   assert.equal(f.dump().includes("private-host"), false);
   assert.equal(f.dump().includes("100.1.1.1"), false);
 });
-test("Tailscale device auth keys and invalid input fail before network or storage", async () => {
+test("Tailscale enrollment keys are encrypted without claiming account verification or API access", async () => {
+  const f = fixture(async () => { assert.fail("auth keys must never call the management API"); });
+  const result = await f.connections.connect("tailscale", "tskey-auth-secret-test");
+  assert.equal(result.configured, true);
+  assert.equal(result.accountVerified, false);
+  assert.equal(result.accountConnected, false);
+  assert.equal(result.credentialState, "unverified");
+  assert.equal(result.credentialType, "device-auth-key");
+  assert.equal(f.dump().includes("tskey-auth-secret-test"), false);
+});
+test("invalid Tailscale credential types and invalid input fail before network or storage", async () => {
   const f = fixture(async () => {
     assert.fail("must not call API");
   });
   await assert.rejects(
-    f.connections.connect("tailscale", "tskey-auth-secret-test"),
+    f.connections.connect("tailscale", "not-a-tailscale-key"),
     /^Error: tailscale_api_token_required$/,
   );
   for (const token of ["", "bad\nsecret", "bad\0secret", "a".repeat(16385)])

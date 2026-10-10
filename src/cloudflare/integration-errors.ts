@@ -3,7 +3,7 @@ const notices: Readonly<Record<string, string>> = Object.freeze({
   integration_forbidden: "This credential cannot access the account API. Check its permissions before reconnecting.",
   integration_unavailable: "The account API is temporarily unavailable. Reopen the connection form and try again.",
   integration_invalid_response: "The account API returned an unexpected response. The credential was not activated.",
-  tailscale_api_token_required: "Use a Tailscale API access token (tskey-api-…), not a device enrollment auth key.",
+  tailscale_api_token_required: "Use a Tailscale API access token (tskey-api-…) or a device enrollment key (tskey-auth-…).",
   invalid_integration_credential: "The integration credential could not be validated. The previous account remains active.",
   invalid_credential_input: "This credential form is invalid or expired. Reopen the account connection menu and try again.",
   credential_revoked: "This credential is invalid or revoked. Reconnect the account.",

@@ -1824,7 +1824,7 @@ export class CloudBotUi {
         chat,
         thread || undefined,
         protectedInput.providerId.startsWith("integration.")
-          ? "✅ Account verified. Credential stored securely. Worker Git/VPN connection is not yet enabled."
+          ? "✅ Credential stored securely. Account verification and Worker runtime connectivity are shown separately in the integration menu."
           : "✅ Provider credential stored securely.",
       );
       return true;
@@ -3089,7 +3089,7 @@ export class CloudBotUi {
         thread || undefined,
         id === "github"
           ? "Send a scoped GitHub personal access token. It will be validated with GitHub and encrypted before storage. Use /cancel to cancel."
-          : "Send a Tailscale API access token (tskey-api-…). This connects the account API; it does not enroll the execution Worker in your tailnet. Use /cancel to cancel.",
+          : "Send a Tailscale API token (tskey-api-…) to generate scoped Worker enrollment keys, or a device enrollment key (tskey-auth-…). An enrollment key is verified when a Worker joins, not through the account API. Use /cancel to cancel.",
         [[this.button(actor, chat, thread, topic, "✖ Cancel", "cancel")]],
       );
       return true;
@@ -3104,7 +3104,9 @@ export class CloudBotUi {
           "\n\n" +
           (status.accountConnected
             ? "Account verified" + (status.username ? " · " + escape(String(status.username)) : "")
-            : "Not connected") +
+            : status.configured
+              ? "Enrollment key configured · awaiting Worker enrollment"
+              : "Not configured") +
           "\n" +
           (name === "github"
             ? "Repository access belongs to the dedicated Core Worker. A scoped GitHub credential and governed Git transport must be configured before connecting."

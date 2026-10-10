@@ -9,9 +9,10 @@ export interface IntegrationConnection {
   credentialId: string;
   capability: string;
   configured: true;
-  accountConnected: true;
-  accountVerified: true;
-  credentialState: "valid";
+  accountConnected: boolean;
+  accountVerified: boolean;
+  credentialState: "valid" | "unverified";
+  credentialType?: "personal-access-token" | "management-api-token" | "device-auth-key";
   /** API authentication does not establish Core repository transport or a VPN. */
   connected: false;
   reason: "core_runtime_unavailable";
@@ -94,6 +95,8 @@ export class CloudIntegrationConnections {
   async prepare(idValue: IntegrationId, value: string): Promise<IntegrationConnection> {
     const id = integrationId(idValue);
     const token = tokenValue(value);
+    if (id === "tailscale" && /^tskey-auth-[A-Za-z0-9]+-[A-Za-z0-9]+$/.test(token))
+      return this.persist(id, token, {}, false);
     if (id === "tailscale" && !token.startsWith("tskey-api-"))
       throw new Error("tailscale_api_token_required");
     const url =
@@ -166,6 +169,14 @@ export class CloudIntegrationConnections {
       identity.tailnet = "-";
       identity.visibleDevices = payload.devices.length;
     }
+    return this.persist(id, token, identity);
+  }
+  private async persist(
+    id: IntegrationId,
+    token: string,
+    identity: Pick<IntegrationConnection, "username" | "tailnet" | "visibleDevices">,
+    verified = true,
+  ): Promise<IntegrationConnection> {
     const capability = `integration:${id}`;
     let credentialId: string;
     try {
@@ -185,9 +196,10 @@ export class CloudIntegrationConnections {
       credentialId,
       capability,
       configured: true,
-      accountConnected: true,
-      accountVerified: true,
-      credentialState: "valid",
+      accountConnected: verified,
+      accountVerified: verified,
+      credentialState: verified ? "valid" : "unverified",
+      credentialType: id === "github" ? "personal-access-token" : verified ? "management-api-token" : "device-auth-key",
       connected: false,
       reason: "core_runtime_unavailable",
       configuredAt: new Date().toISOString(),

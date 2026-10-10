@@ -96,6 +96,12 @@ test("Tailscale management credential mints one Worker enrollment key without re
     /credential_scope_rejected/,
   );
 });
+test("Tailscale enrollment credentials use only the generic enrollment lease, never the management API", async () => {
+  const deliver = integrationDelivery(async () => { assert.fail("must not call management API"); });
+  const enrollment = { ...request, integrationId: "tailscale", capability: "device.enroll", resource: undefined };
+  assert.equal(await deliver("tskey-auth-private-enrollment", enrollment), "tskey-auth-private-enrollment");
+  await assert.rejects(deliver("tskey-auth-private-enrollment", { ...enrollment, capability: "ssh.exec" }), /credential_scope_rejected/);
+});
 test("malformed resources and management responses fail closed before credential delivery", async () => {
   const deliver = integrationDelivery(async () => {
     assert.fail("must not fetch");

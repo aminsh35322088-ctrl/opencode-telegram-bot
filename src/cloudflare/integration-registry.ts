@@ -16,7 +16,7 @@ export function createIntegrationRegistry(
   });
   registry.register({
     id: "tailscale",
-    credentialType: "management-api-token",
+    credentialType: "management-or-enrollment-key",
     capabilities: ["device.enroll", "network.status", "network.devices", "ssh.exec"],
     requiredScopes: {
       "device.enroll": ["device.enroll"],

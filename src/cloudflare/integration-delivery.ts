@@ -104,6 +104,8 @@ export function integrationDelivery(
     }
     if (request.integrationId === "tailscale") {
       if (request.capability !== "device.enroll") throw new Error("credential_scope_rejected");
+      // Enrollment keys are scoped bootstrap material, not management API credentials.
+      if (/^tskey-auth-[A-Za-z0-9]+-[A-Za-z0-9]+$/.test(value)) return value;
       const response = await call("https://api.tailscale.com/api/v2/tailnet/-/keys", {
         method: "POST",
         headers: { Authorization: "Bearer " + value, "Content-Type": "application/json" },
