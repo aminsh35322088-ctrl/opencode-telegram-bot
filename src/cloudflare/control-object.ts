@@ -2199,8 +2199,14 @@ export class ControlPlane {
     console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
   }
   private async advanceSafely(jobId: string): Promise<void> {
-    const existing = this.store.job(jobId);
+    let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
+    if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing)) {
+      await this.setup();
+      this.store.ensureFixedFleet("railway", 10, 5);
+      existing = this.store.job(jobId);
+      if (!existing) throw new Error("unknown_job");
+    }
     if (existing.phase === "CLEANUP_PENDING") {
       try {
         await this.cancelAllocation(jobId);

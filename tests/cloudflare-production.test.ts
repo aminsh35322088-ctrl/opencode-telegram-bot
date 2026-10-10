@@ -1459,3 +1459,47 @@ test("Delete Chat fences output, sanitizes runtime, preserves Railway Service/Vo
   )][0];
   assert.equal(JSON.parse(presentation!.data).state, "CANCELLED");
 });
+
+test("fixed bootstrap queue retry self-heals explicit provider rejection without changing 2x5 topology", async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  const firstProject = f.store.projects().find((project) => project.projectKey === "opencode-telegram-01")!;
+  f.store.saveProject({ ...firstProject, phase: "CREATING" });
+  for (const job of jobs.filter((candidate) => candidate.projectKey === firstProject.projectKey)) {
+    f.store.configureJob(job.jobId, { phase: "FAILED", error: "railway_api_failure" });
+    f.store.transition(job.workerId, job.generation, "UNHEALTHY");
+  }
+  const first = jobs.find((job) => job.workerId === "worker-01")!;
+  assert.equal(f.store.job(first.jobId)?.phase, "FAILED");
+  assert.equal(
+    f.store.projects().find((project) => project.projectKey === firstProject.projectKey)?.phase,
+    "CREATING",
+  );
+  let observedJobId: string | undefined;
+  let observedJobPhase: string | undefined;
+  let observedProjectPhase: string | undefined;
+  t.mock.method(f.plane as any, "advance", async (jobId: string) => {
+    observedJobId = jobId;
+    observedJobPhase = f.store.job(jobId)?.phase;
+    observedProjectPhase = f.store.projects().find(
+      (project) => project.projectKey === firstProject.projectKey,
+    )?.phase;
+  });
+
+  await (f.plane as any).advanceSafely(first.jobId);
+
+  assert.equal(observedJobId, first.jobId);
+  assert.equal(observedJobPhase, "RESERVED");
+  assert.equal(observedProjectPhase, "RESERVED");
+  const backend = f.store.backends().find((candidate) => candidate.backendId === "railway")!;
+  assert.equal(backend.maxWorkersPerProject, 5);
+  assert.equal(backend.maxProjects, 2);
+  assert.deepEqual(
+    f.store
+      .projects()
+      .filter((project) => /^opencode-telegram-\d{2}$/u.test(project.projectKey))
+      .map((project) => project.projectKey),
+    ["opencode-telegram-01", "opencode-telegram-02"],
+  );
+});
