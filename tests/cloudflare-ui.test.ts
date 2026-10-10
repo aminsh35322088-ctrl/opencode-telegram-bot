@@ -1550,3 +1550,14 @@ test("all General settings sections render without operation failures or Worker 
  assert.equal(f.store.jobs().length,before);
  assert.equal([...f.sql.exec("SELECT request FROM runs")].length,0);
 });
+
+test("authenticated Main qualification can render account and configuration menus but cannot mutate",async(t)=>{
+ const f=fixture(t);await f.bound();
+ for(const command of ["advanced","extensions","actions","plugins","memory","github","tailscale","help"]){
+  const response=await f.post("/admin/ui",{chatId:-100,threadId:0,command});
+  assert.equal(response.status,200,command);
+ }
+ for(const command of ["factory_reset_final","integration_remove","credential_save"]){
+  const response=await f.post("/admin/ui",{chatId:-100,threadId:0,command});assert.notEqual(response.status,200,command);
+ }
+});
