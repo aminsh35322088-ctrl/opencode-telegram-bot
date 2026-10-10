@@ -10,6 +10,16 @@ import {
 } from "../src/cloudflare/credential-vault.js";
 const master = btoa("k".repeat(32));
 const secret = "github-secret-test";
+test("account API diagnostics expose only bounded stage and category, never exception material", async (t) => {
+  const logs:unknown[]=[];
+  t.mock.method(console,"error",(...args:unknown[])=>{logs.push(args);});
+  const f=fixture(async()=>{throw new TypeError("private-token-in-error");});
+  await assert.rejects(f.connections.connect("github",secret),/integration_unavailable/);
+  assert.match(JSON.stringify(logs),/integration_account_verification_failed/);
+  assert.match(JSON.stringify(logs),/transport/);
+  assert.equal(JSON.stringify(logs).includes("private-token-in-error"),false);
+  assert.equal(JSON.stringify(logs).includes(secret),false);
+});
 function fixture(fetcher: typeof fetch) {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE ui_state(key TEXT PRIMARY KEY,data TEXT NOT NULL)");
@@ -25,7 +35,7 @@ test("GitHub validates identity before encrypted storage and grants no execution
   const f = fixture(async (url, options) => {
     assert.equal(url, "https://api.github.com/user");
     assert.equal(new Headers(options?.headers).get("Authorization"), `Bearer ${secret}`);
-    assert.equal(options?.redirect, "error");
+    assert.equal(options?.redirect, "manual");
     assert.ok(options?.signal);
     return Response.json({ login: "operator" });
   });

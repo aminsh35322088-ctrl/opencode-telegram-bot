@@ -71,7 +71,7 @@ export class CloudIntegrationConnections {
   constructor(
     private readonly sql: SqlDatabase,
     private readonly master: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = (input, init) => fetch(input, init),
   ) {}
   async connect(idValue: IntegrationId, value: string): Promise<IntegrationConnection> {
     const id = integrationId(idValue);
@@ -95,13 +95,22 @@ export class CloudIntegrationConnections {
               }
             : {}),
         },
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(10_000),
       });
-    } catch {
+    } catch (error) {
+      const reason = error instanceof Error && /too many subrequests|subrequest limit/i.test(error.message)
+        ? "subrequest_limit" : error instanceof Error && /Illegal invocation/.test(error.message)
+          ? "receiver" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)
+          ? "timeout" : "transport";
+      // Fixed metadata only; exception messages and submitted credential values are excluded.
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({ event: "integration_account_verification_failed", integrationId: id, stage: "transport", reason }));
       throw new Error("integration_unavailable");
     }
     if (!response.ok) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({ event: "integration_account_verification_failed", integrationId: id, stage: "response", status: response.status }));
       await response.body?.cancel().catch(() => undefined);
       if (response.status === 401) throw new Error("integration_unauthorized");
       if (response.status === 403) throw new Error("integration_forbidden");
