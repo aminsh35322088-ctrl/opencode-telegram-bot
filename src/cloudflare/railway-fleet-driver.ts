@@ -1,4 +1,10 @@
-import { ControlStore, type AllocationJob } from "./control-store.js";
+import {
+  ControlStore,
+  type AllocationJob,
+  type FleetProject,
+  type FleetWorker,
+  type RailwayBackend,
+} from "./control-store.js";
 export type CleanupClassification = "owned" | "deleted_or_pending_purge" | "unrelated" | "ambiguous";
 export interface CleanupResource {
   kind: "service" | "volume";
@@ -75,10 +81,14 @@ export class RailwayFleetDriver implements FleetProvisioner {
       throw new Error("invalid_control_url");
   }
   private async inventory(job: AllocationJob): Promise<Inventory> {
-    const value = await this.request<Inventory>(inventoryQuery, {
+    const value = await this.request<{
+      project: Inventory["project"] | null;
+      environment: Inventory["environment"] | null;
+    }>(inventoryQuery, {
       projectId: job.projectId,
       environmentId: job.environmentId,
     });
+    if (!value.project || !value.environment) throw new Error("railway_scope_missing");
     if (
       value.project.services.pageInfo?.hasNextPage ||
       value.project.volumes.pageInfo?.hasNextPage ||
@@ -87,7 +97,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
     )
       throw new Error("inventory_pagination_required");
     value.project.services.edges = value.project.services.edges.filter((s) => !s.node.deletedAt);
-    return value;
+    return value as Inventory;
   }
   async listProjects(
     workspaceId: string,
@@ -101,6 +111,50 @@ export class RailwayFleetDriver implements FleetProvisioner {
       hasNextPage: result.workspace.projects.pageInfo?.hasNextPage ?? false,
     };
   }
+  private async resolveProject(
+    project: FleetProject,
+    backend: RailwayBackend,
+    recreateMissing: boolean,
+  ): Promise<FleetProject> {
+    const result = await this.listProjects(backend.workspaceId);
+    if (result.hasNextPage) throw new Error("inventory_pagination_required");
+    const sameName = result.projects.filter((candidate) => candidate.name === project.projectKey);
+    if (sameName.length > 1) throw new Error("project_ownership_ambiguous");
+    let actual: RailwayProject | undefined;
+    if (project.projectId) {
+      actual = result.projects.find((candidate) => candidate.id === project.projectId);
+      if (actual && actual.name !== project.projectKey) throw new Error("project_ownership_ambiguous");
+      if (!actual) {
+        if (!recreateMissing) throw new Error("railway_scope_missing");
+        if (sameName.length) throw new Error("project_ownership_ambiguous");
+      }
+    } else {
+      actual = sameName[0];
+    }
+    actual ??= (
+      await this.request<{ projectCreate: RailwayProject }>(
+        "mutation FleetProjectCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name environments{edges{node{id name}}}}}",
+        { input: { name: project.projectKey, workspaceId: backend.workspaceId } },
+      )
+    ).projectCreate;
+    const environment = actual.environments.edges.find((edge) => edge.node.name === "production")?.node;
+    if (!environment) throw new Error("production_environment_missing");
+    project.projectId = actual.id;
+    project.environmentId = environment.id;
+    project.phase = "READY";
+    this.store.saveProject(project);
+    return project;
+  }
+
+  private async projectIdIsAbsent(worker: FleetWorker): Promise<boolean> {
+    if (!worker.projectId) throw new Error("cleanup_reconciliation_required");
+    const backend = this.store.backends().find((candidate) => candidate.backendId === worker.backendId);
+    if (!backend) throw new Error("cleanup_reconciliation_required");
+    const result = await this.listProjects(backend.workspaceId);
+    if (result.hasNextPage) throw new Error("inventory_pagination_required");
+    return !result.projects.some((project) => project.id === worker.projectId);
+  }
+
   async provision(jobId: string): Promise<AllocationJob> {
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
@@ -112,32 +166,27 @@ export class RailwayFleetDriver implements FleetProvisioner {
     if (!worker || worker.generation !== job.generation) throw new Error("stale_generation");
     const backend = this.store.backends().find((b) => b.backendId === job!.backendId);
     if (!backend?.enabled) throw new Error("backend_unavailable");
-    const project = this.store.selectProject(jobId);
-    if (!project.projectId) {
-      const result = await this.listProjects(backend.workspaceId);
-      if (result.hasNextPage) throw new Error("inventory_pagination_required");
-      const matches = result.projects.filter((p) => p.name === project.projectKey);
-      if (matches.length > 1) throw new Error("project_ownership_ambiguous");
-      const actual =
-        matches[0] ??
-        (
-          await this.request<{ projectCreate: RailwayProject }>(
-            "mutation FleetProjectCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name environments{edges{node{id name}}}}}",
-            { input: { name: project.projectKey, workspaceId: backend.workspaceId } },
-          )
-        ).projectCreate;
-      const environment = actual.environments.edges.find((e) => e.node.name === "production")?.node;
-      if (!environment) throw new Error("production_environment_missing");
-      project.projectId = actual.id;
-      project.environmentId = environment.id;
-      project.phase = "READY";
-      this.store.saveProject(project);
-    }
+    let project = this.store.selectProject(jobId);
+    if (!project.projectId || !project.environmentId)
+      project = await this.resolveProject(project, backend, false);
     job = this.store.configureJob(jobId, {
       projectId: project.projectId,
       environmentId: project.environmentId,
     });
-    let inventory = await this.inventory(job);
+    let inventory: Inventory;
+    try {
+      inventory = await this.inventory(job);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "railway_scope_missing") throw error;
+      if (job.serviceId || job.volumeId || job.endpoint)
+        throw new Error("cleanup_reconciliation_required");
+      project = await this.resolveProject(project, backend, true);
+      job = this.store.configureJob(jobId, {
+        projectId: project.projectId,
+        environmentId: project.environmentId,
+      });
+      inventory = await this.inventory(job);
+    }
     const name = "topic-node-" + job.workerId;
     const matches = inventory.project.services.edges.filter((s) => s.node.name === name);
     if (matches.length > 1 || (job.serviceId && !matches.some((s) => s.node.id === job!.serviceId)))
@@ -349,10 +398,25 @@ export class RailwayFleetDriver implements FleetProvisioner {
       });
     }
     for (const scope of scopes.values()) {
-      let inventory = await this.inventory(scope as AllocationJob);
       const scopedWorkers = allWorkers.filter(
         (worker) => worker.projectId === scope.projectId && worker.environmentId === scope.environmentId,
       );
+      let inventory: Inventory;
+      try {
+        inventory = await this.inventory(scope as AllocationJob);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "railway_scope_missing") throw error;
+        const witness = scopedWorkers[0];
+        if (!witness || !(await this.projectIdIsAbsent(witness)))
+          throw new Error("cleanup_reconciliation_required");
+        for (const worker of scopedWorkers.filter((candidate) => targets.has(candidate.workerId))) {
+          if (worker.serviceId)
+            resources.push({ kind: "service", id: worker.serviceId, classification: "deleted_or_pending_purge" });
+          if (worker.volumeId)
+            resources.push({ kind: "volume", id: worker.volumeId, classification: "deleted_or_pending_purge" });
+        }
+        continue;
+      }
       const byName = new Map(scopedWorkers.map((worker) => ["topic-node-" + worker.workerId, worker]));
       let ambiguous = false;
       const ownedServiceIds: string[] = [];
@@ -494,7 +558,18 @@ export class RailwayFleetDriver implements FleetProvisioner {
       projectId: worker.projectId,
       environmentId: worker.environmentId,
     } as AllocationJob;
-    let inventory = await this.inventory(scope);
+    let inventory: Inventory;
+    try {
+      inventory = await this.inventory(scope);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "railway_scope_missing" &&
+        (await this.projectIdIsAbsent(worker))
+      )
+        return;
+      throw error;
+    }
     const job = this.store.jobs().find((j) => j.workerId === workerId);
     if (
       !worker.volumeId &&

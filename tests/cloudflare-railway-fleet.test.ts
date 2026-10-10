@@ -42,7 +42,8 @@ function fixture() {
   }> = [];
   let loseProject = false,
     loseVolume = false,
-    quota = false;
+    quota = false,
+    projectSerial = 0;
   let rejectMutation = "";
   const mutations: string[] = [];
   const request = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
@@ -63,35 +64,40 @@ function fixture() {
     else if (query.includes("FleetProjectCreate")) {
       if (quota) throw new Error("railway_quota_exhausted");
       const p = {
-        id: "p" + projects.length,
+        id: "p" + projectSerial,
         name: input.name as string,
-        environments: { edges: [{ node: { id: "e" + projects.length, name: "production" } }] },
+        environments: { edges: [{ node: { id: "e" + projectSerial, name: "production" } }] },
       };
+      projectSerial++;
       projects.push(p);
       if (loseProject) {
         loseProject = false;
         throw new Error("transport_error");
       }
       result = { projectCreate: p };
-    } else if (query.includes("FleetInventory"))
-      result = {
-        project: {
-          services: { edges: services.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
-          volumes: { edges: volumes.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
-        },
-        environment: {
-          serviceInstances: {
-            edges: services.map((s) => ({
-              node: {
-                serviceId: s.id,
-                domains: { serviceDomains: [{ domain: s.id + ".up.railway.app" }] },
-                latestDeployment: null,
+    } else if (query.includes("FleetInventory")) {
+      const liveProject = projects.find((project) => project.id === variables.projectId);
+      result = liveProject
+        ? {
+            project: {
+              services: { edges: services.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
+              volumes: { edges: volumes.map((node) => ({ node })), pageInfo: { hasNextPage: false } },
+            },
+            environment: {
+              serviceInstances: {
+                edges: services.map((s) => ({
+                  node: {
+                    serviceId: s.id,
+                    domains: { serviceDomains: [{ domain: s.id + ".up.railway.app" }] },
+                    latestDeployment: null,
+                  },
+                })),
+                pageInfo: { hasNextPage: false },
               },
-            })),
-            pageInfo: { hasNextPage: false },
-          },
-        },
-      };
+            },
+          }
+        : { project: null, environment: null };
+    }
     else if (query.includes("FleetDestroyService")) {
       const i = services.findIndex((s) => s.id === variables.id);
       if (i >= 0) services.splice(i, 1);
@@ -209,6 +215,46 @@ test("identity rotation redeploys the same allocation service and volume with a 
   assert.equal(f.volumes.length, 1);
   assert.deepEqual(generations, [1, 2]);
   assert.equal(second.phase, "DEPLOYING");
+});
+
+test("externally deleted Railway project is recreated before a fresh allocation uses the stored slot", async () => {
+  const f = fixture();
+  const first = f.store.reserveAllocation("first-project", -100);
+  await f.driver.provision(first.jobId);
+  const oldProjectId = f.store.job(first.jobId)!.projectId!;
+  const fenced = f.store.fenceWorker(first.workerId);
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+  f.store.confirmDestroyed(fenced.workerId, fenced.generation);
+
+  f.projects.splice(0);
+  f.services.splice(0);
+  f.volumes.splice(0);
+
+  const second = f.store.reserveAllocation("after-external-project-delete", -100);
+  await f.driver.provision(second.jobId);
+
+  assert.equal(f.projects.length, 1);
+  assert.equal(f.projects[0]!.name, "workers-a-01");
+  assert.notEqual(f.store.job(second.jobId)!.projectId, oldProjectId);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+});
+
+test("cleanup treats a Railway project proven absent from the workspace as already destroyed", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("external-delete-cleanup", -100);
+  await f.driver.provision(job.jobId);
+  f.store.ready(job.workerId, job.generation, "key");
+  const fenced = f.store.fenceWorker(job.workerId);
+  const deleting = f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+
+  f.projects.splice(0);
+  f.services.splice(0);
+  f.volumes.splice(0);
+
+  await f.driver.destroy(deleting.workerId, deleting.generation);
+  f.store.confirmDestroyed(deleting.workerId, deleting.generation);
+  assert.equal(f.store.worker(job.workerId)!.state, "REPLACED");
 });
 
 test("lost project create response reconciles deterministic workspace project without duplication", async () => {
@@ -433,6 +479,21 @@ test("a deleted project with the deterministic name is not adopted", async () =>
   const provisioned = await f.driver.provision(job.jobId);
   assert.notEqual(provisioned.projectId, "deleted-project");
   assert.equal(f.projects.length, 2);
+});
+
+test("managed cleanup reconciliation accepts a managed project proven absent from Railway", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("reconcile-missing-project", -100);
+  await f.driver.provision(job.jobId);
+  const worker = f.store.worker(job.workerId)!;
+  f.projects.splice(0);
+  f.services.splice(0);
+  f.volumes.splice(0);
+
+  const result = await f.driver.reconcileManagedResources([worker.workerId]);
+
+  assert.ok(result.resources.some((resource) => resource.kind === "service" && resource.classification === "deleted_or_pending_purge"));
+  assert.ok(result.resources.some((resource) => resource.kind === "volume" && resource.classification === "deleted_or_pending_purge"));
 });
 
 test("managed cleanup reconciliation deletes only exact stored Railway ownership", async () => {
