@@ -177,6 +177,8 @@ export interface RailwaySetupStatus {
   ready: boolean;
   accountName?: string;
   projectsCreated: number;
+  totalProjects: number;
+  failure?: string;
   workersCreated: number;
   volumesAttached: number;
   workersReady: number;
@@ -1556,7 +1558,7 @@ export class CloudBotUi {
     );
   }
   private async railwayOnboardingPanel(actor: number, chat: number): Promise<void> {
-    const status = this.deps.railwayStatus ? await this.deps.railwayStatus() : { configured: true, ready: true, projectsCreated: 2, workersCreated: 10, volumesAttached: 10, workersReady: 10, totalWorkers: 10, failed: 0 };
+    const status = this.deps.railwayStatus ? await this.deps.railwayStatus() : { configured: true, ready: true, projectsCreated: 4, totalProjects: 4, workersCreated: 10, volumesAttached: 10, workersReady: 10, totalWorkers: 10, failed: 0 };
     if (!status.configured) {
       this.set(`form:${actor}:${chat}:0`, {
         kind: "railway_credential",
@@ -1574,7 +1576,7 @@ export class CloudBotUi {
     this.set(`form:${actor}:${chat}:0`, {});
     if (!status.ready) {
       const mark = (done: boolean, active: boolean, label: string) => `${done ? "✅" : active ? "⏳" : "○"} ${label}`;
-      const projectsDone = status.projectsCreated >= 2;
+      const projectsDone = status.projectsCreated >= status.totalProjects;
       const workersDone = status.workersCreated >= status.totalWorkers;
       const volumesDone = status.volumesAttached >= status.totalWorkers;
       const readyDone = status.workersReady >= status.totalWorkers;
@@ -1584,11 +1586,12 @@ export class CloudBotUi {
         "🚂 <b>Setting up Railway</b>\n\n" +
           "✅ Token authenticated\n" +
           "✅ Account verified" + (status.accountName ? ` · ${escape(status.accountName)}` : "") + "\n" +
-          mark(projectsDone, !projectsDone, `Projects created ${status.projectsCreated}/2`) + "\n" +
+          mark(projectsDone, !projectsDone, `Projects created ${status.projectsCreated}/${status.totalProjects}`) + "\n" +
           mark(workersDone, projectsDone && !workersDone, `Workers created ${status.workersCreated}/${status.totalWorkers}`) + "\n" +
           mark(volumesDone, workersDone && !volumesDone, `Volumes attached ${status.volumesAttached}/${status.totalWorkers}`) + "\n" +
           mark(readyDone, volumesDone && !readyDone, `Deploy & health checks ${status.workersReady}/${status.totalWorkers}`) +
-          (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : ""),
+          (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : "") +
+          (status.failure ? `\n${escape(integrationFailureNotice(new Error(status.failure)) ?? "Railway provisioning failed. Retry from Railway Settings.")}` : ""),
         [],
       );
       return;
@@ -1598,7 +1601,7 @@ export class CloudBotUi {
       undefined,
       "👋 <b>Welcome to OpenCode Telegram</b>\n\n" +
         "✅ <b>Railway Ready</b>\n\n" +
-        "✅ 2 Projects created\n" +
+        `✅ ${status.totalProjects} Projects created\n` +
         `✅ ${status.totalWorkers} Workers ready\n` +
         `✅ ${status.totalWorkers} Volumes attached\n` +
         "✅ Runtime verified\n\nYour OpenCode environment is ready to use.",

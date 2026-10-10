@@ -758,9 +758,19 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
             ? "railway_forbidden"
             : response.status === 429 || has(/rate limit|too many requests/i)
               ? "railway_rate_limited"
-              : has(/resource provision limit|limit exceeded|upgrade to provision/i)
-                ? "railway_quota_exhausted"
-                : has(/project not found|environment not found|workspace not found|service not found/i)
+              : has(/workspace.{0,80}restricted|restricted.{0,80}workspace|cannot create new resources/i)
+                ? "railway_workspace_restricted"
+                : has(/project creation limit|maximum (?:number of )?projects|project limit|too many projects/i)
+                  ? "railway_project_limit"
+                  : has(/service creation limit|new accounts.{0,80}services per day/i)
+                    ? "railway_new_account_limit"
+                    : has(/volume.{0,80}limit|only have [0-9]+ volumes|maximum (?:number of )?volumes/i)
+                      ? "railway_volume_limit"
+                      : has(/limited trial|trial.{0,80}restricted/i)
+                        ? "railway_trial_restricted"
+                        : has(/resource provision limit|limit exceeded|upgrade to provision|creation limit/i)
+                          ? "railway_quota_exhausted"
+                          : has(/project not found|environment not found|workspace not found|service not found/i)
                   ? "railway_scope_missing"
                   : has(
                         /cannot query field|unknown argument|is not defined by type|unknown type|was not provided/i,
@@ -773,6 +783,18 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
         /\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(query)?.[1] ?? "anonymous";
       const providerCode = result.errors?.[0]?.extensions?.code;
       const traceId = result.errors?.[0]?.traceId;
+      const diagnosticSignals = [
+        ["workspace", /workspace/i],
+        ["restricted", /restricted/i],
+        ["project", /project/i],
+        ["service", /service/i],
+        ["volume", /volume/i],
+        ["limit", /limit|maximum/i],
+        ["resource", /resource/i],
+        ["trial", /trial/i],
+        ["billing", /billing|subscription|plan/i],
+        ["create", /create|creation/i],
+      ].flatMap(([signal, pattern]) => has(pattern as RegExp) ? [signal as string] : []);
       // Provider error text and variables may contain user/resource material; log only bounded diagnostics.
       // eslint-disable-next-line no-console
       console.warn(
@@ -787,6 +809,7 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
           ...(typeof traceId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(traceId)
             ? { traceId }
             : {}),
+          ...(diagnosticSignals.length ? { signals: diagnosticSignals } : {}),
         }),
       );
       throw new Error(category);

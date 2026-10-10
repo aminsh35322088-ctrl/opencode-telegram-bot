@@ -773,3 +773,44 @@ test("fixed fleet recreates a persisted project that is absent from the authenti
   assert.equal(f.projects.length, 1);
   assert.equal(f.projects[0]?.name, "opencode-telegram-01");
 });
+
+
+test("Railway BAD_USER_INPUT resource restrictions are classified without reflecting provider text", async () => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const cases = [
+    ["Your workspace has been restricted. You cannot create new resources.", "railway_workspace_restricted"],
+    ["You have hit the project creation limit for this account.", "railway_project_limit"],
+    ["You have hit the service creation limit for new accounts (25 services per day).", "railway_new_account_limit"],
+    ["This project can only have 3 volumes on the Trial plan.", "railway_volume_limit"],
+    ["This is a limited trial and provisioning is restricted.", "railway_trial_restricted"],
+  ] as const;
+  for (const [message, expected] of cases) {
+    const api = railwayApi("synthetic-secret", async () => Response.json({
+      errors: [{ message, extensions: { code: "BAD_USER_INPUT" } }], data: null,
+    }));
+    await assert.rejects(
+      api("mutation FixedFleetProjectCreate{projectCreate(input:{name:\"x\"}){id}}", {}),
+      (error) => error instanceof Error && error.message === expected && !error.message.includes(message),
+    );
+  }
+});
+
+test("Railway rejection diagnostics log only bounded lexical signals, never raw provider text", async () => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const sensitive = "workspace secret-name-123 has been restricted and cannot create new resources";
+  const logs: string[] = [];
+  const previous = console.warn;
+  console.warn = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+  try {
+    const api = railwayApi("synthetic-secret", async () => Response.json({
+      errors: [{ message: sensitive, extensions: { code: "BAD_USER_INPUT" }, traceId: "safe-trace" }], data: null,
+    }));
+    await assert.rejects(api("mutation FixedFleetProjectCreate{__typename}", {}), /railway_workspace_restricted/);
+  } finally {
+    console.warn = previous;
+  }
+  assert.equal(logs.length, 1);
+  const diagnostic = JSON.parse(logs[0]!) as { signals?: string[] };
+  assert.deepEqual(diagnostic.signals?.sort(), ["create", "resource", "restricted", "workspace"].sort());
+  assert.equal(logs[0]!.includes("secret-name-123"), false);
+});

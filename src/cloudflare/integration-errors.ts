@@ -19,6 +19,12 @@ const notices: Readonly<Record<string, string>> = Object.freeze({
   railway_scope_missing: "A bot-owned Railway project is no longer accessible to this account. Refresh Railway Settings, then Retry.",
   railway_schema_mismatch: "Railway rejected the provisioning request because its API contract changed. Update the bot before retrying.",
   railway_provider_rejected: "Railway rejected the provisioning request. Check Railway account access and limits before retrying.",
+  railway_workspace_restricted: "Railway has restricted this workspace/account from creating new resources. Open Railway and resolve the account restriction before Retry.",
+  railway_project_limit: "This Railway account has reached its project creation limit. Free project capacity or use an eligible Trial/Hobby account, then Retry.",
+  railway_new_account_limit: "Railway's new-account creation limit is currently blocking additional resources. Retry after the Railway limit resets.",
+  railway_volume_limit: "This Railway plan cannot attach another Volume in the current project. The fleet topology must use additional projects.",
+  railway_trial_restricted: "This Railway Trial is restricted from provisioning the required resources. Complete Railway verification or use an eligible account, then Retry.",
+  railway_quota_exhausted: "Railway resource quota is blocking provisioning. Check the account plan, verification and current limits, then Retry.",
 });
 /** Only exact internal codes reach presentation. Arbitrary upstream exception text is discarded. */
 export function integrationFailureNotice(error: unknown): string | undefined {

@@ -1603,6 +1603,7 @@ export class ControlPlane {
     const projects = this.store.projects().filter((project) => project.backendId === "railway");
     const workers = this.store.workers().filter((worker) => worker.backendId === "railway");
     const totalWorkers = 10;
+    const totalProjects = 4;
     const readyStates = new Set(["READY_UNBOUND", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"]);
     const failedWorkers = new Set(
       workers.filter((worker) => worker.state === "UNHEALTHY").map((worker) => worker.workerId),
@@ -1610,6 +1611,7 @@ export class ControlPlane {
     for (const job of this.store.jobs())
       if (this.fixedFleetJob(job) && job.error) failedWorkers.add(job.workerId);
     const failed = failedWorkers.size;
+    const failure = this.store.jobs().find((job) => this.fixedFleetJob(job) && !!job.error)?.error;
     const projectsCreated = projects.filter((project) => !!project.projectId && !!project.environmentId).length;
     const workersCreated = workers.filter((worker) => !!worker.serviceId && !!worker.endpoint).length;
     const volumesAttached = workers.filter((worker) => !!worker.volumeId).length;
@@ -1626,12 +1628,14 @@ export class ControlPlane {
       configured: !!metadata,
       ready:
         !!metadata &&
-        projectsCreated === 2 &&
+        projectsCreated === totalProjects &&
         workers.length === totalWorkers &&
         workersReady === totalWorkers &&
         failed === 0,
       ...(metadata?.accountName ? { accountName: metadata.accountName } : {}),
       projectsCreated,
+      totalProjects,
+      ...(failure ? { failure } : {}),
       workersCreated,
       volumesAttached,
       workersReady,
@@ -1643,7 +1647,7 @@ export class ControlPlane {
     let status = this.railwaySetupStatus();
     if (!status.configured || status.ready) return status;
     await this.setup();
-    this.store.ensureFixedFleet("railway", 10, 5);
+    this.store.ensureFixedFleet("railway", 10, 3);
     await this.scheduleAlarm(Date.now() + 1);
     status = this.railwaySetupStatus();
     return status;
@@ -1676,7 +1680,7 @@ export class ControlPlane {
     if (current) await vault.replace(input);
     else await vault.save(input);
     await this.setup();
-    const jobs = this.store.ensureFixedFleet("railway", 10, 5);
+    const jobs = this.store.ensureFixedFleet("railway", 10, 3);
     if (!current || !this.railwaySetupStatus().ready)
       this.state.storage.sql.exec(
         "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
@@ -1953,8 +1957,9 @@ export class ControlPlane {
     const maximum = Number(this.env.MAX_WORKERS),
       perProject = Number(this.env.WORKERS_PER_PROJECT),
       maxProjects = Number(this.env.MAX_RAILWAY_PROJECTS);
-    if (maximum !== 10 || perProject !== 5 || maxProjects !== 2)
+    if (maximum !== 10 || perProject !== 3 || maxProjects !== 4)
       throw new Error("invalid_capacity_policy");
+    this.store.reconcileFixedFleetTopology("railway", maximum, perProject);
     this.store.putBackend({
       backendId: "railway",
       accountId: credential.accountId,

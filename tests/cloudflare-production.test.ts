@@ -34,8 +34,8 @@ async function fixture() {
   const env = {
     TELEGRAM_BOT_TOKEN: "synthetic-telegram",
     MAX_WORKERS: "10",
-    WORKERS_PER_PROJECT: "5",
-    MAX_RAILWAY_PROJECTS: "2",
+    WORKERS_PER_PROJECT: "3",
+    MAX_RAILWAY_PROJECTS: "4",
       PROVISIONING_ENABLED: "true",
     TELEGRAM_ALLOWED_USER_ID: "7",
     CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
@@ -547,7 +547,7 @@ test("admin canary and webhook share idempotent Topic creation from the fixed re
   const f = await fixture(),
     original = globalThis.fetch;
   await post(f.plane, "/admin/setup");
-  const fixed = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  const fixed = f.store.ensureFixedFleet("railway", 10, 3)[0]!;
   f.store.saveProject({
     ...f.store.projects().find((project) => project.projectKey === fixed.projectKey)!,
     projectId: "project-1",
@@ -1389,7 +1389,7 @@ test("Delete Chat fences output, sanitizes runtime, preserves Railway Service/Vo
     configuration: { runtime: { model: "opencode/big-pickle" } },
     skills: [], actions: [], catalog: {}, defaults: {}, credentialReferences: [],
   });
-  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 3)[0]!;
   f.store.saveProject({
     ...f.store.projects().find((project) => project.projectKey === bootstrap.projectKey)!,
     projectId: "project-1", environmentId: "environment-1", phase: "READY",

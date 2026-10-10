@@ -30,8 +30,8 @@ async function fixture(
     TELEGRAM_BOT_TOKEN: "synthetic",
     TELEGRAM_ALLOWED_USER_ID: "7",
     MAX_WORKERS: "10",
-    WORKERS_PER_PROJECT: "5",
-    MAX_RAILWAY_PROJECTS: "2",
+    WORKERS_PER_PROJECT: "3",
+    MAX_RAILWAY_PROJECTS: "4",
       PROVISIONING_ENABLED: "true",
     CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
     WORKER_CORE_VERSION: "test",
@@ -144,15 +144,15 @@ async function fixture(
       accountId: "account-1",
       region: "europe-west4",
       desiredMaximumWorkers: 10,
-      maxWorkersPerProject: 5,
-      maxProjects: 2,
+      maxWorkersPerProject: 3,
+      maxProjects: 4,
       enabled: true,
     });
-    const bootstrap = store.ensureFixedFleet("railway", 10, 5);
+    const bootstrap = store.ensureFixedFleet("railway", 10, 3);
     for (let index = 0; index < bootstrap.length; index++) {
       const ordinal = index + 1;
       const job = bootstrap[index]!;
-      const projectOrdinal = Math.floor(index / 5) + 1;
+      const projectOrdinal = Math.floor(index / 3) + 1;
       const project = store.projects().find((candidate) => candidate.projectKey === job.projectKey)!;
       store.saveProject({
         ...project,
@@ -1660,7 +1660,7 @@ test("fixed fleet exhaustion never creates an eleventh Worker or destructive cle
   const beforeJobs = f.store.jobs().length;
   await f.update("/new_chat");
   assert.equal(f.store.workers().length, 10);
-  assert.equal(f.store.projects().length, 2);
+  assert.equal(f.store.projects().length, 4);
   assert.equal(f.store.jobs().length, beforeJobs);
   assert.equal(f.store.jobs().some((job) => job.phase === "CLEANUP_PENDING"), false);
 });
@@ -1782,7 +1782,7 @@ test("Railway onboarding protects token, seeds ten slots, updates one panel, wel
   const stored = [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='infrastructure:railway:credential'")][0];
   assert.ok(stored);
   assert.equal(stored.data.includes("railway-account-token"), false);
-  assert.equal(f.store.projects().length, 2);
+  assert.equal(f.store.projects().length, 4);
   assert.equal(f.store.workers().length, 10);
   assert.deepEqual(f.store.workers().map((worker) => worker.workerId), Array.from({ length: 10 }, (_, i) => `worker-${String(i + 1).padStart(2, "0")}`));
   assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 1002));
@@ -1793,7 +1793,7 @@ test("Railway onboarding protects token, seeds ten slots, updates one panel, wel
   for (const worker of f.store.workers()) {
     const job = f.store.jobs().find((candidate) => candidate.requestId === `fleet-bootstrap:${worker.workerId}`)!;
     const ordinal = Number(worker.workerId.slice(-2));
-    const projectOrdinal = Math.floor((ordinal - 1) / 5) + 1;
+    const projectOrdinal = Math.floor((ordinal - 1) / 3) + 1;
     f.store.configureJob(job.jobId, {
       projectId: `project-${projectOrdinal}`,
       environmentId: `environment-${projectOrdinal}`,
@@ -1842,11 +1842,11 @@ test("Railway Settings shows fixed fleet status and replacement uses the same pa
     accountId: "account-1",
     region: "europe-west4",
     desiredMaximumWorkers: 10,
-    maxWorkersPerProject: 5,
-    maxProjects: 2,
+    maxWorkersPerProject: 3,
+    maxProjects: 4,
     enabled: true,
   });
-  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  const jobs = f.store.ensureFixedFleet("railway", 10, 3);
   for (let index = 0; index < jobs.length; index++) {
     const ordinal = index + 1;
     const job = jobs[index]!;
