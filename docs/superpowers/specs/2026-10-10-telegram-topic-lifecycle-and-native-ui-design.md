@@ -10,7 +10,7 @@ The bot must return to a simple, reliable Telegram-native interaction model whil
 
 The primary goals are:
 
-1. `New Chat` must not create a Telegram AI Topic until its dedicated Railway worker is deployed, healthy, OpenCode is ready, and an OpenCode session has been created successfully.
+1. `New Chat` must not create a Telegram AI Topic until its dedicated Railway worker is deployed, healthy, OpenCode is ready, and a provisional OpenCode session has been prepared successfully through the narrow unbound preparation path.
 2. The existing Main Panel in `All` must be the single provisioning surface. It is edited in place while a new AI thread is being created and is locked until provisioning succeeds, fails, or is cancelled.
 3. Managed AI Topics must use a real Telegram `ReplyKeyboardMarkup` for Topic controls, matching the previously working UX.
 4. `All`, managed AI Topics, and manually created Telegram Topics must remain strictly isolated from each other.
@@ -94,9 +94,9 @@ The panel should present compact, user-readable progress such as:
 - Waiting for Railway deployment success
 - Waiting for worker health
 - Preparing OpenCode
-- Creating OpenCode session
+- Preparing OpenCode session
 - Creating Telegram Topic
-- Binding session
+- Binding prepared session
 - Ready
 
 The exact copy may be polished, but the panel remains one message edited in place. Provisioning must not spam progress messages into the chat.
@@ -105,9 +105,9 @@ The exact copy may be polished, but the panel remains one message edited in plac
 
 The required order is:
 
-`IDLE -> PROVISIONING -> WORKER_HEALTHY -> SESSION_READY -> TOPIC_CREATING -> BINDING -> READY`
+`IDLE -> PROVISIONING -> WORKER_HEALTHY -> SESSION_PREPARED -> TOPIC_CREATING -> BINDING -> READY`
 
-A Telegram Topic must not exist before `SESSION_READY`.
+A Telegram Topic must not exist before the backend worker is healthy and a provisional OpenCode session has been prepared successfully.
 
 The concrete success path is:
 
@@ -115,15 +115,15 @@ The concrete success path is:
 2. Create/configure the Railway Service and fresh Volume.
 3. Deploy the topic runtime.
 4. Verify Railway deployment success.
-5. Verify real worker health/readiness.
-6. Verify OpenCode readiness on the worker.
-7. Create the OpenCode session successfully.
-8. Only now allocate the next managed Topic number/title and call Telegram `createForumTopic`.
+5. Verify real worker health/readiness and OpenCode readiness while the worker is still unbound (`chatId=0`, `threadId=0`).
+6. Invoke one narrowly scoped unbound RPC, `session.prepare`, which creates a provisional OpenCode session and returns only its `sessionId`; ordinary unbound model/session RPC remains forbidden.
+7. Allocate the next managed Topic number/title and call Telegram `createForumTopic`.
+8. Bind the worker generation to the real `chatId + threadId`, attach the prepared `sessionId`, and close the unbound RPC scope.
 9. Persist/finalize the binding containing at least `chatId`, `threadId`, `sessionId`, `workerId`, `generation`, and normalized workspace identity.
 10. Send the first Topic-owned Ready/Created message with model capability summary and ReplyKeyboard.
 11. Restore the Main Panel in `All` to its normal idle/navigation state.
 
-The allocation model must support a provisional worker/session identity before a Telegram `threadId` exists. Any RPC or credential scheme that currently assumes a thread must be adapted explicitly rather than faking a durable thread identifier.
+The provisional `session.prepare` path is a deliberately narrow exception to the normal Topic-scoped RPC boundary. It is valid only for a healthy, unbound worker in the current allocation generation, cannot accept model prompts or arbitrary session operations, and must become unusable as soon as the worker is bound or fenced. No fake or durable placeholder Telegram thread identifier is permitted.
 
 ### 5.3 First Topic message and native Continue to thread
 
@@ -364,11 +364,13 @@ Required regression groups include:
 
 ### 12.1 New Chat state machine
 
-- Telegram Topic is not created before worker health and successful `session.create`.
+- Telegram Topic is not created before worker health and successful unbound `session.prepare`.
+- Unbound workers reject every ordinary session/model RPC; only the exact `session.prepare` preparation operation is allowed in the current allocation generation.
+- A stale generation, already-bound worker, or fenced worker cannot use `session.prepare`.
 - Worker deploy failure creates no Topic.
-- Session creation failure creates no Topic.
-- Topic creation failure cleans the already-created backend resources.
-- Binding failure cleans the newly created Topic and backend resources.
+- Session preparation failure creates no Topic.
+- Topic creation failure retires the prepared session and cleans the already-created backend resources.
+- Binding failure deletes the newly created Topic, retires the prepared session, and cleans backend resources.
 - Retry begins from a clean state with a new generation.
 - Duplicate New Chat update cannot allocate twice.
 
