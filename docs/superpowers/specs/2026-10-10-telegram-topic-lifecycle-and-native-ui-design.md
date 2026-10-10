@@ -10,7 +10,7 @@ The bot must return to a simple, reliable Telegram-native interaction model whil
 
 The primary goals are:
 
-1. `New Chat` must not create a Telegram AI Topic until its dedicated Railway worker is deployed, healthy, OpenCode is ready, and a provisional OpenCode session has been prepared successfully through the narrow unbound preparation path.
+1. `New Chat` must not create a Telegram AI Topic until its dedicated Railway worker is deployed, healthy, OpenCode is ready, and an unbound `session.probe` has successfully proven that OpenCode can create and delete a temporary session without leaving durable Topic/session state.
 2. The existing Main Panel in `All` must be the single provisioning surface. It is edited in place while a new AI thread is being created and is locked until provisioning succeeds, fails, or is cancelled.
 3. Managed AI Topics must use a real Telegram `ReplyKeyboardMarkup` for Topic controls, matching the previously working UX.
 4. `All`, managed AI Topics, and manually created Telegram Topics must remain strictly isolated from each other.
@@ -94,9 +94,10 @@ The panel should present compact, user-readable progress such as:
 - Waiting for Railway deployment success
 - Waiting for worker health
 - Preparing OpenCode
-- Preparing OpenCode session
+- Probing OpenCode session lifecycle
 - Creating Telegram Topic
-- Binding prepared session
+- Binding worker identity
+- Creating Topic session
 - Ready
 
 The exact copy may be polished, but the panel remains one message edited in place. Provisioning must not spam progress messages into the chat.
@@ -105,9 +106,9 @@ The exact copy may be polished, but the panel remains one message edited in plac
 
 The required order is:
 
-`IDLE -> PROVISIONING -> WORKER_HEALTHY -> SESSION_PREPARED -> TOPIC_CREATING -> BINDING -> READY`
+`IDLE -> PROVISIONING -> WORKER_HEALTHY -> SESSION_PROBED -> TOPIC_CREATING -> BINDING -> SESSION_CREATING -> READY`
 
-A Telegram Topic must not exist before the backend worker is healthy and a provisional OpenCode session has been prepared successfully.
+A Telegram Topic must not exist before the backend worker is healthy and an unbound `session.probe` has successfully demonstrated create/delete session capability with no durable session or Topic state left behind.
 
 The concrete success path is:
 
@@ -116,14 +117,15 @@ The concrete success path is:
 3. Deploy the topic runtime.
 4. Verify Railway deployment success.
 5. Verify real worker health/readiness and OpenCode readiness while the worker is still unbound (`chatId=0`, `threadId=0`).
-6. Invoke one narrowly scoped unbound RPC, `session.prepare`, which creates a provisional OpenCode session and returns only its `sessionId`; ordinary unbound model/session RPC remains forbidden.
+6. Invoke one narrowly scoped unbound RPC, `session.probe`. It creates a temporary OpenCode session inside the existing ephemeral unbound workspace, verifies the session can be addressed, deletes it, verifies deletion, and returns only a bounded success proof. It must not persist a session ID in the worker boundary ledger.
 7. Allocate the next managed Topic number/title and call Telegram `createForumTopic`.
-8. Bind the worker generation to the real `chatId + threadId`, attach the prepared `sessionId`, and close the unbound RPC scope.
-9. Persist/finalize the binding containing at least `chatId`, `threadId`, `sessionId`, `workerId`, `generation`, and normalized workspace identity.
-10. Send the first Topic-owned Ready/Created message with model capability summary and ReplyKeyboard.
-11. Restore the Main Panel in `All` to its normal idle/navigation state.
+8. Bind the worker generation to the real `chatId + threadId` using the existing identity handoff rules. The unbound probe capability becomes unavailable immediately after this bind.
+9. Create the real OpenCode Topic session with normal bound `session.create`.
+10. Persist/finalize the binding containing at least `chatId`, `threadId`, `sessionId`, `workerId`, `generation`, and normalized workspace identity.
+11. Send the first Topic-owned Ready/Created message with model capability summary and ReplyKeyboard.
+12. Restore the Main Panel in `All` to its normal idle/navigation state.
 
-The provisional `session.prepare` path is a deliberately narrow exception to the normal Topic-scoped RPC boundary. It is valid only for a healthy, unbound worker in the current allocation generation, cannot accept model prompts or arbitrary session operations, and must become unusable as soon as the worker is bound or fenced. No fake or durable placeholder Telegram thread identifier is permitted.
+The `session.probe` path is a deliberately narrow exception to the normal unbound RPC boundary. It is valid only for a healthy, unbound worker in the current allocation generation, accepts an empty payload only, and must leave no durable session/run/Topic state. If probe cleanup cannot be proven, the worker is not reusable and the allocation enters destructive cleanup. No fake or durable placeholder Telegram thread identifier is permitted.
 
 ### 5.3 First Topic message and native Continue to thread
 
@@ -154,7 +156,7 @@ Rules:
 - The same Main Panel is edited into the error view and exposes `Retry` and `Cancel`.
 - Cancel returns the Main Panel to idle only after required cleanup has completed or has entered an explicit cleanup-required error state.
 
-No dead Telegram Topic should be created for failures occurring before session readiness.
+Failures before a successful `session.probe` create no Telegram Topic. Failures after Topic creation but before READY must delete that newly created Topic as part of verified cleanup so no dead managed Topic remains.
 
 ## 6. Managed Topic ReplyKeyboard
 
@@ -364,13 +366,15 @@ Required regression groups include:
 
 ### 12.1 New Chat state machine
 
-- Telegram Topic is not created before worker health and successful unbound `session.prepare`.
-- Unbound workers reject every ordinary session/model RPC; only the exact `session.prepare` preparation operation is allowed in the current allocation generation.
-- A stale generation, already-bound worker, or fenced worker cannot use `session.prepare`.
+- Telegram Topic is not created before worker health and successful unbound `session.probe`.
+- Unbound workers reject every ordinary session/model RPC; only the exact empty-payload `session.probe` readiness operation is allowed in the current allocation generation.
+- `session.probe` creates, addresses, deletes, and verifies deletion of a temporary OpenCode session without persisting a boundary session ID.
+- A stale generation, already-bound worker, or fenced worker cannot use `session.probe`.
 - Worker deploy failure creates no Topic.
-- Session preparation failure creates no Topic.
-- Topic creation failure retires the prepared session and cleans the already-created backend resources.
-- Binding failure deletes the newly created Topic, retires the prepared session, and cleans backend resources.
+- Session probe failure creates no Topic and destroys the uncertain worker allocation.
+- Topic creation failure cleans the already-probed backend resources.
+- Bound `session.create` failure deletes the newly created Topic and cleans backend resources.
+- Binding failure deletes the newly created Topic and cleans backend resources.
 - Retry begins from a clean state with a new generation.
 - Duplicate New Chat update cannot allocate twice.
 
@@ -461,8 +465,14 @@ This change does not introduce:
 
 ## 15. Expected Code Areas
 
+Implementation spans both repositories because the readiness probe belongs inside the Telegram Core worker boundary. The Core change is a narrow prerequisite and must be released before the Bot pins and deploys it.
+
 Implementation is expected to touch, at minimum, the existing responsibilities represented by:
 
+- Core: `worker/node_agent.py`
+- Core: `tests/worker/test_node_agent.py` and compiled/runtime qualification covering the new probe
+- Core release metadata for the next prerelease after `v1.18.33-bot.13-pre.27`
+- Bot: `core-release.lock.json` / package pins for that exact Core prerelease
 - `src/cloudflare/control-object.ts`
 - `src/cloudflare/control-store.ts`
 - `src/cloudflare/railway-fleet-driver.ts`
