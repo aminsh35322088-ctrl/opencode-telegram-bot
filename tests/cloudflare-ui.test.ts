@@ -1508,6 +1508,47 @@ test("cleanup verification failure keeps New Chat actionable with Retry and Canc
   assert.match(output, /✖ Cancel/);
 });
 
+test("Cancel from cleanup pending returns Home without waiting for Railway cleanup", async (t) => {
+  const f = fixture(t);
+  await f.post("/admin/setup");
+  const stale = f.store.reserveAllocation("historical-cleanup-cancel", -100);
+  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
+  const fenced = f.store.fenceWorker(stale.workerId);
+  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
+
+  let destroyCalls = 0;
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
+    destroy: async () => {
+      destroyCalls++;
+      if (destroyCalls === 1) throw new Error("railway_transport_timeout");
+      await blocked;
+    },
+  });
+
+  await f.update("/new_chat");
+  const cancel = [
+    ...f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []),
+  ]
+    .reverse()
+    .find((button: any) => button.text === "✖ Cancel");
+  assert.ok(cancel);
+
+  const operation = f.callback((cancel as any).callback_data);
+  const completedQuickly = await Promise.race([
+    operation.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 200)),
+  ]);
+  release();
+  await operation;
+
+  assert.equal(completedQuickly, true);
+  assert.match(JSON.stringify(f.sent), /OpenCode Telegram/);
+});
+
 test("Retry from cleanup pending performs cleanup instead of repainting the dead end", async (t) => {
   const f = fixture(t);
   await f.post("/admin/setup");

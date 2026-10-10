@@ -1175,6 +1175,20 @@ export class ControlStore {
       return job;
     });
   }
+  recordCleanupVolume(workerId: string, generation: number, volumeId: string): void {
+    const worker = this.worker(workerId);
+    if (
+      !worker ||
+      worker.generation !== generation ||
+      worker.state !== "DELETING" ||
+      !volumeId ||
+      (worker.volumeId !== undefined && worker.volumeId !== volumeId)
+    )
+      throw new Error("cleanup_ownership_mismatch");
+    worker.volumeId = volumeId;
+    this.saveWorker(worker);
+  }
+
   recordVolumeDeletion(workerId: string, generation: number, pendingUntil: string): void {
     const worker = this.worker(workerId);
     if (

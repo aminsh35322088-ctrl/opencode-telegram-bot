@@ -916,6 +916,10 @@ export class CloudBotUi {
   ): Promise<void> {
     const worker = this.deps.store.worker(job.workerId);
     if (worker?.state !== "REPLACED") {
+      await this.panel(job.chatId, undefined, {
+        text: "⏳ Reconciling the previous Railway allocation…",
+        reply_markup: { inline_keyboard: [] },
+      });
       if (!this.deps.cancelAllocation) {
         await this.allocationCleanupPending(
           job,
@@ -926,7 +930,10 @@ export class CloudBotUi {
       try {
         await this.deps.cancelAllocation(job.jobId);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : "cleanup_reconciliation_required";
+        const reason =
+          error instanceof Error && error.message !== "cleanup_reconciliation_required"
+            ? error.message
+            : "Railway cleanup could not be verified safely yet. Retry in a moment or Cancel to return Home.";
         await this.allocationCleanupPending(job, reason);
         return;
       }
@@ -1976,21 +1983,20 @@ export class CloudBotUi {
     }
     if (name === "allocation_cancel") {
       const failed = this.deps.store.job(String(action.value ?? ""));
-      if (failed && failed.chatId === chat) {
-        const worker = this.deps.store.worker(failed.workerId);
-        if (worker && worker.state !== "REPLACED" && this.deps.cancelAllocation) {
-          try {
-            await this.deps.cancelAllocation(failed.jobId);
-          } catch (error) {
-            const reason =
-              error instanceof Error ? error.message : "cleanup_reconciliation_required";
-            await this.allocationCleanupPending(failed, reason);
-            return true;
-          }
-        }
-      }
+      const cleanup =
+        failed &&
+        failed.chatId === chat &&
+        this.deps.store.worker(failed.workerId)?.state !== "REPLACED" &&
+        this.deps.cancelAllocation
+          ? () => this.deps.cancelAllocation!(failed.jobId).catch(() => undefined)
+          : undefined;
       this.set("action_done:" + updateId, true);
       await this.home(chat, actor, false);
+      if (cleanup) {
+        const pending = cleanup();
+        if (this.deps.waitUntil) this.deps.waitUntil(pending);
+        else void pending;
+      }
       return true;
     }
     if (name === "history" || name === "sessions") {

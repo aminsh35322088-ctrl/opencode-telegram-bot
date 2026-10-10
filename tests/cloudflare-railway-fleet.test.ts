@@ -42,8 +42,11 @@ function fixture() {
   }> = [];
   let loseProject = false,
     loseVolume = false,
+    loseAttachedVolume = false,
+    rejectVolumeCreate = false,
     quota = false,
     projectSerial = 0;
+  const volumeCreateInputs: Record<string, unknown>[] = [];
   let rejectMutation = "";
   const mutations: string[] = [];
   const request = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
@@ -111,10 +114,37 @@ function fixture() {
       services.push(s);
       result = { serviceCreate: s };
     } else if (query.includes("FleetVolumeCreate")) {
-      const v = { id: "v" + volumes.length, volumeInstances: { edges: [] } };
+      volumeCreateInputs.push({ ...input });
+      if (rejectVolumeCreate) {
+        rejectVolumeCreate = false;
+        throw new Error("railway_api_failure");
+      }
+      const volumeId = "v" + volumes.length;
+      const attachedServiceId =
+        !loseVolume && typeof input.serviceId === "string" && input.serviceId
+          ? input.serviceId
+          : undefined;
+      const v = {
+        id: volumeId,
+        volumeInstances: {
+          edges: attachedServiceId
+            ? [
+                {
+                  node: {
+                    serviceId: attachedServiceId,
+                    volumeId,
+                    mountPath: String(input.mountPath ?? "/data"),
+                    sizeMB: 500,
+                  },
+                },
+              ]
+            : [],
+        },
+      };
       volumes.push(v);
-      if (loseVolume) {
+      if (loseVolume || loseAttachedVolume) {
         loseVolume = false;
+        loseAttachedVolume = false;
         throw new Error("transport_error");
       }
       result = { volumeCreate: v };
@@ -159,17 +189,62 @@ function fixture() {
     services,
     volumes,
     mutations,
+    volumeCreateInputs,
     loseProject: () => {
       loseProject = true;
     },
     loseVolume: () => {
       loseVolume = true;
     },
+    loseAttachedVolume: () => {
+      loseAttachedVolume = true;
+    },
+    rejectVolumeCreate: () => {
+      rejectVolumeCreate = true;
+    },
     quota: () => {
       quota = true;
     },
   };
 }
+test("volume creation is service-bound and a lost response is recoverable by ownership", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("service-bound-volume", -100);
+  f.loseAttachedVolume();
+
+  await assert.rejects(f.driver.provision(job.jobId), /transport_error/);
+  const afterLoss = f.store.job(job.jobId)!;
+  assert.equal(afterLoss.phase, "VOLUME_CREATING");
+  assert.equal(f.volumeCreateInputs.length, 1);
+  assert.equal(f.volumeCreateInputs[0]!.serviceId, afterLoss.serviceId);
+  assert.equal(f.volumeCreateInputs[0]!.environmentId, afterLoss.environmentId);
+
+  const recovered = await f.driver.provision(job.jobId);
+  assert.equal(recovered.phase, "DEPLOYING");
+  assert.ok(recovered.volumeId);
+});
+
+test("cleanup can prove legacy VOLUME_CREATING has no orphan volume and retire the service", async () => {
+  const f = fixture();
+  const job = f.store.reserveAllocation("legacy-volume-create-rejected", -100);
+  f.rejectVolumeCreate();
+
+  await assert.rejects(f.driver.provision(job.jobId), /railway_api_failure/);
+  const failed = f.store.job(job.jobId)!;
+  assert.equal(failed.phase, "VOLUME_CREATING");
+  assert.ok(failed.serviceId);
+  assert.equal(failed.volumeId, undefined);
+  assert.equal(f.volumes.length, 0);
+
+  const worker = f.store.fenceWorker(job.workerId);
+  f.store.transition(worker.workerId, worker.generation, "DELETING");
+  await f.driver.destroy(worker.workerId, worker.generation);
+  f.store.confirmDestroyed(worker.workerId, worker.generation);
+
+  assert.equal(f.services.length, 0);
+  assert.equal(f.store.worker(worker.workerId)?.state, "REPLACED");
+});
+
 test("first allocation creates execution project/service/volume and deploys immutable image", async () => {
   const f = fixture();
   const job = f.store.reserveAllocation("first", -100);

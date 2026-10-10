@@ -212,7 +212,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
         return this.store.configureJob(jobId, { phase: "DEPLOYING" });
       throw new Error("deployment_reconciliation_pending");
     }
-    const attached = inventory.project.volumes.edges.filter((v) =>
+    let attached = inventory.project.volumes.edges.filter((v) =>
       v.node.volumeInstances.edges.some((i) => i.node.serviceId === job!.serviceId),
     );
     if (attached.length > 1) throw new Error("volume_ownership_ambiguous");
@@ -230,8 +230,8 @@ export class RailwayFleetDriver implements FleetProvisioner {
           {
             input: {
               projectId: job.projectId,
-              environmentId: null,
-              serviceId: null,
+              environmentId: job.environmentId,
+              serviceId: job.serviceId,
               mountPath: "/data",
             },
           },
@@ -240,6 +240,10 @@ export class RailwayFleetDriver implements FleetProvisioner {
           volumeId: volume.volumeCreate.id,
           phase: "VOLUME_CREATED",
         });
+        inventory = await this.inventory(job);
+        attached = inventory.project.volumes.edges.filter((v) =>
+          v.node.volumeInstances.edges.some((i) => i.node.serviceId === job!.serviceId),
+        );
       }
     }
     if (!attached.length) {
@@ -571,11 +575,44 @@ export class RailwayFleetDriver implements FleetProvisioner {
       throw error;
     }
     const job = this.store.jobs().find((j) => j.workerId === workerId);
+    let resolvedVolumeId = worker.volumeId;
     if (
-      !worker.volumeId &&
+      !resolvedVolumeId &&
       (job?.phase === "VOLUME_CREATING" || job?.cleanupPhase === "VOLUME_CREATING")
-    )
-      throw new Error("cleanup_reconciliation_required");
+    ) {
+      if (!worker.serviceId) throw new Error("cleanup_reconciliation_required");
+      const attachedCandidates = inventory.project.volumes.edges.filter((volume) =>
+        volume.node.volumeInstances.edges.some(
+          (instance) => instance.node.serviceId === worker.serviceId,
+        ),
+      );
+      if (attachedCandidates.length > 1) throw new Error("cleanup_reconciliation_required");
+      const attachedVolume = attachedCandidates[0];
+      if (attachedVolume) {
+        if (
+          this.store
+            .workers()
+            .some(
+              (candidate) =>
+                candidate.workerId !== workerId && candidate.volumeId === attachedVolume.node.id,
+            )
+        )
+          throw new Error("cleanup_ownership_mismatch");
+        resolvedVolumeId = attachedVolume.node.id;
+        this.store.recordCleanupVolume(workerId, generation, resolvedVolumeId);
+      } else {
+        const knownVolumeIds = new Set(
+          this.store
+            .workers()
+            .filter((candidate) => candidate.projectId === worker.projectId && candidate.volumeId)
+            .map((candidate) => candidate.volumeId!),
+        );
+        const untrackedVolumes = inventory.project.volumes.edges.filter(
+          (volume) => !knownVolumeIds.has(volume.node.id),
+        );
+        if (untrackedVolumes.length) throw new Error("cleanup_reconciliation_required");
+      }
+    }
     const ownedName = "topic-node-" + worker.workerId;
     const matches = inventory.project.services.edges.filter(
       (s) => s.node.id === worker.serviceId || s.node.name === ownedName,
@@ -597,7 +634,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
       )
     )
       throw new Error("service_cleanup_pending");
-    const volume = inventory.project.volumes.edges.find((v) => v.node.id === worker.volumeId);
+    const volume = inventory.project.volumes.edges.find((v) => v.node.id === resolvedVolumeId);
     if (
       volume?.node.volumeInstances.edges.some(
         (v) => v.node.serviceId && v.node.serviceId !== serviceId,
@@ -607,10 +644,10 @@ export class RailwayFleetDriver implements FleetProvisioner {
     if (volume)
       await this.mutate(
         "mutation FleetDestroyVolume($volumeId:String!){volumeDelete(volumeId:$volumeId)}",
-        { volumeId: worker.volumeId },
+        { volumeId: resolvedVolumeId },
       );
     inventory = await this.inventory(scope);
-    const retained = inventory.project.volumes.edges.find((v) => v.node.id === worker.volumeId);
+    const retained = inventory.project.volumes.edges.find((v) => v.node.id === resolvedVolumeId);
     if (retained) {
       const instances = retained.node.volumeInstances.edges.map((i) => i.node);
       if (
