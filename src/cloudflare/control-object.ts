@@ -1600,8 +1600,12 @@ export class ControlPlane {
   }
   private railwaySetupStatus(): RailwaySetupStatus {
     const metadata = this.railwayCredentials().metadata();
-    const projects = this.store.projects().filter((project) => project.backendId === "railway");
-    const workers = this.store.workers().filter((worker) => worker.backendId === "railway");
+    const projects = this.store.projects().filter(
+      (project) => project.backendId === "railway" && /^opencode-telegram-\d{2}$/u.test(project.projectKey),
+    );
+    const workers = this.store.workers().filter(
+      (worker) => worker.backendId === "railway" && /^worker-\d{2}$/u.test(worker.workerId),
+    );
     const totalWorkers = 10;
     const totalProjects = 4;
     const readyStates = new Set(["READY_UNBOUND", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"]);
@@ -2192,8 +2196,20 @@ export class ControlPlane {
     console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
   }
   private async advanceSafely(jobId: string): Promise<void> {
-    const existing = this.store.job(jobId);
+    let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
+    if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing)) {
+      await this.setup();
+      const bootstrap = this.store.ensureFixedFleet("railway", 10, 3);
+      const current = this.store.job(jobId);
+      if (!current) {
+        for (const job of bootstrap) await this.env.JOBS.send({ jobId: job.jobId });
+        await this.scheduleAlarm(Date.now() + 1);
+        await this.refreshRailwayOnboarding();
+        return;
+      }
+      existing = current;
+    }
     if (existing.phase === "CLEANUP_PENDING") {
       try {
         await this.cancelAllocation(jobId);
