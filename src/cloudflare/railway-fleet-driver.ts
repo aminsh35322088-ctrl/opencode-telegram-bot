@@ -21,6 +21,25 @@ export interface FleetProvisioner {
   ): Promise<{ image: string; deploymentId: string; status: string }>;
 }
 type RequestApi = <T>(query: string, variables: Record<string, unknown>) => Promise<T>;
+export class RailwayApiError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs?: number,
+  ) {
+    super(message);
+    this.name = "RailwayApiError";
+  }
+}
+
+function retryAfterMs(response: Response): number | undefined {
+  const value = response.headers.get("Retry-After")?.trim();
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1_000, Math.ceil(seconds * 1_000));
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return undefined;
+  return Math.max(1_000, at - Date.now());
+}
 type RailwayProject = {
   deletedAt?: string | null;
   id: string;
@@ -774,11 +793,13 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
             : error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)
               ? "railway_transport_timeout"
               : "railway_transport_error";
-      throw new Error(category);
+      throw new RailwayApiError(category);
     }
     if (response.status >= 300 && response.status < 400)
-      throw new Error("railway_redirect_rejected");
-    const result = (await response.json()) as {
+      throw new RailwayApiError("railway_redirect_rejected");
+
+    const raw = await response.text();
+    let result: {
       data?: T;
       errors?: Array<{
         message?: string;
@@ -786,31 +807,68 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
         traceId?: string;
       }>;
     };
+    try {
+      result = raw ? (JSON.parse(raw) as typeof result) : {};
+    } catch {
+      const bodyHint = raw.slice(0, 256);
+      const category =
+        response.status === 429 || /rate limit|too many requests/i.test(bodyHint)
+          ? "railway_rate_limited"
+          : response.status === 401 ||
+              /\bnot authorized\b|\bunauthorized\b|\bnot authenticated\b/i.test(bodyHint)
+            ? "railway_unauthorized"
+            : response.status === 403 ||
+                /\bforbidden\b|permission denied|insufficient permission/i.test(bodyHint)
+              ? "railway_forbidden"
+              : response.status >= 500
+                ? "railway_provider_rejected"
+                : "railway_api_failure";
+      const operation =
+        /\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(query)?.[1] ?? "anonymous";
+      // Never log provider response bodies: they may contain account/resource details.
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          event: "railway_api_rejected",
+          operation,
+          category,
+          status: response.status,
+        }),
+      );
+      throw new RailwayApiError(
+        category,
+        category === "railway_rate_limited" ? (retryAfterMs(response) ?? 60_000) : undefined,
+      );
+    }
+
     if (!response.ok || result.errors?.length || !result.data) {
       const messages = result.errors?.map((error) => error.message ?? "") ?? [];
       const has = (pattern: RegExp) => messages.some((message) => pattern.test(message));
       const providerCode = result.errors?.[0]?.extensions?.code;
       const category =
-        providerCode === "BAD_USER_INPUT"
-          ? "railway_bad_user_input"
-          : response.status === 401 || has(/\bnot authorized\b|\bunauthorized\b|\bnot authenticated\b/i)
-          ? "railway_unauthorized"
-          : response.status === 403 ||
-              has(/\bforbidden\b|permission denied|insufficient permission/i)
-            ? "railway_forbidden"
-            : response.status === 429 || has(/rate limit|too many requests/i)
-              ? "railway_rate_limited"
-              : has(/resource provision limit|limit exceeded|upgrade to provision/i)
-                ? "railway_quota_exhausted"
-                : has(/project not found|environment not found|workspace not found|service not found/i)
-                  ? "railway_scope_missing"
+        response.status === 429 || has(/rate limit|too many requests/i)
+          ? "railway_rate_limited"
+          : providerCode === "BAD_USER_INPUT"
+            ? "railway_bad_user_input"
+            : response.status === 401 ||
+                has(/\bnot authorized\b|\bunauthorized\b|\bnot authenticated\b/i)
+              ? "railway_unauthorized"
+              : response.status === 403 ||
+                  has(/\bforbidden\b|permission denied|insufficient permission/i)
+                ? "railway_forbidden"
+                : has(/resource provision limit|limit exceeded|upgrade to provision/i)
+                  ? "railway_quota_exhausted"
                   : has(
-                        /cannot query field|unknown argument|is not defined by type|unknown type|was not provided/i,
+                        /project not found|environment not found|workspace not found|service not found/i,
                       )
-                    ? "railway_schema_mismatch"
-                    : has(/problem processing request/i)
-                      ? "railway_provider_rejected"
-                      : "railway_api_failure";
+                    ? "railway_scope_missing"
+                    : has(
+                          /cannot query field|unknown argument|is not defined by type|unknown type|was not provided/i,
+                        )
+                      ? "railway_schema_mismatch"
+                      : has(/problem processing request/i)
+                        ? "railway_provider_rejected"
+                        : "railway_api_failure";
       const operation =
         /\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(query)?.[1] ?? "anonymous";
       const traceId = result.errors?.[0]?.traceId;
@@ -830,7 +888,10 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
             : {}),
         }),
       );
-      throw new Error(category);
+      throw new RailwayApiError(
+        category,
+        category === "railway_rate_limited" ? (retryAfterMs(response) ?? 60_000) : undefined,
+      );
     }
     return result.data;
   };

@@ -16,7 +16,7 @@ import type { DurableObjectState } from "@cloudflare/workers-types";
 import type { ControlEnvironment } from "./worker.js";
 import { ControlStore, type AllocationJob } from "./control-store.js";
 import { decryptCredential, encryptCredential, randomSecret, sha256 } from "./credentials.js";
-import { RailwayFleetDriver, railwayApi } from "./railway-fleet-driver.js";
+import { RailwayApiError, RailwayFleetDriver, railwayApi } from "./railway-fleet-driver.js";
 import {
   RailwayCredentialStore,
   protectRailwayCredentialUpdate,
@@ -77,6 +77,33 @@ export class ControlPlane {
     });
     this.alarmScheduling = next.catch(() => {});
     await next;
+  }
+  private railwayBackoffUntil(): number {
+    const row = [
+      ...this.state.storage.sql.exec<{ data: string }>(
+        "SELECT data FROM ui_state WHERE key=?",
+        "railway:api-backoff",
+      ),
+    ][0];
+    if (!row) return 0;
+    try {
+      const until = Number((JSON.parse(row.data) as { until?: unknown }).until);
+      if (Number.isFinite(until) && until > 0) return until;
+    } catch {
+      // Invalid control metadata is discarded below.
+    }
+    this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
+    return 0;
+  }
+  private setRailwayBackoff(until: number): void {
+    this.state.storage.sql.exec(
+      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      "railway:api-backoff",
+      JSON.stringify({ until }),
+    );
+  }
+  private clearRailwayBackoff(): void {
+    this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
   }
   private async refreshTyping(
     topic: import("./control-store.js").FleetTopic,
@@ -2201,6 +2228,13 @@ export class ControlPlane {
   private async advanceSafely(jobId: string): Promise<void> {
     let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
+    const now = Date.now();
+    const backoffUntil = this.railwayBackoffUntil();
+    if (backoffUntil > now) {
+      await this.scheduleAlarm(backoffUntil);
+      return;
+    }
+    if (backoffUntil) this.clearRailwayBackoff();
     if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing)) {
       await this.setup();
       this.store.ensureFixedFleet("railway", 10, 5);
@@ -2239,7 +2273,18 @@ export class ControlPlane {
         "railway_transport_error",
       ]);
       if (transient.has(reason)) {
-        await this.scheduleAlarm(Date.now() + 15_000);
+        if (reason === "railway_rate_limited") {
+          const requested =
+            error instanceof RailwayApiError && Number.isFinite(error.retryAfterMs)
+              ? error.retryAfterMs!
+              : 60_000;
+          const delay = Math.min(60 * 60_000, Math.max(1_000, requested));
+          const until = Date.now() + delay;
+          this.setRailwayBackoff(until);
+          await this.scheduleAlarm(until);
+        } else {
+          await this.scheduleAlarm(Date.now() + 15_000);
+        }
         return;
       }
       const job = this.store.job(jobId);

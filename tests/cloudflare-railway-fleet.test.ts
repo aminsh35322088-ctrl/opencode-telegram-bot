@@ -440,6 +440,23 @@ test("transport diagnostics classify failures without exposing exception credent
   );
 });
 
+test("Railway API classifies a plain-text 429 and honors Retry-After", async () => {
+  const { RailwayApiError, railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const api = railwayApi(
+    "synthetic-token",
+    async () =>
+      new Response("Rate limit exceeded", { status: 429, headers: { "Retry-After": "7" } }),
+  );
+  await assert.rejects(
+    api("mutation FleetServiceCreate{__typename}", {}),
+    (error) =>
+      error instanceof RailwayApiError &&
+      error.message === "railway_rate_limited" &&
+      error.retryAfterMs === 7_000,
+  );
+});
+
+
 test("Railway GraphQL failures map provider-safe scope auth and schema categories", async () => {
   const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
   const cases = [

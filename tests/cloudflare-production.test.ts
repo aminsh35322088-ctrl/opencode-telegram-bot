@@ -1460,6 +1460,28 @@ test("Delete Chat fences output, sanitizes runtime, preserves Railway Service/Vo
   assert.equal(JSON.parse(presentation!.data).state, "CANCELLED");
 });
 
+test("Railway rate limit creates a shared Retry-After backoff across fixed fleet jobs", async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  const first = jobs.find((job) => job.workerId === "worker-01")!;
+  const second = jobs.find((job) => job.workerId === "worker-02")!;
+  const { RailwayApiError } = await import("../src/cloudflare/railway-fleet-driver.js");
+  let calls = 0;
+  t.mock.method(f.plane as any, "advance", async () => {
+    calls++;
+    throw new RailwayApiError("railway_rate_limited", 7_000);
+  });
+  const before = Date.now();
+  await (f.plane as any).advanceSafely(first.jobId);
+  assert.equal(calls, 1);
+  assert.ok((f.getAlarm() ?? 0) >= before + 6_900);
+
+  await (f.plane as any).advanceSafely(second.jobId);
+  assert.equal(calls, 1);
+});
+
+
 test("fixed bootstrap queue retry self-heals explicit provider rejection without changing 2x5 topology", async (t) => {
   const f = await fixture();
   await post(f.plane, "/admin/setup");
