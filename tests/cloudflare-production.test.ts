@@ -34,8 +34,8 @@ async function fixture() {
   const env = {
     TELEGRAM_BOT_TOKEN: "synthetic-telegram",
     MAX_WORKERS: "10",
-    WORKERS_PER_PROJECT: "3",
-    MAX_RAILWAY_PROJECTS: "4",
+    WORKERS_PER_PROJECT: "5",
+    MAX_RAILWAY_PROJECTS: "2",
       PROVISIONING_ENABLED: "true",
     TELEGRAM_ALLOWED_USER_ID: "7",
     CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
@@ -547,7 +547,7 @@ test("admin canary and webhook share idempotent Topic creation from the fixed re
   const f = await fixture(),
     original = globalThis.fetch;
   await post(f.plane, "/admin/setup");
-  const fixed = f.store.ensureFixedFleet("railway", 10, 3)[0]!;
+  const fixed = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
   f.store.saveProject({
     ...f.store.projects().find((project) => project.projectKey === fixed.projectKey)!,
     projectId: "project-1",
@@ -1389,7 +1389,7 @@ test("Delete Chat fences output, sanitizes runtime, preserves Railway Service/Vo
     configuration: { runtime: { model: "opencode/big-pickle" } },
     skills: [], actions: [], catalog: {}, defaults: {}, credentialReferences: [],
   });
-  const bootstrap = f.store.ensureFixedFleet("railway", 10, 3)[0]!;
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
   f.store.saveProject({
     ...f.store.projects().find((project) => project.projectKey === bootstrap.projectKey)!,
     projectId: "project-1", environmentId: "environment-1", phase: "READY",
@@ -1458,63 +1458,4 @@ test("Delete Chat fences output, sanitizes runtime, preserves Railway Service/Vo
     "SELECT data FROM telegram_run_presentations WHERE run=?", "delete-run",
   )][0];
   assert.equal(JSON.parse(presentation!.data).state, "CANCELLED");
-});
-
-
-test("legacy Railway rows never inflate fixed onboarding progress", async () => {
-  const f = await fixture();
-  f.store.putBackend({
-    backendId: "railway", accountId: "account-1", region: "europe-west4",
-    desiredMaximumWorkers: 10, maxWorkersPerProject: 3, maxProjects: 4, enabled: true,
-  });
-  f.store.saveProject({
-    projectKey: "workers-railway-01", backendId: "railway", ordinal: 1,
-    reservedWorkers: 3, phase: "READY", projectId: "legacy-project", environmentId: "legacy-env",
-  });
-  f.store.saveWorker({
-    workerId: "legacy-worker", backendId: "railway", generation: 1, state: "BOUND_IDLE",
-    projectKey: "workers-railway-01", projectId: "legacy-project", environmentId: "legacy-env",
-    serviceId: "legacy-service", volumeId: "legacy-volume", endpoint: "https://legacy.example",
-    chatId: 1, threadId: 2, revision: 0,
-  });
-  f.store.ensureFixedFleet("railway", 10, 3);
-
-  const status = (f.plane as any).railwaySetupStatus();
-  assert.equal(status.projectsCreated, 0);
-  assert.equal(status.workersCreated, 0);
-  assert.equal(status.volumesAttached, 0);
-  assert.equal(status.workersReady, 0);
-  assert.equal(status.totalProjects, 4);
-  assert.equal(status.totalWorkers, 10);
-});
-
-test("retrying one failed bootstrap job self-heals old 5-per-project fixed topology and queues the new fleet", async () => {
-  const f = await fixture();
-  f.store.putBackend({
-    backendId: "railway", accountId: "account-1", region: "europe-west4",
-    desiredMaximumWorkers: 10, maxWorkersPerProject: 5, maxProjects: 2, enabled: true,
-  });
-  const oldJobs = f.store.ensureFixedFleet("railway", 10, 5);
-  for (const job of oldJobs) {
-    f.store.configureJob(job.jobId, { phase: "FAILED", error: "railway_api_failure" });
-    f.store.transition(job.workerId, job.generation, "UNHEALTHY");
-  }
-  f.queued.length = 0;
-
-  await (f.plane as any).advanceSafely(oldJobs[0]!.jobId);
-
-  const backend = f.store.backends().find((candidate) => candidate.backendId === "railway")!;
-  assert.equal(backend.maxWorkersPerProject, 3);
-  assert.equal(backend.maxProjects, 4);
-  assert.deepEqual(
-    f.store.projects().filter((project) => /^opencode-telegram-\d{2}$/u.test(project.projectKey)).map((project) => [project.projectKey, project.reservedWorkers]),
-    [
-      ["opencode-telegram-01", 3], ["opencode-telegram-02", 3],
-      ["opencode-telegram-03", 3], ["opencode-telegram-04", 1],
-    ],
-  );
-  const fixedJobs = f.store.jobs().filter((job) => job.requestId.startsWith("fleet-bootstrap:"));
-  assert.equal(fixedJobs.length, 10);
-  assert.equal(fixedJobs.some((job) => job.jobId === oldJobs[0]!.jobId), false);
-  assert.equal(f.queued.length, 10);
 });

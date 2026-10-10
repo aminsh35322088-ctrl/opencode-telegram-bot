@@ -843,59 +843,27 @@ test("fixed fleet retry reopens a failed bootstrap slot without creating duplica
   assert.equal(f.store.workers().length, 10);
 });
 
-
-test("fixed fleet topology migrates an unused 5-per-project layout to Trial-safe 3-per-project layout", () => {
+test("fixed fleet recovers a rejected project creation with no provider ownership receipt", () => {
   const f = fixture();
-  backend(f.store, "railway", 10, 5);
-  const old = f.store.ensureFixedFleet("railway", 10, 5);
-  assert.deepEqual(f.store.projects().map((project) => project.projectKey), ["opencode-telegram-01", "opencode-telegram-02"]);
-  for (const job of old) {
-    f.store.configureJob(job.jobId, { phase: "FAILED", error: "railway_api_failure" });
+  f.store.putBackend({ backendId: "railway", accountId: "account", desiredMaximumWorkers: 10, maxWorkersPerProject: 5, maxProjects: 2, region: "europe-west4", enabled: true });
+  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  const project = f.store.projects().find((candidate) => candidate.projectKey === "opencode-telegram-01")!;
+  f.store.saveProject({ ...project, phase: "CREATING" });
+  for (const job of jobs.filter((candidate) => candidate.projectKey === project.projectKey)) {
+    f.store.configureJob(job.jobId, { phase: "FAILED", error: job.workerId === "worker-01" ? "railway_api_failure" : "project_creation_reconciliation_required" });
     f.store.transition(job.workerId, job.generation, "UNHEALTHY");
   }
-
-  assert.equal(f.store.reconcileFixedFleetTopology("railway", 10, 3), true);
-  backend(f.store, "railway", 10, 3);
-  const migrated = f.store.ensureFixedFleet("railway", 10, 3);
-
-  assert.equal(migrated.length, 10);
-  assert.deepEqual(
-    f.store.projects().map((project) => [project.projectKey, project.reservedWorkers]),
-    [
-      ["opencode-telegram-01", 3],
-      ["opencode-telegram-02", 3],
-      ["opencode-telegram-03", 3],
-      ["opencode-telegram-04", 1],
-    ],
-  );
-  assert.deepEqual(
-    f.store.workers().map((worker) => worker.projectKey),
-    [
-      "opencode-telegram-01", "opencode-telegram-01", "opencode-telegram-01",
-      "opencode-telegram-02", "opencode-telegram-02", "opencode-telegram-02",
-      "opencode-telegram-03", "opencode-telegram-03", "opencode-telegram-03",
-      "opencode-telegram-04",
-    ],
-  );
-  assert.equal(f.store.workers().length, 10);
+  const recovered = f.store.ensureFixedFleet("railway", 10, 5);
+  assert.equal(f.store.projects().find((candidate) => candidate.projectKey === project.projectKey)?.phase, "RESERVED");
+  assert.ok(recovered.filter((job) => job.projectKey === project.projectKey).every((job) => job.phase === "RESERVED" && !job.error));
 });
 
-test("fixed fleet topology migration refuses any bound Topic instead of erasing live ownership", () => {
+test("fixed fleet keeps an ambiguous CREATING project fenced when no provider rejection was recorded", () => {
   const f = fixture();
-  backend(f.store, "railway", 10, 5);
-  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
-  f.store.configureJob(bootstrap.jobId, {
-    projectId: "p1", environmentId: "e1", serviceId: "s1", volumeId: "v1",
-    endpoint: "https://worker-01.up.railway.app",
-  });
-  f.store.ready(bootstrap.workerId, 1, "credential");
-  const allocation = f.store.reservePreparedAllocation("live-topic", -100);
-  f.store.markSessionProbed(allocation.jobId);
-  const rotated = f.store.rotateAllocationToTopic(allocation.jobId, 42);
-  f.store.ready(rotated.workerId, rotated.generation, "bound-credential");
-  f.store.bindTopic(allocation.jobId, 42, "session");
-
-  assert.throws(() => f.store.reconcileFixedFleetTopology("railway", 10, 3), /fixed_fleet_topology_in_use/);
-  assert.equal(f.store.topics().length, 1);
-  assert.equal(f.store.worker("worker-01")?.threadId, 42);
+  f.store.putBackend({ backendId: "railway", accountId: "account", desiredMaximumWorkers: 10, maxWorkersPerProject: 5, maxProjects: 2, region: "europe-west4", enabled: true });
+  f.store.ensureFixedFleet("railway", 10, 5);
+  const project = f.store.projects().find((candidate) => candidate.projectKey === "opencode-telegram-01")!;
+  f.store.saveProject({ ...project, phase: "CREATING" });
+  f.store.ensureFixedFleet("railway", 10, 5);
+  assert.equal(f.store.projects().find((candidate) => candidate.projectKey === project.projectKey)?.phase, "CREATING");
 });

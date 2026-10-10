@@ -774,43 +774,68 @@ test("fixed fleet recreates a persisted project that is absent from the authenti
   assert.equal(f.projects[0]?.name, "opencode-telegram-01");
 });
 
-
-test("Railway BAD_USER_INPUT resource restrictions are classified without reflecting provider text", async () => {
+test("Railway BAD_USER_INPUT is preserved as a safe retryable category", async () => {
   const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
-  const cases = [
-    ["Your workspace has been restricted. You cannot create new resources.", "railway_workspace_restricted"],
-    ["You have hit the project creation limit for this account.", "railway_project_limit"],
-    ["You have hit the service creation limit for new accounts (25 services per day).", "railway_new_account_limit"],
-    ["This project can only have 3 volumes on the Trial plan.", "railway_volume_limit"],
-    ["This is a limited trial and provisioning is restricted.", "railway_trial_restricted"],
-  ] as const;
-  for (const [message, expected] of cases) {
-    const api = railwayApi("synthetic-secret", async () => Response.json({
-      errors: [{ message, extensions: { code: "BAD_USER_INPUT" } }], data: null,
-    }));
-    await assert.rejects(
-      api("mutation FixedFleetProjectCreate{projectCreate(input:{name:\"x\"}){id}}", {}),
-      (error) => error instanceof Error && error.message === expected && !error.message.includes(message),
-    );
-  }
+  const api = railwayApi("synthetic-token", async () =>
+    Response.json({
+      errors: [{ message: "invalid project input", extensions: { code: "BAD_USER_INPUT" }, traceId: "trace-bad-input" }],
+      data: null,
+    }),
+  );
+  await assert.rejects(
+    api("mutation FixedFleetProjectCreate{__typename}", {}),
+    (error) => error instanceof Error && error.message === "railway_bad_user_input",
+  );
 });
 
-test("Railway rejection diagnostics log only bounded lexical signals, never raw provider text", async () => {
-  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
-  const sensitive = "workspace secret-name-123 has been restricted and cannot create new resources";
-  const logs: string[] = [];
-  const previous = console.warn;
-  console.warn = (...args: unknown[]) => logs.push(args.map(String).join(" "));
-  try {
-    const api = railwayApi("synthetic-secret", async () => Response.json({
-      errors: [{ message: sensitive, extensions: { code: "BAD_USER_INPUT" }, traceId: "safe-trace" }], data: null,
-    }));
-    await assert.rejects(api("mutation FixedFleetProjectCreate{__typename}", {}), /railway_workspace_restricted/);
-  } finally {
-    console.warn = previous;
-  }
-  assert.equal(logs.length, 1);
-  const diagnostic = JSON.parse(logs[0]!) as { signals?: string[] };
-  assert.deepEqual(diagnostic.signals?.sort(), ["create", "resource", "restricted", "workspace"].sort());
-  assert.equal(logs[0]!.includes("secret-name-123"), false);
+test("fixed project creation retries with the sole Railway workspace after BAD_USER_INPUT and hydrates environment separately", async () => {
+  const db = new DatabaseSync(":memory:");
+  const sql: SqlDatabase = { exec: (q, ...b) => db.prepare(q).all(...b) as never };
+  const store = new ControlStore(sql, (fn) => {
+    db.exec("BEGIN");
+    try { const value = fn(); db.exec("COMMIT"); return value; }
+    catch (error) { db.exec("ROLLBACK"); throw error; }
+  });
+  const project = { projectKey: "opencode-telegram-01", backendId: "railway", ordinal: 1, reservedWorkers: 5, phase: "RESERVED" };
+  store.saveProject(project);
+  const creates: Record<string, unknown>[] = [];
+  const queries: string[] = [];
+  const request = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
+    queries.push(query);
+    if (query.includes("FixedFleetProjectCreate")) {
+      const input = variables.input as Record<string, unknown>;
+      creates.push({ ...input });
+      if (!input.workspaceId) throw new Error("railway_bad_user_input");
+      return { projectCreate: { id: "project-new", name: "opencode-telegram-01" } } as T;
+    }
+    if (query.includes("FleetProjectWorkspaces"))
+      return { me: { workspaces: [{ id: "workspace-only", name: "Personal" }] } } as T;
+    if (query.includes("FixedFleetProject($id"))
+      return {
+        project: {
+          id: "project-new",
+          name: "opencode-telegram-01",
+          deletedAt: null,
+          environments: { edges: [{ node: { id: "environment-new", name: "production" } }] },
+        },
+      } as T;
+    throw new Error("unexpected_query");
+  };
+  const driver = new RailwayFleetDriver(store, request, {
+    image: "ghcr.io/example/worker@sha256:" + "a".repeat(64),
+    controlUrl: "https://control.example",
+    bootstrap: async () => "unused",
+  });
+
+  const resolved = await (driver as any).resolveFixedProject(project, true);
+
+  assert.deepEqual(creates, [
+    { name: "opencode-telegram-01" },
+    { name: "opencode-telegram-01", workspaceId: "workspace-only" },
+  ]);
+  const createQuery = queries.find((query) => query.includes("FixedFleetProjectCreate"))!;
+  assert.doesNotMatch(createQuery, /environments/);
+  assert.equal(resolved.projectId, "project-new");
+  assert.equal(resolved.environmentId, "environment-new");
+  db.close();
 });

@@ -731,10 +731,11 @@ export class ControlStore {
         totalWorkers !== backend.desiredMaximumWorkers ||
         !Number.isSafeInteger(workersPerProject) ||
         workersPerProject < 1 ||
-        workersPerProject !== backend.maxWorkersPerProject
+        workersPerProject !== backend.maxWorkersPerProject ||
+        totalWorkers % workersPerProject !== 0
       )
         throw new Error("invalid_fixed_fleet_policy");
-      const projectCount = Math.ceil(totalWorkers / workersPerProject);
+      const projectCount = totalWorkers / workersPerProject;
       if ((backend.maxProjects ?? projectCount) !== projectCount)
         throw new Error("invalid_fixed_fleet_policy");
       for (let ordinal = 1; ordinal <= projectCount; ordinal++) {
@@ -743,12 +744,42 @@ export class ControlStore {
         if (existing) {
           if (existing.backendId !== backendId || existing.ordinal !== ordinal)
             throw new Error("fixed_fleet_project_conflict");
+          if (existing.phase === "CREATING" && !existing.projectId && !existing.environmentId) {
+            const projectWorkers = this.workers().filter(
+              (worker) => worker.backendId === backendId && worker.projectKey === projectKey && /^worker-\d{2}$/u.test(worker.workerId),
+            );
+            const projectJobs = this.jobs().filter(
+              (job) => job.backendId === backendId && job.projectKey === projectKey && job.requestId.startsWith("fleet-bootstrap:worker-"),
+            );
+            const providerRejected = projectJobs.some(
+              (job) => job.phase === "FAILED" && ["railway_api_failure", "railway_bad_user_input"].includes(job.error ?? ""),
+            );
+            const allFailed =
+              projectJobs.length === workersPerProject &&
+              projectJobs.every((job) => job.phase === "FAILED" && !!job.error);
+            const hasNoOwnershipReceipt =
+              projectWorkers.length === workersPerProject &&
+              projectWorkers.every(
+                (worker) =>
+                  !worker.projectId &&
+                  !worker.environmentId &&
+                  !worker.serviceId &&
+                  !worker.volumeId &&
+                  !worker.endpoint &&
+                  worker.chatId === undefined &&
+                  worker.threadId === undefined,
+              );
+            if (providerRejected && allFailed && hasNoOwnershipReceipt) {
+              existing.phase = "RESERVED";
+              this.saveProject(existing);
+            }
+          }
         } else {
           this.saveProject({
             projectKey,
             backendId,
             ordinal,
-            reservedWorkers: Math.min(workersPerProject, totalWorkers - (ordinal - 1) * workersPerProject),
+            reservedWorkers: workersPerProject,
             phase: "RESERVED",
           });
         }
@@ -809,55 +840,6 @@ export class ControlStore {
         jobs.push(job);
       }
       return jobs;
-    });
-  }
-
-  reconcileFixedFleetTopology(backendId: string, totalWorkers: number, workersPerProject: number): boolean {
-    if (!Number.isSafeInteger(totalWorkers) || totalWorkers < 1 || !Number.isSafeInteger(workersPerProject) || workersPerProject < 1)
-      throw new Error("invalid_fixed_fleet_policy");
-    const fixedWorkers = this.workers().filter(
-      (worker) => worker.backendId === backendId && /^worker-\d{2}$/u.test(worker.workerId),
-    );
-    if (!fixedWorkers.length) return false;
-    const mismatch = fixedWorkers.some((worker) => {
-      const slot = Number(worker.workerId.slice("worker-".length));
-      if (!Number.isSafeInteger(slot) || slot < 1 || slot > totalWorkers) return true;
-      const ordinal = Math.floor((slot - 1) / workersPerProject) + 1;
-      const expected = `opencode-telegram-${String(ordinal).padStart(2, "0")}`;
-      return worker.projectKey !== expected;
-    });
-    if (!mismatch) return false;
-    const ids = new Set(fixedWorkers.map((worker) => worker.workerId));
-    if (
-      fixedWorkers.some(
-        (worker) =>
-          worker.chatId !== undefined ||
-          worker.threadId !== undefined ||
-          !["PROVISIONING", "READY_UNBOUND", "UNHEALTHY", "RECOVERING"].includes(worker.state),
-      ) ||
-      this.topics().some((topic) => ids.has(topic.workerId))
-    )
-      throw new Error("fixed_fleet_topology_in_use");
-    return this.transaction(() => {
-      const fixedJobs = this.jobs().filter(
-        (job) =>
-          job.backendId === backendId &&
-          ids.has(job.workerId) &&
-          (job.requestId.startsWith("fleet-bootstrap:") || job.requestId.startsWith("fleet-recycle:")),
-      );
-      for (const job of fixedJobs) {
-        this.sql.exec("DELETE FROM bootstrap WHERE job=?", job.jobId);
-        this.sql.exec("DELETE FROM jobs WHERE id=?", job.jobId);
-      }
-      for (const worker of fixedWorkers) {
-        this.sql.exec("DELETE FROM nonces WHERE worker=?", worker.workerId);
-        this.sql.exec("DELETE FROM approvals WHERE worker=?", worker.workerId);
-        this.sql.exec("DELETE FROM workers WHERE id=?", worker.workerId);
-      }
-      for (const project of this.projects())
-        if (project.backendId === backendId && /^opencode-telegram-\d{2}$/u.test(project.projectKey))
-          this.sql.exec("DELETE FROM projects WHERE id=?", project.projectKey);
-      return true;
     });
   }
 

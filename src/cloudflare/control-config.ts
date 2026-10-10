@@ -2,8 +2,8 @@
 export const CONTROL_DEFAULTS = Object.freeze({
   CONTROL_PLANE_URL: "https://opencode-control-plane.amin3532.workers.dev",
   MAX_WORKERS: "10",
-  WORKERS_PER_PROJECT: "3",
-  MAX_RAILWAY_PROJECTS: "4",
+  WORKERS_PER_PROJECT: "5",
+  MAX_RAILWAY_PROJECTS: "2",
   PROVISIONING_ENABLED: "true",
   WORKER_IMAGE:
     "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:d6b3c375cac23e115043b919d255bddc5c9d9c8699791ec48a57d7108b211736",

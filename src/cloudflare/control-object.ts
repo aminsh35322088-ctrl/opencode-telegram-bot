@@ -1600,14 +1600,21 @@ export class ControlPlane {
   }
   private railwaySetupStatus(): RailwaySetupStatus {
     const metadata = this.railwayCredentials().metadata();
+    const totalWorkers = 10;
+    const expectedProjectKeys = new Set(["opencode-telegram-01", "opencode-telegram-02"]);
+    const expectedWorkerIds = new Set(
+      Array.from({ length: totalWorkers }, (_, index) => `worker-${String(index + 1).padStart(2, "0")}`),
+    );
     const projects = this.store.projects().filter(
-      (project) => project.backendId === "railway" && /^opencode-telegram-\d{2}$/u.test(project.projectKey),
+      (project) => project.backendId === "railway" && expectedProjectKeys.has(project.projectKey),
     );
     const workers = this.store.workers().filter(
-      (worker) => worker.backendId === "railway" && /^worker-\d{2}$/u.test(worker.workerId),
+      (worker) =>
+        worker.backendId === "railway" &&
+        expectedWorkerIds.has(worker.workerId) &&
+        !!worker.projectKey &&
+        expectedProjectKeys.has(worker.projectKey),
     );
-    const totalWorkers = 10;
-    const totalProjects = 4;
     const readyStates = new Set(["READY_UNBOUND", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"]);
     const failedWorkers = new Set(
       workers.filter((worker) => worker.state === "UNHEALTHY").map((worker) => worker.workerId),
@@ -1615,7 +1622,6 @@ export class ControlPlane {
     for (const job of this.store.jobs())
       if (this.fixedFleetJob(job) && job.error) failedWorkers.add(job.workerId);
     const failed = failedWorkers.size;
-    const failure = this.store.jobs().find((job) => this.fixedFleetJob(job) && !!job.error)?.error;
     const projectsCreated = projects.filter((project) => !!project.projectId && !!project.environmentId).length;
     const workersCreated = workers.filter((worker) => !!worker.serviceId && !!worker.endpoint).length;
     const volumesAttached = workers.filter((worker) => !!worker.volumeId).length;
@@ -1632,14 +1638,12 @@ export class ControlPlane {
       configured: !!metadata,
       ready:
         !!metadata &&
-        projectsCreated === totalProjects &&
+        projectsCreated === 2 &&
         workers.length === totalWorkers &&
         workersReady === totalWorkers &&
         failed === 0,
       ...(metadata?.accountName ? { accountName: metadata.accountName } : {}),
       projectsCreated,
-      totalProjects,
-      ...(failure ? { failure } : {}),
       workersCreated,
       volumesAttached,
       workersReady,
@@ -1651,7 +1655,7 @@ export class ControlPlane {
     let status = this.railwaySetupStatus();
     if (!status.configured || status.ready) return status;
     await this.setup();
-    this.store.ensureFixedFleet("railway", 10, 3);
+    this.store.ensureFixedFleet("railway", 10, 5);
     await this.scheduleAlarm(Date.now() + 1);
     status = this.railwaySetupStatus();
     return status;
@@ -1684,7 +1688,7 @@ export class ControlPlane {
     if (current) await vault.replace(input);
     else await vault.save(input);
     await this.setup();
-    const jobs = this.store.ensureFixedFleet("railway", 10, 3);
+    const jobs = this.store.ensureFixedFleet("railway", 10, 5);
     if (!current || !this.railwaySetupStatus().ready)
       this.state.storage.sql.exec(
         "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
@@ -1961,9 +1965,8 @@ export class ControlPlane {
     const maximum = Number(this.env.MAX_WORKERS),
       perProject = Number(this.env.WORKERS_PER_PROJECT),
       maxProjects = Number(this.env.MAX_RAILWAY_PROJECTS);
-    if (maximum !== 10 || perProject !== 3 || maxProjects !== 4)
+    if (maximum !== 10 || perProject !== 5 || maxProjects !== 2)
       throw new Error("invalid_capacity_policy");
-    this.store.reconcileFixedFleetTopology("railway", maximum, perProject);
     this.store.putBackend({
       backendId: "railway",
       accountId: credential.accountId,
@@ -2196,20 +2199,8 @@ export class ControlPlane {
     console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
   }
   private async advanceSafely(jobId: string): Promise<void> {
-    let existing = this.store.job(jobId);
+    const existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
-    if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing)) {
-      await this.setup();
-      const bootstrap = this.store.ensureFixedFleet("railway", 10, 3);
-      const current = this.store.job(jobId);
-      if (!current) {
-        for (const job of bootstrap) await this.env.JOBS.send({ jobId: job.jobId });
-        await this.scheduleAlarm(Date.now() + 1);
-        await this.refreshRailwayOnboarding();
-        return;
-      }
-      existing = current;
-    }
     if (existing.phase === "CLEANUP_PENDING") {
       try {
         await this.cancelAllocation(jobId);
