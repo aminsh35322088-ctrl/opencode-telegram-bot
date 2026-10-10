@@ -1,1 +1,1 @@
-Temporary Cloudflare deployment artifact for commit 4f7844752c55037df29738018047634b03196ad4.
+Temporary Cloudflare deploy artifact for bot commit 8d4be86. Raw SHA-256: f6a4782bb9173c776c62a08e765d5c02dbbb75cf36ec1055cf0c8a6a3a84acd2
