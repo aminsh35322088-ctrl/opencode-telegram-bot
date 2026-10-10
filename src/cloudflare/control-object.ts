@@ -58,6 +58,7 @@ export class ControlPlane {
   private readonly env: ControlEnvironment;
   private secretsReady?: Promise<void>;
   private alarmScheduling: Promise<void> = Promise.resolve();
+  private alarmRunning = false;
   constructor(
     private readonly state: DurableObjectState,
     env: ControlEnvironment,
@@ -68,12 +69,13 @@ export class ControlPlane {
     );
   }
   private async scheduleAlarm(at: number): Promise<void> {
+    const scheduledAt = this.alarmRunning ? Math.max(at, Date.now() + 5_000) : at;
     const next = this.alarmScheduling.then(async () => {
       const current =
         typeof this.state.storage.getAlarm === "function"
           ? await this.state.storage.getAlarm()
           : null;
-      if (current === null || at < current) await this.state.storage.setAlarm(at);
+      if (current === null || scheduledAt < current) await this.state.storage.setAlarm(scheduledAt);
     });
     this.alarmScheduling = next.catch(() => {});
     await next;
@@ -2626,6 +2628,15 @@ export class ControlPlane {
     if (active) presentation.cancelled(active.runId);
   }
   async alarm(): Promise<void> {
+    if (this.alarmRunning) return;
+    this.alarmRunning = true;
+    try {
+      await this.runAlarm();
+    } finally {
+      this.alarmRunning = false;
+    }
+  }
+  private async runAlarm(): Promise<void> {
     await this.initializeSecrets();
     try {
       this.store.prepareQueues();
@@ -2634,23 +2645,7 @@ export class ControlPlane {
       await this.scheduleAlarm(Date.now() + 1_000);
       return;
     }
-    const pending = [...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM jobs")]
-      .map((r) => JSON.parse(r.data) as AllocationJob)
-      .filter((j) =>
-        [
-          "RESERVED",
-          "PROVISIONING",
-          "VOLUME_CREATING",
-          "VOLUME_CREATED",
-          "VOLUME_ATTACHING",
-          "BINDING",
-          "DEPLOYING",
-          "DEPLOY_SUBMITTED",
-          "SESSION_PROBED",
-          "TOPIC_CREATED",
-          "CLEANUP_PENDING",
-        ].includes(j.phase),
-      );
+    const pending = this.store.pendingJobs(20);
     for (const job of pending) {
       try {
         await this.advanceSafely(job.jobId);

@@ -1546,3 +1546,43 @@ test("fixed bootstrap queue retry self-heals explicit provider rejection without
     ["opencode-telegram-01", "opencode-telegram-02"],
   );
 });
+
+test("alarm self-reschedules are clamped so a logic loop cannot burn the daily Durable Objects row-read quota", async () => {
+  const f = await fixture();
+  const started = Date.now();
+  (f.plane as any).alarmRunning = true;
+  await (f.plane as any).scheduleAlarm(started + 1);
+  assert.ok((f.getAlarm() ?? 0) >= started + 4_900);
+});
+
+test("idle alarm does not scan retained allocation-job history", async () => {
+  const f = await fixture();
+  for (let i = 0; i < 500; i++) {
+    const job = {
+      jobId: `history-${i}`,
+      requestId: `history-${i}`,
+      chatId: -100,
+      workerId: `retired-${i}`,
+      backendId: "railway",
+      generation: 1,
+      phase: "BOUND",
+    };
+    f.sql.exec(
+      "INSERT INTO jobs(id,request,chat,data) VALUES(?,?,?,?)",
+      job.jobId,
+      job.requestId,
+      job.chatId,
+      JSON.stringify(job),
+    );
+  }
+  const original = f.sql.exec.bind(f.sql);
+  let jobRowsReadByAlarm = 0;
+  f.sql.exec = ((query: string, ...args: unknown[]) => {
+    const rows = original(query, ...args) as unknown[];
+    if (/SELECT\s+data\s+FROM\s+jobs/iu.test(query)) jobRowsReadByAlarm += rows.length;
+    return rows as never;
+  }) as typeof f.sql.exec;
+
+  await f.plane.alarm();
+  assert.ok(jobRowsReadByAlarm <= 20, `alarm read ${jobRowsReadByAlarm} retained jobs`);
+});

@@ -117,7 +117,7 @@ export class ControlStore {
     private readonly sql: SqlDatabase,
     private readonly transaction: <T>(action: () => T) => T,
   ) {
-    this.migrate();
+    const schemaVersion = this.migrate();
     this.transaction(() => {
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS run_pins(request TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL,model TEXT NOT NULL,dispatched INTEGER NOT NULL DEFAULT 0)",
@@ -165,24 +165,28 @@ export class ControlStore {
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS pending_responses(run TEXT PRIMARY KEY,chat INTEGER NOT NULL,thread INTEGER NOT NULL)",
       );
-      this.sql.exec("UPDATE schema_version SET version=7");
     });
+    if (schemaVersion < 8)
+      this.transaction(() => {
+        this.sql.exec("CREATE INDEX jobs_phase ON jobs(json_extract(data,'$.phase'))");
+        this.sql.exec("UPDATE schema_version SET version=8");
+      });
   }
-  private migrate(): void {
+  private migrate(): number {
     this.sql.exec("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)");
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 7) throw new Error("unsupported_schema");
-    if (version >= 3) return;
+    if (version > 8) throw new Error("unsupported_schema");
+    if (version >= 3) return version;
     if (version === 2) {
       this.migrateEvents();
-      return;
+      return 3;
     }
     if (version === 1) {
       this.migrateLeases();
       this.migrateEvents();
-      return;
+      return 3;
     }
     this.transaction(() => {
       this.sql.exec("CREATE TABLE backends(id TEXT PRIMARY KEY,data TEXT NOT NULL)");
@@ -223,6 +227,7 @@ export class ControlStore {
     });
     this.migrateLeases();
     this.migrateEvents();
+    return 3;
   }
   private migrateLeases(): void {
     this.transaction(() => {
@@ -1085,6 +1090,19 @@ export class ControlStore {
     return [...this.sql.exec<{ data: string }>("SELECT data FROM jobs")].map(
       (r) => JSON.parse(r.data) as AllocationJob,
     );
+  }
+  pendingJobs(limit = 20): AllocationJob[] {
+    return [
+      ...this.sql.exec<{ data: string }>(
+        `SELECT data FROM jobs INDEXED BY jobs_phase
+         WHERE json_extract(data,'$.phase') IN (
+           'RESERVED','PROVISIONING','VOLUME_CREATING','VOLUME_CREATED','VOLUME_ATTACHING',
+           'BINDING','DEPLOYING','DEPLOY_SUBMITTED','SESSION_PROBED','TOPIC_CREATED','CLEANUP_PENDING'
+         )
+         ORDER BY rowid LIMIT ?`,
+        Math.max(1, Math.min(100, Math.trunc(limit))),
+      ),
+    ].map((r) => JSON.parse(r.data) as AllocationJob);
   }
   reserveTopicTitle(jobId: string): string {
     return this.transaction(() => {
