@@ -14,7 +14,7 @@ function fixture(configured = "v1.18.33-bot.13-pre.25", observed = configured) {
   store.setGlobal({ configuration: { runtime: { model: "opencode/big-pickle" } } }, "hash");
   store.putBackend({
     backendId: "a",
-    workspaceId: "workspace",
+    accountId: "account",
     credential: "synthetic",
     desiredMaximumWorkers: 10,
     maxWorkersPerProject: 5,

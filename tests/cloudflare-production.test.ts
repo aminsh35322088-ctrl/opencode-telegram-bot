@@ -12,7 +12,8 @@ import {
   type ProtectedTelegramUpdate,
 } from "../src/cloudflare/credential-vault.js";
 import { CloudCredentialVault } from "../src/cloudflare/credential-vault.js";
-function fixture() {
+import { RailwayCredentialStore } from "../src/cloudflare/railway-credential-store.js";
+async function fixture() {
   const db = new DatabaseSync(":memory:");
   const sql = {
     exec: (q: string, ...args: unknown[]) => db.prepare(q).all(...(args as never[])) as never,
@@ -32,13 +33,10 @@ function fixture() {
   let alarmAt: number | null = null;
   const env = {
     TELEGRAM_BOT_TOKEN: "synthetic-telegram",
-    RAILWAY_API_TOKEN: "synthetic-provisioning-secret",
-    RAILWAY_WORKSPACE_ID: "workspace",
     MAX_WORKERS: "10",
     WORKERS_PER_PROJECT: "5",
     MAX_RAILWAY_PROJECTS: "2",
-    PROVISION_ON_TOPIC_CREATE: "true",
-    PROVISIONING_ENABLED: "true",
+      PROVISIONING_ENABLED: "true",
     TELEGRAM_ALLOWED_USER_ID: "7",
     CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
     JOBS: {
@@ -60,7 +58,13 @@ function fixture() {
     } as never,
     env as never,
   );
-  return { plane, sql, queued, getAlarm: () => alarmAt, store: new ControlStore(sql, tx) };
+  const store = new ControlStore(sql, tx);
+  await new RailwayCredentialStore(sql, env.CREDENTIAL_MASTER_KEY).save({
+    accountId: "account-1",
+    accountName: "Primary Railway",
+    token: "synthetic-provisioning-secret",
+  });
+  return { plane, sql, queued, getAlarm: () => alarmAt, store };
 }
 const post = (plane: ControlPlane, path: string, body: unknown = {}) =>
   plane.fetch(
@@ -73,7 +77,7 @@ async function tokenHash(value: string): Promise<string> {
 }
 
 test("initial Worker bootstrap is strictly unbound 0/0 even though the allocation knows its Telegram chat", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("bootstrap-unbound", -100);
   f.store.configureJob(job.jobId, {
@@ -101,7 +105,7 @@ test("initial Worker bootstrap is strictly unbound 0/0 even though the allocatio
 });
 
 test("global account selection and removal publish only the selected credential grant", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   f.store.setGlobal({}, "initial", 0);
   t.mock.method(globalThis, "fetch", async () => Response.json({ login: "operator" }));
   const { CloudIntegrationConnections } =
@@ -134,7 +138,7 @@ test("global account selection and removal publish only the selected credential 
   assert.equal(JSON.stringify(f.store.global()).includes("secret"), false);
 });
 test("legacy provider credentials migrate to the generic broker without changing proxy references", async () => {
-  const f = fixture();
+  const f = await fixture();
   const metadata = await new CloudCredentialVault(f.sql, btoa("k".repeat(32))).saveProvider(
     "sample",
     "provider-private-secret",
@@ -176,7 +180,7 @@ test("legacy provider credentials migrate to the generic broker without changing
 });
 
 test("legacy maximum-length provider names retain generic credential compatibility", async () => {
-  const f = fixture();
+  const f = await fixture();
   const id = "p".repeat(128);
   const metadata = await new CloudCredentialVault(f.sql, btoa("k".repeat(32))).saveProvider(
     id,
@@ -210,7 +214,7 @@ test("legacy maximum-length provider names retain generic credential compatibili
 });
 
 test("provider credential rotation uses the generic store and revokes the displaced reference atomically", async () => {
-  const f = fixture();
+  const f = await fixture();
   f.store.setGlobal(
     { configuration: { runtime: { provider: { sample: { options: {} } } } } },
     "initial",
@@ -284,7 +288,7 @@ test("production signed transport leases only a current Topic capability referen
   t.after(() => {
     globalThis.fetch = original;
   });
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("broker", -100, 42);
   const secret = "n".repeat(64);
@@ -374,18 +378,22 @@ test("production signed transport leases only a current Topic capability referen
     false,
   );
 });
-test("production setup stores only secret reference and preserves lazy zero-project inventory", async () => {
-  const f = fixture();
+test("production setup stores only Railway account metadata while the token stays encrypted separately", async () => {
+  const f = await fixture();
   const response = await post(f.plane, "/admin/setup");
   assert.equal(response.status, 200);
   const rows = [...f.sql.exec("SELECT data FROM backends")] as Array<{ data: string }>;
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.data.includes("synthetic-provisioning-secret"), false);
-  assert.equal(JSON.parse(rows[0]!.data).credential, "binding:RAILWAY_API_TOKEN");
+  const backend = JSON.parse(rows[0]!.data);
+  assert.equal(backend.accountId, "account-1");
+  assert.equal("credential" in backend, false);
+  const credentialRow = [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='infrastructure:railway:credential'")][0]!;
+  assert.equal(credentialRow.data.includes("synthetic-provisioning-secret"), false);
   assert.equal(([...f.sql.exec("SELECT id FROM projects")] as unknown[]).length, 0);
 });
 test("equivalent Topic create request allocates once and never activates an unready Worker", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const body = { requestId: "canary", chatId: -100, threadId: 42 };
   const a = await (await post(f.plane, "/admin/topics", body)).json();
@@ -395,7 +403,7 @@ test("equivalent Topic create request allocates once and never activates an unre
   assert.equal(([...f.sql.exec("SELECT worker FROM topics")] as unknown[]).length, 0);
 });
 test("General Topic admission rejects before reserving infrastructure", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   assert.equal(
     (await post(f.plane, "/admin/topics", { requestId: "general", chatId: -100, threadId: 1 }))
@@ -406,7 +414,7 @@ test("General Topic admission rejects before reserving infrastructure", async ()
 });
 
 test("Telegram chunk retry preserves already delivered chunks", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("delivery", -100);
   f.store.ready(job.workerId, 1, "key");
@@ -481,7 +489,7 @@ test("Telegram chunk retry preserves already delivered chunks", async (t) => {
 });
 
 test("uncertain admission reaches owned stop and terminal failure instead of retrying forever", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("uncertain", -100, 42);
   const secret = "n".repeat(64),
@@ -535,9 +543,26 @@ test("uncertain admission reaches owned stop and terminal failure instead of ret
   );
 });
 
-test("admin canary and webhook share idempotent Topic creation", async (t) => {
-  const f = fixture(),
+test("admin canary and webhook share idempotent Topic creation from the fixed ready fleet", async (t) => {
+  const f = await fixture(),
     original = globalThis.fetch;
+  await post(f.plane, "/admin/setup");
+  const fixed = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.saveProject({
+    ...f.store.projects().find((project) => project.projectKey === fixed.projectKey)!,
+    projectId: "project-1",
+    environmentId: "environment-1",
+    phase: "READY",
+  });
+  f.store.configureJob(fixed.jobId, {
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    volumeId: "volume-1",
+    endpoint: "https://worker-01.up.railway.app",
+    phase: "READY_UNBOUND",
+  });
+  f.store.ready("worker-01", 1, "prepared-credential");
   t.after(() => {
     globalThis.fetch = original;
   });
@@ -552,12 +577,13 @@ test("admin canary and webhook share idempotent Topic creation", async (t) => {
   assert.equal(creates, 0);
   assert.equal(a.jobId, b.jobId);
   assert.equal(a.threadId, undefined);
-  assert.equal(f.store.workers().length, 1);
+  assert.equal(f.store.workers().length, 10);
+  assert.equal(f.store.worker("worker-01")?.state, "BINDING");
   assert.equal(f.store.topics().length, 0);
 });
 
 test("text deltas append exactly once and retain assistant ownership", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("delta", -100);
   f.store.ready(job.workerId, 1, "key");
@@ -585,7 +611,7 @@ test("text deltas append exactly once and retain assistant ownership", async () 
 });
 
 test("cancel-job resumes deletion after a lost cleanup response without refencing", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("cancel-retry", -100);
   f.store.configureJob(job.jobId, { phase: "VOLUME_CREATING" });
@@ -606,7 +632,7 @@ test("cancel-job resumes deletion after a lost cleanup response without refencin
 });
 
 test("cancelling a timed-out job preserves an ambiguous volume creation receipt", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("cancel-timeout", -100);
   f.store.configureJob(job.jobId, {
@@ -625,7 +651,7 @@ test("cancelling a timed-out job preserves an ambiguous volume creation receipt"
 });
 
 test("changing global configuration does not unlock an already admitted run", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("pin-active", -100, 42),
     secret = "n".repeat(64);
@@ -677,7 +703,7 @@ test("changing global configuration does not unlock an already admitted run", as
 });
 
 test("authenticated pre-admission revision rejection releases queue only after verified inactivity", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("revision-rejected", -100, 42),
     secret = "n".repeat(64);
@@ -729,7 +755,7 @@ test("authenticated pre-admission revision rejection releases queue only after v
 });
 
 test("control restart resumes a volume attachment job from durable journal", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("attach-restart", -100, 42);
   f.store.configureJob(job.jobId, { phase: "VOLUME_ATTACHING" });
@@ -742,7 +768,7 @@ test("control restart resumes a volume attachment job from durable journal", asy
 });
 
 test("run status reports scoped execution and delivery receipts without prompt or secrets", async () => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveAllocation("observe", -100);
   f.store.ready(job.workerId, 1, "synthetic-node-secret");
@@ -775,7 +801,7 @@ test("run status reports scoped execution and delivery receipts without prompt o
 
 test("Telegram prompts require the same verified model and revision admission as canary prompts", async (t) => {
   for (const connected of [false, true]) {
-    const f = fixture();
+    const f = await fixture();
     await post(f.plane, "/admin/setup");
     await post(f.plane, "/admin/global", {
       configuration: { runtime: { model: "opencode/big-pickle" } },
@@ -841,7 +867,7 @@ test("Telegram prompts require the same verified model and revision admission as
 });
 
 test("Core compaction dispatch shares Topic queue and signed callback fencing without prompt fields", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("compact-dispatch", -100, 42),
     secret = "c".repeat(64);
@@ -909,7 +935,7 @@ test("Core compaction dispatch shares Topic queue and signed callback fencing wi
 });
 
 test("stream wake alarm cannot be postponed by a slower status retry", async () => {
-  const f = fixture();
+  const f = await fixture();
   const schedule = (
     f.plane as unknown as { scheduleAlarm: (at: number) => Promise<void> }
   ).scheduleAlarm.bind(f.plane);
@@ -920,7 +946,7 @@ test("stream wake alarm cannot be postponed by a slower status retry", async () 
 });
 
 test("accepted streamed run is not resubmitted or status-polled on every token alarm", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("fast-stream", -100, 42),
     secret = "s".repeat(64);
@@ -964,7 +990,7 @@ test("accepted streamed run is not resubmitted or status-polled on every token a
 });
 
 test("General thread 1 credential input uses the same normalized account scope as ingress", async (t) => {
-  const f = fixture();
+  const f = await fixture();
   f.store.setGlobal({}, "initial", 0);
   f.sql.exec(
     "INSERT INTO ui_state VALUES(?,?)",
@@ -1009,7 +1035,7 @@ test("General thread 1 credential input uses the same normalized account scope a
 });
 
 test("native Stop without from is ingested and durably fences the exact draft before cancellation", async () => {
-  const f = fixture();
+  const f = await fixture();
   const topic = {
     chatId: 7,
     threadId: 42,
@@ -1084,7 +1110,7 @@ test("native Stop without from is ingested and durably fences the exact draft be
 });
 
 async function nativeExecutionFixture() {
-  const f = fixture();
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   const job = f.store.reserveTopicAllocation("native_exec", 7, 42);
   const secret = "n".repeat(64);
@@ -1356,71 +1382,48 @@ test("Stop during identity resolution cancels the unsubmitted run without requir
   );
 });
 
-test("Delete Chat fences output, cancels the exact run, retires runtime, destroys Railway, then deletes Telegram Topic", async (t) => {
-  const f = fixture();
+test("Delete Chat fences output, sanitizes runtime, preserves Railway Service/Volume, and queues fixed Worker recycle", async (t) => {
+  const f = await fixture();
   await post(f.plane, "/admin/setup");
   await post(f.plane, "/admin/global", {
     configuration: { runtime: { model: "opencode/big-pickle" } },
-    skills: [],
-    actions: [],
-    catalog: {},
-    defaults: {},
-    credentialReferences: [],
+    skills: [], actions: [], catalog: {}, defaults: {}, credentialReferences: [],
   });
-  const job = f.store.reserveTopicAllocation("delete-order", -100, 42);
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.saveProject({
+    ...f.store.projects().find((project) => project.projectKey === bootstrap.projectKey)!,
+    projectId: "project-1", environmentId: "environment-1", phase: "READY",
+  });
+  f.store.configureJob(bootstrap.jobId, {
+    projectId: "project-1", environmentId: "environment-1", serviceId: "service-1",
+    volumeId: "volume-1", endpoint: "https://worker-01.up.railway.app", phase: "READY_UNBOUND",
+  });
+  const secret1 = "m".repeat(64);
+  const credential1 = await encryptCredential(btoa("k".repeat(32)), "node:worker-01:1", secret1);
+  f.store.ready("worker-01", 1, credential1);
+  const job = f.store.reservePreparedAllocation("delete-order", -100);
+  f.store.markSessionProbed(job.jobId);
+  const rotated = f.store.rotateAllocationToTopic(job.jobId, 42);
   const secret = "n".repeat(64);
-  const credential = await encryptCredential(
-    btoa("k".repeat(32)),
-    "node:" + job.workerId + ":1",
-    secret,
-  );
-  f.store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
-  f.store.ready(job.workerId, 1, credential);
+  const credential = await encryptCredential(btoa("k".repeat(32)), "node:worker-01:2", secret);
+  f.store.ready("worker-01", rotated.generation, credential);
   const topic = f.store.bindTopic(job.jobId, 42, "session");
   const revision = f.store.global()!.revision;
-  f.store.enqueueVerified(
-    -100,
-    42,
-    "delete-run",
-    "prompt",
-    topic.generation,
-    revision,
-    "opencode/big-pickle",
-  );
+  f.store.enqueueVerified(-100, 42, "delete-run", "prompt", topic.generation, revision, "opencode/big-pickle");
   f.store.startNext(-100, 42);
-  const binding = {
-    chatId: -100,
-    threadId: 42,
-    sessionId: "session",
-    generation: topic.generation,
-    workerId: topic.workerId,
-    runId: "delete-run",
-    draftId: 77,
-    state: "STREAMING",
-    summaries: [],
-    thinking: [],
-    completedThinking: [],
-    activities: {},
-  };
   f.sql.exec(
     "INSERT INTO telegram_run_presentations VALUES(?,?,?,?,?)",
-    "delete-run",
-    -100,
-    42,
-    77,
-    JSON.stringify(binding),
+    "delete-run", -100, 42, 77,
+    JSON.stringify({
+      chatId: -100, threadId: 42, sessionId: "session", generation: topic.generation,
+      workerId: topic.workerId, runId: "delete-run", draftId: 77, state: "STREAMING",
+      summaries: [], thinking: [], completedThinking: [], activities: {},
+    }),
   );
   const order: string[] = [];
-  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
-    destroy: async () => {
-      order.push("destroy");
-    },
-    reconcileManagedResources: async () => ({ resources: [] }),
-  });
+  const retirePayloads: unknown[] = [];
   const original = globalThis.fetch;
-  t.after(() => {
-    globalThis.fetch = original;
-  });
+  t.after(() => { globalThis.fetch = original; });
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const payload = JSON.parse(String(init?.body));
@@ -1429,28 +1432,30 @@ test("Delete Chat fences output, cancels the exact run, retires runtime, destroy
       return Response.json({ ok: true, result: true });
     }
     order.push(payload.operation);
-    const result = payload.operation === "status" ? null : true;
+    if (payload.operation === "retire") retirePayloads.push(payload.payload);
+    const result =
+      payload.operation === "status" ? null :
+      payload.operation === "retire" ? { retired: true, sanitized: true } : true;
     const signed = await signEnvelope(
-      {
-        ...payload,
-        nonce: crypto.randomUUID(),
-        timestamp: Date.now(),
-        payload: { ok: true, result },
-      },
+      { ...payload, nonce: crypto.randomUUID(), timestamp: Date.now(), payload: { ok: true, result } },
       secret,
     );
     return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
   };
   const response = await post(f.plane, "/admin/delete-topic", { chatId: -100, threadId: 42 });
   assert.equal(response.status, 200);
-  assert.deepEqual(order, ["stop", "retire", "destroy", "deleteForumTopic"]);
-  assert.equal(f.store.worker(job.workerId)?.state, "REPLACED");
+  assert.deepEqual(order, ["stop", "retire", "deleteForumTopic"]);
+  assert.deepEqual(retirePayloads, [{ sanitize: true }]);
+  const worker = f.store.worker("worker-01")!;
+  assert.equal(worker.state, "RECOVERING");
+  assert.equal(worker.generation, 3);
+  assert.equal(worker.serviceId, "service-1");
+  assert.equal(worker.volumeId, "volume-1");
   assert.equal(f.store.topics().length, 0);
-  const presentation = [
-    ...f.sql.exec<{ data: string }>(
-      "SELECT data FROM telegram_run_presentations WHERE run=?",
-      "delete-run",
-    ),
-  ][0];
+  assert.ok(f.store.jobs().some((candidate) => candidate.requestId === "fleet-recycle:worker-01:3"));
+  assert.ok(f.queued.some((item: any) => f.store.job(item.jobId)?.requestId === "fleet-recycle:worker-01:3"));
+  const presentation = [...f.sql.exec<{ data: string }>(
+    "SELECT data FROM telegram_run_presentations WHERE run=?", "delete-run",
+  )][0];
   assert.equal(JSON.parse(presentation!.data).state, "CANCELLED");
 });

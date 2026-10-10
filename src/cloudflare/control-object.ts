@@ -17,6 +17,12 @@ import type { ControlEnvironment } from "./worker.js";
 import { ControlStore, type AllocationJob } from "./control-store.js";
 import { decryptCredential, encryptCredential, randomSecret, sha256 } from "./credentials.js";
 import { RailwayFleetDriver, railwayApi } from "./railway-fleet-driver.js";
+import {
+  RailwayCredentialStore,
+  protectRailwayCredentialUpdate,
+  readRailwayCredentialInput,
+  type ProtectedRailwayTelegramUpdate,
+} from "./railway-credential-store.js";
 import { nodeRpc, type RpcIdentity } from "./node-rpc.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 import { telegramMediaParts, type CloudPromptPart } from "./media.js";
@@ -37,7 +43,12 @@ import { applyGlobalConfigMutation } from "./config-ui.js";
 import { WorkerImageUpgrade, isWorkerImageUpgrading } from "./worker-image-upgrade.js";
 import { LegacyUiAdapter } from "./legacy-ui-adapter.js";
 import packageJson from "../../package.json" with { type: "json" };
-import { CloudBotUi, supportsContextCompaction, type TelegramUpdate } from "./bot-ui.js";
+import {
+  CloudBotUi,
+  supportsContextCompaction,
+  type RailwaySetupStatus,
+  type TelegramUpdate,
+} from "./bot-ui.js";
 
 import { CONTROL_DEFAULTS } from "./control-config.js";
 import { resolveControlSecrets, equalSecret } from "./control-secrets.js";
@@ -226,7 +237,7 @@ export class ControlPlane {
 
   private async initializeSecrets(): Promise<void> {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
-    if (!this.env.TELEGRAM_BOT_TOKEN || !this.env.RAILWAY_API_TOKEN) return;
+    if (!this.env.TELEGRAM_BOT_TOKEN) return;
     this.secretsReady ??= resolveControlSecrets(this.state.storage.sql, this.env)
       .then(async (value) => {
         Object.assign(this.env, value);
@@ -462,13 +473,13 @@ export class ControlPlane {
         return Response.json({
           ready: true,
           automaticallyManaged: true,
-          userSecrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID", "RAILWAY_API_TOKEN"],
+          userSecrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"],
         });
       if (path === "/admin/inventory")
         return Response.json({
           backends: this.store
             .backends()
-            .map(({ credential: _credential, ...publicData }) => publicData),
+            .map((publicData) => publicData),
           projects: this.store.projects(),
           workers: this.store
             .workers()
@@ -510,10 +521,24 @@ export class ControlPlane {
         return Response.json({ ok: true });
       }
       if (path === "/admin/railway-status") {
-        const inventory = await this.driver().listProjects(this.env.RAILWAY_WORKSPACE_ID);
+        const credential = await this.railwayCredentials().read();
+        const workers = this.store.workers();
         return Response.json({
-          projects: inventory.projects.map((p) => ({ id: p.id, name: p.name })),
-          hasNextPage: inventory.hasNextPage,
+          configured: !!credential,
+          account: credential
+            ? { id: credential.accountId, name: credential.accountName, configuredAt: credential.configuredAt }
+            : undefined,
+          projects: this.store.projects().map((project) => ({
+            projectKey: project.projectKey,
+            projectId: project.projectId,
+            phase: project.phase,
+          })),
+          fleet: {
+            total: workers.length,
+            ready: workers.filter((worker) => worker.state === "READY_UNBOUND").length,
+            bound: workers.filter((worker) => worker.state === "BOUND_IDLE" || worker.state === "BOUND_ACTIVE").length,
+            unavailable: workers.filter((worker) => ["UNHEALTHY", "RECOVERING", "DELETING", "REPLACED"].includes(worker.state)).length,
+          },
         });
       }
       if (path === "/admin/upgrade-worker") {
@@ -521,7 +546,7 @@ export class ControlPlane {
           store: this.store,
           sql: this.state.storage.sql,
           transaction: (fn) => this.state.storage.transactionSync(fn),
-          request: railwayApi(this.env.RAILWAY_API_TOKEN),
+          request: railwayApi((await this.requireRailwayCredential()).token),
           assertAdmin: () => {
             /* Public Worker already authenticates this privileged route. */
           },
@@ -786,7 +811,7 @@ export class ControlPlane {
         );
       }
       if (path === "/admin/cleanup-status")
-        return Response.json(await this.driver().inspectCleanup(String(body.workerId)));
+        return Response.json(await (await this.driver()).inspectCleanup(String(body.workerId)));
       if (path === "/admin/cancel-job") {
         const job = this.store.job(String(body.jobId));
         if (!job) throw new Error("unknown_job");
@@ -804,7 +829,7 @@ export class ControlPlane {
           const worker = this.store.fenceWorker(job.workerId);
           if (worker.state !== "DELETING")
             this.store.transition(worker.workerId, worker.generation, "DELETING");
-          await this.driver().destroy(worker.workerId, worker.generation);
+          await (await this.driver()).destroy(worker.workerId, worker.generation);
           this.store.confirmDestroyed(worker.workerId, worker.generation);
         }
         return Response.json({ ok: true });
@@ -871,6 +896,7 @@ export class ControlPlane {
               (job) =>
                 job.chatId === chatId &&
                 job.threadId === threadId &&
+                !this.fixedFleetJob(job) &&
                 this.store.worker(job.workerId)?.state !== "REPLACED",
             )
         )
@@ -969,8 +995,13 @@ export class ControlPlane {
           return Response.json({ ok: true });
         }
         if (!actor || !allowed.includes(actor)) return Response.json({ ok: true });
-        const protectedUpdate = await protectTelegramCredentialUpdate(
+        const railwayProtectedUpdate = await protectRailwayCredentialUpdate(
           update,
+          this.state.storage.sql,
+          this.env.CREDENTIAL_MASTER_KEY,
+        );
+        const protectedUpdate = await protectTelegramCredentialUpdate(
+          railwayProtectedUpdate,
           this.state.storage.sql,
           this.env.CREDENTIAL_MASTER_KEY,
         );
@@ -1567,6 +1598,95 @@ export class ControlPlane {
     const ui = this.ui();
     return actor ? ui.forPanel(actor, topic.chatId, topic.threadId, topic.generation) : ui;
   }
+  private railwaySetupStatus(): RailwaySetupStatus {
+    const metadata = this.railwayCredentials().metadata();
+    const projects = this.store.projects().filter((project) => project.backendId === "railway");
+    const workers = this.store.workers().filter((worker) => worker.backendId === "railway");
+    const totalWorkers = 10;
+    const readyStates = new Set(["READY_UNBOUND", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"]);
+    const failed = workers.filter((worker) => worker.state === "UNHEALTHY").length +
+      this.store.jobs().filter((job) => this.fixedFleetJob(job) && !!job.error).length;
+    const projectsCreated = projects.filter((project) => !!project.projectId && !!project.environmentId).length;
+    const workersCreated = workers.filter((worker) => !!worker.serviceId && !!worker.endpoint).length;
+    const volumesAttached = workers.filter((worker) => !!worker.volumeId).length;
+    const workersReady = workers.filter(
+      (worker) =>
+        readyStates.has(worker.state) &&
+        !!worker.projectId &&
+        !!worker.environmentId &&
+        !!worker.serviceId &&
+        !!worker.volumeId &&
+        !!worker.endpoint,
+    ).length;
+    return {
+      configured: !!metadata,
+      ready:
+        !!metadata &&
+        projectsCreated === 2 &&
+        workers.length === totalWorkers &&
+        workersReady === totalWorkers &&
+        failed === 0,
+      ...(metadata?.accountName ? { accountName: metadata.accountName } : {}),
+      projectsCreated,
+      workersCreated,
+      volumesAttached,
+      workersReady,
+      totalWorkers,
+      failed,
+    };
+  }
+  private async saveRailwayCredentialInput(
+    update: ProtectedRailwayTelegramUpdate,
+    generation: number,
+  ): Promise<void> {
+    const message = update.message;
+    if (!message?.from?.id || !message.chat.id || message.message_thread_id) throw new Error("invalid_railway_credential_input");
+    const token = await readRailwayCredentialInput(
+      update,
+      this.env.CREDENTIAL_MASTER_KEY,
+      { actor: message.from.id, chat: message.chat.id, thread: 0, generation },
+    );
+    const api = railwayApi(token);
+    const account = await api<{ me: { id: string; name?: string | null } }>(
+      "query RailwayAccountIdentity{me{id name}}",
+      {},
+    );
+    if (!account.me?.id || typeof account.me.id !== "string") throw new Error("railway_unauthorized");
+    const vault = this.railwayCredentials();
+    const current = vault.metadata();
+    const input = {
+      accountId: account.me.id,
+      ...(account.me.name ? { accountName: account.me.name } : {}),
+      token,
+    };
+    if (current) await vault.replace(input);
+    else await vault.save(input);
+    await this.setup();
+    const jobs = this.store.ensureFixedFleet("railway", 10, 5);
+    if (!current || !this.railwaySetupStatus().ready)
+      this.state.storage.sql.exec(
+        "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+        "railway:onboarding",
+        JSON.stringify({ actor: message.from.id, chat: message.chat.id }),
+      );
+    for (const job of jobs) {
+      const worker = this.store.worker(job.workerId);
+      if (worker?.state === "READY_UNBOUND") continue;
+      await this.env.JOBS.send({ jobId: job.jobId });
+    }
+    await this.scheduleAlarm(Date.now() + 1);
+  }
+  private async refreshRailwayOnboarding(): Promise<void> {
+    const row = [
+      ...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "railway:onboarding"),
+    ][0];
+    if (!row) return;
+    const scope = JSON.parse(row.data) as { actor?: number; chat?: number };
+    if (!Number.isSafeInteger(scope.actor) || !Number.isSafeInteger(scope.chat)) return;
+    await this.ui().forPanel(scope.actor!, scope.chat!, 0, 0).railwayOnboarding(scope.actor!, scope.chat!);
+    if (this.railwaySetupStatus().ready)
+      this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding");
+  }
   private ui(): CloudBotUi {
     const rpc = async <T>(
       topic: import("./control-store.js").FleetTopic,
@@ -1673,6 +1793,9 @@ export class ControlPlane {
         this.manageIntegration(id, action, credentialId),
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
+      railwayStatus: () => this.railwaySetupStatus(),
+      saveRailwayCredential: (update, generation) =>
+        this.saveRailwayCredentialInput(update, generation),
       questionDecision: (topic, request, questions, answers) =>
         this.questionDecision(topic, request, questions, answers),
       newTopic: (chat, request) => this.newTopic(chat, request),
@@ -1802,18 +1925,25 @@ export class ControlPlane {
       );
     await this.scheduleAlarm(Date.now() + 1);
   }
+  private railwayCredentials(): RailwayCredentialStore {
+    if (!this.env.CREDENTIAL_MASTER_KEY) throw new Error("control_secrets_unavailable");
+    return new RailwayCredentialStore(this.state.storage.sql, this.env.CREDENTIAL_MASTER_KEY);
+  }
+  private async requireRailwayCredential() {
+    const credential = await this.railwayCredentials().read();
+    if (!credential) throw new Error("railway_backend_not_configured");
+    return credential;
+  }
   private async setup(): Promise<void> {
-    if (!this.env.RAILWAY_API_TOKEN || !this.env.RAILWAY_WORKSPACE_ID)
-      throw new Error("railway_backend_not_configured");
+    const credential = await this.requireRailwayCredential();
     const maximum = Number(this.env.MAX_WORKERS),
       perProject = Number(this.env.WORKERS_PER_PROJECT),
       maxProjects = Number(this.env.MAX_RAILWAY_PROJECTS);
-    if (![maximum, perProject, maxProjects].every((v) => Number.isSafeInteger(v) && v > 0))
+    if (maximum !== 10 || perProject !== 5 || maxProjects !== 2)
       throw new Error("invalid_capacity_policy");
     this.store.putBackend({
       backendId: "railway",
-      workspaceId: this.env.RAILWAY_WORKSPACE_ID,
-      credential: "binding:RAILWAY_API_TOKEN",
+      accountId: credential.accountId,
       region: "europe-west4",
       desiredMaximumWorkers: maximum,
       maxWorkersPerProject: perProject,
@@ -1824,7 +1954,7 @@ export class ControlPlane {
       const snapshot = {
         version: 1,
         revision: 1,
-        configuration: { runtime: {} },
+        configuration: { runtime: { model: "opencode/muse-spark-1.3-contributor-free" } },
         skills: [],
         actions: [],
         catalog: {},
@@ -1834,8 +1964,9 @@ export class ControlPlane {
       this.store.setGlobal(snapshot, await sha256(canonical(snapshot)), 0);
     }
   }
-  private driver(guard?: () => void): RailwayFleetDriver {
-    const api = railwayApi(this.env.RAILWAY_API_TOKEN);
+  private async driver(guard?: () => void): Promise<RailwayFleetDriver> {
+    const credential = await this.requireRailwayCredential();
+    const api = railwayApi(credential.token);
     const request = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
       guard?.();
       const result = await api<T>(query, variables);
@@ -1861,7 +1992,7 @@ export class ControlPlane {
       !worker.endpoint ||
       worker.chatId ||
       worker.threadId ||
-      worker.state !== "READY_UNBOUND"
+      !["PROVISIONING", "RECOVERING", "READY_UNBOUND", "BINDING"].includes(worker.state)
     )
       throw new Error("unbound_worker_not_ready");
     const selected = generation ?? worker.generation;
@@ -1905,10 +2036,10 @@ export class ControlPlane {
         .length
     )
       throw new Error("control_reset_pending");
-    if (this.env.PROVISION_ON_TOPIC_CREATE !== "true" || this.env.PROVISIONING_ENABLED !== "true")
+    if (this.env.PROVISIONING_ENABLED !== "true")
       throw new Error("provisioning_disabled");
     await this.setup();
-    const job = this.store.reserveAllocation(requestId, chatId);
+    const job = this.store.reservePreparedAllocation(requestId, chatId);
     this.store.reserveTopicTitle(job.jobId);
     await this.scheduleAlarm(Date.now() + 15_000);
     await this.env.JOBS.send({ jobId: job.jobId });
@@ -1924,6 +2055,122 @@ export class ControlPlane {
   }
   private async allocationProgress(job: AllocationJob, stage: string): Promise<void> {
     await this.allocationUi(job)?.allocationProgress(job, stage);
+  }
+  private fixedFleetJob(job: AllocationJob): boolean {
+    return !!job.projectKey && /^opencode-telegram-\d{2}$/u.test(job.projectKey) && /^worker-\d{2}$/u.test(job.workerId);
+  }
+  private infrastructureFleetJob(job: AllocationJob): boolean {
+    return job.requestId.startsWith("fleet-bootstrap:") || job.requestId.startsWith("fleet-recycle:");
+  }
+  private async verifyFixedWorker(jobId: string, guard: () => void): Promise<boolean> {
+    const job = this.store.job(jobId);
+    if (!job) throw new Error("unknown_job");
+    const worker = this.store.worker(job.workerId);
+    if (!worker?.credential) {
+      await this.scheduleAlarm(Date.now() + 15_000);
+      return false;
+    }
+    const identity = job.threadId
+      ? await this.identity(worker.workerId)
+      : await this.unboundIdentity(worker.workerId);
+    let health: { ready: boolean; runtime?: { telegramCoreCommit: string; telegramCoreVersion: string } };
+    try {
+      health = await nodeRpc(identity, "health", {});
+    } catch {
+      await this.scheduleAlarm(Date.now() + 15_000);
+      return false;
+    }
+    guard();
+    if (!health.ready) {
+      await this.scheduleAlarm(Date.now() + 15_000);
+      return false;
+    }
+    if (
+      health.runtime?.telegramCoreCommit !== this.env.WORKER_CORE_COMMIT ||
+      health.runtime?.telegramCoreVersion !== this.env.WORKER_CORE_VERSION
+    )
+      throw new Error("worker_image_mismatch");
+    const observed = await (await this.driver(guard)).inspectDeployment(jobId);
+    if (observed.status !== "SUCCESS") {
+      await this.scheduleAlarm(Date.now() + 15_000);
+      return false;
+    }
+    this.store.saveObservation(worker.workerId, job.generation, {
+      image: observed.image,
+      deploymentId: observed.deploymentId,
+      runtimeCommit: health.runtime.telegramCoreCommit,
+      runtimeVersion: health.runtime.telegramCoreVersion,
+      lastHealthAt: Date.now(),
+    });
+    this.store.ready(worker.workerId, job.generation, worker.credential);
+    return true;
+  }
+  private async advanceFixedInfrastructure(jobId: string, guard: () => void): Promise<void> {
+    let job = this.store.job(jobId);
+    if (!job) throw new Error("unknown_job");
+    if (job.phase === "READY_UNBOUND") return;
+    await (await this.driver(guard)).provisionFixed(jobId);
+    if (!(await this.verifyFixedWorker(jobId, guard))) return;
+    job = this.store.configureJob(jobId, { phase: "READY_UNBOUND" });
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({ event: "fixed_worker_ready", workerId: job.workerId, generation: job.generation }));
+  }
+  private async advanceFixedTopic(jobId: string, guard: () => void): Promise<void> {
+    let job = this.store.job(jobId);
+    if (!job) throw new Error("unknown_job");
+    if (job.phase === "BOUND") return;
+    if (!job.threadId) {
+      const identity = await this.unboundIdentity(job.workerId);
+      if (job.phase === "RESERVED") {
+        const health = await nodeRpc<{ ready: boolean }>(identity, "health", {});
+        guard();
+        if (!health.ready) {
+          await this.scheduleAlarm(Date.now() + 5_000);
+          return;
+        }
+        const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(identity, "session.probe", {});
+        guard();
+        if (probe.created !== true || probe.deleted !== true) throw new Error("session_probe_failed");
+        job = this.store.markSessionProbed(jobId);
+      }
+      if (job.phase === "SESSION_PROBED") {
+        const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{ message_thread_id: number }>(
+          "createForumTopic",
+          { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) },
+        );
+        if (!Number.isSafeInteger(created.message_thread_id) || created.message_thread_id <= 1)
+          throw new Error("invalid_topic");
+        job = this.store.configureJob(jobId, { pendingThreadId: created.message_thread_id, phase: "TOPIC_CREATED" });
+      }
+      const pendingThread = job.pendingThreadId;
+      if (!pendingThread) throw new Error("topic_creation_reconciliation_required");
+      const retired = await nodeRpc<{ retired: boolean; sanitized?: boolean }>(identity, "retire", { sanitize: true });
+      guard();
+      if (!retired.retired || retired.sanitized !== true) throw new Error("worker_retirement_unconfirmed");
+      const rotated = this.store.rotateAllocationToTopic(jobId, pendingThread);
+      this.store.saveObservation(rotated.workerId, rotated.generation, { chatId: rotated.chatId, threadId: pendingThread });
+      await this.scheduleAlarm(Date.now() + 1);
+      await this.env.JOBS.send({ jobId });
+      return;
+    }
+    await (await this.driver(guard)).provisionFixed(jobId);
+    if (!(await this.verifyFixedWorker(jobId, guard))) return;
+    job = this.store.job(jobId)!;
+    const identity = await this.identity(job.workerId);
+    const session = await nodeRpc<{ sessionId: string }>(identity, "session.create", {});
+    guard();
+    const bound = this.store.bindTopic(jobId, job.threadId!, session.sessionId);
+    if (job.topicTitle) {
+      const key = `topic:${bound.chatId}:${bound.threadId}:${bound.generation}`;
+      this.state.storage.sql.exec(
+        "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+        key,
+        JSON.stringify({ title: job.topicTitle, titleSource: "auto" }),
+      );
+    }
+    await this.topicUi(bound).ready(bound);
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
   }
   private async advanceSafely(jobId: string): Promise<void> {
     const existing = this.store.job(jobId);
@@ -1966,6 +2213,18 @@ export class ControlPlane {
       const job = this.store.job(jobId);
       if (!job || job.phase === "BOUND") throw error;
       const worker = this.store.worker(job.workerId);
+      if (this.fixedFleetJob(job)) {
+        this.store.configureJob(jobId, { phase: "FAILED", error: reason });
+        if (
+          worker &&
+          worker.generation === job.generation &&
+          ["PROVISIONING", "RECOVERING", "BINDING", "READY_UNBOUND", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(worker.state)
+        )
+          this.store.transition(worker.workerId, worker.generation, "UNHEALTHY");
+        if (this.infrastructureFleetJob(job)) await this.refreshRailwayOnboarding();
+        else await this.allocationUi(this.store.job(jobId)!)?.allocationFailure(this.store.job(jobId)!, reason);
+        return;
+      }
       if (worker?.state !== "REPLACED" && worker && worker.generation === job.generation)
         this.store.configureJob(jobId, {
           phase: "CLEANUP_PENDING",
@@ -2036,6 +2295,14 @@ export class ControlPlane {
         throw new Error("stale_generation");
     };
     try {
+      if (this.fixedFleetJob(job)) {
+        if (this.infrastructureFleetJob(job)) {
+          await this.advanceFixedInfrastructure(jobId, guard);
+          await this.refreshRailwayOnboarding();
+        } else await this.advanceFixedTopic(jobId, guard);
+        return;
+      }
+      // Legacy dynamic allocations remain isolated until the fixed-fleet migration is fully qualified.
       // A crash after the probe or after Topic creation must resume the same one-way handoff,
       // never redeploy the unbound generation or create a second Telegram Topic.
       if (!job.threadId && ["SESSION_PROBED", "TOPIC_CREATED"].includes(job.phase)) {
@@ -2070,7 +2337,7 @@ export class ControlPlane {
       }
 
       await this.allocationProgress(job, job.threadId ? "BINDING" : "DEPLOYING");
-      await this.driver(guard).provision(jobId);
+      await (await this.driver(guard)).provision(jobId);
       job = this.store.job(jobId)!;
       const worker = this.store.worker(job.workerId)!;
       if (!worker.credential) {
@@ -2102,7 +2369,7 @@ export class ControlPlane {
         health.runtime?.telegramCoreVersion !== this.env.WORKER_CORE_VERSION
       )
         throw new Error("worker_image_mismatch");
-      const observed = await this.driver(guard).inspectDeployment(jobId);
+      const observed = await (await this.driver(guard)).inspectDeployment(jobId);
       if (observed.status !== "SUCCESS") {
         await this.scheduleAlarm(Date.now() + 15_000);
         return;
@@ -2200,7 +2467,7 @@ export class ControlPlane {
       if (current.state === "FENCING")
         current = this.store.transition(current.workerId, current.generation, "DELETING");
       if (current.state !== "DELETING") throw new Error("cleanup_reconciliation_required");
-      await this.driver().destroy(current.workerId, current.generation);
+      await (await this.driver()).destroy(current.workerId, current.generation);
       this.store.confirmDestroyed(current.workerId, current.generation);
     }
     job = this.store.job(jobId)!;
@@ -2227,7 +2494,7 @@ export class ControlPlane {
           .map((job) => job.workerId),
       ),
     ];
-    await this.driver().reconcileManagedResources(workerIds);
+    await (await this.driver()).reconcileManagedResources(workerIds);
   }
   private async deleteTopic(chatId: number, threadId: number): Promise<void> {
     const topic = this.store.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
@@ -2250,14 +2517,15 @@ export class ControlPlane {
       }
     }
     const worker = this.store.fenceTopic(chatId, threadId);
-    try {
-      await nodeRpc(await this.identity(worker.workerId, previousGeneration), "retire", {});
-    } catch {
-      /* Destruction is mandatory if retirement cannot prove process join. */
-    }
-    this.store.transition(worker.workerId, worker.generation, "DELETING");
-    await this.driver().destroy(worker.workerId, worker.generation);
-    this.store.confirmDestroyed(worker.workerId, worker.generation);
+    const retired = await nodeRpc<{ retired: boolean; sanitized?: boolean }>(
+      await this.identity(worker.workerId, previousGeneration),
+      "retire",
+      { sanitize: true },
+    );
+    if (!retired.retired || retired.sanitized !== true) throw new Error("worker_retirement_unconfirmed");
+    const recycle = this.store.prepareWorkerReuse(worker.workerId, worker.generation);
+    await this.scheduleAlarm(Date.now() + 1);
+    await this.env.JOBS.send({ jobId: recycle.jobId });
     if (active) presentation.cancelled(active.runId);
   }
   async alarm(): Promise<void> {
@@ -2273,6 +2541,7 @@ export class ControlPlane {
       .map((r) => JSON.parse(r.data) as AllocationJob)
       .filter((j) =>
         [
+          "RESERVED",
           "PROVISIONING",
           "VOLUME_CREATING",
           "VOLUME_CREATED",
@@ -2870,6 +3139,7 @@ export class ControlPlane {
             event: "telegram_ui_operation_failed",
             category: integrationFailureCategory(error),
             credentialInput: !!(update as ProtectedTelegramUpdate).credentialInput,
+            railwayCredentialInput: !!(update as ProtectedRailwayTelegramUpdate).railwayCredentialInput,
           }),
         );
         this.store.completeTelegramUpdate(row.id, "FAILED");

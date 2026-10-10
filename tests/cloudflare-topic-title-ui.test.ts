@@ -13,7 +13,7 @@ function fixture() {
   const store = new ControlStore(sql, (action) => action());
   store.putBackend({
     backendId: "a",
-    workspaceId: "w",
+    accountId: "account",
     credential: "encrypted",
     region: "eu",
     desiredMaximumWorkers: 10,

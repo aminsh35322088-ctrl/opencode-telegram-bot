@@ -8,12 +8,14 @@ export interface InternalControlSecrets {
 }
 type Roots = {
   TELEGRAM_BOT_TOKEN?: string;
-  RAILWAY_API_TOKEN?: string;
 } & Partial<InternalControlSecrets>;
-type Wrapped = { version: 1; telegram: string; railway: string };
-const context = "opencode-control-plane:internal-secrets:v1";
+type LegacyWrapped = { version: 1; telegram: string; railway?: string };
+type Wrapped = { version: 2; telegram: string };
+const legacyContext = "opencode-control-plane:internal-secrets:v1";
+const context = "opencode-control-plane:internal-secrets:v2";
+
 /** Domain-separated wrapping keys stay inside the privileged Control Plane. */
-async function wrappingKey(token: string, source: string): Promise<string> {
+async function wrappingKey(token: string, source: string, saltContext = context): Promise<string> {
   const material = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(token),
@@ -25,7 +27,7 @@ async function wrappingKey(token: string, source: string): Promise<string> {
     {
       name: "HKDF",
       hash: "SHA-256",
-      salt: new TextEncoder().encode(context),
+      salt: new TextEncoder().encode(saltContext),
       info: new TextEncoder().encode(source),
     },
     material,
@@ -49,25 +51,32 @@ function valid(value: unknown): value is InternalControlSecrets {
     return false;
   }
 }
-/** Two encrypted envelopes permit rotating either user token separately. Corruption fails closed. */
+
+/**
+ * Internal Control Plane identity is rooted only in the Telegram bot token.
+ * Legacy v1 rows are recovered through their Telegram envelope and immediately
+ * rewritten as v2 so Railway credentials never participate in bootstrap identity.
+ */
 export async function resolveControlSecrets(
   sql: SqlDatabase,
   env: Roots,
 ): Promise<InternalControlSecrets> {
-  if (!env.TELEGRAM_BOT_TOKEN || !env.RAILWAY_API_TOKEN) {
+  if (!env.TELEGRAM_BOT_TOKEN) {
     if (valid(env)) return env;
     throw new Error("control_secrets_unavailable");
   }
-  const keys = await Promise.all([
-    wrappingKey(env.TELEGRAM_BOT_TOKEN, "telegram"),
-    wrappingKey(env.RAILWAY_API_TOKEN, "railway"),
-  ]);
+  const telegramKey = await wrappingKey(env.TELEGRAM_BOT_TOKEN, "telegram");
+  const legacyTelegramKey = await wrappingKey(
+    env.TELEGRAM_BOT_TOKEN,
+    "telegram",
+    legacyContext,
+  );
   const wrap = async (value: InternalControlSecrets): Promise<string> =>
     JSON.stringify({
-      version: 1,
-      telegram: await encryptCredential(keys[0]!, context, JSON.stringify(value)),
-      railway: await encryptCredential(keys[1]!, context, JSON.stringify(value)),
-    });
+      version: 2,
+      telegram: await encryptCredential(telegramKey, context, JSON.stringify(value)),
+    } satisfies Wrapped);
+
   let row = [...sql.exec<{ data: string }>("SELECT data FROM control_secrets WHERE id=1")][0];
   if (!row) {
     const generated = {
@@ -79,40 +88,37 @@ export async function resolveControlSecrets(
     };
     if (!valid(generated)) throw new Error("control_secrets_unavailable");
     const data = await wrap(generated);
-    // Recheck through atomic insert: another request may have initialized while crypto awaited.
     sql.exec("INSERT OR IGNORE INTO control_secrets(id,data) VALUES(1,?)", data);
     row = [...sql.exec<{ data: string }>("SELECT data FROM control_secrets WHERE id=1")][0];
   }
-  let value: InternalControlSecrets | undefined;
-  let rewrap = false;
+
   try {
-    const stored = JSON.parse(row!.data) as Wrapped;
-    if (stored.version !== 1) throw new Error("invalid");
-    for (const [index, blob] of [stored.telegram, stored.railway].entries()) {
-      try {
-        const decoded: unknown = JSON.parse(await decryptCredential(keys[index]!, context, blob));
-        if (!valid(decoded)) throw new Error("invalid");
-        if (value && JSON.stringify(decoded) !== JSON.stringify(value))
-          throw new Error("mismatched_control_identity");
-        value = decoded;
-      } catch (error) {
-        if (error instanceof Error && error.message === "mismatched_control_identity") throw error;
-        rewrap = true;
-      }
+    const stored = JSON.parse(row!.data) as Wrapped | LegacyWrapped;
+    let decoded: unknown;
+    let migrate = false;
+    if (stored.version === 2) {
+      decoded = JSON.parse(await decryptCredential(telegramKey, context, stored.telegram));
+    } else if (stored.version === 1) {
+      decoded = JSON.parse(
+        await decryptCredential(legacyTelegramKey, legacyContext, stored.telegram),
+      );
+      migrate = true;
+    } else {
+      throw new Error("invalid");
     }
-    if (!value) throw new Error("invalid");
-    // Never allow leftover legacy bindings to silently replace the active encryption identity.
+    if (!valid(decoded)) throw new Error("invalid");
     for (const name of ["CREDENTIAL_MASTER_KEY", "ADMIN_TOKEN", "TELEGRAM_WEBHOOK_SECRET"] as const)
-      if (env[name] && env[name] !== value[name]) throw new Error("invalid");
-    if (rewrap) {
-      const data = await wrap(value);
+      if (env[name] && env[name] !== decoded[name]) throw new Error("invalid");
+    if (migrate) {
+      const data = await wrap(decoded);
       sql.exec("UPDATE control_secrets SET data=? WHERE id=1 AND data=?", data, row!.data);
     }
-    return value;
+    return decoded;
   } catch {
     throw new Error("control_secrets_unavailable");
   }
 }
+
 /** Fixed-length digest comparison avoids character-position timing leaks. */
 export async function equalSecret(actual: string, expected: string): Promise<boolean> {
   const digest = async (s: string) =>

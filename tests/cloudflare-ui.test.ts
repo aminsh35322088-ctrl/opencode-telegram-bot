@@ -5,8 +5,12 @@ import { ControlPlane } from "../src/cloudflare/control-object.js";
 import { ControlStore } from "../src/cloudflare/control-store.js";
 import { encryptCredential } from "../src/cloudflare/credentials.js";
 import { signEnvelope } from "../src/cloudflare/protocol.js";
+import { RailwayCredentialStore } from "../src/cloudflare/railway-credential-store.js";
 
-function fixture(t: { after: (f: () => void) => void }) {
+async function fixture(
+  t: { after: (f: () => void) => void },
+  options: { railway?: "ready" | "unconfigured" } = {},
+) {
   const db = new DatabaseSync(":memory:");
   const sql = {
     exec: (q: string, ...args: unknown[]) => db.prepare(q).all(...(args as never[])) as never,
@@ -25,13 +29,10 @@ function fixture(t: { after: (f: () => void) => void }) {
   const env = {
     TELEGRAM_BOT_TOKEN: "synthetic",
     TELEGRAM_ALLOWED_USER_ID: "7",
-    RAILWAY_API_TOKEN: "synthetic",
-    RAILWAY_WORKSPACE_ID: "workspace",
     MAX_WORKERS: "10",
     WORKERS_PER_PROJECT: "5",
     MAX_RAILWAY_PROJECTS: "2",
-    PROVISION_ON_TOPIC_CREATE: "true",
-    PROVISIONING_ENABLED: "true",
+      PROVISIONING_ENABLED: "true",
     CREDENTIAL_MASTER_KEY: btoa("k".repeat(32)),
     WORKER_CORE_VERSION: "test",
     JOBS: { send: async () => {} },
@@ -46,6 +47,9 @@ function fixture(t: { after: (f: () => void) => void }) {
   const original = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const payload = JSON.parse(String(init?.body));
+    if (String(input).includes("backboard.railway.com")) {
+      return Response.json({ data: { me: { id: "account-1", name: "Primary Railway" } } });
+    }
     if (String(input).includes("api.telegram.org")) {
       const method = String(input).split("/").at(-1)!;
       sent.push({ method, payload });
@@ -129,6 +133,49 @@ function fixture(t: { after: (f: () => void) => void }) {
     });
     await plane.alarm();
   };
+  if ((options.railway ?? "ready") === "ready") {
+    await new RailwayCredentialStore(sql, env.CREDENTIAL_MASTER_KEY).save({
+      accountId: "account-1",
+      accountName: "Primary Railway",
+      token: "synthetic-railway-token",
+    });
+    store.putBackend({
+      backendId: "railway",
+      accountId: "account-1",
+      region: "europe-west4",
+      desiredMaximumWorkers: 10,
+      maxWorkersPerProject: 5,
+      maxProjects: 2,
+      enabled: true,
+    });
+    const bootstrap = store.ensureFixedFleet("railway", 10, 5);
+    for (let index = 0; index < bootstrap.length; index++) {
+      const ordinal = index + 1;
+      const job = bootstrap[index]!;
+      const projectOrdinal = Math.floor(index / 5) + 1;
+      const project = store.projects().find((candidate) => candidate.projectKey === job.projectKey)!;
+      store.saveProject({
+        ...project,
+        projectId: `project-${projectOrdinal}`,
+        environmentId: `environment-${projectOrdinal}`,
+        phase: "READY",
+      });
+      store.configureJob(job.jobId, {
+        projectId: `project-${projectOrdinal}`,
+        environmentId: `environment-${projectOrdinal}`,
+        serviceId: `service-${ordinal}`,
+        volumeId: `volume-${ordinal}`,
+        endpoint: ordinal === 1 ? "https://canary.up.railway.app" : `https://worker-${ordinal}.up.railway.app`,
+        phase: "READY_UNBOUND",
+      });
+      const credential = await encryptCredential(
+        env.CREDENTIAL_MASTER_KEY,
+        `node:${job.workerId}:1`,
+        secret,
+      );
+      store.ready(job.workerId, 1, credential);
+    }
+  }
   const bound = async () => {
     await post("/admin/setup");
     await post("/admin/global", {
@@ -139,25 +186,28 @@ function fixture(t: { after: (f: () => void) => void }) {
       defaults: {},
       credentialReferences: [],
     });
-    const job = store.reserveTopicAllocation("ui", -100, 42);
-    store.configureJob(job.jobId, { endpoint: "https://canary.up.railway.app" });
+    const existing = store.topics().find((topic) => topic.chatId === -100 && topic.threadId === 42);
+    if (existing) return store.jobs().find((job) => job.workerId === existing.workerId && job.phase === "BOUND")!;
+    const job = store.reservePreparedAllocation("ui", -100);
+    store.markSessionProbed(job.jobId);
+    const rotated = store.rotateAllocationToTopic(job.jobId, 42);
     const credential = await encryptCredential(
       env.CREDENTIAL_MASTER_KEY,
-      "node:" + job.workerId + ":1",
+      `node:${rotated.workerId}:${rotated.generation}`,
       secret,
     );
-    store.ready(job.workerId, 1, credential);
-    store.bindTopic(job.jobId, 42, "session");
-    return job;
+    store.ready(rotated.workerId, rotated.generation, credential);
+    store.bindTopic(rotated.jobId, 42, "session");
+    return rotated;
   };
   return { plane, store, sql, sent, rpc, rpcResults, update, callback, bound, post, state, env };
 }
 
 test("Railway authorization failures render actionable recovery instead of internal error codes", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   await f.update("/start");
-  const job = f.store.reserveAllocation("railway-auth-ui", -100);
+  const job = f.store.reservePreparedAllocation("railway-auth-ui", -100);
   const ui = (f.plane as any).allocationUi(job);
   await ui.allocationFailure(job, "railway_unauthorized");
   const output = JSON.stringify(f.sent);
@@ -166,7 +216,7 @@ test("Railway authorization failures render actionable recovery instead of inter
 });
 
 test("Start restores main navigation and publishes the existing Telegram command catalog without allocating", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.update("/start");
   const output = JSON.stringify(f.sent);
   assert.match(output, /⚡ <b>OpenCode Telegram<\/b>/);
@@ -181,11 +231,11 @@ test("Start restores main navigation and publishes the existing Telegram command
         x.payload.commands.some((c: any) => c.command === "settings"),
     ),
   );
-  assert.equal(f.store.workers().length, 0);
+  assert.equal(f.store.workers().length, 10);
 });
 
 test("keyboard restores dedicated Topic controls and never sends the command to OpenCode", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/keyboard", 42);
   const output = JSON.stringify(f.sent);
@@ -196,7 +246,7 @@ test("keyboard restores dedicated Topic controls and never sends the command to 
 });
 
 test("unknown slash commands and stale reply keyboard controls cannot become model prompts", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   for (const text of ["/unknown", "⚙️ Main Settings", "🕘 History"]) await f.update(text, 42);
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
@@ -204,7 +254,7 @@ test("unknown slash commands and stale reply keyboard controls cannot become mod
 });
 
 test("settings preserves separate global and Topic navigation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/settings");
   let output = JSON.stringify(f.sent);
@@ -230,7 +280,7 @@ test("settings preserves separate global and Topic navigation", async (t) => {
 });
 
 test("crafted Topic integration callbacks cannot open global account credential forms", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   const job = await f.bound();
   for (const action of [
     "github",
@@ -268,7 +318,7 @@ test("crafted Topic integration callbacks cannot open global account credential 
 });
 
 test("legacy Settings submenus keep More/Advanced and Topic Models navigation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/settings");
   let buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
@@ -306,10 +356,10 @@ test("legacy Settings submenus keep More/Advanced and Topic Models navigation", 
 });
 
 test("delete requires a generation-scoped confirmation and rejects it after fencing", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   const job = await f.bound();
   await f.update("🗑️ Delete Chat", 42);
-  assert.equal(f.store.worker(job.workerId)?.generation, 1);
+  assert.equal(f.store.worker(job.workerId)?.generation, job.generation);
   const buttons = f.sent.flatMap((x) => x.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   const confirm = buttons.find(
     (b: any) => /Delete/.test(b.text) && String(b.callback_data).startsWith("ui:"),
@@ -329,7 +379,7 @@ test("delete requires a generation-scoped confirmation and rejects it after fenc
 });
 
 test("callback from another actor or Topic cannot execute a bound confirmation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/delete_topic", 42);
   const buttons = f.sent.flatMap((x) => x.payload.reply_markup?.inline_keyboard?.flat() ?? []);
@@ -342,7 +392,7 @@ test("callback from another actor or Topic cannot execute a bound confirmation",
 });
 
 test("compact is durable Topic presentation state and does not duplicate global enable state", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("📦 Compact: OFF", 42);
   assert.equal([...f.sql.exec("SELECT request FROM runs")].length, 0);
@@ -360,22 +410,22 @@ test("compact is durable Topic presentation state and does not duplicate global 
   );
   assert.ok(labels.some((label) => /Compact: ON/.test(label)));
   const topicState = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+    ...f.sql.exec<{ data: string }>(`SELECT data FROM ui_state WHERE key='topic:-100:42:${f.store.topics()[0]!.generation}'`),
   ][0];
   assert.equal(JSON.parse(topicState!.data).compact, true);
   assert.equal(f.store.global()!.revision, revision);
 });
 
 test("plain text in General explains the Topic requirement without execution or allocation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.update("چطوری");
   assert.ok(f.sent.length);
-  assert.equal(f.store.workers().length, 0);
+  assert.equal(f.store.workers().length, 10);
   assert.equal(f.rpc.length, 0);
 });
 
 test("cancel clears the durable input form", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/rename", 42);
   await f.update("/cancel", 42);
@@ -389,7 +439,7 @@ test("cancel clears the durable input form", async (t) => {
 });
 
 test("rename answer remains a control after an acknowledgement rate limit", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/rename", 42);
   const before = globalThis.fetch;
@@ -417,7 +467,7 @@ test("rename answer remains a control after an acknowledgement rate limit", asyn
 });
 
 test("legacy Abort command cannot cancel the current or next run", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "run_a", "a");
   f.store.startNext(-100, 42);
@@ -438,7 +488,7 @@ test("legacy Abort command cannot cancel the current or next run", async (t) => 
 });
 
 test("readiness keyboard retries Telegram 429 without duplicating a delivered notice", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   const before = globalThis.fetch;
   let failed = false;
@@ -464,7 +514,7 @@ test("readiness keyboard retries Telegram 429 without duplicating a delivered no
 });
 
 test("questions render in their Topic and their answers never become prompts", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "run_q", "ask");
   f.store.startNext(-100, 42);
@@ -527,7 +577,7 @@ test("questions render in their Topic and their answers never become prompts", a
 });
 
 test("signed global mutations require exact trusted approval and preserve canonical revision", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   const job = await f.bound();
   const mutation = {
     type: "skills.create",
@@ -539,7 +589,7 @@ test("signed global mutations require exact trusted approval and preserve canoni
       {
         version: 1,
         nodeId: job.workerId,
-        generation: 1,
+        generation: job.generation,
         chatId: -100,
         threadId: 42,
         sessionId: "session",
@@ -595,15 +645,15 @@ test("signed global mutations require exact trusted approval and preserve canoni
 });
 
 test("double taps on New Chat reuse the pending allocation instead of creating a second Worker", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.update("/new");
   await f.update("/new");
-  assert.equal(f.store.workers().length, 1);
+  assert.equal(f.store.workers().length, 10);
   assert.equal(f.sent.filter((x) => x.method === "createForumTopic").length, 0);
 });
 
 test("a Topic fenced before final Telegram delivery cannot publish its old response", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "late", "prompt");
   f.store.startNext(-100, 42);
@@ -628,7 +678,7 @@ test("a Topic fenced before final Telegram delivery cannot publish its old respo
 });
 
 test("session dashboard exposes owned todo/diff/subagent/file navigation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/session", 42);
   const text = JSON.stringify(f.sent);
@@ -651,7 +701,7 @@ test("session dashboard exposes owned todo/diff/subagent/file navigation", async
 });
 
 test("legacy Session, Messages and Files reuse one Topic panel instead of sending message spam", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.rpcResults.set("session.get", { id: "session", title: "Legacy Topic" });
   f.rpcResults.set("session.todos", [{ status: "pending", content: "Restore UI" }]);
@@ -713,7 +763,7 @@ test("legacy Session, Messages and Files reuse one Topic panel instead of sendin
 });
 
 test("Model Center uses the canonical legacy root instead of the simplified Cloudflare replacement", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/model", 42);
   const output = JSON.stringify(f.sent);
@@ -728,7 +778,7 @@ test("Model Center uses the canonical legacy root instead of the simplified Clou
 });
 
 test("model and agent selectors use Core catalogs without creating model runs", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/model", 42);
   await f.update("/agent", 42);
@@ -739,7 +789,7 @@ test("model and agent selectors use Core catalogs without creating model runs", 
 });
 
 test("internal destructive slash commands cannot bypass confirmation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   for (const [command, thread] of [
     ["/delete_confirm", 42],
@@ -755,7 +805,7 @@ test("internal destructive slash commands cannot bypass confirmation", async (t)
 });
 
 test("raw output and footer preferences are applied to completed Topic responses", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   const topic = f.store.topics()[0]!;
   f.sql.exec(
@@ -768,7 +818,7 @@ test("raw output and footer preferences are applied to completed Topic responses
     42,
     "render_pref",
     "question",
-    1,
+    topic.generation,
     f.store.global()!.revision,
     "opencode/big-pickle",
   );
@@ -799,7 +849,7 @@ test("Telegram Topic deletion is idempotent after an acknowledged deletion is lo
 });
 
 test("Topic attachments are durably admitted and only inline file data reaches Core", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   const outbound = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
@@ -829,7 +879,7 @@ test("Topic attachments are durably admitted and only inline file data reaches C
 });
 
 test("attachments cannot bypass an active UI input form into model execution", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/rename", 42);
   await f.post("/telegram/webhook", {
@@ -847,7 +897,7 @@ test("attachments cannot bypass an active UI input form into model execution", a
 });
 
 test("media model defaults are pinned for attachments without changing chat model or sharing execution", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.post("/admin/global", {
     configuration: { runtime: { model: "opencode/big-pickle" } },
@@ -877,11 +927,11 @@ test("media model defaults are pinned for attachments without changing chat mode
   await f.plane.alarm();
   assert.equal(f.store.runPin("telegram_3300")?.model, "example/audio");
   assert.equal((f.store.global()!.data.configuration as any).runtime.model, "opencode/big-pickle");
-  assert.equal(f.store.workers().length, 1);
+  assert.equal(f.store.workers().length, 10);
 });
 
 test("streaming toggle persists an actual transport mode rather than a boolean", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/appearance", 42);
   const buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
@@ -889,13 +939,13 @@ test("streaming toggle persists an actual transport mode rather than a boolean",
   assert.ok(button);
   await f.callback(button.callback_data, 42);
   const row = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+    ...f.sql.exec<{ data: string }>(`SELECT data FROM ui_state WHERE key='topic:-100:42:${f.store.topics()[0]!.generation}'`),
   ][0];
   assert.equal(JSON.parse(row.data).responseStreamingMode, "off");
 });
 
 test("managed Topic ReplyKeyboard never exposes legacy Pause Resume or Abort controls", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "keyboard_run", "prompt");
   f.store.startNext(-100, 42);
@@ -915,7 +965,7 @@ test("managed Topic ReplyKeyboard never exposes legacy Pause Resume or Abort con
 });
 
 test("Topic preferences store only overrides and never duplicate canonical global defaults", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.post("/admin/global", {
     configuration: { runtime: { model: "opencode/big-pickle" } },
@@ -927,7 +977,7 @@ test("Topic preferences store only overrides and never duplicate canonical globa
   });
   await f.update("/compact", 42);
   const row = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+    ...f.sql.exec<{ data: string }>(`SELECT data FROM ui_state WHERE key='topic:-100:42:${f.store.topics()[0]!.generation}'`),
   ][0];
   const value = JSON.parse(row.data);
   assert.equal("memory" in value, false);
@@ -936,9 +986,9 @@ test("Topic preferences store only overrides and never duplicate canonical globa
 });
 
 test("a sleeping Worker keeps a prompt pending until signed readiness succeeds", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   const job = await f.bound();
-  f.store.saveObservation(job.workerId, 1, {
+  f.store.saveObservation(job.workerId, job.generation, {
     runtimeVersion: "1.18.33-bot.13-pre.24",
     revision: f.store.global()!.revision,
   });
@@ -971,7 +1021,7 @@ test("a sleeping Worker keeps a prompt pending until signed readiness succeeds",
 });
 
 test("Prompt Queue menu shows effective queue default and first toggle disables queue", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/queue", 42);
   const button = f.sent
@@ -980,7 +1030,7 @@ test("Prompt Queue menu shows effective queue default and first toggle disables 
   assert.ok(button);
   await f.callback(button.callback_data, 42);
   const row = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+    ...f.sql.exec<{ data: string }>(`SELECT data FROM ui_state WHERE key='topic:-100:42:${f.store.topics()[0]!.generation}'`),
   ][0];
   assert.equal(JSON.parse(row.data).promptQueueEnabled, false);
   assert.equal(
@@ -990,7 +1040,7 @@ test("Prompt Queue menu shows effective queue default and first toggle disables 
 });
 
 test("canonical Topic defaults apply without being copied into Topic overrides", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.post("/admin/global", {
     configuration: { runtime: { model: "opencode/big-pickle" } },
@@ -1021,13 +1071,13 @@ test("canonical Topic defaults apply without being copied into Topic overrides",
   buttons = f.sent.flatMap((s) => s.payload.reply_markup?.inline_keyboard?.flat() ?? []);
   assert.ok(buttons.some((b: any) => b.text === "📥 Prompt queue: OFF"));
   const row = [
-    ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='topic:-100:42:1'"),
+    ...f.sql.exec<{ data: string }>(`SELECT data FROM ui_state WHERE key='topic:-100:42:${f.store.topics()[0]!.generation}'`),
   ][0];
   assert.deepEqual(JSON.parse(row.data), { responseStreamingMode: "edit" });
 });
 
 test("cancelling guided task setup invalidates its old confirmation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/task", 42);
   await f.update("every 5 minutes", 42);
@@ -1042,7 +1092,7 @@ test("cancelling guided task setup invalidates its old confirmation", async (t) 
 });
 
 test("expired task-form answer cannot become an ordinary model prompt", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/task", 42);
   const key = "form:7:-100:42";
@@ -1058,7 +1108,7 @@ test("expired task-form answer cannot become an ordinary model prompt", async (t
 });
 
 test("authenticated UI smoke test can open and cancel task setup without execution", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   const start = await f.post("/admin/ui", { chatId: -100, threadId: 42, command: "task" });
   assert.equal(start.status, 200);
@@ -1076,7 +1126,7 @@ test("authenticated UI smoke test can open and cancel task setup without executi
 });
 
 test("cancelled configuration wizard cannot commit its old confirmation", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   const revision = f.store.global()!.revision;
   await f.update("/skills");
@@ -1100,7 +1150,7 @@ test("cancelled configuration wizard cannot commit its old confirmation", async 
 });
 
 test("authenticated read-only UI checks render guided Skills and MCP menus without execution", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   const now = Date.now;
   const fixedTime = now();
@@ -1127,7 +1177,7 @@ test("authenticated read-only UI checks render guided Skills and MCP menus witho
 });
 
 test("General menus edit the same pinned canonical panel without creating a second panel", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.update("/start");
   const main = [
     ...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='legacy:main:-100'"),
@@ -1150,7 +1200,7 @@ test("General menus edit the same pinned canonical panel without creating a seco
 });
 
 test("Settings descendants use explicit Back parents and Home", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.update("/settings");
   let buttons = f.sent.flatMap(
     (entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [],
@@ -1179,7 +1229,7 @@ test("Settings descendants use explicit Back parents and Home", async (t) => {
 });
 
 test("Topic Settings child returns to Topic Settings with Back and Close only", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("⚙️ Topic Settings", 42);
   let buttons = f.sent.flatMap(
@@ -1204,7 +1254,7 @@ test("Topic Settings child returns to Topic Settings with Back and Close only", 
 });
 
 test("Session and Model Center children return to their exact parents", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
 
   await f.update("/session", 42);
@@ -1245,7 +1295,7 @@ test("Session and Model Center children return to their exact parents", async (t
 });
 
 test("wizard confirmation Cancel restores its origin after text form state is consumed", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/skills");
   const add = f.sent
@@ -1263,7 +1313,7 @@ test("wizard confirmation Cancel restores its origin after text form state is co
 });
 
 test("task confirmation Cancel restores the task list after prompt form state is consumed", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/task", 42);
   await f.update("every 5 minutes", 42);
@@ -1277,7 +1327,7 @@ test("task confirmation Cancel restores the task list after prompt form state is
 });
 
 test("File browser subdirectories have explicit parent Back plus Home", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.rpcResults.set("file.list", [{ type: "directory", name: "src", path: "src" }]);
   await f.update("/ls", 42);
@@ -1300,7 +1350,7 @@ test("File browser subdirectories have explicit parent Back plus Home", async (t
 });
 
 test("active Cloudflare runs emit a Topic-scoped typing action without making typing a run dependency", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   f.store.enqueue(-100, 42, "typing_probe", "probe");
   f.store.startNext(-100, 42);
@@ -1315,7 +1365,7 @@ test("active Cloudflare runs emit a Topic-scoped typing action without making ty
 });
 
 test("ordinary user text is never deleted just because it is not a ReplyKeyboard control", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
 
   f.sent.length = 0;
@@ -1340,7 +1390,7 @@ test("ordinary user text is never deleted just because it is not a ReplyKeyboard
 });
 
 test("only exact rendered Topic controls are consumed; an emoji-prefixed user prompt still reaches the model", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.bound();
   await f.update("/keyboard", 42);
   const modelButton = f.sent
@@ -1356,7 +1406,7 @@ test("only exact rendered Topic controls are consumed; an emoji-prefixed user pr
 });
 
 test("Factory Reset preserves configuration evidence when Railway reconciliation is ambiguous", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   await f.post("/admin/global", {
     configuration: { runtime: { model: "keep/provider-model" }, marker: "preserve-me" },
@@ -1395,7 +1445,7 @@ test("Factory Reset preserves configuration evidence when Railway reconciliation
 });
 
 test("Factory Reset removes every integration reference and encrypted lease store across restart", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   const { CloudIntegrationConnections } =
     await import("../src/cloudflare/integration-connections.js");
@@ -1467,7 +1517,7 @@ test("Factory Reset removes every integration reference and encrypted lease stor
 });
 
 test("pending Factory Reset lock makes New Chat actionable instead of showing the generic failure", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   f.sql.exec(
     "INSERT INTO ui_state(key,data) VALUES(?,?)",
@@ -1492,7 +1542,7 @@ test("pending Factory Reset lock makes New Chat actionable instead of showing th
 });
 
 test("legacy reset locks from older builds can be cancelled without the generic failure", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   f.sql.exec(
     "INSERT INTO ui_state(key,data) VALUES(?,?)",
@@ -1515,7 +1565,7 @@ test("legacy reset locks from older builds can be cancelled without the generic 
 });
 
 test("Cancel Pending Reset clears the stale lock and lets the next New Chat allocate", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   f.sql.exec(
     "INSERT INTO ui_state(key,data) VALUES(?,?)",
@@ -1544,7 +1594,7 @@ test("Cancel Pending Reset clears the stale lock and lets the next New Chat allo
 });
 
 test("Resume Reset reuses the original cleanup plan and completes Factory Reset", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   f.sql.exec(
     "CREATE TABLE IF NOT EXISTS capability_leases(id TEXT PRIMARY KEY,expires INTEGER NOT NULL,data TEXT NOT NULL)",
@@ -1590,138 +1640,33 @@ test("Resume Reset reuses the original cleanup plan and completes Factory Reset"
   assert.match(JSON.stringify(f.sent), /Factory Reset completed/);
 });
 
-test("historical cleaned allocation failures cannot block a later New Chat", async (t) => {
-  const f = fixture(t);
-  await f.post("/admin/setup");
-  const job = f.store.reserveAllocation("historical-failure", -100);
-  const worker = f.store.worker(job.workerId)!;
-  f.sql.exec(
-    "UPDATE workers SET data=? WHERE id=?",
-    JSON.stringify({ ...worker, state: "REPLACED" }),
-    worker.workerId,
-  );
-  f.store.finalizeAllocationFailure(job.jobId);
-  const before = f.store.jobs().length;
+test("one unhealthy fixed Worker never blocks New Chat from reserving another clean slot", async (t) => {
+  const f = await fixture(t);
+  const first = f.store.worker("worker-01")!;
+  f.store.transition(first.workerId, first.generation, "UNHEALTHY");
+  const beforeWorkers = f.store.workers().length;
   await f.update("/new_chat");
-  assert.equal(f.store.jobs().length, before + 1);
+  assert.equal(f.store.workers().length, beforeWorkers);
+  const allocation = f.store.jobs().filter((job) => !job.requestId.startsWith("fleet-bootstrap:")).at(-1);
+  assert.ok(allocation);
+  assert.equal(allocation.workerId, "worker-02");
+  assert.equal(f.store.worker("worker-01")?.state, "UNHEALTHY");
   assert.doesNotMatch(JSON.stringify(f.sent), /The operation could not be completed/);
 });
 
-test("New Chat actively reconciles an unresolved historical allocation before creating another", async (t) => {
-  const f = fixture(t);
-  await f.post("/admin/setup");
-  const stale = f.store.reserveAllocation("historical-cleanup", -100);
-  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
-  const fenced = f.store.fenceWorker(stale.workerId);
-  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
-
-  let destroyCalls = 0;
-  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
-    destroy: async () => { destroyCalls++; },
-    provision: async () => { throw new Error("provisioning_pending"); },
-  });
-
-  const before = f.store.jobs().length;
+test("fixed fleet exhaustion never creates an eleventh Worker or destructive cleanup job", async (t) => {
+  const f = await fixture(t);
+  for (const worker of f.store.workers()) f.store.transition(worker.workerId, worker.generation, "UNHEALTHY");
+  const beforeJobs = f.store.jobs().length;
   await f.update("/new_chat");
-
-  assert.equal(destroyCalls, 1);
-  assert.equal(f.store.worker(stale.workerId)?.state, "REPLACED");
-  assert.equal(f.store.jobs().length, before + 1);
-});
-
-test("cleanup verification failure keeps New Chat actionable with Retry and Cancel", async (t) => {
-  const f = fixture(t);
-  await f.post("/admin/setup");
-  const stale = f.store.reserveAllocation("historical-cleanup-timeout", -100);
-  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
-  const fenced = f.store.fenceWorker(stale.workerId);
-  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
-
-  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
-    destroy: async () => { throw new Error("railway_transport_timeout"); },
-  });
-
-  await f.update("/new_chat");
-  const output = JSON.stringify(f.sent);
-  assert.match(output, /Cleanup verification pending/);
-  assert.match(output, /↻ Retry/);
-  assert.match(output, /✖ Cancel/);
-});
-
-test("Cancel from cleanup pending returns Home without waiting for Railway cleanup", async (t) => {
-  const f = fixture(t);
-  await f.post("/admin/setup");
-  const stale = f.store.reserveAllocation("historical-cleanup-cancel", -100);
-  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
-  const fenced = f.store.fenceWorker(stale.workerId);
-  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
-
-  let destroyCalls = 0;
-  let release!: () => void;
-  const blocked = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
-    destroy: async () => {
-      destroyCalls++;
-      if (destroyCalls === 1) throw new Error("railway_transport_timeout");
-      await blocked;
-    },
-  });
-
-  await f.update("/new_chat");
-  const cancel = [
-    ...f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? []),
-  ]
-    .reverse()
-    .find((button: any) => button.text === "✖ Cancel");
-  assert.ok(cancel);
-
-  const operation = f.callback((cancel as any).callback_data);
-  const completedQuickly = await Promise.race([
-    operation.then(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 200)),
-  ]);
-  release();
-  await operation;
-
-  assert.equal(completedQuickly, true);
-  assert.match(JSON.stringify(f.sent), /OpenCode Telegram/);
-});
-
-test("Retry from cleanup pending performs cleanup instead of repainting the dead end", async (t) => {
-  const f = fixture(t);
-  await f.post("/admin/setup");
-  const stale = f.store.reserveAllocation("historical-cleanup-retry", -100);
-  f.store.configureJob(stale.jobId, { phase: "FAILED", error: "provisioning_cancelled" });
-  const fenced = f.store.fenceWorker(stale.workerId);
-  f.store.transition(fenced.workerId, fenced.generation, "DELETING");
-
-  let destroyCalls = 0;
-  (f.plane as unknown as { driver: () => unknown }).driver = () => ({
-    destroy: async () => {
-      destroyCalls++;
-      if (destroyCalls === 1) throw new Error("railway_transport_timeout");
-    },
-    provision: async () => { throw new Error("provisioning_pending"); },
-  });
-
-  const before = f.store.jobs().length;
-  await f.update("/new_chat");
-  const retry = [...f.sent.flatMap((entry) => entry.payload.reply_markup?.inline_keyboard?.flat() ?? [])]
-    .reverse()
-    .find((button: any) => button.text === "↻ Retry");
-  assert.ok(retry);
-
-  await f.callback((retry as any).callback_data);
-
-  assert.equal(destroyCalls, 2);
-  assert.equal(f.store.worker(stale.workerId)?.state, "REPLACED");
-  assert.equal(f.store.jobs().length, before + 1);
+  assert.equal(f.store.workers().length, 10);
+  assert.equal(f.store.projects().length, 2);
+  assert.equal(f.store.jobs().length, beforeJobs);
+  assert.equal(f.store.jobs().some((job) => job.phase === "CLEANUP_PENDING"), false);
 });
 
 test("account removal remains committed when Telegram notification is rate limited", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   const { CloudIntegrationConnections } =
     await import("../src/cloudflare/integration-connections.js");
@@ -1772,7 +1717,7 @@ test("account removal remains committed when Telegram notification is rate limit
 });
 
 test("bad General configuration input keeps its form and never exposes submitted material", async (t) => {
-  const f = fixture(t);
+  const f = await fixture(t);
   await f.post("/admin/setup");
   f.sql.exec(
     "INSERT INTO ui_state(key,data) VALUES(?,?)",
@@ -1792,7 +1737,7 @@ test("bad General configuration input keeps its form and never exposes submitted
 });
 
 test("all General settings sections render without operation failures or Worker execution",async(t)=>{
- const f=fixture(t);await f.bound();
+ const f=await fixture(t);await f.bound();
  const before=f.store.jobs().length;
  for(const command of ["settings","more","advanced","models","providers","extensions","actions","skills","mcps","plugins","commands","memory","github","tailscale","history","help"]){
   f.sent.length=0;await f.update("/"+command,1);
@@ -1805,7 +1750,7 @@ test("all General settings sections render without operation failures or Worker 
 });
 
 test("authenticated Main qualification can render account and configuration menus but cannot mutate",async(t)=>{
- const f=fixture(t);await f.bound();
+ const f=await fixture(t);await f.bound();
  for(const command of ["advanced","extensions","actions","plugins","memory","github","tailscale","help"]){
   const response=await f.post("/admin/ui",{chatId:-100,threadId:0,command});
   assert.equal(response.status,200,command);
@@ -1813,4 +1758,160 @@ test("authenticated Main qualification can render account and configuration menu
  for(const command of ["factory_reset_final","integration_remove","credential_save"]){
   const response=await f.post("/admin/ui",{chatId:-100,threadId:0,command});assert.notEqual(response.status,200,command);
  }
+});
+
+test("first /start renders Railway onboarding instead of Home when no infrastructure credential exists", async (t) => {
+  const f = await fixture(t, { railway: "unconfigured" });
+  await f.update("/start");
+  const panel = f.sent.filter((entry) => ["sendMessage", "editMessageText"].includes(entry.method)).at(-1);
+  assert.ok(panel);
+  assert.match(String(panel.payload.text), /Railway Setup/);
+  assert.match(String(panel.payload.text), /Account API Token/);
+  assert.doesNotMatch(String(panel.payload.text), /OpenCode Telegram.*Ready/s);
+  const form = [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='form:7:-100:0'")][0]!;
+  assert.equal(JSON.parse(form.data).kind, "railway_credential");
+});
+
+
+test("Railway onboarding protects token, seeds ten slots, updates one panel, welcomes, and Continue opens Home", async (t) => {
+  const f = await fixture(t, { railway: "unconfigured" });
+  await f.update("/start");
+  const firstPanel = f.sent.find((entry) => entry.method === "sendMessage" && String(entry.payload.text).includes("Railway Setup"));
+  assert.ok(firstPanel);
+  await f.update("railway-account-token");
+  const stored = [...f.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='infrastructure:railway:credential'")][0];
+  assert.ok(stored);
+  assert.equal(stored.data.includes("railway-account-token"), false);
+  assert.equal(f.store.projects().length, 2);
+  assert.equal(f.store.workers().length, 10);
+  assert.deepEqual(f.store.workers().map((worker) => worker.workerId), Array.from({ length: 10 }, (_, i) => `worker-${String(i + 1).padStart(2, "0")}`));
+  assert.ok(f.sent.some((entry) => entry.method === "deleteMessage" && entry.payload.message_id === 1002));
+  const progress = f.sent.filter((entry) => entry.method === "editMessageText").at(-1);
+  assert.ok(progress);
+  assert.match(String(progress.payload.text), /Setting up Railway/);
+
+  for (const worker of f.store.workers()) {
+    const job = f.store.jobs().find((candidate) => candidate.requestId === `fleet-bootstrap:${worker.workerId}`)!;
+    const ordinal = Number(worker.workerId.slice(-2));
+    const projectOrdinal = Math.floor((ordinal - 1) / 5) + 1;
+    f.store.configureJob(job.jobId, {
+      projectId: `project-${projectOrdinal}`,
+      environmentId: `environment-${projectOrdinal}`,
+      serviceId: `service-${ordinal}`,
+      volumeId: `volume-${ordinal}`,
+      endpoint: `https://worker-${ordinal}.up.railway.app`,
+    });
+    f.store.saveProject({
+      ...f.store.projects().find((project) => project.projectKey === worker.projectKey)!,
+      projectId: `project-${projectOrdinal}`,
+      environmentId: `environment-${projectOrdinal}`,
+      phase: "READY",
+    });
+    f.store.ready(worker.workerId, 1, `credential-${ordinal}`);
+    f.store.configureJob(job.jobId, { phase: "READY_UNBOUND" });
+  }
+  await (f.plane as any).refreshRailwayOnboarding();
+  const welcome = f.sent.filter((entry) => entry.method === "editMessageText").at(-1)!;
+  assert.match(String(welcome.payload.text), /Welcome to OpenCode Telegram/);
+  assert.match(String(welcome.payload.text), /Railway Ready/);
+
+  const continueRow = [...f.sql.exec<{ id: string; data: string }>("SELECT id,data FROM ui_callbacks ORDER BY rowid DESC")].find((row) => JSON.parse(row.data).action === "railway_continue");
+  assert.ok(continueRow);
+  await f.callback("ui:" + continueRow.id);
+  const home = f.sent.filter((entry) => entry.method === "editMessageText").at(-1)!;
+  assert.match(String(home.payload.text), /⚡ <b>OpenCode Telegram<\/b>/);
+  assert.match(String(home.payload.text), /🟢 <b>Ready<\/b>/);
+  assert.match(String(home.payload.text), /opencode\/muse-spark-1\.3-contributor-free/);
+  assert.match(String(home.payload.text), /🛠️ build/);
+  const panelMessages = f.sent.filter((entry) => ["sendMessage", "editMessageText"].includes(entry.method) && (String(entry.payload.text).includes("Railway") || String(entry.payload.text).includes("OpenCode Telegram")));
+  assert.equal(panelMessages.filter((entry) => entry.method === "sendMessage").length, 1);
+  const editedIds = panelMessages.filter((entry) => entry.method === "editMessageText").map((entry) => entry.payload.message_id);
+  assert.ok(editedIds.length >= 3);
+  assert.ok(editedIds.every((id) => id === editedIds[0]));
+});
+
+test("Railway Settings shows fixed fleet status and replacement uses the same panel", async (t) => {
+  const f = await fixture(t);
+  const vault = new (await import("../src/cloudflare/railway-credential-store.js")).RailwayCredentialStore(
+    f.sql,
+    f.env.CREDENTIAL_MASTER_KEY,
+  );
+  await vault.save({ accountId: "account-1", accountName: "Primary Railway", token: "initial-token" });
+  f.store.putBackend({
+    backendId: "railway",
+    accountId: "account-1",
+    region: "europe-west4",
+    desiredMaximumWorkers: 10,
+    maxWorkersPerProject: 5,
+    maxProjects: 2,
+    enabled: true,
+  });
+  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  for (let index = 0; index < jobs.length; index++) {
+    const ordinal = index + 1;
+    const job = jobs[index]!;
+    const projectOrdinal = Math.floor(index / 5) + 1;
+    const project = f.store.projects().find((candidate) => candidate.projectKey === job.projectKey)!;
+    f.store.saveProject({
+      ...project,
+      projectId: `project-${projectOrdinal}`,
+      environmentId: `environment-${projectOrdinal}`,
+      phase: "READY",
+    });
+    f.store.configureJob(job.jobId, {
+      projectId: `project-${projectOrdinal}`,
+      environmentId: `environment-${projectOrdinal}`,
+      serviceId: `service-${ordinal}`,
+      volumeId: `volume-${ordinal}`,
+      endpoint: `https://worker-${ordinal}.up.railway.app`,
+      phase: "READY_UNBOUND",
+    });
+    f.store.ready(job.workerId, 1, `credential-${ordinal}`);
+  }
+  await f.update("/start");
+  await f.update("/settings");
+  const railwayButton = [...f.sql.exec<{ id: string; data: string }>("SELECT id,data FROM ui_callbacks")].find(
+    (row) => JSON.parse(row.data).action === "railway",
+  );
+  assert.ok(railwayButton);
+  await f.callback("ui:" + railwayButton.id);
+  const panel = f.sent.filter((entry) => entry.method === "editMessageText").at(-1)!;
+  assert.match(String(panel.payload.text), /Railway/);
+  assert.match(String(panel.payload.text), /Primary Railway/);
+  assert.match(String(panel.payload.text), /Fleet: <b>10\/10<\/b>/);
+  assert.match(String(panel.payload.text), /Available: <b>10<\/b>/);
+  const replace = [...f.sql.exec<{ id: string; data: string }>("SELECT id,data FROM ui_callbacks")].find(
+    (row) => JSON.parse(row.data).action === "railway_replace",
+  );
+  assert.ok(replace);
+  await f.callback("ui:" + replace.id);
+  const replacementPanel = f.sent.filter((entry) => entry.method === "editMessageText").at(-1)!;
+  assert.match(String(replacementPanel.payload.text), /Replace Railway Token/);
+  assert.match(String(replacementPanel.payload.text), /same account/);
+});
+
+test("Railway token replacement rejects another account without changing the stored credential", async (t) => {
+  const f = await fixture(t);
+  const { RailwayCredentialStore } = await import("../src/cloudflare/railway-credential-store.js");
+  const vault = new RailwayCredentialStore(f.sql, f.env.CREDENTIAL_MASTER_KEY);
+  await vault.save({ accountId: "account-1", accountName: "Primary Railway", token: "old-token" });
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?)",
+    "form:7:-100:0",
+    JSON.stringify({ kind: "railway_credential", generation: 0, expires: Date.now() + 60000, returnAction: "railway" }),
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("backboard.railway.com"))
+      return Response.json({ data: { me: { id: "account-2", name: "Other Railway" } } });
+    return originalFetch(input, init);
+  };
+  try {
+    await f.update("foreign-account-token");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const stored = await vault.read();
+  assert.equal(stored?.accountId, "account-1");
+  assert.equal(stored?.token, "old-token");
 });

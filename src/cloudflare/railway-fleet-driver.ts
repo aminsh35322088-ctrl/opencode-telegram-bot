@@ -3,7 +3,6 @@ import {
   type AllocationJob,
   type FleetProject,
   type FleetWorker,
-  type RailwayBackend,
 } from "./control-store.js";
 export type CleanupClassification = "owned" | "deleted_or_pending_purge" | "unrelated" | "ambiguous";
 export interface CleanupResource {
@@ -14,6 +13,7 @@ export interface CleanupResource {
 export interface ManagedCleanupResult { resources: CleanupResource[] }
 export interface FleetProvisioner {
   provision(jobId: string): Promise<AllocationJob>;
+  provisionFixed(jobId: string): Promise<AllocationJob>;
   destroy(workerId: string, generation: number): Promise<void>;
   reconcileManagedResources(workerIds: string[]): Promise<ManagedCleanupResult>;
   inspectDeployment(
@@ -99,44 +99,64 @@ export class RailwayFleetDriver implements FleetProvisioner {
     value.project.services.edges = value.project.services.edges.filter((s) => !s.node.deletedAt);
     return value as Inventory;
   }
-  async listProjects(
-    workspaceId: string,
-  ): Promise<{ projects: RailwayProject[]; hasNextPage: boolean }> {
-    const result = await this.request<{ workspace: { projects: Connection<RailwayProject> } }>(
-      "query FleetProjects($workspaceId:String!){workspace(workspaceId:$workspaceId){projects{edges{node{id name deletedAt environments{edges{node{id name}}}}} pageInfo{hasNextPage}}}}",
-      { workspaceId },
-    );
-    return {
-      projects: result.workspace.projects.edges.filter((p) => !p.node.deletedAt).map((p) => p.node),
-      hasNextPage: result.workspace.projects.pageInfo?.hasNextPage ?? false,
-    };
-  }
   private async resolveProject(
     project: FleetProject,
-    backend: RailwayBackend,
     recreateMissing: boolean,
   ): Promise<FleetProject> {
-    const result = await this.listProjects(backend.workspaceId);
-    if (result.hasNextPage) throw new Error("inventory_pagination_required");
-    const sameName = result.projects.filter((candidate) => candidate.name === project.projectKey);
-    if (sameName.length > 1) throw new Error("project_ownership_ambiguous");
     let actual: RailwayProject | undefined;
     if (project.projectId) {
-      actual = result.projects.find((candidate) => candidate.id === project.projectId);
+      const result = await this.request<{ project: RailwayProject | null }>(
+        "query FleetProject($id:String!){project(id:$id){id name deletedAt environments{edges{node{id name}}}}}",
+        { id: project.projectId },
+      );
+      actual = result.project && !result.project.deletedAt ? result.project : undefined;
       if (actual && actual.name !== project.projectKey) throw new Error("project_ownership_ambiguous");
-      if (!actual) {
-        if (!recreateMissing) throw new Error("railway_scope_missing");
-        if (sameName.length) throw new Error("project_ownership_ambiguous");
-      }
-    } else {
-      actual = sameName[0];
+      if (!actual && !recreateMissing) throw new Error("railway_scope_missing");
     }
-    actual ??= (
-      await this.request<{ projectCreate: RailwayProject }>(
-        "mutation FleetProjectCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name environments{edges{node{id name}}}}}",
-        { input: { name: project.projectKey, workspaceId: backend.workspaceId } },
-      )
-    ).projectCreate;
+    if (!actual) {
+      if (project.phase === "CREATING") throw new Error("project_creation_reconciliation_required");
+      project.phase = "CREATING";
+      this.store.saveProject(project);
+      actual = (
+        await this.request<{ projectCreate: RailwayProject }>(
+          "mutation FleetProjectCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name environments{edges{node{id name}}}}}",
+          { input: { name: project.projectKey } },
+        )
+      ).projectCreate;
+      if (actual.name !== project.projectKey) throw new Error("project_ownership_ambiguous");
+    }
+    const environment = actual.environments.edges.find((edge) => edge.node.name === "production")?.node;
+    if (!environment) throw new Error("production_environment_missing");
+    project.projectId = actual.id;
+    project.environmentId = environment.id;
+    project.phase = "READY";
+    this.store.saveProject(project);
+    return project;
+  }
+
+  private async resolveFixedProject(project: FleetProject, recreateMissing: boolean): Promise<FleetProject> {
+    let actual: RailwayProject | undefined;
+    if (project.projectId) {
+      const result = await this.request<{ project: RailwayProject | null }>(
+        "query FixedFleetProject($id:String!){project(id:$id){id name deletedAt environments{edges{node{id name}}}}}",
+        { id: project.projectId },
+      );
+      actual = result.project && !result.project.deletedAt ? result.project : undefined;
+      if (actual && actual.name !== project.projectKey) throw new Error("project_ownership_ambiguous");
+      if (!actual && !recreateMissing) throw new Error("railway_scope_missing");
+    }
+    if (!actual) {
+      if (project.phase === "CREATING") throw new Error("project_creation_reconciliation_required");
+      project.phase = "CREATING";
+      this.store.saveProject(project);
+      actual = (
+        await this.request<{ projectCreate: RailwayProject }>(
+          "mutation FixedFleetProjectCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name environments{edges{node{id name}}}}}",
+          { input: { name: project.projectKey } },
+        )
+      ).projectCreate;
+      if (actual.name !== project.projectKey) throw new Error("project_ownership_ambiguous");
+    }
     const environment = actual.environments.edges.find((edge) => edge.node.name === "production")?.node;
     if (!environment) throw new Error("production_environment_missing");
     project.projectId = actual.id;
@@ -148,14 +168,20 @@ export class RailwayFleetDriver implements FleetProvisioner {
 
   private async projectIdIsAbsent(worker: FleetWorker): Promise<boolean> {
     if (!worker.projectId) throw new Error("cleanup_reconciliation_required");
-    const backend = this.store.backends().find((candidate) => candidate.backendId === worker.backendId);
-    if (!backend) throw new Error("cleanup_reconciliation_required");
-    const result = await this.listProjects(backend.workspaceId);
-    if (result.hasNextPage) throw new Error("inventory_pagination_required");
-    return !result.projects.some((project) => project.id === worker.projectId);
+    const result = await this.request<{ project: { id: string; deletedAt?: string | null } | null }>(
+      "query FleetProjectPresence($id:String!){project(id:$id){id deletedAt}}",
+      { id: worker.projectId },
+    );
+    return !result.project || !!result.project.deletedAt;
   }
 
   async provision(jobId: string): Promise<AllocationJob> {
+    return this.provisionInternal(jobId, false);
+  }
+  async provisionFixed(jobId: string): Promise<AllocationJob> {
+    return this.provisionInternal(jobId, true);
+  }
+  private async provisionInternal(jobId: string, fixed: boolean): Promise<AllocationJob> {
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
     if (job.desiredImage && job.desiredImage !== this.options.image)
@@ -166,9 +192,14 @@ export class RailwayFleetDriver implements FleetProvisioner {
     if (!worker || worker.generation !== job.generation) throw new Error("stale_generation");
     const backend = this.store.backends().find((b) => b.backendId === job!.backendId);
     if (!backend?.enabled) throw new Error("backend_unavailable");
-    let project = this.store.selectProject(jobId);
+    let project = fixed
+      ? this.store.projects().find((candidate) => candidate.projectKey === job!.projectKey && candidate.backendId === job!.backendId)
+      : this.store.selectProject(jobId);
+    if (!project) throw new Error("fixed_fleet_project_missing");
     if (!project.projectId || !project.environmentId)
-      project = await this.resolveProject(project, backend, false);
+      project = fixed
+        ? await this.resolveFixedProject(project, false)
+        : await this.resolveProject(project, false);
     job = this.store.configureJob(jobId, {
       projectId: project.projectId,
       environmentId: project.environmentId,
@@ -180,14 +211,16 @@ export class RailwayFleetDriver implements FleetProvisioner {
       if (!(error instanceof Error) || error.message !== "railway_scope_missing") throw error;
       if (job.serviceId || job.volumeId || job.endpoint)
         throw new Error("cleanup_reconciliation_required");
-      project = await this.resolveProject(project, backend, true);
+      project = fixed
+        ? await this.resolveFixedProject(project, true)
+        : await this.resolveProject(project, true);
       job = this.store.configureJob(jobId, {
         projectId: project.projectId,
         environmentId: project.environmentId,
       });
       inventory = await this.inventory(job);
     }
-    const name = "topic-node-" + job.workerId;
+    const name = fixed ? job.workerId : "topic-node-" + job.workerId;
     const matches = inventory.project.services.edges.filter((s) => s.node.name === name);
     if (matches.length > 1 || (job.serviceId && !matches.some((s) => s.node.id === job!.serviceId)))
       throw new Error("service_ownership_ambiguous");
@@ -233,6 +266,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
               environmentId: job.environmentId,
               serviceId: job.serviceId,
               mountPath: "/data",
+              ...(fixed ? { name: job.workerId + "-data" } : {}),
             },
           },
         );

@@ -9,12 +9,9 @@ export interface ControlEnvironment {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_ALLOWED_USER_IDS?: string;
   TELEGRAM_ALLOWED_USER_ID?: string;
-  RAILWAY_API_TOKEN: string;
-  RAILWAY_WORKSPACE_ID: string;
   MAX_WORKERS: string;
   WORKERS_PER_PROJECT: string;
   MAX_RAILWAY_PROJECTS: string;
-  PROVISION_ON_TOPIC_CREATE: string;
   ADMIN_TOKEN: string;
   CREDENTIAL_MASTER_KEY: string;
   PROVISIONING_ENABLED?: string;
@@ -34,7 +31,6 @@ export default {
         role: "control-plane",
         protocol: "revision-fenced-v1",
         execution: false,
-        railwayCredentialPresent: Boolean(env.RAILWAY_API_TOKEN),
         telegramCredentialPresent: Boolean(env.TELEGRAM_BOT_TOKEN),
         provisioningEnabled: env.PROVISIONING_ENABLED === "true",
       });

@@ -19,8 +19,7 @@ function fixture() {
   });
   store.putBackend({
     backendId: "a",
-    workspaceId: "workspace",
-    credential: "encrypted",
+    accountId: "account",
     desiredMaximumWorkers: 10,
     maxWorkersPerProject: 5,
     region: "europe-west4",
@@ -47,10 +46,12 @@ function fixture() {
     quota = false,
     projectSerial = 0;
   const serviceCreateInputs: Record<string, unknown>[] = [];
+  const queries: string[] = [];
   const volumeCreateInputs: Record<string, unknown>[] = [];
   let rejectMutation = "";
   const mutations: string[] = [];
   const request = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
+    queries.push(query);
     if (rejectMutation && query.includes(rejectMutation))
       return {
         serviceInstanceLimitsUpdate: false,
@@ -191,6 +192,7 @@ function fixture() {
     services,
     volumes,
     mutations,
+    queries,
     serviceCreateInputs,
     volumeCreateInputs,
     loseProject: () => {
@@ -347,14 +349,15 @@ test("cleanup treats a Railway project proven absent from the workspace as alrea
   assert.equal(f.store.worker(job.workerId)!.state, "REPLACED");
 });
 
-test("lost project create response reconciles deterministic workspace project without duplication", async () => {
+test("ambiguous project creation fails closed without inspecting or duplicating account projects", async () => {
   const f = fixture();
   const job = f.store.reserveAllocation("lost", -100);
   f.loseProject();
   await assert.rejects(f.driver.provision(job.jobId), /transport_error/);
-  await f.driver.provision(job.jobId);
+  await assert.rejects(f.driver.provision(job.jobId), /project_creation_reconciliation_required/);
   assert.equal(f.projects.length, 1);
-  assert.equal(f.services.length, 1);
+  assert.equal(f.services.length, 0);
+  assert.equal(f.queries.some((query) => query.includes("FleetProjects")), false);
 });
 test("quota failure is explicit and never activates a Topic or shared/local runtime", async () => {
   const f = fixture();
@@ -691,4 +694,56 @@ test("managed cleanup reconciliation preserves unrelated resources in a shared p
   assert.equal(f.volumes.length, 1);
   assert.equal(f.volumes[0]!.id, secondWorker.volumeId);
   assert.ok(result.resources.some((resource) => resource.classification === "unrelated"));
+});
+
+
+test("fixed fleet provisioning creates its dedicated project directly without workspace discovery", async () => {
+  const f = fixture();
+  const job = f.store.ensureFixedFleet("a", 10, 5)[0]!;
+  await f.driver.provisionFixed(job.jobId);
+  assert.equal(f.projects[0]?.name, "opencode-telegram-01");
+  assert.equal(f.serviceCreateInputs[0]?.name, "worker-01");
+  assert.equal(f.volumeCreateInputs[0]?.name, "worker-01-data");
+  assert.equal(f.queries.some((query) => query.includes("FleetProjects")), false);
+  const create = f.queries.find((query) => query.includes("FixedFleetProjectCreate"));
+  assert.ok(create);
+});
+
+test("fixed Worker bind and recycle redeploy the same Service and Volume across unbound/bound generations", async () => {
+  const f = fixture();
+  const generations: number[] = [];
+  const driver = new RailwayFleetDriver(f.store, f.request, {
+    image: "ghcr.io/example/worker@sha256:" + "b".repeat(64),
+    controlUrl: "https://control.example",
+    bootstrap: async (job) => {
+      generations.push(job.generation);
+      return "bootstrap-" + job.generation;
+    },
+  });
+  const bootstrap = f.store.ensureFixedFleet("a", 10, 5)[0]!;
+  const first = await driver.provisionFixed(bootstrap.jobId);
+  const serviceId = first.serviceId!;
+  const volumeId = first.volumeId!;
+  f.store.ready(first.workerId, 1, "unbound-secret");
+  f.store.configureJob(first.jobId, { phase: "READY_UNBOUND" });
+
+  const chat = f.store.reservePreparedAllocation("fixed-chat", -100);
+  f.store.markSessionProbed(chat.jobId);
+  const boundGeneration = f.store.rotateAllocationToTopic(chat.jobId, 42);
+  assert.equal(boundGeneration.generation, 2);
+  const rebound = await driver.provisionFixed(chat.jobId);
+  assert.equal(rebound.serviceId, serviceId);
+  assert.equal(rebound.volumeId, volumeId);
+  f.store.ready(chat.workerId, 2, "bound-secret");
+  f.store.bindTopic(chat.jobId, 42, "session");
+
+  const fenced = f.store.fenceTopic(-100, 42);
+  const recycle = f.store.prepareWorkerReuse(fenced.workerId, fenced.generation);
+  assert.equal(recycle.generation, 3);
+  const recycled = await driver.provisionFixed(recycle.jobId);
+  assert.equal(recycled.serviceId, serviceId);
+  assert.equal(recycled.volumeId, volumeId);
+  assert.equal(f.services.length, 1);
+  assert.equal(f.volumes.length, 1);
+  assert.deepEqual(generations, [1, 2, 3]);
 });

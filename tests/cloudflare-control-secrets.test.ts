@@ -44,15 +44,15 @@ test("legacy credentials survive removal of extra Cloudflare secret bindings", a
     "node-owned-key",
   );
 });
-test("single-token rotation rewraps without changing internal identities", async () => {
+test("changing the sole Telegram root fails closed instead of regenerating control identity", async () => {
   const f = fixture();
-  const original = await resolveControlSecrets(f.sql, f.env);
-  const rotated = { ...f.env, RAILWAY_API_TOKEN: "new-synthetic-railway" };
-  assert.deepEqual(await resolveControlSecrets(f.sql, rotated), original);
-  assert.deepEqual(
-    await resolveControlSecrets(f.sql, { ...rotated, TELEGRAM_BOT_TOKEN: "new-synthetic-bot" }),
-    original,
+  await resolveControlSecrets(f.sql, f.env);
+  const before = f.db.prepare("SELECT data FROM control_secrets").get();
+  await assert.rejects(
+    resolveControlSecrets(f.sql, { TELEGRAM_BOT_TOKEN: "new-synthetic-bot" }),
+    /control_secrets_unavailable/,
   );
+  assert.deepEqual(f.db.prepare("SELECT data FROM control_secrets").get(), before);
 });
 test("simultaneous token replacement and corrupted state fail closed without regeneration", async () => {
   const f = fixture();
@@ -145,22 +145,13 @@ test("canonical Control Plane migrates legacy secrets then authenticates with on
     await ingress.fetch(new Request("https://public/health"), env as never)
   ).json();
   assert.equal(health.provisioningEnabled, true);
-  assert.equal(health.railwayCredentialPresent, true);
-  assert.equal(
-    (
-      await restarted.fetch(
-        new Request("https://internal/admin/setup", { method: "POST", body: "{}" }),
-      )
-    ).status,
-    200,
+  assert.equal("railwayCredentialPresent" in health, false);
+  const setupWithoutUserRailwayCredential = await restarted.fetch(
+    new Request("https://internal/admin/setup", { method: "POST", body: "{}" }),
   );
-  const backend = JSON.parse(
-    (f.db.prepare("SELECT data FROM backends").get() as { data: string }).data,
-  );
-  assert.equal(backend.desiredMaximumWorkers, 10);
-  assert.equal(backend.maxWorkersPerProject, 5);
-  assert.equal(backend.maxProjects, 2);
-  assert.equal(backend.workspaceId, "df47876f-4c37-4a4d-89c7-407ec111227d");
+  assert.equal(setupWithoutUserRailwayCredential.status, 409);
+  assert.match(await setupWithoutUserRailwayCredential.text(), /railway_backend_not_configured/);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM backends").get().n, 0);
 });
 
 test("missing internal identity never authenticates a literal undefined administrative token", async () => {
@@ -179,4 +170,62 @@ test("missing internal identity never authenticates a literal undefined administ
     }),
   );
   assert.deepEqual(await response.json(), { authorized: false });
+});
+
+test("control secrets initialize and recover with Telegram as the only root binding", async () => {
+  const f = fixture();
+  const telegramOnly = { TELEGRAM_BOT_TOKEN: f.env.TELEGRAM_BOT_TOKEN };
+  const first = await resolveControlSecrets(f.sql, telegramOnly);
+  const second = await resolveControlSecrets(f.sql, telegramOnly);
+  assert.deepEqual(second, first);
+  const stored = JSON.parse((f.db.prepare("SELECT data FROM control_secrets").get() as { data: string }).data) as {
+    version: number;
+    telegram?: string;
+    railway?: string;
+  };
+  assert.equal(stored.version, 2);
+  assert.equal(typeof stored.telegram, "string");
+  assert.equal(stored.railway, undefined);
+});
+
+test("legacy dual-envelope control secrets migrate through the Telegram envelope without Railway binding", async () => {
+  const f = fixture();
+  const legacy = await resolveControlSecrets(f.sql, f.env);
+  const migrated = await resolveControlSecrets(f.sql, { TELEGRAM_BOT_TOKEN: f.env.TELEGRAM_BOT_TOKEN });
+  assert.deepEqual(migrated, legacy);
+  const stored = JSON.parse((f.db.prepare("SELECT data FROM control_secrets").get() as { data: string }).data) as {
+    version: number;
+    railway?: string;
+  };
+  assert.equal(stored.version, 2);
+  assert.equal(stored.railway, undefined);
+});
+
+test("public and admin Control Plane contracts do not advertise a Railway Cloudflare binding", async () => {
+  const { ControlPlane } = await import("../src/cloudflare/control-object.js");
+  const { default: ingress } = await import("../src/cloudflare/worker.js");
+  const health = (await (
+    await ingress.fetch(
+      new Request("https://public/health"),
+      { TELEGRAM_BOT_TOKEN: "synthetic-bot", PROVISIONING_ENABLED: "true" } as never,
+    )
+  ).json()) as Record<string, unknown>;
+  assert.equal("railwayCredentialPresent" in health, false);
+
+  const f = fixture();
+  const plane = new ControlPlane(
+    {
+      storage: { sql: f.sql, transactionSync: <T>(action: () => T) => action(), setAlarm: async () => {} },
+    } as never,
+    {
+      TELEGRAM_BOT_TOKEN: f.env.TELEGRAM_BOT_TOKEN,
+      CREDENTIAL_MASTER_KEY: btoa("q".repeat(32)),
+      ADMIN_TOKEN: "synthetic-admin",
+      TELEGRAM_WEBHOOK_SECRET: "synthetic-webhook",
+    } as never,
+  );
+  const contract = (await (
+    await plane.fetch(new Request("https://internal/admin/control-secrets"))
+  ).json()) as { userSecrets: string[] };
+  assert.deepEqual(contract.userSecrets, ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]);
 });

@@ -11,6 +11,7 @@ import { t } from "../i18n/index.js";
 import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 import { CloudTaskUi, taskDraftKey } from "./task-ui.js";
 import type { ProtectedTelegramUpdate } from "./credential-vault.js";
+import type { ProtectedRailwayTelegramUpdate } from "./railway-credential-store.js";
 import { integrationFailureNotice } from "./integration-errors.js";
 import { CloudConfigUi, resetGlobalConfiguration, OUTPUT_DEFAULTS } from "./config-ui.js";
 import type { AllocationJob, ControlStore, FleetTopic, SqlDatabase } from "./control-store.js";
@@ -170,6 +171,18 @@ interface UiOptions {
   title?: string;
   titleSource?: "auto" | "manual";
 }
+
+export interface RailwaySetupStatus {
+  configured: boolean;
+  ready: boolean;
+  accountName?: string;
+  projectsCreated: number;
+  workersCreated: number;
+  volumesAttached: number;
+  workersReady: number;
+  totalWorkers: number;
+  failed: number;
+}
 interface UiDependencies {
   allowedUserId?: string;
   sql: SqlDatabase;
@@ -193,6 +206,11 @@ interface UiDependencies {
   saveCredential?: (
     update: ProtectedTelegramUpdate,
     providerId: string,
+    generation: number,
+  ) => Promise<void>;
+  railwayStatus?: () => RailwaySetupStatus | Promise<RailwaySetupStatus>;
+  saveRailwayCredential?: (
+    update: ProtectedRailwayTelegramUpdate,
     generation: number,
   ) => Promise<void>;
   questionDecision?: (
@@ -294,6 +312,7 @@ const navigation = new Set([
   "providers",
   "github",
   "tailscale",
+  "railway",
   "extensions",
   "actions",
   "skills",
@@ -1536,6 +1555,60 @@ export class CloudBotUi {
       ),
     );
   }
+  private async railwayOnboardingPanel(actor: number, chat: number): Promise<void> {
+    const status = this.deps.railwayStatus ? await this.deps.railwayStatus() : { configured: true, ready: true, projectsCreated: 2, workersCreated: 10, volumesAttached: 10, workersReady: 10, totalWorkers: 10, failed: 0 };
+    if (!status.configured) {
+      this.set(`form:${actor}:${chat}:0`, {
+        kind: "railway_credential",
+        generation: 0,
+        expires: Date.now() + 15 * 60_000,
+      });
+      await this.menu(
+        chat,
+        undefined,
+        "🚂 <b>Railway Setup</b>\n\nSend your Railway <b>Account API Token</b>.\n\nThe token is encrypted before storage and is used only by the Control Plane to manage the dedicated Worker fleet.",
+        [],
+      );
+      return;
+    }
+    this.set(`form:${actor}:${chat}:0`, {});
+    if (!status.ready) {
+      const mark = (done: boolean, active: boolean, label: string) => `${done ? "✅" : active ? "⏳" : "○"} ${label}`;
+      const projectsDone = status.projectsCreated >= 2;
+      const workersDone = status.workersCreated >= status.totalWorkers;
+      const volumesDone = status.volumesAttached >= status.totalWorkers;
+      const readyDone = status.workersReady >= status.totalWorkers;
+      await this.menu(
+        chat,
+        undefined,
+        "🚂 <b>Setting up Railway</b>\n\n" +
+          "✅ Token authenticated\n" +
+          "✅ Account verified" + (status.accountName ? ` · ${escape(status.accountName)}` : "") + "\n" +
+          mark(projectsDone, !projectsDone, `Projects created ${status.projectsCreated}/2`) + "\n" +
+          mark(workersDone, projectsDone && !workersDone, `Workers created ${status.workersCreated}/${status.totalWorkers}`) + "\n" +
+          mark(volumesDone, workersDone && !volumesDone, `Volumes attached ${status.volumesAttached}/${status.totalWorkers}`) + "\n" +
+          mark(readyDone, volumesDone && !readyDone, `Deploy & health checks ${status.workersReady}/${status.totalWorkers}`) +
+          (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : ""),
+        [],
+      );
+      return;
+    }
+    await this.menu(
+      chat,
+      undefined,
+      "👋 <b>Welcome to OpenCode Telegram</b>\n\n" +
+        "✅ <b>Railway Ready</b>\n\n" +
+        "✅ 2 Projects created\n" +
+        `✅ ${status.totalWorkers} Workers ready\n` +
+        `✅ ${status.totalWorkers} Volumes attached\n` +
+        "✅ Runtime verified\n\nYour OpenCode environment is ready to use.",
+      [[this.button(actor, chat, 0, undefined, "Continue", "railway_continue")]],
+    );
+  }
+  async railwayOnboarding(actor: number, chat: number): Promise<void> {
+    if (this.panelScope?.thread) return;
+    await this.railwayOnboardingPanel(actor, chat);
+  }
   private async home(chat: number, actor: number, replace: boolean): Promise<void> {
     if (this.panelScope?.thread) return this.forPanel(actor, chat, 0, 0).home(chat, actor, replace);
     if (replace)
@@ -1570,6 +1643,31 @@ export class CloudBotUi {
         });
     }
   }
+  private async railwaySettings(actor: number, chat: number): Promise<void> {
+    const status = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
+    const workers = this.deps.store.workers().filter((worker) => worker.backendId === "railway");
+    const bound = workers.filter((worker) => ["BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(worker.state) && !!worker.chatId).length;
+    const available = workers.filter((worker) => worker.state === "READY_UNBOUND").length;
+    const unavailable = workers.length - bound - available;
+    const text =
+      "🚂 <b>Railway</b>\n\n" +
+      (status?.configured ? "🟢 <b>Connected</b>" : "🔴 <b>Not connected</b>") +
+      (status?.accountName ? `\nAccount: <b>${escape(status.accountName)}</b>` : "") +
+      `\nFleet: <b>${workers.length}/10</b>` +
+      `\nAvailable: <b>${available}</b>` +
+      `\nBound: <b>${bound}</b>` +
+      `\nUnavailable: <b>${Math.max(0, unavailable)}</b>`;
+    const rows: Button[][] = [
+      [this.button(actor, chat, 0, undefined, "🔑 Replace Token", "railway_replace")],
+      [this.button(actor, chat, 0, undefined, "🔄 Refresh Status", "railway_refresh")],
+    ];
+    await this.menu(
+      chat,
+      undefined,
+      text,
+      this.withNavigation(actor, chat, 0, undefined, rows, { back: { action: "settings" }, close: true }),
+    );
+  }
   private async settings(
     actor: number,
     chat: number,
@@ -1578,6 +1676,7 @@ export class CloudBotUi {
   ): Promise<void> {
     const view = buildCanonicalSettingsMenuView(topic ? this.topicSettingsState(topic) : undefined);
     const rows = this.settingsButtonRows(actor, chat, thread, topic, view.keyboard);
+    if (!topic) rows.push([this.button(actor, chat, 0, undefined, "🚂 Railway", "railway")]);
     await this.menu(
       chat,
       topic ? thread : undefined,
@@ -1686,7 +1785,9 @@ export class CloudBotUi {
     let formAdmitted = false;
     let admittedForm: Record<string, unknown> | undefined;
     const protectedInput = (update as ProtectedTelegramUpdate).credentialInput;
-    if (protectedInput) action = { action: "credential_save", value: protectedInput.providerId };
+    const protectedRailwayInput = (update as ProtectedRailwayTelegramUpdate).railwayCredentialInput;
+    if (protectedRailwayInput) action = { action: "railway_credential_save" };
+    else if (protectedInput) action = { action: "credential_save", value: protectedInput.providerId };
     if (update.callback_query && !saved) {
       try {
         await this.deps.telegram.call("answerCallbackQuery", {
@@ -1766,7 +1867,7 @@ export class CloudBotUi {
         await this.settings(actor, chat, thread, topic);
         return true;
       }
-    } else if (!saved && !protectedInput) {
+    } else if (!saved && !protectedInput && !protectedRailwayInput) {
       const label = normalized(text);
       const topicModel = topic ? this.model(topic) : "";
       const topicModelSplit = topicModel.indexOf("/");
@@ -1973,6 +2074,20 @@ export class CloudBotUi {
       );
       return true;
     }
+    if (name === "railway_credential_save") {
+      if (!protectedRailwayInput || !this.deps.saveRailwayCredential || thread) return true;
+      const railwayForm = this.get<{ returnAction?: string }>(`form:${actor}:${chat}:0`);
+      if (update.message?.message_id)
+        await this.deps.telegram
+          .call("deleteMessage", { chat_id: chat, message_id: update.message.message_id })
+          .catch(() => undefined);
+      await this.deps.saveRailwayCredential(update as ProtectedRailwayTelegramUpdate, 0);
+      this.set(`form:${actor}:${chat}:0`, {});
+      this.set("action_done:" + updateId, true);
+      if (railwayForm?.returnAction === "railway") await this.railwaySettings(actor, chat);
+      else await this.railwayOnboardingPanel(actor, chat);
+      return true;
+    }
     if (name === "credential_save") {
       if (!protectedInput || !this.deps.saveCredential) throw new Error("invalid_credential_input");
       if (protectedInput.providerId.startsWith("integration.") && thread)
@@ -2064,8 +2179,20 @@ export class CloudBotUi {
           });
           this.set(resetKey, { retired: true });
         }
-        await this.home(chat, actor, true);
+        const railway = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
+        if (railway && !railway.ready) await this.railwayOnboardingPanel(actor, chat);
+        else await this.home(chat, actor, true);
       }
+      return true;
+    }
+    if (name === "railway_continue") {
+      const railway = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
+      if (!railway?.ready) {
+        await this.railwayOnboardingPanel(actor, chat);
+        return true;
+      }
+      this.set("action_done:" + updateId, true);
+      await this.home(chat, actor, true);
       return true;
     }
     if (name === "home") {
@@ -2087,6 +2214,7 @@ export class CloudBotUi {
         .filter(
           (j) =>
             j.chatId === chat &&
+            !/^worker-\d{2}$/u.test(j.workerId) &&
             this.deps.store.worker(j.workerId)?.state !== "REPLACED" &&
             (j.error || ["FAILED", "CLEANUP_PENDING", "RECONCILIATION_REQUIRED"].includes(j.phase)),
         )
@@ -2153,6 +2281,27 @@ export class CloudBotUi {
         if (this.deps.waitUntil) this.deps.waitUntil(pending);
         else void pending;
       }
+      return true;
+    }
+    if (name === "railway" || name === "railway_refresh") {
+      if (thread) return true;
+      await this.railwaySettings(actor, chat);
+      return true;
+    }
+    if (name === "railway_replace") {
+      if (thread) return true;
+      this.set(`form:${actor}:${chat}:0`, {
+        kind: "railway_credential",
+        generation: 0,
+        expires: Date.now() + 15 * 60_000,
+        returnAction: "railway",
+      });
+      await this.menu(
+        chat,
+        undefined,
+        "🚂 <b>Replace Railway Token</b>\n\nSend a new Railway Account API Token for the <b>same account</b>.\n\nA token from another Railway account will be rejected and the existing fleet will remain unchanged.",
+        [[this.button(actor, chat, 0, undefined, "✕ Cancel", "cancel")]],
+      );
       return true;
     }
     if (name === "history" || name === "sessions") {

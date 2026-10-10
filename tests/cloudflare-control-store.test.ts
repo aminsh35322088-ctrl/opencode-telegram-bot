@@ -35,8 +35,7 @@ function fixture() {
 function backend(store: ControlStore, id = "a", maximum = 10, perProject = 5) {
   store.putBackend({
     backendId: id,
-    workspaceId: "workspace-" + id,
-    credential: "encrypted-reference",
+    accountId: "account-" + id,
     region: "europe-west4",
     desiredMaximumWorkers: maximum,
     maxWorkersPerProject: perProject,
@@ -752,4 +751,78 @@ test("Topic fencing cancels only compact active/queued ids without scanning run 
     [...f.sql.exec("SELECT request FROM runs WHERE state IN ('ACTIVE','QUEUED')")].length,
     0,
   );
+});
+
+test("fixed fleet seeds exactly two owned projects and ten deterministic reusable Worker slots", () => {
+  const f = fixture();
+  backend(f.store, "railway", 10, 5);
+  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  assert.equal(jobs.length, 10);
+  assert.deepEqual(
+    f.store.projects().map((project) => project.projectKey),
+    ["opencode-telegram-01", "opencode-telegram-02"],
+  );
+  assert.deepEqual(
+    f.store.workers().map((worker) => worker.workerId),
+    Array.from({ length: 10 }, (_, index) => `worker-${String(index + 1).padStart(2, "0")}`),
+  );
+  assert.deepEqual(f.store.projects().map((project) => project.reservedWorkers), [5, 5]);
+  assert.equal(f.store.ensureFixedFleet("railway", 10, 5).length, 10);
+  assert.equal(f.store.workers().length, 10);
+});
+
+test("New Chat reserves only a preprovisioned READY_UNBOUND fixed slot and never creates capacity", () => {
+  const f = fixture();
+  backend(f.store, "railway", 10, 5);
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(bootstrap.jobId, {
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    volumeId: "volume-1",
+    endpoint: "https://worker-01.up.railway.app",
+  });
+  f.store.ready("worker-01", 1, "encrypted-node-credential");
+  const before = f.store.workers().length;
+  const job = f.store.reservePreparedAllocation("new-chat-1", -100);
+  assert.equal(job.workerId, "worker-01");
+  assert.equal(job.serviceId, "service-1");
+  assert.equal(job.volumeId, "volume-1");
+  assert.equal(f.store.worker("worker-01")?.state, "BINDING");
+  assert.equal(f.store.workers().length, before);
+  assert.equal(f.store.reservePreparedAllocation("new-chat-1", -100).jobId, job.jobId);
+  assert.throws(() => f.store.reservePreparedAllocation("new-chat-2", -100), /capacity_exhausted/);
+});
+
+test("fixed Worker recycle preserves Railway ownership and rotates a fenced bound slot back toward unbound", () => {
+  const f = fixture();
+  backend(f.store, "railway", 10, 5);
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(bootstrap.jobId, {
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    volumeId: "volume-1",
+    endpoint: "https://worker-01.up.railway.app",
+  });
+  f.store.ready("worker-01", 1, "unbound-credential");
+  const job = f.store.reservePreparedAllocation("chat", -100);
+  f.store.markSessionProbed(job.jobId);
+  const rotated = f.store.rotateAllocationToTopic(job.jobId, 42);
+  f.store.ready("worker-01", rotated.generation, "bound-credential");
+  f.store.bindTopic(job.jobId, 42, "session");
+  const fenced = f.store.fenceTopic(-100, 42);
+  const recycle = f.store.prepareWorkerReuse(fenced.workerId, fenced.generation);
+  const worker = f.store.worker("worker-01")!;
+  assert.equal(worker.generation, 3);
+  assert.equal(worker.state, "RECOVERING");
+  assert.equal(worker.chatId, undefined);
+  assert.equal(worker.threadId, undefined);
+  assert.equal(worker.credential, undefined);
+  assert.equal(worker.projectId, "project-1");
+  assert.equal(worker.serviceId, "service-1");
+  assert.equal(worker.volumeId, "volume-1");
+  assert.equal(recycle.chatId, 0);
+  assert.equal(recycle.serviceId, "service-1");
+  assert.equal(f.store.topics().some((topic) => topic.workerId === "worker-01"), false);
 });

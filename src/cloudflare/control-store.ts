@@ -16,8 +16,7 @@ export type WorkerState =
   | "DELETING";
 export interface RailwayBackend {
   backendId: string;
-  workspaceId: string;
-  credential: string;
+  accountId: string;
   region: string;
   desiredMaximumWorkers: number;
   maxWorkersPerProject: number;
@@ -691,8 +690,7 @@ export class ControlStore {
   putBackend(backend: RailwayBackend): void {
     if (
       !/^[a-zA-Z0-9_-]{1,48}$/.test(backend.backendId) ||
-      !backend.workspaceId ||
-      !backend.credential ||
+      !backend.accountId ||
       !Number.isSafeInteger(backend.desiredMaximumWorkers) ||
       backend.desiredMaximumWorkers < 0 ||
       !Number.isSafeInteger(backend.maxWorkersPerProject) ||
@@ -721,6 +719,133 @@ export class ControlStore {
       job.chatId,
       JSON.stringify(job),
     );
+  }
+  ensureFixedFleet(backendId: string, totalWorkers = 10, workersPerProject = 5): AllocationJob[] {
+    return this.transaction(() => {
+      const backend = this.backends().find((candidate) => candidate.backendId === backendId);
+      if (
+        !backend ||
+        !backend.enabled ||
+        !Number.isSafeInteger(totalWorkers) ||
+        totalWorkers < 1 ||
+        totalWorkers !== backend.desiredMaximumWorkers ||
+        !Number.isSafeInteger(workersPerProject) ||
+        workersPerProject < 1 ||
+        workersPerProject !== backend.maxWorkersPerProject ||
+        totalWorkers % workersPerProject !== 0
+      )
+        throw new Error("invalid_fixed_fleet_policy");
+      const projectCount = totalWorkers / workersPerProject;
+      if ((backend.maxProjects ?? projectCount) !== projectCount)
+        throw new Error("invalid_fixed_fleet_policy");
+      for (let ordinal = 1; ordinal <= projectCount; ordinal++) {
+        const projectKey = `opencode-telegram-${String(ordinal).padStart(2, "0")}`;
+        const existing = this.one<FleetProject>("projects", projectKey);
+        if (existing) {
+          if (existing.backendId !== backendId || existing.ordinal !== ordinal)
+            throw new Error("fixed_fleet_project_conflict");
+        } else {
+          this.saveProject({
+            projectKey,
+            backendId,
+            ordinal,
+            reservedWorkers: workersPerProject,
+            phase: "RESERVED",
+          });
+        }
+      }
+      const jobs: AllocationJob[] = [];
+      for (let slot = 1; slot <= totalWorkers; slot++) {
+        const workerId = `worker-${String(slot).padStart(2, "0")}`;
+        const ordinal = Math.floor((slot - 1) / workersPerProject) + 1;
+        const projectKey = `opencode-telegram-${String(ordinal).padStart(2, "0")}`;
+        let worker = this.worker(workerId);
+        if (!worker) {
+          worker = {
+            workerId,
+            backendId,
+            generation: 1,
+            state: "PROVISIONING",
+            projectKey,
+            revision: 0,
+          };
+          this.saveWorker(worker);
+        } else if (worker.backendId !== backendId || worker.projectKey !== projectKey) {
+          throw new Error("fixed_fleet_worker_conflict");
+        }
+        const requestId = `fleet-bootstrap:${workerId}`;
+        const existingJob = this.jobs().find((candidate) => candidate.requestId === requestId);
+        if (existingJob) {
+          if (existingJob.workerId !== workerId || existingJob.generation !== worker.generation)
+            throw new Error("fixed_fleet_job_conflict");
+          jobs.push(existingJob);
+          continue;
+        }
+        const job: AllocationJob = {
+          jobId: crypto.randomUUID(),
+          requestId,
+          createdAt: Date.now(),
+          chatId: 0,
+          workerId,
+          backendId,
+          generation: worker.generation,
+          phase: "RESERVED",
+          projectKey,
+          projectId: worker.projectId,
+          environmentId: worker.environmentId,
+          serviceId: worker.serviceId,
+          volumeId: worker.volumeId,
+          endpoint: worker.endpoint,
+        };
+        this.saveJob(job);
+        jobs.push(job);
+      }
+      return jobs;
+    });
+  }
+  reservePreparedAllocation(requestId: string, chatId: number): AllocationJob {
+    return this.transaction(() => {
+      if (!requestId || requestId.length > 128 || !Number.isSafeInteger(chatId) || chatId === 0)
+        throw new Error("invalid_request");
+      const duplicate = this.jobs().find((candidate) => candidate.requestId === requestId);
+      if (duplicate) return duplicate;
+      const worker = this.workers()
+        .filter(
+          (candidate) =>
+            candidate.state === "READY_UNBOUND" &&
+            !!candidate.projectId &&
+            !!candidate.environmentId &&
+            !!candidate.serviceId &&
+            !!candidate.volumeId &&
+            !!candidate.endpoint &&
+            !!candidate.credential &&
+            this.backends().some(
+              (backend) => backend.backendId === candidate.backendId && backend.enabled,
+            ),
+        )
+        .sort((a, b) => a.workerId.localeCompare(b.workerId))[0];
+      if (!worker) throw new Error("capacity_exhausted");
+      worker.state = "BINDING";
+      this.saveWorker(worker);
+      const job: AllocationJob = {
+        jobId: crypto.randomUUID(),
+        requestId,
+        createdAt: Date.now(),
+        chatId,
+        workerId: worker.workerId,
+        backendId: worker.backendId,
+        generation: worker.generation,
+        phase: "RESERVED",
+        projectKey: worker.projectKey,
+        projectId: worker.projectId,
+        environmentId: worker.environmentId,
+        serviceId: worker.serviceId,
+        volumeId: worker.volumeId,
+        endpoint: worker.endpoint,
+      };
+      this.saveJob(job);
+      return job;
+    });
   }
   reserveTopicAllocation(requestId: string, chatId: number, threadId: number): AllocationJob {
     return this.reserveAllocation(requestId, chatId, threadId);
@@ -985,7 +1110,7 @@ export class ControlStore {
         job.threadId !== undefined ||
         !worker ||
         worker.generation !== job.generation ||
-        worker.state !== "READY_UNBOUND" ||
+        !["READY_UNBOUND", "BINDING"].includes(worker.state) ||
         !worker.credential
       )
         throw new Error("session_probe_state_mismatch");
@@ -1009,7 +1134,7 @@ export class ControlStore {
       if (
         !worker ||
         worker.generation !== job.generation ||
-        worker.state !== "READY_UNBOUND" ||
+        !["READY_UNBOUND", "BINDING"].includes(worker.state) ||
         !worker.credential
       )
         throw new Error("stale_generation");
@@ -1147,6 +1272,56 @@ export class ControlStore {
         this.saveWorker(worker);
       }
       return worker;
+    });
+  }
+  prepareWorkerReuse(workerId: string, generation: number): AllocationJob {
+    return this.transaction(() => {
+      const worker = this.worker(workerId);
+      if (
+        !worker ||
+        worker.generation !== generation ||
+        worker.state !== "FENCING" ||
+        !worker.projectKey ||
+        !worker.projectId ||
+        !worker.environmentId ||
+        !worker.serviceId ||
+        !worker.volumeId ||
+        !worker.endpoint
+      )
+        throw new Error("recycle_not_confirmed");
+      const topic = this.topics().find((candidate) => candidate.workerId === workerId);
+      if (!topic || topic.state !== "FENCED" || topic.generation !== generation)
+        throw new Error("recycle_not_confirmed");
+      const requestId = `fleet-recycle:${workerId}:${generation}`;
+      const existing = this.jobs().find((candidate) => candidate.requestId === requestId);
+      if (existing) return existing;
+      this.sql.exec("DELETE FROM topics WHERE worker=?", workerId);
+      worker.state = "RECOVERING";
+      worker.chatId = undefined;
+      worker.threadId = undefined;
+      worker.credential = undefined;
+      worker.runtimeCommit = undefined;
+      worker.runtimeVersion = undefined;
+      worker.lastHealthAt = undefined;
+      this.saveWorker(worker);
+      const job: AllocationJob = {
+        jobId: crypto.randomUUID(),
+        requestId,
+        createdAt: Date.now(),
+        chatId: 0,
+        workerId,
+        backendId: worker.backendId,
+        generation,
+        phase: "RESERVED",
+        projectKey: worker.projectKey,
+        projectId: worker.projectId,
+        environmentId: worker.environmentId,
+        serviceId: worker.serviceId,
+        volumeId: worker.volumeId,
+        endpoint: worker.endpoint,
+      };
+      this.saveJob(job);
+      return job;
     });
   }
   completeCleanup(workerId: string, generation: number): void {
