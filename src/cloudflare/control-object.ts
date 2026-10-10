@@ -1737,7 +1737,9 @@ export class ControlPlane {
     if (!row) return;
     const scope = JSON.parse(row.data) as { actor?: number; chat?: number };
     if (!Number.isSafeInteger(scope.actor) || !Number.isSafeInteger(scope.chat)) return;
-    await this.ui().forPanel(scope.actor!, scope.chat!, 0, 0).railwayOnboarding(scope.actor!, scope.chat!);
+    await this.ui()
+      .forPanel(scope.actor!, scope.chat!, 0, 0)
+      .railwayOnboarding(scope.actor!, scope.chat!, false);
     if (this.railwaySetupStatus().ready)
       this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding");
   }
@@ -1847,7 +1849,10 @@ export class ControlPlane {
         this.manageIntegration(id, action, credentialId),
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
-      railwayStatus: () => this.resumeRailwaySetup(),
+      railwayStatus: () => this.railwaySetupStatus(),
+      railwayResume: async () => {
+        await this.resumeRailwaySetup();
+      },
       saveRailwayCredential: (update, generation) =>
         this.saveRailwayCredentialInput(update, generation),
       questionDecision: (topic, request, questions, answers) =>

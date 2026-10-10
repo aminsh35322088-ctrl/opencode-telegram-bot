@@ -1773,6 +1773,25 @@ test("first /start renders Railway onboarding instead of Home when no infrastruc
 });
 
 
+test("internal Railway onboarding refresh is read-only while explicit onboarding resumes setup", async (t) => {
+  const f = await fixture(t);
+  f.sql.exec(
+    "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+    "railway:onboarding",
+    JSON.stringify({ actor: 7, chat: -100 }),
+  );
+  let resumes = 0;
+  (f.plane as any).resumeRailwaySetup = async () => {
+    resumes++;
+  };
+
+  await (f.plane as any).refreshRailwayOnboarding();
+  assert.equal(resumes, 0);
+
+  await (f.plane as any).ui().railwayOnboarding(7, -100);
+  assert.equal(resumes, 1);
+});
+
 test("Railway onboarding protects token, seeds ten slots, updates one panel, welcomes, and Continue opens Home", async (t) => {
   const f = await fixture(t, { railway: "unconfigured" });
   await f.update("/start");
