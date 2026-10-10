@@ -231,115 +231,63 @@ export class ControlStore {
       this.sql.exec("UPDATE schema_version SET version=3");
     });
   }
+  /** Complete recovery in bounded primary-key pages, with durable progress between retries. */
+  private migrateQueue<T extends { cursor: number }>(key: string, query: string, consume: (row: T) => void): void {
+    const marker = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key)][0];
+    const progress = marker ? JSON.parse(marker.data) as { cursor?: number; complete?: boolean } : {};
+    if (progress.complete) return;
+    let cursor = progress.cursor ?? -1;
+    // Workers clocks do not advance during synchronous work: use a fixed row budget.
+    for (let page = 0; page < 5; page++) {
+      const rows = [...this.sql.exec<T>(query, cursor, 200)];
+      const complete = rows.length < 200;
+      this.transaction(() => {
+        for (const row of rows) consume(row);
+        cursor = rows.at(-1)?.cursor ?? cursor;
+        this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+          key, JSON.stringify({ cursor, complete }));
+      });
+      if (complete) return;
+    }
+    throw new Error("queue_migration_pending");
+  }
   private ensureRunRouting(): void {
-    const marker = [
-      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='run-routing-v2'"),
-    ][0];
-    if (marker) return;
-    // Recover only a bounded tail once. New runs are indexed transactionally below.
-    const recent = [
-      ...this.sql.exec<{ seq: number; request: string; chat: number; thread: number; state: string }>(
-        "SELECT seq,request,chat,thread,state FROM runs ORDER BY seq DESC LIMIT 5000",
-      ),
-    ].reverse();
-    for (const run of recent) {
-      if (run.state === "ACTIVE")
-        this.sql.exec(
-          "INSERT INTO active_runs(chat,thread,request) VALUES(?,?,?) ON CONFLICT(chat,thread) DO UPDATE SET request=excluded.request",
-          run.chat,
-          run.thread,
-          run.request,
-        );
-      else if (run.state === "QUEUED")
-        this.sql.exec(
-          "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING",
-          run.chat,
-          run.thread,
-          run.seq,
-          run.request,
-        );
-    }
-    this.sql.exec(
-      "INSERT INTO ui_state(key,data) VALUES('run-routing-v2','{}') ON CONFLICT(key) DO NOTHING",
-    );
+    this.migrateQueue<{ cursor: number; seq: number; request: string; chat: number; thread: number; state: string }>(
+      "run-routing-v3", "SELECT seq AS cursor,seq,request,chat,thread,state FROM runs WHERE seq>? ORDER BY seq LIMIT ?", run => {
+        if (run.state === "ACTIVE") this.sql.exec(
+          "INSERT INTO active_runs(chat,thread,request) VALUES(?,?,?) ON CONFLICT(chat,thread) DO UPDATE SET request=excluded.request", run.chat, run.thread, run.request);
+        else if (run.state === "QUEUED") this.sql.exec(
+          "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING", run.chat, run.thread, run.seq, run.request);
+      });
   }
-
-  private ensureTelegramUpdateQueue(): { legacyMax: number } {
-    const key = "telegram-update-queue-v2";
-    const marker = [
-      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key),
-    ][0];
-    if (marker) return JSON.parse(marker.data) as { legacyMax: number };
-    const recent = [
-      ...this.sql.exec<{ id: number; data: string; state: string }>(
-        "SELECT id,data,state FROM updates ORDER BY id DESC LIMIT 1000",
-      ),
-    ];
-    const legacyMax = recent[0]?.id ?? -1;
-    for (const update of recent) {
-      this.sql.exec(
-        "INSERT INTO update_receipts(id,state) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
-        update.id,
-        update.state,
-      );
-      if (update.state === "PENDING")
-        this.sql.exec(
-          "INSERT INTO pending_updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING",
-          update.id,
-          update.data,
-        );
-    }
-    const value = { legacyMax };
-    this.sql.exec(
-      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
-      key,
-      JSON.stringify(value),
-    );
-    return value;
+  private ensureTelegramUpdateQueue(): void {
+    this.migrateQueue<{ cursor: number; id: number; data: string; state: string }>(
+      "telegram-update-queue-v3", "SELECT id AS cursor,id,data,state FROM updates WHERE id>? ORDER BY id LIMIT ?", update => {
+        const receipt = [...this.sql.exec<{ state: string }>("SELECT state FROM update_receipts WHERE id=?", update.id)][0];
+        if (update.state !== "PENDING" || (receipt && receipt.state !== "PENDING")) return;
+        this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING') ON CONFLICT(id) DO NOTHING", update.id);
+        this.sql.exec("INSERT INTO pending_updates(id,data) VALUES(?,?) ON CONFLICT(id) DO NOTHING", update.id, update.data);
+      });
   }
-
   private ensurePendingResponseQueue(): void {
-    const key = "pending-response-queue-v2";
-    if ([...this.sql.exec("SELECT key FROM ui_state WHERE key=?", key)].length) return;
-    // A bounded tail is sufficient to recover in-flight deliveries; terminal history stays cold.
-    const recent = [
-      ...this.sql.exec<{ run: string; chat: number; thread: number; state: string }>(
-        "SELECT run,chat,thread,state FROM responses ORDER BY rowid DESC LIMIT 1000",
-      ),
-    ];
-    for (const response of recent)
-      if (response.state === "PENDING")
-        this.sql.exec(
-          "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING",
-          response.run,
-          response.chat,
-          response.thread,
-        );
-    this.sql.exec(
-      "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
-      key,
-      "{}",
-    );
+    this.migrateQueue<{ cursor: number; run: string; chat: number; thread: number; state: string }>(
+      "pending-response-queue-v3", "SELECT rowid AS cursor,run,chat,thread,state FROM responses WHERE rowid>? ORDER BY rowid LIMIT ?", response => {
+        if (response.state === "PENDING") this.sql.exec(
+          "INSERT INTO pending_responses(run,chat,thread) VALUES(?,?,?) ON CONFLICT(run) DO NOTHING", response.run, response.chat, response.thread);
+      });
+  }
+  prepareQueues(): void {
+    this.ensureRunRouting();
+    this.ensureTelegramUpdateQueue();
+    this.ensurePendingResponseQueue();
   }
 
   recordTelegramUpdate(id: number, data: string): boolean {
     if (!Number.isSafeInteger(id) || id < 0 || !data) throw new Error("invalid_update");
-    const { legacyMax } = this.ensureTelegramUpdateQueue();
+    this.ensureTelegramUpdateQueue();
     if ([...this.sql.exec("SELECT id FROM update_receipts WHERE id=?", id)].length) return false;
-    if (id <= legacyMax) {
-      const legacy = [
-        ...this.sql.exec<{ data: string; state: string }>(
-          "SELECT data,state FROM updates WHERE id=?",
-          id,
-        ),
-      ][0];
-      if (!legacy || legacy.state !== "PENDING") return false;
-      this.transaction(() => {
-        this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING')", id);
-        this.sql.exec("INSERT INTO pending_updates(id,data) VALUES(?,?)", id, legacy.data);
-      });
-      return true;
-    }
+    const legacy = [...this.sql.exec<{ state: string }>("SELECT state FROM updates WHERE id=?", id)][0];
+    if (legacy && legacy.state !== "PENDING") return false;
     this.transaction(() => {
       this.sql.exec("INSERT INTO update_receipts(id,state) VALUES(?,'PENDING')", id);
       this.sql.exec("INSERT INTO pending_updates(id,data) VALUES(?,?)", id, data);
@@ -395,6 +343,7 @@ export class ControlStore {
     ];
   }
   recordCallback(chatId: number, threadId: number, payload: Record<string, unknown>): boolean {
+    this.ensureRunRouting();
     const runId = String(payload.runId ?? ""),
       stream = String(payload.streamNonce ?? ""),
       sequence = Number(payload.sequence);
@@ -509,6 +458,7 @@ export class ControlStore {
     });
   }
   failRun(chatId: number, threadId: number, requestId: string, text: string): void {
+    this.ensureRunRouting();
     this.transaction(() => {
       if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === requestId)) return;
       this.sql.exec(
@@ -542,7 +492,7 @@ export class ControlStore {
     this.ensurePendingResponseQueue();
     return [
       ...this.sql.exec<{ run: string; chat: number; thread: number }>(
-        "SELECT run,chat,thread FROM pending_responses ORDER BY rowid LIMIT 20",
+        "SELECT p.run,p.chat,p.thread FROM pending_responses p CROSS JOIN responses r ON r.run=p.run ORDER BY r.rowid LIMIT 20",
       ),
     ].map((row) => ({
       ...row,
@@ -1178,6 +1128,7 @@ export class ControlStore {
     model: string,
     operation: "run" | "session.compact" = "run",
   ): void {
+    this.ensureRunRouting();
     this.transaction(() => {
       const topic = this.topics().find((t) => t.chatId === chatId && t.threadId === threadId);
       if (topic?.generation !== generation) throw new Error("stale_generation");

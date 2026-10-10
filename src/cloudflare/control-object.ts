@@ -610,6 +610,8 @@ export class ControlPlane {
         });
       }
       if (path === "/node-control" || path === "/nodes/events") {
+        // Finish bounded legacy recovery before consuming signed replay receipts.
+        this.store.prepareQueues();
         const worker = this.store.worker(String(body.nodeId ?? ""));
         if (!worker?.credential) throw new Error("node_unknown");
         if (body.generation !== worker.generation) throw new Error("stale_generation");
@@ -869,6 +871,7 @@ export class ControlPlane {
       }
       return new Response("Not found", { status: 404 });
     } catch (error) {
+      if (error instanceof Error && error.message === "queue_migration_pending") await this.scheduleAlarm(Date.now() + 1_000);
       const category =
         error instanceof Error && /^[a-z_]+$/.test(error.message)
           ? error.message
@@ -1509,6 +1512,11 @@ export class ControlPlane {
   }
   async alarm(): Promise<void> {
     await this.initializeSecrets();
+    try { this.store.prepareQueues(); } catch (error) {
+      if (!(error instanceof Error) || error.message !== "queue_migration_pending") throw error;
+      await this.scheduleAlarm(Date.now() + 1_000);
+      return;
+    }
     const pending = [...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM jobs")]
       .map((r) => JSON.parse(r.data) as AllocationJob)
       .filter(

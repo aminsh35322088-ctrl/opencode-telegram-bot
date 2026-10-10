@@ -577,7 +577,8 @@ test("pending responses are compact and delivered history is never rescanned", (
     "answer",
     null,
   );
-  // Seed the compact queue through the migration/reconciliation path.
+  // Migrate once; recurring delivery must use only compact state.
+  f.store.completedResponses();
   f.queries.length = 0;
   assert.equal(f.store.completedResponses()[0]?.run, "pending");
   assert.equal(
@@ -594,7 +595,7 @@ test("pending responses are compact and delivered history is never rescanned", (
   );
 });
 
-test("a retried legacy pending Telegram update outside the recovery tail is recovered by exact id", () => {
+test("legacy pending Telegram updates outside the historical tail recover without webhook retry", () => {
   const f = fixture();
   for (let id = 1; id <= 1002; id++)
     f.sql.exec(
@@ -604,12 +605,60 @@ test("a retried legacy pending Telegram update outside the recovery tail is reco
       id === 1 ? "PENDING" : "DISPATCHED",
     );
 
-  // Initialize the bounded migration from the newest 1000 rows; id=1 is deliberately outside it.
-  assert.deepEqual(f.store.pendingTelegramUpdates(), []);
-  assert.equal(f.store.recordTelegramUpdate(1, JSON.stringify({ update_id: 1 })), true);
+  assert.throws(()=>f.store.prepareQueues(), /queue_migration_pending/);
+  f.store.prepareQueues();
+  assert.deepEqual(f.store.pendingTelegramUpdates(), [{ id: 1, data: JSON.stringify({ update_id: 1 }) }]);
+  assert.equal(f.store.recordTelegramUpdate(1, JSON.stringify({ update_id: 1 })), false);
   assert.deepEqual(f.store.pendingTelegramUpdates(), [
     { id: 1, data: JSON.stringify({ update_id: 1 }) },
   ]);
+});
+
+test("fresh Telegram ids below the legacy watermark are accepted and exact legacy receipts dedupe", () => {
+  const f = fixture();
+  f.sql.exec("INSERT INTO updates(id,data,state) VALUES(10000,'{}','DISPATCHED')");
+  assert.equal(f.store.recordTelegramUpdate(5, "{}"), true);
+  assert.equal(f.store.recordTelegramUpdate(10000, "{}"), false);
+});
+
+test("response migration preserves FIFO beyond the history tail", () => {
+  const f = fixture();
+  f.sql.exec("INSERT INTO responses(run,chat,thread,state) VALUES('earlier',1,2,'PENDING')");
+  for (let id=0;id<1002;id++) f.sql.exec("INSERT INTO responses(run,chat,thread,state) VALUES(?,1,2,'DELIVERED')", "done"+id);
+  f.sql.exec("INSERT INTO responses(run,chat,thread,state) VALUES('later',1,2,'PENDING')");
+  assert.throws(()=>f.store.prepareQueues(), /queue_migration_pending/);
+  f.store.prepareQueues();
+  assert.deepEqual(f.store.completedResponses().map(row=>row.run), ["earlier", "later"]);
+  const plan = [...f.sql.exec<{ detail: string }>("EXPLAIN QUERY PLAN SELECT p.run,p.chat,p.thread FROM pending_responses p CROSS JOIN responses r ON r.run=p.run ORDER BY r.rowid LIMIT 20")];
+  assert.equal(plan.some(row=>/SCAN r\b/.test(row.detail)), false, JSON.stringify(plan));
+  assert.equal(plan.some(row=>/SEARCH r\b/.test(row.detail)), true, JSON.stringify(plan));
+});
+
+test("run migration restores active and queued work older than the history tail", () => {
+  const f = fixture();
+  f.sql.exec("INSERT INTO runs(request,chat,thread,prompt,state) VALUES('old-active',1,2,'a','ACTIVE')");
+  f.sql.exec("INSERT INTO runs(request,chat,thread,prompt,state) VALUES('old-queued',1,2,'b','QUEUED')");
+  for(let id=0;id<5001;id++) f.sql.exec("INSERT INTO runs(request,chat,thread,prompt,state) VALUES(?,1,3,'c','COMPLETED')", "done"+id);
+  f.queries.length=0;
+  assert.throws(()=>f.store.prepareQueues(), /queue_migration_pending/);
+  assert.equal(f.queries.filter(({query})=>query.includes("FROM runs WHERE seq>?")).length,5);
+  for(let attempt=0;attempt<10;attempt++) {
+    try { f.store.prepareQueues(); break; }
+    catch(error) { if(!(error instanceof Error) || error.message!=="queue_migration_pending") throw error; }
+  }
+  assert.deepEqual(f.store.activeRuns(1,2).map(row=>row.requestId), ["old-active"]);
+  assert.equal(f.store.startNext(1,2), undefined);
+  f.store.finishRun(1,2,"old-active");
+  assert.equal(f.store.startNext(1,2)?.requestId, "old-queued");
+});
+
+test("the first legacy callback and failure migrate before entering their outer transaction", () => {
+  for (const operation of ["callback", "failure"]) {
+    const f=fixture();
+    f.sql.exec("INSERT INTO runs(request,chat,thread,prompt,state) VALUES('legacy',1,2,'a','ACTIVE')");
+    if(operation === "callback") assert.equal(f.store.recordCallback(1,2, { runId: "legacy", streamNonce: "stream", sequence: 1, event: {type: "message.updated"} }), true);
+    else f.store.failRun(1,2,"legacy","failed");
+  }
 });
 
 test("Topic fencing cancels only compact active/queued ids without scanning run history", () => {
