@@ -651,9 +651,4 @@ export const de: I18nDictionary = {
   "mcps.detail.type": "Type: {type}",
   "mcps.add.field.remote_url": "Server URL",
   "mcps.add.field.command": "Command",
-  "generation.activity": "Working: {activity}…",
-  "generation.finalizing": "Preparing the final response…",
-  "generation.streaming": "Preparing the response…",
-  "generation.summary": "Completed a model planning phase.",
-  "generation.completed": "Execution completed.",
 };

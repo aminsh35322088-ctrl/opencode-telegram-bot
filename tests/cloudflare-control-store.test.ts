@@ -441,14 +441,14 @@ test("Topic titles use the smallest free positive slot, stay durable, and never 
   assert.equal(f.store.reserveTopicTitle(otherChat.jobId), "#1");
 });
 
-test("ControlStore startup indexes only the new presentation table, never retained history", () => {
+test("ControlStore startup never builds secondary indexes over retained history", () => {
   const f = fixture();
   const secondary = [
     ...f.sql.exec<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
     ),
   ].map((row) => row.name);
-  assert.deepEqual(secondary, ["native_scope_state", "native_state"]);
+  assert.deepEqual(secondary, []);
 
   f.queries.length = 0;
   f.restart();

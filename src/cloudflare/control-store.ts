@@ -1,5 +1,4 @@
 import type { SqlStorage } from "@cloudflare/workers-types";
-import { t } from "../i18n/index.js";
 export type SqlDatabase = Pick<SqlStorage, "exec">;
 export type WorkerState =
   | "PROVISIONING"
@@ -123,23 +122,6 @@ export class ControlStore {
         "CREATE TABLE IF NOT EXISTS run_pins(request TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL,model TEXT NOT NULL,dispatched INTEGER NOT NULL DEFAULT 0)",
       );
       this.sql.exec("CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY,data TEXT NOT NULL)");
-      if (
-        ![
-          ...this.sql.exec(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_run_presentations'",
-          ),
-        ].length
-      ) {
-        this.sql.exec(
-          "CREATE TABLE telegram_run_presentations(run TEXT PRIMARY KEY,chat INTEGER NOT NULL,thread INTEGER NOT NULL,draft INTEGER NOT NULL UNIQUE,data TEXT NOT NULL)",
-        );
-        this.sql.exec(
-          "CREATE INDEX native_scope_state ON telegram_run_presentations(chat,thread,json_extract(data,'$.state'))",
-        );
-        this.sql.exec(
-          "CREATE INDEX native_state ON telegram_run_presentations(json_extract(data,'$.state'))",
-        );
-      }
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS ui_callbacks(id TEXT PRIMARY KEY,actor INTEGER NOT NULL,chat INTEGER NOT NULL,thread INTEGER NOT NULL,generation INTEGER NOT NULL,expires INTEGER NOT NULL,data TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'READY')",
       );
@@ -277,7 +259,6 @@ export class ControlStore {
         else if (run.state === "QUEUED") this.sql.exec(
           "INSERT INTO run_queue(chat,thread,seq,request) VALUES(?,?,?,?) ON CONFLICT(request) DO NOTHING", run.chat, run.thread, run.seq, run.request);
       });
-
   }
   private ensureTelegramUpdateQueue(): void {
     this.migrateQueue<{ cursor: number; id: number; data: string; state: string }>(
@@ -380,19 +361,8 @@ export class ControlStore {
         ].length
       )
         return false;
-      if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === runId)) {
-        const stopped = [
-          ...this.sql.exec<{ state: string }>(
-            "SELECT state FROM runs WHERE request=? AND chat=? AND thread=?",
-            runId,
-            chatId,
-            threadId,
-          ),
-        ][0];
-        if (stopped && ["CANCELLING", "CANCELLED", "FINALIZING"].includes(stopped.state))
-          return false;
+      if (!this.activeRuns(chatId, threadId).some((r) => r.requestId === runId))
         throw new Error("run_mismatch");
-      }
       this.sql.exec("INSERT INTO callbacks VALUES(?,?,?)", runId, stream, sequence);
       const event = payload.event as {
         type?: string;
@@ -483,37 +453,6 @@ export class ControlStore {
           threadId,
           runId,
         );
-
-        const native = [
-          ...this.sql.exec<{ data: string }>(
-            "SELECT data FROM telegram_run_presentations WHERE run=?",
-            runId,
-          ),
-        ][0];
-        if (native && JSON.parse(native.data).state !== "UNSUPPORTED") {
-          this.sql.exec(
-            "UPDATE runs SET state=? WHERE request=? AND state='COMPLETED'",
-            event?.type === "session.error" ? "FAILED" : "FINALIZING",
-            runId,
-          );
-          const text = [
-            ...this.sql.exec<{ text: string }>(
-              "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant')",
-              runId,
-            ),
-          ]
-            .map((p) => p.text)
-            .join("");
-          if (!text.trim())
-            this.sql.exec(
-              "INSERT INTO response_parts(run,part,text) VALUES(?,?,?)",
-              runId,
-              "terminal-status",
-              event?.type === "session.error"
-                ? t("bot.prompt_send_error", undefined, "en")
-                : t("generation.completed", undefined, "en"),
-            );
-        }
       }
       return true;
     });
@@ -1289,9 +1228,7 @@ export class ControlStore {
       if (
         [
           ...this.sql.exec(
-            "SELECT request FROM active_runs WHERE chat=? AND thread=? UNION ALL SELECT run FROM telegram_run_presentations WHERE chat=? AND thread=? AND json_extract(data,'$.state') IN ('THINKING','ACTIVITY','STREAMING','FINALIZING','CANCELLING') LIMIT 1",
-            chatId,
-            threadId,
+            "SELECT request FROM active_runs WHERE chat=? AND thread=?",
             chatId,
             threadId,
           ),

@@ -642,11 +642,6 @@ export const en = {
   "attachment.cancel": "❌ Cancel attachment",
   "attachment.cancelled": "❌ Attachment cancelled",
   "attachment.invalid": "⚠️ The attached file is no longer available. Sending the message without it.",
-  "generation.activity": "Working: {activity}…",
-  "generation.finalizing": "Preparing the final response…",
-  "generation.streaming": "Preparing the response…",
-  "generation.summary": "Completed a model planning phase.",
-  "generation.completed": "Execution completed.",
 } as const;
 
 export type I18nKey = keyof typeof en;
