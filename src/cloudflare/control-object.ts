@@ -1676,6 +1676,7 @@ export class ControlPlane {
     ).length;
     return {
       configured: !!metadata,
+      usable: !!metadata && workersReady > 0,
       ready:
         !!metadata &&
         projectsCreated === 2 &&
@@ -1689,7 +1690,7 @@ export class ControlPlane {
       workersReady,
       totalWorkers,
       failed,
-      ...(this.store.jobs().some((job) => this.fixedFleetJob(job) && job.error === "railway_quota_exhausted") ? { blockedReason: "railway_quota_exhausted" } : {}),
+      ...(this.store.jobs().some((job) => this.fixedFleetJob(job) && job.error === "railway_creation_limited") ? { blockedReason: "railway_creation_limited" } : this.store.jobs().some((job) => this.fixedFleetJob(job) && job.error === "railway_quota_exhausted") ? { blockedReason: "railway_quota_exhausted" } : {}),
       ...(this.railwayBackoffUntil() > Date.now() ? { retryAt: this.railwayBackoffUntil() } : {}),
     };
   }
@@ -2265,6 +2266,7 @@ export class ControlPlane {
     let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
     if (this.infrastructureFleetJob(existing) && this.fixedFleetJob(existing) &&
+        !(existing.serviceId && existing.volumeId) &&
         [...this.sql.exec("SELECT key FROM ui_state WHERE key=?", "railway:onboarding:paused")].length)
       return;
     if (!this.sqlBudget.backgroundAllowed()) {
@@ -2344,7 +2346,7 @@ export class ControlPlane {
       const worker = this.store.worker(job.workerId);
       if (this.fixedFleetJob(job)) {
         this.store.configureJob(jobId, { phase: "FAILED", error: reason });
-        if (this.infrastructureFleetJob(job) && reason === "railway_quota_exhausted")
+        if (this.infrastructureFleetJob(job) && ["railway_quota_exhausted", "railway_creation_limited"].includes(reason))
           this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", "railway:onboarding:paused", JSON.stringify({ reason }));
         if (
           worker &&

@@ -1995,3 +1995,20 @@ test("/start resumes configured but paused Railway setup", async (t) => {
   assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='railway:onboarding:paused'")].length, 0);
   assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='railway:onboarding'")].length, 1);
 });
+
+test("verified partial fleet opens Home while unavailable slots remain fenced", async (t) => {
+  const f = await fixture(t);
+  for (const worker of f.store.workers().slice(2)) {
+    f.store.transition(worker.workerId, worker.generation, "UNHEALTHY");
+    const job = f.store.jobs().find(j => j.requestId === `fleet-bootstrap:${worker.workerId}`)!;
+    f.store.configureJob(job.jobId, { phase: "FAILED", error: "railway_creation_limited" });
+  }
+  const status = (f.plane as any).railwaySetupStatus();
+  assert.equal(status.ready, false);
+  assert.equal(status.usable, true);
+  assert.equal(status.workersReady, 2);
+  await f.update("/start");
+  const text = f.sent.filter(e => ["sendMessage", "editMessageText"].includes(e.method)).at(-1)!.payload.text;
+  assert.match(String(text), /⚡ <b>OpenCode Telegram/);
+  assert.doesNotMatch(String(text), /10 Workers ready/);
+});

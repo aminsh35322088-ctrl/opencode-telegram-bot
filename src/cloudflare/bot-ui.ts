@@ -175,6 +175,7 @@ interface UiOptions {
 export interface RailwaySetupStatus {
   configured: boolean;
   ready: boolean;
+  usable?: boolean;
   accountName?: string;
   projectsCreated: number;
   workersCreated: number;
@@ -1591,12 +1592,14 @@ export class CloudBotUi {
           mark(workersDone, projectsDone && !workersDone, `Workers created ${status.workersCreated}/${status.totalWorkers}`) + "\n" +
           mark(volumesDone, workersDone && !volumesDone, `Volumes attached ${status.volumesAttached}/${status.totalWorkers}`) + "\n" +
           mark(readyDone, volumesDone && !readyDone, `Deploy & health checks ${status.workersReady}/${status.totalWorkers}`) +
+          (status.usable ? "\n\n" + t("railway.setup.usable", undefined, "en") : "") +
+          (status.blockedReason === "railway_creation_limited" ? "\n\n" + t("railway.setup.creation_limited", undefined, "en") : "") +
           (status.blockedReason === "railway_quota_exhausted" ? "\n\n⛔ Railway resource limit reached. Setup paused. Resolve the account limit, then send /start to retry." : "") +
           (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : "") +
           (status.retryAt && status.retryAt > Date.now()
             ? "\n\n⏳ Railway API rate limited · retrying automatically."
             : ""),
-        [],
+        status.usable ? [[this.button(actor, chat, 0, undefined, "Continue", "railway_continue")]] : [],
       );
       return;
     }
@@ -2188,14 +2191,14 @@ export class CloudBotUi {
           this.set(resetKey, { retired: true });
         }
         const railway = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
-        if (railway && !railway.ready) await this.railwayOnboarding(actor, chat);
+        if (railway && !(railway.usable ?? railway.ready)) await this.railwayOnboarding(actor, chat);
         else await this.home(chat, actor, true);
       }
       return true;
     }
     if (name === "railway_continue") {
       const railway = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
-      if (!railway?.ready) {
+      if (!(railway?.usable ?? railway?.ready)) {
         await this.railwayOnboardingPanel(actor, chat);
         return true;
       }

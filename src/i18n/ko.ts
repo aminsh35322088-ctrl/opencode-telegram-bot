@@ -8,6 +8,9 @@ import type { I18nDictionary } from "./en.js";
  * Keep this dictionary complete to avoid falling back to another locale.
  */
 export const ko: I18nDictionary = {
+  "railway.setup.usable": "✅ Verified Workers are available now. Continue to use the ready capacity.",
+  "railway.setup.creation_limited": "⏳ Railway daily service creation limit reached. New resource creation paused; existing Workers remain available.",
+
   "cmd.description.help": "도움말",
 
   "callback.unknown_command": "알 수 없는 명령어",

@@ -849,6 +849,8 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
       const category =
         response.status === 429 || has(/rate limit|too many requests/i)
           ? "railway_rate_limited"
+          : has(/service creation limit.*per day/i)
+            ? "railway_creation_limited"
           : has(/resource provision limit|service creation limit|limit exceeded|upgrade to provision/i)
             ? "railway_quota_exhausted"
           : providerCode === "BAD_USER_INPUT"

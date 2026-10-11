@@ -1,6 +1,9 @@
 import type { I18nDictionary } from "./en.js";
 
 export const ru: I18nDictionary = {
+  "railway.setup.usable": "✅ Verified Workers are available now. Continue to use the ready capacity.",
+  "railway.setup.creation_limited": "⏳ Railway daily service creation limit reached. New resource creation paused; existing Workers remain available.",
+
   "cmd.description.help": "Справка",
 
   "callback.unknown_command": "Неизвестная команда",

@@ -898,3 +898,10 @@ test("Railway provision quota takes precedence over generic BAD_USER_INPUT", asy
   const api = railwayApi("secret", async () => Response.json({ errors: [{ message: "Free plan resource provision limit exceeded. Please upgrade to provision more resources!", extensions: { code: "BAD_USER_INPUT" } }] }));
   await assert.rejects(api("mutation FleetServiceCreate{__typename}", {}), /railway_quota_exhausted/);
 });
+
+test("daily service creation limit is distinguished from permanent plan quota", async (t) => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  t.mock.method(console, "warn", () => {});
+  const api = railwayApi("secret", async () => Response.json({ errors: [{ message: "You've hit the service creation limit for new accounts (25 services per day)", extensions: { code: "BAD_USER_INPUT" } }] }));
+  await assert.rejects(api("mutation FleetServiceCreate{__typename}", {}), /railway_creation_limited/);
+});

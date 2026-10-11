@@ -1661,3 +1661,15 @@ test("explicit Railway resume renews paused bootstrap deadlines and rechecks cac
   assert.equal((f.plane as any).railwaySetupStatus().projectsCreated, 0);
   assert.equal(f.store.projects().find(p => p.projectKey === job.projectKey)!.projectId, "cached-project");
 });
+
+test("resource creation pause permits finishing an already owned service and volume", async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(job.jobId, { serviceId: "owned-service", volumeId: "owned-volume", phase: "VOLUME_ATTACHING" });
+  f.sql.exec("INSERT INTO ui_state VALUES('railway:onboarding:paused','{}')");
+  let advanced = 0;
+  t.mock.method(f.plane as any, "advance", async () => { advanced++; });
+  await (f.plane as any).advanceSafely(job.jobId);
+  assert.equal(advanced, 1);
+});
