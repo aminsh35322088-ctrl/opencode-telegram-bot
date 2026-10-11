@@ -2141,7 +2141,7 @@ export class ControlPlane {
     if (this.env.PROVISIONING_ENABLED !== "true")
       throw new Error("provisioning_disabled");
     await this.setup();
-    const job = this.store.reservePreparedAllocation(requestId, chatId);
+    const job = this.store.reservePreparedAllocation(requestId, chatId, true);
     this.store.reserveTopicTitle(job.jobId);
     await this.scheduleAlarm(Date.now() + 15_000);
     await this.env.JOBS.send({ jobId: job.jobId });
@@ -2224,18 +2224,22 @@ export class ControlPlane {
     if (!job.threadId) {
       const identity = await this.unboundIdentity(job.workerId);
       if (job.phase === "RESERVED") {
-        const health = await nodeRpc<{ ready: boolean }>(identity, "health", {});
+        await this.allocationProgress(job, "HEALTH");
+        const health = await nodeRpc<{ ready: boolean; bindingRotation?: boolean }>(identity, "health", {});
         guard();
         if (!health.ready) {
           await this.scheduleAlarm(Date.now() + 5_000);
           return;
         }
+        if (health.bindingRotation !== true) throw new Error("worker_binding_upgrade_required");
+        await this.allocationProgress(job, "PROBING");
         const probe = await nodeRpc<{ created: boolean; deleted: boolean }>(identity, "session.probe", {});
         guard();
         if (probe.created !== true || probe.deleted !== true) throw new Error("session_probe_failed");
         job = this.store.markSessionProbed(jobId);
       }
       if (job.phase === "SESSION_PROBED") {
+        await this.allocationProgress(job, "TOPIC");
         const created = await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call<{ message_thread_id: number }>(
           "createForumTopic",
           { chat_id: job.chatId, name: this.store.reserveTopicTitle(jobId) },
@@ -2249,16 +2253,48 @@ export class ControlPlane {
       const retired = await nodeRpc<{ retired: boolean; sanitized?: boolean }>(identity, "retire", { sanitize: true });
       guard();
       if (!retired.retired || retired.sanitized !== true) throw new Error("worker_retirement_unconfirmed");
+      const previous = this.store.worker(job.workerId)!;
+      this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", "binding-handoff:" + jobId, JSON.stringify({ generation: previous.generation, endpoint: previous.endpoint, credential: previous.credential }));
       const rotated = this.store.rotateAllocationToTopic(jobId, pendingThread);
       this.store.saveObservation(rotated.workerId, rotated.generation, { chatId: rotated.chatId, threadId: pendingThread });
       await this.scheduleAlarm(Date.now() + 1);
       await this.env.JOBS.send({ jobId });
       return;
     }
-    await (await this.driver(guard)).provisionFixed(jobId);
-    if (!(await this.verifyFixedWorker(jobId, guard))) return;
-    job = this.store.job(jobId)!;
+    await this.allocationProgress(job, "BINDING");
+    let worker = this.store.worker(job.workerId)!;
+    if (!worker.credential) {
+      const row = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "binding-handoff:" + jobId)][0];
+      if (!row) throw new Error("worker_binding_reconciliation_required");
+      const previous = JSON.parse(row.data) as { generation: number; endpoint: string; credential: string };
+      if (previous.generation + 1 !== job.generation) throw new Error("stale_generation");
+      const secret = await decryptCredential(this.env.CREDENTIAL_MASTER_KEY, "node:" + job.workerId + ":" + previous.generation, previous.credential);
+      const token = randomSecret();
+      const hash = await sha256(token);
+      guard();
+      this.store.issueBootstrap(jobId, hash, Date.now() + 15 * 60_000);
+      const rotated = await nodeRpc<{ rotated: boolean }>(
+        { workerId: job.workerId, generation: previous.generation, chatId: 0, threadId: 0, endpoint: previous.endpoint, secret },
+        "binding.rotate", { bootstrapToken: token },
+      );
+      guard();
+      if (!rotated.rotated) throw new Error("worker_binding_reconciliation_required");
+      worker = this.store.worker(job.workerId)!;
+    }
+    if (!worker.credential) throw new Error("worker_unavailable");
     const identity = await this.identity(job.workerId);
+    const health = await nodeRpc<{ ready: boolean; bindingRotation?: boolean }>(identity, "health", {});
+    guard();
+    if (!health.ready) throw new Error("worker_unavailable");
+    await this.allocationProgress(job, "SYNCING");
+    const global = this.store.global();
+    const sync = await nodeRpc<{ revision: number; hash: string; deferred?: boolean }>(identity, "sync-global", {});
+    guard();
+    if (!global || sync.deferred || sync.revision !== global.revision || sync.hash !== global.hash)
+      throw new Error("configuration_pending");
+    this.store.saveObservation(job.workerId, job.generation, { revision: sync.revision, lastHealthAt: Date.now() });
+    this.store.ready(job.workerId, job.generation, worker.credential);
+    job = this.store.job(jobId)!;
     const session = await nodeRpc<{ sessionId: string }>(identity, "session.create", {});
     guard();
     const bound = this.store.bindTopic(jobId, job.threadId!, session.sessionId);
@@ -2270,7 +2306,9 @@ export class ControlPlane {
         JSON.stringify({ title: job.topicTitle, titleSource: "auto" }),
       );
     }
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", "binding-handoff:" + jobId);
     await this.topicUi(bound).ready(bound);
+    await this.allocationProgress(this.store.job(jobId)!, "READY");
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({ event: "worker_bound", workerId: job.workerId, generation: job.generation }));
   }
@@ -2418,7 +2456,8 @@ export class ControlPlane {
       throw new Error("worker_bootstrap_timeout");
 
     const owner = crypto.randomUUID();
-    if (!this.store.acquireLease("railway-provisioning", owner, Date.now(), 180_000))
+    const lease = this.fixedFleetJob(job) && !this.infrastructureFleetJob(job) ? "worker-binding:" + job.workerId : "railway-provisioning";
+    if (!this.store.acquireLease(lease, owner, Date.now(), 180_000))
       throw new Error("provisioning_pending");
     const guard = () => {
       const currentJob = this.store.job(jobId);
@@ -2432,7 +2471,7 @@ export class ControlPlane {
         ].length
       )
         throw new Error("control_reset_pending");
-      this.store.renewLease("railway-provisioning", owner, Date.now(), 180_000);
+      this.store.renewLease(lease, owner, Date.now(), 180_000);
       const current = this.store.worker(currentJob.workerId);
       if (
         !current ||
@@ -2586,7 +2625,7 @@ export class ControlPlane {
         }),
       );
     } finally {
-      this.store.releaseLease("railway-provisioning", owner);
+      this.store.releaseLease(lease, owner);
     }
   }
   private async cancelAllocation(jobId: string): Promise<void> {
@@ -2597,6 +2636,7 @@ export class ControlPlane {
       await this.deleteTopic(topic.chatId, topic.threadId);
       return;
     }
+    if (this.fixedFleetJob(job)) throw new Error("prepared_worker_cleanup_reconciliation_required");
     let current = this.store.worker(job.workerId);
     if (!current) throw new Error("unknown_worker");
     if (current.state !== "REPLACED") {

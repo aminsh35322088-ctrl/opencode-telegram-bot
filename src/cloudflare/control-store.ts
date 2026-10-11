@@ -924,7 +924,7 @@ export class ControlStore {
       return project;
     });
   }
-  reservePreparedAllocation(requestId: string, chatId: number): AllocationJob {
+  reservePreparedAllocation(requestId: string, chatId: number, fixedOnly = false): AllocationJob {
     return this.transaction(() => {
       if (!requestId || requestId.length > 128 || !Number.isSafeInteger(chatId) || chatId === 0)
         throw new Error("invalid_request");
@@ -935,6 +935,7 @@ export class ControlStore {
         .filter(
           (candidate) =>
             candidate.state === "READY_UNBOUND" &&
+            (!fixedOnly || (/^worker-\d{2}$/u.test(candidate.workerId) && /^opencode-telegram-\d{2}$/u.test(candidate.projectKey ?? ""))) &&
             !!candidate.projectId &&
             !!candidate.environmentId &&
             !!candidate.serviceId &&

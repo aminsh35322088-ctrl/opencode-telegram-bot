@@ -863,12 +863,12 @@ export class CloudBotUi {
       return;
     }
     const stages = [
-      ["ALLOCATING", "Allocating Railway worker"],
-      ["DEPLOYING", "Deploying runtime"],
-      ["HEALTH", "Waiting for health"],
+      ["ALLOCATING", "Reserving prepared worker"],
+      ["HEALTH", "Waking prepared worker"],
       ["PROBING", "Preparing OpenCode"],
       ["TOPIC", "Creating Telegram Topic"],
       ["BINDING", "Binding Topic runtime"],
+      ["SYNCING", "Syncing configuration and credentials"],
     ] as const;
     const current = Math.max(
       0,

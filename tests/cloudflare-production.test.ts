@@ -1697,3 +1697,60 @@ test("capacity changes persist a non-multiple-of-five target", async () => {
   assert.equal(f.store.backends()[0]!.desiredMaximumWorkers, 7);
   await assert.rejects(() => (f.plane as any).setRailwayCapacity(0), /invalid_capacity_policy/);
 });
+
+for (const loseReply of [false, true]) test(`prepared New Chat rotates in place without deployment${loseReply ? " and recovers a lost rotation reply" : ""}`, async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(bootstrap.jobId, {
+    projectId: "project", environmentId: "environment", serviceId: "service",
+    volumeId: "volume", endpoint: "https://worker-01.up.railway.app", phase: "READY_UNBOUND",
+  });
+  let secret = "s".repeat(64);
+  f.store.ready(bootstrap.workerId, 1, await encryptCredential(btoa("k".repeat(32)), "node:worker-01:1", secret));
+  const job = f.store.reservePreparedAllocation("prepared-chat", -100);
+  t.mock.method(f.plane as any, "topicUi", () => ({ ready: async () => {} }));
+  t.mock.method(f.plane as any, "allocationProgress", async () => {});
+  const operations: string[] = [];
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    assert.ok(!url.includes("backboard.railway"), "New Chat must not contact Railway");
+    const body = JSON.parse(String(init?.body));
+    if (url.includes("api.telegram.org")) {
+      return Response.json({ ok: true, result: url.endsWith("createForumTopic") ? { message_thread_id: 42 } : true });
+    }
+    operations.push(body.operation);
+    const signingSecret = secret;
+    let result: unknown;
+    switch (body.operation) {
+      case "health": result = { ready: true, bindingRotation: true }; break;
+      case "session.probe": result = { created: true, deleted: true }; break;
+      case "retire": result = { retired: true, sanitized: true }; break;
+      case "binding.rotate": {
+        const response = await post(f.plane, "/nodes/bootstrap", { bootstrapToken: body.payload.bootstrapToken, serviceId: "service", projectId: "project" });
+        assert.equal(response.status, 200);
+        const credentials = await response.json() as { secret: string; identity: { generation: number } };
+        secret = credentials.secret;
+        assert.equal(credentials.identity.generation, 2);
+        result = { rotated: true };
+        if (loseReply) throw new Error("connection lost after bootstrap");
+        break;
+      }
+      case "sync-global": result = { revision: f.store.global()!.revision, hash: f.store.global()!.hash }; break;
+      case "session.create": result = { sessionId: "session" }; break;
+      default: throw new Error("Unexpected operation: " + body.operation);
+    }
+    const signed = await signEnvelope({ ...body, nonce: crypto.randomUUID(), timestamp: Date.now(), payload: { ok: true, result } }, signingSecret);
+    return new Response(signed.body, { headers: { "x-node-signature": signed.signature } });
+  };
+  await (f.plane as any).advance(job.jobId);
+  if (loseReply) await assert.rejects((f.plane as any).advance(job.jobId), /worker_unavailable/u);
+  await (f.plane as any).advance(job.jobId);
+  assert.equal(f.store.job(job.jobId)!.phase, "BOUND");
+  assert.equal(f.store.worker("worker-01")!.serviceId, "service");
+  assert.equal(f.store.worker("worker-01")!.volumeId, "volume");
+  assert.deepEqual(operations, ["health", "session.probe", "retire", "binding.rotate", "health", "sync-global", "session.create"]);
+  assert.equal(f.store.topics().length, 1);
+});
