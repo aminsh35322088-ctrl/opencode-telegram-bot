@@ -293,7 +293,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
         (
           await this.request<{ serviceCreate: { id: string } }>(
             "mutation FleetServiceCreate($input:ServiceCreateInput!){serviceCreate(input:$input){id}}",
-            { input: { name, projectId: job.projectId } },
+            { input: { name, projectId: job.projectId, ...(fixed ? { environmentId: job.environmentId } : {}) } },
           )
         ).serviceCreate;
       job = this.store.configureJob(jobId, { serviceId: service.id });
@@ -329,7 +329,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
               environmentId: job.environmentId,
               serviceId: job.serviceId,
               mountPath: "/data",
-              ...(fixed ? { name: job.workerId + "-data" } : {}),
+              ...(fixed ? { region: backend.region } : {}),
             },
           },
         );
@@ -849,6 +849,8 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
       const category =
         response.status === 429 || has(/rate limit|too many requests/i)
           ? "railway_rate_limited"
+          : has(/resource provision limit|service creation limit|limit exceeded|upgrade to provision/i)
+            ? "railway_quota_exhausted"
           : providerCode === "BAD_USER_INPUT"
             ? "railway_bad_user_input"
             : response.status === 401 ||
@@ -873,6 +875,16 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
       const operation =
         /\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(query)?.[1] ?? "anonymous";
       const traceId = result.errors?.[0]?.traceId;
+      const reasonVocabulary = new Set(["account", "limited", "plan", "trial", "upgrade", "service", "services", "limit", "limits", "maximum", "minimum", "exceeded", "reached", "project", "workspace", "environment", "required", "source", "region", "invalid", "permission", "billing", "quota", "name", "volume", "empty", "verified", "verification", "creation", "rate", "free", "subscription"]);
+      const reasonWords = [...new Set(messages.flatMap(message => (message.toLowerCase().match(/[a-z]+/g) ?? []).filter(word => reasonVocabulary.has(word))))];
+      const providerHint = has(/limited plan|limited trial|trial.*expired|upgrade.*plan/i)
+        ? "plan_restricted"
+        : has(/source.*required|provide.*source/i) ? "source_required"
+          : has(/environment.*required|environment.*missing/i) ? "environment_required"
+            : has(/service.*limit|maximum.*service|quota/i) ? "service_limit"
+              : has(/workspace.*required|workspace.*missing/i) ? "workspace_required"
+                : has(/name.*invalid|invalid.*name|name.*already/i) ? "service_name"
+                  : "unspecified";
       // Provider error text and variables may contain user/resource material; log only bounded diagnostics.
       // eslint-disable-next-line no-console
       console.warn(
@@ -880,6 +892,8 @@ export function railwayApi(token: string, transport: typeof fetch = fetch): Requ
           event: "railway_api_rejected",
           operation,
           category,
+          providerHint,
+          reasonWords,
           status: response.status,
           ...(typeof providerCode === "string" && /^[A-Z0-9_:-]{1,64}$/.test(providerCode)
             ? { providerCode }

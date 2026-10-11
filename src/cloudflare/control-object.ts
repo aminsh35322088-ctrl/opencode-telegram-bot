@@ -1689,6 +1689,7 @@ export class ControlPlane {
       workersReady,
       totalWorkers,
       failed,
+      ...(this.store.jobs().some((job) => this.fixedFleetJob(job) && job.error === "railway_quota_exhausted") ? { blockedReason: "railway_quota_exhausted" } : {}),
       ...(this.railwayBackoffUntil() > Date.now() ? { retryAt: this.railwayBackoffUntil() } : {}),
     };
   }
@@ -1696,7 +1697,7 @@ export class ControlPlane {
     let status = this.railwaySetupStatus();
     if (!status.configured || status.ready) return status;
     await this.setup();
-    const jobs = this.store.ensureFixedFleet("railway", 10, 5);
+    const jobs = this.store.ensureFixedFleet("railway", 10, 5, true);
     const pendingProjects = new Set<string>();
     for (const job of jobs) {
       if (job.phase === "READY_UNBOUND" || job.phase === "BOUND") continue;
@@ -1739,7 +1740,7 @@ export class ControlPlane {
     if (current) await vault.replace(input);
     else await vault.save(input);
     await this.setup();
-    const jobs = this.store.ensureFixedFleet("railway", 10, 5);
+    const jobs = this.store.ensureFixedFleet("railway", 10, 5, true);
     if (!current || !this.railwaySetupStatus().ready)
       this.sql.exec(
         "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
@@ -2285,6 +2286,7 @@ export class ControlPlane {
       existing = this.store.job(jobId);
       if (!existing) throw new Error("unknown_job");
     }
+    if (this.infrastructureFleetJob(existing) && existing.phase === "FAILED") return;
     if (existing.phase === "CLEANUP_PENDING") {
       try {
         await this.cancelAllocation(jobId);
@@ -2342,6 +2344,8 @@ export class ControlPlane {
       const worker = this.store.worker(job.workerId);
       if (this.fixedFleetJob(job)) {
         this.store.configureJob(jobId, { phase: "FAILED", error: reason });
+        if (this.infrastructureFleetJob(job) && reason === "railway_quota_exhausted")
+          this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", "railway:onboarding:paused", JSON.stringify({ reason }));
         if (
           worker &&
           worker.generation === job.generation &&

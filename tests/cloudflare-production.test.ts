@@ -1503,7 +1503,7 @@ test("Railway transport timeout creates a shared backoff across fixed fleet jobs
   assert.equal(calls, 1);
 });
 
-test("fixed bootstrap queue retry self-heals explicit provider rejection without changing 2x5 topology", async (t) => {
+test("fixed bootstrap queue retains provider failure until explicit resume without changing 2x5 topology", async (t) => {
   const f = await fixture();
   await post(f.plane, "/admin/setup");
   const jobs = f.store.ensureFixedFleet("railway", 10, 5);
@@ -1532,6 +1532,10 @@ test("fixed bootstrap queue retry self-heals explicit provider rejection without
 
   await (f.plane as any).advanceSafely(first.jobId);
 
+  assert.equal(observedJobId, undefined);
+  assert.equal(f.store.job(first.jobId)?.phase, "FAILED");
+  f.store.ensureFixedFleet("railway", 10, 5, true);
+  await (f.plane as any).advanceSafely(first.jobId);
   assert.equal(observedJobId, first.jobId);
   assert.equal(observedJobPhase, "RESERVED");
   assert.equal(observedProjectPhase, "RESERVED");

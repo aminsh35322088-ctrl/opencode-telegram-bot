@@ -183,6 +183,7 @@ export interface RailwaySetupStatus {
   totalWorkers: number;
   failed: number;
   retryAt?: number;
+  blockedReason?: string;
 }
 interface UiDependencies {
   allowedUserId?: string;
@@ -1590,6 +1591,7 @@ export class CloudBotUi {
           mark(workersDone, projectsDone && !workersDone, `Workers created ${status.workersCreated}/${status.totalWorkers}`) + "\n" +
           mark(volumesDone, workersDone && !volumesDone, `Volumes attached ${status.volumesAttached}/${status.totalWorkers}`) + "\n" +
           mark(readyDone, volumesDone && !readyDone, `Deploy & health checks ${status.workersReady}/${status.totalWorkers}`) +
+          (status.blockedReason === "railway_quota_exhausted" ? "\n\n⛔ Railway resource limit reached. Setup paused. Resolve the account limit, then send /start to retry." : "") +
           (status.failed ? `\n\n⚠️ ${status.failed} Worker${status.failed === 1 ? "" : "s"} need recovery.` : "") +
           (status.retryAt && status.retryAt > Date.now()
             ? "\n\n⏳ Railway API rate limited · retrying automatically."

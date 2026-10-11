@@ -723,7 +723,7 @@ test("fixed fleet provisioning creates its dedicated project directly without wo
   await f.driver.provisionFixed(job.jobId);
   assert.equal(f.projects[0]?.name, "opencode-telegram-01");
   assert.equal(f.serviceCreateInputs[0]?.name, "worker-01");
-  assert.equal(f.volumeCreateInputs[0]?.name, "worker-01-data");
+  assert.equal("name" in f.volumeCreateInputs[0]!, false);
   assert.equal(f.queries.some((query) => query.includes("FleetProjects")), false);
   const create = f.queries.find((query) => query.includes("FixedFleetProjectCreate"));
   assert.ok(create);
@@ -868,4 +868,33 @@ test("fixed fleet ignores a soft-deleted project whose inventory is still readab
   const recovered = await f.driver.provisionFixed(job.jobId);
   assert.notEqual(recovered.projectId, "deleted-project");
   assert.notEqual(recovered.environmentId, "deleted-environment");
+});
+
+test("fixed fleet scopes service creation to its selected environment and uses supported volume input", async () => {
+  const f = fixture();
+  const job = f.store.ensureFixedFleet("a", 10, 5)[0]!;
+  await f.driver.provisionFixed(job.jobId);
+  const actual = f.store.job(job.jobId)!;
+  assert.equal(f.serviceCreateInputs[0]!.environmentId, actual.environmentId);
+  assert.equal("name" in f.volumeCreateInputs[0]!, false);
+  assert.equal(f.volumeCreateInputs[0]!.region, "europe-west4");
+});
+
+test("Railway rejection diagnostics expose only fixed reason flags, never provider message or variables", async (t) => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  const logs: string[] = [];
+  t.mock.method(console, "warn", (value: string) => { logs.push(value); });
+  const api = railwayApi("private-token", async () => Response.json({ errors: [{ message: "Your account is on a limited plan private-token", extensions: { code: "BAD_USER_INPUT" } }] }));
+  await assert.rejects(api("mutation FleetServiceCreate{__typename}", {}));
+  const event = JSON.parse(logs[0]!);
+  assert.equal(event.providerHint, "plan_restricted");
+  assert.deepEqual(event.reasonWords, ["account", "limited", "plan"]);
+  assert.doesNotMatch(logs.join(""), /private-token|Your account/);
+});
+
+test("Railway provision quota takes precedence over generic BAD_USER_INPUT", async (t) => {
+  const { railwayApi } = await import("../src/cloudflare/railway-fleet-driver.js");
+  t.mock.method(console, "warn", () => {});
+  const api = railwayApi("secret", async () => Response.json({ errors: [{ message: "Free plan resource provision limit exceeded. Please upgrade to provision more resources!", extensions: { code: "BAD_USER_INPUT" } }] }));
+  await assert.rejects(api("mutation FleetServiceCreate{__typename}", {}), /railway_quota_exhausted/);
 });

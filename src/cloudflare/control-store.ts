@@ -730,7 +730,7 @@ export class ControlStore {
       JSON.stringify(job),
     );
   }
-  ensureFixedFleet(backendId: string, totalWorkers = 10, workersPerProject = 5): AllocationJob[] {
+  ensureFixedFleet(backendId: string, totalWorkers = 10, workersPerProject = 5, resumeFailed = false): AllocationJob[] {
     return this.transaction(() => {
       const backend = this.backends().find((candidate) => candidate.backendId === backendId);
       if (
@@ -779,7 +779,7 @@ export class ControlStore {
                   worker.chatId === undefined &&
                   worker.threadId === undefined,
               );
-            if (providerRejected && allFailed && hasNoOwnershipReceipt) {
+            if (resumeFailed && providerRejected && allFailed && hasNoOwnershipReceipt) {
               existing.phase = "RESERVED";
               this.saveProject(existing);
             }
@@ -820,7 +820,7 @@ export class ControlStore {
         if (existingJob) {
           if (existingJob.workerId !== workerId || existingJob.generation !== worker.generation)
             throw new Error("fixed_fleet_job_conflict");
-          if ((existingJob.phase === "FAILED" || existingJob.error) && worker.state === "UNHEALTHY") {
+          if (resumeFailed && (existingJob.phase === "FAILED" || existingJob.error) && worker.state === "UNHEALTHY") {
             worker.state = "RECOVERING";
             this.saveWorker(worker);
             existingJob.phase = "RESERVED";

@@ -835,7 +835,9 @@ test("fixed fleet retry reopens a failed bootstrap slot without creating duplica
   f.store.configureJob(first.jobId, { phase: "FAILED", error: "railway_scope_missing" });
   f.store.transition(first.workerId, first.generation, "UNHEALTHY");
 
-  const retried = f.store.ensureFixedFleet("railway", 10, 5).find((job) => job.workerId === first.workerId)!;
+  const retained = f.store.ensureFixedFleet("railway", 10, 5).find((job) => job.workerId === first.workerId)!;
+  assert.equal(retained.phase, "FAILED");
+  const retried = f.store.ensureFixedFleet("railway", 10, 5, true).find((job) => job.workerId === first.workerId)!;
 
   assert.equal(retried.phase, "RESERVED");
   assert.equal(retried.error, undefined);
@@ -853,7 +855,7 @@ test("fixed fleet recovers a rejected project creation with no provider ownershi
     f.store.configureJob(job.jobId, { phase: "FAILED", error: job.workerId === "worker-01" ? "railway_api_failure" : "project_creation_reconciliation_required" });
     f.store.transition(job.workerId, job.generation, "UNHEALTHY");
   }
-  const recovered = f.store.ensureFixedFleet("railway", 10, 5);
+  const recovered = f.store.ensureFixedFleet("railway", 10, 5, true);
   assert.equal(f.store.projects().find((candidate) => candidate.projectKey === project.projectKey)?.phase, "RESERVED");
   assert.ok(recovered.filter((job) => job.projectKey === project.projectKey).every((job) => job.phase === "RESERVED" && !job.error));
 });
