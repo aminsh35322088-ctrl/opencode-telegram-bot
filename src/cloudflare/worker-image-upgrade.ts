@@ -85,30 +85,23 @@ export class WorkerImageUpgrade {
       JSON.stringify(record),
     );
   }
-  private owned(record: WorkerImageUpgradeRecord): { worker: FleetWorker; topic: FleetTopic } {
+  private owned(record: WorkerImageUpgradeRecord): { worker: FleetWorker; topic: FleetTopic | undefined } {
     const worker = this.deps.store.worker(record.workerId);
     const topics = this.deps.store.topics().filter((t) => t.workerId === record.workerId);
     const topic = topics[0];
-    if (
-      !worker ||
-      worker.generation !== record.generation ||
-      topics.length !== 1 ||
-      !topic ||
-      topic.generation !== record.generation ||
-      topic.sessionId !== record.sessionId ||
-      topic.state !== "ACTIVE" ||
-      worker.chatId !== topic.chatId ||
-      worker.threadId !== topic.threadId ||
-      worker.projectId !== record.projectId ||
-      worker.environmentId !== record.environmentId ||
-      worker.serviceId !== record.serviceId ||
-      worker.volumeId !== record.volumeId ||
-      worker.endpoint !== record.endpoint
-    )
+    const bound = !!record.sessionId;
+    if (!worker || worker.generation !== record.generation ||
+        topics.length !== (bound ? 1 : 0) ||
+        (bound && (!topic || topic.generation !== record.generation || topic.sessionId !== record.sessionId ||
+          topic.state !== "ACTIVE" || worker.chatId !== topic.chatId || worker.threadId !== topic.threadId)) ||
+        (!bound && (worker.chatId || worker.threadId)) ||
+        worker.projectId !== record.projectId || worker.environmentId !== record.environmentId ||
+        worker.serviceId !== record.serviceId || worker.volumeId !== record.volumeId || worker.endpoint !== record.endpoint)
       throw new Error("stale_generation");
     return { worker, topic };
   }
-  private assertNoRuns(topic: FleetTopic): void {
+  private assertNoRuns(topic: FleetTopic | undefined): void {
+    if (!topic) return;
     if (
       [
         ...this.deps.sql.exec(
@@ -145,7 +138,7 @@ export class WorkerImageUpgrade {
       .filter((i) => i.serviceId === record.serviceId);
     if (
       services.length !== 1 ||
-      services[0]!.node.name !== "topic-node-" + record.workerId ||
+      ![record.workerId, "topic-node-" + record.workerId].includes(services[0]!.node.name) ||
       instances.length !== 1 ||
       mounts.length !== 1 ||
       mounts[0]!.volume !== record.volumeId ||
@@ -194,11 +187,10 @@ export class WorkerImageUpgrade {
       const topics = this.deps.store.topics().filter((t) => t.workerId === workerId);
       const topic = topics[0];
       if (
-        !topic ||
-        topics.length !== 1 ||
-        topic.generation !== generation ||
-        topic.state !== "ACTIVE" ||
-        !["BOUND_IDLE", "SLEEPING"].includes(worker.state) ||
+        topics.length > 1 ||
+        (topic && (topic.generation !== generation || topic.state !== "ACTIVE")) ||
+        (!topic && (worker.chatId || worker.threadId)) ||
+        !["BOUND_IDLE", "READY_UNBOUND", "SLEEPING"].includes(worker.state) ||
         !worker.projectId ||
         !worker.environmentId ||
         !worker.serviceId ||
@@ -215,7 +207,7 @@ export class WorkerImageUpgrade {
         serviceId: worker.serviceId,
         volumeId: worker.volumeId,
         endpoint: worker.endpoint,
-        sessionId: topic.sessionId,
+        sessionId: topic?.sessionId ?? "",
         target: { ...target },
         phase: "CHECKING",
       };
@@ -223,7 +215,7 @@ export class WorkerImageUpgrade {
         this.owned(record!);
         this.assertNoRuns(topic);
         this.save(record!);
-        this.deps.store.transition(workerId, generation, "FENCING");
+        if (worker.state !== "READY_UNBOUND") this.deps.store.transition(workerId, generation, "FENCING");
         this.deps.store.transition(workerId, generation, "RECOVERING");
       });
     }
@@ -253,11 +245,12 @@ export class WorkerImageUpgrade {
     try {
       if (selected.phase === "CHECKING") {
         this.assertNoRuns(this.owned(selected).topic);
-        if ((await rpc("status")) !== null) throw new Error("worker_not_idle");
+        const status = await rpc("status");
+        if (selected.sessionId ? status !== null : !(status && (status as { bound?: boolean }).bound === false)) throw new Error("worker_not_idle");
         const health = (await rpc("health")) as { ready?: boolean };
         if (health?.ready !== true) throw new Error("worker_not_ready");
-        const session = (await rpc("session.get")) as { id?: string };
-        if (session?.id !== selected.sessionId) throw new Error("upgrade_session_mismatch");
+        const session = selected.sessionId ? (await rpc("session.get")) as { id?: string } : undefined;
+        if (selected.sessionId && session?.id !== selected.sessionId) throw new Error("upgrade_session_mismatch");
         const before = await this.inventory(selected, guard);
         if (!before.latestDeployment?.id || before.latestDeployment.status !== "SUCCESS")
           throw new Error("worker_deployment_not_stable");
@@ -308,9 +301,10 @@ export class WorkerImageUpgrade {
         health.runtime.runtimeProfile !== "telegram-headless"
       )
         return selected;
-      const session = (await rpc("session.get")) as { id?: string };
-      if (session?.id !== selected.sessionId) throw new Error("upgrade_session_mismatch");
-      if ((await rpc("status")) !== null) throw new Error("worker_not_idle");
+      const session = selected.sessionId ? (await rpc("session.get")) as { id?: string } : undefined;
+      if (selected.sessionId && session?.id !== selected.sessionId) throw new Error("upgrade_session_mismatch");
+      const status = await rpc("status");
+      if (selected.sessionId ? status !== null : !(status && (status as { bound?: boolean }).bound === false)) throw new Error("worker_not_idle");
       // Re-read after signed readiness: source/volume/domain drift must not reopen admission.
       const final = await this.inventory(selected, guard);
       if (
@@ -329,7 +323,7 @@ export class WorkerImageUpgrade {
           runtimeVersion: target.version,
           lastHealthAt: now(),
         });
-        this.deps.store.transition(workerId, generation, "BOUND_IDLE");
+        this.deps.store.transition(workerId, generation, selected.sessionId ? "BOUND_IDLE" : "READY_UNBOUND");
         selected.phase = "COMPLETE";
         selected.deploymentId = final.latestDeployment!.id;
         this.save(selected);

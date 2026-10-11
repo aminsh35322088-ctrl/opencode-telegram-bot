@@ -52,6 +52,7 @@ import {
 
 import { ControlSqlBudget } from "./sql-budget.js";
 
+import { discoverCoreUpdate, newerRelease } from "./core-update.js";
 import { CONTROL_DEFAULTS } from "./control-config.js";
 import { resolveControlSecrets, equalSecret } from "./control-secrets.js";
 
@@ -73,6 +74,15 @@ export class ControlPlane {
     this.store = new ControlStore(this.sql, (action) =>
       state.storage.transactionSync(action),
     );
+    const release = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='core-update:target'")][0];
+    if (release) {
+      const target = JSON.parse(release.data) as { image: string; commit: string; version: string };
+      if (newerRelease(target.version, this.env.WORKER_CORE_VERSION)) {
+        this.env.WORKER_IMAGE = target.image;
+        this.env.WORKER_CORE_COMMIT = target.commit;
+        this.env.WORKER_CORE_VERSION = target.version;
+      }
+    }
     if (typeof state.waitUntil === "function" && this.store.hasPendingTelegramUpdates())
       state.waitUntil(this.scheduleAlarm(Date.now() + 1));
   }
@@ -490,6 +500,10 @@ export class ControlPlane {
     try {
       await this.initializeSecrets();
       const path = new URL(request.url).pathname;
+      if (path === "/maintenance/core") {
+        await this.scheduleAlarm(Date.now() + 1);
+        return Response.json({ ok: true });
+      }
       if (path === "/control/auth") {
         const input = await request.text();
         if (input.length > 1024) return new Response("Unauthorized", { status: 401 });
@@ -589,7 +603,7 @@ export class ControlPlane {
             /* Public Worker already authenticates this privileged route. */
           },
           rpc: async (id, operation, session) =>
-            nodeRpc(await this.identity(id), operation, {}, session),
+            nodeRpc(session ? await this.identity(id) : await this.unboundIdentity(id), operation, {}, session || undefined),
         });
         const result = await upgrade.advance(String(body.workerId ?? ""), Number(body.generation), {
           image: this.env.WORKER_IMAGE,
@@ -2715,6 +2729,55 @@ export class ControlPlane {
     await this.env.JOBS.send({ jobId: recycle.jobId });
     if (active) presentation.cancelled(active.runId);
   }
+  private async updateCoreFleet(): Promise<void> {
+    if (this.env.CORE_AUTO_UPDATE !== "true" || !this.railwayCredentials().metadata()) return;
+    const now = Date.now();
+    const poll = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key='core-update:poll'")][0];
+    const due = poll ? Number(JSON.parse(poll.data)) : 0;
+    await this.scheduleAlarm(now + 15 * 60_000);
+    if (due <= now) {
+      this.sql.exec("INSERT INTO ui_state(key,data) VALUES('core-update:poll',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", JSON.stringify(now + 15 * 60_000));
+      try {
+        const target = await discoverCoreUpdate({ image: this.env.WORKER_IMAGE, commit: this.env.WORKER_CORE_COMMIT, version: this.env.WORKER_CORE_VERSION });
+        if (target) {
+          this.sql.exec("INSERT INTO ui_state(key,data) VALUES('core-update:target',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", JSON.stringify(target));
+          this.env.WORKER_IMAGE = target.image;
+          this.env.WORKER_CORE_COMMIT = target.commit;
+          this.env.WORKER_CORE_VERSION = target.version;
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(JSON.stringify({ event: "core_release_poll_failed", reason: error instanceof Error ? error.message : "release_unavailable" }));
+      }
+    }
+    const workers = this.store.workers().filter(worker =>
+      worker.credential && worker.serviceId && /^worker-\d{2}$/u.test(worker.workerId) &&
+      (isWorkerImageUpgrading(this.sql, worker.workerId) ||
+        (worker.runtimeCommit !== this.env.WORKER_CORE_COMMIT && ["READY_UNBOUND", "BOUND_IDLE", "SLEEPING"].includes(worker.state))),
+    );
+    // Finish the current rollout before admitting another worker to maintenance.
+    workers.sort((a, b) => Number(isWorkerImageUpgrading(this.sql, b.workerId)) - Number(isWorkerImageUpgrading(this.sql, a.workerId)));
+    const worker = workers[0];
+    if (!worker) return;
+    try {
+      const upgrade = new WorkerImageUpgrade({
+        store: this.store, sql: this.sql, transaction: fn => this.state.storage.transactionSync(fn),
+        request: railwayApi((await this.requireRailwayCredential()).token), assertAdmin: () => {},
+        rpc: async (id, operation, session) => nodeRpc(session ? await this.identity(id) : await this.unboundIdentity(id), operation, {}, session || undefined),
+      });
+      const pending = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "worker-image-upgrade:" + worker.workerId)][0];
+      const record = pending ? JSON.parse(pending.data) as { phase: string; target: { image: string; commit: string; version: string } } : undefined;
+      const target = record && record.phase !== "COMPLETE" ? record.target : { image: this.env.WORKER_IMAGE, commit: this.env.WORKER_CORE_COMMIT, version: this.env.WORKER_CORE_VERSION };
+      const result = await upgrade.advance(worker.workerId, worker.generation, target);
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify({ event: "automatic_core_upgrade", workerId: worker.workerId, phase: result.phase, version: result.target.version }));
+      await this.scheduleAlarm(now + 30_000);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn(JSON.stringify({ event: "automatic_core_upgrade_pending", workerId: worker.workerId, reason: error instanceof Error ? error.message : "upgrade_pending" }));
+      await this.scheduleAlarm(now + 60_000);
+    }
+  }
   async alarm(): Promise<void> {
     if (this.alarmRunning) return;
     this.alarmRunning = true;
@@ -2754,6 +2817,7 @@ export class ControlPlane {
       console.warn(JSON.stringify({ event: "background_sql_budget_exhausted", ...this.sqlBudget.snapshot() }));
       return;
     }
+    await this.updateCoreFleet();
     const pending = this.store.pendingJobs(20);
     for (const job of pending) {
       try {

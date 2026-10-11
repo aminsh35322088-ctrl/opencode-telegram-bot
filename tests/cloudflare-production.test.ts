@@ -32,6 +32,7 @@ async function fixture() {
   const queued: unknown[] = [];
   let alarmAt: number | null = null;
   const env = {
+    CORE_AUTO_UPDATE: "false",
     TELEGRAM_BOT_TOKEN: "synthetic-telegram",
     MAX_WORKERS: "10",
     WORKERS_PER_PROJECT: "5",
@@ -1753,4 +1754,24 @@ for (const loseReply of [false, true]) test(`prepared New Chat rotates in place 
   assert.equal(f.store.worker("worker-01")!.volumeId, "volume");
   assert.deepEqual(operations, ["health", "session.probe", "retire", "binding.rotate", "health", "sync-global", "session.create"]);
   assert.equal(f.store.topics().length, 1);
+});
+
+test("automatic Core rollout advances one prepared worker per maintenance pass", async t => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const { WorkerImageUpgrade } = await import("../src/cloudflare/worker-image-upgrade.js");
+  for (const job of f.store.ensureFixedFleet("railway", 10, 5).slice(0, 2)) {
+    f.store.configureJob(job.jobId, { projectId: "project", environmentId: "environment", serviceId: job.workerId, volumeId: "volume-" + job.workerId, endpoint: "https://" + job.workerId + ".up.railway.app", phase: "READY_UNBOUND" });
+    f.store.ready(job.workerId, 1, "synthetic-encrypted-credential");
+  }
+  (f.plane as any).env.CORE_AUTO_UPDATE = "true";
+  f.sql.exec("INSERT INTO ui_state(key,data) VALUES('core-update:poll',?)", JSON.stringify(Date.now() + 900_000));
+  const calls: string[] = [];
+  t.mock.method(WorkerImageUpgrade.prototype, "advance", async (workerId: string, generation: number, target: unknown) => {
+    calls.push(workerId);
+    return { workerId, generation, target, phase: "COMPLETE" };
+  });
+  await (f.plane as any).updateCoreFleet();
+  assert.deepEqual(calls, ["worker-01"]);
+  assert.ok(f.getAlarm());
 });

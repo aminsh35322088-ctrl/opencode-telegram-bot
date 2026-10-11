@@ -12,7 +12,7 @@ const target = {
   commit: "b".repeat(40),
   version: "1.18.33-bot.13-pre.24",
 };
-function fixture() {
+function fixture(unbound = false) {
   const db = new Database(":memory:");
   const sql: SqlDatabase = {
     exec: (q, ...b) =>
@@ -64,6 +64,10 @@ function fixture() {
       state: "ACTIVE",
     }),
   );
+  if (unbound) {
+    db.prepare("DELETE FROM topics").run();
+    db.prepare("UPDATE workers SET data=? WHERE id=?").run(JSON.stringify({ ...worker, state: "READY_UNBOUND", chatId: undefined, threadId: undefined }), "node");
+  }
   let image = `ghcr.io/example/worker@sha256:${"c".repeat(64)}`,
     deployment = "old",
     status = "SUCCESS",
@@ -146,9 +150,9 @@ function fixture() {
     } as T;
   };
   const rpc = async (_workerId: string, op: string, sessionId: string): Promise<unknown> => {
-    assert.equal(sessionId, "ses_owned");
+    assert.equal(sessionId, unbound ? "" : "ses_owned");
     calls.push(op);
-    if (op === "status") return active;
+    if (op === "status") return unbound ? { bound: false, retired: false, ready: true } : active;
     if (op === "session.get") return { id: "ses_owned" };
     return { ready, runtime };
   };
@@ -309,4 +313,16 @@ test("failed deployment and false mutation receipts cannot reopen Worker admissi
     assert.equal(isWorkerImageUpgrading(f.sql, "node"), true);
     assert.equal(f.store.worker("node")!.state, "RECOVERING");
   }
+});
+
+
+test("prepared unbound worker upgrades without creating a Topic or session", async () => {
+  const f = fixture(true);
+  await f.service().advance("node", 2, target);
+  assert.equal(f.store.worker("node")!.state, "READY_UNBOUND");
+  assert.equal(f.store.worker("node")!.generation, 2);
+  assert.equal(f.store.worker("node")!.volumeId, "volume");
+  assert.equal(f.store.topics().length, 0);
+  assert.ok(!f.calls.includes("session.get"));
+  assert.equal(f.mutations.length, 1);
 });

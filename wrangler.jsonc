@@ -4,6 +4,7 @@
   "main": "src/cloudflare/worker.ts",
   "compatibility_date": "2026-10-07",
   "workers_dev": true,
+  "triggers": { "crons": ["*/15 * * * *"] },
   "keep_vars": false,
   "observability": {
     "enabled": true,

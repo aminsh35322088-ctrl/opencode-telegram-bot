@@ -15,6 +15,7 @@ export interface ControlEnvironment {
   ADMIN_TOKEN: string;
   CREDENTIAL_MASTER_KEY: string;
   PROVISIONING_ENABLED?: string;
+  CORE_AUTO_UPDATE?: string;
   WORKER_IMAGE: string;
   WORKER_CORE_COMMIT: string;
   WORKER_CORE_VERSION: string;
@@ -103,6 +104,10 @@ export default {
       },
       body: request.method === "GET" ? undefined : body,
     }) as unknown as Promise<Response>;
+  },
+  async scheduled(_event: unknown, env: ControlEnvironment): Promise<void> {
+    const response = await env.CONTROL.getByName("canonical").fetch("https://control.internal/maintenance/core", { method: "POST" });
+    if (!response.ok) throw new Error("core_maintenance_unavailable");
   },
   async queue(batch: MessageBatch<{ jobId: string }>, env: ControlEnvironment): Promise<void> {
     for (const message of batch.messages) {

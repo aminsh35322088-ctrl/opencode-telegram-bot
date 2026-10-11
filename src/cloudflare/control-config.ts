@@ -5,8 +5,9 @@ export const CONTROL_DEFAULTS = Object.freeze({
   WORKERS_PER_PROJECT: "5",
   MAX_RAILWAY_PROJECTS: "2",
   PROVISIONING_ENABLED: "true",
+  CORE_AUTO_UPDATE: "true",
   WORKER_IMAGE:
-    "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:d6b3c375cac23e115043b919d255bddc5c9d9c8699791ec48a57d7108b211736",
-  WORKER_CORE_COMMIT: "f59b4ce0dfed4b4cec5f6fc58673e58e3b3adef4",
-  WORKER_CORE_VERSION: "1.18.33-bot.13-pre.30",
+    "ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:90accf7f06a07f6e35dbcdc7487f1bc30fc9214e2805c6327345a1bf58b6a812",
+  WORKER_CORE_COMMIT: "b0f9fd09d16f22051fdbecfeb5f35bda15384892",
+  WORKER_CORE_VERSION: "1.18.33-bot.13-pre.31",
 });
