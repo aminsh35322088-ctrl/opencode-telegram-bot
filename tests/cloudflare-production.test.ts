@@ -1643,3 +1643,17 @@ test("cold construction rearms a persisted Telegram backlog without an additiona
   await Promise.all(pending);
   assert.equal(armed, true);
 });
+
+test("explicit Railway resume renews paused bootstrap deadlines and rechecks cached projects", async () => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  const old = Date.now() - 24 * 60 * 60_000;
+  f.store.configureJob(job.jobId, { createdAt: old });
+  const project = f.store.projects().find(p => p.projectKey === job.projectKey)!;
+  f.store.saveProject({ ...project, phase: "READY", projectId: "cached-project", environmentId: "cached-environment" });
+  await (f.plane as any).resumeRailwaySetup();
+  assert.ok(f.store.job(job.jobId)!.createdAt! > old);
+  assert.equal((f.plane as any).railwaySetupStatus().projectsCreated, 0);
+  assert.equal(f.store.projects().find(p => p.projectKey === job.projectKey)!.projectId, "cached-project");
+});

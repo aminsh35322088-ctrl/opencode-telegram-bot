@@ -856,3 +856,16 @@ test("fixed project creation retries with the sole Railway workspace after BAD_U
   assert.equal(resolved.environmentId, "environment-new");
   db.close();
 });
+
+
+test("fixed fleet ignores a soft-deleted project whose inventory is still readable", async () => {
+  const f = fixture();
+  const job = f.store.ensureFixedFleet("a", 10, 5)[0]!;
+  const project = f.store.projects().find((candidate) => candidate.projectKey === job.projectKey)!;
+  f.projects.push({ id: "deleted-project", name: project.projectKey, environments: { edges: [{ node: { id: "deleted-environment", name: "production" } }] } });
+  Object.assign(f.projects[0]!, { deletedAt: "2026-10-11T00:00:00Z" });
+  f.store.saveProject({ ...project, projectId: "deleted-project", environmentId: "deleted-environment", phase: "READY" });
+  const recovered = await f.driver.provisionFixed(job.jobId);
+  assert.notEqual(recovered.projectId, "deleted-project");
+  assert.notEqual(recovered.environmentId, "deleted-environment");
+});

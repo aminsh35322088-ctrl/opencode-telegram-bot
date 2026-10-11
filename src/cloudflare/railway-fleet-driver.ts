@@ -163,6 +163,7 @@ export class RailwayFleetDriver implements FleetProvisioner {
       actual = result.project && !result.project.deletedAt ? result.project : undefined;
       if (actual && actual.name !== project.projectKey) throw new Error("project_ownership_ambiguous");
       if (!actual && !recreateMissing) throw new Error("railway_scope_missing");
+      if (!actual) project = this.store.resetFixedProjectOwnership(project.projectKey, project.backendId);
     }
     if (!actual) {
       if (project.phase === "CREATING") throw new Error("project_creation_reconciliation_required");
@@ -254,10 +255,10 @@ export class RailwayFleetDriver implements FleetProvisioner {
       ? this.store.projects().find((candidate) => candidate.projectKey === job!.projectKey && candidate.backendId === job!.backendId)
       : this.store.selectProject(jobId);
     if (!project) throw new Error("fixed_fleet_project_missing");
-    if (!project.projectId || !project.environmentId)
-      project = fixed
-        ? await this.resolveFixedProject(project, true)
-        : await this.resolveProject(project, false);
+    // A soft-deleted Railway project remains queryable; persisted IDs are not proof of liveness.
+    if (fixed) project = await this.resolveFixedProject(project, true);
+    else if (!project.projectId || !project.environmentId)
+      project = await this.resolveProject(project, false);
     job = this.store.configureJob(jobId, {
       projectId: project.projectId,
       environmentId: project.environmentId,

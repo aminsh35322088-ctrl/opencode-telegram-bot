@@ -1662,7 +1662,7 @@ export class ControlPlane {
     for (const job of this.store.jobs())
       if (this.fixedFleetJob(job) && job.error) failedWorkers.add(job.workerId);
     const failed = failedWorkers.size;
-    const projectsCreated = projects.filter((project) => !!project.projectId && !!project.environmentId).length;
+    const projectsCreated = projects.filter((project) => project.phase === "READY" && !!project.projectId && !!project.environmentId).length;
     const workersCreated = workers.filter((worker) => !!worker.serviceId && !!worker.endpoint).length;
     const volumesAttached = workers.filter((worker) => !!worker.volumeId).length;
     const workersReady = workers.filter(
@@ -1696,7 +1696,17 @@ export class ControlPlane {
     let status = this.railwaySetupStatus();
     if (!status.configured || status.ready) return status;
     await this.setup();
-    this.store.ensureFixedFleet("railway", 10, 5);
+    const jobs = this.store.ensureFixedFleet("railway", 10, 5);
+    const pendingProjects = new Set<string>();
+    for (const job of jobs) {
+      if (job.phase === "READY_UNBOUND" || job.phase === "BOUND") continue;
+      this.store.configureJob(job.jobId, { createdAt: Date.now() });
+      if (job.projectKey) pendingProjects.add(job.projectKey);
+    }
+    for (const project of this.store.projects()) {
+      if (project.backendId === "railway" && pendingProjects.has(project.projectKey) && project.projectId)
+        this.store.saveProject({ ...project, phase: "VERIFYING" });
+    }
     await this.scheduleAlarm(Date.now() + 1);
     status = this.railwaySetupStatus();
     return status;

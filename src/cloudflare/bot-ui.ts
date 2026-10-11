@@ -2186,7 +2186,7 @@ export class CloudBotUi {
           this.set(resetKey, { retired: true });
         }
         const railway = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
-        if (railway && !railway.ready) await this.railwayOnboardingPanel(actor, chat);
+        if (railway && !railway.ready) await this.railwayOnboarding(actor, chat);
         else await this.home(chat, actor, true);
       }
       return true;

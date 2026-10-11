@@ -1982,3 +1982,16 @@ test("Railway setup status ignores legacy Railway projects and historical worker
   assert.equal(status.failed, 0);
   assert.equal(status.ready, true);
 });
+
+
+test("/start resumes configured but paused Railway setup", async (t) => {
+  const f = await fixture(t);
+  (f.plane as any).railwaySetupStatus = () => ({ configured: true, ready: false, projectsCreated: 0, workersCreated: 0, volumesAttached: 0, workersReady: 0, totalWorkers: 10, failed: 0 });
+  f.sql.exec("INSERT INTO ui_state VALUES('railway:onboarding:paused','{}')");
+  let resumes = 0;
+  (f.plane as any).resumeRailwaySetup = async () => { resumes++; };
+  await f.update("/start");
+  assert.equal(resumes, 1);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='railway:onboarding:paused'")].length, 0);
+  assert.equal([...f.sql.exec("SELECT key FROM ui_state WHERE key='railway:onboarding'")].length, 1);
+});
