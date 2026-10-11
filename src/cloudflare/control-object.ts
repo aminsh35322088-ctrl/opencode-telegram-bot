@@ -1917,7 +1917,7 @@ export class ControlPlane {
       newTopic: (chat, request) => this.newTopic(chat, request),
       resumeAllocation: async jobId => {
         const job = this.store.job(jobId);
-        if (!job || !this.fixedFleetJob(job) || job.phase !== "FAILED") throw new Error("allocation_resume_rejected");
+        if (!job || !this.fixedFleetJob(job) || this.infrastructureFleetJob(job) || job.phase !== "FAILED") throw new Error("allocation_resume_rejected");
         this.store.configureJob(jobId, { phase: job.cleanupPhase ?? (job.threadId ? "BINDING" : "RESERVED"), error: undefined, createdAt: Date.now() });
         await this.env.JOBS.send({ jobId });
         await this.scheduleAlarm(Date.now() + 1);
@@ -2677,7 +2677,7 @@ export class ControlPlane {
       return;
     }
     if (this.fixedFleetJob(job)) {
-      this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: job.cleanupPhase ?? job.phase, error: "Chat creation cancelled." });
+      this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: job.cleanupPhase ?? (job.phase === "FAILED" ? (job.threadId ? "BINDING" : "RESERVED") : job.phase), error: "Chat creation cancelled." });
       return;
     }
     let current = this.store.worker(job.workerId);
