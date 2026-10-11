@@ -5,7 +5,7 @@ const imageRepository = "aminsh35322088-ctrl/opencode-telegram-worker";
 const headers = { "User-Agent": "OpenCode-Control-Plane", Accept: "application/vnd.github+json" };
 async function json<T>(url: string, extra: Record<string, string> = {}): Promise<T> {
   const response = await fetch(url, { headers: { ...headers, ...extra }, signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error("core_release_unavailable");
+  if (!response.ok) throw new Error("core_release_unavailable_" + response.status);
   const body = await response.text();
   if (body.length > 512_000) throw new Error("core_release_response_too_large");
   return JSON.parse(body) as T;
@@ -25,9 +25,21 @@ export function newerRelease(candidate: string, current: string): boolean {
  * Upstream changes need a matching Bot SDK release and remain an explicit migration.
  */
 export async function discoverCoreUpdate(current: WorkerImageTarget): Promise<WorkerImageTarget | undefined> {
-  const releases = await json<Array<{ draft: boolean; tag_name: string; assets: Array<{ name: string; browser_download_url: string }> }>>(
-    `https://api.github.com/repos/${repository}/releases?per_page=20`,
-  );
+  type Release = { draft: boolean; tag_name: string; assets: Array<{ name: string; browser_download_url: string }> };
+  let releases: Release[];
+  try {
+    releases = await json<Release[]>(`https://api.github.com/repos/${repository}/releases?per_page=20`);
+  } catch {
+    // Public release feeds avoid the shared unauthenticated REST API rate limit.
+    const response = await fetch(`https://github.com/${repository}/releases.atom`, { headers, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error("core_release_feed_unavailable_" + response.status);
+    const feed = await response.text();
+    if (feed.length > 512_000) throw new Error("core_release_response_too_large");
+    releases = [...feed.matchAll(/releases\/tag\/(v\d+\.\d+\.\d+-bot\.\d+-pre\.\d+)["<]/gu)].map(match => ({
+      draft: false, tag_name: match[1]!, assets: [{ name: "build-info.json", browser_download_url: `https://github.com/${repository}/releases/download/${match[1]}/build-info.json` }],
+    }));
+    if (!releases.length) throw new Error("core_release_feed_invalid");
+  }
   const release = releases.filter(r => !r.draft && /^v\d+\.\d+\.\d+-bot\.\d+-pre\.\d+$/u.test(r.tag_name))
     .sort((a, b) => newerRelease(a.tag_name.slice(1), b.tag_name.slice(1)) ? -1 : 1)[0];
   if (!release || !newerRelease(release.tag_name.slice(1), current.version)) return undefined;

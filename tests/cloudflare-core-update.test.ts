@@ -28,3 +28,17 @@ for (const failure of ["none", "digest", "upstream", "missing_image"] as const) 
     else await assert.rejects(discoverCoreUpdate(current), new RegExp(failure === "digest" ? "digest_mismatch" : failure === "upstream" ? "incompatible" : "not_published"));
   });
 }
+
+test("public release feed remains usable when GitHub REST is rate limited", async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const calls: string[] = [];
+  globalThis.fetch = async input => {
+    const url = String(input); calls.push(url);
+    if (url.includes("api.github.com")) return new Response("rate limited", { status: 403 });
+    assert.ok(url.endsWith("/releases.atom"));
+    return new Response('<feed><entry><link href="https://github.com/aminsh35322088-ctrl/opencode-telegram-core/releases/tag/v1.18.33-bot.13-pre.30"/></entry></feed>');
+  };
+  assert.equal(await discoverCoreUpdate(current), undefined);
+  assert.equal(calls.length, 2);
+});
