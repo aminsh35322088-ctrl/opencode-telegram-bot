@@ -905,3 +905,18 @@ test("panel adoption checks other owners through an indexed prefix lookup", asyn
   const plan = [...f.sql.exec<{ detail: string }>("EXPLAIN QUERY PLAN " + lookup.query, ...lookup.bindings)];
   assert.ok(plan.some((row) => /SEARCH ui_state USING INDEX/u.test(row.detail)), JSON.stringify(plan));
 });
+
+test("capacity reconciliation preserves a bound Worker after its generation rotates", () => {
+  const f = fixture();
+  backend(f.store, "railway", 10, 5);
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(bootstrap.jobId, { projectId: "project", environmentId: "environment", serviceId: "service", volumeId: "volume", endpoint: "https://worker.up.railway.app", phase: "READY_UNBOUND" });
+  f.store.ready("worker-01", 1, "credential");
+  const job = f.store.reservePreparedAllocation("bind", -100);
+  f.store.markSessionProbed(job.jobId);
+  const rotated = f.store.rotateAllocationToTopic(job.jobId, 42);
+  f.store.ready("worker-01", rotated.generation, "rotated-credential");
+  f.store.bindTopic(job.jobId, 42, "session");
+  assert.doesNotThrow(() => f.store.ensureFixedFleet("railway", 10, 5, true));
+  assert.equal(f.store.topics().find(topic => topic.chatId === -100 && topic.threadId === 42)!.sessionId, "session");
+});

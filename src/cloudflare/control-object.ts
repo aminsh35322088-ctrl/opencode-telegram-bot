@@ -1638,10 +1638,20 @@ export class ControlPlane {
     const ui = this.ui();
     return actor ? ui.forPanel(actor, topic.chatId, topic.threadId, topic.generation) : ui;
   }
+  private railwayCapacity(): number {
+    const row = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "railway:capacity")][0];
+    return row ? Number(JSON.parse(row.data)) : Number(this.env.MAX_WORKERS);
+  }
+  private async setRailwayCapacity(count: number): Promise<void> {
+    if (!Number.isSafeInteger(count) || count < 1 || count > 10) throw new Error("invalid_capacity_policy");
+    this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", "railway:capacity", JSON.stringify(count));
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding:paused");
+    await this.resumeRailwaySetup();
+  }
   private railwaySetupStatus(): RailwaySetupStatus {
     const metadata = this.railwayCredentials().metadata();
-    const totalWorkers = 10;
-    const expectedProjectKeys = new Set(["opencode-telegram-01", "opencode-telegram-02"]);
+    const totalWorkers = this.railwayCapacity();
+    const expectedProjectKeys = new Set(Array.from({ length: Math.ceil(totalWorkers / 5) }, (_, i) => `opencode-telegram-${String(i + 1).padStart(2, "0")}`));
     const expectedWorkerIds = new Set(
       Array.from({ length: totalWorkers }, (_, index) => `worker-${String(index + 1).padStart(2, "0")}`),
     );
@@ -1679,7 +1689,7 @@ export class ControlPlane {
       usable: !!metadata && workersReady > 0,
       ready:
         !!metadata &&
-        projectsCreated === 2 &&
+        projectsCreated === Math.ceil(totalWorkers / 5) &&
         workers.length === totalWorkers &&
         workersReady === totalWorkers &&
         failed === 0,
@@ -1696,9 +1706,10 @@ export class ControlPlane {
   }
   private async resumeRailwaySetup(): Promise<RailwaySetupStatus> {
     let status = this.railwaySetupStatus();
-    if (!status.configured || status.ready) return status;
+    if (!status.configured) return status;
     await this.setup();
-    const jobs = this.store.ensureFixedFleet("railway", 10, 5, true);
+    if (status.ready) return status;
+    const jobs = this.store.ensureFixedFleet("railway", this.railwayCapacity(), 5, true);
     const pendingProjects = new Set<string>();
     for (const job of jobs) {
       if (job.phase === "READY_UNBOUND" || job.phase === "BOUND") continue;
@@ -1741,7 +1752,7 @@ export class ControlPlane {
     if (current) await vault.replace(input);
     else await vault.save(input);
     await this.setup();
-    const jobs = this.store.ensureFixedFleet("railway", 10, 5, true);
+    const jobs = this.store.ensureFixedFleet("railway", this.railwayCapacity(), 5, true);
     if (!current || !this.railwaySetupStatus().ready)
       this.sql.exec(
         "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
@@ -1875,6 +1886,7 @@ export class ControlPlane {
       saveCredential: (update, provider, generation) =>
         this.saveCredential(update, provider, generation),
       railwayStatus: () => this.railwaySetupStatus(),
+      railwayCapacity: (count) => this.setRailwayCapacity(count),
       railwayResume: async (actor, chat) => {
         this.sql.exec(
           "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
@@ -2026,10 +2038,10 @@ export class ControlPlane {
   }
   private async setup(): Promise<void> {
     const credential = await this.requireRailwayCredential();
-    const maximum = Number(this.env.MAX_WORKERS),
+    const maximum = this.railwayCapacity(),
       perProject = Number(this.env.WORKERS_PER_PROJECT),
       maxProjects = Number(this.env.MAX_RAILWAY_PROJECTS);
-    if (maximum !== 10 || perProject !== 5 || maxProjects !== 2)
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 10 || perProject !== 5 || maxProjects !== 2)
       throw new Error("invalid_capacity_policy");
     this.store.putBackend({
       backendId: "railway",
@@ -2265,10 +2277,12 @@ export class ControlPlane {
   private async advanceSafely(jobId: string): Promise<void> {
     let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
-    if (this.infrastructureFleetJob(existing) && this.fixedFleetJob(existing) &&
-        !(existing.serviceId && existing.volumeId) &&
-        [...this.sql.exec("SELECT key FROM ui_state WHERE key=?", "railway:onboarding:paused")].length)
-      return;
+    if (this.infrastructureFleetJob(existing) && this.fixedFleetJob(existing)) {
+      if (Number(existing.workerId.slice(7)) > this.railwayCapacity()) return;
+      const paused = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "railway:onboarding:paused")][0];
+      if (paused && !(existing.serviceId && existing.volumeId) &&
+          !(existing.serviceId && JSON.parse(paused.data).reason === "railway_creation_limited")) return;
+    }
     if (!this.sqlBudget.backgroundAllowed()) {
       await this.scheduleAlarm(this.sqlBudget.nextReset());
       return;
@@ -2284,7 +2298,7 @@ export class ControlPlane {
     if (backoffUntil) this.clearRailwayBackoff();
     if (this.fixedFleetJob(existing) && this.infrastructureFleetJob(existing)) {
       await this.setup();
-      this.store.ensureFixedFleet("railway", 10, 5);
+      this.store.ensureFixedFleet("railway", this.railwayCapacity(), 5);
       existing = this.store.job(jobId);
       if (!existing) throw new Error("unknown_job");
     }

@@ -1673,3 +1673,27 @@ test("resource creation pause permits finishing an already owned service and vol
   await (f.plane as any).advanceSafely(job.jobId);
   assert.equal(advanced, 1);
 });
+
+test("daily service creation pause permits adding a volume to an owned service", async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(job.jobId, { serviceId: "owned-service", phase: "RESERVED" });
+  f.sql.exec("INSERT INTO ui_state VALUES(?,?)", "railway:onboarding:paused", JSON.stringify({ reason: "railway_creation_limited" }));
+  let advanced = 0;
+  t.mock.method(f.plane as any, "advance", async () => { advanced++; });
+  await (f.plane as any).advanceSafely(job.jobId);
+  assert.equal(advanced, 1);
+});
+
+test("capacity changes persist a non-multiple-of-five target", async () => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  f.store.ensureFixedFleet("railway", 10, 5);
+  await (f.plane as any).setRailwayCapacity(7);
+  assert.equal((f.plane as any).railwaySetupStatus().totalWorkers, 7);
+  assert.equal(f.store.backends()[0]!.desiredMaximumWorkers, 7);
+  await (f.plane as any).setup();
+  assert.equal(f.store.backends()[0]!.desiredMaximumWorkers, 7);
+  await assert.rejects(() => (f.plane as any).setRailwayCapacity(0), /invalid_capacity_policy/);
+});

@@ -213,6 +213,7 @@ interface UiDependencies {
   ) => Promise<void>;
   railwayStatus?: () => RailwaySetupStatus | Promise<RailwaySetupStatus>;
   railwayResume?: (actor: number, chat: number) => Promise<void>;
+  railwayCapacity?: (count: number) => Promise<void>;
   saveRailwayCredential?: (
     update: ProtectedRailwayTelegramUpdate,
     generation: number,
@@ -1578,7 +1579,8 @@ export class CloudBotUi {
     this.set(`form:${actor}:${chat}:0`, {});
     if (!status.ready) {
       const mark = (done: boolean, active: boolean, label: string) => `${done ? "✅" : active ? "⏳" : "○"} ${label}`;
-      const projectsDone = status.projectsCreated >= 2;
+      const projectsTotal = Math.ceil(status.totalWorkers / 5);
+      const projectsDone = status.projectsCreated >= projectsTotal;
       const workersDone = status.workersCreated >= status.totalWorkers;
       const volumesDone = status.volumesAttached >= status.totalWorkers;
       const readyDone = status.workersReady >= status.totalWorkers;
@@ -1588,7 +1590,7 @@ export class CloudBotUi {
         "🚂 <b>Setting up Railway</b>\n\n" +
           "✅ Token authenticated\n" +
           "✅ Account verified" + (status.accountName ? ` · ${escape(status.accountName)}` : "") + "\n" +
-          mark(projectsDone, !projectsDone, `Projects created ${status.projectsCreated}/2`) + "\n" +
+          mark(projectsDone, !projectsDone, `Projects created ${status.projectsCreated}/${projectsTotal}`) + "\n" +
           mark(workersDone, projectsDone && !workersDone, `Workers created ${status.workersCreated}/${status.totalWorkers}`) + "\n" +
           mark(volumesDone, workersDone && !volumesDone, `Volumes attached ${status.volumesAttached}/${status.totalWorkers}`) + "\n" +
           mark(readyDone, volumesDone && !readyDone, `Deploy & health checks ${status.workersReady}/${status.totalWorkers}`) +
@@ -1608,7 +1610,7 @@ export class CloudBotUi {
       undefined,
       "👋 <b>Welcome to OpenCode Telegram</b>\n\n" +
         "✅ <b>Railway Ready</b>\n\n" +
-        "✅ 2 Projects created\n" +
+        `✅ ${Math.ceil(status.totalWorkers / 5)} Projects created\n` +
         `✅ ${status.totalWorkers} Workers ready\n` +
         `✅ ${status.totalWorkers} Volumes attached\n` +
         "✅ Runtime verified\n\nYour OpenCode environment is ready to use.",
@@ -1656,7 +1658,8 @@ export class CloudBotUi {
   }
   private async railwaySettings(actor: number, chat: number): Promise<void> {
     const status = this.deps.railwayStatus ? await this.deps.railwayStatus() : undefined;
-    const workers = this.deps.store.workers().filter((worker) => worker.backendId === "railway");
+    const total = status?.totalWorkers ?? 10;
+    const workers = this.deps.store.workers().filter((worker) => worker.backendId === "railway" && /^worker-\d{2}$/u.test(worker.workerId) && Number(worker.workerId.slice(7)) <= total && worker.projectKey === `opencode-telegram-${String(Math.ceil(Number(worker.workerId.slice(7)) / 5)).padStart(2, "0")}`);
     const bound = workers.filter((worker) => ["BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(worker.state) && !!worker.chatId).length;
     const available = workers.filter((worker) => worker.state === "READY_UNBOUND").length;
     const unavailable = workers.length - bound - available;
@@ -1664,11 +1667,15 @@ export class CloudBotUi {
       "🚂 <b>Railway</b>\n\n" +
       (status?.configured ? "🟢 <b>Connected</b>" : "🔴 <b>Not connected</b>") +
       (status?.accountName ? `\nAccount: <b>${escape(status.accountName)}</b>` : "") +
-      `\nFleet: <b>${workers.length}/10</b>` +
+      `\nFleet: <b>${workers.filter(w => !!w.serviceId).length}/${total}</b>` +
       `\nAvailable: <b>${available}</b>` +
       `\nBound: <b>${bound}</b>` +
-      `\nUnavailable: <b>${Math.max(0, unavailable)}</b>`;
+      `\nUnavailable: <b>${Math.max(0, unavailable)}</b>` +
+      (status?.blockedReason === "railway_creation_limited" ? "\n\n" + t("railway.setup.creation_limited", undefined, "en") : "") +
+      (status?.blockedReason === "railway_quota_exhausted" ? "\n\n⛔ Railway resource limit reached. Target capacity is not yet available." : "");
     const rows: Button[][] = [
+      [this.button(actor, chat, 0, undefined, "🔢 Worker Count", "railway_capacity")],
+      [this.button(actor, chat, 0, undefined, "▶ Resume Setup", "railway_resume")],
       [this.button(actor, chat, 0, undefined, "🔑 Replace Token", "railway_replace")],
       [this.button(actor, chat, 0, undefined, "🔄 Refresh Status", "railway_refresh")],
     ];
@@ -2296,6 +2303,24 @@ export class CloudBotUi {
     }
     if (name === "railway" || name === "railway_refresh") {
       if (thread) return true;
+      await this.railwaySettings(actor, chat);
+      return true;
+    }
+    if (name === "railway_capacity") {
+      if (thread) return true;
+      const rows: Button[][] = [1, 6].map(start => Array.from({ length: 5 }, (_, i) => this.button(actor, chat, 0, undefined, String(start + i), "railway_capacity_set", String(start + i))));
+      await this.menu(chat, undefined, "🔢 <b>Worker Count</b>\n\nChoose the target capacity (default: 10). Existing chats are preserved. Railway limits may prevent completing the target.", this.withNavigation(actor, chat, 0, undefined, rows, { back: { action: "railway" }, close: true }));
+      return true;
+    }
+    if (name === "railway_capacity_set") {
+      if (thread || !this.deps.railwayCapacity) return true;
+      await this.deps.railwayCapacity(Number(action.value));
+      await this.railwaySettings(actor, chat);
+      return true;
+    }
+    if (name === "railway_resume") {
+      if (thread) return true;
+      await this.deps.railwayResume?.(actor, chat);
       await this.railwaySettings(actor, chat);
       return true;
     }

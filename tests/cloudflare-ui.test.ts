@@ -2012,3 +2012,21 @@ test("verified partial fleet opens Home while unavailable slots remain fenced", 
   assert.match(String(text), /⚡ <b>OpenCode Telegram/);
   assert.doesNotMatch(String(text), /10 Workers ready/);
 });
+
+test("Railway panel excludes historical workers and lets the user select seven slots", async (t) => {
+  const f = await fixture(t);
+  f.sql.exec("INSERT INTO workers VALUES(?,?,?)", "retired-worker", "railway", JSON.stringify({ workerId: "retired-worker", backendId: "railway", generation: 1, state: "UNHEALTHY", revision: 0 }));
+  await f.update("/settings");
+  const click = async (action: string, value?: string) => {
+    const rows = [...f.sql.exec<{ id: string; data: string }>("SELECT id,data FROM ui_callbacks")];
+    const row = rows.reverse().find(row => { const a = JSON.parse(row.data); return a.action === action && (value === undefined || a.value === value); });
+    assert.ok(row, action);
+    await f.callback("ui:" + row.id);
+  };
+  await click("railway");
+  assert.match(String(f.sent.at(-1)!.payload.text), /Fleet: <b>10\/10<\/b>/);
+  await click("railway_capacity");
+  await click("railway_capacity_set", "7");
+  assert.equal((f.plane as any).railwaySetupStatus().totalWorkers, 7);
+  assert.match(JSON.stringify(f.sent), /Fleet: <b>7\/7<\/b>/);
+});

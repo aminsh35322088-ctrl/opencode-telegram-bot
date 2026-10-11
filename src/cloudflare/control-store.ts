@@ -741,12 +741,11 @@ export class ControlStore {
         totalWorkers !== backend.desiredMaximumWorkers ||
         !Number.isSafeInteger(workersPerProject) ||
         workersPerProject < 1 ||
-        workersPerProject !== backend.maxWorkersPerProject ||
-        totalWorkers % workersPerProject !== 0
+        workersPerProject !== backend.maxWorkersPerProject
       )
         throw new Error("invalid_fixed_fleet_policy");
-      const projectCount = totalWorkers / workersPerProject;
-      if ((backend.maxProjects ?? projectCount) !== projectCount)
+      const projectCount = Math.ceil(totalWorkers / workersPerProject);
+      if ((backend.maxProjects ?? projectCount) < projectCount)
         throw new Error("invalid_fixed_fleet_policy");
       for (let ordinal = 1; ordinal <= projectCount; ordinal++) {
         const projectKey = `opencode-telegram-${String(ordinal).padStart(2, "0")}`;
@@ -818,6 +817,10 @@ export class ControlStore {
           "SELECT data FROM jobs WHERE request=? AND chat=?", requestId, 0,
         )].map((row) => JSON.parse(row.data) as AllocationJob)[0];
         if (existingJob) {
+          if (existingJob.workerId === workerId && existingJob.generation < worker.generation && ["READY_UNBOUND", "BOUND"].includes(existingJob.phase)) {
+            jobs.push(existingJob);
+            continue;
+          }
           if (existingJob.workerId !== workerId || existingJob.generation !== worker.generation)
             throw new Error("fixed_fleet_job_conflict");
           if (resumeFailed && (existingJob.phase === "FAILED" || existingJob.error) && worker.state === "UNHEALTHY") {
@@ -927,6 +930,7 @@ export class ControlStore {
         throw new Error("invalid_request");
       const duplicate = this.jobs().find((candidate) => candidate.requestId === requestId);
       if (duplicate) return duplicate;
+      const backends = this.backends();
       const worker = this.workers()
         .filter(
           (candidate) =>
@@ -937,8 +941,10 @@ export class ControlStore {
             !!candidate.volumeId &&
             !!candidate.endpoint &&
             !!candidate.credential &&
-            this.backends().some(
-              (backend) => backend.backendId === candidate.backendId && backend.enabled,
+            backends.some(
+              (backend) => backend.backendId === candidate.backendId && backend.enabled &&
+                (!/^worker-\d{2}$/u.test(candidate.workerId) || Number(candidate.workerId.slice(7)) <= backend.desiredMaximumWorkers) &&
+                this.workers().filter(w => w.backendId === backend.backendId && ["BINDING", "BOUND_IDLE", "BOUND_ACTIVE", "SLEEPING"].includes(w.state) ).length < backend.desiredMaximumWorkers,
             ),
         )
         .sort((a, b) => a.workerId.localeCompare(b.workerId))[0];
