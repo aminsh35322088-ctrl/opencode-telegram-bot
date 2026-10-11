@@ -514,7 +514,7 @@ test("ControlStore startup creates only bounded hot-path indexes and never rebui
       "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
     ),
   ].map((row) => row.name);
-  assert.deepEqual(secondary, ["jobs_phase", "native_scope_state", "native_state"]);
+  assert.deepEqual(secondary, ["jobs_phase", "native_scope_state", "native_state", "ui_callbacks_scope"]);
 
   f.queries.length = 0;
   f.restart();
@@ -866,4 +866,40 @@ test("fixed fleet keeps an ambiguous CREATING project fenced when no provider re
   f.store.saveProject({ ...project, phase: "CREATING" });
   f.store.ensureFixedFleet("railway", 10, 5);
   assert.equal(f.store.projects().find((candidate) => candidate.projectKey === project.projectKey)?.phase, "CREATING");
+});
+
+
+test("fixed fleet bootstrap lookup uses the unique request and chat index instead of retained job history", () => {
+  const f = fixture();
+  backend(f.store, "railway");
+  f.store.ensureFixedFleet("railway", 10, 5);
+  for (let i = 0; i < 2000; i++) {
+    f.sql.exec("INSERT INTO jobs(id,request,chat,data) VALUES(?,?,?,?)", `old-${i}`, `old-${i}`, 7,
+      JSON.stringify({ jobId: `old-${i}`, requestId: `old-${i}`, chatId: 7, workerId: "old", backendId: "railway", generation: 1, phase: "BOUND" }));
+  }
+  f.queries.length = 0;
+  const jobs = f.store.ensureFixedFleet("railway", 10, 5);
+  assert.equal(jobs.length, 10);
+  const reads = f.queries.filter(({ query }) => /SELECT.*FROM jobs/isu.test(query));
+  assert.equal(reads.length, 10);
+  for (const read of reads) assert.match(read.query, /WHERE request=\? AND chat=\?/u);
+});
+
+test("panel callback retirement uses the actor scope index", () => {
+  const f = fixture();
+  const plan = [...f.sql.exec<{ detail: string }>(
+    "EXPLAIN QUERY PLAN DELETE FROM ui_callbacks WHERE actor=? AND chat=? AND thread=? AND generation=? AND json_extract(data,'$.panel')=1", 7, 7, 0, 0,
+  )];
+  assert.ok(plan.some((row) => /SEARCH ui_callbacks USING INDEX/u.test(row.detail)), JSON.stringify(plan));
+});
+
+test("panel adoption checks other owners through an indexed prefix lookup", async () => {
+  const { CloudBotUi } = await import("../src/cloudflare/bot-ui.js");
+  const f = fixture();
+  f.sql.exec("INSERT INTO ui_state VALUES(?,?)", "panel:8:7:0:0", JSON.stringify({ messageId: 123, state: "DELIVERED" }));
+  const ui = new CloudBotUi({ sql: f.sql } as never, { actor: 7, chat: 7, thread: 0, generation: 0 } as never);
+  assert.equal((ui as any).adoptPanel(123), false, "another actor's panel remains owned");
+  const lookup = f.queries.find(({ query }) => /SELECT key,data FROM ui_state/u.test(query))!;
+  const plan = [...f.sql.exec<{ detail: string }>("EXPLAIN QUERY PLAN " + lookup.query, ...lookup.bindings)];
+  assert.ok(plan.some((row) => /SEARCH ui_state USING INDEX/u.test(row.detail)), JSON.stringify(plan));
 });

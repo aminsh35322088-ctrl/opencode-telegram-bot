@@ -171,13 +171,18 @@ export class ControlStore {
         this.sql.exec("CREATE INDEX jobs_phase ON jobs(json_extract(data,'$.phase'))");
         this.sql.exec("UPDATE schema_version SET version=8");
       });
+    if (schemaVersion < 9)
+      this.transaction(() => {
+        this.sql.exec("CREATE INDEX ui_callbacks_scope ON ui_callbacks(actor,chat,thread,generation,json_extract(data,'$.panel'))");
+        this.sql.exec("UPDATE schema_version SET version=9");
+      });
   }
   private migrate(): number {
     this.sql.exec("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)");
     const version =
       [...this.sql.exec<{ version: number }>("SELECT version FROM schema_version")][0]?.version ??
       0;
-    if (version > 8) throw new Error("unsupported_schema");
+    if (version > 9) throw new Error("unsupported_schema");
     if (version >= 3) return version;
     if (version === 2) {
       this.migrateEvents();
@@ -809,7 +814,9 @@ export class ControlStore {
           throw new Error("fixed_fleet_worker_conflict");
         }
         const requestId = `fleet-bootstrap:${workerId}`;
-        const existingJob = this.jobs().find((candidate) => candidate.requestId === requestId);
+        const existingJob = [...this.sql.exec<{ data: string }>(
+          "SELECT data FROM jobs WHERE request=? AND chat=?", requestId, 0,
+        )].map((row) => JSON.parse(row.data) as AllocationJob)[0];
         if (existingJob) {
           if (existingJob.workerId !== workerId || existingJob.generation !== worker.generation)
             throw new Error("fixed_fleet_job_conflict");

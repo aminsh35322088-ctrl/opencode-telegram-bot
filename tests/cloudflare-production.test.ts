@@ -1586,3 +1586,60 @@ test("idle alarm does not scan retained allocation-job history", async () => {
   await f.plane.alarm();
   assert.ok(jobRowsReadByAlarm <= 20, `alarm read ${jobRowsReadByAlarm} retained jobs`);
 });
+
+
+test("paused infrastructure does not restart provisioning or schedule a retry on an unrelated alarm", async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const job = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.sql.exec("INSERT INTO ui_state VALUES('railway:onboarding:paused','{}')");
+  let advanced = 0;
+  t.mock.method(f.plane as any, "advance", async () => { advanced++; });
+  await (f.plane as any).advanceSafely(job.jobId);
+  assert.equal(advanced, 0);
+  assert.equal(f.getAlarm(), null);
+});
+
+test("Telegram control updates are processed before infrastructure I/O", async (t) => {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  f.store.ensureFixedFleet("railway", 10, 5);
+  f.store.recordTelegramUpdate(991, JSON.stringify({ update_id: 991, message: { from: { id: 7 }, chat: { id: 7 }, text: "/start" } }));
+  let handled = false;
+  t.mock.method(f.plane as any, "ui", () => ({ handle: async () => { handled = true; return true; } }));
+  const observed: boolean[] = [];
+  t.mock.method(f.plane as any, "advanceSafely", async () => { observed.push(handled); });
+  await f.plane.alarm();
+  assert.equal(observed.length, 0, "control traffic must have its own alarm turn");
+  await f.plane.alarm();
+  assert.ok(observed.length > 0);
+  assert.ok(observed.every(Boolean), "provisioning must not block /start");
+  assert.equal(handled, true);
+  assert.equal(f.store.hasPendingTelegramUpdates(), false);
+});
+
+test("new ingress replaces an overdue alarm left behind by exhausted platform retries", async () => {
+  const f = await fixture();
+  let armed: number | undefined;
+  const plane = new ControlPlane({ storage: { sql: f.sql,
+    transactionSync: <T>(action: () => T) => action(),
+    getAlarm: async () => Date.now() - 60_000,
+    setAlarm: async (value: number) => { armed = value; },
+  } } as never, { TELEGRAM_ALLOWED_USER_ID: "7" } as never);
+  const next = Date.now() + 1_000;
+  await (plane as any).scheduleAlarm(next);
+  assert.equal(armed, next, "a stale alarm must not strand durable /start updates");
+});
+
+test("cold construction rearms a persisted Telegram backlog without an additional user message", async () => {
+  const f = await fixture();
+  f.store.recordTelegramUpdate(993, JSON.stringify({ update_id: 993, message: { from: { id: 7 }, chat: { id: 7 }, text: "/start" } }));
+  const pending: Promise<unknown>[] = [];
+  let armed = false;
+  new ControlPlane({ waitUntil: (work: Promise<unknown>) => pending.push(work), storage: { sql: f.sql,
+    transactionSync: <T>(action: () => T) => action(), getAlarm: async () => Date.now() - 60_000,
+    setAlarm: async () => { armed = true; },
+  } } as never, { TELEGRAM_ALLOWED_USER_ID: "7" } as never);
+  await Promise.all(pending);
+  assert.equal(armed, true);
+});

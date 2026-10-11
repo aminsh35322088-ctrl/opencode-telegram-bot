@@ -375,8 +375,8 @@ export class CloudBotUi {
       return false;
     const owned = [
       ...this.deps.sql.exec<{ key: string; data: string }>(
-        "SELECT key,data FROM ui_state WHERE key LIKE ?",
-        `panel:%:${scope.chat}:${scope.thread}:${scope.generation}`,
+        "SELECT key,data FROM ui_state WHERE key GLOB ?",
+        `panel:*:${scope.chat}:${scope.thread}:${scope.generation}`,
       ),
     ].some((row) => row.key !== key && record(JSON.parse(row.data)).messageId === messageId);
     if (owned) return false;

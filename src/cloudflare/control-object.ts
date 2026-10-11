@@ -50,11 +50,15 @@ import {
   type TelegramUpdate,
 } from "./bot-ui.js";
 
+import { ControlSqlBudget } from "./sql-budget.js";
+
 import { CONTROL_DEFAULTS } from "./control-config.js";
 import { resolveControlSecrets, equalSecret } from "./control-secrets.js";
 
 export class ControlPlane {
   private readonly store: ControlStore;
+  private readonly sql: import("./control-store.js").SqlDatabase;
+  private readonly sqlBudget: ControlSqlBudget;
   private readonly env: ControlEnvironment;
   private secretsReady?: Promise<void>;
   private alarmScheduling: Promise<void> = Promise.resolve();
@@ -64,9 +68,13 @@ export class ControlPlane {
     env: ControlEnvironment,
   ) {
     this.env = { ...CONTROL_DEFAULTS, ...env };
-    this.store = new ControlStore(state.storage.sql, (action) =>
+    this.sqlBudget = new ControlSqlBudget(state.storage.sql);
+    this.sql = this.sqlBudget.sql;
+    this.store = new ControlStore(this.sql, (action) =>
       state.storage.transactionSync(action),
     );
+    if (typeof state.waitUntil === "function" && this.store.hasPendingTelegramUpdates())
+      state.waitUntil(this.scheduleAlarm(Date.now() + 1));
   }
   private async scheduleAlarm(at: number): Promise<void> {
     const scheduledAt = this.alarmRunning ? Math.max(at, Date.now() + 5_000) : at;
@@ -75,14 +83,15 @@ export class ControlPlane {
         typeof this.state.storage.getAlarm === "function"
           ? await this.state.storage.getAlarm()
           : null;
-      if (current === null || scheduledAt < current) await this.state.storage.setAlarm(scheduledAt);
+      if (current === null || (!this.alarmRunning && current < Date.now() - 5_000) || scheduledAt < current)
+        await this.state.storage.setAlarm(scheduledAt);
     });
     this.alarmScheduling = next.catch(() => {});
     await next;
   }
   private railwayBackoffUntil(): number {
     const row = [
-      ...this.state.storage.sql.exec<{ data: string }>(
+      ...this.sql.exec<{ data: string }>(
         "SELECT data FROM ui_state WHERE key=?",
         "railway:api-backoff",
       ),
@@ -94,18 +103,18 @@ export class ControlPlane {
     } catch {
       // Invalid control metadata is discarded below.
     }
-    this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
     return 0;
   }
   private setRailwayBackoff(until: number): void {
-    this.state.storage.sql.exec(
+    this.sql.exec(
       "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
       "railway:api-backoff",
       JSON.stringify({ until }),
     );
   }
   private clearRailwayBackoff(): void {
-    this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:api-backoff");
   }
   private async refreshTyping(
     topic: import("./control-store.js").FleetTopic,
@@ -113,7 +122,7 @@ export class ControlPlane {
   ): Promise<void> {
     const key = `typing:${runId}`;
     const row = [
-      ...this.state.storage.sql.exec<{ data: string }>(
+      ...this.sql.exec<{ data: string }>(
         "SELECT data FROM ui_state WHERE key=?",
         key,
       ),
@@ -137,7 +146,7 @@ export class ControlPlane {
       // Typing is best-effort presentation and must never block execution.
     }
     const nextAt = Date.now() + delay;
-    this.state.storage.sql.exec(
+    this.sql.exec(
       "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
       key,
       JSON.stringify({
@@ -151,7 +160,7 @@ export class ControlPlane {
   }
   private presentation(): TelegramRunPresentationController {
     return new TelegramRunPresentationController(
-      this.state.storage.sql,
+      this.sql,
       new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
     );
   }
@@ -159,7 +168,7 @@ export class ControlPlane {
     const presentation = this.presentation();
     for (const binding of presentation.pendingCancellations()) {
       const dispatchLease = [
-        ...this.state.storage.sql.exec<{ expires: number }>(
+        ...this.sql.exec<{ expires: number }>(
           "SELECT expires FROM leases WHERE id=?",
           `dispatch:${binding.runId}`,
         ),
@@ -190,7 +199,7 @@ export class ControlPlane {
           // Signed admission proof is required even when execution currently reads
           // null. A timed-out run submission may still be reaching the Worker.
           const dispatch = [
-            ...this.state.storage.sql.exec<{ data: string }>(
+            ...this.sql.exec<{ data: string }>(
               "SELECT data FROM ui_state WHERE key=?",
               `dispatch:${binding.runId}`,
             ),
@@ -241,13 +250,13 @@ export class ControlPlane {
         }
         presentation.cancelled(binding.runId);
         const stopReceipt = [
-          ...this.state.storage.sql.exec<{ data: string }>(
+          ...this.sql.exec<{ data: string }>(
             "SELECT data FROM ui_state WHERE key=?",
             `native-stop:${binding.runId}`,
           ),
         ][0];
         if (stopReceipt && binding.at !== undefined)
-          this.state.storage.sql.exec(
+          this.sql.exec(
             "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
             `native-qualified:${binding.chatId}`,
             JSON.stringify({
@@ -267,7 +276,7 @@ export class ControlPlane {
   private async initializeSecrets(): Promise<void> {
     // Legacy test/installation paths lacking root bindings remain backward compatible.
     if (!this.env.TELEGRAM_BOT_TOKEN) return;
-    this.secretsReady ??= resolveControlSecrets(this.state.storage.sql, this.env)
+    this.secretsReady ??= resolveControlSecrets(this.sql, this.env)
       .then(async (value) => {
         Object.assign(this.env, value);
         await this.migrateLegacyCredentials();
@@ -284,7 +293,7 @@ export class ControlPlane {
     if (!current) return;
     const broker = this.capabilityBroker();
     const connections = new CloudIntegrationConnections(
-      this.state.storage.sql,
+      this.sql,
       this.env.CREDENTIAL_MASTER_KEY,
     );
     const references = Array.isArray(current.data.credentialReferences)
@@ -314,7 +323,7 @@ export class ControlPlane {
         let generic = broker.reference(id, reference.credentialId);
         if (!generic) {
           const legacy = await new CloudCredentialVault(
-            this.state.storage.sql,
+            this.sql,
             this.env.CREDENTIAL_MASTER_KEY,
           ).readLease(reference.capability, reference.credentialId);
           generic = await broker.save(
@@ -417,7 +426,7 @@ export class ControlPlane {
   }
   private capabilityBroker(): CloudCapabilityBroker {
     return new CloudCapabilityBroker(
-      this.state.storage.sql,
+      this.sql,
       this.env.CREDENTIAL_MASTER_KEY,
       this.integrationRegistry(),
       (owner) => {
@@ -517,13 +526,13 @@ export class ControlPlane {
         });
       if (path === "/admin/native-status") {
         const bindings = [
-          ...this.state.storage.sql.exec<{ data: string }>(
+          ...this.sql.exec<{ data: string }>(
             "SELECT data FROM telegram_run_presentations ORDER BY rowid DESC LIMIT 100",
           ),
         ].map((row) => {
           const b = JSON.parse(row.data) as import("./run-presentation.js").RunDraftBinding;
           const receipt = [
-            ...this.state.storage.sql.exec<{ data: string }>(
+            ...this.sql.exec<{ data: string }>(
               "SELECT data FROM ui_state WHERE key=?",
               `native-stop:${b.runId}`,
             ),
@@ -573,7 +582,7 @@ export class ControlPlane {
       if (path === "/admin/upgrade-worker") {
         const upgrade = new WorkerImageUpgrade({
           store: this.store,
-          sql: this.state.storage.sql,
+          sql: this.sql,
           transaction: (fn) => this.state.storage.transactionSync(fn),
           request: railwayApi((await this.requireRailwayCredential()).token),
           assertAdmin: () => {
@@ -649,14 +658,14 @@ export class ControlPlane {
         );
         if (!Number.isSafeInteger(actor) || !actor) throw new Error("authorization_not_configured");
         const sequence = [
-          ...this.state.storage.sql.exec<{ data: string }>(
+          ...this.sql.exec<{ data: string }>(
             "SELECT data FROM ui_state WHERE key='admin_ui_sequence'",
           ),
         ][0];
         const updateId = sequence ? Number(sequence.data) - 1 : -1;
         if (!Number.isSafeInteger(updateId) || updateId >= 0)
           throw new Error("invalid_ui_sequence");
-        this.state.storage.sql.exec(
+        this.sql.exec(
           "INSERT INTO ui_state VALUES('admin_ui_sequence',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
           String(updateId),
         );
@@ -670,7 +679,7 @@ export class ControlPlane {
         const callback =
           body.callback === true
             ? [
-                ...this.state.storage.sql.exec<{ id: string }>(
+                ...this.sql.exec<{ id: string }>(
                   "SELECT id FROM ui_callbacks WHERE actor=? AND chat=? AND thread=? AND generation=? AND json_extract(data,'$.action')=? ORDER BY rowid DESC LIMIT 1",
                   actor,
                   chat,
@@ -776,7 +785,7 @@ export class ControlPlane {
       if (path === "/admin/run-status") {
         const requestId = String(body.requestId ?? "");
         const run = [
-          ...this.state.storage.sql.exec<{ request: string; state: string }>(
+          ...this.sql.exec<{ request: string; state: string }>(
             "SELECT request,state FROM runs WHERE request=? AND chat=? AND thread=?",
             requestId,
             Number(body.chatId),
@@ -785,19 +794,19 @@ export class ControlPlane {
         ][0];
         if (!run) throw new Error("unknown_run");
         const response = [
-          ...this.state.storage.sql.exec<{ state: string }>(
+          ...this.sql.exec<{ state: string }>(
             "SELECT state FROM responses WHERE run=?",
             requestId,
           ),
         ][0];
         const delivery = [
-          ...this.state.storage.sql.exec<{ id: string; state: string }>(
+          ...this.sql.exec<{ id: string; state: string }>(
             "SELECT id,state FROM outbox WHERE json_extract(data,'$.run')=? ORDER BY id LIMIT 100",
             requestId,
           ),
         ];
         const previewRow = [
-          ...this.state.storage.sql.exec<{ data: string }>(
+          ...this.sql.exec<{ data: string }>(
             "SELECT data FROM ui_state WHERE key=?",
             "run-ui:" + requestId,
           ),
@@ -947,7 +956,7 @@ export class ControlPlane {
           );
         if (!topic) throw new Error("topic_not_writable");
         const operation = String(body.operation);
-        if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+        if (isWorkerImageUpgrading(this.sql, topic.workerId))
           throw new Error("worker_upgrade_pending");
         if (
           ![
@@ -1005,7 +1014,7 @@ export class ControlPlane {
             this.presentation().acceptStop(stop),
           );
           if (binding) {
-            this.state.storage.sql.exec(
+            this.sql.exec(
               "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO NOTHING",
               `native-stop:${binding.runId}`,
               JSON.stringify({
@@ -1026,12 +1035,12 @@ export class ControlPlane {
         if (!actor || !allowed.includes(actor)) return Response.json({ ok: true });
         const railwayProtectedUpdate = await protectRailwayCredentialUpdate(
           update,
-          this.state.storage.sql,
+          this.sql,
           this.env.CREDENTIAL_MASTER_KEY,
         );
         const protectedUpdate = await protectTelegramCredentialUpdate(
           railwayProtectedUpdate,
-          this.state.storage.sql,
+          this.sql,
           this.env.CREDENTIAL_MASTER_KEY,
         );
         if (
@@ -1249,7 +1258,7 @@ export class ControlPlane {
             if (this.store.worker(worker.workerId)?.generation !== envelope.generation)
               throw new Error("stale_generation");
             const previous = [
-              ...this.state.storage.sql.exec<{ id: string; data: string }>(
+              ...this.sql.exec<{ id: string; data: string }>(
                 "SELECT id,data FROM approvals WHERE worker=? AND generation=? AND json_extract(data,'$.sessionId')=? AND json_extract(data,'$.configHash')=? AND json_extract(data,'$.revision')=? AND state IN ('PENDING','APPROVED')",
                 worker.workerId,
                 envelope.generation,
@@ -1286,7 +1295,7 @@ export class ControlPlane {
                 multiple: false,
               },
             };
-            this.state.storage.sql.exec(
+            this.sql.exec(
               "INSERT INTO approvals VALUES(?,?,?,?,'PENDING')",
               approvalId,
               worker.workerId,
@@ -1299,7 +1308,7 @@ export class ControlPlane {
             });
           }
           const approval = [
-            ...this.state.storage.sql.exec<{ data: string; state: string }>(
+            ...this.sql.exec<{ data: string; state: string }>(
               "SELECT data,state FROM approvals WHERE id=? AND worker=? AND generation=?",
               String(payload.approvalId ?? ""),
               worker.workerId,
@@ -1365,14 +1374,14 @@ export class ControlPlane {
               );
             else
               new CloudRunUi(
-                this.state.storage.sql,
+                this.sql,
                 new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
               ).capture(
                 String((envelope.payload as Record<string, unknown>).runId),
                 (envelope.payload as Record<string, unknown>).event,
               );
             new CloudTopicTitleUi(
-              this.state.storage.sql,
+              this.sql,
               this.store,
               new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
             ).capture(topic, (envelope.payload as Record<string, unknown>).event);
@@ -1381,13 +1390,13 @@ export class ControlPlane {
           if (admitted && ["question.asked", "permission.asked"].includes(event?.type ?? "")) {
             const key = "dispatch:" + String((envelope.payload as Record<string, unknown>).runId);
             const row = [
-              ...this.state.storage.sql.exec<{ data: string }>(
+              ...this.sql.exec<{ data: string }>(
                 "SELECT data FROM ui_state WHERE key=?",
                 key,
               ),
             ][0];
             if (row)
-              this.state.storage.sql.exec(
+              this.sql.exec(
                 "UPDATE ui_state SET data=? WHERE key=?",
                 JSON.stringify({ ...JSON.parse(row.data), nextPoll: 0 }),
                 key,
@@ -1411,6 +1420,8 @@ export class ControlPlane {
       // eslint-disable-next-line no-console
       console.error(JSON.stringify({ event: "control_operation_failed", category }));
       return Response.json({ error: category }, { status: 409 });
+    } finally {
+      this.sqlBudget.flush();
     }
   }
   private questionDecision(
@@ -1420,7 +1431,7 @@ export class ControlPlane {
     answers: string[][],
   ): void {
     const rows = [
-      ...this.state.storage.sql.exec<{ id: string; data: string }>(
+      ...this.sql.exec<{ id: string; data: string }>(
         "SELECT id,data FROM approvals WHERE worker=? AND generation=? AND state='PENDING'",
         topic.workerId,
         topic.generation,
@@ -1442,7 +1453,7 @@ export class ControlPlane {
       });
       if (index < 0) continue;
       const approved = answers[index]?.length === 1 && answers[index]?.[0] === "Approve";
-      this.state.storage.sql.exec(
+      this.sql.exec(
         "UPDATE approvals SET state=?,data=? WHERE id=? AND state='PENDING'",
         approved ? "APPROVED" : "REJECTED",
         JSON.stringify({ ...prepared, questionRequestId: requestId }),
@@ -1454,7 +1465,7 @@ export class ControlPlane {
     if ((id !== "github" && id !== "tailscale") || !["select", "remove"].includes(action))
       throw new Error("invalid_integration");
     const connections = new CloudIntegrationConnections(
-      this.state.storage.sql,
+      this.sql,
       this.env.CREDENTIAL_MASTER_KEY,
     );
     const accounts = connections.accounts(id);
@@ -1534,7 +1545,7 @@ export class ControlPlane {
       const id = providerId.startsWith("integration.github") ? "github" : "tailscale";
       const mode = providerId.endsWith(".add") ? "add" : "rotate";
       const connections = new CloudIntegrationConnections(
-        this.state.storage.sql,
+        this.sql,
         this.env.CREDENTIAL_MASTER_KEY,
       );
       const metadata = await connections.prepare(id, value);
@@ -1612,7 +1623,7 @@ export class ControlPlane {
       this.store.setGlobal(next, hash, global.revision, undefined, () => {
         if (displaced?.credentialId) broker.remove(displaced.credentialId);
         // Superseded legacy copies cease to be authoritative after atomic activation.
-        this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "credential:" + providerId);
+        this.sql.exec("DELETE FROM ui_state WHERE key=?", "credential:" + providerId);
       });
     } catch (error) {
       broker.remove(metadata.credentialId);
@@ -1720,7 +1731,7 @@ export class ControlPlane {
     await this.setup();
     const jobs = this.store.ensureFixedFleet("railway", 10, 5);
     if (!current || !this.railwaySetupStatus().ready)
-      this.state.storage.sql.exec(
+      this.sql.exec(
         "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
         "railway:onboarding",
         JSON.stringify({ actor: message.from.id, chat: message.chat.id }),
@@ -1734,7 +1745,7 @@ export class ControlPlane {
   }
   private async refreshRailwayOnboarding(): Promise<void> {
     const row = [
-      ...this.state.storage.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "railway:onboarding"),
+      ...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "railway:onboarding"),
     ][0];
     if (!row) return;
     const scope = JSON.parse(row.data) as { actor?: number; chat?: number };
@@ -1743,7 +1754,7 @@ export class ControlPlane {
       .forPanel(scope.actor!, scope.chat!, 0, 0)
       .railwayOnboarding(scope.actor!, scope.chat!, false);
     if (this.railwaySetupStatus().ready)
-      this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding");
+      this.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding");
   }
   private ui(): CloudBotUi {
     const rpc = async <T>(
@@ -1751,7 +1762,7 @@ export class ControlPlane {
       operation: string,
       payload: unknown = {},
     ): Promise<T> => {
-      if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+      if (isWorkerImageUpgrading(this.sql, topic.workerId))
         throw new Error("worker_upgrade_pending");
       if (this.store.worker(topic.workerId)?.runtimeVersion) {
         const health = await nodeRpc<{ ready: boolean }>(
@@ -1796,8 +1807,8 @@ export class ControlPlane {
         undefined,
         resetCredentials
           ? () => {
-              this.state.storage.sql.exec("DELETE FROM capability_leases");
-              this.state.storage.sql.exec(
+              this.sql.exec("DELETE FROM capability_leases");
+              this.sql.exec(
                 "DELETE FROM ui_state WHERE key GLOB 'capability-credential:*' OR key GLOB 'integration-credential:*' OR key GLOB 'integration-accounts:*' OR key GLOB 'credential:*'",
               );
             }
@@ -1805,7 +1816,7 @@ export class ControlPlane {
       );
     };
     const legacyUi = new LegacyUiAdapter({
-      sql: this.state.storage.sql,
+      sql: this.sql,
       store: this.store,
       botVersion: packageJson.version,
       coreVersion: this.env.WORKER_CORE_VERSION,
@@ -1814,7 +1825,7 @@ export class ControlPlane {
     });
     return new CloudBotUi({
       allowedUserId: this.env.TELEGRAM_ALLOWED_USER_ID,
-      sql: this.state.storage.sql,
+      sql: this.sql,
       store: this.store,
       telegram: new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN, fetch, async (payload) => {
         const chat = Number(payload.chat_id),
@@ -1824,7 +1835,7 @@ export class ControlPlane {
         const binding = this.presentation().activeBinding(topic);
         if (binding) {
           const text = [
-            ...this.state.storage.sql.exec<{ text: string }>(
+            ...this.sql.exec<{ text: string }>(
               "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
               binding.runId,
             ),
@@ -1853,12 +1864,12 @@ export class ControlPlane {
         this.saveCredential(update, provider, generation),
       railwayStatus: () => this.railwaySetupStatus(),
       railwayResume: async (actor, chat) => {
-        this.state.storage.sql.exec(
+        this.sql.exec(
           "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
           "railway:onboarding",
           JSON.stringify({ actor, chat }),
         );
-        this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding:paused");
+        this.sql.exec("DELETE FROM ui_state WHERE key=?", "railway:onboarding:paused");
         await this.resumeRailwaySetup();
       },
       saveRailwayCredential: (update, generation) =>
@@ -1903,7 +1914,7 @@ export class ControlPlane {
       .topics()
       .find((t) => t.chatId === chatId && t.threadId === threadId && t.state === "ACTIVE");
     if (!topic || topic.generation !== generation) throw new Error("stale_generation");
-    if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+    if (isWorkerImageUpgrading(this.sql, topic.workerId))
       throw new Error("worker_upgrade_pending");
     if (!text || text.length > 20000) throw new Error("invalid_prompt");
     if (
@@ -1955,7 +1966,7 @@ export class ControlPlane {
     );
     if (!inspection.connected) throw new Error("provider_credential_binding_missing");
     if (!inspection.available) throw new Error("model_unavailable");
-    if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId))
+    if (isWorkerImageUpgrading(this.sql, topic.workerId))
       throw new Error("worker_upgrade_pending");
     if (this.store.global()?.revision !== admittedGlobal?.revision)
       throw new Error("configuration_changed");
@@ -1985,7 +1996,7 @@ export class ControlPlane {
       operation,
     );
     if (parts)
-      this.state.storage.sql.exec(
+      this.sql.exec(
         "INSERT INTO ui_state VALUES(?,?) ON CONFLICT(key) DO NOTHING",
         "media:" + requestId,
         JSON.stringify(parts),
@@ -1994,7 +2005,7 @@ export class ControlPlane {
   }
   private railwayCredentials(): RailwayCredentialStore {
     if (!this.env.CREDENTIAL_MASTER_KEY) throw new Error("control_secrets_unavailable");
-    return new RailwayCredentialStore(this.state.storage.sql, this.env.CREDENTIAL_MASTER_KEY);
+    return new RailwayCredentialStore(this.sql, this.env.CREDENTIAL_MASTER_KEY);
   }
   private async requireRailwayCredential() {
     const credential = await this.railwayCredentials().read();
@@ -2099,7 +2110,7 @@ export class ControlPlane {
   }
   private async newTopic(chatId: number, requestId: string): Promise<AllocationJob> {
     if (
-      [...this.state.storage.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + chatId)]
+      [...this.sql.exec("SELECT key FROM ui_state WHERE key=?", "reset:" + chatId)]
         .length
     )
       throw new Error("control_reset_pending");
@@ -2229,7 +2240,7 @@ export class ControlPlane {
     const bound = this.store.bindTopic(jobId, job.threadId!, session.sessionId);
     if (job.topicTitle) {
       const key = `topic:${bound.chatId}:${bound.threadId}:${bound.generation}`;
-      this.state.storage.sql.exec(
+      this.sql.exec(
         "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
         key,
         JSON.stringify({ title: job.topicTitle, titleSource: "auto" }),
@@ -2242,6 +2253,13 @@ export class ControlPlane {
   private async advanceSafely(jobId: string): Promise<void> {
     let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
+    if (this.infrastructureFleetJob(existing) && this.fixedFleetJob(existing) &&
+        [...this.sql.exec("SELECT key FROM ui_state WHERE key=?", "railway:onboarding:paused")].length)
+      return;
+    if (!this.sqlBudget.backgroundAllowed()) {
+      await this.scheduleAlarm(this.sqlBudget.nextReset());
+      return;
+    }
     const now = Date.now();
     const backoffUntil = this.railwayBackoffUntil();
     if (backoffUntil > now) {
@@ -2350,7 +2368,7 @@ export class ControlPlane {
     if (!job) throw new Error("unknown_job");
     if (
       [
-        ...this.state.storage.sql.exec(
+        ...this.sql.exec(
           "SELECT key FROM ui_state WHERE key=?",
           "reset:" + job.chatId,
         ),
@@ -2377,7 +2395,7 @@ export class ControlPlane {
       if (!currentJob) throw new Error("unknown_job");
       if (
         [
-          ...this.state.storage.sql.exec(
+          ...this.sql.exec(
             "SELECT key FROM ui_state WHERE key=?",
             "reset:" + currentJob.chatId,
           ),
@@ -2521,7 +2539,7 @@ export class ControlPlane {
       const bound = this.store.bindTopic(jobId, job.threadId, session.sessionId);
       if (job.topicTitle) {
         const key = `topic:${bound.chatId}:${bound.threadId}:${bound.generation}`;
-        this.state.storage.sql.exec(
+        this.sql.exec(
           "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
           key,
           JSON.stringify({ title: job.topicTitle, titleSource: "auto" }),
@@ -2630,10 +2648,18 @@ export class ControlPlane {
   async alarm(): Promise<void> {
     if (this.alarmRunning) return;
     this.alarmRunning = true;
+    const before = this.sqlBudget.snapshot();
     try {
       await this.runAlarm();
     } finally {
       this.alarmRunning = false;
+      this.sqlBudget.flush();
+      const after = this.sqlBudget.snapshot();
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify({ event: "control_alarm_sql_usage", rowsRead: after.rowsRead - before.rowsRead,
+        rowsWritten: after.rowsWritten - before.rowsWritten, dailyRowsRead: after.rowsRead,
+        dailyRowsWritten: after.rowsWritten, statements: after.statements - before.statements,
+        peakRows: after.peakRows, peakStatement: after.peakStatement }));
     }
   }
   private async runAlarm(): Promise<void> {
@@ -2643,6 +2669,19 @@ export class ControlPlane {
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "queue_migration_pending") throw error;
       await this.scheduleAlarm(Date.now() + 1_000);
+      return;
+    }
+    if (await this.processTelegramUpdates()) {
+      // Yield before running newly admitted prompts or slow provisioning I/O.
+      await this.scheduleAlarm(Date.now() + (this.store.hasPendingTelegramUpdates() ? 30_000 : 5_000));
+      return;
+    }
+    // Cancellation remains a control operation even while maintenance is suspended.
+    await this.reconcileNativeCancellations();
+    if (!this.sqlBudget.backgroundAllowed()) {
+      await this.scheduleAlarm(this.sqlBudget.nextReset());
+      // eslint-disable-next-line no-console
+      console.warn(JSON.stringify({ event: "background_sql_budget_exhausted", ...this.sqlBudget.snapshot() }));
       return;
     }
     const pending = this.store.pendingJobs(20);
@@ -2655,7 +2694,6 @@ export class ControlPlane {
     }
 
     this.store.clearInactiveTyping();
-    await this.reconcileNativeCancellations();
     // Ambiguous persistent deliveries must retain a reachable, refreshable Stop
     // while the existing outbox requires reconciliation. Never resend them blindly.
     for (const binding of this.presentation().finalizingBindings()) {
@@ -2664,7 +2702,7 @@ export class ControlPlane {
         .find((t) => t.chatId === binding.chatId && t.threadId === binding.threadId);
       if (!topic || !this.presentation().owns(topic, binding.runId)) continue;
       const text = [
-        ...this.state.storage.sql.exec<{ text: string }>(
+        ...this.sql.exec<{ text: string }>(
           "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
           binding.runId,
         ),
@@ -2675,14 +2713,14 @@ export class ControlPlane {
       if (due !== undefined) await this.scheduleAlarm(due);
     }
     for (const topic of this.store.topics().filter((t) => t.state === "ACTIVE")) {
-      if (isWorkerImageUpgrading(this.state.storage.sql, topic.workerId)) continue;
+      if (isWorkerImageUpgrading(this.sql, topic.workerId)) continue;
       const run =
         this.store.activeRuns(topic.chatId, topic.threadId)[0] ??
         this.store.startNext(topic.chatId, topic.threadId);
       if (!run || this.store.worker(topic.workerId)?.state === "UNHEALTHY") continue;
       try {
         const text = [
-          ...this.state.storage.sql.exec<{ text: string }>(
+          ...this.sql.exec<{ text: string }>(
             "SELECT p.text FROM response_parts p LEFT JOIN message_roles r ON r.run=p.run AND r.message=p.message WHERE p.run=? AND (p.message IS NULL OR r.role='assistant') ORDER BY p.rowid",
             run.requestId,
           ),
@@ -2694,7 +2732,7 @@ export class ControlPlane {
         const previewDue = presentation.enabled(run.requestId)
           ? await presentation.update(topic, run.requestId, text)
           : await new CloudRunUi(
-              this.state.storage.sql,
+              this.sql,
               new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
             ).progress(topic, run.requestId, text, this.ui().options(topic));
         if (previewDue !== undefined) await this.scheduleAlarm(previewDue);
@@ -2711,7 +2749,7 @@ export class ControlPlane {
       )
         continue;
       const dispatchRow = [
-        ...this.state.storage.sql.exec<{ data: string }>(
+        ...this.sql.exec<{ data: string }>(
           "SELECT data FROM ui_state WHERE key=?",
           dispatchKey,
         ),
@@ -2779,7 +2817,7 @@ export class ControlPlane {
                 ...(operation === "run"
                   ? (() => {
                       const row = [
-                        ...this.state.storage.sql.exec<{ data: string }>(
+                        ...this.sql.exec<{ data: string }>(
                           "SELECT data FROM ui_state WHERE key=?",
                           "media:" + run.requestId,
                         ),
@@ -2837,7 +2875,7 @@ export class ControlPlane {
           )[0],
         );
         if (status.state === "ACCEPTED")
-          this.state.storage.sql.exec(
+          this.sql.exec(
             "INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
             dispatchKey,
             JSON.stringify({
@@ -2949,7 +2987,7 @@ export class ControlPlane {
       }
       const runCompleted =
         [
-          ...this.state.storage.sql.exec<{ state: string }>(
+          ...this.sql.exec<{ state: string }>(
             "SELECT state FROM runs WHERE request=?",
             response.run,
           ),
@@ -2970,7 +3008,7 @@ export class ControlPlane {
         }
         const id = response.run + ":" + index;
         const previous = [
-          ...this.state.storage.sql.exec<{ state: string }>(
+          ...this.sql.exec<{ state: string }>(
             "SELECT state FROM outbox WHERE id=?",
             id,
           ),
@@ -2981,7 +3019,7 @@ export class ControlPlane {
           complete = false;
           break;
         }
-        this.state.storage.sql.exec(
+        this.sql.exec(
           "INSERT INTO outbox VALUES(?,?,'SENDING') ON CONFLICT(id) DO UPDATE SET state='SENDING'",
           id,
           JSON.stringify({ run: response.run, index }),
@@ -2990,7 +3028,7 @@ export class ControlPlane {
           if (
             index === 0 &&
             !presentation.enabled(response.run) &&
-            (await new CloudRunUi(this.state.storage.sql, telegram).finish(
+            (await new CloudRunUi(this.sql, telegram).finish(
               topic,
               response.run,
               parts[index]!.fallbackText,
@@ -3008,7 +3046,7 @@ export class ControlPlane {
             await telegram.sendPart(response.chat, response.thread, parts[index]!, () =>
               presentation.canDeliver(topic, response.run),
             );
-          this.state.storage.sql.exec("UPDATE outbox SET state='DELIVERED' WHERE id=?", id);
+          this.sql.exec("UPDATE outbox SET state='DELIVERED' WHERE id=?", id);
           if (index < parts.length - 1 && presentation.enabled(response.run))
             await presentation.restore(topic, response.run, text);
         } catch (error) {
@@ -3016,7 +3054,7 @@ export class ControlPlane {
             error instanceof TelegramDeliveryError && error.category === "rate_limited"
               ? "PENDING"
               : "RECONCILIATION_REQUIRED";
-          this.state.storage.sql.exec("UPDATE outbox SET state=? WHERE id=?", state, id);
+          this.sql.exec("UPDATE outbox SET state=? WHERE id=?", state, id);
           if (state === "PENDING") await this.scheduleAlarm(Date.now() + 30_000);
           else this.store.responseDelivered(response.run, state);
           complete = false;
@@ -3026,7 +3064,7 @@ export class ControlPlane {
       if (complete && runCompleted && preferences.sendDiffFileAttachments) {
         const id = response.run + ":diff";
         const receipt = [
-          ...this.state.storage.sql.exec<{ state: string }>(
+          ...this.sql.exec<{ state: string }>(
             "SELECT state FROM outbox WHERE id=?",
             id,
           ),
@@ -3046,14 +3084,14 @@ export class ControlPlane {
                   .slice(0, 262144)
               : "";
             if (patch) {
-              this.state.storage.sql.exec(
+              this.sql.exec(
                 "INSERT INTO outbox VALUES(?,?,'SENDING') ON CONFLICT(id) DO UPDATE SET state='SENDING'",
                 id,
                 JSON.stringify({ run: response.run, artifact: "diff" }),
               );
               await telegram.document(topic.chatId, topic.threadId, "changes.diff", patch);
             }
-            this.state.storage.sql.exec(
+            this.sql.exec(
               "INSERT INTO outbox VALUES(?,?,'DELIVERED') ON CONFLICT(id) DO UPDATE SET state='DELIVERED'",
               id,
               JSON.stringify({ run: response.run, artifact: "diff" }),
@@ -3062,7 +3100,7 @@ export class ControlPlane {
             if (error instanceof TelegramDeliveryError) {
               const state =
                 error.category === "rate_limited" ? "PENDING" : "RECONCILIATION_REQUIRED";
-              this.state.storage.sql.exec(
+              this.sql.exec(
                 "INSERT INTO outbox VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state",
                 id,
                 JSON.stringify({ run: response.run, artifact: "diff" }),
@@ -3079,7 +3117,7 @@ export class ControlPlane {
       if (complete) {
         if (!presentation.canDeliver(topic, response.run)) continue;
         await presentation.complete(topic, response.run, runCompleted ? "COMPLETED" : "FAILED");
-        this.state.storage.sql.exec(
+        this.sql.exec(
           "UPDATE runs SET state='COMPLETED' WHERE request=? AND state='FINALIZING'",
           response.run,
         );
@@ -3091,7 +3129,7 @@ export class ControlPlane {
               {},
               topic.sessionId,
             );
-            new CloudTopicTitleUi(this.state.storage.sql, this.store, telegram).capture(topic, {
+            new CloudTopicTitleUi(this.sql, this.store, telegram).capture(topic, {
               type: "session.updated",
               properties: { info },
             });
@@ -3100,7 +3138,7 @@ export class ControlPlane {
           }
         }
         this.store.responseDelivered(response.run);
-        this.state.storage.sql.exec("DELETE FROM ui_state WHERE key=?", `typing:${response.run}`);
+        this.sql.exec("DELETE FROM ui_state WHERE key=?", `typing:${response.run}`);
         await this.topicUi(topic).runKeyboard(topic, response.run, false);
         // eslint-disable-next-line no-console
         console.log(
@@ -3115,7 +3153,7 @@ export class ControlPlane {
       }
     }
     const titles = new CloudTopicTitleUi(
-      this.state.storage.sql,
+      this.sql,
       this.store,
       new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN),
     );
@@ -3123,7 +3161,7 @@ export class ControlPlane {
     const nextTitle = titles.nextDue();
     if (nextTitle !== undefined) await this.scheduleAlarm(nextTitle);
     const taskUi = new CloudTaskUi({
-      sql: this.state.storage.sql,
+      sql: this.sql,
       store: this.store,
       actorId: 0,
       chatId: 0,
@@ -3140,6 +3178,8 @@ export class ControlPlane {
       this.enqueuePrompt(topic.chatId, topic.threadId, topic.generation, request, text),
     );
     if (nextTask !== undefined) await this.scheduleAlarm(Math.min(nextTask, Date.now() + 60_000));
+  }
+  private async processTelegramUpdates(): Promise<boolean> {
     const rows = this.store.pendingTelegramUpdates(20);
     for (const row of rows) {
       const update = JSON.parse(row.data) as TelegramUpdate;
@@ -3275,6 +3315,6 @@ export class ControlPlane {
           }
       }
     }
-    if (this.store.hasPendingTelegramUpdates()) await this.scheduleAlarm(Date.now() + 30_000);
+    return rows.length > 0;
   }
 }
