@@ -1775,3 +1775,59 @@ test("automatic Core rollout advances one prepared worker per maintenance pass",
   assert.deepEqual(calls, ["worker-01"]);
   assert.ok(f.getAlarm());
 });
+
+async function preparedPausedFixture() {
+  const f = await fixture();
+  await post(f.plane, "/admin/setup");
+  const bootstrap = f.store.ensureFixedFleet("railway", 10, 5)[0]!;
+  f.store.configureJob(bootstrap.jobId, { projectId: "project", environmentId: "env", serviceId: "owned-service", volumeId: "owned-volume", endpoint: "https://worker-01.up.railway.app", phase: "READY_UNBOUND" });
+  f.store.ready(bootstrap.workerId, 1, "synthetic");
+  const job = f.store.reservePreparedAllocation("paused-chat", -100);
+  f.store.configureJob(job.jobId, { phase: "BINDING", threadId: 42, createdAt: Date.now() - 130_000 });
+  return { ...f, job };
+}
+
+test("a stuck prepared binding stops after its retry budget and delayed deliveries stay stopped", async t => {
+  const f = await preparedPausedFixture();
+  let failures = 0, attempts = 0;
+  t.mock.method(f.plane as any, "allocationUi", () => ({ allocationFailure: async () => { failures++; } }));
+  t.mock.method(f.plane as any, "advance", async () => { attempts++; throw new Error("worker_unavailable"); });
+  await (f.plane as any).advanceSafely(f.job.jobId);
+  await (f.plane as any).advanceSafely(f.job.jobId);
+  const paused = f.store.job(f.job.jobId)!;
+  assert.equal(paused.phase, "FAILED");
+  assert.equal(paused.cleanupPhase, "BINDING");
+  assert.equal(paused.threadId, 42);
+  assert.equal(paused.serviceId, "owned-service");
+  assert.equal(paused.volumeId, "owned-volume");
+  assert.equal(attempts, 1);
+  assert.equal(failures, 1);
+  assert.ok(!f.store.pendingJobs().some(job => job.jobId === paused.jobId));
+});
+
+test("Cancel fences prepared allocation progress and Retry resumes the same Topic and worker", async t => {
+  const f = await preparedPausedFixture();
+  t.mock.method(f.plane as any, "advance", async () => { throw new Error("unexpected_progress"); });
+  await (f.plane as any).cancelAllocation(f.job.jobId);
+  await (f.plane as any).advanceSafely(f.job.jobId);
+  assert.equal(f.store.job(f.job.jobId)!.phase, "FAILED");
+  await (f.plane as any).ui().deps.resumeAllocation(f.job.jobId);
+  const resumed = f.store.job(f.job.jobId)!;
+  assert.equal(resumed.phase, "BINDING");
+  assert.equal(resumed.threadId, 42);
+  assert.equal(resumed.workerId, f.job.workerId);
+  assert.equal(resumed.generation, f.job.generation);
+  assert.equal(resumed.volumeId, "owned-volume");
+  assert.ok(resumed.createdAt! > Date.now() - 5_000);
+  assert.deepEqual(f.queued.at(-1), { jobId: f.job.jobId });
+});
+
+test("a delayed Cancel cannot delete a successfully bound Topic", async t => {
+  const f = await preparedPausedFixture();
+  f.store.bindTopic(f.job.jobId, 42, "session");
+  let deleted = false;
+  t.mock.method(f.plane as any, "deleteTopic", async () => { deleted = true; });
+  await (f.plane as any).cancelAllocation(f.job.jobId);
+  assert.equal(f.store.job(f.job.jobId)!.phase, "BOUND");
+  assert.equal(deleted, false);
+});

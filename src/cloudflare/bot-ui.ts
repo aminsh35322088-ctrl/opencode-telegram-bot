@@ -196,6 +196,7 @@ interface UiDependencies {
   compact?: (topic: FleetTopic, requestId: string) => Promise<void>;
   newTopic: (chat: number, request: string) => Promise<AllocationJob>;
   deleteTopic: (chat: number, thread: number) => Promise<void>;
+  resumeAllocation?: (jobId: string) => Promise<void>;
   cancelAllocation?: (jobId: string) => Promise<void>;
   reconcileManagedCleanup?: (chat: number) => Promise<void>;
   rpc: <T = unknown>(topic: FleetTopic, operation: string, payload?: unknown) => Promise<T>;
@@ -879,7 +880,7 @@ export class CloudBotUi {
     );
     await this.panel(job.chatId, undefined, {
       text: ["Creating new thread…", "", ...lines].join("\n"),
-      reply_markup: { inline_keyboard: [] },
+      reply_markup: { inline_keyboard: [[this.button(this.panelScope.actor, job.chatId, 0, undefined, "✖ Cancel", "allocation_cancel", job.jobId)]] },
     });
   }
   async allocationFailure(job: AllocationJob, reason: string): Promise<void> {
@@ -945,6 +946,12 @@ export class CloudBotUi {
     chat: number,
     updateId: number,
   ): Promise<void> {
+    if (/^worker-\d{2}$/u.test(job.workerId) && this.deps.resumeAllocation) {
+      await this.deps.resumeAllocation(job.jobId);
+      this.set("action_done:" + updateId, true);
+      await this.allocationProgress(this.deps.store.job(job.jobId)!, "BINDING");
+      return;
+    }
     const worker = this.deps.store.worker(job.workerId);
     if (worker?.state !== "REPLACED") {
       await this.panel(job.chatId, undefined, {
@@ -2292,6 +2299,12 @@ export class CloudBotUi {
         this.deps.cancelAllocation
           ? () => this.deps.cancelAllocation!(failed.jobId).catch(() => undefined)
           : undefined;
+      if (cleanup && failed && /^worker-\d{2}$/u.test(failed.workerId)) {
+        await this.deps.cancelAllocation!(failed.jobId);
+        this.set("action_done:" + updateId, true);
+        await this.home(chat, actor, false);
+        return true;
+      }
       this.set("action_done:" + updateId, true);
       await this.home(chat, actor, false);
       if (cleanup) {

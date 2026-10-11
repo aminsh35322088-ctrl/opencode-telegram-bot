@@ -15,6 +15,7 @@ export interface ControlEnvironment {
   ADMIN_TOKEN: string;
   CREDENTIAL_MASTER_KEY: string;
   PROVISIONING_ENABLED?: string;
+  PAUSE_NEW_CHAT_BEFORE?: string;
   CORE_AUTO_UPDATE?: string;
   WORKER_IMAGE: string;
   WORKER_CORE_COMMIT: string;

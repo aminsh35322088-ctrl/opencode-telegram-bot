@@ -1915,6 +1915,13 @@ export class ControlPlane {
       questionDecision: (topic, request, questions, answers) =>
         this.questionDecision(topic, request, questions, answers),
       newTopic: (chat, request) => this.newTopic(chat, request),
+      resumeAllocation: async jobId => {
+        const job = this.store.job(jobId);
+        if (!job || !this.fixedFleetJob(job) || job.phase !== "FAILED") throw new Error("allocation_resume_rejected");
+        this.store.configureJob(jobId, { phase: job.cleanupPhase ?? (job.threadId ? "BINDING" : "RESERVED"), error: undefined, createdAt: Date.now() });
+        await this.env.JOBS.send({ jobId });
+        await this.scheduleAlarm(Date.now() + 1);
+      },
       deleteTopic: (chat, thread) => this.deleteTopic(chat, thread),
       cancelAllocation: (jobId) => this.cancelAllocation(jobId),
       reconcileManagedCleanup: (chat) => this.reconcileManagedCleanup(chat),
@@ -2329,6 +2336,16 @@ export class ControlPlane {
   private async advanceSafely(jobId: string): Promise<void> {
     let existing = this.store.job(jobId);
     if (!existing) throw new Error("unknown_job");
+    if (this.fixedFleetJob(existing) && !this.infrastructureFleetJob(existing)) {
+      if (existing.phase === "FAILED") return;
+      const cutoff = Number(this.env.PAUSE_NEW_CHAT_BEFORE ?? 0);
+      if (existing.phase !== "BOUND" && cutoff && (existing.createdAt ?? 0) < cutoff) {
+        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: existing.phase, error: "Chat creation paused. Retry when ready." });
+        await this.allocationUi(paused)?.allocationFailure(paused, paused.error!);
+        return;
+      }
+    }
+
     if (this.infrastructureFleetJob(existing) && this.fixedFleetJob(existing)) {
       if (Number(existing.workerId.slice(7)) > this.railwayCapacity()) return;
       const paused = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "railway:onboarding:paused")][0];
@@ -2386,6 +2403,13 @@ export class ControlPlane {
         "railway_transport_timeout",
         "railway_transport_error",
       ]);
+      if (this.store.job(jobId)?.phase === "FAILED") return;
+      if (transient.has(reason) && this.fixedFleetJob(existing) && !this.infrastructureFleetJob(existing) && Date.now() - (existing.createdAt ?? 0) > 120_000) {
+        const current = this.store.job(jobId)!;
+        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: current.phase, error: "Worker did not become ready. Retry or Cancel." });
+        await this.allocationUi(paused)?.allocationFailure(paused, paused.error!);
+        return;
+      }
       if (transient.has(reason)) {
         if (["railway_rate_limited", "railway_transport_timeout", "railway_transport_error"].includes(reason)) {
           const requested =
@@ -2411,7 +2435,7 @@ export class ControlPlane {
       if (!job || job.phase === "BOUND") throw error;
       const worker = this.store.worker(job.workerId);
       if (this.fixedFleetJob(job)) {
-        this.store.configureJob(jobId, { phase: "FAILED", error: reason });
+        this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: job.phase, error: reason });
         if (this.infrastructureFleetJob(job) && ["railway_quota_exhausted", "railway_creation_limited"].includes(reason))
           this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", "railway:onboarding:paused", JSON.stringify({ reason }));
         if (
@@ -2476,6 +2500,7 @@ export class ControlPlane {
     const guard = () => {
       const currentJob = this.store.job(jobId);
       if (!currentJob) throw new Error("unknown_job");
+      if (currentJob.phase === "FAILED") throw new Error("allocation_paused");
       if (
         [
           ...this.sql.exec(
@@ -2645,12 +2670,16 @@ export class ControlPlane {
   private async cancelAllocation(jobId: string): Promise<void> {
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
+    if (job.phase === "BOUND") return;
     const topic = this.store.topics().find((t) => t.workerId === job!.workerId);
     if (topic) {
       await this.deleteTopic(topic.chatId, topic.threadId);
       return;
     }
-    if (this.fixedFleetJob(job)) throw new Error("prepared_worker_cleanup_reconciliation_required");
+    if (this.fixedFleetJob(job)) {
+      this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: job.cleanupPhase ?? job.phase, error: "Chat creation cancelled." });
+      return;
+    }
     let current = this.store.worker(job.workerId);
     if (!current) throw new Error("unknown_worker");
     if (current.state !== "REPLACED") {

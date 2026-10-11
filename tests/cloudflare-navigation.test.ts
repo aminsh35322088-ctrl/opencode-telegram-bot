@@ -563,3 +563,12 @@ test("fresh Topic Settings invocation retires the old panel while callback navig
   assert.equal(buttons.some((button: any) => button.text === "🏠 Home"), false);
   assert.ok(buttons.some((button: any) => button.text === "✖ Close"));
 });
+
+test("allocation progress exposes Cancel while running and removes it after success", async () => {
+  const f = fixture();
+  const job = f.store.jobs()[0]!;
+  await f.scoped(7, 0, 0).allocationProgress(job, "BINDING");
+  assert.ok(f.sent.at(-1)!.payload.reply_markup.inline_keyboard.flat().some((button: any) => button.text.includes("Cancel")));
+  await f.scoped(7, 0, 0).allocationProgress(job, "READY");
+  assert.ok(!f.sent.at(-1)!.payload.reply_markup.inline_keyboard.flat().some((button: any) => button.text.includes("Cancel")));
+});
