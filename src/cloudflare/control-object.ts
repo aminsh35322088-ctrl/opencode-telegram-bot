@@ -1917,7 +1917,7 @@ export class ControlPlane {
       newTopic: (chat, request) => this.newTopic(chat, request),
       resumeAllocation: async jobId => {
         const job = this.store.job(jobId);
-        if (!job || !this.fixedFleetJob(job) || this.infrastructureFleetJob(job) || job.phase !== "FAILED") throw new Error("allocation_resume_rejected");
+        if (!job || !this.fixedFleetJob(job) || this.infrastructureFleetJob(job) || job.phase !== "FAILED" || this.store.worker(job.workerId)?.generation !== job.generation) throw new Error("allocation_resume_rejected");
         this.store.configureJob(jobId, { phase: job.cleanupPhase ?? (job.threadId ? "BINDING" : "RESERVED"), error: undefined, createdAt: Date.now() });
         await this.env.JOBS.send({ jobId });
         await this.scheduleAlarm(Date.now() + 1);
@@ -2676,7 +2676,7 @@ export class ControlPlane {
   private async cancelAllocation(jobId: string): Promise<void> {
     let job = this.store.job(jobId);
     if (!job) throw new Error("unknown_job");
-    if (job.phase === "BOUND") return;
+    if (job.phase === "BOUND" || this.store.worker(job.workerId)?.generation !== job.generation) return;
     const topic = this.store.topics().find((t) => t.workerId === job!.workerId);
     if (topic) {
       await this.deleteTopic(topic.chatId, topic.threadId);
@@ -2740,7 +2740,8 @@ export class ControlPlane {
     if (!proof.retired) {
       if (worker.generation !== job.generation) throw new Error("stale_generation");
       let identity: RpcIdentity;
-      if (worker.credential) identity = job.threadId ? await this.identity(job.workerId) : await this.unboundIdentity(job.workerId);
+      if (worker.credential) identity = { workerId: job.workerId, generation: job.generation, chatId: worker.chatId ?? 0, threadId: worker.threadId ?? 0,
+        endpoint: worker.endpoint!, secret: await decryptCredential(this.env.CREDENTIAL_MASTER_KEY, "node:" + job.workerId + ":" + job.generation, worker.credential) };
       else {
         const handoffRow = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "binding-handoff:" + jobId)][0];
         if (!handoffRow) throw new Error("worker_retirement_unconfirmed");

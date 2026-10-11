@@ -1869,3 +1869,18 @@ test("cancelled allocation recovery does not refence after recycling was persist
   assert.equal(f.store.worker(worker.workerId)!.generation, worker.generation);
   assert.deepEqual(f.queued.at(-1), { jobId: recycle.jobId });
 });
+
+test("an old Cancel button cannot delete a newer Topic on the reused worker", async t => {
+  const f = await preparedPausedFixture();
+  await (f.plane as any).cancelAllocation(f.job.jobId);
+  const worker = f.store.fenceWorker(f.job.workerId);
+  f.store.prepareWorkerReuse(worker.workerId, worker.generation, f.job.jobId);
+  f.store.ready(worker.workerId, worker.generation, "synthetic");
+  const next = f.store.reservePreparedAllocation("next-chat", -100);
+  f.store.bindTopic(next.jobId, 43, "next-session");
+  let deleted = false;
+  t.mock.method(f.plane as any, "deleteTopic", async () => { deleted = true; });
+  await (f.plane as any).cancelAllocation(f.job.jobId);
+  assert.equal(deleted, false);
+  assert.equal(f.store.job(next.jobId)!.phase, "BOUND");
+});
