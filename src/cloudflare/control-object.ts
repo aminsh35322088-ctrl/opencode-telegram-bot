@@ -2338,9 +2338,15 @@ export class ControlPlane {
     if (!existing) throw new Error("unknown_job");
     if (this.fixedFleetJob(existing) && !this.infrastructureFleetJob(existing)) {
       if (existing.phase === "FAILED") return;
+      if (existing.phase !== "BOUND" && Date.now() - (existing.createdAt ?? Date.now()) > 120_000) {
+        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: existing.phase, error: "Chat creation timed out. Cancel this attempt." });
+        await this.cancelAllocation(jobId);
+        await this.allocationUi(paused)?.allocationFailure(paused, paused.error!);
+        return;
+      }
       const cutoff = Number(this.env.PAUSE_NEW_CHAT_BEFORE ?? 0);
       if (existing.phase !== "BOUND" && cutoff && (existing.createdAt ?? 0) < cutoff) {
-        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: existing.phase, error: "Chat creation paused. Retry when ready." });
+        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: existing.phase, error: "Chat creation paused. Cancel this attempt." });
         await this.allocationUi(paused)?.allocationFailure(paused, paused.error!);
         return;
       }
@@ -2406,7 +2412,7 @@ export class ControlPlane {
       if (this.store.job(jobId)?.phase === "FAILED") return;
       if (transient.has(reason) && this.fixedFleetJob(existing) && !this.infrastructureFleetJob(existing) && Date.now() - (existing.createdAt ?? 0) > 120_000) {
         const current = this.store.job(jobId)!;
-        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: current.phase, error: "Worker did not become ready. Retry or Cancel." });
+        const paused = this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: current.phase, error: "Worker did not become ready. Cancel this attempt." });
         await this.allocationUi(paused)?.allocationFailure(paused, paused.error!);
         return;
       }
@@ -2678,6 +2684,8 @@ export class ControlPlane {
     }
     if (this.fixedFleetJob(job)) {
       this.store.configureJob(jobId, { phase: "FAILED", cleanupPhase: job.cleanupPhase ?? (job.phase === "FAILED" ? (job.threadId ? "BINDING" : "RESERVED") : job.phase), error: "Chat creation cancelled." });
+      this.sql.exec("INSERT INTO ui_state(key,data) VALUES(?,?) ON CONFLICT(key) DO NOTHING", "allocation-cancel:" + jobId, "{}");
+      await this.scheduleAlarm(Date.now() + 1);
       return;
     }
     let current = this.store.worker(job.workerId);
@@ -2714,6 +2722,49 @@ export class ControlPlane {
       }
     }
     this.store.finalizeAllocationFailure(jobId);
+  }
+  private async cleanupCancelledAllocation(jobId: string): Promise<void> {
+    const job = this.store.job(jobId);
+    const key = "allocation-cancel:" + jobId;
+    if (!job || job.phase !== "FAILED" || job.error !== "Chat creation cancelled.") return;
+    const row = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", key)][0];
+    if (!row) return;
+    const proof = JSON.parse(row.data) as { retired?: boolean };
+    let worker = this.store.worker(job.workerId)!;
+    const alreadyRecycled = this.store.jobs().find(candidate => candidate.requestId === `fleet-recycle:${job.workerId}:${job.generation + 1}`);
+    if (alreadyRecycled && worker.generation === job.generation + 1) {
+      this.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+      await this.env.JOBS.send({ jobId: alreadyRecycled.jobId });
+      return;
+    }
+    if (!proof.retired) {
+      if (worker.generation !== job.generation) throw new Error("stale_generation");
+      let identity: RpcIdentity;
+      if (worker.credential) identity = job.threadId ? await this.identity(job.workerId) : await this.unboundIdentity(job.workerId);
+      else {
+        const handoffRow = [...this.sql.exec<{ data: string }>("SELECT data FROM ui_state WHERE key=?", "binding-handoff:" + jobId)][0];
+        if (!handoffRow) throw new Error("worker_retirement_unconfirmed");
+        const handoff = JSON.parse(handoffRow.data) as { generation: number; endpoint: string; credential: string };
+        if (handoff.generation + 1 !== job.generation) throw new Error("stale_generation");
+        identity = { workerId: job.workerId, generation: handoff.generation, chatId: 0, threadId: 0, endpoint: handoff.endpoint,
+          secret: await decryptCredential(this.env.CREDENTIAL_MASTER_KEY, "node:" + job.workerId + ":" + handoff.generation, handoff.credential) };
+      }
+      const retired = await nodeRpc<{ retired: boolean; sanitized?: boolean }>(identity, "retire", { sanitize: true });
+      if (!retired.retired || retired.sanitized !== true) throw new Error("worker_retirement_unconfirmed");
+      this.sql.exec("UPDATE ui_state SET data=? WHERE key=?", JSON.stringify({ retired: true }), key);
+    }
+    const thread = job.threadId ?? job.pendingThreadId;
+
+    worker = this.store.fenceWorker(job.workerId);
+    const recycle = this.store.prepareWorkerReuse(worker.workerId, worker.generation, jobId);
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", key);
+    this.sql.exec("DELETE FROM ui_state WHERE key=?", "binding-handoff:" + jobId);
+    if (thread) {
+      try { await new CloudTelegram(this.env.TELEGRAM_BOT_TOKEN).call("deleteForumTopic", { chat_id: job.chatId, message_thread_id: thread }); }
+      catch { /* A failed blank Topic deletion must not retain the sanitized worker. */ }
+    }
+    await this.env.JOBS.send({ jobId: recycle.jobId });
+    await this.scheduleAlarm(Date.now() + 1);
   }
   private async reconcileManagedCleanup(chatId: number): Promise<void> {
     const workerIds = [
@@ -2845,6 +2896,19 @@ export class ControlPlane {
       // eslint-disable-next-line no-console
       console.warn(JSON.stringify({ event: "background_sql_budget_exhausted", ...this.sqlBudget.snapshot() }));
       return;
+    }
+    const expiredRow = [...this.sql.exec<{ data: string }>("SELECT data FROM jobs WHERE json_extract(data,'$.phase')='FAILED' AND json_extract(data,'$.error') IN (?,?,?) LIMIT 1", "Worker did not become ready. Retry or Cancel.", "Worker did not become ready. Cancel this attempt.", "Chat creation timed out. Cancel this attempt.")][0];
+    const expiredCandidate = expiredRow ? JSON.parse(expiredRow.data) as AllocationJob : undefined;
+    const expired = expiredCandidate && this.fixedFleetJob(expiredCandidate) && !this.infrastructureFleetJob(expiredCandidate) && this.store.worker(expiredCandidate.workerId)?.generation === expiredCandidate.generation ? expiredCandidate : undefined;
+    if (expired) {
+      await this.cancelAllocation(expired.jobId);
+      const cancelledJob = this.store.job(expired.jobId)!;
+      await this.allocationUi(cancelledJob)?.allocationFailure(cancelledJob, "Chat creation timed out and was stopped.");
+    }
+    const cancelled = [...this.sql.exec<{ key: string }>("SELECT key FROM ui_state WHERE key LIKE 'allocation-cancel:%' LIMIT 1")][0];
+    if (cancelled) {
+      try { await this.cleanupCancelledAllocation(cancelled.key.slice("allocation-cancel:".length)); }
+      catch { await this.scheduleAlarm(Date.now() + 30_000); }
     }
     await this.updateCoreFleet();
     const pending = this.store.pendingJobs(20);

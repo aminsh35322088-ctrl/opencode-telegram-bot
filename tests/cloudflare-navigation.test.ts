@@ -572,3 +572,11 @@ test("allocation progress exposes Cancel while running and removes it after succ
   await f.scoped(7, 0, 0).allocationProgress(job, "READY");
   assert.ok(!f.sent.at(-1)!.payload.reply_markup.inline_keyboard.flat().some((button: any) => button.text.includes("Cancel")));
 });
+
+test("failed New Chat offers only Cancel", async () => {
+  const f = fixture();
+  await f.scoped(7, 0, 0).allocationFailure(f.store.jobs()[0]!, "worker_unavailable");
+  const buttons = f.sent.at(-1)!.payload.reply_markup.inline_keyboard.flat();
+  assert.equal(buttons.length, 1);
+  assert.ok(buttons[0].text.includes("Cancel"));
+});

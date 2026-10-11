@@ -1412,7 +1412,7 @@ export class ControlStore {
       return worker;
     });
   }
-  prepareWorkerReuse(workerId: string, generation: number): AllocationJob {
+  prepareWorkerReuse(workerId: string, generation: number, cancelledJobId?: string): AllocationJob {
     return this.transaction(() => {
       const worker = this.worker(workerId);
       if (
@@ -1428,7 +1428,10 @@ export class ControlStore {
       )
         throw new Error("recycle_not_confirmed");
       const topic = this.topics().find((candidate) => candidate.workerId === workerId);
-      if (!topic || topic.state !== "FENCED" || topic.generation !== generation)
+      const cancelled = cancelledJobId ? this.job(cancelledJobId) : undefined;
+      const cancelledBinding = !topic && cancelled?.phase === "FAILED" && cancelled.workerId === workerId &&
+        cancelled.generation + 1 === generation && cancelled.error === "Chat creation cancelled.";
+      if (!cancelledBinding && (!topic || topic.state !== "FENCED" || topic.generation !== generation))
         throw new Error("recycle_not_confirmed");
       const requestId = `fleet-recycle:${workerId}:${generation}`;
       const existing = this.jobs().find((candidate) => candidate.requestId === requestId);

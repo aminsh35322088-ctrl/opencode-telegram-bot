@@ -894,15 +894,6 @@ export class CloudBotUi {
           job.chatId,
           0,
           undefined,
-          "↻ Retry",
-          "allocation_retry",
-          job.jobId,
-        ),
-        this.button(
-          this.panelScope.actor,
-          job.chatId,
-          0,
-          undefined,
           "✖ Cancel",
           "allocation_cancel",
           job.jobId,
@@ -918,15 +909,6 @@ export class CloudBotUi {
       reply_markup: {
         inline_keyboard: [
           [
-            this.button(
-              this.panelScope.actor,
-              job.chatId,
-              0,
-              undefined,
-              "↻ Retry",
-              "allocation_retry",
-              job.jobId,
-            ),
             this.button(
               this.panelScope.actor,
               job.chatId,

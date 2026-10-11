@@ -1800,7 +1800,7 @@ test("a stuck prepared binding stops after its retry budget and delayed deliveri
   assert.equal(paused.threadId, 42);
   assert.equal(paused.serviceId, "owned-service");
   assert.equal(paused.volumeId, "owned-volume");
-  assert.equal(attempts, 1);
+  assert.equal(attempts, 0);
   assert.equal(failures, 1);
   assert.ok(!f.store.pendingJobs().some(job => job.jobId === paused.jobId));
 });
@@ -1830,4 +1830,42 @@ test("a delayed Cancel cannot delete a successfully bound Topic", async t => {
   await (f.plane as any).cancelAllocation(f.job.jobId);
   assert.equal(f.store.job(f.job.jobId)!.phase, "BOUND");
   assert.equal(deleted, false);
+});
+
+test("Cancel retires the failed runtime and recycles its existing service and volume once", async t => {
+  const f = await preparedPausedFixture();
+  // This fixture has not rotated yet; cancel uses its unbound identity.
+  f.store.configureJob(f.job.jobId, { threadId: undefined });
+  const secret = "s".repeat(64);
+  f.store.ready(f.job.workerId, 1, await encryptCredential(btoa("k".repeat(32)), "node:worker-01:1", secret));
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  let retirements = 0;
+  globalThis.fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.operation, "retire");
+    assert.equal(body.payload.sanitize, true);
+    retirements++;
+    const reply = await signEnvelope({ ...body, payload: { ok: true, result: { retired: true, sanitized: true } } }, secret);
+    return new Response(reply.body, { headers: { "x-node-signature": reply.signature } });
+  };
+  await (f.plane as any).cancelAllocation(f.job.jobId);
+  await (f.plane as any).cleanupCancelledAllocation(f.job.jobId);
+  await (f.plane as any).cleanupCancelledAllocation(f.job.jobId);
+  const recycled = f.store.jobs().find(job => job.requestId === "fleet-recycle:worker-01:2")!;
+  assert.equal(recycled.serviceId, "owned-service");
+  assert.equal(recycled.volumeId, "owned-volume");
+  assert.equal(retirements, 1);
+  assert.equal(f.store.worker("worker-01")!.state, "RECOVERING");
+  assert.equal(f.store.worker("worker-01")!.credential, undefined);
+});
+
+test("cancelled allocation recovery does not refence after recycling was persisted", async () => {
+  const f = await preparedPausedFixture();
+  await (f.plane as any).cancelAllocation(f.job.jobId);
+  const worker = f.store.fenceWorker(f.job.workerId);
+  const recycle = f.store.prepareWorkerReuse(worker.workerId, worker.generation, f.job.jobId);
+  await (f.plane as any).cleanupCancelledAllocation(f.job.jobId);
+  assert.equal(f.store.worker(worker.workerId)!.generation, worker.generation);
+  assert.deepEqual(f.queued.at(-1), { jobId: recycle.jobId });
 });
