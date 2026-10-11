@@ -71,20 +71,30 @@ test("admitted private Topic starts one native thinking draft before any text", 
   await f.controller().update(f.topic, "run", "");
   assert.equal(drafts(f)[1]!.body.draft_id, first.draft_id);
 });
-test("thinking and every execution activity keep Stop without accumulating tool quotations", async () => {
-  const f = fixture();
+test("thinking and every execution activity keep Stop while visible reasoning stays separate from tool input", async () => {
+  const f = fixture((method) =>
+    Response.json({
+      ok: true,
+      result:
+        method === "getChat"
+          ? { id: 7, type: "private" }
+          : method === "sendRichMessage" || method === "sendMessage"
+            ? { message_id: 123 }
+            : true,
+    }),
+  );
   await f.ui.start(f.topic, "run");
   f.ui.capture(
     f.topic,
     "run",
-    part("reason", "reasoning", { text: "SECRET CHAIN OF THOUGHT", time: { start: 1 } }),
+    part("reason", "reasoning", { text: "VISIBLE REASONING", time: { start: 1 } }),
   );
   f.ui.capture(f.topic, "run", {
     type: "message.part.delta",
     properties: {
       partID: "reason",
       field: "text",
-      delta: "SECRET REASONING DELTA",
+      delta: " DELTA",
     },
   });
   for (const tool of ["read", "grep", "bash", "custom", "mcp", "lsp", "task", "webfetch"]) {
@@ -104,44 +114,56 @@ test("thinking and every execution activity keep Stop without accumulating tool 
   f.ui.capture(
     f.topic,
     "run",
-    part("reason", "reasoning", { text: "SECRET CHAIN OF THOUGHT", time: { start: 1, end: 2 } }),
+    part("reason", "reasoning", { text: "VISIBLE REASONING DELTA", time: { start: 1, end: 2 } }),
   );
   f.advance();
   await f.ui.update(f.topic, "run", "سلام **answer**");
-  const blocks = drafts(f).at(-1)!.body.rich_message.blocks;
-  assert.equal(blocks.filter((b: any) => b.type === "blockquote").length, 1);
-  assert.equal(blocks.filter((b: any) => b.type === "expandable_blockquote").length, 0);
-  assert.equal(blocks.at(-1).type, "thinking");
-  assert.equal(JSON.stringify(f.sent).includes("SECRET CHAIN"), false);
+
+  const persistent = f.sent.find((entry) => entry.method === "sendRichMessage");
+  assert.ok(persistent);
+  assert.match(JSON.stringify(persistent.body), /VISIBLE REASONING DELTA/);
+  assert.equal(persistent.body.rich_message.blocks[0].type, "blockquote");
+
+  const draftBlocks = drafts(f).at(-1)!.body.rich_message.blocks;
+  assert.equal(draftBlocks.filter((block: any) => block.type === "blockquote").length, 0);
   assert.equal(
-    JSON.stringify([...f.sql.exec("SELECT data FROM telegram_run_presentations")]).includes(
-      "SECRET CHAIN",
-    ),
-    false,
+    draftBlocks.filter((block: any) => block.type === "expandable_blockquote").length,
+    0,
   );
-  assert.equal(JSON.stringify(f.sent).includes("SECRET REASONING DELTA"), false);
-  assert.equal(
-    JSON.stringify([...f.sql.exec("SELECT data FROM telegram_run_presentations")]).includes(
-      "SECRET REASONING DELTA",
-    ),
-    false,
-  );
+  assert.equal(draftBlocks.at(-1).type, "thinking");
+  assert.match(JSON.stringify(f.sent), /VISIBLE REASONING/);
   assert.equal(JSON.stringify(f.sent).includes("PRIVATE INPUT"), false);
+  assert.equal(
+    JSON.stringify([...f.sql.exec("SELECT data FROM telegram_run_presentations")]).includes(
+      "VISIBLE REASONING",
+    ),
+    false,
+  );
 });
-test("trusted completed summary uses the exact 320-character/four-line collapse threshold", async () => {
-  for (const summary of ["x".repeat(321), "a\nb\nc\nd\ne"]) {
-    const f = fixture();
+test("completed reasoning uses the exact 320-character/four-line collapse threshold", async () => {
+  for (const reasoning of ["x".repeat(321), "a\nb\nc\nd\ne"]) {
+    const f = fixture((method) =>
+      Response.json({
+        ok: true,
+        result:
+          method === "getChat"
+            ? { id: 7, type: "private" }
+            : method === "sendRichMessage" || method === "sendMessage"
+              ? { message_id: 123 }
+              : true,
+      }),
+    );
     await f.ui.start(f.topic, "run");
-    const binding = f.ui.binding("run")!;
-    binding.summaries = [summary];
-    f.sql.exec(
-      "UPDATE telegram_run_presentations SET data=? WHERE run='run'",
-      JSON.stringify(binding),
+    f.ui.capture(
+      f.topic,
+      "run",
+      part("reason", "reasoning", { text: reasoning, time: { start: 1, end: 2 } }),
     );
     f.advance();
     await f.ui.update(f.topic, "run", "");
-    const blocks = drafts(f).at(-1)!.body.rich_message.blocks;
-    assert.equal(blocks.filter((block: any) => block.type === "expandable_blockquote").length, 1);
+    const persistent = f.sent.find((entry) => entry.method === "sendRichMessage");
+    assert.ok(persistent);
+    assert.equal(persistent.body.rich_message.blocks[0].type, "expandable_blockquote");
   }
 });
 
@@ -178,12 +200,22 @@ for (const activity of ["thinking", "read", "bash", "custom", "task", "streaming
   });
 }
 test("Native Stop requires the exact chat thread draft session worker and generation owner", async () => {
-  const cases: Array<{ name: string; mutateStop?: (stop: any) => any; mutateTopic?: (topic: any) => any }> = [
+  const cases: Array<{
+    name: string;
+    mutateStop?: (stop: any) => any;
+    mutateTopic?: (topic: any) => any;
+  }> = [
     { name: "wrong chat", mutateStop: (stop) => ({ ...stop, chat: { id: 8, type: "private" } }) },
     { name: "wrong thread", mutateStop: (stop) => ({ ...stop, message_thread_id: 43 }) },
     { name: "wrong draft", mutateStop: (stop) => ({ ...stop, draft_id: stop.draft_id + 1 }) },
-    { name: "replacement session", mutateTopic: (topic) => ({ ...topic, sessionId: "replacement-session" }) },
-    { name: "replacement worker", mutateTopic: (topic) => ({ ...topic, workerId: "replacement-worker" }) },
+    {
+      name: "replacement session",
+      mutateTopic: (topic) => ({ ...topic, sessionId: "replacement-session" }),
+    },
+    {
+      name: "replacement worker",
+      mutateTopic: (topic) => ({ ...topic, workerId: "replacement-worker" }),
+    },
     { name: "replacement generation", mutateTopic: (topic) => ({ ...topic, generation: 2 }) },
   ];
   for (const entry of cases) {
@@ -195,7 +227,10 @@ test("Native Stop requires the exact chat thread draft session worker and genera
       draft_id: drafts(f)[0]!.body.draft_id,
     };
     if (entry.mutateTopic)
-      f.sql.exec("UPDATE topics SET data=? WHERE chat=7 AND thread=42", JSON.stringify(entry.mutateTopic(f.topic)));
+      f.sql.exec(
+        "UPDATE topics SET data=? WHERE chat=7 AND thread=42",
+        JSON.stringify(entry.mutateTopic(f.topic)),
+      );
     const stop = entry.mutateStop ? entry.mutateStop(original) : original;
     assert.equal(f.ui.acceptStop(stop), undefined, entry.name);
     assert.equal(f.ui.binding("run")?.state === "CANCELLING", false, entry.name);
@@ -223,8 +258,14 @@ test("accepted Native Stop synchronously fences response and queue ownership bef
 
   assert.equal(admitted?.runId, "run");
   assert.equal(f.ui.binding("run")?.state, "CANCELLING");
-  assert.equal([...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='run'")][0]?.state, "CANCELLING");
-  assert.equal([...f.sql.exec<{ state: string }>("SELECT state FROM responses WHERE run='run'")][0]?.state, "FENCED");
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM runs WHERE request='run'")][0]?.state,
+    "CANCELLING",
+  );
+  assert.equal(
+    [...f.sql.exec<{ state: string }>("SELECT state FROM responses WHERE run='run'")][0]?.state,
+    "FENCED",
+  );
   assert.equal([...f.sql.exec("SELECT request FROM active_runs WHERE request='run'")].length, 0);
   assert.equal(f.ui.canDeliver(f.topic, "run"), false);
   assert.equal(f.ui.acceptStop(stop), undefined);
@@ -486,4 +527,83 @@ test("uncertain final receipt retains refreshable ownership after restart", asyn
   await f.controller().update(f.topic, "run", "final response");
   assert.equal(drafts(f).at(-1)!.body.can_stop, true);
   assert.equal(f.store.startNext(7, 42), undefined);
+});
+
+test("native thinking draft streams visible reasoning text without merging assistant text", async () => {
+  const f = fixture();
+  await f.ui.start(f.topic, "run");
+  f.ui.capture(
+    f.topic,
+    "run",
+    part("reason", "reasoning", { text: "Inspecting the renderer path", time: { start: 1 } }),
+  );
+  f.advance();
+  await f.ui.update(f.topic, "run", "assistant text must stay separate");
+
+  const latest = drafts(f).at(-1)!.body;
+  const serialized = JSON.stringify(latest.rich_message.blocks);
+  assert.match(serialized, /Inspecting the renderer path/);
+  assert.doesNotMatch(serialized, /assistant text must stay separate/);
+  assert.equal(latest.rich_message.blocks.at(-1).type, "thinking");
+});
+
+test("completed short reasoning persists as a separate normal quote before the answer draft", async () => {
+  const f = fixture((method) =>
+    Response.json({
+      ok: true,
+      result:
+        method === "getChat"
+          ? { id: 7, type: "private" }
+          : method === "sendRichMessage" || method === "sendMessage"
+            ? { message_id: 123 }
+            : true,
+    }),
+  );
+  await f.ui.start(f.topic, "run");
+  f.ui.capture(
+    f.topic,
+    "run",
+    part("reason", "reasoning", { text: "Short visible reasoning", time: { start: 1, end: 2 } }),
+  );
+  f.advance();
+  await f.ui.update(f.topic, "run", "FINAL ANSWER");
+
+  const persistent = f.sent.find((entry) => entry.method === "sendRichMessage");
+  assert.ok(persistent, "completed reasoning must become a persistent Telegram message");
+  assert.match(JSON.stringify(persistent.body), /Short visible reasoning/);
+  assert.equal(persistent.body.rich_message.blocks[0].type, "blockquote");
+
+  const latestDraft = drafts(f).at(-1)!.body;
+  const draftText = JSON.stringify(latestDraft.rich_message.blocks);
+  assert.match(draftText, /FINAL ANSWER/);
+  assert.doesNotMatch(draftText, /Short visible reasoning/);
+  assert.doesNotMatch(draftText, /Completed a model planning phase/);
+});
+
+test("completed long reasoning persists as a separate expandable quote", async () => {
+  const f = fixture((method) =>
+    Response.json({
+      ok: true,
+      result:
+        method === "getChat"
+          ? { id: 7, type: "private" }
+          : method === "sendRichMessage" || method === "sendMessage"
+            ? { message_id: 123 }
+            : true,
+    }),
+  );
+  const reasoning = "x".repeat(321);
+  await f.ui.start(f.topic, "run");
+  f.ui.capture(
+    f.topic,
+    "run",
+    part("reason", "reasoning", { text: reasoning, time: { start: 1, end: 2 } }),
+  );
+  f.advance();
+  await f.ui.update(f.topic, "run", "");
+
+  const persistent = f.sent.find((entry) => entry.method === "sendRichMessage");
+  assert.ok(persistent, "long completed reasoning must be persisted");
+  assert.equal(persistent.body.rich_message.blocks[0].type, "expandable_blockquote");
+  assert.match(JSON.stringify(persistent.body), /xxxxxxxxxxxxxxxxxxxx/);
 });

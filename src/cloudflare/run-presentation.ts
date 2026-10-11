@@ -3,7 +3,7 @@ import { CloudTelegram, TelegramDeliveryError } from "./telegram.js";
 import { renderTelegramParts } from "../bot/render/pipeline.js";
 import { shouldRenderRtl } from "../bot/render/text-direction.js";
 import { t } from "../i18n/index.js";
-import { isLongThinking } from "../bot/messages/thinking-rendering.js";
+import { prepareThinkingPayload } from "../bot/messages/thinking-rendering.js";
 
 export type RunPresentationState =
   | "THINKING"
@@ -27,6 +27,7 @@ export interface RunDraftBinding {
   summaries: string[];
   thinking: string[];
   completedThinking: string[];
+  reasoning?: Record<string, { text: string; title?: string }>;
   activities: Record<string, string>;
   at?: number;
   retryAt?: number;
@@ -42,13 +43,6 @@ const active = (s: RunPresentationState) =>
   ["THINKING", "ACTIVITY", "STREAMING", "FINALIZING"].includes(s);
 const object = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-const completedSummaryBlock = (text: string) =>
-  isLongThinking(text)
-    ? { type: "expandable_blockquote" as const, text }
-    : {
-        type: "blockquote" as const,
-        blocks: [{ type: "paragraph" as const, text }],
-      };
 const tools = new Set([
   "read",
   "write",
@@ -65,7 +59,7 @@ const tools = new Set([
   "todowrite",
   "todoread",
 ]);
-/** Telegram ownership only. Never implements process cancellation or retains reasoning text. */
+/** Telegram ownership only. Never implements process cancellation. Visible provider reasoning is retained only until its persistent quote is delivered. */
 export class TelegramRunPresentationController {
   constructor(
     private readonly sql: SqlDatabase,
@@ -194,6 +188,7 @@ export class TelegramRunPresentationController {
         summaries: [],
         thinking: [],
         completedThinking: [],
+        reasoning: {},
         activities: {},
       };
       if (!this.live(b)) return;
@@ -246,28 +241,55 @@ export class TelegramRunPresentationController {
     const b = this.binding(run);
     if (!b || !active(b.state) || !this.owns(topic, run) || b.state === "FINALIZING") return;
     const e = object(event),
-      p = object(e.properties),
-      part = object(p.part);
-    const id = typeof part.id === "string" ? part.id : "";
-    if (e.type !== "message.part.updated" || !id || id.length > 128) return;
+      p = object(e.properties);
     const before = JSON.stringify(b);
-    if (part.type === "reasoning") {
-      if (typeof object(part.time).end === "number") {
-        if (!b.completedThinking.includes(id) && b.thinking.includes(id)) {
-          b.summaries = [...b.summaries, t("generation.summary", undefined, "en")].slice(-4);
-          b.completedThinking = [...b.completedThinking, id].slice(-32);
-          b.thinking = b.thinking.filter((v) => v !== id);
+    const reasoning = (b.reasoning ??= {});
+
+    if (e.type === "message.part.delta") {
+      const id = typeof p.partID === "string" ? p.partID : "";
+      if (id && p.field === "text" && typeof p.delta === "string" && reasoning[id]) {
+        reasoning[id]!.text += p.delta;
+      } else return;
+    } else if (e.type === "message.part.updated") {
+      const part = object(p.part);
+      const id = typeof part.id === "string" ? part.id : "";
+      if (!id || id.length > 128) return;
+      if (part.type === "reasoning") {
+        const metadata = object(part.metadata);
+        const title = [
+          part.title,
+          metadata.title,
+          metadata.heading,
+          metadata.summary,
+          metadata.name,
+        ].find((value) => typeof value === "string" && value.trim());
+        const previous = reasoning[id];
+        const text = typeof part.text === "string" ? part.text : (previous?.text ?? "");
+        reasoning[id] = {
+          text,
+          ...(typeof title === "string"
+            ? { title: title.trim() }
+            : previous?.title
+              ? { title: previous.title }
+              : {}),
+        };
+        if (typeof object(part.time).end === "number") {
+          if (!b.completedThinking.includes(id))
+            b.completedThinking = [...b.completedThinking, id].slice(-32);
+          b.thinking = b.thinking.filter((value) => value !== id);
           this.log("native_thinking_completed", b);
+        } else if (!b.thinking.includes(id) && !b.completedThinking.includes(id)) {
+          b.thinking = [...b.thinking, id].slice(-16);
         }
-      } else if (!b.thinking.includes(id) && !b.completedThinking.includes(id))
-        b.thinking = [...b.thinking, id].slice(-16);
-    } else if (part.type === "tool") {
-      const status = object(part.state).status;
-      if (["running", "pending"].includes(String(status))) {
-        if (Object.keys(b.activities).length < 16 || id in b.activities)
-          b.activities[id] = tools.has(String(part.tool)) ? String(part.tool) : "tool";
-      } else if (["completed", "error"].includes(String(status))) delete b.activities[id];
+      } else if (part.type === "tool") {
+        const status = object(part.state).status;
+        if (["running", "pending"].includes(String(status))) {
+          if (Object.keys(b.activities).length < 16 || id in b.activities)
+            b.activities[id] = tools.has(String(part.tool)) ? String(part.tool) : "tool";
+        } else if (["completed", "error"].includes(String(status))) delete b.activities[id];
+      } else return;
     } else return;
+
     b.state = Object.keys(b.activities).length ? "ACTIVITY" : "THINKING";
     if (JSON.stringify(b) !== before) {
       this.save(b);
@@ -280,6 +302,10 @@ export class TelegramRunPresentationController {
     if (b.state !== "FINALIZING") {
       b.state = "FINALIZING";
       b.activities = {};
+      for (const id of b.thinking) {
+        if (b.reasoning?.[id]?.text && !b.completedThinking.includes(id))
+          b.completedThinking = [...b.completedThinking, id].slice(-32);
+      }
       b.thinking = [];
       this.save(b);
       this.log("native_draft_finalizing", b);
@@ -304,6 +330,30 @@ export class TelegramRunPresentationController {
       apiCode,
     });
   }
+  private async flushCompletedReasoning(
+    topic: FleetTopic,
+    b: RunDraftBinding,
+  ): Promise<RunDraftBinding> {
+    for (const id of [...b.completedThinking]) {
+      const section = b.reasoning?.[id];
+      if (section?.text.trim()) {
+        const payload = prepareThinkingPayload(
+          [{ id, text: section.text, ...(section.title ? { title: section.title } : {}) }],
+          { final: true },
+        );
+        for (const part of payload?.parts ?? [])
+          await this.telegram.sendPart(b.chatId, b.threadId, part, () => this.owns(topic, b.runId));
+      }
+      b = this.binding(b.runId) ?? b;
+      if (b.reasoning) delete b.reasoning[id];
+      b.completedThinking = b.completedThinking.filter((value) => value !== id);
+      b.at = undefined;
+      b.signature = undefined;
+      this.save(b);
+    }
+    return b;
+  }
+
   async restore(topic: FleetTopic, run: string, text: string): Promise<void> {
     const b = this.binding(run);
     if (!b || !active(b.state) || !this.owns(topic, run)) return;
@@ -325,6 +375,7 @@ export class TelegramRunPresentationController {
     const now = this.now();
     if ((b.sendingUntil ?? 0) > now) return b.sendingUntil;
     if ((b.retryAt ?? 0) > now) return b.retryAt;
+    if (b.completedThinking.length) b = await this.flushCompletedReasoning(topic, b);
     if (b.at !== undefined && now - b.at < 1500) return b.at + 1500;
     if (b.state !== "FINALIZING" && b.state !== "ACTIVITY" && !b.thinking.length && text)
       b.state = "STREAMING";
@@ -339,14 +390,15 @@ export class TelegramRunPresentationController {
             : text
               ? t("generation.streaming", undefined, "en")
               : t("bot.thinking", undefined, "en");
-    const content = text
-      ? (renderTelegramParts(text, { maxChars: 3000 }).at(-1)?.blocks ?? [])
+    const liveReasoning = b.thinking
+      .map((id) => b.reasoning?.[id]?.text ?? "")
+      .filter(Boolean)
+      .join("\n\n");
+    const visibleText = b.thinking.length ? liveReasoning : text;
+    const content = visibleText
+      ? (renderTelegramParts(visibleText, { maxChars: 3000 }).at(-1)?.blocks ?? [])
       : [];
-    const blocks = [
-      ...b.summaries.map(completedSummaryBlock),
-      ...content,
-      { type: "thinking", text: label },
-    ];
+    const blocks = [...content, { type: "thinking", text: label }];
     const signature = JSON.stringify(blocks);
     if (b.signature === signature && b.at !== undefined && now - b.at < 10_000)
       return b.at + 10_000;
@@ -357,7 +409,7 @@ export class TelegramRunPresentationController {
         chat_id: b.chatId,
         message_thread_id: b.threadId,
         draft_id: b.draftId,
-        rich_message: { blocks, is_rtl: shouldRenderRtl(text) },
+        rich_message: { blocks, is_rtl: shouldRenderRtl(visibleText) },
         can_stop: true,
         keep_on_stop: false,
       });
@@ -453,6 +505,8 @@ export class TelegramRunPresentationController {
     b.state = "CANCELLED";
     b.activities = {};
     b.thinking = [];
+    b.completedThinking = [];
+    b.reasoning = {};
     this.save(b);
     this.sql.exec("UPDATE runs SET state='CANCELLED' WHERE request=? AND state='CANCELLING'", run);
     this.sql.exec("DELETE FROM active_runs WHERE request=?", run);
@@ -496,6 +550,8 @@ export class TelegramRunPresentationController {
     b.state = outcome;
     b.activities = {};
     b.thinking = [];
+    b.completedThinking = [];
+    b.reasoning = {};
     this.save(b);
     this.log("native_draft_completed", b);
     // Telegram's persistent send clears its ephemeral draft/Stop envelope.
