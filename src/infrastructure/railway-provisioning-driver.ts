@@ -17,6 +17,7 @@ interface Inventory {
 export interface NodeProvisionerOptions {
   request<T>(document: string, variables: Record<string, unknown>): Promise<T>;
   pools: WorkerPool[]; coreCommit?:string; workerImage?:string;workerVersion?:string; controlUrl: string; journalPath: string;
+  createPool?(excluded: ReadonlySet<string>): Promise<WorkerPool>;
   /** Canonical persisted binding resolver; caller supplied objects alone cannot authorize infrastructure. */
   lookup(nodeId: string): Promise<NodeBinding | undefined>;
   /** Root-private durable identity store. The returned key must never be sent to the Bot/model process. */
@@ -39,7 +40,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     if (!/^[a-f0-9]{40}$/.test(options.coreCommit ?? WORKER_CORE_COMMIT)) throw new Error("Worker Core source must be an exact commit");
     const control = new URL(options.controlUrl);
     if (control.protocol !== "https:" || !control.hostname.endsWith(".up.railway.app") || control.username || control.password || control.search || control.hash || control.pathname !== "/") throw new Error("Control URL must be a Railway HTTPS domain");
-    if (!options.pools.length || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0)))) throw new Error("Invalid Worker pool policy");
+    if ((!options.pools.length && !options.createPool) || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0)))) throw new Error("Invalid Worker pool policy");
     if(options.workerImage&&!/^[a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64}$/.test(options.workerImage))throw new Error("Worker image must be an immutable digest");
   }
   listPools():readonly WorkerPool[]{return structuredClone(this.options.pools);}
@@ -150,12 +151,25 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
   provision(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{
       const excluded=new Set<string>();
-      for(let attempt=0;attempt<this.options.pools.length;attempt++){
+      let expanded=false;
+      const expand=async()=>{
+        if(expanded||!this.options.createPool)throw new WorkerProvisioningError("capacity_exhausted");
+        expanded=true;
+        let pool:WorkerPool;
+        const known=new Set(this.options.pools.map(candidate=>candidate.projectId));
+        for(const projectId of excluded)known.add(projectId);
+        try{pool=await this.options.createPool(known);}
+        catch(error){if(error instanceof InfrastructureRequestError&&error.category==="resource_limit")throw new WorkerProvisioningError("capacity_exhausted");throw error;}
+        if(!pool?.projectId||!pool.environmentId||!pool.region||excluded.has(pool.projectId)||this.options.pools.some(candidate=>candidate.projectId===pool.projectId))throw new WorkerProvisioningError("reconciliation_required");
+        this.options.pools.push(structuredClone(pool));
+      };
+      while(true){
         try{return await this.provisionAttempt(nodeId,generation,excluded);}
         catch(error){
+          if(error instanceof WorkerProvisioningError&&error.category==="capacity_exhausted"){await expand();continue;}
           if(!(error instanceof InfrastructureRequestError)||error.category!=="resource_limit")throw error;
           const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId);
-          if(!record)throw error;
+          if(!record){await expand();continue;}
           if(record.everDeployed||record.phase==="deploying"||record.deploymentId)throw error;
           await this.binding(nodeId,generation);
           const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;
@@ -171,9 +185,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           }
           excluded.add(pool.projectId);
           journal.nodes=journal.nodes.filter(n=>n!==record);await this.save(journal);
+          if(this.options.pools.every(candidate=>excluded.has(candidate.projectId)))await expand();
         }
       }
-      throw new WorkerProvisioningError("capacity_exhausted");
     });
   }
   private async provisionAttempt(nodeId:string,generation:number,excluded:Set<string>):Promise<ProvisionedNode>{

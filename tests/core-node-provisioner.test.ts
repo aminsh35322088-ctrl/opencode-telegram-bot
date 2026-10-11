@@ -257,3 +257,42 @@ test('unavailable current project rolls over, while arbitrary API rejection is p
  const h=await fixture();h.add('all-unavailable');h.options.request=async()=>{throw new InfrastructureRequestError('project_unavailable',200,'WorkerInventory');};
  await assert.rejects(h.controller.provision('all-unavailable',1),/project_unavailable/);
 });
+
+
+
+test('an empty selected workspace lazily creates its first Worker pool on New Chat',async()=>{
+ const f=await fixture();f.options.pools=[];f.add('first-pool');let expansions=0;
+ (f.options as NodeProvisionerOptions & {createPool?:(excluded:ReadonlySet<string>)=>Promise<{projectId:string;environmentId:string;region:string}>}).createPool=async excluded=>{
+  expansions++;assert.deepEqual([...excluded],[]);return {projectId:'fresh',environmentId:'fresh-production',region:'eu'};
+ };
+ const controller=new NodeProvisioner(f.options);
+ const node=await controller.provision('first-pool',1);
+ assert.equal(node.projectId,'fresh');assert.equal(expansions,1);
+ assert.deepEqual(controller.listPools().map(pool=>pool.projectId),['fresh']);
+});
+
+test('policy-capacity expansion excludes every already configured Worker pool',async()=>{
+ const f=await fixture();f.options.pools.forEach(pool=>{pool.capacity=0;});f.add('policy-expand');let observed:string[]=[];
+ (f.options as NodeProvisionerOptions & {createPool?:(excluded:ReadonlySet<string>)=>Promise<{projectId:string;environmentId:string;region:string}>}).createPool=async excluded=>{
+  observed=[...excluded].sort();return {projectId:'c',environmentId:'ec',region:'eu'};
+ };
+ const controller=new NodeProvisioner(f.options);
+ assert.equal((await controller.provision('policy-expand',1)).projectId,'c');
+ assert.deepEqual(observed,['a','b']);
+});
+
+test('Railway service quota expands the selected workspace with one new deterministic pool',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('expand');const request=f.options.request;let expansions=0;
+ (f.options as NodeProvisionerOptions & {createPool?:(excluded:ReadonlySet<string>)=>Promise<{projectId:string;environmentId:string;region:string}>}).createPool=async excluded=>{
+  expansions++;assert.deepEqual([...excluded].sort(),['a','b']);
+  return {projectId:'c',environmentId:'ec',region:'eu'};
+ };
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.includes('mutation WorkerService')&&['a','b'].includes((variables.input as {projectId:string}).projectId))throw new InfrastructureRequestError('resource_limit',200,'WorkerService');
+  return request<T>(document,variables);
+ };
+ const node=await f.controller.provision('expand',1);
+ assert.equal(node.projectId,'c');assert.equal(expansions,1);
+ assert.deepEqual(f.controller.listPools().map(pool=>pool.projectId),['a','b','c']);
+});

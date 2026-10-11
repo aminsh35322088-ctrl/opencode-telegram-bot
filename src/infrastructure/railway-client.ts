@@ -21,6 +21,7 @@ export function createInfrastructureClient(
   transport: typeof fetch = fetch,
 ): {
   readonly configured:boolean;
+  configureCredential(value: string): void;
   request<T>(document: string, variables?: Record<string, unknown>): Promise<T>;
   dispose(): void;
 } {
@@ -32,7 +33,13 @@ export function createInfrastructureClient(
   }
   // No getter, serialization, diagnostics, IPC, or environment exports the token.
   return {
-    configured:typeof credential==="string" && credential.length>0,
+    get configured(){ return typeof credential==="string" && credential.length>0; },
+    configureCredential(value: string) {
+      const candidate = value.trim();
+      if (!candidate || candidate.length > 4096 || /[\r\n]/u.test(candidate)) throw new Error("Invalid Railway infrastructure credential");
+      credential = candidate;
+      retryAt = 0;
+    },
     async request<T>(document: string, variables = {}): Promise<T> {
       if (!credential) throw new Error("Railway infrastructure credential unavailable");
       if(Date.now()<retryAt)throw new Error("Railway infrastructure retry deferred");

@@ -1,9 +1,12 @@
 # Infrastructure credential boundary
 
 Railway starts `dist/infrastructure/launcher.js` as the privileged infrastructure
-identity. Before importing application dependencies, it captures the account
-credential in a private closure and removes all Railway token variants from the
-environment. It never returns, serializes, logs, or forwards the credential.
+identity. A legacy startup credential, when present, is captured in a private
+closure and removed from the child environment. The preferred first-run path
+accepts a Railway Account or Workspace token over the inherited parent/child IPC,
+validates it in the privileged launcher, and persists it encrypted under the
+root-only `/data/.infrastructure` directory. The credential is never returned,
+logged, placed in model state, or forwarded to Workers.
 
 The launcher prepares ownership of the `/data` mount root only, then starts
 maintenance and application bootstrap as UID/GID 1000. Both scripts reject other
@@ -19,14 +22,17 @@ under the Linux identity boundary. A compromise of the container's privileged
 identity is outside this boundary; an ordinary application process must never be
 given that identity or an escalation capability.
 
-The captured client currently has no application IPC or public endpoint. It makes
-no idle requests. Adding an allocator requires a narrow, authenticated operation
-interface and must not expose a generic GraphQL proxy or credential getter.
+The application has only a narrow inherited IPC setup surface: read setup status,
+submit one transient candidate credential, and select one validated workspace.
+There is no generic GraphQL proxy or credential getter. Infrastructure lifecycle
+requests are separately allow-listed (`provision`, `retire`, `reconcile`). The
+public HTTP gateway exposes only health and the signed node protocol.
 
-This is a prerequisite for the distributed Topic migration. It does not ship
-remote Topic nodes, canonical revision/snapshot sync, approval receipts, or a
-remote cutover. The local Core remains active until those paths pass deployment
-and end-to-end tests.
+Worker allocation is request-driven. Definitive Railway quota exhaustion may
+create the next managed `opencode-topic-NN` project in the selected workspace;
+transport ambiguity never authorizes blind resource recreation. Each Worker gets
+only its node identity secret and Control URL, never the Railway or Telegram
+credential.
 
 Verification uses synthetic credentials only, the governed-process regression
 tests, and a container boundary check for UID, immutable code, `/proc` isolation,

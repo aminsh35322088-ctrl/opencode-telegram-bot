@@ -10,6 +10,13 @@ export async function requestInfrastructure(operation:"provision"|"retire"|"reco
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
  return await callInfrastructure("infrastructure-request",{operation,nodeId,generation},300_000) as ProvisionedNode;
 }
+
+export type InfrastructureSetupOperation="status"|"credential.begin"|"workspace.select";
+export async function requestInfrastructureSetup(operation:InfrastructureSetupOperation,payload:Record<string,unknown>={}):Promise<unknown>{
+ if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
+ return await callInfrastructure("infrastructure-configure",{operation,payload},30_000);
+}
+
 export async function requestNodeLifecycle(binding:Readonly<NodeBinding>,operation:"health"|"status"|"sync-global"|"session.create"|"session.get",payload:unknown={}):Promise<{ok:boolean;result:unknown}>{
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
  if(!["health","status","sync-global","session.create","session.get"].includes(operation))throw new Error("Lifecycle operation denied");
@@ -24,9 +31,12 @@ export function installInfrastructureTransport():void{
   if(!message||typeof message!=="object")return;
   const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope;errorCode?:string;httpStatus?:number};
   if(!response.requestId)return;
-  if(response.channel==="worker-response" || response.channel==="infrastructure-response"){
+  if(response.channel==="worker-response" || response.channel==="infrastructure-response" || response.channel==="infrastructure-configure-response"){
    const wait=waits.get(response.requestId);if(!wait)return;waits.delete(response.requestId);
-   if(response.ok)wait.resolve(response.result);else if(response.channel==="infrastructure-response"&&["capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required","image_mismatch"].includes(response.errorCode??""))wait.reject(new WorkerProvisioningError(response.errorCode as ConstructorParameters<typeof WorkerProvisioningError>[0]));else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification","capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})`:"Node transport failed"));
+   if(response.ok)wait.resolve(response.result);
+   else if(response.channel==="infrastructure-response"&&["capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required","image_mismatch"].includes(response.errorCode??""))wait.reject(new WorkerProvisioningError(response.errorCode as ConstructorParameters<typeof WorkerProvisioningError>[0]));
+   else if(response.channel==="infrastructure-configure-response")wait.reject(new Error("Infrastructure setup failed"));
+   else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification","capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})`:"Node transport failed"));
   }else if(response.channel==="worker-stream-ready"){
    streams.get(response.requestId)?.onReady?.();
   }else if(response.channel==="worker-event" || response.channel==="worker-stream-end"){

@@ -26,6 +26,7 @@ import { ensureMcpRuntimeForDirectory } from "../../app/services/mcp-server-serv
 import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
 import { isCurrentCoreSessionRoute, resolveCoreTopicBinding } from "../../core/native-core-service.js";
 import { createCoreSessionApi } from "../services/core-session-api.js";
+import { ensureRailwayInfrastructureConfigured } from "./railway-onboarding-command.js";
 
 export interface NewCommandDeps {
   bot: Bot<Context>;
@@ -41,6 +42,7 @@ export function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): 
 }
 
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
+  if (!await ensureRailwayInfrastructureConfigured(ctx)) return;
   let directory: string | null = null;
   let sessionId: string | null = null;
   let binding: TelegramTopicBinding | null = null;

@@ -7,7 +7,7 @@ import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./con
 
 // This process is the only infrastructure credential owner. Railway starts it as
 // root; the existing bootstrap drops the Bot and Core to the node user. The
-// credential never enters the shell, application, or runtime environment.
+// credential never enters Worker variables, model state or application storage.
 const nodes=captureNodeRegistry(process.env);
 const infrastructure = createInfrastructureClient(process.env);
 const existingVariableNames=Object.keys(process.env);
@@ -22,8 +22,6 @@ async function main(): Promise<void> {
   const { budgetedSpawn, budgetedExecFile } = await import("../runtime/process-budget.js");
   const volume = await lstat("/data");
   if (!volume.isDirectory() || volume.isSymbolicLink()) throw new Error("Invalid persistent volume root");
-  // Only the mount root needs ownership preparation. Never traverse or execute
-  // application-controlled persistent files as the credential-owning identity.
   const gatewayEnabled=runtimeConfig.gatewayEnabled;
   if(gatewayEnabled){
     await budgetedExecFile("cleanup","/usr/bin/chown",["--no-dereference","0:0","/data"]);
@@ -38,6 +36,87 @@ async function main(): Promise<void> {
   }else{
     await budgetedExecFile("cleanup", "/usr/bin/chown", ["--no-dereference", "1000:1000", "/data"]);
   }
+
+  let stopGateway:(()=>void)|undefined;
+  let gatewayStart:((child:import("node:child_process").ChildProcess)=>void)|undefined;
+  if(gatewayEnabled){
+    const {startNodeGateway}=await import("./node-gateway.js");
+    const {NodeProtocol}=await import("../control-plane/node-protocol.js");
+    const {InfrastructureController}=await import("./node-controller.js");
+    const {InfrastructureNodeTransport}=await import("./node-transport.js");
+    const {getRuntimePaths}=await import("../runtime/paths.js");
+    const {resolveWorkerPools,createWorkerPool}=await import("./worker-pools.js");
+    const {resolveControlUrl}=await import("./control-location.js");
+    const {RailwayCredentialStore}=await import("./railway-credential-store.js");
+    const {RailwayOnboardingController}=await import("./railway-onboarding-controller.js");
+    const {validateRailwayInfrastructureCredential}=await import("./railway-credential-validation.js");
+    const port=Number(process.env.PORT??8080);
+    if(!Number.isSafeInteger(port)||port<1||port>65535)throw new Error("Invalid control gateway port");
+    const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
+    const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
+    const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
+    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,workerImage,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
+      if(!infrastructure.configured)return;
+      try{
+        const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
+        await cleanupDeprecatedControlVariables({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId,names:existingVariableNames});
+        process.stdout.write("[InfrastructureBoundary] control_variables_reconciled contract=secrets-and-user-settings\n");
+      }catch{process.stdout.write("[InfrastructureBoundary] control_variable_cleanup_pending\n");}
+      try{
+        const {verifyWorkerRuntimeCanary}=await import("./worker-runtime-canary.js");
+        void verifyWorkerRuntimeCanary({journalPath:"/data/.infrastructure/provisioning.json",selftest:(nodeId,generation,profile)=>retirementTransport.runtimeSelftest(nodeId,generation,profile),log:message=>{process.stdout.write(message);},afterVerified:async(nodeId,generation)=>{
+          await controller.cleanupRuntimeCanaryVariables(nodeId,generation,(id,epoch,profile)=>retirementTransport.runtimeSelftest(id,epoch,profile));
+          process.stdout.write(`[InfrastructureBoundary] worker_variables_reconciled node=${nodeId} generation=${generation} contract=identity-v1 restartVerification=pending\n`);
+        }}).catch(()=>{process.stdout.write("[InfrastructureBoundary] worker_runtime_canary_pending\n");});
+      }catch{process.stdout.write("[InfrastructureBoundary] worker_runtime_canary_pending\n");}
+    }});
+
+    let configuredWorkspaceId:string|undefined;
+    let poolConfigured=false;
+    const configureWorkspace=async(workspaceId:string):Promise<void>=>{
+      if(poolConfigured){
+        if(configuredWorkspaceId!==workspaceId)throw new Error("Railway workspace is already active");
+        return;
+      }
+      let stage:'inventory'|'verify'='inventory';
+      try{
+        const controlUrl=await resolveControlUrl({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId});
+        try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
+          process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);
+        }catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
+        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,pools:poolPolicy,onStage:value=>{stage=value;}});
+        controller.configurePools(resolved,controlUrl,excluded=>createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded}));
+        configuredWorkspaceId=workspaceId;poolConfigured=true;
+        for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
+      }catch(error){
+        const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';
+        process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);
+        throw error;
+      }
+    };
+
+    const credentialStore=new RailwayCredentialStore("/data/.infrastructure/railway-credential.json");
+    const onboarding=new RailwayOnboardingController({
+      controlProjectId:runtimeConfig.projectId,
+      client:infrastructure,
+      store:credentialStore,
+      validate:input=>validateRailwayInfrastructureCredential(input),
+      activateWorkspace:configureWorkspace,
+    });
+    const startupPoolConfiguration=(async()=>{
+      try{
+        await onboarding.initialize();
+        if(!poolConfigured&&infrastructure.configured){
+          const result=await infrastructure.request<{project:{workspaceId:string}}>('query WorkerWorkspace($projectId:String!){project(id:$projectId){workspaceId}}',{projectId:runtimeConfig.projectId});
+          if(!result.project.workspaceId)throw new Error("Control workspace unavailable");
+          await configureWorkspace(result.project.workspaceId);
+        }
+      }catch{process.stdout.write("[InfrastructureBoundary] railway_onboarding_restore_pending\n");}
+    })();
+    controller.waitForPoolConfiguration(startupPoolConfiguration);
+    gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,onboarding);};
+  }
+
   const child = await budgetedSpawn("bot-daemon", "/app/railway-volume-maintenance.sh", [], {
     cwd: "/app",
     stdio: gatewayEnabled ? ["inherit","inherit","inherit","ipc"] : "inherit",
@@ -46,57 +125,9 @@ async function main(): Promise<void> {
     gid: 1000,
   });
   process.stdout.write("[InfrastructureBoundary] startup_environment_isolated application_uid=node\n");
-  let stopGateway:(()=>void)|undefined;
-  if(gatewayEnabled){
-    const {startNodeGateway}=await import("./node-gateway.js");
-    const {NodeProtocol}=await import("../control-plane/node-protocol.js");
-    const port=Number(process.env.PORT??8080);
-    if(!Number.isSafeInteger(port)||port<1||port>65535)throw new Error("Invalid control gateway port");
-    const {InfrastructureController}=await import("./node-controller.js");
-    const {InfrastructureNodeTransport}=await import("./node-transport.js");
-    const {getRuntimePaths}=await import("../runtime/paths.js");
-    const pools=undefined;
-    const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
-    const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
-    const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
-    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,workerImage,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,pools,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
-      if(!infrastructure.configured)return;
-      try{
-        const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
-        await cleanupDeprecatedControlVariables({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId,names:existingVariableNames});
-        process.stdout.write("[InfrastructureBoundary] control_variables_reconciled contract=secrets-and-user-settings\n");
-      }catch{process.stdout.write("[InfrastructureBoundary] control_variable_cleanup_pending\n");}
-      // A single unbound slot runs fixed, joined toolchain probes after cluster fencing.
-      // Older images safely reject this operation while the canary upgrade is pending.
-      try{
-        const {verifyWorkerRuntimeCanary}=await import("./worker-runtime-canary.js");
-        // Finite diagnostic work must not hold the lifecycle IPC reply deadline.
-        void verifyWorkerRuntimeCanary({journalPath:"/data/.infrastructure/provisioning.json",selftest:(nodeId,generation,profile)=>retirementTransport.runtimeSelftest(nodeId,generation,profile),log:message=>{process.stdout.write(message);},afterVerified:async(nodeId,generation)=>{
-          await controller.cleanupRuntimeCanaryVariables(nodeId,generation,(id,epoch,profile)=>retirementTransport.runtimeSelftest(id,epoch,profile));
-          process.stdout.write(`[InfrastructureBoundary] worker_variables_reconciled node=${nodeId} generation=${generation} contract=identity-v1 restartVerification=pending\n`);
-        }}).catch(()=>{process.stdout.write("[InfrastructureBoundary] worker_runtime_canary_pending\n");});
-      }catch{process.stdout.write("[InfrastructureBoundary] worker_runtime_canary_pending\n");}
-    }});
-    stopGateway=startNodeGateway(child,nodes,protocol,port,controller);
-    if(runtimeConfig.bootstrapEnabled){
-      const poolConfiguration=(async()=>{let stage:'inventory'|'verify'='inventory';try{
-        const {resolveWorkerPools}=await import("./worker-pools.js");
-        const {resolveControlUrl}=await import("./control-location.js");
-        const controlUrl=await resolveControlUrl({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId});
-        try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
-        process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);}catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
-        const resolved=await resolveWorkerPools({request:infrastructure.request,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,pools:poolPolicy,onStage:value=>{stage=value;}});
-        controller.configurePools(resolved,controlUrl);
-        for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
-      }catch(error){const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);throw error;}})();
-      controller.waitForPoolConfiguration(poolConfiguration);
-    }
+  gatewayStart?.(child);
 
-
-  }
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.on(signal, () => { child.kill(signal); });
-  }
+  for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => { child.kill(signal); });
   child.once("error", () => {
     infrastructure.dispose();
     process.stderr.write("[InfrastructureBoundary] application_start_failed\n");

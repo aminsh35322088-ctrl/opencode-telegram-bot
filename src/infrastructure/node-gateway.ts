@@ -10,11 +10,17 @@ import type {InfrastructureController} from "./node-controller.js";
 import {InfrastructureNodeTransport} from "./node-transport.js";
 
 type Registry=ReturnType<typeof captureNodeRegistry>;
+interface InfrastructureSetupController {
+  status():Promise<unknown>;
+  begin(token:string):Promise<unknown>;
+  selectWorkspace(workspaceId:string):Promise<unknown>;
+}
 /** Root-only gateway. Application sees authenticated envelopes, never signing material. */
-export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:NodeProtocol,port:number,controller?:InfrastructureController){
+export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:NodeProtocol,port:number,controller?:InfrastructureController,setup?:InfrastructureSetupController){
   const pending=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void;timer:NodeJS.Timeout}>();
   const outbound=new Map<string,AbortController>();
   let infrastructureActive=0;
+  let setupActive=0;
   let applicationReady=false;
   let desiredRevision=0;
   let reconciling=false;
@@ -49,8 +55,28 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
   });
   child.on("message",async message=>{
     if(!message || typeof message!=="object")return;
-    const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number};
+    const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number;payload?:Record<string,unknown>};
     if(typeof input.requestId!=="string" || input.requestId.length>128)return;
+    if(input.channel==="infrastructure-configure"){
+      if(!setup||setupActive>=1||!input.operation){child.send({channel:"infrastructure-configure-response",requestId:input.requestId,ok:false});return;}
+      setupActive++;
+      try{
+        let result:unknown;
+        if(input.operation==="status")result=await setup.status();
+        else if(input.operation==="credential.begin"){
+          const token=input.payload?.token;
+          if(typeof token!=="string"||!token.trim()||token.length>4096||/[\r\n\u0000]/u.test(token))throw new Error("Invalid setup input");
+          result=await setup.begin(token);
+        }else if(input.operation==="workspace.select"){
+          const workspaceId=input.payload?.workspaceId;
+          if(typeof workspaceId!=="string"||!workspaceId||workspaceId.length>256||/[\r\n\u0000]/u.test(workspaceId))throw new Error("Invalid setup input");
+          result=await setup.selectWorkspace(workspaceId);
+        }else throw new Error("Infrastructure setup operation denied");
+        child.send({channel:"infrastructure-configure-response",requestId:input.requestId,ok:true,result});
+      }catch{child.send({channel:"infrastructure-configure-response",requestId:input.requestId,ok:false});}
+      finally{setupActive--;}
+      return;
+    }
     if(input.channel==="infrastructure-request"){
       // Bound in-flight IPC work; this is not a Worker fleet capacity limit.
       if(!controller||infrastructureActive>=4||!input.operation||!input.nodeId||!input.generation){child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false});return;}

@@ -11,6 +11,7 @@ import { getBotUpdateNotice, markBotVersionNotified } from "../../app/services/v
 import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
 import { logger } from "../../utils/logger.js";
 import { dismissMcpAddWizard } from "./mcp-server-command.js";
+import { ensureRailwayInfrastructureConfigured } from "./railway-onboarding-command.js";
 
 async function normalizeStartContext(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
@@ -49,6 +50,8 @@ export async function startCommand(ctx: Context): Promise<void> {
   const isSupergroupForum = Boolean((ctx.chat as { is_forum?: boolean }).is_forum);
   const isPrivateTopicMode = isPrivateBotTopicMode(ctx);
   const isTopicMode = isSupergroupForum || isPrivateTopicMode || isInTopic || keyboardManager.isTopicMode(chatId);
+
+  if (!isInTopic && !await ensureRailwayInfrastructureConfigured(ctx)) return;
 
   await normalizeStartContext(ctx);
   logger.info(`[TelegramKeyboard] /start mode detection: chat=${chatId}, isInTopic=${isInTopic}, isSupergroupForum=${isSupergroupForum}, isPrivateTopicMode=${isPrivateTopicMode}, topicMode=${keyboardManager.isTopicMode(chatId)}`);

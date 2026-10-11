@@ -6,7 +6,7 @@ test("infrastructure credential is removed before loading runtime or startup she
   const environment = { RAILWAY_API_TOKEN: "synthetic-account", RAILWAY_TOKEN: "synthetic-project", KEEP: "yes" };
   const client = createInfrastructureClient(environment);
   assert.deepEqual(environment, { KEEP: "yes" });
-  assert.deepEqual(Object.keys(client).sort(), ["configured", "dispose", "request"]);
+  assert.deepEqual(Object.keys(client).sort(), ["configureCredential", "configured", "dispose", "request"]);
   client.dispose();
   await assert.rejects(client.request("query { me { id } }"), /unavailable/);
 });
@@ -35,4 +35,20 @@ test("safe infrastructure failure categories never reflect server details", asyn
   await assert.rejects(client.request("query Example { field }"),error=>error instanceof InfrastructureRequestError && error.category===category && error.status===200 && error.message==="Railway infrastructure request failed" && !JSON.stringify(error).includes("sensitive"));
   client.dispose();
  }
+});
+
+test("infrastructure credential can be installed after startup without exposing it", async () => {
+  let authorization = "";
+  const client = createInfrastructureClient({ KEEP: "yes" }, async (_url, init) => {
+    authorization = new Headers(init?.headers).get("authorization") ?? "";
+    return new Response(JSON.stringify({ data: { project: { id: "p" } } }), { status: 200 });
+  });
+  assert.equal(client.configured, false);
+  assert.equal("credential" in client, false);
+  client.configureCredential("synthetic-runtime-token");
+  assert.equal(client.configured, true);
+  await client.request("query WorkerCredentialProbe { project(id: \"p\") { id } }");
+  assert.equal(authorization, "Bearer synthetic-runtime-token");
+  client.dispose();
+  assert.equal(client.configured, false);
 });

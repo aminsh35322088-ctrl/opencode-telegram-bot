@@ -36,6 +36,7 @@ import { handleContextButtonPress } from "../menus/context-control-menu.js";
 import { getCompactOutputMode, setCompactOutputMode } from "../../app/stores/settings-store.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
 import { showTelegramTopicDeleteConfirmation } from "../services/telegram-topic-delete-handler.js";
+import { handleRailwayOnboardingMessage } from "../commands/railway-onboarding-command.js";
 
 interface CommandRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; clearRuntimeState: (reason: string) => void; }
 let commandsInitialized = false;
@@ -63,6 +64,7 @@ export function registerCommandRouter(bot: Bot<Context>, deps: CommandRouterDeps
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.message?.text?.startsWith("/")) flushPendingPrompt(ctx.chat.id);
     if (ctx.message?.text && ctx.chat) {
+      if (await handleRailwayOnboardingMessage(ctx)) return;
       if (isGeminiWizardActive() && !ctx.message.text.startsWith("/")) {
         try {
           await verifyAndSaveGeminiChatProvider(ctx.message.text);

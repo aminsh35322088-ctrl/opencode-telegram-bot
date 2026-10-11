@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {resolveWorkerPools} from '../src/infrastructure/worker-pools.js';
+import {createWorkerPool,resolveWorkerPools} from '../src/infrastructure/worker-pools.js';
 const project=(id:string,environment:string)=>({id,name:id,environments:{edges:[{node:{id:environment,name:environment}}],pageInfo:{hasNextPage:false}}});
 const options={workspaceId:'workspace',controlProjectId:'control',controlEnvironmentId:'production',workerProjectId:'existing',workerEnvironmentId:'validation',region:'eu'};
 test('root setup verifies existing control and validation pools without project mutations',async()=>{
@@ -34,7 +34,40 @@ test('configured flat pool supports three projects with independent policy limit
  const request=async<T>()=>({workspace:{id:'workspace',projects:{edges:[project('control','production'),project('existing','validation'),project('third','third-env')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T);
  assert.deepEqual(await resolveWorkerPools({...options,pools,request}),pools);
 });
+test('a selected workspace without the Control project can start with no Worker pools',async()=>{
+ const request=async<T>()=>({workspace:{id:'worker-workspace',projects:{edges:[],pageInfo:{hasNextPage:false}}}} as T);
+ assert.deepEqual(await resolveWorkerPools({workspaceId:'worker-workspace',controlProjectId:'control',controlEnvironmentId:'production',region:'eu',request}),[]);
+});
+
 test('single eligible project is valid and does not require a validation project',async()=>{
  const request=async<T>()=>({workspace:{id:'workspace',projects:{edges:[project('control','production')].map(node=>({node})),pageInfo:{hasNextPage:false}}}} as T);
  assert.deepEqual((await resolveWorkerPools({workspaceId:'workspace',controlProjectId:'control',controlEnvironmentId:'production',region:'eu',request})).map(p=>p.projectId),['control']);
+});
+
+
+test('capacity rollover creates the next deterministic Worker project in the selected workspace',async()=>{
+ const calls:Array<{document:string;variables:Record<string,unknown>}>=[];
+ const request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  calls.push({document,variables});
+  if(document.startsWith('query WorkerPoolExpansionInventory'))return {projects:{pageInfo:{hasNextPage:false},edges:[{node:{id:'control',name:'opencode-telegram-bot'}}]}} as T;
+  if(document.startsWith('mutation WorkerPoolCreate')){assert.deepEqual(variables,{input:{name:'opencode-topic-01',workspaceId:'workspace'}});return {projectCreate:{id:'worker-project',name:'opencode-topic-01'}} as T;}
+  assert.ok(document.startsWith('query WorkerPoolCreated'));
+  assert.deepEqual(variables,{projectId:'worker-project'});
+  return {project:{id:'worker-project',name:'opencode-topic-01',environments:{pageInfo:{hasNextPage:false},edges:[{node:{id:'worker-production',name:'production'}}]}}} as T;
+ };
+ const pool=await createWorkerPool({workspaceId:'workspace',region:'eu',request});
+ assert.deepEqual(pool,{projectId:'worker-project',environmentId:'worker-production',region:'eu'});
+ assert.equal(calls.length,3);
+});
+
+test('pool expansion adopts an untracked managed project after an ambiguous create result',async()=>{
+ let creates=0;
+ const request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.startsWith('query WorkerPoolExpansionInventory'))return {projects:{pageInfo:{hasNextPage:false},edges:[{node:{id:'control',name:'opencode-telegram-bot'}},{node:{id:'recovered',name:'opencode-topic-01'}}]}} as T;
+  if(document.startsWith('mutation WorkerPoolCreate')){creates++;throw new Error('must reconcile instead of creating');}
+  assert.ok(document.startsWith('query WorkerPoolCreated'));assert.deepEqual(variables,{projectId:'recovered'});
+  return {project:{id:'recovered',name:'opencode-topic-01',environments:{pageInfo:{hasNextPage:false},edges:[{node:{id:'production-recovered',name:'production'}}]}}} as T;
+ };
+ const pool=await createWorkerPool({workspaceId:'workspace',region:'eu',excludedProjectIds:new Set(['control']),request});
+ assert.deepEqual(pool,{projectId:'recovered',environmentId:'production-recovered',region:'eu'});assert.equal(creates,0);
 });
