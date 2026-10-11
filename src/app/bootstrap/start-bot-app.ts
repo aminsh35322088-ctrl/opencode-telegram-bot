@@ -3,8 +3,6 @@ import { readFile } from "fs/promises";
 import { cleanupBotRuntime, createBot } from "../../bot/index.js";
 import { createScheduledTaskDeliverySender } from "../../bot/messages/scheduled-task-delivery.js";
 import { config } from "../../config.js";
-import { opencodeAutoRestartService } from "../../opencode/auto-restart.js";
-import { notifyOpencodeReadyIfHealthy, registerOpenCodeReadyRefreshHandler } from "../../opencode/ready-refresh.js";
 import { flushSettings, getGlobalSettings, loadSettings } from "../stores/settings-store.js";
 import { scheduledTaskRuntime } from "../services/scheduled-task-runtime-service.js";
 import { migrateLegacyCustomProviderCredentials, syncOpenCodeCustomConfig } from "../services/custom-provider-service.js";
@@ -23,12 +21,10 @@ import { clearServiceStateFile } from "../../runtime/service/manager.js";
 import { getServiceStateFilePathFromEnv, isServiceChildProcess } from "../../runtime/service/env.js";
 import { flushLogger, getLogFilePath, initializeLogger, logger } from "../../utils/logger.js";
 import { RuntimeObservabilityWatchdog } from "../../utils/runtime-observability.js";
-import { opencodeMemoryRecoveryService } from "../services/opencode-memory-recovery-service.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
-import { initializeNativeCore, shutdownNativeCore } from "../../core/native-core-service.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -79,6 +75,7 @@ async function reconcileOrphanedTopicState(): Promise<void> {
 
 export async function startBotApp(): Promise<void> {
   await initializeLogger();
+  const distributedControlPlane = process.env.CONTROL_APPLICATION_IPC === "1";
   const mode = getRuntimeMode();
   const runtimePaths = getRuntimePaths();
   const version = await getBotVersion();
@@ -173,9 +170,12 @@ export async function startBotApp(): Promise<void> {
   logger.info(
     `[Extensions] Managed OpenCode config ready: path=${managedConfigPath}, plugins=${managedPlugins}`,
   );
-  startModelCatalogRefreshService();
-  startFreeLlmCatalogRefreshService();
-  registerOpenCodeReadyRefreshHandler();
+  if (!distributedControlPlane) {
+    startModelCatalogRefreshService();
+    startFreeLlmCatalogRefreshService();
+    const { registerOpenCodeReadyRefreshHandler } = await import("../../opencode/ready-refresh.js");
+    registerOpenCodeReadyRefreshHandler();
+  }
   const bot = createBot();
 
   // Re-pin only the exact bot-owned Main navigation anchors. These IDs are
@@ -214,15 +214,15 @@ export async function startBotApp(): Promise<void> {
     sessionId: binding.sessionId,
     directory: binding.directory,
   }));
-  await initializeNativeCore(bot.api, coreBindings);
-  if(process.env.CONTROL_APPLICATION_IPC==="1"){
-    const {opencodeReadyLifecycle}=await import("../../opencode/ready-lifecycle.js");
-    let inspected=false;
-    const inspectOnce=async()=>{if(inspected)return;inspected=true;const {inspectExistingTopicBindings}=await import("../../control-plane/topic-classification.js");await inspectExistingTopicBindings();};
-    if(opencodeReadyLifecycle.isReady())void inspectOnce();
-    else opencodeReadyLifecycle.onReady(inspectOnce);
-    // One startup inventory for migration planning: identities only, never conversation,
-    // workspace contents, credentials, or an idle outbound diagnostics loop.
+  let shutdownLocalCore = async (): Promise<void> => {};
+  let stopLocalOpenCode = (): void => {};
+  if (!distributedControlPlane) {
+    const { initializeNativeCore, shutdownNativeCore } = await import("../../core/native-core-service.js");
+    await initializeNativeCore(bot.api, coreBindings);
+    shutdownLocalCore = shutdownNativeCore;
+  } else {
+    // Control Plane owns Telegram and orchestration only. All OpenCode/Core
+    // execution lives inside provisioned topic-node Worker services.
     for(const binding of coreBindings)logger.info(`[DistributedInventory] topic chat=${binding.chatId} thread=${binding.threadId} session=${binding.sessionId}`);
     const {nodeBindings}=await import("../../control-plane/node-bindings.js");
     const {readGlobalSnapshot}=await import("../../control-plane/global-state.js");
@@ -250,17 +250,23 @@ export async function startBotApp(): Promise<void> {
   }
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog();
   runtimeObservabilityWatchdog.start();
-  safeBackgroundTask({
-    taskName: "app.opencodeStartup",
-    task: async () => {
-      const monitorStarted = await opencodeAutoRestartService.start();
-      if (!monitorStarted) {
-        await notifyOpencodeReadyIfHealthy("startup");
-        return;
-      }
-      opencodeMemoryRecoveryService.start();
-    },
-  });
+  if (!distributedControlPlane) {
+    const { opencodeAutoRestartService } = await import("../../opencode/auto-restart.js");
+    const { notifyOpencodeReadyIfHealthy } = await import("../../opencode/ready-refresh.js");
+    const { opencodeMemoryRecoveryService } = await import("../services/opencode-memory-recovery-service.js");
+    stopLocalOpenCode = () => opencodeAutoRestartService.stop();
+    safeBackgroundTask({
+      taskName: "app.opencodeStartup",
+      task: async () => {
+        const monitorStarted = await opencodeAutoRestartService.start();
+        if (!monitorStarted) {
+          await notifyOpencodeReadyIfHealthy("startup");
+          return;
+        }
+        opencodeMemoryRecoveryService.start();
+      },
+    });
+  }
 
   let shutdownStarted = false;
   let shutdownTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -272,8 +278,8 @@ export async function startBotApp(): Promise<void> {
     stopModelCatalogRefreshService();
     stopFreeLlmCatalogRefreshService();
     cleanupBotRuntime(`app_shutdown_${signal.toLowerCase()}`);
-    void shutdownNativeCore().catch((error) => logger.warn("[Core] Failed to shut down cleanly", error));
-    opencodeAutoRestartService.stop();
+    void shutdownLocalCore().catch((error) => logger.warn("[Core] Failed to shut down cleanly", error));
+    stopLocalOpenCode();
     scheduledTaskRuntime.shutdown();
     void stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     shutdownTimeout = setTimeout(() => {
@@ -329,8 +335,8 @@ export async function startBotApp(): Promise<void> {
       shutdownTimeout = null;
     }
     cleanupBotRuntime("app_shutdown_complete");
-    await shutdownNativeCore().catch((error) => logger.warn("[Core] Failed to shut down cleanly", error));
-    opencodeAutoRestartService.stop();
+    await shutdownLocalCore().catch((error) => logger.warn("[Core] Failed to shut down cleanly", error));
+    stopLocalOpenCode();
     scheduledTaskRuntime.shutdown();
     await stopTailscaleIntegration().catch((error) => logger.warn("[Tailscale] Failed to stop tailscaled cleanly", error));
     await clearManagedServiceState().catch((error) =>

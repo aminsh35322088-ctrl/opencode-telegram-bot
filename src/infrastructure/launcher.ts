@@ -2,12 +2,15 @@ import {WORKER_RUNTIME_IMAGE} from "./worker-core-release.js";
 import { createInfrastructureClient, InfrastructureRequestError } from "./railway-client.js";
 import { lstat } from "node:fs/promises";
 import { constants } from "node:os";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import {captureNodeRegistry} from "./node-registry.js";
 import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./control-runtime-config.js";
 
 // This process is the only infrastructure credential owner. Railway starts it as
-// root; the existing bootstrap drops the Bot and Core to the node user. The
-// credential never enters Worker variables, model state or application storage.
+// root; the launcher drops the Telegram/orchestration application to the node user.
+// OpenCode Core is never started in this service; it exists only in Worker images.
+// The credential never enters Worker variables, model state or application storage.
 const nodes=captureNodeRegistry(process.env);
 const infrastructure = createInfrastructureClient(process.env);
 const existingVariableNames=Object.keys(process.env);
@@ -19,13 +22,13 @@ configureApplicationEnvironment(process.env,runtimeConfig);
 
 async function main(): Promise<void> {
   if (process.getuid?.() !== 0) throw new Error("Infrastructure launcher requires a separate privileged identity");
-  const { budgetedSpawn, budgetedExecFile } = await import("../runtime/process-budget.js");
+  const execFileAsync = promisify(execFile);
   const volume = await lstat("/data");
   if (!volume.isDirectory() || volume.isSymbolicLink()) throw new Error("Invalid persistent volume root");
   const gatewayEnabled=runtimeConfig.gatewayEnabled;
   if(gatewayEnabled){
-    await budgetedExecFile("cleanup","/usr/bin/chown",["--no-dereference","0:0","/data"]);
-    await budgetedExecFile("cleanup","/usr/bin/chmod",["1777","/data"]);
+    await execFileAsync("/usr/bin/chown",["--no-dereference","0:0","/data"]);
+    await execFileAsync("/usr/bin/chmod",["1777","/data"]);
     const {mkdir,chmod}=await import("node:fs/promises");
     await mkdir("/data/.infrastructure",{mode:0o700}).catch(error=>{if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;});
     const directory=await lstat("/data/.infrastructure");
@@ -34,7 +37,7 @@ async function main(): Promise<void> {
     await nodes.load("/data/.infrastructure/nodes.json");
     await nodes.persist("/data/.infrastructure/nodes.json");
   }else{
-    await budgetedExecFile("cleanup", "/usr/bin/chown", ["--no-dereference", "1000:1000", "/data"]);
+    await execFileAsync("/usr/bin/chown", ["--no-dereference", "1000:1000", "/data"]);
   }
 
   let stopGateway:(()=>void)|undefined;
@@ -117,7 +120,7 @@ async function main(): Promise<void> {
     gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,onboarding);};
   }
 
-  const child = await budgetedSpawn("bot-daemon", "/app/railway-volume-maintenance.sh", [], {
+  const child = spawn(process.execPath, ["/app/dist/index.js"], {
     cwd: "/app",
     stdio: gatewayEnabled ? ["inherit","inherit","inherit","ipc"] : "inherit",
     env:{...process.env,...(gatewayEnabled?{CONTROL_APPLICATION_IPC:"1"}:{})},
