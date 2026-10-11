@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { configureGroqStt, deleteCustomProvider, discoverModels, isGroqSttConfigured, removeGroqStt, listCustomProviders, saveCustomProvider, syncOpenCodeCustomConfig, type AiCapability } from "../../app/services/custom-provider-service.js";
-import { configureCloudflareCredentials, configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeCloudflareCredentials, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
+import { configureImageAiProvider, IMAGE_AI_PROVIDER_IDS, listImageAiProviders, removeImageAiProvider } from "../../app/services/image-ai-provider-service.js";
 import { reconcileStoredModelSelection } from "../../app/services/model-selection-service.js";
 import { isChatModelMetadata, isImageModelMetadata } from "../../app/services/model-eligibility-service.js";
 import { config } from "../../config.js";
@@ -16,8 +16,8 @@ import { setAiRoleSelection } from "../../app/services/ai-role-selection-service
 import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 import { deleteInputMessage } from "./panel-render.js";
 
-type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-cloudflare-account" | "image-cloudflare-token" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
-interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; accountId?: string; messageId: number; expires: number; busy?: boolean; }
+type Step = "name" | "url" | "key" | "groq-stt-key" | "stt-select" | "image-custom-base-url" | "image-custom-model" | "image-custom-edit-model" | "image-custom-key";
+interface PendingProvider { step: Step; capability?: AiCapability; providerID?: string; name?: string; baseURL?: string; model?: string; editModel?: string; messageId: number; expires: number; busy?: boolean; }
 const providerWizard = new TopicScopedValue<PendingProvider>();
 function messageId(ctx: Context): number | undefined { const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id; const canonical = typeof chatId === "number" ? getMainNavigationMessageId(chatId) : undefined; return canonical ?? ctx.callbackQuery?.message?.message_id; }
 function wizardKeyboard() { return new InlineKeyboard().text("✖ Cancel", "provider:cancel"); }
@@ -76,15 +76,12 @@ function compactButtonLabel(value: string, max = 42): string {
 }
 
 async function renderImageProviders(ctx: Context, id?: number, notice = "") {
-  const legacy = await listImageAiProviders();
-  const cloudflare = legacy.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID);
-  const oldCustom = legacy.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+  const providers = await listImageAiProviders();
+  const custom = providers.find((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
   const keyboard = new InlineKeyboard()
-    .text(cloudflare ? "☁️ Cloudflare Workers AI · Connected" : "☁️ Configure Cloudflare Workers AI", "provider:image:cloudflare:configure").row()
-    .text(oldCustom ? "🖼 OpenAI-compatible Image API · Connected" : "🖼 Add OpenAI-compatible Image API", "provider:image:custom:configure").row();
+    .text(custom ? "🖼 OpenAI-compatible Image API · Connected" : "🖼 Add OpenAI-compatible Image API", "provider:image:custom:configure").row();
 
-  if (cloudflare) keyboard.text("🗑 Remove Cloudflare", "provider:remove-image:cloudflare").row();
-  if (oldCustom) keyboard.text("🗑 Remove OpenAI-compatible Image API", "provider:remove-image:custom").row();
+  if (custom) keyboard.text("🗑 Remove OpenAI-compatible Image API", "provider:remove-image:custom").row();
   keyboard.text("← API Connections", "provider:menu");
 
   await render(ctx, [
@@ -94,8 +91,7 @@ async function renderImageProviders(ctx: Context, id?: number, notice = "") {
     "Image-only adapters live here.",
     "Multi-purpose APIs belong in API Connections and are classified automatically from their model catalog.",
     "",
-    cloudflare ? "Cloudflare Workers AI · Connected" : "Cloudflare Workers AI · Not configured",
-    oldCustom ? "Legacy Custom Image API · Connected" : "",
+    custom ? "OpenAI-compatible Image API · Connected" : "OpenAI-compatible Image API · Not configured",
   ].filter(Boolean).join("\n"), keyboard, id);
 }
 
@@ -134,9 +130,7 @@ async function renderProviders(ctx: Context, id?: number, notice = "") {
   const [providers, legacy, groq] = await Promise.all([listCustomProviders(), listImageAiProviders(), isGroqSttConfigured()]);
   const general = providers.filter((provider) => provider.capability !== "stt");
   const transcription = groq || providers.some((provider) => provider.capability === "stt");
-  const imageAdapters = legacy.filter((provider) =>
-    provider.id === IMAGE_AI_PROVIDER_IDS.CLOUDFLARE_ID || provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID
-  ).length;
+  const imageAdapters = legacy.filter((provider) => provider.id === IMAGE_AI_PROVIDER_IDS.CUSTOM_ID).length;
   const keyboard = new InlineKeyboard();
 
   for (const provider of general) {
@@ -183,7 +177,6 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     const capability = data.slice("provider:add:".length) as AiCapability;
     if (capability === "general" || capability === "coding" || capability === "image" || capability === "stt") await start(ctx, "name", capability === "stt" ? "🎙 Add Transcription API\n\nStep 1 of 3 — Name\n\nSend a short name for this API connection.\nExample: My API" : "🔌 Add Provider\n\nStep 1 of 3 — Name\n\nSend a short name for this API connection.\nExample: My API", capability === "stt" ? "stt" : "general"); return true;
   }
-  if (data === "provider:image:cloudflare:configure") { await start(ctx, "image-cloudflare-account", "☁️ Cloudflare Workers AI\n\nStep 1 of 2 · Account ID\nSend your Cloudflare Account ID."); return true; }
   if (data === "provider:image:custom:configure") { await start(ctx, "image-custom-base-url", "🖼 OpenAI Image API\n\nStep 1 of 4 · Base URL\nPaste the image API base URL.\n\nExample: https://api.example.com/v1"); return true; }
   if (data === "provider:stt:groq:add") { await start(ctx, "groq-stt-key", "🎤 Groq Transcription\n\nAPI key\nSend your Groq API key.\n\n🔒 Your key message will be deleted immediately.", "stt"); return true; }
   if (data === "provider:stt:groq:remove") { await removeGroqStt(); await renderSlot(ctx, "stt", id, "✅ Groq removed.\n\n"); return true; }
@@ -192,12 +185,11 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     if (p) { const examples = p.models.slice(0, 8).map(m => "• " + m.id).join("\n"); await start(ctx, "stt-select", `🎙 ${p.name}\n\nTranscription model\nSend the exact model ID.${examples ? "\n\nExamples:\n" + examples : ""}`, "stt"); const wizard = providerWizard.get(); if (wizard) wizard.providerID = p.id; }
     return true;
   }
-  if (data.startsWith("provider:remove-image:") || data === "provider:image:cloudflare:remove" || data === "provider:image:custom:remove") {
-    const type = data.includes("cloudflare") ? "cloudflare" : "custom";
-    await render(ctx, "Remove this image connection?\n\nAny Image AI default or Topic override using it will become unavailable.", new InlineKeyboard().text("🗑 Remove", `provider:confirm-image:${type}`).text("Cancel", "provider:image:engines"), id); return true;
+  if (data.startsWith("provider:remove-image:") || data === "provider:image:custom:remove") {
+    await render(ctx, "Remove this image connection?\n\nAny Image AI default or Topic override using it will become unavailable.", new InlineKeyboard().text("🗑 Remove", "provider:confirm-image:custom").text("Cancel", "provider:image:engines"), id); return true;
   }
-  if (data === "provider:confirm-image:cloudflare" || data === "provider:confirm-image:custom") {
-    if (data.endsWith(":cloudflare")) await removeCloudflareCredentials(); else await removeImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
+  if (data === "provider:confirm-image:custom") {
+    await removeImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID);
     await renderImageProviders(ctx, id, "✅ Connection removed.\n\n"); return true;
   }
   if (data.startsWith("provider:delete:")) {
@@ -263,17 +255,10 @@ export async function handleProviderWizardMessage(ctx: Context): Promise<boolean
       s.baseURL = text.replace(/\/+$/g, ""); s.step = s.step === "url" ? "key" : "image-custom-model";
       await editWizard(ctx, s.messageId, s.step === "key" ? `${s.capability === "stt" ? "🎙 Add Transcription API" : "🔌 Add Provider"}\n\nStep 3 of 3 — API Key\n\nSend the API key.\nYour key message is removed from the chat after it is read.` : "🎨 Configure Image API\n\nStep 2 of 4 — Generation model\n\nSend the generation model ID."); return true;
     }
-    if (s.step === "image-cloudflare-account") {
-      if (!/^[a-f0-9]{32}$/i.test(text)) throw new Error("Account ID must contain 32 hexadecimal characters");
-      s.accountId = text; s.step = "image-cloudflare-token"; await editWizard(ctx, s.messageId, "🎨 Configure Image API\n\nStep 2 of 2 — API Token\n\nSend the Cloudflare API token.\nYour token message is removed from the chat after it is read."); return true;
-    }
     if (s.step === "image-custom-model") { s.model = text; s.step = "image-custom-edit-model"; await editWizard(ctx, s.messageId, "🖼 OpenAI Image API\n\nStep 3 of 4 · Edit model\nSend the edit model ID."); return true; }
     if (s.step === "image-custom-edit-model") { s.editModel = text; s.step = "image-custom-key"; await editWizard(ctx, s.messageId, "🖼 OpenAI Image API\n\nStep 4 of 4 · API key\nSend the key.\n\n🔒 Your key message will be deleted immediately."); return true; }
     s.busy = true; await editWizard(ctx, s.messageId, "🔎 Connecting…\n\nChecking credentials and reading the model catalog.");
-    if (s.step === "image-cloudflare-token") {
-      const validation = await configureCloudflareCredentials(s.accountId!, text, guard);
-      if (!validation.valid) throw new Error(`Cloudflare verification failed: ${validation.reason}`);
-    } else if (s.step === "image-custom-key") await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, { baseURL: s.baseURL!, model: s.model!, editModel: s.editModel! }, guard);
+    if (s.step === "image-custom-key") await configureImageAiProvider(IMAGE_AI_PROVIDER_IDS.CUSTOM_ID, text, { baseURL: s.baseURL!, model: s.model!, editModel: s.editModel! }, guard);
     else if (s.step === "groq-stt-key") { await configureGroqStt(text, guard); saved = true; await setAiRoleSelection("stt", "groq", "whisper-large-v3"); setDefaultCapabilityModel("speechToText", { providerID: "groq", modelID: "whisper-large-v3" }); }
     else {
       const models = await discoverModels(s.baseURL!, text); guard();

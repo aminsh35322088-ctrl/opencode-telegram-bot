@@ -60,9 +60,9 @@ describe("image model catalog", () => {
     });
     listImageAiProviders.mockResolvedValue([
       {
-        id: "cloudflare",
-        name: "Cloudflare Workers AI",
-        model: "@cf/example",
+        id: "image-provider",
+        name: "Image Provider",
+        model: "image/example",
         capabilities: ["generate", "edit"],
         active: true,
         default: false,
@@ -73,7 +73,7 @@ describe("image model catalog", () => {
   it("detects image-output models across OpenCode providers and legacy adapters", async () => {
     const catalog = await listImageModelCatalog();
     expect(catalog.map((entry) => [entry.providerID, entry.modelID, entry.capabilities])).toEqual([
-      ["cloudflare", "@cf/example", ["generate", "edit"]],
+      ["image-provider", "image/example", ["generate", "edit"]],
       ["mixed", "image-edit", ["generate", "edit"]],
       ["mixed", "image-generate", ["generate"]],
     ]);

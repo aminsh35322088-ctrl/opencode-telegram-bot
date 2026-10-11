@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   saveCustomProvider: vi.fn(),
   isGroqSttConfigured: vi.fn(),
   listImageAiProviders: vi.fn(),
+  configureImageAiProvider: vi.fn(),
   resolveLocalOpencodeTarget: vi.fn(),
   findServerPid: vi.fn(),
   killServerProcess: vi.fn(),
@@ -26,11 +27,9 @@ vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
 }));
 
 vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
-  configureCloudflareCredentials: vi.fn(),
-  configureImageAiProvider: vi.fn(),
-  IMAGE_AI_PROVIDER_IDS: { CLOUDFLARE_ID: "cloudflare", CUSTOM_ID: "custom" },
+  configureImageAiProvider: mocks.configureImageAiProvider,
+  IMAGE_AI_PROVIDER_IDS: { CUSTOM_ID: "custom" },
   listImageAiProviders: mocks.listImageAiProviders,
-  removeCloudflareCredentials: vi.fn(),
   removeImageAiProvider: vi.fn(),
 }));
 
@@ -130,6 +129,7 @@ describe("provider wizard General panel contract", () => {
     mocks.saveCustomProvider.mockReset().mockResolvedValue(undefined);
     mocks.isGroqSttConfigured.mockReset().mockResolvedValue(false);
     mocks.listImageAiProviders.mockReset().mockResolvedValue([]);
+    mocks.configureImageAiProvider.mockReset().mockResolvedValue(undefined);
     mocks.resolveLocalOpencodeTarget.mockReset().mockReturnValue(null);
     mocks.findServerPid.mockReset().mockResolvedValue(null);
     mocks.killServerProcess.mockReset().mockResolvedValue(true);
@@ -242,7 +242,20 @@ describe("provider wizard General panel contract", () => {
       .flat()
       .map((button: { callback_data?: string }) => button.callback_data);
     expect(callbacks).toContain("provider:image:custom:configure");
-    expect(callbacks).toContain("provider:image:cloudflare:configure");
+  });
+
+  it("keeps the custom image wizard generation and edit model steps separate", async () => {
+    const start = callbackContext("provider:image:custom:configure", 500);
+    expect(await handleProviderCallback(start)).toBe(true);
+
+    const base = textContext("https://images.example.com/v1", 601);
+    expect(await handleProviderWizardMessage(base)).toBe(true);
+    expect((base.api.editMessageText as any).mock.calls.at(-1)?.[2]).toContain("Step 2 of 4");
+
+    const generation = textContext("image-gen-v1", 602);
+    expect(await handleProviderWizardMessage(generation)).toBe(true);
+    expect((generation.api.editMessageText as any).mock.calls.at(-1)?.[2]).toContain("Step 3 of 4");
+    expect(mocks.configureImageAiProvider).not.toHaveBeenCalled();
   });
 
   it("migrates legacy add:image flow into one generic AI provider catalog", async () => {

@@ -28,12 +28,9 @@ test("Telegram exposes no legacy Pause Resume Abort or custom Stop product contr
   const messageRouter = text("src/bot/routers/message-router.ts");
   const classifier = text("src/bot/interaction-classifier.ts");
   const messagePatterns = text("src/bot/message-patterns.ts");
-  const cloudUi = text("src/cloudflare/bot-ui.ts");
-  for (const source of [replyRouter, messageRouter, classifier, messagePatterns, cloudUi]) {
+  for (const source of [replyRouter, messageRouter, classifier, messagePatterns]) {
     assert.doesNotMatch(source, /MAIN_BUTTONS\.(?:pause|resume|abort)/);
   }
-  assert.doesNotMatch(cloudUi, /\["pause",\s*"resume",\s*"abort",\s*"stop"\]/);
-  assert.doesNotMatch(cloudUi, /name === "abort"|name === "pause"|name === "resume"/);
   assert.doesNotMatch(messagePatterns, /⏸(?:️)? Pause|▶(?:️)? Resume|🛑 Abort/);
 
   const topicDeleteUi = text("src/bot/services/telegram-topic-delete-handler.ts");
@@ -59,7 +56,6 @@ test("user-facing source no longer advertises slash abort pause resume or custom
     text("src/bot/routers/command-router.ts"),
     text("src/bot/routers/reply-keyboard-router.ts"),
     text("src/bot/routers/message-router.ts"),
-    text("src/cloudflare/bot-ui.ts"),
     text("src/app/managers/interaction-manager.ts"),
   ].join("\n");
   assert.doesNotMatch(sources, /\/(?:abort|pause|resume)\b/);

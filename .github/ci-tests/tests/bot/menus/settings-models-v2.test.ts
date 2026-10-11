@@ -46,7 +46,7 @@ describe("Image AI Topic V2 model settings UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDefaultImageModel.mockReturnValue({
-      providerID: "cloudflare",
+      providerID: "image-provider",
       modelID: "flux",
     });
     getCurrentTopicImageModelOverride.mockReturnValue(undefined);

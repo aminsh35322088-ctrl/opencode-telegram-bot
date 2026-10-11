@@ -83,13 +83,7 @@ Production does not update `opencode-ai` independently. The bot pins one immutab
 
 Railway builds download the locked Core runtime artifact, verify its SHA-256 digest, install the SDK/native packages from the same GitHub Release, and verify all three artifacts report the same Core/upstream identity before compiling the bot.
 
-The Cloudflare Control Plane checks published Core prereleases every 15 minutes. Within the same upstream OpenCode version, it resolves the release commit to a verified immutable GHCR digest and rolls Workers forward one at a time. A missing image, digest mismatch, or upstream version change leaves the existing target unchanged. Upstream changes still require moving the Bot SDK/native release pin together.
-
-Both prepared unbound Workers and idle Topic Workers are eligible. Active or queued work prevents deployment; pending upgrades remain fenced until Railway deployment success, signed runtime identity, and the existing session (when bound) are verified. Services, 500 MB volumes, Topic/session identities, and generations are preserved. The rollout journal and target survive Control Plane restarts. A failed deployment remains fenced for reconciliation; it is never reported as a successful upgrade.
-
-`CORE_AUTO_UPDATE` defaults to `true`; setting it to `false` suspends release discovery and automatic rollout. New Chat only reserves prepared Workers and never triggers infrastructure deployment.
-
-Worker startup prefers its validated credential cache over the already-consumed bootstrap token. A running Worker uses a fresh one-time token only for an explicit clean binding rotation.
+Upgrades therefore happen only by moving the Core release pin after Core verification. This prevents runtime/SDK/Core drift.
 
 ## Resource strategy
 

@@ -115,7 +115,7 @@ describe("MCP Extension record and generated tool actions", () => {
       server: "cf",
       tools: [{ name: "get zone" }, { name: "get-zone" }],
     });
-    await ensureMcpExtension({ serverName: "cf", projectDirectory: "/work/repo", source: "https://mcp.cloudflare.com" });
+    await ensureMcpExtension({ serverName: "cf", projectDirectory: "/work/repo", source: "https://mcp.example.com" });
     const result = await syncMcpExtensionActions({ serverName: "cf", projectDirectory: "/work/repo" });
 
     expect(result.created).toBe(2);

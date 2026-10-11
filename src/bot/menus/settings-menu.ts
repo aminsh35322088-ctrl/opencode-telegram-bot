@@ -439,7 +439,7 @@ export function buildExperimentalSettingsView(): { text: string; keyboard: Inlin
  * Durable/control-plane friendly view builders. They intentionally live beside
  * the original Settings implementation so the legacy Telegram copy, hierarchy
  * and callback namespace remain the canonical UI contract while state can come
- * from Cloudflare instead of process-local stores.
+ * from the active control plane instead of process-local stores.
  */
 export interface CanonicalTopicSettingsState {
   model: string;

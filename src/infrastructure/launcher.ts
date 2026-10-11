@@ -5,10 +5,11 @@ import { constants } from "node:os";
 import {captureNodeRegistry} from "./node-registry.js";
 import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./control-runtime-config.js";
 
-// Railway fleet ownership moved to the Cloudflare Control Plane. The legacy
-// launcher remains credentialless and cannot provision or discover Railway resources.
+// This process is the only infrastructure credential owner. Railway starts it as
+// root; the existing bootstrap drops the Bot and Core to the node user. The
+// credential never enters the shell, application, or runtime environment.
 const nodes=captureNodeRegistry(process.env);
-const infrastructure = createInfrastructureClient(undefined);
+const infrastructure = createInfrastructureClient(process.env);
 const existingVariableNames=Object.keys(process.env);
 const workerImage=process.env.WORKER_RUNTIME_IMAGE??WORKER_RUNTIME_IMAGE;
 const poolPolicy=process.env.WORKER_POOL_POLICY?JSON.parse(process.env.WORKER_POOL_POLICY):undefined;

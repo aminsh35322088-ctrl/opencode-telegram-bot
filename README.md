@@ -168,7 +168,7 @@ The bot supports more than plain text coding sessions.
 
 Use **🎨 New Image Chat** beside New Chat in Main to open a dedicated image Topic. Discuss a design, generate an image, then keep editing it in the same conversation. Reply to an older image to edit that version; otherwise the latest image is used. **New design**, **Stop**, image settings and deletion are available inside the Topic.
 
-Configure it under **Settings → AI Providers → Image** using a native Gemini image model, or a vision conversation model paired with Cloudflare/Custom image generation and editing. Model IDs are chosen explicitly. Existing Topics keep their profile when the default changes.
+Configure it under **Settings → AI Providers → Image** using a native Gemini image model, or a vision conversation model paired with a Custom image generation/editing API. Model IDs are chosen explicitly. Existing Topics keep their profile when the default changes.
 
 Image Topics store Telegram file IDs and bounded conversation metadata, with no image archive on Railway and no OpenCode session/workspace. Coding Topics retain photo understanding; their former Image AI generation/edit controls are removed. See [Image Chat setup and limits](docs/IMAGE_CHATS.md).
 

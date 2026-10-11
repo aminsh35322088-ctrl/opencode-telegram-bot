@@ -42,29 +42,29 @@ describe("Image Model settings contract", () => {
 
   it("persists the global Default Image Model independently from Topic defaults", async () => {
     setDefaultImageModel({
-      providerID: "cloudflare",
-      modelID: "@cf/example/generate",
-      editModelID: "@cf/example/edit",
+      providerID: "image-provider",
+      modelID: "image/example/generate",
+      editModelID: "image/example/edit",
     });
     await flushSettings();
 
     expect(getDefaultImageModel()).toEqual({
-      providerID: "cloudflare",
-      modelID: "@cf/example/generate",
-      editModelID: "@cf/example/edit",
+      providerID: "image-provider",
+      modelID: "image/example/generate",
+      editModelID: "image/example/edit",
     });
 
     const state = JSON.parse(await readFile(path.join(tempHome, "app-state.json"), "utf8"));
     expect(state.settings.defaultImageModel).toEqual({
-      providerID: "cloudflare",
-      modelID: "@cf/example/generate",
-      editModelID: "@cf/example/edit",
+      providerID: "image-provider",
+      modelID: "image/example/generate",
+      editModelID: "image/example/edit",
     });
     expect(state.settings.topicDefaults?.imageModelOverride).toBeUndefined();
   });
 
   it("resolves Topic override before global default and returns to the latest global default after reset", async () => {
-    const firstGlobal = { providerID: "cloudflare", modelID: "global-v1" };
+    const firstGlobal = { providerID: "image-provider", modelID: "global-v1" };
     const secondGlobal = { providerID: "custom-image-ai", modelID: "global-v2", editModelID: "edit-v2" };
     const topicOverride = { providerID: "custom-image-ai", modelID: "topic-model" };
 
@@ -89,7 +89,7 @@ describe("Image Model settings contract", () => {
   });
 
   it("does not leak mutable selection objects through getters", () => {
-    setDefaultImageModel({ providerID: "cloudflare", modelID: "immutable" });
+    setDefaultImageModel({ providerID: "image-provider", modelID: "immutable" });
     const selection = getDefaultImageModel();
     expect(selection).toBeDefined();
     selection!.modelID = "mutated";

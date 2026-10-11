@@ -35,7 +35,6 @@ const LEGACY_APPLICATION_PATHS = [
   "settings.json.tmp",
   "custom-providers.json",
   "image-ai-providers.json",
-  "cloudflare-workers-ai.json",
   "providers",
   "integrations",
   "ai-role-selection.json",

@@ -1,8 +1,6 @@
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
 import { readBoundedJson, detectImageMimeType } from "./ai-http-service.js";
-import crypto from "node:crypto";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
-import { logger } from "../../utils/logger.js";
 import { runOpenCodeImageModel } from "./opencode-image-execution-service.js";
 import type { SessionOwner } from "@opencode-telegram/native-runtime";
 import {
@@ -21,24 +19,11 @@ interface StoredImageAiProvider extends ImageAiProviderStatus {
   updatedAt: string;
 }
 interface ResolvedImageAiProvider extends StoredImageAiProvider { apiKey: string; }
-interface CloudflareCredentials {
-  accountId: string;
-  credentialId: string;
-  /** Legacy plaintext field, migrated to Credential Vault on first read. */
-  token?: string;
-}
-interface ImageAiStore { providers: StoredImageAiProvider[]; cloudflare?: CloudflareCredentials; }
-export interface CloudflareCredentialValidation { valid: boolean; reason?: "missing" | "invalid_account_id" | "unauthorized" | "inactive_token" | "no_workers_ai_access" | "network" | "api_error"; tokenStatus?: string; }
+interface ImageAiStore { providers: StoredImageAiProvider[]; }
 
-const CLOUDFLARE_ID = "cloudflare";
 const CUSTOM_ID = "custom-image-ai";
-const CLOUDFLARE_MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
-const CLOUDFLARE_BASE_URL = "https://api.cloudflare.com/client/v4";
 const CUSTOM_CREDENTIAL_ID = "api-key";
 const CUSTOM_EXTENSION_ID = "model-provider:custom-image-ai";
-const CLOUDFLARE_CREDENTIAL_ID = "api-token";
-const CLOUDFLARE_EXTENSION_ID = "model-provider:cloudflare-image-ai";
-let cloudflareValidationCache: { accountId: string; tokenHash: string; expiresAt: number; result: CloudflareCredentialValidation } | null = null;
 
 function getStore(state: Awaited<ReturnType<typeof readAppState>>): ImageAiStore {
   const raw = state.imageAi;
@@ -88,30 +73,7 @@ function getStore(state: Awaited<ReturnType<typeof readAppState>>): ImageAiStore
         })
     : [];
 
-  const cloudflareRaw =
-    value.cloudflare && typeof value.cloudflare === "object" && !Array.isArray(value.cloudflare)
-      ? value.cloudflare as Record<string, unknown>
-      : undefined;
-  const cloudflare =
-    cloudflareRaw
-    && typeof cloudflareRaw.accountId === "string"
-    && (
-      (typeof cloudflareRaw.credentialId === "string" && cloudflareRaw.credentialId.trim())
-      || (typeof cloudflareRaw.token === "string" && cloudflareRaw.token.trim())
-    )
-      ? {
-          accountId: cloudflareRaw.accountId.trim(),
-          credentialId:
-            typeof cloudflareRaw.credentialId === "string" && cloudflareRaw.credentialId.trim()
-              ? cloudflareRaw.credentialId.trim()
-              : CLOUDFLARE_CREDENTIAL_ID,
-          ...(typeof cloudflareRaw.token === "string" && cloudflareRaw.token.trim()
-            ? { token: cloudflareRaw.token.trim() }
-            : {}),
-        }
-      : undefined;
-
-  return cloudflare ? { providers, cloudflare } : { providers };
+  return { providers };
 }
 
 async function readStore(): Promise<ImageAiStore> {
@@ -158,23 +120,7 @@ export async function migrateLegacyImageAiCredentials(): Promise<number> {
     changed = true;
   }
 
-  const legacyCloudflareToken = store.cloudflare?.token?.trim();
-  if (store.cloudflare && legacyCloudflareToken) {
-    const current = await resolveExtensionCredential(
-      CLOUDFLARE_EXTENSION_ID,
-      store.cloudflare.credentialId,
-    );
-    if (!current) {
-      await saveExtensionCredential(
-        CLOUDFLARE_EXTENSION_ID,
-        store.cloudflare.credentialId,
-        legacyCloudflareToken,
-      );
-      migrated += 1;
-    }
-    delete store.cloudflare.token;
-    changed = true;
-  }
+
 
   if (changed) await writeStore(store);
   return migrated;
@@ -188,112 +134,17 @@ async function imageProviderApiKey(provider: StoredImageAiProvider): Promise<str
   )?.trim() ?? "";
 }
 
-async function cloudflareToken(
-  credentials: CloudflareCredentials | undefined,
-): Promise<string> {
-  if (!credentials) return "";
-  const legacy = credentials.token?.trim();
-  if (legacy) return legacy;
-  return (
-    await resolveExtensionCredential(
-      CLOUDFLARE_EXTENSION_ID,
-      credentials.credentialId,
-    )
-  )?.trim() ?? "";
-}
-
-async function cloudflareProvider(): Promise<ResolvedImageAiProvider | null> {
-  await migrateLegacyImageAiCredentials();
-  const credentials = (await readStore()).cloudflare;
-  if (!credentials) return null;
-  const token = await cloudflareToken(credentials);
-  if (!token) return null;
-
-  return {
-    id: CLOUDFLARE_ID,
-    name: "Cloudflare Workers AI",
-    baseURL: `${CLOUDFLARE_BASE_URL}/accounts/${credentials.accountId}/ai/run`,
-    model: CLOUDFLARE_MODEL,
-    capabilities: ["generate", "edit"],
-    active: true,
-    default: true,
-    credentialId: credentials.credentialId,
-    apiKey: token,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-export async function validateCloudflareCredentials(accountIdInput: string, tokenInput: string): Promise<CloudflareCredentialValidation> {
-  const accountId = accountIdInput.trim(); const token = tokenInput.trim();
-  if (!accountId || !token) return { valid: false, reason: "missing" };
-  if (!/^[a-f0-9]{32}$/i.test(accountId)) return { valid: false, reason: "invalid_account_id" };
-  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-  if (cloudflareValidationCache?.accountId === accountId && cloudflareValidationCache.tokenHash === tokenHash && cloudflareValidationCache.expiresAt > Date.now()) return cloudflareValidationCache.result;
-  try {
-    const verifyResponse = await fetch(`${CLOUDFLARE_BASE_URL}/user/tokens/verify`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
-    const verifyBody = await readBody(verifyResponse);
-    if (!verifyResponse.ok) { const result = { valid: false, reason: verifyResponse.status === 401 ? "unauthorized" : "api_error" } as CloudflareCredentialValidation; cacheValidation(accountId, tokenHash, result, 30_000); return result; }
-    const tokenResult = verifyBody && typeof verifyBody === "object" && "result" in verifyBody ? (verifyBody as Record<string, unknown>).result : undefined;
-    const tokenStatus = tokenResult && typeof tokenResult === "object" ? (tokenResult as Record<string, unknown>).status : undefined;
-    if (tokenStatus !== "active") { const result = { valid: false, reason: "inactive_token", tokenStatus: typeof tokenStatus === "string" ? tokenStatus : undefined } as CloudflareCredentialValidation; cacheValidation(accountId, tokenHash, result, 30_000); return result; }
-    const modelsResponse = await fetch(`${CLOUDFLARE_BASE_URL}/accounts/${accountId}/ai/models/search?search=${encodeURIComponent(CLOUDFLARE_MODEL)}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
-    const modelsBody = await readBody(modelsResponse);
-    if (!modelsResponse.ok) { const result = { valid: false, reason: modelsResponse.status === 401 || modelsResponse.status === 403 ? "no_workers_ai_access" : "api_error", tokenStatus: "active" } as CloudflareCredentialValidation; cacheValidation(accountId, tokenHash, result, 30_000); return result; }
-    const success = modelsBody && typeof modelsBody === "object" && "success" in modelsBody ? (modelsBody as Record<string, unknown>).success : false;
-    const resultItems = modelsBody && typeof modelsBody === "object" && Array.isArray((modelsBody as Record<string, unknown>).result) ? (modelsBody as { result: unknown[] }).result : [];
-    const hasRequestedModel = resultItems.some((item) => item && typeof item === "object" && typeof (item as Record<string, unknown>).name === "string" && (item as Record<string, unknown>).name === CLOUDFLARE_MODEL);
-    if (success !== true || !hasRequestedModel) { const result = { valid: false, reason: "no_workers_ai_access", tokenStatus: "active" } as CloudflareCredentialValidation; cacheValidation(accountId, tokenHash, result, 30_000); return result; }
-    const valid = { valid: true, tokenStatus: "active" } as CloudflareCredentialValidation; cacheValidation(accountId, tokenHash, valid, 5 * 60_000); return valid;
-  } catch (error) { logger.warn(`[ImageAI] Cloudflare credential validation failed: ${error instanceof Error ? error.message : String(error)}`); return { valid: false, reason: "network" }; }
-}
-function cacheValidation(accountId: string, tokenHash: string, result: CloudflareCredentialValidation, ttl: number): void { cloudflareValidationCache = { accountId, tokenHash, expiresAt: Date.now() + ttl, result }; }
-export async function configureCloudflareCredentials(
-  accountId: string,
-  token: string,
-  beforeSave: () => void = () => {},
-): Promise<CloudflareCredentialValidation> {
-  const validation = await validateCloudflareCredentials(accountId, token);
-  if (!validation.valid) return validation;
-
-  const store = await readStore();
-  await saveExtensionCredential(
-    CLOUDFLARE_EXTENSION_ID,
-    CLOUDFLARE_CREDENTIAL_ID,
-    token.trim(),
-  );
-  await writeStore({
-    ...store,
-    cloudflare: {
-      accountId: accountId.trim(),
-      credentialId: CLOUDFLARE_CREDENTIAL_ID,
-    },
-  }, beforeSave);
-  cloudflareValidationCache = null;
-  return validation;
-}
-
-export async function removeCloudflareCredentials(): Promise<void> {
-  const store = await readStore();
-  delete store.cloudflare;
-  await writeStore(store);
-  await removeExtensionCredentials(CLOUDFLARE_EXTENSION_ID);
-  cloudflareValidationCache = null;
-}
 
 export async function listImageAiProviders(): Promise<ImageAiProviderStatus[]> {
   await migrateLegacyImageAiCredentials();
   const store = await readStore();
-  const cloudflare = await cloudflareProvider();
-  const custom = store.providers;
-  const providers = cloudflare ? [cloudflare, ...custom] : custom;
-  const defaultId = providers.find((provider) => provider.active)?.id;
-  return providers.map((provider) => status(provider, defaultId));
+  const defaultId = store.providers.find((provider) => provider.active)?.id;
+  return store.providers.map((provider) => status(provider, defaultId));
 }
 
 export async function getActiveImageAiProviders(): Promise<ResolvedImageAiProvider[]> {
   await migrateLegacyImageAiCredentials();
   const store = await readStore();
-  const cloudflare = await cloudflareProvider();
   const custom: ResolvedImageAiProvider[] = [];
 
   for (const provider of store.providers) {
@@ -303,14 +154,12 @@ export async function getActiveImageAiProviders(): Promise<ResolvedImageAiProvid
     custom.push({ ...provider, apiKey });
   }
 
-  return cloudflare ? [cloudflare, ...custom] : custom;
+  return custom;
 }
 function parseError(payload: unknown, httpStatus: number): string { if (payload && typeof payload === "object" && "error" in payload) { const value = (payload as Record<string, unknown>).error; return typeof value === "string" ? value : JSON.stringify(value); } return `HTTP ${httpStatus}`; }
 async function readBody(response: Response): Promise<unknown> { const text = await response.text(); if (!text) return null; try { return JSON.parse(text); } catch { return text; } }
 async function fetchRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> { let lastError: unknown; for (let i = 0; i < attempts; i += 1) { try { const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) }); if (![429, 502, 503, 504].includes(response.status) || i === attempts - 1) return response; const retryAfter = Number(response.headers.get("retry-after") ?? ""); const delay = retryAfter > 0 && retryAfter < 30 ? retryAfter * 1000 : 1000 * (i + 1); await new Promise((resolve) => setTimeout(resolve, delay)); } catch (error) { lastError = error; if (i + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1))); } } throw lastError instanceof Error ? lastError : new Error("Image provider request failed"); }
-function imageBufferFromCloudflareResult(body: unknown): Buffer { const result = body && typeof body === "object" ? (body as Record<string, unknown>).result : undefined; const value = result && typeof result === "object" ? (result as Record<string, unknown>).image : undefined; if (typeof value !== "string" || !value) throw new Error("Cloudflare Workers AI returned no image data"); const match = value.match(/^data:[^;]+;base64,(.+)$/s); return Buffer.from(match?.[1] ?? value, "base64"); }
 function imageBufferFromOpenAiResult(body: unknown): Buffer { const data = body && typeof body === "object" && Array.isArray((body as Record<string, unknown>).data) ? (body as { data: unknown[] }).data : []; const first = data[0]; const b64 = first && typeof first === "object" ? (first as Record<string, unknown>).b64_json : undefined; if (typeof b64 !== "string" || !b64) throw new Error("Custom image API returned no b64_json image data"); return Buffer.from(b64, "base64"); }
-async function runCloudflare(provider: ResolvedImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png", signal?: AbortSignal): Promise<{ buffer: Buffer; mimeType: string }> { const credentials = (await readStore()).cloudflare; if (!credentials) throw new Error("Cloudflare Workers AI is not configured"); const validation = await validateCloudflareCredentials(credentials.accountId, key); if (!validation.valid) throw new Error(`Cloudflare credentials rejected: ${validation.reason}`); const form = new FormData(); form.append("prompt", prompt); form.append("width", "1024"); form.append("height", "768"); if (image) form.append("input_image_0", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png"); const model = image ? (provider.editModel ?? provider.model) : provider.model;   const response = await imageRequest(`${provider.baseURL}/${model}`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }, signal); if (!response.ok) { const errBody = await readBody(response); throw new Error(`Cloudflare Workers AI ${image ? "editing" : "generation"} failed: ${parseError(errBody, response.status)}`); } const body = signal ? await readBoundedJson(response) : await readBody(response); return { buffer: imageBufferFromCloudflareResult(body), mimeType: "image/png" }; }
 async function runCustomOpenAiCompatible(provider: ResolvedImageAiProvider, key: string, prompt: string, image?: Buffer, mimeType = "image/png", signal?: AbortSignal): Promise<{ buffer: Buffer; mimeType: string }> { const baseURL = provider.baseURL.replace(/\/+$/g, ""); if (image) { const form = new FormData(); form.append("model", provider.editModel ?? provider.model); form.append("prompt", prompt); form.append("image", new Blob([new Uint8Array(image)], { type: mimeType }), "input.png");     const response = await imageRequest(`${baseURL}/images/edits`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }, signal); if (!response.ok) { const errBody = await readBody(response); throw new Error(`Custom image editing failed: ${parseError(errBody, response.status)}`); } const body = signal ? await readBoundedJson(response) : await readBody(response); return { buffer: imageBufferFromOpenAiResult(body), mimeType: "image/png" }; } const response = await imageRequest(`${baseURL}/images/generations`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: provider.model, prompt, response_format: "b64_json" }) }, signal); if (!response.ok) { const errBody = await readBody(response); throw new Error(`Custom image generation failed: ${parseError(errBody, response.status)}`); } const body = signal ? await readBoundedJson(response) : await readBody(response); return { buffer: imageBufferFromOpenAiResult(body), mimeType: "image/png" }; }
 
 export async function configureImageAiProvider(
@@ -400,7 +249,7 @@ export async function removeImageAiProvider(id: string): Promise<boolean> {
   await removeExtensionCredentials(CUSTOM_EXTENSION_ID);
   return true;
 }
-export const IMAGE_AI_PROVIDER_IDS = { CLOUDFLARE_ID, CUSTOM_ID } as const;
+export const IMAGE_AI_PROVIDER_IDS = { CUSTOM_ID } as const;
 
 async function imageRequest(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
   if (!signal) return fetchRetry(url, init);
@@ -433,25 +282,15 @@ export async function runImageForSelection(
     ) {
       throw new Error("The selected Image Model is unavailable or changed. Choose it again in Settings.");
     }
-    const result = provider.id === CUSTOM_ID
-      ? await runCustomOpenAiCompatible(
-        provider,
-        provider.apiKey,
-        prompt,
-        image?.buffer,
-        image?.mimeType,
-        signal,
-      )
-      : provider.id === CLOUDFLARE_ID
-        ? await runCloudflare(
-          provider,
-          provider.apiKey,
-          prompt,
-          image?.buffer,
-          image?.mimeType,
-          signal,
-        )
-        : (() => { throw new Error("Unsupported legacy Image Model provider."); })();
+    if (provider.id !== CUSTOM_ID) throw new Error("Unsupported Image Model provider.");
+    const result = await runCustomOpenAiCompatible(
+      provider,
+      provider.apiKey,
+      prompt,
+      image?.buffer,
+      image?.mimeType,
+      signal,
+    );
 
     const mimeType = detectImageMimeType(result.buffer);
     if (!mimeType) throw new Error("Image provider returned an unsupported image format");
