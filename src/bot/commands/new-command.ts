@@ -2,7 +2,6 @@ import {WorkerProvisioningError} from "../../infrastructure/worker-provisioning-
 import { createRemoteTopicSession, isTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
 import type { Bot, Context } from "grammy";
 import { CommandContext } from "grammy";
-import path from "node:path";
 import { opencodeClient } from "../../opencode/client.js";
 import type { SessionInfo } from "../../app/types/session.js";
 import { ingestSessionInfoForCache } from "../../app/services/session-cache-service.js";
@@ -24,8 +23,7 @@ import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-conte
 import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
 import { ensureMcpRuntimeForDirectory } from "../../app/services/mcp-server-service.js";
 import { createTopicKeyboard } from "../keyboards/main-reply-keyboard.js";
-import { isCurrentCoreSessionRoute, resolveCoreTopicBinding } from "../../core/native-core-service.js";
-import { createCoreSessionApi } from "../services/core-session-api.js";
+import { assertCurrentSessionTopicRoute, createCoreSessionApi } from "../services/core-session-api.js";
 import { ensureRailwayInfrastructureConfigured } from "./railway-onboarding-command.js";
 
 export interface NewCommandDeps {
@@ -64,14 +62,11 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
     const sessionInfo: SessionInfo = { id: session.id, title: session.title, directory };
 
     const defaults = getTopicDefaults();
-    const initialAgent = defaults.agent ?? await resolveProjectAgent(getStoredAgent());
+    const initialAgent = defaults.agent ?? (remote ? getStoredAgent() : await resolveProjectAgent(getStoredAgent()));
     const initialModel = defaults.model ?? getStoredModel();
     const initialCompact = defaults.compactOutputMode;
     binding = remote?.binding ?? await openSessionInTelegramTopic(deps.bot.api, ctx.chat.id, sessionInfo);
-    const coreRoute = resolveCoreTopicBinding(binding.chatId, binding.threadId);
-    if (!coreRoute || coreRoute.sessionId !== session.id || coreRoute.normalizedDirectory !== path.resolve(directory)) {
-      throw new Error("New Topic does not match its Core binding");
-    }
+    await assertCurrentSessionTopicRoute(session.id,{chatId:binding.chatId,threadId:binding.threadId,directory});
     const chatTitle = binding.title ?? `Chat #${binding.threadId}`;
     sessionInfo.title = chatTitle;
 
@@ -127,7 +122,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
         // use its explicit thread association for native Topic navigation, and carrying
         // the ReplyKeyboard on the same durable message makes the initial controls
         // reliable on Android/iOS instead of depending on a deleted control message.
-        if (!isCurrentCoreSessionRoute(coreRoute)) throw new Error("New Topic Core binding changed before first message");
+        await assertCurrentSessionTopicRoute(session.id,{chatId:ctx.chat.id,threadId:binding!.threadId,directory:directory!});
         await createCoreSessionApi(deps.bot.api, session.id).sendMessage(
           ctx.chat.id,
           `✅ New AI Topic ready.\n\n${routingSummary}`,

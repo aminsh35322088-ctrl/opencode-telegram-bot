@@ -72,7 +72,7 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(errorMessage(error));
 }
 
-async function cleanupTelegramTopicSessionMetadata(api: Api, binding: TelegramTopicBinding): Promise<void> {
+async function cleanupTelegramTopicSessionMetadata(api: Api, binding: TelegramTopicBinding, remoteSessionRetired=false): Promise<void> {
   const context = { chatId: binding.chatId, threadId: binding.threadId, sessionId: binding.sessionId, directory: binding.directory };
   topicTelemetry("delete_started", context);
   const cleanupErrors: Error[] = [];
@@ -93,6 +93,9 @@ async function cleanupTelegramTopicSessionMetadata(api: Api, binding: TelegramTo
     if(remoteNode) {
       if(remoteNode.status!=="retired")await topicNodeLifecycle.retire(binding.chatId,binding.threadId);
       topicTelemetry("remote_node_retired",context);
+    } else if(remoteSessionRetired) {
+      logger.info(`[TelegramTopics] Remote session lifecycle already retired with its Worker: session=${binding.sessionId}`);
+      topicTelemetry("remote_session_retired_with_worker",context);
     } else {
     const { data, error } = await opencodeClient.session.delete({ sessionID: binding.sessionId, directory: binding.directory });
     if (error) {
@@ -236,7 +239,8 @@ export async function deleteTelegramTopicSession(
   const node = await nodeBindings.find(binding.chatId,binding.threadId);
   const historical=(await nodeBindings.list()).some(item=>item.chatId===binding.chatId&&item.threadId===binding.threadId&&item.sessionId===binding.sessionId);
   const core = getNativeCore();
-  if(node||historical) {
+  const distributedRemoteSession=process.env.CONTROL_APPLICATION_IPC==="1";
+  if(node||historical||distributedRemoteSession) {
     const bindingId=coreBindingId(binding.chatId,binding.threadId);
     if(core) {
       const active=core.bindings.registry.getById(bindingId);
@@ -249,7 +253,7 @@ export async function deleteTelegramTopicSession(
     stopTopicEventSubscription(binding.directory,binding.sessionId);
     if(node)await topicNodeLifecycle.retire(binding.chatId,binding.threadId);
     if(core)await core.workers.stop(bindingId,"remote_topic_retired");
-    await cleanupTelegramTopicSessionMetadata(api,binding);
+    await cleanupTelegramTopicSessionMetadata(api,binding,true);
     if(core)await core.bindings.completeDelete(bindingId);
     return;
   }

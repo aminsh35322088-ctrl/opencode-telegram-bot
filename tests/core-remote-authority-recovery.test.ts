@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, mock } from "node:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { Api } from "grammy";
@@ -8,9 +8,11 @@ import { RailwayResourceGovernor } from "@opencode-telegram/native-runtime";
 import { initializeNativeCore, shutdownNativeCore, getNativeCore, restoreRemoteCoreRun, finishCoreRunForSession, coreBindingId } from "../src/core/native-core-service.js";
 import { runInTopicRuntimeContext } from "../src/app/services/topic-runtime-context.js";
 import { createCoreSessionApi } from "../src/bot/services/core-session-api.js";
+import { saveTelegramTopicBinding } from "../src/app/services/telegram-topic-store.js";
 import { deleteTelegramTopicSession } from "../src/app/services/telegram-topic-delete-service.js";
 import { nodeBindings, type NodeBinding } from "../src/control-plane/node-bindings.js";
 import { topicNodeLifecycle } from "../src/control-plane/topic-node-lifecycle.js";
+import { opencodeClient } from "../src/opencode/client.js";
 // Deterministic synthetic fixtures only; never inherit production Telegram credentials.
 process.env.TELEGRAM_BOT_TOKEN="12345:synthetic-authority-test";
 process.env.TELEGRAM_USER_ID="12345";
@@ -29,6 +31,59 @@ test('signed recovery restores exact logical RunIdentity without model dispatch'
     await assert.rejects(runInTopicRuntimeContext({...topic,threadId:3},()=>restoreRemoteCoreRun('owned',topic.directory,'remote-run')),/exact Topic/);
     assert.equal(finishCoreRunForSession('owned'),true);
   }finally{await shutdownNativeCore();delete process.env.OPENCODE_TELEGRAM_HOME;}
+});
+test('distributed Topic output uses the exact ready remote Worker when local Core is intentionally absent',async()=>{
+  const home=await mkdtemp(path.join(tmpdir(),'remote-topic-output-'));
+  const previousHome=process.env.OPENCODE_TELEGRAM_HOME;process.env.OPENCODE_TELEGRAM_HOME=home;
+  const sent:Array<{chatId:number;threadId?:number;text:string}>=[];
+  const api={sendMessage:async(chatId:number,text:string,options?:{message_thread_id?:number})=>{sent.push({chatId,threadId:options?.message_thread_id,text});},raw:{sendMessage:async(input:{chat_id:number;text:string;message_thread_id?:number})=>{sent.push({chatId:input.chat_id,threadId:input.message_thread_id,text:input.text});}}} as unknown as Api;
+  try {
+    await shutdownNativeCore();
+    await saveTelegramTopicBinding({...topic,createdAt:'now',updatedAt:'now'});
+    assert.equal(getNativeCore(),null);
+    await createCoreSessionApi(api,topic.sessionId).sendMessage(topic.chatId,'ready');
+    assert.deepEqual(sent,[{chatId:topic.chatId,threadId:topic.threadId,text:'ready'}]);
+    const scoped=createCoreSessionApi(api,topic.sessionId);
+    await scoped.raw.sendMessage({chat_id:topic.chatId,text:'raw'} as never);
+    assert.deepEqual(sent.at(-1),{chatId:topic.chatId,threadId:topic.threadId,text:'raw'});
+    await assert.rejects(scoped.sendMessage(-200,'foreign'),/chat differs from remote Topic binding/);
+    const originalFind=nodeBindings.find;
+    try {
+      nodeBindings.find=async()=>({...node,status:'failed'});
+      await assert.rejects(scoped.sendMessage(topic.chatId,'stale'),/does not own ready session/);
+    } finally {nodeBindings.find=originalFind;}
+    assert.equal(sent.length,2);
+  } finally {
+    await shutdownNativeCore();
+    if(previousHome===undefined)delete process.env.OPENCODE_TELEGRAM_HOME;else process.env.OPENCODE_TELEGRAM_HOME=previousHome;
+    await rm(home,{recursive:true,force:true});
+  }
+});
+test('remote Topic cleanup never deletes a recycled Worker session through the local OpenCode client',async()=>{
+  const home=await mkdtemp(path.join(tmpdir(),'remote-topic-delete-'));
+  const previousHome=process.env.OPENCODE_TELEGRAM_HOME;const previousIpc=process.env.CONTROL_APPLICATION_IPC;process.env.OPENCODE_TELEGRAM_HOME=home;process.env.CONTROL_APPLICATION_IPC='1';
+  const workspace=path.join(home,'opencode','topic-workspaces',String(topic.chatId),'workspace');
+  const fs=await import('node:fs/promises');await fs.mkdir(workspace,{recursive:true});
+  const originalFind=nodeBindings.find;const originalList=nodeBindings.list;const originalRetire=topicNodeLifecycle.retire;
+  const originalDelete=opencodeClient.session.delete;let current:NodeBinding={...node,chatId:0,threadId:0,status:'available',sessionId:undefined,generation:2};let localDeletes=0;let forumDeletes=0;
+  nodeBindings.find=async()=>undefined;
+  nodeBindings.list=async()=>[current];
+  topicNodeLifecycle.retire=async()=>{throw new Error('A recycled Worker must not be retired twice');};
+  opencodeClient.session.delete=async()=>{localDeletes++;return {data:true} as never;};
+  const api={sendMessage:async()=>({message_id:1}),pinChatMessage:async()=>{},deleteForumTopic:async()=>{forumDeletes++;}} as unknown as Api;
+  try {
+    await saveTelegramTopicBinding({...topic,directory:workspace,createdAt:'now',updatedAt:'now'});
+    await deleteTelegramTopicSession(api,{...topic,directory:workspace,createdAt:'now',updatedAt:'now'});
+    assert.equal(localDeletes,0);
+    assert.equal(forumDeletes,1);
+    assert.equal(await fs.stat(workspace).then(()=>true,()=>false),false);
+  } finally {
+    nodeBindings.find=originalFind;nodeBindings.list=originalList;topicNodeLifecycle.retire=originalRetire;
+    opencodeClient.session.delete=originalDelete;
+    if(previousIpc===undefined)delete process.env.CONTROL_APPLICATION_IPC;else process.env.CONTROL_APPLICATION_IPC=previousIpc;
+    if(previousHome===undefined)delete process.env.OPENCODE_TELEGRAM_HOME;else process.env.OPENCODE_TELEGRAM_HOME=previousHome;
+    await rm(home,{recursive:true,force:true});
+  }
 });
 test('Delete durably fences captured Telegram output before awaiting infrastructure; failed cleanup stays fenced on retry',async()=>{
   process.env.OPENCODE_TELEGRAM_HOME=await mkdtemp(path.join(tmpdir(),'remote-delete-fence-'));

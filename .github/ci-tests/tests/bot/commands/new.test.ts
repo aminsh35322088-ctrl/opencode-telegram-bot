@@ -24,6 +24,7 @@ const mocked = vi.hoisted(() => ({
   ensureMcpRuntimeForDirectoryMock: vi.fn(),
   resolveCoreTopicBindingMock: vi.fn(),
   isCurrentCoreSessionRouteMock: vi.fn(),
+  assertCurrentSessionTopicRouteMock: vi.fn(),
   deleteTelegramTopicSessionMock: vi.fn(),
 }));
 
@@ -35,6 +36,7 @@ vi.mock("../../../src/core/native-core-service.js", () => ({
 }));
 
 vi.mock("../../../src/bot/services/core-session-api.js", () => ({
+  assertCurrentSessionTopicRoute: mocked.assertCurrentSessionTopicRouteMock,
   createCoreSessionApi: (api: unknown) => api,
 }));
 
@@ -237,6 +239,7 @@ describe("bot/commands/new", () => {
       bindingGeneration: 1,
     });
     mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
+    mocked.assertCurrentSessionTopicRouteMock.mockReset().mockResolvedValue(undefined);
     mocked.deleteTelegramTopicSessionMock.mockReset().mockResolvedValue(undefined);
     mocked.ingestSessionInfoForCacheMock.mockReset();
     mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
@@ -301,7 +304,7 @@ describe("bot/commands/new", () => {
 
   it("does not send the first Topic message after its Core binding changes", async () => {
     mocked.sessionCreateMock.mockResolvedValueOnce({ data: { id: "session-2", title: "Two" } });
-    mocked.isCurrentCoreSessionRouteMock.mockReturnValue(false);
+    mocked.assertCurrentSessionTopicRouteMock.mockRejectedValueOnce(new Error("Core Topic binding changed"));
     const deps = createDeps();
 
     await newCommand(createContext() as never, deps);
@@ -358,6 +361,7 @@ describe('remote New Chat retry ownership',()=>{
   const ctx=createContext();const deps=createDeps();
   await newCommand(ctx as never,deps);
   expect(mocked.remoteCreate).toHaveBeenCalledWith(deps.bot.api,123,'/temporary',expect.stringMatching(/^telegram-new:/));
+  expect(mocked.assertCurrentSessionTopicRouteMock).toHaveBeenCalledWith('worker-session',{chatId:123,threadId:77,directory:'/worker/topic'});
   expect(mocked.deleteWorkspace).toHaveBeenCalledWith('/temporary');
   expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
   expect(deps.sendMessageMock).toHaveBeenCalledWith(123,expect.stringContaining('New AI Topic ready'),expect.objectContaining({message_thread_id:77}));
