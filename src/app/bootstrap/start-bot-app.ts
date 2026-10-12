@@ -25,6 +25,9 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { reconcileTopicWorkspaces } from "../services/telegram-topic-workspace-service.js";
 import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
+import { requestInfrastructureSetup } from "../../control-plane/application-transport.js";
+import { normalizeRailwayWorkerSettings } from "../../infrastructure/railway-worker-settings.js";
+import { setTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -241,10 +244,12 @@ export async function startBotApp(): Promise<void> {
     bot,
     createScheduledTaskDeliverySender(bot.api, config.telegram.allowedUserId),
   );
-  if(process.env.CONTROL_CLUSTER_BOOTSTRAP_ENABLED==="1"){
+  if(distributedControlPlane){
+    const workerSettings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
+    setTopicNodeCreationEnabled(workerSettings.workerCreationEnabled);
     safeBackgroundTask({taskName:"app.workerClusterBootstrap",task:async()=>{
       const {topicNodeLifecycle}=await import("../../control-plane/topic-node-lifecycle.js");
-      const workers=await topicNodeLifecycle.bootstrapPool(process.env.WORKER_WARM_CAPACITY===undefined?undefined:Number(process.env.WORKER_WARM_CAPACITY));
+      const workers=await topicNodeLifecycle.bootstrapPool(workerSettings.workerCreationEnabled?workerSettings.warmCapacity:0);
       for(const worker of workers)logger.info(`[WorkerCluster] slot=${worker.slot} node=${worker.nodeId} generation=${worker.generation} status=${worker.status} project=${worker.projectId} service=${worker.serviceId} volume=${worker.volumeId} revision=${worker.currentRevision}`);
     }});
   }

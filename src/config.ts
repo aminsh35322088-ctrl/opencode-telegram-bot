@@ -13,7 +13,7 @@ Object.assign(process.env,safeEnvironment);
 export type MessageFormatMode = "raw" | "markdown";
 export type SttRequestFormat = "multipart" | "json";
 
-function getRequiredTelegramEnvVar(key: "TELEGRAM_BOT_TOKEN" | "TELEGRAM_ALLOWED_USER_ID"): string {
+function getRequiredTelegramEnvVar(key: "TELEGRAM_BOT_TOKEN" | "TELEGRAM_USER_ID"): string {
   const value = process.env[key];
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
@@ -22,10 +22,10 @@ function getRequiredTelegramEnvVar(key: "TELEGRAM_BOT_TOKEN" | "TELEGRAM_ALLOWED
 }
 
 function parseTelegramAllowedUserId(): number {
-  const raw = getRequiredTelegramEnvVar("TELEGRAM_ALLOWED_USER_ID").trim();
+  const raw = getRequiredTelegramEnvVar("TELEGRAM_USER_ID").trim();
   const id = Number(raw);
   if (!Number.isSafeInteger(id) || id <= 0 || String(id) !== raw) {
-    throw new Error("TELEGRAM_ALLOWED_USER_ID must contain one valid positive Telegram user ID.");
+    throw new Error("TELEGRAM_USER_ID must contain one valid positive Telegram user ID.");
   }
   return id;
 }

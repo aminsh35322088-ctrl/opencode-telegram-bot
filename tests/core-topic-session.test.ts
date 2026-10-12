@@ -45,10 +45,10 @@ test("a rotated Core Topic rejects stale metadata for session and keyboard routi
   const home = await mkdtemp(path.join(tmpdir(), "core-stale-topic-test-"));
   const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
   const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-  const previousUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+  const previousUser = process.env.TELEGRAM_USER_ID;
   process.env.OPENCODE_TELEGRAM_HOME = home;
   process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
-  process.env.TELEGRAM_ALLOWED_USER_ID = "1";
+  process.env.TELEGRAM_USER_ID = "1";
   try {
     await initializeNativeCore({} as Api, []);
     await saveTelegramTopicBinding({
@@ -72,8 +72,8 @@ test("a rotated Core Topic rejects stale metadata for session and keyboard routi
     else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
     if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
     else process.env.TELEGRAM_BOT_TOKEN = previousToken;
-    if (previousUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
-    else process.env.TELEGRAM_ALLOWED_USER_ID = previousUser;
+    if (previousUser === undefined) delete process.env.TELEGRAM_USER_ID;
+    else process.env.TELEGRAM_USER_ID = previousUser;
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -82,10 +82,10 @@ test("keyboard routing rejects stale metadata when the Core directory changes", 
   const home = await mkdtemp(path.join(tmpdir(), "core-stale-directory-test-"));
   const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
   const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-  const previousUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+  const previousUser = process.env.TELEGRAM_USER_ID;
   process.env.OPENCODE_TELEGRAM_HOME = home;
   process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
-  process.env.TELEGRAM_ALLOWED_USER_ID = "1";
+  process.env.TELEGRAM_USER_ID = "1";
   try {
     await initializeNativeCore({} as Api, []);
     await saveTelegramTopicBinding({
@@ -108,8 +108,8 @@ test("keyboard routing rejects stale metadata when the Core directory changes", 
     else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
     if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
     else process.env.TELEGRAM_BOT_TOKEN = previousToken;
-    if (previousUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
-    else process.env.TELEGRAM_ALLOWED_USER_ID = previousUser;
+    if (previousUser === undefined) delete process.env.TELEGRAM_USER_ID;
+    else process.env.TELEGRAM_USER_ID = previousUser;
     await rm(home, { recursive: true, force: true });
   }
 });

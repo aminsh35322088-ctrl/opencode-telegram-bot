@@ -6,6 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import {budgetedExecFile,budgetedSpawn} from "../runtime/process-budget.js";
 import {captureNodeRegistry} from "./node-registry.js";
 import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./control-runtime-config.js";
+import {DEFAULT_RAILWAY_WORKER_SETTINGS,RailwayWorkerSettingsStore,type RailwayWorkerSettings} from "./railway-worker-settings.js";
 
 // This process is the only infrastructure credential owner. Railway starts it as
 // root; the launcher drops the Telegram/orchestration application to the node user.
@@ -14,11 +15,9 @@ import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./con
 const nodes=captureNodeRegistry(process.env);
 const infrastructure = createInfrastructureClient(process.env);
 const existingVariableNames=Object.keys(process.env);
-const workerImage=process.env.WORKER_RUNTIME_IMAGE??WORKER_RUNTIME_IMAGE;
-const poolPolicy=process.env.WORKER_POOL_POLICY?JSON.parse(process.env.WORKER_POOL_POLICY):undefined;
-delete process.env.WORKER_RUNTIME_IMAGE;delete process.env.WORKER_POOL_POLICY;
+const workerImage=WORKER_RUNTIME_IMAGE;
 const runtimeConfig=resolveControlRuntimeConfig(process.env,infrastructure.configured,nodes.metadata().length>0);
-configureApplicationEnvironment(process.env,runtimeConfig);
+configureApplicationEnvironment(process.env);
 
 async function main(): Promise<void> {
   if (process.getuid?.() !== 0) throw new Error("Infrastructure launcher requires a separate privileged identity");
@@ -41,7 +40,10 @@ async function main(): Promise<void> {
 
   let stopGateway:(()=>void)|undefined;
   let gatewayStart:((child:ChildProcess)=>void)|undefined;
+  let workerSettings:RailwayWorkerSettings={...DEFAULT_RAILWAY_WORKER_SETTINGS};
+  const workerSettingsStore=new RailwayWorkerSettingsStore("/data/.infrastructure/worker-settings.json");
   if(gatewayEnabled){
+    workerSettings=await workerSettingsStore.load();
     const {startNodeGateway}=await import("./node-gateway.js");
     const {NodeProtocol}=await import("../control-plane/node-protocol.js");
     const {InfrastructureController}=await import("./node-controller.js");
@@ -92,8 +94,8 @@ async function main(): Promise<void> {
         try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
           process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);
         }catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
-        const resolved=await resolveWorkerPools({request:infrastructure.request,workspaceId,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,pools:poolPolicy,onStage:value=>{stage=value;}});
-        controller.configurePools(resolved,controlUrl,excluded=>createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded}));
+        const resolved=(await resolveWorkerPools({request:infrastructure.request,workspaceId,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,onStage:value=>{stage=value;}})).map(pool=>({...pool,capacity:workerSettings.workersPerProject}));
+        controller.configurePools(resolved,controlUrl,async excluded=>({...await createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded}),capacity:workerSettings.workersPerProject}));
         configuredWorkspaceId=workspaceId;poolConfigured=true;
         for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
       }catch(error){
@@ -122,7 +124,14 @@ async function main(): Promise<void> {
       }catch{process.stdout.write("[InfrastructureBoundary] railway_onboarding_restore_pending\n");}
     })();
     controller.waitForPoolConfiguration(startupPoolConfiguration);
-    gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,onboarding,bootstrapGrants);};
+    const setupController={
+      status:async()=>{const current=await onboarding.status();if(current.configured)return current;if(infrastructure.configured&&configuredWorkspaceId)return {configured:true as const,tokenType:"workspace" as const,workspaceId:configuredWorkspaceId};return current;},
+      begin:(token:string)=>onboarding.begin(token),
+      selectWorkspace:(workspaceId:string)=>onboarding.selectWorkspace(workspaceId),
+      getSettings:async()=>({...workerSettings}),
+      updateSettings:async(patch:unknown)=>{workerSettings=await workerSettingsStore.update(patch);controller.setPoolCapacity(workerSettings.workersPerProject);return {...workerSettings};},
+    };
+    gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,setupController,bootstrapGrants);};
   }
 
   const child = await budgetedSpawn("bot-daemon",process.execPath, ["/app/dist/index.js"], {

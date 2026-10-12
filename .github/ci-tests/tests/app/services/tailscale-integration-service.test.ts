@@ -51,7 +51,7 @@ esac
 
     vi.stubEnv("OPENCODE_TELEGRAM_HOME", home);
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:test-bot-token");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "1");
+    vi.stubEnv("TELEGRAM_USER_ID", "1");
     vi.stubEnv("TAILSCALE_BIN", tailscale);
     vi.stubEnv("TAILSCALE_SOCKET", socketPath);
     vi.stubEnv("FAKE_TAILSCALE_STATUS_FILE", statusFile);

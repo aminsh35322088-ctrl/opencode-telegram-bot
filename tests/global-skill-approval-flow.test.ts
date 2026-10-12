@@ -9,7 +9,7 @@ test("legacy Skill Question and candidate choice migrate into exact frozen ledge
   const home = await mkdtemp(path.join(tmpdir(), "skill-approval-"));
   process.env.OPENCODE_TELEGRAM_HOME = home;
   process.env.TELEGRAM_BOT_TOKEN = "123:test-fixture";
-  process.env.TELEGRAM_ALLOWED_USER_ID = "123";
+  process.env.TELEGRAM_USER_ID = "123";
   const originalFetch = globalThis.fetch;
   try {
     const {runWithAuthenticatedMutationActor} = await import("../src/control-plane/actor-context.js");
@@ -50,7 +50,7 @@ test("legacy Skill Question and candidate choice migrate into exact frozen ledge
     globalThis.fetch = originalFetch;
     delete process.env.OPENCODE_TELEGRAM_HOME;
     delete process.env.TELEGRAM_BOT_TOKEN;
-    delete process.env.TELEGRAM_ALLOWED_USER_ID;
+    delete process.env.TELEGRAM_USER_ID;
     await rm(home,{recursive:true,force:true});
   }
 });

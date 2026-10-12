@@ -36,7 +36,7 @@ fi
 if [ ! -f "$source_env" ]; then
   cp "$script_dir/.env.example" "$source_env"
   echo "Created $source_env from e2e/.env.example."
-  echo "Fill in TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_ID, then run again."
+  echo "Fill in TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID, then run again."
   exit 1
 fi
 

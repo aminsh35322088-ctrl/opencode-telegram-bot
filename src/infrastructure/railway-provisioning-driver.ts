@@ -44,6 +44,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     if(options.workerImage&&!/^[a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64}$/.test(options.workerImage))throw new Error("Worker image must be an immutable digest");
   }
   listPools():readonly WorkerPool[]{return structuredClone(this.options.pools);}
+  setPoolCapacity(capacity:number):void{
+    if(!Number.isSafeInteger(capacity)||capacity<1||capacity>100)throw new Error("Invalid Worker pool capacity");
+    for(const pool of this.options.pools)pool.capacity=capacity;
+  }
   listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{

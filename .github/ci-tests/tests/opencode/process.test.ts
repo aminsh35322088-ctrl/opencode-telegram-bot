@@ -14,21 +14,21 @@ import {
 describe("opencode/process", () => {
   it("strips Telegram credentials from the OpenCode child environment", () => {
     const originalTelegram = process.env.TELEGRAM_BOT_TOKEN;
-    const originalAllowedUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+    const originalAllowedUser = process.env.TELEGRAM_USER_ID;
 
     try {
       process.env.TELEGRAM_BOT_TOKEN = "telegram-fixture";
-      process.env.TELEGRAM_ALLOWED_USER_ID = "123456";
+      process.env.TELEGRAM_USER_ID = "123456";
 
       const environment = buildAgentEnvironment();
 
       expect(environment.TELEGRAM_BOT_TOKEN).toBeUndefined();
-      expect(environment.TELEGRAM_ALLOWED_USER_ID).toBeUndefined();
+      expect(environment.TELEGRAM_USER_ID).toBeUndefined();
     } finally {
       if (originalTelegram === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
       else process.env.TELEGRAM_BOT_TOKEN = originalTelegram;
-      if (originalAllowedUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
-      else process.env.TELEGRAM_ALLOWED_USER_ID = originalAllowedUser;
+      if (originalAllowedUser === undefined) delete process.env.TELEGRAM_USER_ID;
+      else process.env.TELEGRAM_USER_ID = originalAllowedUser;
     }
   });
 

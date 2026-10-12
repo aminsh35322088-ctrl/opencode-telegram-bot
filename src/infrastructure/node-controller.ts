@@ -30,6 +30,7 @@ export class InfrastructureController {
   if(options.pools && options.controlUrl)this.configurePools(options.pools,options.controlUrl);
  }
  /** One startup inventory operation gates requests; it never retries mutations. */
+ setPoolCapacity(capacity:number):void{ this.provisioner?.setPoolCapacity(capacity); }
  waitForPoolConfiguration(operation:Promise<void>):void{
   if(this.poolConfiguration||this.provisioner)throw Error('Worker pool configuration already started');
   this.poolConfiguration=operation;void operation.catch(()=>undefined);

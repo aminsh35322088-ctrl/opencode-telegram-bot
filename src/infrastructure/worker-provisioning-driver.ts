@@ -14,6 +14,7 @@ export interface WorkerProvisioningDriver {
   listWorkers():Promise<ProvisionedNode[]>;
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>;
   inspectCapacity(): Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>;
+  setPoolCapacity(capacity:number): void;
   provision(nodeId:string,generation:number):Promise<ProvisionedNode>;
   handoff(nodeId:string,generation:number):Promise<ProvisionedNode>;
   retire(nodeId:string,generation:number):Promise<ProvisionedNode>;

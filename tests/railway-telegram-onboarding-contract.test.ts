@@ -22,7 +22,8 @@ test("Railway credential messages are consumed and deleted before normal prompt 
  assert.ok(commandRouter.indexOf("if (await handleRailwayOnboardingMessage")<commandRouter.indexOf("if (await handleProviderWizardMessage"));
  assert.match(onboarding,/deleteInputMessage/);
  assert.match(onboarding,/railway:workspace:/);
- assert.match(onboarding,/setTopicNodeCreationEnabled\(true\)/);
+ assert.match(onboarding,/requestInfrastructureSetup\("settings\.get"/);
+ assert.match(onboarding,/setTopicNodeCreationEnabled\(settings\.workerCreationEnabled\)/);
 });
 
 test("Railway workspace buttons are handled by the central callback router",async()=>{

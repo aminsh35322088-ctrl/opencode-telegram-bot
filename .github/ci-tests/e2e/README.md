@@ -26,7 +26,7 @@ Run these checks with the project's manual-testing agent/workflow when available
 
 2. **Config.** Run `.\e2e\run-test-bot.ps1` once; it creates `e2e/.env` from the
    template and exits. Fill in `TELEGRAM_BOT_TOKEN` and
-   `TELEGRAM_ALLOWED_USER_ID`, then run it again.
+   `TELEGRAM_USER_ID`, then run it again.
 
    Keep `BOT_LOCALE=en` — the probes match bot strings literally.
 

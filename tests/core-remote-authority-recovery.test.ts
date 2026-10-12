@@ -13,7 +13,7 @@ import { nodeBindings, type NodeBinding } from "../src/control-plane/node-bindin
 import { topicNodeLifecycle } from "../src/control-plane/topic-node-lifecycle.js";
 // Deterministic synthetic fixtures only; never inherit production Telegram credentials.
 process.env.TELEGRAM_BOT_TOKEN="12345:synthetic-authority-test";
-process.env.TELEGRAM_ALLOWED_USER_ID="12345";
+process.env.TELEGRAM_USER_ID="12345";
 mock.method(RailwayResourceGovernor,"currentSnapshot",(workerCount:number,idleWorkerCount:number)=>({rssBytes:32*1024*1024,totalBytes:32*1024*1024,workerCount,idleWorkerCount}));
 const topic={chatId:-100,threadId:2,sessionId:'owned',directory:'/logical/topic'};
 const node:NodeBinding={nodeId:'authority-node',generation:1,...topic,currentRevision:1,status:'ready',createdAt:'now',updatedAt:'now'};

@@ -255,7 +255,7 @@ describe("bot/services/event-subscription-service lifecycle", () => {
 
   beforeEach(async () => {
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "123456789");
+    vi.stubEnv("TELEGRAM_USER_ID", "123456789");
     vi.stubEnv("OPENCODE_MODEL_PROVIDER", "test-provider");
     vi.stubEnv("OPENCODE_MODEL_ID", "test-model");
     vi.stubEnv(

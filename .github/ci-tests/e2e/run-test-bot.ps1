@@ -25,7 +25,7 @@ if (-not (Test-Path $testHome)) {
 if (-not (Test-Path $sourceEnv)) {
     Copy-Item (Join-Path $PSScriptRoot ".env.example") $sourceEnv
     Write-Host "Created $sourceEnv from e2e/.env.example."
-    Write-Host "Fill in TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_ID, then run again."
+    Write-Host "Fill in TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID, then run again."
     exit 1
 }
 

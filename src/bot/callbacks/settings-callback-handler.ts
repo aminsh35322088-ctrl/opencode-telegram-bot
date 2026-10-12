@@ -65,6 +65,17 @@ import { getCurrentSessionDirectory } from "../../app/services/session-service.j
 import { getMainNavigationMessageId } from "../../app/stores/settings-store.js";
 
 import {
+  buildRailwaySettingsView,
+  getRailwayWorkerSettings,
+  updateRailwayWorkerSettings,
+  SETTINGS_RAILWAY_CREATION_CALLBACK,
+  SETTINGS_RAILWAY_WARM_DEC_CALLBACK,
+  SETTINGS_RAILWAY_WARM_INC_CALLBACK,
+  SETTINGS_RAILWAY_CAPACITY_DEC_CALLBACK,
+  SETTINGS_RAILWAY_CAPACITY_INC_CALLBACK,
+} from "../menus/railway-settings-menu.js";
+
+import {
   buildDefaultModelsSettingsView,
   buildExperimentalSettingsView,
   SETTINGS_EXPERIMENTAL_CALLBACK,
@@ -116,6 +127,7 @@ import {
   SETTINGS_TOPIC_DEFAULTS_CALLBACK,
   SETTINGS_VARIANT_CALLBACK,
   SETTINGS_CALLBACK_PREFIX,
+  SETTINGS_RAILWAY_CALLBACK,
   SETTINGS_MEMORY_CALLBACK,
   SETTINGS_MEMORY_CLEAR_CALLBACK,
   SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK,
@@ -322,6 +334,35 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         await ctx.answerCallbackQuery();
         await renderSettingsView(ctx, buildContextSettingsView(), "both");
         return true;
+      case SETTINGS_RAILWAY_CALLBACK:
+        await ctx.answerCallbackQuery();
+        await renderSettingsView(ctx, await buildRailwaySettingsView(), "back");
+        return true;
+      case SETTINGS_RAILWAY_CREATION_CALLBACK: {
+        await ctx.answerCallbackQuery();
+        const current=await getRailwayWorkerSettings();
+        const updated=await updateRailwayWorkerSettings({workerCreationEnabled:!current.workerCreationEnabled});
+        await renderSettingsView(ctx,await buildRailwaySettingsView(updated),"back");
+        return true;
+      }
+      case SETTINGS_RAILWAY_WARM_DEC_CALLBACK:
+      case SETTINGS_RAILWAY_WARM_INC_CALLBACK: {
+        await ctx.answerCallbackQuery();
+        const current=await getRailwayWorkerSettings();
+        const delta=callbackData===SETTINGS_RAILWAY_WARM_INC_CALLBACK?1:-1;
+        const updated=await updateRailwayWorkerSettings({warmCapacity:Math.max(0,Math.min(100,current.warmCapacity+delta))});
+        await renderSettingsView(ctx,await buildRailwaySettingsView(updated),"back");
+        return true;
+      }
+      case SETTINGS_RAILWAY_CAPACITY_DEC_CALLBACK:
+      case SETTINGS_RAILWAY_CAPACITY_INC_CALLBACK: {
+        await ctx.answerCallbackQuery();
+        const current=await getRailwayWorkerSettings();
+        const delta=callbackData===SETTINGS_RAILWAY_CAPACITY_INC_CALLBACK?1:-1;
+        const updated=await updateRailwayWorkerSettings({workersPerProject:Math.max(1,Math.min(100,current.workersPerProject+delta))});
+        await renderSettingsView(ctx,await buildRailwaySettingsView(updated),"back");
+        return true;
+      }
       case SETTINGS_GITHUB_CALLBACK:
         await ctx.answerCallbackQuery();
         await renderSettingsView(ctx, await buildGithubSettingsView(), "back");

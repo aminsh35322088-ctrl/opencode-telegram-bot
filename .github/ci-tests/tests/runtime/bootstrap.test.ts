@@ -16,7 +16,7 @@ describe("runtime/bootstrap", () => {
   it("validates required runtime env values", () => {
     const result = validateRuntimeEnvValues({
       TELEGRAM_BOT_TOKEN: "123456:abcdef",
-      TELEGRAM_ALLOWED_USER_ID: "123456789",
+      TELEGRAM_USER_ID: "123456789",
       OPENCODE_MODEL_PROVIDER: "opencode",
       OPENCODE_MODEL_ID: "big-pickle",
     });
@@ -27,7 +27,7 @@ describe("runtime/bootstrap", () => {
   it("fails validation when required model values are missing", () => {
     const result = validateRuntimeEnvValues({
       TELEGRAM_BOT_TOKEN: "123456:abcdef",
-      TELEGRAM_ALLOWED_USER_ID: "123456789",
+      TELEGRAM_USER_ID: "123456789",
     });
 
     expect(result.isValid).toBe(false);
@@ -37,13 +37,13 @@ describe("runtime/bootstrap", () => {
   it("fails validation for invalid user id", () => {
     const result = validateRuntimeEnvValues({
       TELEGRAM_BOT_TOKEN: "123456:abcdef",
-      TELEGRAM_ALLOWED_USER_ID: "0",
+      TELEGRAM_USER_ID: "0",
       OPENCODE_MODEL_PROVIDER: "opencode",
       OPENCODE_MODEL_ID: "big-pickle",
     });
 
     expect(result.isValid).toBe(false);
-    expect(result.reason).toContain("TELEGRAM_ALLOWED_USER_ID");
+    expect(result.reason).toContain("TELEGRAM_USER_ID");
   });
 
   it("falls back to flat updates when template is unavailable", () => {
@@ -53,7 +53,7 @@ describe("runtime/bootstrap", () => {
       "OPENCODE_SERVER_USERNAME=old-user",
       "OPENCODE_SERVER_PASSWORD=old-password",
       "TELEGRAM_BOT_TOKEN=old",
-      "TELEGRAM_ALLOWED_USER_ID=1",
+      "TELEGRAM_USER_ID=1",
       "OPENCODE_API_URL=http://localhost:4096",
       "OPENCODE_MODEL_PROVIDER=old-provider",
       "OPENCODE_MODEL_ID=old-model",
@@ -63,7 +63,7 @@ describe("runtime/bootstrap", () => {
     const updated = buildEnvFileContent(existingContent, {
       BOT_LOCALE: "ru",
       TELEGRAM_BOT_TOKEN: "new-token:value",
-      TELEGRAM_ALLOWED_USER_ID: "777",
+      TELEGRAM_USER_ID: "777",
       OPENCODE_SERVER_USERNAME: "new-user",
       OPENCODE_MODEL_PROVIDER: "old-provider",
       OPENCODE_MODEL_ID: "old-model",
@@ -74,7 +74,7 @@ describe("runtime/bootstrap", () => {
     expect(updated).not.toContain("OPENCODE_SERVER_PASSWORD=");
     expect(updated).toContain("BOT_LOCALE=ru");
     expect(updated).toContain("TELEGRAM_BOT_TOKEN=new-token:value");
-    expect(updated).toContain("TELEGRAM_ALLOWED_USER_ID=777");
+    expect(updated).toContain("TELEGRAM_USER_ID=777");
     expect(updated).not.toContain("OPENCODE_API_URL=");
     expect(updated).toContain("OPENCODE_MODEL_PROVIDER=old-provider");
     expect(updated).toContain("OPENCODE_MODEL_ID=old-model");
@@ -86,7 +86,7 @@ describe("runtime/bootstrap", () => {
       {
         BOT_LOCALE: "ru",
         TELEGRAM_BOT_TOKEN: "token:value",
-        TELEGRAM_ALLOWED_USER_ID: "42",
+        TELEGRAM_USER_ID: "42",
         OPENCODE_SERVER_USERNAME: "opencode",
         OPENCODE_MODEL_PROVIDER: "opencode",
         OPENCODE_MODEL_ID: "big-pickle",
@@ -97,13 +97,13 @@ describe("runtime/bootstrap", () => {
     expect(updated).toContain("# Telegram Bot Token (from @BotFather)");
     expect(updated).toContain("TELEGRAM_BOT_TOKEN=token:value");
     expect(updated).toContain("# The single Telegram user ID allowed to use this bot");
-    expect(updated).toContain("TELEGRAM_ALLOWED_USER_ID=42");
+    expect(updated).toContain("TELEGRAM_USER_ID=42");
 
     expect(updated.indexOf("# Telegram Bot Token (from @BotFather)")).toBeLessThan(
       updated.indexOf("TELEGRAM_BOT_TOKEN=token:value"),
     );
     expect(updated.indexOf("TELEGRAM_BOT_TOKEN=token:value")).toBeLessThan(
-      updated.indexOf("TELEGRAM_ALLOWED_USER_ID=42"),
+      updated.indexOf("TELEGRAM_USER_ID=42"),
     );
   });
 
@@ -120,7 +120,7 @@ describe("runtime/bootstrap", () => {
       {
         BOT_LOCALE: "en",
         TELEGRAM_BOT_TOKEN: "token:value",
-        TELEGRAM_ALLOWED_USER_ID: "42",
+        TELEGRAM_USER_ID: "42",
         OPENCODE_SERVER_USERNAME: "opencode",
         OPENCODE_MODEL_PROVIDER: "opencode",
         OPENCODE_MODEL_ID: "big-pickle",
@@ -147,7 +147,7 @@ describe("runtime/bootstrap", () => {
       {
         BOT_LOCALE: "en",
         TELEGRAM_BOT_TOKEN: "token:value",
-        TELEGRAM_ALLOWED_USER_ID: "42",
+        TELEGRAM_USER_ID: "42",
         OPENCODE_SERVER_USERNAME: "opencode",
         OPENCODE_MODEL_PROVIDER: "opencode",
         OPENCODE_MODEL_ID: "big-pickle",
@@ -157,7 +157,7 @@ describe("runtime/bootstrap", () => {
 
     expect(updated).toContain("# Telegram Bot Token (from @BotFather)");
     expect(updated).toContain("TELEGRAM_BOT_TOKEN=token:value");
-    expect(updated).toContain("TELEGRAM_ALLOWED_USER_ID=42");
+    expect(updated).toContain("TELEGRAM_USER_ID=42");
     expect(updated).toContain("OPENCODE_API_URL=https://example.com");
     expect(updated).toContain("OPENCODE_SERVER_PASSWORD=old-password");
   });
@@ -172,7 +172,7 @@ describe("runtime/bootstrap", () => {
       {
         BOT_LOCALE: "en",
         TELEGRAM_BOT_TOKEN: "token:value",
-        TELEGRAM_ALLOWED_USER_ID: "42",
+        TELEGRAM_USER_ID: "42",
         OPENCODE_SERVER_USERNAME: "opencode",
         OPENCODE_MODEL_PROVIDER: "opencode",
         OPENCODE_MODEL_ID: "big-pickle",
@@ -202,7 +202,7 @@ describe("runtime/bootstrap installed configuration", () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
     vi.stubEnv("OPENCODE_TELEGRAM_HOME", tempHome);
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:process-token");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "123456789");
+    vi.stubEnv("TELEGRAM_USER_ID", "123456789");
     vi.stubEnv("OPENCODE_MODEL_PROVIDER", "process-provider");
     vi.stubEnv("OPENCODE_MODEL_ID", "process-model");
     vi.stubEnv("OPENCODE_API_URL", "");
@@ -240,7 +240,7 @@ describe("runtime/bootstrap installed configuration", () => {
       path.join(tempHome, ".env"),
       [
         "TELEGRAM_BOT_TOKEN=",
-        "TELEGRAM_ALLOWED_USER_ID=invalid",
+        "TELEGRAM_USER_ID=invalid",
         "OPENCODE_MODEL_PROVIDER=file-provider",
         "OPENCODE_MODEL_ID=file-model",
         "",
@@ -254,12 +254,12 @@ describe("runtime/bootstrap installed configuration", () => {
   });
 
   it("rejects an invalid process.env value even when .env is valid", async () => {
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "invalid");
+    vi.stubEnv("TELEGRAM_USER_ID", "invalid");
     await writeFile(
       path.join(tempHome, ".env"),
       [
         "TELEGRAM_BOT_TOKEN=123456:file-token",
-        "TELEGRAM_ALLOWED_USER_ID=42",
+        "TELEGRAM_USER_ID=42",
         "OPENCODE_MODEL_PROVIDER=file-provider",
         "OPENCODE_MODEL_ID=file-model",
         "",

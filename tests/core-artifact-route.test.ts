@@ -13,10 +13,10 @@ test("generated artifact delivery uses the bound Core Topic and the shared bot A
   const home = await mkdtemp(path.join(tmpdir(), "core-artifact-test-"));
   const previousHome = process.env.OPENCODE_TELEGRAM_HOME;
   const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-  const previousUser = process.env.TELEGRAM_ALLOWED_USER_ID;
+  const previousUser = process.env.TELEGRAM_USER_ID;
   process.env.OPENCODE_TELEGRAM_HOME = home;
   process.env.TELEGRAM_BOT_TOKEN = "12345:test-token";
-  process.env.TELEGRAM_ALLOWED_USER_ID = "1";
+  process.env.TELEGRAM_USER_ID = "1";
   const sent: Array<{ chatId: number; threadId?: number }> = [];
   const api = { sendDocument: async (chatId: number, _file: unknown, options?: { message_thread_id?: number }) => {
     sent.push({ chatId, threadId: options?.message_thread_id });
@@ -49,8 +49,8 @@ test("generated artifact delivery uses the bound Core Topic and the shared bot A
     else process.env.OPENCODE_TELEGRAM_HOME = previousHome;
     if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
     else process.env.TELEGRAM_BOT_TOKEN = previousToken;
-    if (previousUser === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
-    else process.env.TELEGRAM_ALLOWED_USER_ID = previousUser;
+    if (previousUser === undefined) delete process.env.TELEGRAM_USER_ID;
+    else process.env.TELEGRAM_USER_ID = previousUser;
     await rm(home, { recursive: true, force: true });
   }
 });

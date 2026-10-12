@@ -41,6 +41,7 @@ export const SETTINGS_DEFAULT_FOOTER_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}defa
 export const SETTINGS_DEFAULT_DIFF_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_diff`;
 export const SETTINGS_DEFAULT_QUEUE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}default_queue`;
 export const SETTINGS_COMMANDS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}commands`;
+export const SETTINGS_RAILWAY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}railway`;
 export const SETTINGS_MEMORY_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}memory`;
 export const SETTINGS_MEMORY_DELETE_PREFIX = `${SETTINGS_MEMORY_CALLBACK}:delete:`;
 export const SETTINGS_MEMORY_CLEAR_CALLBACK = `${SETTINGS_MEMORY_CALLBACK}:clear`;
@@ -146,7 +147,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       "⚙️ <b>Settings</b>",
       "",
       "🧠 Model Center",
-      "🐙 GitHub · 🌐 Tailscale",
+      "🐙 GitHub · 🌐 Tailscale · 🚂 Railway",
       "🧩 Extensions",
       "⚡ Actions",
     ].join("\n"),
@@ -154,6 +155,7 @@ export function buildSettingsMenuView(): { text: string; keyboard: InlineKeyboar
       .text("🧠 Model Center", SETTINGS_DEFAULT_MODELS_CALLBACK).row()
       .text("🐙 GitHub", SETTINGS_GITHUB_CALLBACK)
       .text("🌐 Tailscale", "integration:tailscale").row()
+      .text("🚂 Railway", SETTINGS_RAILWAY_CALLBACK).row()
       .text("🧩 Extensions", SETTINGS_EXTENSIONS_CALLBACK).row()
       .text("⚡ Actions", SETTINGS_ACTIONS_CALLBACK).row()
       .text("⋯ More", SETTINGS_MORE_CALLBACK),
@@ -475,7 +477,7 @@ export function buildCanonicalSettingsMenuView(
         "⚙️ <b>Settings</b>",
         "",
         "🧠 Model Center",
-        "🐙 GitHub · 🌐 Tailscale",
+        "🐙 GitHub · 🌐 Tailscale · 🚂 Railway",
         "🧩 Extensions",
         "⚡ Actions",
       ].join("\n"),

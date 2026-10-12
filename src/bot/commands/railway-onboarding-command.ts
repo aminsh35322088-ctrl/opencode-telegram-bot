@@ -5,6 +5,7 @@ import {keyboardManager} from "../keyboards/keyboard-manager.js";
 import {pinnedMessageManager} from "../pinned/pinned-message-manager.js";
 import {logger} from "../../utils/logger.js";
 import {setTopicNodeCreationEnabled} from "../../control-plane/topic-node-lifecycle.js";
+import {normalizeRailwayWorkerSettings} from "../../infrastructure/railway-worker-settings.js";
 
 interface WorkspaceChoice {id:string;name:string}
 interface SetupStatus {configured:boolean;tokenType?:"account"|"workspace";workspaceId?:string;workspaceName?:string}
@@ -43,7 +44,7 @@ export async function ensureRailwayInfrastructureConfigured(ctx:Context):Promise
  if(typeof chatId!=="number"||!rootThread(ctx))return true;
  try{
   const current=status(await requestInfrastructureSetup("status"));
-  if(current.configured){waitingForToken.delete(chatId);workspaceChoices.delete(chatId);setTopicNodeCreationEnabled(true);return true;}
+  if(current.configured){waitingForToken.delete(chatId);workspaceChoices.delete(chatId);const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));setTopicNodeCreationEnabled(settings.workerCreationEnabled);return true;}
   waitingForToken.add(chatId);workspaceChoices.delete(chatId);await sendSetupPrompt(ctx);return false;
  }catch(error){
   logger.error("[RailwayOnboarding] Failed to read Control Plane setup status",error);
@@ -97,7 +98,7 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
  try{
   const selected=status(await requestInfrastructureSetup("workspace.select",{workspaceId:choice.id}));
   if(!selected.configured)throw new Error("Railway workspace was not activated");
-  waitingForToken.delete(chatId);workspaceChoices.delete(chatId);setTopicNodeCreationEnabled(true);
+  waitingForToken.delete(chatId);workspaceChoices.delete(chatId);const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));setTopicNodeCreationEnabled(settings.workerCreationEnabled);
   await ctx.answerCallbackQuery({text:"Railway connected ✅"}).catch(()=>{});
   await ctx.editMessageText(`✅ <b>Railway connected</b>\n\nWorkspace: <b>${escapeHtml(selected.workspaceName??choice.name)}</b>\n\nNew Chat can now provision isolated Topic Workers.`,{parse_mode:"HTML"}).catch(()=>{});
   if(!pinnedMessageManager.isInitialized())pinnedMessageManager.initialize(ctx.api,chatId);

@@ -4,18 +4,19 @@ export const DEPRECATED_CONTROL_VARIABLES = [
   "CONTROL_DISTRIBUTED_INSPECTION", "CONTROL_WORKSPACE_ID", "CONTROL_PROJECT_ID",
   "CONTROL_ENVIRONMENT_ID", "CONTROL_WORKER_A_PROJECT_ID", "CONTROL_WORKER_A_ENVIRONMENT_ID",
   "CONTROL_WORKER_REGION", "CONTROL_PUBLIC_URL", "CONTROL_WORKER_POOLS",
+  "CONTROL_CLUSTER_BOOTSTRAP_ENABLED", "TOPIC_NODE_CREATION_ENABLED",
+  "WORKER_POOL_POLICY", "WORKER_WARM_CAPACITY", "TELEGRAM_ALLOWED_USER_ID",
 ] as const;
 
 interface ControlRuntimeConfig {
   gatewayEnabled: boolean;
-  bootstrapEnabled: boolean;
   projectId: string;
   environmentId: string;
   serviceId: string;
   region: string;
 }
 
-/** Accepts sanitized platform metadata, never infrastructure credentials. */
+/** Accepts sanitized Railway platform metadata, never infrastructure credentials or Worker policy. */
 export function resolveControlRuntimeConfig(
   environment: NodeJS.ProcessEnv, infrastructureConfigured: boolean, hasKnownNodes: boolean,
 ): ControlRuntimeConfig {
@@ -23,7 +24,6 @@ export function resolveControlRuntimeConfig(
   const region = environment.RAILWAY_REPLICA_REGION;
   return {
     gatewayEnabled: infrastructureConfigured || hasKnownNodes || Boolean(serviceId),
-    bootstrapEnabled: infrastructureConfigured && environment.CONTROL_CLUSTER_BOOTSTRAP_ENABLED !== "0",
     projectId: environment.RAILWAY_PROJECT_ID ?? "",
     environmentId: environment.RAILWAY_ENVIRONMENT_ID ?? "",
     serviceId,
@@ -31,7 +31,6 @@ export function resolveControlRuntimeConfig(
   };
 }
 
-export function configureApplicationEnvironment(environment: NodeJS.ProcessEnv, config: ControlRuntimeConfig): void {
+export function configureApplicationEnvironment(environment: NodeJS.ProcessEnv): void {
   for (const name of DEPRECATED_CONTROL_VARIABLES) delete environment[name];
-  environment.CONTROL_CLUSTER_BOOTSTRAP_ENABLED = config.bootstrapEnabled ? "1" : "0";
 }

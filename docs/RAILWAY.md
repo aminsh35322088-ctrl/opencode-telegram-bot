@@ -30,9 +30,10 @@ The Control Plane is the only Telegram-facing service and the only Railway infra
 Set these in the Railway service Variables tab:
 
 - `TELEGRAM_BOT_TOKEN` — token from @BotFather; Control Plane only
-- `TELEGRAM_ALLOWED_USER_ID` — numeric Telegram user ID allowed to use the bot
+- `TELEGRAM_USER_ID` — numeric Telegram user ID allowed to use the bot
+- `RAILWAY_API_TOKEN` — Railway Account or Workspace API token; privileged Control Plane only
 
-Worker services do **not** receive the Telegram credentials. Railway infrastructure access is enrolled from Telegram on the first root `/start`: send an Account or Workspace token, select the workspace, and the Control Plane stores it encrypted under the root-only `/data/.infrastructure` boundary. The token message is deleted immediately when possible, and the credential is never forwarded to Workers or model-facing code. A Project token is intentionally insufficient because dynamic provisioning may need to create additional Worker projects.
+These are the only user-managed Railway service variables required by the bot. Worker services never receive the Telegram credentials or Railway API token. The Control Plane validates the Railway credential, discovers the selected workspace, and keeps infrastructure access inside the root-owned boundary.
 
 The Railway entrypoint supplies these defaults automatically:
 
@@ -157,16 +158,16 @@ implementation owns GraphQL, its durable resource journal, volume attachment,
 minimal identity bootstrap and retirement. `NodeProvisioner` remains an import
 alias for compatibility. Topic/control code does not choose Railway resources.
 
-`WORKER_POOL_POLICY` may configure an ordered JSON array of existing eligible
-`{projectId, environmentId, region, capacity?}` pools. Omitted capacity delegates
-actual resource admission to Railway; configured capacity is a per-project policy
-limit. The default discovers the Control project and existing `opencode-topic-*`
-projects in the selected workspace. When every eligible pool reaches a definitive
-Railway resource limit, the allocator creates the next deterministic
-`opencode-topic-NN` project in that same workspace and resumes the pending
-Worker allocation. Ambiguous project-create results are reconciled by inventory
-before another project can be created. No slot number selects a project, and
-there is no four-Worker maximum.
+Worker fleet policy is managed from **Main Settings → Railway**, not environment
+variables. The Control Plane persists this root-owned policy under
+`/data/.infrastructure`. The UI controls Worker creation, warm capacity, and the
+per-project Worker limit (default 5). The allocator discovers the Control project
+and existing `opencode-topic-*` projects in the selected workspace. When every
+eligible pool reaches its configured per-project limit or a definitive Railway
+resource limit, the allocator creates the next deterministic `opencode-topic-NN`
+project in that same workspace and resumes the pending Worker allocation.
+Ambiguous project-create results are reconciled by inventory before another
+project can be created. No slot number selects a project.
 
 `WORKER_RUNTIME_IMAGE` must be a public immutable image reference ending in
 `@sha256:<64 lowercase hex characters>`. New allocations cannot source-build or
@@ -178,9 +179,8 @@ signed Worker health before snapshot activation and session creation.
 Previously deployed image-less Workers retain their source and volume on a
 fenced identity handoff until an explicit image canary migrates them. New Worker
 allocations always use an image. Existing persisted slot IDs are legacy identity
-metadata, not capacity or placement policy. Startup reconciles persisted Workers
-and does not manufacture four warm reservations. An explicit `WORKER_WARM_CAPACITY`
-can reserve a small administrative validation/warm pool; its default is zero.
+metadata, not capacity or placement policy. Startup reconciles persisted Workers and does not manufacture fixed warm reservations.
+Warm capacity is controlled from **Main Settings → Railway** and defaults to zero.
 
 Capacity exhaustion is `capacity_exhausted` (`NO WORKER AVAILABLE / CAPACITY
 EXHAUSTED`). Definitive Railway resource-limit rejections roll over only unused

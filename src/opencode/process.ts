@@ -119,7 +119,7 @@ export function buildAgentEnvironment(): NodeJS.ProcessEnv {
   // through the send-file artifact bridge, not by the agent runtime.
   for (const key of [
     "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_ALLOWED_USER_ID",
+    "TELEGRAM_USER_ID",
     "TELEGRAM_PROXY_URL",
     "TELEGRAM_PROXY_SECRET",
     "TELEGRAM_API_ROOT",

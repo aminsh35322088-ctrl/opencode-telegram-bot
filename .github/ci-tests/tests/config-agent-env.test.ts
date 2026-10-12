@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 describe("config in an agent-like runtime", () => {
   const savedToken = process.env.TELEGRAM_BOT_TOKEN;
-  const savedAllowedUserId = process.env.TELEGRAM_ALLOWED_USER_ID;
+  const savedAllowedUserId = process.env.TELEGRAM_USER_ID;
 
   beforeEach(() => {
     delete process.env.TELEGRAM_BOT_TOKEN;
-    delete process.env.TELEGRAM_ALLOWED_USER_ID;
+    delete process.env.TELEGRAM_USER_ID;
     vi.resetModules();
   });
 
@@ -23,9 +23,9 @@ describe("config in an agent-like runtime", () => {
       delete process.env.TELEGRAM_BOT_TOKEN;
     }
     if (savedAllowedUserId !== undefined) {
-      process.env.TELEGRAM_ALLOWED_USER_ID = savedAllowedUserId;
+      process.env.TELEGRAM_USER_ID = savedAllowedUserId;
     } else {
-      delete process.env.TELEGRAM_ALLOWED_USER_ID;
+      delete process.env.TELEGRAM_USER_ID;
     }
   });
 
@@ -44,7 +44,7 @@ describe("config in an agent-like runtime", () => {
 
   it("still resolves telegram config when the credentials are present", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "test-telegram-token";
-    process.env.TELEGRAM_ALLOWED_USER_ID = "123456789";
+    process.env.TELEGRAM_USER_ID = "123456789";
     const { config } = await import("../src/config.js");
     expect(config.telegram.token).toBe("test-telegram-token");
     expect(config.telegram.allowedUserId).toBe(123456789);
