@@ -9,15 +9,15 @@ export async function resolveWorkerPools(options:Options):Promise<WorkerPool[]>{
  const inventory=await options.request<{workspace:{id:string;projects:Connection<Project>}}>('query WorkerPools($workspaceId:String!){workspace(workspaceId:$workspaceId){id projects(first:100){pageInfo{hasNextPage} edges{node{id name environments(first:100){pageInfo{hasNextPage} edges{node{id name}}}}}}}}',{workspaceId});
  if(inventory.workspace.id!==workspaceId||inventory.workspace.projects.pageInfo.hasNextPage)throw Error('Incomplete Worker workspace inventory');
  if(options.pools){options.onStage?.('verify');return options.pools.map(pool=>{
+ if(pool.projectId===options.controlProjectId)throw Error('Control project cannot be used as a Worker pool');
  const project=inventory.workspace.projects.edges.find(e=>e.node.id===pool.projectId)?.node;
  if(!project||project.environments.pageInfo.hasNextPage||!project.environments.edges.some(e=>e.node.id===pool.environmentId)||pool.capacity!==undefined&&(!Number.isSafeInteger(pool.capacity)||pool.capacity<0))throw Error('Worker pool project does not belong to configured workspace/environment');
  return pool;});}
  if(options.workerProjectId===options.controlProjectId)throw Error('Duplicate Worker pool project');
- const configured=options.workerProjectId?inventory.workspace.projects.edges.filter(e=>e.node.id===options.workerProjectId):inventory.workspace.projects.edges.filter(e=>e.node.name.startsWith('opencode-topic-'));
- const controlProject=inventory.workspace.projects.edges.find(e=>e.node.id===options.controlProjectId)?.node;
- const pools:WorkerPool[]=controlProject?[{projectId:options.controlProjectId,environmentId:options.controlEnvironmentId,region:options.region}]:[];
+ const configured=options.workerProjectId?inventory.workspace.projects.edges.filter(e=>e.node.id===options.workerProjectId):inventory.workspace.projects.edges.filter(e=>e.node.id!==options.controlProjectId&&e.node.name.startsWith('opencode-topic-'));
+ const pools:WorkerPool[]=[];
  for(const {node:project} of configured){
-  if(project.id===options.controlProjectId){if(controlProject)continue;throw Error('Duplicate Worker pool project');}
+  if(project.id===options.controlProjectId)throw Error('Control project cannot be used as a Worker pool');
   const preferred=project.environments.edges.filter(e=>e.node.name==='validation');
   const environmentId=options.workerEnvironmentId??(preferred.length===1?preferred[0]!.node.id:project.environments.edges.length===1?project.environments.edges[0]!.node.id:undefined);
   if(!environmentId)throw Error('Existing Worker environment requires unambiguous ownership');
