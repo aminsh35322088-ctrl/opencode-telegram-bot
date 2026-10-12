@@ -32,7 +32,9 @@ export class TopicNodeClient {
     if (!transport?.stream) throw new Error("Secure node streaming unavailable");
     await this.assertCurrent();
     for await (const event of transport.stream(this.binding, this.envelope("session.events", { runId, after }), options)) {
-      await this.assertCurrent();
+      // Root transport verifies every frame against the current in-memory generation,
+      // HMAC, session/run scope and monotonic sequence. Avoid rereading the durable
+      // binding file for every streamed model event.
       if (event.nodeId !== this.binding.nodeId || event.generation !== this.binding.generation || event.chatId !== this.binding.chatId || event.threadId !== this.binding.threadId || event.sessionId !== this.binding.sessionId || event.operation !== "session.event") throw new Error("Stale or foreign node event");
       const payload = event.payload as { runId?: string; event?: unknown };
       if (payload.runId !== runId) throw new Error("Foreign node run event");

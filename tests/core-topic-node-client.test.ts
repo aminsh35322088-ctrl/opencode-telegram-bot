@@ -6,6 +6,7 @@ import type { NodeEnvelope } from "../src/control-plane/node-protocol.js";
 const binding: NodeBinding = { nodeId: "node", generation: 3, chatId: -100, threadId: 2, sessionId: "session", currentRevision: 1, status: "ready", createdAt: "now", updatedAt: "now" };
 let mode = "request";
 let fence = false;
+let currentChecks = 0;
 installSecureNodeTransport({
   async request(_binding, envelope) {
     assert.equal(envelope.nodeId, "node"); assert.equal(envelope.generation, 3); assert.equal(envelope.sessionId, "session");
@@ -17,7 +18,7 @@ installSecureNodeTransport({
     yield { ...envelope, generation: mode === "foreign" ? 2 : 3, operation: "session.event", payload: { runId: "run", event: "hello" } } satisfies NodeEnvelope;
   },
 });
-const client = new TopicNodeClient(binding, async () => { if (fence) throw new Error("stale generation"); });
+const client = new TopicNodeClient(binding, async () => { currentChecks += 1; if (fence) throw new Error("stale generation"); });
 test("native response rejected if node replaced during in-flight request", async () => {
   mode = "fence";
   await assert.rejects(client.request("status"), /stale/);
@@ -27,9 +28,10 @@ test("stream rejects foreign generation before delivery", async () => {
   mode = "foreign";
   await assert.rejects(async () => { for await (const _event of client.events("run")) assert.fail("foreign event delivered"); }, /Stale or foreign/);
 });
-test("valid run event delivers after current binding check", async () => {
-  mode = "request";
+test("valid run event validates durable binding once before the cryptographically fenced stream", async () => {
+  mode = "request"; currentChecks = 0;
   const events: unknown[] = [];
   for await (const event of client.events("run")) events.push(event);
   assert.deepEqual(events, ["hello"]);
+  assert.equal(currentChecks, 1, "signed stream frames must not reread durable binding state per event");
 });
