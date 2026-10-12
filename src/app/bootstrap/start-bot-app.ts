@@ -179,7 +179,7 @@ export async function startBotApp(): Promise<void> {
     const { registerOpenCodeReadyRefreshHandler } = await import("../../opencode/ready-refresh.js");
     registerOpenCodeReadyRefreshHandler();
   }
-  const bot = createBot();
+  const bot = createBot({ distributedControlPlane });
 
   // Re-pin only the exact bot-owned Main navigation anchors. These IDs are
   // persisted exclusively by KeyboardManager's root/All path; real Topic
@@ -253,7 +253,7 @@ export async function startBotApp(): Promise<void> {
       for(const worker of workers)logger.info(`[WorkerCluster] slot=${worker.slot} node=${worker.nodeId} generation=${worker.generation} status=${worker.status} project=${worker.projectId} service=${worker.serviceId} volume=${worker.volumeId} revision=${worker.currentRevision}`);
     }});
   }
-  const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog();
+  const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog({ probeOpenCode: !distributedControlPlane });
   runtimeObservabilityWatchdog.start();
   if (!distributedControlPlane) {
     const { opencodeAutoRestartService } = await import("../../opencode/auto-restart.js");

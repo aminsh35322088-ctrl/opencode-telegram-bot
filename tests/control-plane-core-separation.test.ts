@@ -17,4 +17,15 @@ test("control-plane startup never initializes local Core or OpenCode daemon", as
   assert.match(bootstrap, /const distributedControlPlane = process\.env\.CONTROL_APPLICATION_IPC === "1"/);
   assert.match(bootstrap, /if \(!distributedControlPlane\)[\s\S]*initializeNativeCore/);
   assert.match(bootstrap, /if \(!distributedControlPlane\)[\s\S]*opencodeAutoRestartService\.start/);
+  assert.match(bootstrap, /createBot\(\{ distributedControlPlane \}\)/);
+  assert.match(bootstrap, /new RuntimeObservabilityWatchdog\(\{ probeOpenCode: !distributedControlPlane \}\)/);
+});
+
+test("distributed control plane suppresses local Core notifications and OpenCode health probes", async () => {
+  const bot = await source("src/bot/index.ts");
+  const watchdog = await source("src/utils/runtime-observability.ts");
+  assert.match(bot, /if \(!options\.distributedControlPlane\) void notifyCoreUpdate\(bot\)/);
+  assert.match(watchdog, /probeOpenCode: boolean/);
+  assert.match(watchdog, /status: \"not-applicable\"/);
+  assert.match(watchdog, /if \(this\.options\.probeOpenCode && health\.status !== \"healthy\"\)/);
 });

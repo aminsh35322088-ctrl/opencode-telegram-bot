@@ -17,7 +17,7 @@ type WatchdogSnapshot = {
   sessionId: string | null;
   sessionStatus: SessionStatus;
   sessionBusyForMs: number;
-  health: "healthy" | "unhealthy" | "timeout" | "unknown";
+  health: "healthy" | "unhealthy" | "timeout" | "unknown" | "not-applicable";
   healthLatencyMs: number | null;
   eventLoopLagMs: number;
   serviceMemoryMb: number;
@@ -99,7 +99,10 @@ function measureEventLoopLag(): Promise<number> {
   });
 }
 
+interface RuntimeObservabilityWatchdogOptions { probeOpenCode: boolean; }
+
 export class RuntimeObservabilityWatchdog {
+  constructor(private readonly options: RuntimeObservabilityWatchdogOptions = { probeOpenCode: true }) {}
   private timer: ReturnType<typeof setInterval> | null = null;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
@@ -152,8 +155,12 @@ export class RuntimeObservabilityWatchdog {
     const session = getCurrentSession();
     const sessionId = session?.id ?? null;
     const [health, sessionResult, eventLoopLagMs, processSnapshot] = await Promise.all([
-      checkHealth(),
-      sessionId ? checkSession(sessionId) : Promise.resolve({ status: "not-found" as const, elapsedMs: 0 }),
+      this.options.probeOpenCode
+        ? checkHealth()
+        : Promise.resolve({ status: "not-applicable" as const, latencyMs: null }),
+      this.options.probeOpenCode && sessionId
+        ? checkSession(sessionId)
+        : Promise.resolve({ status: "not-found" as const, elapsedMs: 0 }),
       measureEventLoopLag(),
       getProcessBudgetSnapshot(),
     ]);
@@ -217,7 +224,7 @@ export class RuntimeObservabilityWatchdog {
       logger.warn(`[RuntimeWatchdog] phase=event_loop_lag lagMs=${eventLoopLagMs}`);
     }
 
-    if (health.status !== "healthy") {
+    if (this.options.probeOpenCode && health.status !== "healthy") {
       logger.warn(`[RuntimeWatchdog] phase=opencode_health_anomaly status=${health.status} latencyMs=${health.latencyMs ?? "unknown"} session=${sessionId ?? "none"} sessionState=${sessionResult.status}`);
     }
   }
