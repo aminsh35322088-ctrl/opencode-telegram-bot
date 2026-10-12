@@ -113,3 +113,20 @@ test('Root-only canary cleanup shares lifecycle queue and fences slot one before
  binding.slot=1;await save();provisioner.cleanupDeprecatedWorkerVariables=async()=>{binding.generation=2;await save();};await assert.rejects(controller.cleanupRuntimeCanaryVariables('slot-one',1,async()=>({})),/canary cleanup/);
  await assert.rejects(controller.request('cleanupRuntimeCanaryVariables','slot-one',2),/operation/);
 });
+
+test('Root rotates unbound-bound-unbound generations in place with fresh secrets and no Railway mutation',async()=>{
+ const {NodeBindingStore}=await import('../src/control-plane/node-bindings.js');
+ const home=await mkdtemp(path.join(tmpdir(),'in-place-rotation-'));const filename=path.join(home,'bindings.json');const store=new NodeBindingStore(filename);
+ let slot=(await store.ensurePoolSlots(1))[0]!;slot=await store.update(slot.nodeId,1,{status:'available',endpoint:'https://worker.up.railway.app',projectId:'project',serviceId:'service',volumeId:'volume'});
+ const oldSecret='old-secret-'.repeat(8);await writeFile(path.join(home,'identity-seeds.json'),JSON.stringify([{nodeId:slot.nodeId,generation:1,chatId:0,threadId:0,secret:oldSecret}]),{mode:0o600});
+ const registry=captureNodeRegistry({});registry.install({binding:{nodeId:slot.nodeId,generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://worker.up.railway.app',secret:oldSecret});
+ const events:string[]=[];let issuedSecret='';
+ const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('Railway mutation forbidden');},
+  retireNode:async(identity,sanitize)=>{events.push(`retire:${identity.binding.generation}:${sanitize}`);},
+  issueBootstrap:async(binding,_endpoint,secret)=>{issuedSecret=secret;events.push(`grant:${binding.generation}`);return 'bootstrap_token_'.repeat(5);},
+  rotateNode:async(old,token,target)=>{events.push(`rotate:${old.binding.generation}->${target.generation}`);assert.match(token,/^bootstrap_token_/);registry.install({binding:{nodeId:target.nodeId,generation:target.generation,chatId:target.chatId,threadId:target.threadId,status:'provisioning'},endpoint:old.endpoint,secret:issuedSecret});},
+ });
+ const handoffs:number[]=[];(controller as unknown as {provisioner:{handoff:(id:string,generation:number)=>Promise<unknown>}}).provisioner={handoff:async(id,generation)=>{handoffs.push(generation);const current=(await store.list()).find(item=>item.nodeId===id)!;return {nodeId:id,generation,projectId:current.projectId!,environmentId:'production',serviceId:current.serviceId,volumeId:current.volumeId,endpoint:current.endpoint,unbound:current.chatId===0,phase:'recycled'};}};
+ let bound=await store.reserve(-100,22);bound=await store.update(bound.nodeId,bound.generation,{status:'provisioning'});const rebound=await controller.request('rebind',bound.nodeId,bound.generation);assert.equal(rebound.phase,'recycled');assert.notEqual((await registry.resolve(bound.nodeId))?.secret,oldSecret);assert.equal((await registry.resolve(bound.nodeId))?.binding.chatId,-100);
+ let unbound=await store.beginRecycle(bound.nodeId,bound.generation);const recycled=await controller.request('recycle',unbound.nodeId,unbound.generation);assert.equal(recycled.phase,'recycled');assert.equal((await registry.resolve(unbound.nodeId))?.binding.chatId,0);assert.deepEqual(handoffs,[2,3]);assert.deepEqual(events.map(item=>item.split(':')[0]),['retire','grant','rotate','retire','grant','rotate']);
+});

@@ -72,13 +72,25 @@ export class InfrastructureNodeTransport {
   return {health:true,replayRejected:true,foreignTopicRejected:true,staleGenerationRejected:true};
  }
  /** Only the root retirement controller retains the previous identity after fencing. */
- async retireFenced(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>{
+ async retireFenced(identity:Readonly<InfrastructureNodeIdentity>,sanitize=false):Promise<void>{
   const {nodeId,generation,chatId,threadId,sessionId}=identity.binding;
-  const signed=this.protocol.sign({version:1,nodeId,generation,chatId,threadId,sessionId,operation:"retire",payload:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")},identity.secret);
+  const signed=this.protocol.sign({version:1,nodeId,generation,chatId,threadId,sessionId,operation:"retire",payload:sanitize?{sanitize:true}:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")},identity.secret);
   const response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(15_000)});
   if(!response.ok)throw new Error("Fenced node retirement failed");
   const reply=await this.protocol.verify(await boundedBody(response,10*1024*1024),response.headers.get("x-node-signature")??"",{nodeId,generation,chatId,threadId},identity.secret);
-  if(reply.operation!=="retire" || reply.sessionId!==sessionId || (reply.payload as {ok?:boolean;result?:{retired?:boolean}}).ok!==true || (reply.payload as {result?:{retired?:boolean}}).result?.retired!==true)throw new Error("Fenced node retirement denied");
+  const result=(reply.payload as {ok?:boolean;result?:{retired?:boolean;sanitized?:boolean}});
+  if(reply.operation!=="retire" || reply.sessionId!==sessionId || result.ok!==true || result.result?.retired!==true || (sanitize&&result.result?.sanitized!==true))throw new Error("Fenced node retirement denied");
+ }
+ async rotateFenced(identity:Readonly<InfrastructureNodeIdentity>,bootstrapToken:string,target:NodeIdentity):Promise<void>{
+  const {nodeId,generation,chatId,threadId}=identity.binding;
+  if(typeof bootstrapToken!=="string"||!/^[A-Za-z0-9_-]{48,128}$/.test(bootstrapToken)||target.nodeId!==nodeId||target.generation!==generation+1||(target.chatId===0)!==(target.threadId===0))throw new Error("Invalid binding rotation request");
+  const signed=this.protocol.sign({version:1,nodeId,generation,chatId,threadId,operation:"binding.rotate",payload:{bootstrapToken},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")},identity.secret);
+  const response=await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(20_000)});
+  if(!response.ok)throw new Error("Fenced binding rotation failed");
+  const reply=await this.protocol.verify(await boundedBody(response,1024*1024),response.headers.get("x-node-signature")??"",{nodeId,generation,chatId,threadId},identity.secret);
+  const payload=reply.payload as {ok?:boolean;result?:{rotated?:boolean;identity?:NodeIdentity}};
+  const rotated=payload.result?.identity;
+  if(reply.operation!=="binding.rotate"||reply.sessionId!==undefined||payload.ok!==true||payload.result?.rotated!==true||!rotated||rotated.nodeId!==target.nodeId||rotated.generation!==target.generation||rotated.chatId!==target.chatId||rotated.threadId!==target.threadId)throw new Error("Fenced binding rotation denied");
  }
  private async prepare(envelope:NodeEnvelope){
   const identity=await this.registry.resolve(envelope.nodeId);

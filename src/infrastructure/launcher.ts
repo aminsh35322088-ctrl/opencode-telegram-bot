@@ -57,8 +57,14 @@ async function main(): Promise<void> {
     if(!Number.isSafeInteger(port)||port<1||port>65535)throw new Error("Invalid control gateway port");
     const protocol=new NodeProtocol("/data/.infrastructure/replay.json");
     const retirementTransport=new InfrastructureNodeTransport(nodes,protocol,()=>nodes.persist("/data/.infrastructure/nodes.json"));
+    const {NodeBootstrapGrantStore}=await import("./node-bootstrap-grants.js");
+    const bootstrapGrants=new NodeBootstrapGrantStore(nodes,"/data/.infrastructure/nodes.json");
     const {WORKER_CORE_COMMIT}=await import("./worker-core-release.js");
-    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,workerImage,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,retireNode:identity=>retirementTransport.retireFenced(identity),probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
+    const controller=new InfrastructureController({coreCommit:WORKER_CORE_COMMIT,workerImage,registry:nodes,stateDirectory:"/data/.infrastructure",bindingFilename:`${getRuntimePaths().appHome}/control-plane/node-bindings.json`,request:infrastructure.request,
+      retireNode:(identity,sanitize=false)=>retirementTransport.retireFenced(identity,sanitize),
+      issueBootstrap:(binding,endpoint,secret)=>{if(!binding.serviceId||!binding.projectId)throw new Error("Worker bootstrap resource identity missing");return bootstrapGrants.issue({identity:{nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId},endpoint,secret,serviceId:binding.serviceId,projectId:binding.projectId});},
+      rotateNode:(identity,bootstrapToken,target)=>retirementTransport.rotateFenced(identity,bootstrapToken,{nodeId:target.nodeId,generation:target.generation,chatId:target.chatId,threadId:target.threadId}),
+      probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
       if(!infrastructure.configured)return;
       try{
         const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
@@ -117,7 +123,7 @@ async function main(): Promise<void> {
       }catch{process.stdout.write("[InfrastructureBoundary] railway_onboarding_restore_pending\n");}
     })();
     controller.waitForPoolConfiguration(startupPoolConfiguration);
-    gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,onboarding);};
+    gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,onboarding,bootstrapGrants);};
   }
 
   const child = spawn(process.execPath, ["/app/dist/index.js"], {

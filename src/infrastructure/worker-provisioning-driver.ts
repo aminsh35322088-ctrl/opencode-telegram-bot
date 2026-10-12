@@ -5,7 +5,7 @@ export interface ProvisionedNode {
   workerVariablesContract?: "identity-v1";
   nodeId: string; generation: number; projectId: string; environmentId: string;
   serviceId?: string; volumeId?: string; domainId?: string; endpoint?: string; deploymentId?: string;
-  phase: "reserved" | "configured" | "deploying" | "retiring" | "retired";
+  phase: "reserved" | "configured" | "deploying" | "recycled" | "retiring" | "retired";
 }
 
 /** Privileged provider boundary; topic/control code never sends GraphQL. */
@@ -15,6 +15,7 @@ export interface WorkerProvisioningDriver {
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>;
   inspectCapacity(): Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>;
   provision(nodeId:string,generation:number):Promise<ProvisionedNode>;
+  handoff(nodeId:string,generation:number):Promise<ProvisionedNode>;
   retire(nodeId:string,generation:number):Promise<ProvisionedNode>;
   cleanupDeprecatedWorkerVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>):Promise<void>;
 }

@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {randomBytes,randomUUID} from 'node:crypto';
 import {lstat,mkdir,open,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import type {NodeBinding} from '../control-plane/node-bindings.js';
@@ -12,7 +12,9 @@ interface Options {
  stateDirectory:string;bindingFilename:string;
  request<T>(document:string,variables:Record<string,unknown>):Promise<T>;
  pools?:WorkerPool[];controlUrl?:string;coreCommit?:string;workerImage?:string;
- retireNode?(identity:Readonly<InfrastructureNodeIdentity>):Promise<void>;
+ retireNode?(identity:Readonly<InfrastructureNodeIdentity>,sanitize?:boolean):Promise<void>;
+ issueBootstrap?(binding:Readonly<NodeBinding>,endpoint:string,secret:string):Promise<string>;
+ rotateNode?(identity:Readonly<InfrastructureNodeIdentity>,bootstrapToken:string,target:Readonly<NodeBinding>):Promise<void>;
  probeUnbound?(nodeId:string,generation:number):Promise<unknown>;
  onClusterVerified?():Promise<void>;
 }
@@ -80,6 +82,17 @@ export class InfrastructureController {
   if(!existing)seeds.push({nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,secret});
   await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);const dir=await open(this.options.stateDirectory,'r');try{await dir.sync();}finally{await dir.close();}return secret;
  }
+ private async rotateIdentitySeed(binding:Readonly<NodeBinding>,previous:Readonly<InfrastructureNodeIdentity>):Promise<string>{
+  const filename=path.join(this.options.stateDirectory,'identity-seeds.json');let seeds:Seed[]=[];
+  try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||(stat.mode&0o077)!==0||stat.uid!==process.getuid?.()||stat.size>1024*1024)throw Error('Invalid identity seed store');seeds=JSON.parse(await readFile(filename,'utf8')) as Seed[];if(!Array.isArray(seeds)||seeds.length>1000)throw Error('Invalid identity seed store');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+  const seed=seeds.find(item=>item.nodeId===binding.nodeId);if(!seed)throw Error('Identity seed missing for in-place rotation');
+  if(seed.generation===binding.generation&&seed.chatId===binding.chatId&&seed.threadId===binding.threadId)return seed.secret;
+  if(seed.generation!==previous.binding.generation||seed.chatId!==previous.binding.chatId||seed.threadId!==previous.binding.threadId||binding.generation!==previous.binding.generation+1)throw Error('Identity rotation fence mismatch');
+  const oldUnbound=previous.binding.chatId===0&&previous.binding.threadId===0;const nextUnbound=binding.chatId===0&&binding.threadId===0;if(oldUnbound===nextUnbound)throw Error('Identity rotation must alternate bound ownership');
+  const replacement=randomBytes(48).toString('base64url');if(replacement===seed.secret||replacement===previous.secret)throw Error('Invalid rotated identity seed');
+  Object.assign(seed,{generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,secret:replacement});
+  await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);const directory=await open(this.options.stateDirectory,'r');try{await directory.sync();}finally{await directory.close();}return replacement;
+ }
  /** Root startup maintenance only; never exposed through request() or inherited application IPC. */
  cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>):Promise<void>{
   const task=this.queue.then(async()=>{
@@ -97,9 +110,23 @@ export class InfrastructureController {
  }
  request(operation:string,nodeId:string,generation:number):Promise<ProvisionedNode>{
   const task=this.queue.then(async()=>{
-   if(!['provision','retire','reconcile'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
+   if(!['provision','rebind','recycle','retire','reconcile'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
    const binding=await this.lookup(nodeId);if(!binding||binding.generation!==generation)throw Error('Infrastructure binding denied');
    if(operation==='provision'){if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.provision(nodeId,generation);}
+   if(operation==='rebind'||operation==='recycle'){
+    if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner||!this.options.retireNode||!this.options.issueBootstrap||!this.options.rotateNode)throw Error('Worker in-place rotation unavailable');
+    const targetUnbound=binding.chatId===0&&binding.threadId===0;
+    if((operation==='rebind'&&(targetUnbound||binding.status!=='provisioning'))||(operation==='recycle'&&(!targetUnbound||binding.status!=='retiring'))||!binding.serviceId||!binding.volumeId||!binding.endpoint||!binding.slot)throw Error('Worker in-place rotation scope denied');
+    const registered=await this.options.registry.resolve(nodeId);if(!registered)throw Error('Worker in-place identity unavailable');
+    if(registered.binding.generation===generation&&registered.binding.chatId===binding.chatId&&registered.binding.threadId===binding.threadId){return this.provisioner.handoff(nodeId,generation);}
+    if(registered.binding.generation!==generation-1||registered.binding.nodeId!==nodeId||registered.endpoint!==binding.endpoint)throw Error('Worker in-place generation fence mismatch');
+    const oldUnbound=registered.binding.chatId===0&&registered.binding.threadId===0;if(oldUnbound===targetUnbound)throw Error('Worker in-place ownership transition denied');
+    this.options.registry.install({...registered,binding:{...registered.binding,status:'retiring'}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+    await this.options.retireNode(registered,true);
+    const secret=await this.rotateIdentitySeed(binding,registered);const token=await this.options.issueBootstrap(binding,registered.endpoint,secret);await this.options.rotateNode(registered,token,binding);
+    const rotated=await this.options.registry.resolve(nodeId);if(!rotated||rotated.binding.generation!==generation||rotated.binding.chatId!==binding.chatId||rotated.binding.threadId!==binding.threadId||rotated.endpoint!==binding.endpoint||rotated.secret!==secret)throw Error('Worker in-place rotation not proven');
+    return this.provisioner.handoff(nodeId,generation);
+   }
    if(operation==='retire'){if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.retire(nodeId,generation);}
    const identity=await this.options.registry.resolve(nodeId);if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==binding.chatId||identity.binding.threadId!==binding.threadId)throw Error('Infrastructure identity mismatch');
    if(binding.status==='ready' && (!binding.sessionId||binding.sessionId!==identity.binding.sessionId))throw Error('Infrastructure session mismatch');

@@ -8,18 +8,18 @@ import { TopicNodeLifecycle } from "../src/control-plane/topic-node-lifecycle.js
 import type { ProvisionedNode } from "../src/infrastructure/node-provisioner.js";
 async function fixture(mode='normal') {
   const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'lifecycle-')),'bindings.json'));
-  let time=0;let provisionCalls=0;const calls:string[]=[];
+  let time=0;let provisionCalls=0;let healthCalls=0;const calls:string[]=[];
   const lifecycle=new TopicNodeLifecycle({bindings,now:()=>time,wait:async delay=>{time+=delay;},snapshot:async()=>({revision:7,hash:'hash7'}),
     infrastructure:async(operation,nodeId,generation)=>{
       calls.push(operation);if(operation==='provision'){provisionCalls++;if(mode==='capacity')throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');}
-      const result:ProvisionedNode={nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':'deploying'};
+      const result:ProvisionedNode={nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':operation==='recycle'||operation==='rebind'?'recycled':'deploying'};
       if(mode==='image-mismatch')Object.assign(result,{runtimeCommit:'a'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.17',image:'ghcr.io/example/core@sha256:'+'b'.repeat(64)});
-      if(operation==='reconcile')assert.equal((await bindings.find(-100,2))?.status,'ready');
+      if(operation==='reconcile'){const all=await bindings.list();assert.equal(all.some(item=>item.status==='ready'||item.status==='available'),true);}
       return result;
     },
     node:async(binding,operation)=>{
       calls.push(operation);
-      if(operation==='health')return {ok:true,result:{ready:mode!=='timeout',...(mode==='image-mismatch'?{runtime:{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}}:{})}};
+      if(operation==='health'){healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';return {ok:true,result:{ready:readiness==='ready',readiness,...(mode==='image-mismatch'?{runtime:{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}}:{})}};}
       if(operation==='sync-global')return {ok:true,result:{revision:7,hash:mode==='corrupt'?'wrong':'hash7'}};
       if(operation==='session.create')return {ok:true,result:{sessionId:'session'}};
       if(operation==='session.get'){assert.equal(binding.sessionId,'session');return {ok:true,result:{id:'session',title:'Worker session',directory:'/data/topic'}};}
@@ -40,9 +40,16 @@ test('readiness retries are bounded on demand with no background loop',async()=>
   const f=await fixture('timeout');await assert.rejects(f.lifecycle.ensureReady(-100,2,'/logical/topic'),/timed out/);assert.equal(f.getTime(),300000);
   const count=f.calls.length;await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls.length,count);assert.equal((await f.bindings.find(-100,2))?.status,'failed');
 });
-test('retirement fences immediately, frees slot only after confirmed infrastructure cleanup',async()=>{
+test('Delete Chat recycles the same Worker into ready-unbound without deleting infrastructure',async()=>{
   const f=await fixture();const ready=await f.lifecycle.ensureReady(-100,2,'/logical/topic');
-  assert.equal(await f.lifecycle.retire(-100,2),true);const retired=(await f.bindings.list())[0]!;assert.equal(retired.generation,ready.binding.generation+1);assert.equal(retired.status,'retired');assert.equal(await f.lifecycle.retire(-100,2),false);
+  assert.equal(await f.lifecycle.retire(-100,2),true);const recycled=(await f.bindings.list())[0]!;
+  assert.equal(recycled.nodeId,ready.binding.nodeId);assert.equal(recycled.generation,ready.binding.generation+1);assert.equal(recycled.chatId,0);assert.equal(recycled.threadId,0);assert.equal(recycled.sessionId,undefined);assert.equal(recycled.status,'available');
+  assert.equal(f.calls.includes('recycle'),true);assert.equal(f.calls.includes('retire'),false);assert.equal(await f.lifecycle.retire(-100,2),false);
+});
+
+test('Core readiness uses a fast adaptive first retry rather than a one-second polling floor',async()=>{
+  const f=await fixture('warming-once');await f.lifecycle.ensureReady(-100,2,'/logical/topic');
+  assert.ok(f.getTime()>0 && f.getTime()<=100,`expected <=100ms first readiness retry, got ${f.getTime()}`);
 });
 
 test('image mismatch is rejected before snapshot activation and model/session creation',async()=>{
@@ -52,4 +59,13 @@ test('image mismatch is rejected before snapshot activation and model/session cr
 test('capacity failure never dispatches to any local or shared session',async()=>{
  const f=await fixture('capacity');await assert.rejects(f.lifecycle.ensureReady(-100,2,'/topic'),/CAPACITY EXHAUSTED/);
  assert.deepEqual(f.calls,['provision']);assert.equal((await f.bindings.find(-100,2))?.status,'failed');
+});
+
+test('claiming an already prepared persistent Worker uses in-place rebind instead of Railway provisioning',async()=>{
+ const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'rebind-claim-')),'bindings.json'));let slot=(await bindings.ensurePoolSlots(1))[0]!;
+ slot=await bindings.update(slot.nodeId,1,{status:'available',endpoint:'https://worker.up.railway.app',projectId:'project',serviceId:'service',volumeId:'volume'});
+ const operations:string[]=[];const lifecycle=new TopicNodeLifecycle({bindings,now:Date.now,wait:async()=>{},snapshot:async()=>({revision:1,hash:'h'}),
+  infrastructure:async(operation,nodeId,generation)=>{operations.push(operation);return {nodeId,generation,projectId:'project',environmentId:'production',serviceId:'service',volumeId:'volume',endpoint:'https://worker.up.railway.app',phase:operation==='rebind'?'recycled':'deploying'};},
+  node:async(binding,operation)=>{if(operation==='health')return {ok:true,result:{ready:true,readiness:'ready'}};if(operation==='sync-global')return {ok:true,result:{revision:1,hash:'h'}};if(operation==='session.create')return {ok:true,result:{sessionId:'s'}};if(operation==='session.get')return {ok:true,result:{id:'s',title:'S',directory:'/data/topic'}};throw new Error(operation);}});
+ const ready=await lifecycle.ensureReady(-100,44,'/topic');assert.equal(ready.binding.nodeId,slot.nodeId);assert.equal(ready.binding.generation,2);assert.equal(operations.includes('rebind'),true);assert.equal(operations.includes('provision'),false);
 });

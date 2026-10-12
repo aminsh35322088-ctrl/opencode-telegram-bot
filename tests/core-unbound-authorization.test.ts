@@ -42,3 +42,15 @@ test('unbound Bot transport never sends session or execution RPCs while Root ret
  proof={ok:true,result:{retired:false}};await assert.rejects(transport.retireFenced(identity),/denied/);
  proof={ok:true,result:{retired:true}};await transport.retireFenced(identity);
 });
+
+test('Root in-place rotation sanitizes old generation and verifies binding.rotate with the previous secret',async()=>{
+ const home=await mkdtemp(path.join(tmpdir(),'rotation-root-'));const protocol=new NodeProtocol(path.join(home,'replay.json'));
+ const identity={binding:{nodeId:'slot',generation:7,chatId:-100,threadId:22,sessionId:'session',status:'ready'},endpoint:'https://worker.up.railway.app',secret:'s'.repeat(64)};
+ const registry=captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([identity])});const target={nodeId:'slot',generation:8,chatId:0,threadId:0};const seen:string[]=[];
+ const transport=new InfrastructureNodeTransport(registry,protocol,async()=>{},async(_url,options)=>{
+  const request=JSON.parse(options!.body as string) as {operation:string;payload:unknown;sessionId?:string;nonce:string};seen.push(request.operation);
+  if(request.operation==='retire'){assert.deepEqual(request.payload,{sanitize:true});assert.equal(request.sessionId,'session');const reply=protocol.sign({...request,nonce:'retire-reply-'.padEnd(32,'a'),timestamp:Date.now(),payload:{ok:true,result:{retired:true,sanitized:true}}},identity.secret);return new Response(reply.body,{status:200,headers:{'x-node-signature':reply.signature}});}
+  assert.equal(request.operation,'binding.rotate');assert.equal(request.sessionId,undefined);assert.deepEqual(request.payload,{bootstrapToken:'b'.repeat(64)});const reply=protocol.sign({...request,nonce:'rotate-reply-'.padEnd(32,'a'),timestamp:Date.now(),payload:{ok:true,result:{rotated:true,identity:target}}},identity.secret);return new Response(reply.body,{status:200,headers:{'x-node-signature':reply.signature}});
+ });
+ await transport.retireFenced(identity,true);await transport.rotateFenced(identity,'b'.repeat(64),target);assert.deepEqual(seen,['retire','binding.rotate']);
+});

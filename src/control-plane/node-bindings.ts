@@ -91,8 +91,11 @@ export class NodeBindingStore {
         const available=state.bindings.find(binding=>binding.status==="available" && binding.chatId===0 && binding.threadId===0);
         if(available){available.generation++;available.chatId=chatId;available.threadId=threadId;available.status="reserved";available.updatedAt=new Date().toISOString();return available;}
       }
+      state.clusterId??=randomUUID();
+      const usedSlots=new Set(state.bindings.filter(binding=>binding.status!=="retired"&&binding.slot!==undefined).map(binding=>binding.slot!));
+      let slot=1;while(usedSlots.has(slot))slot++;
       const now = new Date().toISOString();
-      const binding: NodeBinding = { nodeId: randomUUID(), chatId, threadId, generation: 1, currentRevision: 0, status: "reserved", createdAt: now, updatedAt: now };
+      const binding: NodeBinding = { nodeId: randomUUID(), clusterId:state.clusterId, slot, chatId, threadId, generation: 1, currentRevision: 0, status: "reserved", createdAt: now, updatedAt: now };
       state.bindings.push(binding); return binding;
     });
   }
@@ -128,6 +131,26 @@ export class NodeBindingStore {
       Object.assign(binding, patch, { updatedAt: new Date().toISOString() }); return binding;
     });
   }
+  /** Move one bound Worker to its next unbound generation without releasing its infrastructure slot. */
+  beginRecycle(nodeId:string,generation:number):Promise<NodeBinding>{
+    return this.transaction(state=>{
+      const binding=state.bindings.find(item=>item.nodeId===nodeId);
+      if(!binding)throw new Error("Unknown node");
+      if(binding.generation===generation+1&&binding.status==="retiring"&&binding.chatId===0&&binding.threadId===0)return binding;
+      if(binding.generation!==generation||binding.status==="retired"||binding.chatId===0||binding.threadId<=1)throw new Error("Stale node generation");
+      state.clusterId??=binding.clusterId??randomUUID();
+      if(binding.slot===undefined){const used=new Set(state.bindings.filter(item=>item!==binding&&item.status!=="retired"&&item.slot!==undefined).map(item=>item.slot!));let slot=1;while(used.has(slot))slot++;binding.slot=slot;}
+      binding.clusterId=state.clusterId;binding.generation++;binding.chatId=0;binding.threadId=0;delete binding.sessionId;binding.status="retiring";binding.updatedAt=new Date().toISOString();return binding;
+    });
+  }
+  completeRecycle(nodeId:string,generation:number):Promise<NodeBinding>{
+    return this.transaction(state=>{
+      const binding=state.bindings.find(item=>item.nodeId===nodeId);
+      if(!binding||binding.generation!==generation||binding.status!=="retiring"||binding.chatId!==0||binding.threadId!==0||!binding.slot||!binding.endpoint)throw new Error("Recycle proof mismatch");
+      binding.status="available";binding.updatedAt=new Date().toISOString();return binding;
+    });
+  }
+
   /** Fence immediately, before aborting/retiring remote resources. Slot remains occupied until confirmed cleanup. */
   fence(nodeId: string, generation: number): Promise<NodeBinding> {
     return this.transaction((state) => {

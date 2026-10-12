@@ -148,6 +148,21 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     this.options.onInventory?.(inventory);
     return inventory;
   }
+  handoff(nodeId:string,generation:number):Promise<ProvisionedNode>{
+    return this.singleFlight(async()=>{
+      const binding=await this.binding(nodeId,generation);
+      if(!["provisioning","retiring"].includes(binding.status)||!binding.serviceId||!binding.volumeId||!binding.endpoint||!binding.slot)throw new Error("Worker handoff requires persistent slot ownership");
+      const journal=await this.read();const record=journal.nodes.find(item=>item.nodeId===nodeId);
+      if(!record||!record.serviceId||!record.volumeId||!record.endpoint||record.serviceId!==binding.serviceId||record.volumeId!==binding.volumeId||record.endpoint!==binding.endpoint||record.phase==="retired"||record.phase==="retiring")throw new WorkerProvisioningError("reconciliation_required");
+      const unbound=binding.chatId===0&&binding.threadId===0;
+      if(record.generation===generation){
+        if(record.unbound!==unbound)throw new WorkerProvisioningError("reconciliation_required");
+        record.phase="recycled";await this.save(journal);return structuredClone(record);
+      }
+      if(record.generation!==generation-1)throw new Error("Infrastructure generation already fenced");
+      record.generation=generation;record.unbound=unbound;record.slot=binding.slot;record.clusterId=binding.clusterId;record.phase="recycled";await this.save(journal);return structuredClone(record);
+    });
+  }
   provision(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{
       const excluded=new Set<string>();
@@ -321,7 +336,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         await this.binding(nodeId,generation);
         return {nodeId,generation:generation-1,projectId:"",environmentId:"",phase:"retired"};
       }
-      if (record.generation !== generation - 1) throw new Error("Retirement ownership mismatch");
+      if (record.generation !== generation - 1 && record.generation !== generation) throw new Error("Retirement ownership mismatch");
       if (record.phase === "retired") return structuredClone(record);
       if(record.volumeCreatePending)throw new WorkerProvisioningError("reconciliation_required");
       record.phase = "retiring"; await this.save(journal);

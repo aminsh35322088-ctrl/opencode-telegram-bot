@@ -16,7 +16,7 @@ export function setTopicNodeCreationEnabled(enabled: boolean): void { creationEn
 export function isTopicNodeCreationEnabled(): boolean { return creationEnabled; }
 interface LifecycleDependencies {
   bindings: NodeBindingStore;
-  infrastructure(operation:"provision"|"retire"|"reconcile",nodeId:string,generation:number):Promise<ProvisionedNode>;
+  infrastructure(operation:"provision"|"rebind"|"recycle"|"retire"|"reconcile",nodeId:string,generation:number):Promise<ProvisionedNode>;
   node(binding:NodeBinding,operation:string,payload:unknown):Promise<unknown>;
   snapshot():Promise<{revision:number;hash:string}>;
   now():number;
@@ -37,19 +37,20 @@ export class TopicNodeLifecycle {
     const operation=this.preparePool(warmCapacity).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
-  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available',expected?:ProvisionedNode):Promise<void> {
+  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode):Promise<void> {
     const deadline=this.dependencies.now()+300_000;
-    let delay=1_000;
+    let delay=50;
+    const expectedReadiness=binding.chatId===0&&binding.threadId===0?'ready-unbound':'ready';
     while(true) {
-      let health:{ready:boolean;runtime?:{telegramCoreCommit:string;telegramCoreVersion:string}}|undefined;
+      let health:{ready:boolean;readiness?:string;runtime?:{telegramCoreCommit:string;telegramCoreVersion:string}}|undefined;
       try {health=await this.rpc(binding,'health');} catch { /* deployment/wake may still be underway */ }
-      if(health?.ready){
+      if(health?.readiness===expectedReadiness || (health?.readiness===undefined && health?.ready)){
         if(expected?.image&&(health.runtime?.telegramCoreCommit!==expected.runtimeCommit||health.runtime?.telegramCoreVersion!==expected.runtimeVersion))throw new WorkerProvisioningError("image_mismatch");
         if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime!.telegramCoreCommit} actualVersion=${health.runtime!.telegramCoreVersion}`);
         break;
       }
       if(this.dependencies.now()>=deadline)throw new Error("Topic node readiness timed out");
-      await this.dependencies.wait(Math.min(delay,Math.max(0,deadline-this.dependencies.now())));delay=Math.min(delay*2,10_000);
+      await this.dependencies.wait(Math.min(delay,Math.max(0,deadline-this.dependencies.now())));delay=Math.min(delay*2,1_000);
       const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
       if(!current||current.generation!==binding.generation||current.status!==status||current.chatId!==binding.chatId||current.threadId!==binding.threadId)throw new Error("Topic node generation changed during readiness");
     }
@@ -117,10 +118,11 @@ export class TopicNodeLifecycle {
     let binding=await this.dependencies.bindings.reserve(chatId,threadId);
     if(binding.status==='retiring')throw new Error("Topic node is being retired");
     const generation=binding.generation;
+    const inPlaceRebind=binding.status==='reserved'&&!!binding.slot&&!!binding.serviceId&&!!binding.volumeId&&!!binding.endpoint&&generation>1;
     try {
       if(binding.status!=='ready') {
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'provisioning'});
-        const provisioned=await this.dependencies.infrastructure('provision',binding.nodeId,generation);
+        const provisioned=await this.dependencies.infrastructure(inPlaceRebind?'rebind':'provision',binding.nodeId,generation);
         if(provisioned.nodeId!==binding.nodeId||provisioned.generation!==generation||!provisioned.endpoint||!provisioned.serviceId||!provisioned.volumeId)throw new Error("Incomplete provisioned node identity");
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:provisioned.projectId,serviceId:provisioned.serviceId,volumeId:provisioned.volumeId,endpoint:provisioned.endpoint});
         await this.waitReady(binding,'provisioning',provisioned);
@@ -141,13 +143,24 @@ export class TopicNodeLifecycle {
     }
   }
   async retire(chatId:number,threadId:number):Promise<boolean> {
-    let binding=await this.dependencies.bindings.find(chatId,threadId);
-    if(!binding)return false;
-    if(binding.status!=='retiring')binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
-    // Root fences its registry and aborts/retires Core before deleting owned resources.
-    const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
-    if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Infrastructure retirement not confirmed");
-    await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'retired'});return true;
+    const current=await this.dependencies.bindings.find(chatId,threadId);
+    if(!current)return false;
+    let binding=await this.dependencies.bindings.beginRecycle(current.nodeId,current.generation);
+    try{
+      const recycled=await this.dependencies.infrastructure('recycle',binding.nodeId,binding.generation);
+      if(recycled.nodeId!==binding.nodeId||recycled.phase!=='recycled'||recycled.serviceId!==binding.serviceId||recycled.volumeId!==binding.volumeId)throw new Error("Infrastructure recycle not confirmed");
+      await this.waitReady(binding,'retiring',recycled);
+      binding=await this.syncGlobal(binding);
+      binding=await this.dependencies.bindings.completeRecycle(binding.nodeId,binding.generation);
+      await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+      return true;
+    }catch(error){
+      logger.warn(`[WorkerCluster] in-place recycle failed; destroying fenced Worker node=${binding.nodeId} generation=${binding.generation}`,error);
+      const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
+      if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw error;
+      await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'retired'});
+      return true;
+    }
   }
 }
 export const topicNodeLifecycle=new TopicNodeLifecycle();

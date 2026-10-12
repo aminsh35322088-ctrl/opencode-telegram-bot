@@ -15,8 +15,11 @@ interface InfrastructureSetupController {
   begin(token:string):Promise<unknown>;
   selectWorkspace(workspaceId:string):Promise<unknown>;
 }
+interface BootstrapGrantConsumer {
+  consume(input:{bootstrapToken:string;serviceId:string;projectId:string}):Promise<{version:1;identity:{nodeId:string;generation:number;chatId:number;threadId:number};secret:string}>;
+}
 /** Root-only gateway. Application sees authenticated envelopes, never signing material. */
-export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:NodeProtocol,port:number,controller?:InfrastructureController,setup?:InfrastructureSetupController){
+export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:NodeProtocol,port:number,controller?:InfrastructureController,setup?:InfrastructureSetupController,bootstrapGrants?:BootstrapGrantConsumer){
   const pending=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void;timer:NodeJS.Timeout}>();
   const outbound=new Map<string,AbortController>();
   let infrastructureActive=0;
@@ -122,6 +125,12 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
   const server=createServer(async(request,response)=>{
     response.setHeader("cache-control","no-store");
     if(request.url==="/health" && request.method==="GET"){const ready=child.connected&&applicationReady;response.writeHead(ready?200:503);response.end(JSON.stringify({status:ready?"healthy":"unavailable"}));return;}
+    if(request.url==="/nodes/bootstrap" && request.method==="POST"){
+      if(!bootstrapGrants){response.writeHead(403,{"content-type":"application/json"});response.end(JSON.stringify({error:"Bootstrap denied"}));return;}
+      try{let size=0;const chunks:Buffer[]=[];for await(const chunk of request){const buffer=Buffer.from(chunk);size+=buffer.length;if(size>16*1024)throw new Error("Bootstrap request too large");chunks.push(buffer);}
+        const parsed=JSON.parse(Buffer.concat(chunks).toString("utf8")) as {bootstrapToken:string;serviceId:string;projectId:string};const result=await bootstrapGrants.consume(parsed);response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify(result));
+      }catch{response.writeHead(403,{"content-type":"application/json"});response.end(JSON.stringify({error:"Bootstrap denied"}));}return;
+    }
     if(request.url!=="/node-control" || request.method!=="POST"){response.writeHead(404);response.end();return;}
     try{
       let size=0;const chunks:Buffer[]=[];

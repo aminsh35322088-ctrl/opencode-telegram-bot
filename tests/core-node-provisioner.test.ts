@@ -296,3 +296,14 @@ test('Railway service quota expands the selected workspace with one new determin
  assert.equal(node.projectId,'c');assert.equal(expansions,1);
  assert.deepEqual(f.controller.listPools().map(pool=>pool.projectId),['a','b','c']);
 });
+
+test('in-place handoff advances only Worker journal identity and preserves service/volume without Railway mutation',async()=>{
+ const f=await fixture();f.add('handoff');const binding=f.bindings.get('handoff')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,clusterId:'cluster',status:'available'});
+ const original=await f.controller.provision('handoff',1);Object.assign(binding,{projectId:original.projectId,serviceId:original.serviceId,volumeId:original.volumeId,endpoint:original.endpoint});const before=f.calls.length;
+ Object.assign(binding,{generation:2,chatId:-100,threadId:22,status:'provisioning'});
+ const rebound=await f.controller.handoff('handoff',2);
+ assert.equal(rebound.phase,'recycled');assert.equal(rebound.generation,2);assert.equal(rebound.unbound,false);assert.equal(rebound.serviceId,original.serviceId);assert.equal(rebound.volumeId,original.volumeId);assert.equal(f.calls.length,before);
+ Object.assign(binding,{generation:3,chatId:0,threadId:0,status:'retiring'});delete binding.sessionId;
+ const recycled=await f.controller.handoff('handoff',3);
+ assert.equal(recycled.phase,'recycled');assert.equal(recycled.generation,3);assert.equal(recycled.unbound,true);assert.equal(recycled.serviceId,original.serviceId);assert.equal(recycled.volumeId,original.volumeId);assert.equal(f.calls.length,before);
+});

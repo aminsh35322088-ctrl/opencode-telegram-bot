@@ -43,7 +43,7 @@ test('four unbound slots bootstrap idempotently and allocation claims only avail
  for(const n of slots)await store.update(n.nodeId,n.generation,{status:'available',endpoint:'https://worker.up.railway.app'});
  const claims=await Promise.allSettled(Array.from({length:5},(_,i)=>store.reserve(-100,i+2)));
  assert.equal(claims.filter(n=>n.status==='fulfilled').length,5);
- const active=await store.list();assert.equal(new Set(active.map(n=>n.nodeId)).size,5);assert.ok(active.filter(n=>n.slot).every(n=>n.generation===2));
+ const active=await store.list();assert.equal(new Set(active.map(n=>n.nodeId)).size,5);assert.deepEqual(active.map(n=>n.slot).sort((a,b)=>a!-b!),[1,2,3,4,5]);assert.equal(active.filter(n=>n.generation===2).length,4);assert.equal(active.filter(n=>n.generation===1).length,1);
  assert.equal(await store.find(0,0),undefined);
 });
 
@@ -88,4 +88,23 @@ test('New Chat operation receipt survives restart and rejects conflicting return
  const retry=await new NodeBindingStore(filename).beginCreation('update-1',-100,'/retry');assert.equal(retry.fresh,false);assert.equal(retry.operation.directory,'/original');
  await store.recordCreation('update-1',-100,{threadId:7});await assert.rejects(store.recordCreation('update-1',-100,{threadId:8}),/mismatch/);
  assert.equal((await new NodeBindingStore(filename).beginCreation('update-1',-100,'/retry')).operation.threadId,7);
+});
+
+
+test('lazy Worker receives a durable slot and recycles bound ownership to next unbound generation', async()=>{
+  const store=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'lazy-slot-')),'bindings.json'));
+  const bound=await store.reserve(-100,22);
+  assert.ok(bound.slot && bound.slot > 0);
+  assert.ok(bound.clusterId);
+  const provisioned=await store.update(bound.nodeId,bound.generation,{status:'ready',endpoint:'https://worker.up.railway.app',projectId:'project',serviceId:'service',volumeId:'volume',sessionId:'session'});
+  const recycled=await store.beginRecycle(provisioned.nodeId,provisioned.generation);
+  assert.equal(recycled.nodeId,provisioned.nodeId);
+  assert.equal(recycled.generation,provisioned.generation+1);
+  assert.equal(recycled.chatId,0);assert.equal(recycled.threadId,0);assert.equal(recycled.sessionId,undefined);
+  assert.equal(recycled.status,'retiring');assert.equal(recycled.slot,provisioned.slot);assert.equal(recycled.clusterId,provisioned.clusterId);
+  assert.equal(recycled.serviceId,'service');assert.equal(recycled.volumeId,'volume');assert.equal(recycled.endpoint,'https://worker.up.railway.app');
+  const available=await store.completeRecycle(recycled.nodeId,recycled.generation);
+  assert.equal(available.status,'available');
+  const rebound=await store.reserve(-100,23);
+  assert.equal(rebound.nodeId,bound.nodeId);assert.equal(rebound.slot,bound.slot);assert.equal(rebound.generation,recycled.generation+1);assert.equal(rebound.status,'reserved');
 });
