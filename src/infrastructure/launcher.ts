@@ -2,8 +2,8 @@ import {WORKER_RUNTIME_IMAGE} from "./worker-core-release.js";
 import { createInfrastructureClient, InfrastructureRequestError } from "./railway-client.js";
 import { lstat } from "node:fs/promises";
 import { constants } from "node:os";
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import type { ChildProcess } from "node:child_process";
+import {budgetedExecFile,budgetedSpawn} from "../runtime/process-budget.js";
 import {captureNodeRegistry} from "./node-registry.js";
 import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./control-runtime-config.js";
 
@@ -22,13 +22,12 @@ configureApplicationEnvironment(process.env,runtimeConfig);
 
 async function main(): Promise<void> {
   if (process.getuid?.() !== 0) throw new Error("Infrastructure launcher requires a separate privileged identity");
-  const execFileAsync = promisify(execFile);
   const volume = await lstat("/data");
   if (!volume.isDirectory() || volume.isSymbolicLink()) throw new Error("Invalid persistent volume root");
   const gatewayEnabled=runtimeConfig.gatewayEnabled;
   if(gatewayEnabled){
-    await execFileAsync("/usr/bin/chown",["--no-dereference","0:0","/data"]);
-    await execFileAsync("/usr/bin/chmod",["1777","/data"]);
+    await budgetedExecFile("cleanup","/usr/bin/chown",["--no-dereference","0:0","/data"]);
+    await budgetedExecFile("cleanup","/usr/bin/chmod",["1777","/data"]);
     const {mkdir,chmod}=await import("node:fs/promises");
     await mkdir("/data/.infrastructure",{mode:0o700}).catch(error=>{if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;});
     const directory=await lstat("/data/.infrastructure");
@@ -37,11 +36,11 @@ async function main(): Promise<void> {
     await nodes.load("/data/.infrastructure/nodes.json");
     await nodes.persist("/data/.infrastructure/nodes.json");
   }else{
-    await execFileAsync("/usr/bin/chown", ["--no-dereference", "1000:1000", "/data"]);
+    await budgetedExecFile("cleanup","/usr/bin/chown", ["--no-dereference", "1000:1000", "/data"]);
   }
 
   let stopGateway:(()=>void)|undefined;
-  let gatewayStart:((child:import("node:child_process").ChildProcess)=>void)|undefined;
+  let gatewayStart:((child:ChildProcess)=>void)|undefined;
   if(gatewayEnabled){
     const {startNodeGateway}=await import("./node-gateway.js");
     const {NodeProtocol}=await import("../control-plane/node-protocol.js");
@@ -126,7 +125,7 @@ async function main(): Promise<void> {
     gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,onboarding,bootstrapGrants);};
   }
 
-  const child = spawn(process.execPath, ["/app/dist/index.js"], {
+  const child = await budgetedSpawn("bot-daemon",process.execPath, ["/app/dist/index.js"], {
     cwd: "/app",
     stdio: gatewayEnabled ? ["inherit","inherit","inherit","ipc"] : "inherit",
     env:{...process.env,...(gatewayEnabled?{CONTROL_APPLICATION_IPC:"1"}:{})},
