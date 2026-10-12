@@ -44,7 +44,9 @@ export class TopicNodeLifecycle {
     while(true) {
       let health:{ready:boolean;readiness?:string;runtime?:{telegramCoreCommit:string;telegramCoreVersion:string}}|undefined;
       try {health=await this.rpc(binding,'health');} catch { /* deployment/wake may still be underway */ }
-      if(health?.readiness===expectedReadiness || (health?.readiness===undefined && health?.ready)){
+      const explicitlyReady=health?.ready===true&&health?.readiness===expectedReadiness;
+      const legacyReady=health?.ready===true&&health?.readiness===undefined;
+      if(health&&(explicitlyReady||legacyReady)){
         if(expected?.image&&(health.runtime?.telegramCoreCommit!==expected.runtimeCommit||health.runtime?.telegramCoreVersion!==expected.runtimeVersion))throw new WorkerProvisioningError("image_mismatch");
         if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime!.telegramCoreCommit} actualVersion=${health.runtime!.telegramCoreVersion}`);
         break;

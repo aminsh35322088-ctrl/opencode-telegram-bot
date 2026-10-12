@@ -19,7 +19,7 @@ async function fixture(mode='normal') {
     },
     node:async(binding,operation)=>{
       calls.push(operation);
-      if(operation==='health'){healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';return {ok:true,result:{ready:readiness==='ready',readiness,...(mode==='image-mismatch'?{runtime:{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}}:{})}};}
+      if(operation==='health'){healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(mode==='image-mismatch'?{runtime:{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}}:{})}};}
       if(operation==='sync-global')return {ok:true,result:{revision:7,hash:mode==='corrupt'?'wrong':'hash7'}};
       if(operation==='session.create')return {ok:true,result:{sessionId:'session'}};
       if(operation==='session.get'){assert.equal(binding.sessionId,'session');return {ok:true,result:{id:'session',title:'Worker session',directory:'/data/topic'}};}

@@ -58,6 +58,19 @@ test('unready bootstrap has finite readiness deadline and retains provisioned re
   const count=f.operations.length;await new Promise(resolve=>setImmediate(resolve));assert.equal(f.operations.length,count);assert.deepEqual(f.provisioned,[1]);
 });
 
+test('ready-unbound slot waits for Core-ready boolean before global sync',async()=>{
+  const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'unbound-core-ready-')),'bindings.json'));
+  await bindings.ensurePoolSlots(1);
+  let time=0,healthCalls=0;const operations:string[]=[];
+  const lifecycle=new TopicNodeLifecycle({bindings,now:()=>time,wait:async delay=>{time+=delay;},snapshot:async()=>({revision:1,hash:'h'}),
+    infrastructure:async(operation,nodeId,generation)=>({nodeId,generation,projectId:'p',environmentId:'e',serviceId:'s',volumeId:'v',endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':'deploying'} as ProvisionedNode),
+    node:async(_binding,operation)=>{operations.push(operation);if(operation==='health'){healthCalls++;return {ok:true,result:{ready:healthCalls>=3,readiness:'ready-unbound'}};}if(operation==='sync-global')return {ok:true,result:{revision:1,hash:'h'}};throw new Error(operation);}});
+  await lifecycle.bootstrapPool(1);
+  assert.equal(healthCalls,3);
+  assert.equal(operations.filter(operation=>operation==='sync-global').length,1);
+  assert.ok(time>0);
+});
+
 test('unbound Worker becomes available only after exact global snapshot verification',async()=>{
   const f=await fixture();f.setCorrupt();await assert.rejects(f.lifecycle.bootstrapPool(),/verification/);
   assert.equal((await f.bindings.list())[0]!.status,'pool-provisioning');assert.deepEqual(f.reconciled,[]);

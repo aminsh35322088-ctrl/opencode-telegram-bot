@@ -7,6 +7,7 @@ import {logger} from "../../utils/logger.js";
 import {nodeBindings} from "../../control-plane/node-bindings.js";
 import {setTopicNodeCreationEnabled,topicNodeLifecycle} from "../../control-plane/topic-node-lifecycle.js";
 import {normalizeRailwayWorkerSettings,type RailwayWorkerSettings} from "../../infrastructure/railway-worker-settings.js";
+import {WorkerProvisioningError} from "../../infrastructure/worker-provisioning-driver.js";
 import {isRailwaySetupCompleted,setRailwaySetupCompleted} from "../../app/stores/settings-store.js";
 import {renderRailwayBootstrapProgress,summarizeRailwayBootstrap,type RailwayBootstrapProgress} from "../services/railway-bootstrap-progress.js";
 
@@ -26,6 +27,12 @@ const waitingForToken=new Set<number>();
 const workspaceChoices=new Map<number,WorkspaceChoice[]>();
 const bootstrapFlights=new Map<number,Promise<void>>();
 const bootstrapMessageIds=new Map<number,number>();
+
+export function isRetryableRailwayBootstrapError(error:unknown):boolean{
+ if(error instanceof WorkerProvisioningError)return error.category==="provisioning_pending"||error.category==="project_unavailable";
+ const message=error instanceof Error?error.message:String(error);
+ return /Node transport failed|Topic node readiness timed out|Infrastructure operation failed \((?:transport|rate_limit|provisioning_pending|project_unavailable),/iu.test(message);
+}
 
 function setupAvailable():boolean{return process.env.CONTROL_APPLICATION_IPC==="1";}
 function rootThread(ctx:Context):boolean{
@@ -92,28 +99,40 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
  if(progress.complete||bootstrapFlights.has(chatId))return;
  const targetMessageId=messageId;
  const flight=(async()=>{
-  let settled=false;
-  let failure:unknown;
-  const operation=topicNodeLifecycle.bootstrapPool(INITIAL_BOOTSTRAP_WORKERS).catch(error=>{failure=error;return [];}).finally(()=>{settled=true;});
-  let lastSignature="";
-  while(!settled){
-   try{
-    progress=await bootstrapProgress();
-    const signature=JSON.stringify(progress);
-    if(signature!==lastSignature){lastSignature=signature;await editBootstrapMessage(ctx,chatId,targetMessageId,progress);}
-   }catch(error){logger.warn("[RailwayOnboarding] Could not refresh bootstrap progress",error);}
-   await Promise.race([operation,new Promise(resolve=>setTimeout(resolve,1500))]);
+  let retryDelayMs=1_500;
+  let retry=0;
+  while(true){
+   let settled=false;
+   let failure:unknown;
+   const operation=topicNodeLifecycle.bootstrapPool(INITIAL_BOOTSTRAP_WORKERS).catch(error=>{failure=error;return [];}).finally(()=>{settled=true;});
+   let lastSignature="";
+   while(!settled){
+    try{
+     progress=await bootstrapProgress();
+     const signature=JSON.stringify(progress);
+     if(signature!==lastSignature){lastSignature=signature;await editBootstrapMessage(ctx,chatId,targetMessageId,progress);}
+    }catch(error){logger.warn("[RailwayOnboarding] Could not refresh bootstrap progress",error);}
+    await Promise.race([operation,new Promise(resolve=>setTimeout(resolve,1_500))]);
+   }
+   await operation;
+   progress=await bootstrapProgress().catch(()=>progress);
+   if(!failure&&progress.complete){
+    await editBootstrapMessage(ctx,chatId,targetMessageId,progress);
+    logger.info(`[RailwayOnboarding] Initial fleet ready: chat=${chatId}, projects=${progress.projects}, workers=${progress.workers}, volumes=${progress.volumes}, healthy=${progress.healthy}`);
+    return;
+   }
+   if(failure&&!isRetryableRailwayBootstrapError(failure)){
+    logger.error("[RailwayOnboarding] Initial Worker bootstrap blocked by non-retryable error",failure);
+    const retryKeyboard=new InlineKeyboard().text("Retry →","railway:retry");
+    await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(progress)}\n\n❌ Setup is blocked by a non-retryable Railway condition. Fix the Railway resource/configuration issue, then press Retry.`,{parse_mode:"HTML",reply_markup:retryKeyboard}).catch(()=>{});
+    return;
+   }
+   retry++;
+   logger.warn(`[RailwayOnboarding] Transient Worker bootstrap failure; retry=${retry} delayMs=${retryDelayMs}`,failure);
+   await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(progress)}\n\n⏳ Recovering a transient Railway/Worker readiness failure automatically…`,{parse_mode:"HTML"}).catch(()=>{});
+   await new Promise(resolve=>setTimeout(resolve,retryDelayMs));
+   retryDelayMs=Math.min(Math.round(retryDelayMs*1.6),10_000);
   }
-  await operation;
-  if(failure){
-   logger.error("[RailwayOnboarding] Initial Worker bootstrap failed",failure);
-   const latest=await bootstrapProgress().catch(()=>progress);
-   await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(latest)}\n\n❌ Setup paused. Run /start to retry the failed Railway step.`,{parse_mode:"HTML"}).catch(()=>{});
-   return;
-  }
-  progress=await bootstrapProgress();
-  await editBootstrapMessage(ctx,chatId,targetMessageId,progress);
-  logger.info(`[RailwayOnboarding] Initial fleet ready: chat=${chatId}, projects=${progress.projects}, workers=${progress.workers}, volumes=${progress.volumes}, healthy=${progress.healthy}`);
  })().finally(()=>bootstrapFlights.delete(chatId));
  bootstrapFlights.set(chatId,flight);void flight;
 }
@@ -179,6 +198,14 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
  if(!data.startsWith("railway:"))return false;
  const chatId=ctx.chat?.id??ctx.callbackQuery?.message?.chat.id;
  if(typeof chatId!=="number"||!rootThread(ctx)){await ctx.answerCallbackQuery({text:"Use General for Railway setup."}).catch(()=>{});return true;}
+ if(data==="railway:retry"){
+  try{
+   const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
+   await ctx.answerCallbackQuery({text:"Retrying Railway setup…"}).catch(()=>{});
+   await startRailwayBootstrap(ctx,settings,ctx.callbackQuery?.message?.message_id);
+  }catch(error){logger.error("[RailwayOnboarding] Retry failed to start",error);await ctx.answerCallbackQuery({text:"Railway setup retry could not start."}).catch(()=>{});}
+  return true;
+ }
  if(data==="railway:continue"){
   try{
    const progress=await bootstrapProgress();

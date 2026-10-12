@@ -157,6 +157,20 @@ test('immutable image identity is deployed and persisted without repository sour
  assert.deepEqual(contract,{image:f.options.workerImage});
  assert.equal(JSON.parse(await readFile(f.filename,'utf8')).nodes[0].image,f.options.workerImage);
 });
+test('unbound managed Worker image drift redeploys in place without replacing service or volume',async()=>{
+ const f=await fixture();f.add('upgrade');const binding=f.bindings.get('upgrade')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,status:'pool-provisioning'});
+ f.options.coreCommit='1'.repeat(40);f.options.workerVersion='1.18.33-bot.13-pre.33';
+ const original=await f.controller.provision('upgrade',1);
+ const sourceCount=f.calls.filter(c=>c.document.includes('mutation WorkerSource')).length;
+ const nextImage='ghcr.io/example/core@sha256:'+'c'.repeat(64);f.options.workerImage=nextImage;f.options.coreCommit='2'.repeat(40);f.options.workerVersion='1.18.33-bot.13-pre.34';
+ const upgraded=await new NodeProvisioner(f.options).provision('upgrade',1);
+ assert.equal(upgraded.serviceId,original.serviceId);assert.equal(upgraded.volumeId,original.volumeId);assert.equal(f.services.length,1);assert.equal(f.volumes.length,1);
+ assert.equal(upgraded.image,nextImage);assert.equal(upgraded.runtimeCommit,f.options.coreCommit);assert.equal(upgraded.runtimeVersion,f.options.workerVersion);
+ const sources=f.calls.filter(c=>c.document.includes('mutation WorkerSource'));assert.equal(sources.length,sourceCount+1);
+ const source=(sources.at(-1)!.variables.patch as {services:Record<string,{source:{image:string}}>}).services[original.serviceId!]!.source;assert.equal(source.image,nextImage);
+ const persisted=JSON.parse(await readFile(f.filename,'utf8')).nodes[0];assert.equal(persisted.image,nextImage);assert.equal(persisted.runtimeVersion,f.options.workerVersion);
+});
+
 test('concurrent duplicate provisioning and restart create only one owned service and volume',async()=>{
  const f=await fixture();f.add('duplicate');
  const results=await Promise.all(Array.from({length:6},()=>f.controller.provision('duplicate',1)));

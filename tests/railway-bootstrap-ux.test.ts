@@ -46,3 +46,24 @@ test("Telegram onboarding gates Main panel behind bootstrap Continue and support
   assert.match(launcher, /validateRailwayInfrastructureCredential/);
   assert.doesNotMatch(startup, /bootstrapPool\(/, "Worker fleet bootstrap must be triggered by onboarding, not generic process startup");
 });
+
+test("Railway bootstrap self-heals transient Worker readiness failures without asking for /start", async () => {
+  const onboarding = await readFile(new URL("../src/bot/commands/railway-onboarding-command.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(onboarding, /Setup paused\. Run \/start/);
+  assert.match(onboarding, /isRetryableRailwayBootstrapError/);
+  assert.match(onboarding, /bootstrapPool\(INITIAL_BOOTSTRAP_WORKERS\)/);
+  assert.match(onboarding, /retry/i);
+});
+
+test("Railway bootstrap retry classification only loops recoverable failures", async () => {
+  const {isRetryableRailwayBootstrapError}=await import("../src/bot/commands/railway-onboarding-command.js");
+  const {WorkerProvisioningError}=await import("../src/infrastructure/worker-provisioning-driver.js");
+  assert.equal(isRetryableRailwayBootstrapError(new Error("Node transport failed")),true);
+  assert.equal(isRetryableRailwayBootstrapError(new Error("Topic node readiness timed out")),true);
+  assert.equal(isRetryableRailwayBootstrapError(new Error("Infrastructure operation failed (rate_limit, HTTP 429)")),true);
+  assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError("provisioning_pending")),true);
+  assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError("project_unavailable")),true);
+  for(const category of ["capacity_exhausted","image_unavailable","reconciliation_required","image_mismatch"] as const){
+    assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError(category)),false,category);
+  }
+});

@@ -7,7 +7,7 @@ const lock=JSON.parse(readFileSync('core-release.lock.json','utf8')) as {telegra
 
 test('Railway Worker release stays aligned with the Bot Core compatibility unit',()=>{
   assert.equal(WORKER_CORE_VERSION,lock.telegramCoreVersion);
-  assert.equal(WORKER_CORE_COMMIT,'286312ed00945083fdf9da0eb2d004f6396cbd55');
-  assert.notEqual(WORKER_CORE_COMMIT,lock.telegramCoreCommit,'Worker runtime advances independently from the compatibility package commit');
-  assert.equal(WORKER_RUNTIME_IMAGE,'ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:a4c38c027e6ab7c7194b065936bfd1251b64a2f578c80756f44dc23b25057f12');
+  assert.equal(WORKER_CORE_COMMIT,'3b83de32f2259be2f8d6d847804c111698138b8e');
+  assert.equal(WORKER_CORE_COMMIT,lock.telegramCoreCommit,'Worker runtime and compatibility package must share the verified Core source commit');
+  assert.equal(WORKER_RUNTIME_IMAGE,'ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:6c365cc6cf5a8a5297a706410ad089c72b02eeafa7d45f2e82a6586e4710c8f3');
 });

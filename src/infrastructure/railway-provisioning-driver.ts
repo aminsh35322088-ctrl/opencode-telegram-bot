@@ -292,7 +292,15 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         await this.binding(nodeId,generation);
       }
       if(!verifiedVolume)throw new Error("Worker volume activation pending; retry reconciliation");
-      if (record.phase === "deploying" && record.endpoint) {
+      const desiredImage=this.options.workerImage;
+      const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
+      const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
+      const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
+      if(managedImageDrift){
+        if(binding.chatId!==0||binding.threadId!==0)throw new WorkerProvisioningError("image_mismatch");
+        record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;await this.save(journal);
+      }
+      if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");
         record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
