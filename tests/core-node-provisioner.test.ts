@@ -30,6 +30,7 @@ async function fixture() {
         assert.deepEqual(input.multiRegionConfig,attached?undefined:{eu:{numReplicas:1}},'Existing dedicated Volume region must survive discovery/default changes');
         assert.equal(input.region,undefined);
         assert.equal(input.builder,undefined,'Dockerfile detection must not pass unsupported DOCKERFILE Builder enum');
+        assert.equal(input.healthcheckTimeout,30,'Worker Agent liveness must fail fast instead of retrying for five minutes');
         result={serviceInstanceUpdate:true};
       } else if(document.includes('mutation WorkerVolume(')) {
         const volume={id:'v'+volumes.length,projectId:input.projectId as string,serviceId:input.serviceId as string,environmentId:input.environmentId as string};volumes.push(volume);result={volumeCreate:{id:volume.id}};
