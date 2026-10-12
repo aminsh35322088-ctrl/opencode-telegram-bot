@@ -65,3 +65,21 @@ test("Railway workspace activation failure keeps the candidate retryable and doe
   assert.deepEqual(await controller.selectWorkspace("w1"),{configured:true,tokenType:"account",workspaceId:"w1",workspaceName:"Primary"});
   assert.equal(saves,1);
 });
+
+test("preconfigured Railway secret has precedence over persisted Telegram onboarding credential", async () => {
+  const { RailwayOnboardingController } = await import("../src/infrastructure/railway-onboarding-controller.js");
+  let configured = "env-secret";
+  let loads = 0;
+  let activated = "";
+  const controller = new RailwayOnboardingController({
+    controlProjectId:"control",
+    client:{get configured(){return Boolean(configured);},configureCredential(value:string){configured=value;}},
+    store:{load:async()=>{loads++;return {token:"stored-secret",tokenType:"workspace" as const,workspaceId:"old",workspaceName:"Old"};},save:async()=>{}},
+    validate:async()=>({valid:false as const,reason:"invalid" as const}),
+    activateWorkspace:async(workspaceId:string)=>{activated=workspaceId;},
+  });
+  await controller.initialize();
+  assert.equal(configured,"env-secret");
+  assert.equal(loads,0);
+  assert.equal(activated,"");
+});

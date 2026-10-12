@@ -1,18 +1,31 @@
 import {InlineKeyboard,type Context} from "grammy";
 import {requestInfrastructureSetup} from "../../control-plane/application-transport.js";
-import {deleteInputMessage,escapeHtml} from "./panel-render.js";
+import {deleteInputMessage} from "./panel-render.js";
 import {keyboardManager} from "../keyboards/keyboard-manager.js";
 import {pinnedMessageManager} from "../pinned/pinned-message-manager.js";
 import {logger} from "../../utils/logger.js";
-import {setTopicNodeCreationEnabled} from "../../control-plane/topic-node-lifecycle.js";
-import {normalizeRailwayWorkerSettings} from "../../infrastructure/railway-worker-settings.js";
+import {nodeBindings} from "../../control-plane/node-bindings.js";
+import {setTopicNodeCreationEnabled,topicNodeLifecycle} from "../../control-plane/topic-node-lifecycle.js";
+import {normalizeRailwayWorkerSettings,type RailwayWorkerSettings} from "../../infrastructure/railway-worker-settings.js";
+import {isRailwaySetupCompleted,setRailwaySetupCompleted} from "../../app/stores/settings-store.js";
+import {renderRailwayBootstrapProgress,summarizeRailwayBootstrap,type RailwayBootstrapProgress} from "../services/railway-bootstrap-progress.js";
 
 interface WorkspaceChoice {id:string;name:string}
-interface SetupStatus {configured:boolean;tokenType?:"account"|"workspace";workspaceId?:string;workspaceName?:string}
+interface SetupStatus {
+  configured:boolean;
+  tokenType?:"account"|"workspace";
+  workspaceId?:string;
+  workspaceName?:string;
+  blockedReason?:"secret-invalid";
+  projectCount?:number;
+}
 interface ValidationResult {valid:boolean;tokenType?:"account"|"workspace";subjectName?:string;workspaces?:WorkspaceChoice[];reason?:string}
 
+const INITIAL_BOOTSTRAP_WORKERS=5;
 const waitingForToken=new Set<number>();
 const workspaceChoices=new Map<number,WorkspaceChoice[]>();
+const bootstrapFlights=new Map<number,Promise<void>>();
+const bootstrapMessageIds=new Map<number,number>();
 
 function setupAvailable():boolean{return process.env.CONTROL_APPLICATION_IPC==="1";}
 function rootThread(ctx:Context):boolean{
@@ -22,6 +35,8 @@ function rootThread(ctx:Context):boolean{
 function status(value:unknown):SetupStatus{
  if(!value||typeof value!=="object"||typeof (value as {configured?:unknown}).configured!=="boolean")throw new Error("Invalid Railway setup response");
  const candidate=value as SetupStatus;
+ if(candidate.blockedReason!==undefined&&candidate.blockedReason!=="secret-invalid")throw new Error("Invalid Railway setup response");
+ if(candidate.projectCount!==undefined&&(!Number.isSafeInteger(candidate.projectCount)||candidate.projectCount<0||candidate.projectCount>1000))throw new Error("Invalid Railway setup response");
  if(candidate.configured&&(candidate.tokenType!=="account"&&candidate.tokenType!=="workspace"||typeof candidate.workspaceId!=="string"||!candidate.workspaceId))throw new Error("Invalid Railway setup response");
  return candidate;
 }
@@ -37,6 +52,71 @@ async function sendSetupPrompt(ctx:Context):Promise<void>{
  const keyboard=new InlineKeyboard().text("Cancel","railway:cancel");
  await ctx.reply("🚂 Railway setup\n\nSend a Railway Account or Workspace token. The bot needs this access to create and manage isolated Topic Workers.\n\nA Project token is not enough for dynamic Worker projects. Your token message will be deleted immediately after it is received.",{reply_markup:keyboard});
 }
+async function normalizeInitialSettings(settings:RailwayWorkerSettings):Promise<RailwayWorkerSettings>{
+ if(settings.warmCapacity===INITIAL_BOOTSTRAP_WORKERS&&settings.workerCreationEnabled)return settings;
+ return normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.update",{patch:{workerCreationEnabled:true,warmCapacity:INITIAL_BOOTSTRAP_WORKERS}}));
+}
+async function bootstrapProgress():Promise<RailwayBootstrapProgress>{
+ const current=status(await requestInfrastructureSetup("status"));
+ if(!current.configured)throw new Error("Railway setup is not configured");
+ const bindings=await nodeBindings.list();
+ const bindingProjects=new Set(bindings.filter(binding=>binding.status!=="retired"&&binding.slot!==undefined&&binding.slot<=INITIAL_BOOTSTRAP_WORKERS&&binding.projectId).map(binding=>binding.projectId!)).size;
+ return summarizeRailwayBootstrap(bindings,Math.max(current.projectCount??0,bindingProjects),INITIAL_BOOTSTRAP_WORKERS);
+}
+function continueKeyboard(progress:RailwayBootstrapProgress):InlineKeyboard|undefined{
+ return progress.complete?new InlineKeyboard().text("Continue →","railway:continue"):undefined;
+}
+async function editBootstrapMessage(ctx:Context,chatId:number,messageId:number,progress:RailwayBootstrapProgress):Promise<void>{
+ const keyboard=continueKeyboard(progress);
+ await ctx.api.editMessageText(chatId,messageId,renderRailwayBootstrapProgress(progress),{
+  parse_mode:"HTML",
+  ...(keyboard?{reply_markup:keyboard}:{}),
+ }).catch(error=>{
+  if(!/message is not modified/i.test(error instanceof Error?error.message:String(error)))throw error;
+ });
+}
+async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSettings,reuseMessageId?:number):Promise<void>{
+ const chatId=ctx.chat?.id??ctx.callbackQuery?.message?.chat.id;
+ if(typeof chatId!=="number")return;
+ if(isRailwaySetupCompleted())return;
+ const settings=await normalizeInitialSettings(settingsInput);
+ setTopicNodeCreationEnabled(settings.workerCreationEnabled);
+ let progress=await bootstrapProgress();
+ let messageId=reuseMessageId??bootstrapMessageIds.get(chatId);
+ if(messageId){await editBootstrapMessage(ctx,chatId,messageId,progress);}
+ else{
+  const sent=await ctx.reply(renderRailwayBootstrapProgress(progress),{parse_mode:"HTML",...(progress.complete?{reply_markup:continueKeyboard(progress)}:{})});
+  messageId=sent.message_id;
+ }
+ bootstrapMessageIds.set(chatId,messageId);
+ if(progress.complete||bootstrapFlights.has(chatId))return;
+ const targetMessageId=messageId;
+ const flight=(async()=>{
+  let settled=false;
+  let failure:unknown;
+  const operation=topicNodeLifecycle.bootstrapPool(INITIAL_BOOTSTRAP_WORKERS).catch(error=>{failure=error;return [];}).finally(()=>{settled=true;});
+  let lastSignature="";
+  while(!settled){
+   try{
+    progress=await bootstrapProgress();
+    const signature=JSON.stringify(progress);
+    if(signature!==lastSignature){lastSignature=signature;await editBootstrapMessage(ctx,chatId,targetMessageId,progress);}
+   }catch(error){logger.warn("[RailwayOnboarding] Could not refresh bootstrap progress",error);}
+   await Promise.race([operation,new Promise(resolve=>setTimeout(resolve,1500))]);
+  }
+  await operation;
+  if(failure){
+   logger.error("[RailwayOnboarding] Initial Worker bootstrap failed",failure);
+   const latest=await bootstrapProgress().catch(()=>progress);
+   await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(latest)}\n\n❌ Setup paused. Run /start to retry the failed Railway step.`,{parse_mode:"HTML"}).catch(()=>{});
+   return;
+  }
+  progress=await bootstrapProgress();
+  await editBootstrapMessage(ctx,chatId,targetMessageId,progress);
+  logger.info(`[RailwayOnboarding] Initial fleet ready: chat=${chatId}, projects=${progress.projects}, workers=${progress.workers}, volumes=${progress.volumes}, healthy=${progress.healthy}`);
+ })().finally(()=>bootstrapFlights.delete(chatId));
+ bootstrapFlights.set(chatId,flight);void flight;
+}
 
 export async function ensureRailwayInfrastructureConfigured(ctx:Context):Promise<boolean>{
  if(!setupAvailable())return true;
@@ -44,7 +124,19 @@ export async function ensureRailwayInfrastructureConfigured(ctx:Context):Promise
  if(typeof chatId!=="number"||!rootThread(ctx))return true;
  try{
   const current=status(await requestInfrastructureSetup("status"));
-  if(current.configured){waitingForToken.delete(chatId);workspaceChoices.delete(chatId);const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));setTopicNodeCreationEnabled(settings.workerCreationEnabled);return true;}
+  if(current.blockedReason==="secret-invalid"){
+   waitingForToken.delete(chatId);workspaceChoices.delete(chatId);
+   await ctx.reply("❌ <b>Railway Secret is invalid</b>\n\nThe RAILWAY_API_TOKEN configured in Railway Secrets could not be authenticated or cannot access this Control Plane workspace. Fix or remove that Secret and redeploy. Telegram onboarding is disabled while the Secret is present.",{parse_mode:"HTML"});
+   return false;
+  }
+  if(current.configured){
+   waitingForToken.delete(chatId);workspaceChoices.delete(chatId);
+   const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
+   setTopicNodeCreationEnabled(settings.workerCreationEnabled);
+   if(isRailwaySetupCompleted())return true;
+   await startRailwayBootstrap(ctx,settings);
+   return false;
+  }
   waitingForToken.add(chatId);workspaceChoices.delete(chatId);await sendSetupPrompt(ctx);return false;
  }catch(error){
   logger.error("[RailwayOnboarding] Failed to read Control Plane setup status",error);
@@ -87,6 +179,22 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
  if(!data.startsWith("railway:"))return false;
  const chatId=ctx.chat?.id??ctx.callbackQuery?.message?.chat.id;
  if(typeof chatId!=="number"||!rootThread(ctx)){await ctx.answerCallbackQuery({text:"Use General for Railway setup."}).catch(()=>{});return true;}
+ if(data==="railway:continue"){
+  try{
+   const progress=await bootstrapProgress();
+   if(!progress.complete){await ctx.answerCallbackQuery({text:"Railway is still preparing Workers."}).catch(()=>{});return true;}
+   await ctx.answerCallbackQuery({text:"Railway ready ✅"}).catch(()=>{});
+   if(!pinnedMessageManager.isInitialized())pinnedMessageManager.initialize(ctx.api,chatId);
+   keyboardManager.initialize(ctx.api,chatId);
+   const opened=await keyboardManager.replaceMainInlineKeyboard(chatId);
+   if(!opened)throw new Error("Main panel replacement failed");
+   await setRailwaySetupCompleted(true);
+   const messageId=ctx.callbackQuery?.message?.message_id;
+   if(messageId)await ctx.api.deleteMessage(chatId,messageId).catch(()=>{});
+   bootstrapMessageIds.delete(chatId);
+   return true;
+  }catch(error){logger.error("[RailwayOnboarding] Continue failed",error);await ctx.answerCallbackQuery({text:"Railway setup is not ready yet."}).catch(()=>{});return true;}
+ }
  if(data==="railway:cancel"){
   waitingForToken.delete(chatId);workspaceChoices.delete(chatId);await ctx.answerCallbackQuery().catch(()=>{});
   await ctx.editMessageText("Railway setup cancelled. Run /start when you are ready to connect Railway.").catch(()=>{});return true;
@@ -98,12 +206,11 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
  try{
   const selected=status(await requestInfrastructureSetup("workspace.select",{workspaceId:choice.id}));
   if(!selected.configured)throw new Error("Railway workspace was not activated");
-  waitingForToken.delete(chatId);workspaceChoices.delete(chatId);const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));setTopicNodeCreationEnabled(settings.workerCreationEnabled);
+  waitingForToken.delete(chatId);workspaceChoices.delete(chatId);
+  const settings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));setTopicNodeCreationEnabled(settings.workerCreationEnabled);
   await ctx.answerCallbackQuery({text:"Railway connected ✅"}).catch(()=>{});
-  await ctx.editMessageText(`✅ <b>Railway connected</b>\n\nWorkspace: <b>${escapeHtml(selected.workspaceName??choice.name)}</b>\n\nNew Chat can now provision isolated Topic Workers.`,{parse_mode:"HTML"}).catch(()=>{});
-  if(!pinnedMessageManager.isInitialized())pinnedMessageManager.initialize(ctx.api,chatId);
-  keyboardManager.initialize(ctx.api,chatId);
-  await keyboardManager.replaceMainInlineKeyboard(chatId);
+  const messageId=ctx.callbackQuery?.message?.message_id;
+  await startRailwayBootstrap(ctx,settings,messageId);
   logger.info(`[RailwayOnboarding] Workspace activated: chat=${chatId}, workspace=${selected.workspaceId}`);
   return true;
  }catch(error){

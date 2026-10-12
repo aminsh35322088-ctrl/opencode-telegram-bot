@@ -13,6 +13,10 @@ import {DEFAULT_RAILWAY_WORKER_SETTINGS,RailwayWorkerSettingsStore,type RailwayW
 // OpenCode Core is never started in this service; it exists only in Worker images.
 // The credential never enters Worker variables, model state or application storage.
 const nodes=captureNodeRegistry(process.env);
+// Capture only inside the privileged launcher. createInfrastructureClient immediately
+// strips the credential from the environment inherited by the application child.
+const railwaySecretToken=process.env.RAILWAY_API_TOKEN?.trim();
+const railwaySecretPresent=Boolean(railwaySecretToken);
 const infrastructure = createInfrastructureClient(process.env);
 const existingVariableNames=Object.keys(process.env);
 const workerImage=WORKER_RUNTIME_IMAGE;
@@ -77,7 +81,11 @@ async function main(): Promise<void> {
     }});
 
     let configuredWorkspaceId:string|undefined;
+    let configuredWorkspaceName:string|undefined;
+    let secretTokenType:"account"|"workspace"="workspace";
+    let secretInvalid=false;
     let poolConfigured=false;
+    const workerPoolProjectIds=new Set<string>();
     const configureWorkspace=async(workspaceId:string):Promise<void>=>{
       if(poolConfigured){
         if(configuredWorkspaceId!==workspaceId)throw new Error("Railway workspace is already active");
@@ -90,7 +98,12 @@ async function main(): Promise<void> {
           process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);
         }catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
         const resolved=(await resolveWorkerPools({request:infrastructure.request,workspaceId,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,onStage:value=>{stage=value;}})).map(pool=>({...pool,capacity:workerSettings.workersPerProject}));
-        controller.configurePools(resolved,controlUrl,async excluded=>({...await createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded}),capacity:workerSettings.workersPerProject}));
+        for(const pool of resolved)workerPoolProjectIds.add(pool.projectId);
+        controller.configurePools(resolved,controlUrl,async excluded=>{
+          const created=await createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded});
+          workerPoolProjectIds.add(created.projectId);
+          return {...created,capacity:workerSettings.workersPerProject};
+        });
         configuredWorkspaceId=workspaceId;poolConfigured=true;
         for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
         try{
@@ -115,19 +128,44 @@ async function main(): Promise<void> {
     });
     const startupPoolConfiguration=(async()=>{
       try{
+        if(railwaySecretPresent){
+          const validation=await validateRailwayInfrastructureCredential({token:railwaySecretToken!,controlProjectId:runtimeConfig.projectId});
+          if(!validation.valid){secretInvalid=true;process.stdout.write(`[InfrastructureBoundary] railway_secret_rejected reason=${validation.reason}\n`);return;}
+          secretTokenType=validation.tokenType;
+          const result=await infrastructure.request<{project:{workspaceId:string}}>('query WorkerWorkspace($projectId:String!){project(id:$projectId){workspaceId}}',{projectId:runtimeConfig.projectId});
+          if(!result.project.workspaceId)throw new Error("Control workspace unavailable");
+          configuredWorkspaceName=validation.workspaces.find(item=>item.id===result.project.workspaceId)?.name;
+          await configureWorkspace(result.project.workspaceId);
+          process.stdout.write("[InfrastructureBoundary] railway_secret_verified source=environment\n");
+          return;
+        }
         await onboarding.initialize();
         if(!poolConfigured&&infrastructure.configured){
           const result=await infrastructure.request<{project:{workspaceId:string}}>('query WorkerWorkspace($projectId:String!){project(id:$projectId){workspaceId}}',{projectId:runtimeConfig.projectId});
           if(!result.project.workspaceId)throw new Error("Control workspace unavailable");
           await configureWorkspace(result.project.workspaceId);
         }
-      }catch{process.stdout.write("[InfrastructureBoundary] railway_onboarding_restore_pending\n");}
+      }catch{
+        if(railwaySecretPresent)secretInvalid=true;
+        process.stdout.write("[InfrastructureBoundary] railway_onboarding_restore_pending\n");
+      }
     })();
     controller.waitForPoolConfiguration(startupPoolConfiguration);
     const setupController={
-      status:async()=>{const current=await onboarding.status();if(current.configured)return current;if(infrastructure.configured&&configuredWorkspaceId)return {configured:true as const,tokenType:"workspace" as const,workspaceId:configuredWorkspaceId};return current;},
+      status:async()=>{
+        await startupPoolConfiguration.catch(()=>undefined);
+        const projectCount=workerPoolProjectIds.size;
+        if(railwaySecretPresent){
+          if(secretInvalid||!poolConfigured||!configuredWorkspaceId)return {configured:false as const,blockedReason:"secret-invalid" as const,projectCount};
+          return {configured:true as const,tokenType:secretTokenType,workspaceId:configuredWorkspaceId,...(configuredWorkspaceName?{workspaceName:configuredWorkspaceName}:{}),projectCount};
+        }
+        const current=await onboarding.status();
+        if(current.configured)return {...current,projectCount};
+        if(infrastructure.configured&&configuredWorkspaceId)return {configured:true as const,tokenType:"workspace" as const,workspaceId:configuredWorkspaceId,projectCount};
+        return {...current,projectCount};
+      },
       begin:(token:string)=>onboarding.begin(token),
-      selectWorkspace:(workspaceId:string)=>onboarding.selectWorkspace(workspaceId),
+      selectWorkspace:async(workspaceId:string)=>{const result=await onboarding.selectWorkspace(workspaceId);configuredWorkspaceName=result.configured?result.workspaceName:undefined;return result;},
       getSettings:async()=>({...workerSettings}),
       updateSettings:async(patch:unknown)=>{workerSettings=await workerSettingsStore.update(patch);controller.setPoolCapacity(workerSettings.workersPerProject);return {...workerSettings};},
     };

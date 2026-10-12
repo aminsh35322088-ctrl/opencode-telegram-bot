@@ -10,7 +10,7 @@ export interface RailwayWorkerSettings {
 
 export const DEFAULT_RAILWAY_WORKER_SETTINGS: RailwayWorkerSettings = {
   workerCreationEnabled: true,
-  warmCapacity: 0,
+  warmCapacity: 5,
   workersPerProject: 5,
 };
 

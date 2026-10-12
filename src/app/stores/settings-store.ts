@@ -109,6 +109,8 @@ export function setCurrentModel(modelInfo: ModelInfo): void { if (getTopicRuntim
 export function getMainNavigationMessageId(chatId: number): number | undefined { return currentSettings.mainNavigationMessageIds?.[String(chatId)]; }
 export function setMainNavigationMessageId(chatId: number, messageId: number): Promise<void> { currentSettings.mainNavigationMessageIds = { ...(currentSettings.mainNavigationMessageIds ?? {}), [String(chatId)]: messageId }; return writeSettingsFile(currentSettings); }
 export function clearMainNavigationMessageId(chatId: number): Promise<void> { if (!currentSettings.mainNavigationMessageIds) return Promise.resolve(); const next = { ...currentSettings.mainNavigationMessageIds }; delete next[String(chatId)]; currentSettings.mainNavigationMessageIds = Object.keys(next).length ? next : undefined; return writeSettingsFile(currentSettings); }
+export function isRailwaySetupCompleted(): boolean { return currentSettings.railwaySetupCompleted === true; }
+export function setRailwaySetupCompleted(completed: boolean): Promise<void> { currentSettings.railwaySetupCompleted = completed; return writeSettingsFile(currentSettings); }
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined { return currentSettings.sessionDirectoryCache; }
 export function setSessionDirectoryCache(cache: SessionDirectoryCacheInfo): Promise<void> { currentSettings.sessionDirectoryCache = cache; return writeSettingsFile(currentSettings); }
 export function clearSessionDirectoryCache(): void { currentSettings.sessionDirectoryCache = undefined; void writeSettingsFile(currentSettings); }

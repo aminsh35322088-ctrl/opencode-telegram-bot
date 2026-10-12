@@ -30,6 +30,9 @@ export class RailwayOnboardingController {
   constructor(private readonly options: Options) { this.now = options.now ?? Date.now; }
 
   async initialize(): Promise<void> {
+    // An already configured client means Railway injected a root-owned secret.
+    // Never let a persisted Telegram onboarding credential override it.
+    if (this.options.client.configured) return;
     const stored = await this.options.store.load();
     if (!stored) return;
     this.options.client.configureCredential(stored.token);

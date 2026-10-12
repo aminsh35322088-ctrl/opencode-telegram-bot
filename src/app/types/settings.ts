@@ -28,6 +28,7 @@ export interface GlobalSettings {
   experimentalFreeModelDetection?: boolean;
   pinnedMessageId?: number;
   mainNavigationMessageIds?: Record<string, number>;
+  railwaySetupCompleted?: boolean;
   sessionDirectoryCache?: SessionDirectoryCacheInfo;
   scheduledTasks?: ScheduledTask[];
   scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[];
