@@ -68,11 +68,6 @@ async function main(): Promise<void> {
       probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
       if(!infrastructure.configured)return;
       try{
-        const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
-        await cleanupDeprecatedControlVariables({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId,names:existingVariableNames});
-        process.stdout.write("[InfrastructureBoundary] control_variables_reconciled contract=secrets-and-user-settings\n");
-      }catch{process.stdout.write("[InfrastructureBoundary] control_variable_cleanup_pending\n");}
-      try{
         const {verifyWorkerRuntimeCanary}=await import("./worker-runtime-canary.js");
         void verifyWorkerRuntimeCanary({journalPath:"/data/.infrastructure/provisioning.json",selftest:(nodeId,generation,profile)=>retirementTransport.runtimeSelftest(nodeId,generation,profile),log:message=>{process.stdout.write(message);},afterVerified:async(nodeId,generation)=>{
           await controller.cleanupRuntimeCanaryVariables(nodeId,generation,(id,epoch,profile)=>retirementTransport.runtimeSelftest(id,epoch,profile));
@@ -98,6 +93,11 @@ async function main(): Promise<void> {
         controller.configurePools(resolved,controlUrl,async excluded=>({...await createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded}),capacity:workerSettings.workersPerProject}));
         configuredWorkspaceId=workspaceId;poolConfigured=true;
         for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
+        try{
+          const {cleanupDeprecatedControlVariables}=await import("./control-variable-cleanup.js");
+          await cleanupDeprecatedControlVariables({request:infrastructure.request,projectId:runtimeConfig.projectId,environmentId:runtimeConfig.environmentId,serviceId:runtimeConfig.serviceId,names:existingVariableNames});
+          process.stdout.write("[InfrastructureBoundary] control_variables_reconciled contract=telegram-and-railway-credentials-only\n");
+        }catch{process.stdout.write("[InfrastructureBoundary] control_variable_cleanup_pending\n");}
       }catch(error){
         const classification=error instanceof InfrastructureRequestError?`${error.category} http=${error.status}`:'verification';
         process.stdout.write(`[InfrastructureBoundary] worker_pools_unavailable stage=${stage} category=${classification}\n`);

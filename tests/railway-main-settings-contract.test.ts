@@ -38,3 +38,12 @@ test('root IPC exposes persistent Railway worker settings get/update operations'
   assert.match(gateway, /settings\.get/);
   assert.match(gateway, /settings\.update/);
 });
+
+test('legacy Railway variables are reconciled after workspace verification, without requiring a Worker', () => {
+  const launcher = read('src/infrastructure/launcher.ts');
+  const configureStart = launcher.indexOf('const configureWorkspace=async');
+  const cleanup = launcher.indexOf('cleanupDeprecatedControlVariables', configureStart);
+  const workerVerify = launcher.indexOf('onClusterVerified', configureStart);
+  assert.ok(configureStart >= 0 && cleanup > configureStart, 'workspace cleanup must exist');
+  assert.ok(workerVerify < 0 || cleanup < workerVerify, 'cleanup must not wait for Worker verification');
+});
