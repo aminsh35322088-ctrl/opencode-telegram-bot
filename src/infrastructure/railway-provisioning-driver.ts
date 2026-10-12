@@ -171,14 +171,13 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     return this.singleFlight(async()=>{
       const excluded=new Set<string>();
       let expanded=false;
+      let lastQuotaError:InfrastructureRequestError|undefined;
       const expand=async()=>{
-        if(expanded||!this.options.createPool)throw new WorkerProvisioningError("capacity_exhausted");
+        if(expanded||!this.options.createPool)throw lastQuotaError??new WorkerProvisioningError("capacity_exhausted");
         expanded=true;
-        let pool:WorkerPool;
         const known=new Set(this.options.pools.map(candidate=>candidate.projectId));
         for(const projectId of excluded)known.add(projectId);
-        try{pool=await this.options.createPool(known);}
-        catch(error){if(error instanceof InfrastructureRequestError&&error.category==="resource_limit")throw new WorkerProvisioningError("capacity_exhausted");throw error;}
+        const pool=await this.options.createPool(known);
         if(!pool?.projectId||!pool.environmentId||!pool.region||excluded.has(pool.projectId)||this.options.pools.some(candidate=>candidate.projectId===pool.projectId))throw new WorkerProvisioningError("reconciliation_required");
         this.options.pools.push(structuredClone(pool));
       };
@@ -187,6 +186,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         catch(error){
           if(error instanceof WorkerProvisioningError&&error.category==="capacity_exhausted"){await expand();continue;}
           if(!(error instanceof InfrastructureRequestError)||error.category!=="resource_limit")throw error;
+          // Preserve Railway quota evidence across rollover so onboarding can
+          // offer verified partial capacity without accepting policy/security failures.
+          lastQuotaError=error;
           const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId);
           if(!record){await expand();continue;}
           if(record.everDeployed||record.phase==="deploying"||record.deploymentId)throw error;

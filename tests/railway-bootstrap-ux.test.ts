@@ -68,3 +68,22 @@ test("Railway bootstrap retry classification only loops recoverable failures", a
     assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError(category)),false,category);
   }
 });
+
+test("limited onboarding requires an actual Railway quota rejection and verified capacity", async () => {
+  const {canContinueRailwayBootstrapWithLimitedResources,renderRailwayBootstrapLimit,summarizeRailwayBootstrap}=await import("../src/bot/services/railway-bootstrap-progress.js");
+  const bindings=Array.from({length:4},(_,index)=>({projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"}));
+  const progress=summarizeRailwayBootstrap(bindings,1,5);
+  const quota=new Error("Infrastructure operation failed (resource_limit, HTTP 200)");
+  assert.equal(canContinueRailwayBootstrapWithLimitedResources(progress,quota),true);
+  for(const error of [new Error("Infrastructure operation failed (verification, HTTP 200): boundary_replay_http_200"),new Error("Node transport failed"),new Error("NO WORKER AVAILABLE / CAPACITY EXHAUSTED"),new Error("Infrastructure operation failed (schema, HTTP 200)")]){
+    assert.equal(canContinueRailwayBootstrapWithLimitedResources(progress,error),false);
+  }
+  assert.equal(canContinueRailwayBootstrapWithLimitedResources({...progress,healthy:0},quota),false);
+  const text=renderRailwayBootstrapLimit(progress);
+  assert.match(text,/Free plan limit/);
+  assert.match(text,/4\/5/);
+  assert.match(text,/4 verified Workers/);
+  assert.doesNotMatch(text,/\\n/);
+  assert.equal(progress.complete,false);
+  assert.equal(progress.workersTarget,5);
+});

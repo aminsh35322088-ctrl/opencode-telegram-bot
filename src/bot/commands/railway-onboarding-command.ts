@@ -9,7 +9,8 @@ import {setTopicNodeCreationEnabled,topicNodeLifecycle} from "../../control-plan
 import {normalizeRailwayWorkerSettings,type RailwayWorkerSettings} from "../../infrastructure/railway-worker-settings.js";
 import {WorkerProvisioningError} from "../../infrastructure/worker-provisioning-driver.js";
 import {isRailwaySetupCompleted,setRailwaySetupCompleted} from "../../app/stores/settings-store.js";
-import {renderRailwayBootstrapProgress,summarizeRailwayBootstrap,type RailwayBootstrapProgress} from "../services/railway-bootstrap-progress.js";
+import {canContinueRailwayBootstrapWithLimitedResources,isRailwayBootstrapResourceLimit,renderRailwayBootstrapLimit,renderRailwayBootstrapProgress,summarizeRailwayBootstrap,type RailwayBootstrapProgress} from "../services/railway-bootstrap-progress.js";
+import {t} from "../../i18n/index.js";
 
 interface WorkspaceChoice {id:string;name:string}
 interface SetupStatus {
@@ -27,6 +28,7 @@ const waitingForToken=new Set<number>();
 const workspaceChoices=new Map<number,WorkspaceChoice[]>();
 const bootstrapFlights=new Map<number,Promise<void>>();
 const bootstrapMessageIds=new Map<number,number>();
+const continueFlights=new Set<number>();
 
 export function isRetryableRailwayBootstrapError(error:unknown):boolean{
  if(error instanceof WorkerProvisioningError)return error.category==="provisioning_pending"||error.category==="project_unavailable";
@@ -36,7 +38,7 @@ export function isRetryableRailwayBootstrapError(error:unknown):boolean{
 
 function blockedVerificationDetail(error:unknown):string|undefined{
  const message=error instanceof Error?error.message:String(error);
- const match=/boundary_(replay|foreign-topic|stale-generation)_http_(\\d{3})/u.exec(message);
+ const match=/boundary_(replay|foreign-topic|stale-generation)_http_(\d{3})/u.exec(message);
  if(!match)return undefined;
  const checks:Record<string,string>={replay:"replay protection","foreign-topic":"foreign Topic isolation","stale-generation":"generation fencing"};
  return "Worker security verification failed: "+(checks[match[1]!]??"boundary check")+", HTTP "+match[2]+".";
@@ -129,10 +131,17 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
     return;
    }
    if(failure&&!isRetryableRailwayBootstrapError(failure)){
+    if(isRailwayBootstrapResourceLimit(failure)){
+     const keyboard=new InlineKeyboard().text(t("railway.setup.retry"),"railway:retry");
+     if(canContinueRailwayBootstrapWithLimitedResources(progress,failure))keyboard.row().text(t("railway.setup.continue_limited"),"railway:continue-limited");
+     await ctx.api.editMessageText(chatId,targetMessageId,renderRailwayBootstrapLimit(progress),{parse_mode:"HTML",reply_markup:keyboard}).catch(error=>logger.warn("[RailwayOnboarding] Could not render quota choices",error));
+     logger.warn(`[RailwayOnboarding] Railway quota reached; verified=${progress.healthy}/${INITIAL_BOOTSTRAP_WORKERS}`);
+     return;
+    }
     logger.error("[RailwayOnboarding] Initial Worker bootstrap blocked by non-retryable error",failure);
     const retryKeyboard=new InlineKeyboard().text("Retry →","railway:retry");
     const detail=blockedVerificationDetail(failure);
-    const blockedText=renderRailwayBootstrapProgress(progress)+"\\n\\n❌ Setup is blocked by a non-retryable Railway condition. Fix the Railway resource/configuration issue, then press Retry."+(detail?"\\n\\n🔎 "+detail:"");
+    const blockedText=renderRailwayBootstrapProgress(progress)+"\n\n❌ Setup is blocked by a non-retryable Railway condition. Fix the Railway resource/configuration issue, then press Retry."+(detail?"\n\n🔎 "+detail:"");
     await ctx.api.editMessageText(chatId,targetMessageId,blockedText,{parse_mode:"HTML",reply_markup:retryKeyboard}).catch(()=>{});
     return;
    }
@@ -215,11 +224,26 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
   }catch(error){logger.error("[RailwayOnboarding] Retry failed to start",error);await ctx.answerCallbackQuery({text:"Railway setup retry could not start."}).catch(()=>{});}
   return true;
  }
- if(data==="railway:continue"){
+ if(data==="railway:continue"||data==="railway:continue-limited"){
+  if(isRailwaySetupCompleted()||continueFlights.has(chatId)){await ctx.answerCallbackQuery().catch(()=>{});return true;}
+  continueFlights.add(chatId);
   try{
+   const limited=data==="railway:continue-limited";
+   let quota:unknown;
+   if(limited){
+    await ctx.answerCallbackQuery({text:t("railway.setup.limited_checking")}).catch(()=>{});
+    // Recheck live health, global state and root security proofs. This also
+    // makes a pre-restart button safe without trusting an in-memory receipt.
+    await topicNodeLifecycle.bootstrapPool(INITIAL_BOOTSTRAP_WORKERS).catch(error=>{quota=error;});
+   }
    const progress=await bootstrapProgress();
-   if(!progress.complete){await ctx.answerCallbackQuery({text:"Railway is still preparing Workers."}).catch(()=>{});return true;}
-   await ctx.answerCallbackQuery({text:"Railway ready ✅"}).catch(()=>{});
+   const verifiedLimited=limited&&canContinueRailwayBootstrapWithLimitedResources(progress,quota);
+   if((quota&&!verifiedLimited)||(!progress.complete&&!verifiedLimited)){
+    if(limited)await ctx.reply(t("railway.setup.limited_unavailable"));
+    else await ctx.answerCallbackQuery({text:"Railway is still preparing Workers."}).catch(()=>{});
+    return true;
+   }
+   if(!limited)await ctx.answerCallbackQuery({text:"Railway ready ✅"}).catch(()=>{});
    if(!pinnedMessageManager.isInitialized())pinnedMessageManager.initialize(ctx.api,chatId);
    keyboardManager.initialize(ctx.api,chatId);
    const opened=await keyboardManager.replaceMainInlineKeyboard(chatId);
@@ -230,6 +254,7 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
    bootstrapMessageIds.delete(chatId);
    return true;
   }catch(error){logger.error("[RailwayOnboarding] Continue failed",error);await ctx.answerCallbackQuery({text:"Railway setup is not ready yet."}).catch(()=>{});return true;}
+  finally{continueFlights.delete(chatId);}
  }
  if(data==="railway:cancel"){
   waitingForToken.delete(chatId);workspaceChoices.delete(chatId);await ctx.answerCallbackQuery().catch(()=>{});

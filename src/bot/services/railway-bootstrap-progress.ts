@@ -1,9 +1,23 @@
+import {t} from "../../i18n/index.js";
+
 export interface RailwayBootstrapBindingLike {
   slot?: number;
   projectId?: string;
   serviceId?: string;
   volumeId?: string;
   status?: string;
+}
+
+export function isRailwayBootstrapResourceLimit(error:unknown):boolean {
+  return error instanceof Error && /^Infrastructure operation failed \(resource_limit, HTTP \d+\)/u.test(error.message);
+}
+
+export function canContinueRailwayBootstrapWithLimitedResources(progress:RailwayBootstrapProgress,error:unknown):boolean {
+  return isRailwayBootstrapResourceLimit(error) && progress.projects>0 && progress.healthy>0 && progress.workers>=progress.healthy && progress.volumes>=progress.healthy;
+}
+
+export function renderRailwayBootstrapLimit(progress:RailwayBootstrapProgress):string {
+  return renderRailwayBootstrapProgress(progress)+"\n\n"+t("railway.setup.free_limit",{healthy:progress.healthy,target:progress.workersTarget});
 }
 
 export interface RailwayBootstrapProgress {
@@ -31,7 +45,7 @@ export function summarizeRailwayBootstrap(
   const projects = Math.min(projectsTarget, Math.max(0, Math.trunc(projectCount)));
   const workers = Math.min(target, active.filter((binding) => Boolean(binding.serviceId)).length);
   const volumes = Math.min(target, active.filter((binding) => Boolean(binding.volumeId)).length);
-  const healthy = Math.min(target, active.filter((binding) => binding.status === "available").length);
+  const healthy = Math.min(target, active.filter((binding) => binding.status === "available" && Boolean(binding.serviceId) && Boolean(binding.volumeId)).length);
   return {
     projects,
     projectsTarget,

@@ -92,6 +92,22 @@ test('claiming reuses prepared Workers then reserves lazy capacity',async()=>{
   await f.lifecycle.bootstrapPool();assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal((await f.bindings.list()).length,5);
 });
 
+test('limited bootstrap keeps four ready slots and New Chat claims them without filling the fifth slot',async()=>{
+ const f=await fixture();f.setFail(5);
+ await assert.rejects(f.lifecycle.bootstrapPool(5),error=>error===f.failure);
+ const before=await f.bindings.list();
+ assert.deepEqual(before.map(binding=>binding.status),['available','available','available','available','pool-provisioning']);
+ for(let index=0;index<4;index++){
+  const claimed=await f.bindings.reserve(-100,index+2);
+  assert.equal(claimed.nodeId,before[index]!.nodeId);
+  assert.equal(claimed.serviceId,before[index]!.serviceId);
+  assert.equal(claimed.volumeId,before[index]!.volumeId);
+  assert.equal(claimed.generation,2);
+ }
+ assert.deepEqual(f.provisioned,[1,2,3,4,5]);
+ assert.equal((await f.bindings.list())[4]!.status,'pool-provisioning');
+});
+
 
 test('New Chat reaches Telegram creation regardless of historical warm pool capacity',async()=>{
  let creations=0;const reachedCreate=new Error('Telegram creation reached');

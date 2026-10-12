@@ -218,8 +218,21 @@ test('configured eligible projects are all tried before a total Railway quota fa
  f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
   if(document.includes('mutation WorkerService')){projects.push((variables.input as {projectId:string}).projectId);throw new InfrastructureRequestError('resource_limit',200,'WorkerService');}return request<T>(document,variables);
  };
- await assert.rejects(f.controller.provision('full',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+ await assert.rejects(f.controller.provision('full',1),error=>error instanceof InfrastructureRequestError&&error.category==='resource_limit'&&error.operation==='WorkerService');
  assert.deepEqual(projects,['a','b']);assert.equal(f.services.length,0);
+});
+
+test('overflow project quota retains the Railway resource rejection instead of policy capacity exhaustion',async()=>{
+ const {InfrastructureRequestError}=await import('../src/infrastructure/railway-client.js');
+ const f=await fixture();f.add('limited');const request=f.options.request;
+ f.options.request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.includes('mutation WorkerService'))throw new InfrastructureRequestError('resource_limit',200,'WorkerService');
+  return request<T>(document,variables);
+ };
+ const quota=new InfrastructureRequestError('resource_limit',200,'WorkerPoolCreate');
+ f.options.createPool=async()=>{throw quota;};
+ await assert.rejects(f.controller.provision('limited',1),error=>error===quota);
+ assert.equal(f.services.length,0);assert.equal(f.volumes.length,0);
 });
 
 test('quota during reconciliation of an existing Worker never destroys its runtime or volume',async()=>{

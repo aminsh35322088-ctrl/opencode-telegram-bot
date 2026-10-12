@@ -8,6 +8,11 @@ import type { I18nDictionary } from "./en.js";
  * Keep this dictionary complete to avoid falling back to another locale.
  */
 export const ko: I18nDictionary = {
+  "railway.setup.free_limit": "⚠️ Free plan limit / Railway resource quota reached.\n\n{healthy} verified Workers are available out of the default target of {target}. With at least one verified Worker, you can continue with limited resources. New Chat will use the ready Workers; additional capacity depends on your Railway plan.",
+  "railway.setup.continue_limited": "Continue with limited resources →",
+  "railway.setup.retry": "Retry →",
+  "railway.setup.limited_checking": "Checking available Workers…",
+  "railway.setup.limited_unavailable": "❌ Limited setup cannot continue: a Railway resource limit and at least one verified Worker are required. Press Retry to recheck setup.",
   "railway.setup.usable": "✅ Verified Workers are available now. Continue to use the ready capacity.",
   "railway.setup.creation_limited": "⏳ Railway daily service creation limit reached. New resource creation paused; existing Workers remain available.",
 
