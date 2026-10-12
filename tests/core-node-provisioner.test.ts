@@ -31,6 +31,7 @@ async function fixture() {
         assert.equal(input.region,undefined);
         assert.equal(input.builder,undefined,'Dockerfile detection must not pass unsupported DOCKERFILE Builder enum');
         assert.equal(input.healthcheckTimeout,30,'Worker Agent liveness must fail fast instead of retrying for five minutes');
+        assert.equal(input.sleepApplication,false,'Warm pool Workers must stay awake for reliable readiness and New Chat routing');
         result={serviceInstanceUpdate:true};
       } else if(document.includes('mutation WorkerVolume(')) {
         const volume={id:'v'+volumes.length,projectId:input.projectId as string,serviceId:input.serviceId as string,environmentId:input.environmentId as string};volumes.push(volume);result={volumeCreate:{id:volume.id}};

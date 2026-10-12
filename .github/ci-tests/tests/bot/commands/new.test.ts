@@ -344,6 +344,28 @@ describe("bot/commands/new", () => {
 
 
 describe('remote New Chat retry ownership',()=>{
+ it('routes a remote New Chat to the created Telegram Topic and the exact Worker session',async()=>{
+  mocked.remoteEnabled.mockReturnValue(true);
+  mocked.createTelegramTopicWorkspaceMock.mockResolvedValue('/temporary');
+  mocked.remoteCreate.mockResolvedValueOnce({
+   binding:{chatId:123,threadId:77,sessionId:'worker-session',directory:'/worker/topic'},
+   session:{id:'worker-session',title:'Worker Session'},
+  });
+  mocked.resolveCoreTopicBindingMock.mockReturnValue({
+   bindingId:'123:77',chatId:123,threadId:77,sessionId:'worker-session',
+   normalizedDirectory:path.resolve('/worker/topic'),bindingGeneration:1,
+  });
+  const ctx=createContext();const deps=createDeps();
+  await newCommand(ctx as never,deps);
+  expect(mocked.remoteCreate).toHaveBeenCalledWith(deps.bot.api,123,'/temporary',expect.stringMatching(/^telegram-new:/));
+  expect(mocked.deleteWorkspace).toHaveBeenCalledWith('/temporary');
+  expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
+  expect(deps.sendMessageMock).toHaveBeenCalledWith(123,expect.stringContaining('New AI Topic ready'),expect.objectContaining({message_thread_id:77}));
+  expect(mocked.attachToSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+   chatId:123,session:expect.objectContaining({id:'worker-session',directory:'/worker/topic'}),
+  }));
+ });
+
  it('acknowledges a completed retry without UI initialization or destructive cleanup',async()=>{
   mocked.remoteEnabled.mockReturnValue(true);
   mocked.createTelegramTopicWorkspaceMock.mockResolvedValue('/new-temp');
